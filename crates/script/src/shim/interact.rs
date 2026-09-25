@@ -119,9 +119,9 @@ pub enum InteractReq {
     /// Host rejects generation mismatch, seq 0, and seq above the posted ring.
     #[serde(rename = "inspect-ack")]
     InspectAck { seq: u64, generation: u64 },
-    /// Scene `try_move` packet with nearest fallback
-    /// (`Interactions::walk_nearest`) used by `DirectNavigator`, not world
-    /// `Traversal`.
+    /// Scene/direct `try_move` packet with nearest fallback
+    /// (`Interactions::walk_nearest`). World-scale `Traversal` uses the
+    /// separate baked `Walk` / `WalkNear` requests.
     #[serde(rename = "walk-to")]
     WalkTo { x: i32, z: i32, level: i32 },
     /// Deposit-all the bank-side item named `name`.

@@ -11,11 +11,12 @@ use std::time::{Duration, Instant};
 use crate::collision::{bake_from_maps, WorldCollision};
 use crate::grid::StepGrid;
 use crate::router::{
-    find, find_allow_teleports, find_bounded, find_many_with, find_many_with_avoid_bounded,
-    find_many_with_avoid_bounded_until, find_missing_item_reqs, find_missing_item_reqs_with_avoid,
-    find_on_grid, find_with, find_with_avoid, find_with_avoid_bounded, find_with_model,
-    local_step_component, step_ok, AvoidRect, CostModel, FindOptions, GridLeg, Leg, MissingReq,
-    RouteError, TargetError, BANK_TARGET_BUDGET, PER_STEP_WALK,
+    find, find_allow_teleports, find_bounded, find_first_with, find_many_with,
+    find_many_with_avoid_bounded, find_many_with_avoid_bounded_until, find_missing_item_reqs,
+    find_missing_item_reqs_with_avoid, find_on_grid, find_with, find_with_avoid,
+    find_with_avoid_bounded, find_with_model, local_step_component, step_ok, AvoidRect, CostModel,
+    FindOptions, GridLeg, Leg, MissingReq, RouteError, TargetError, BANK_TARGET_BUDGET,
+    PER_STEP_WALK,
 };
 use crate::tile::Tile;
 use crate::transport::{
@@ -803,6 +804,34 @@ fn many_targets_keep_shortcuts_duplicates_budget_and_deadline_distinct() {
 }
 
 #[test]
+fn first_target_search_stops_before_an_unreachable_sibling_floods_the_map() {
+    let wc = bake(100, 1, &[]);
+    let graph = TransportGraph::default();
+    let from = tile(0, 0, 0);
+    let targets = [tile(2, 0, 0), tile(200, 0, 0)];
+    let search = find_first_with(
+        &wc,
+        &graph,
+        from,
+        &targets,
+        FindOptions::default(),
+        &WorldState::empty(),
+    );
+
+    assert_eq!(search.route().unwrap().dest, targets[0]);
+    assert_eq!(
+        search.settled(),
+        3,
+        "the cheapest goal ends the search before the unreachable target"
+    );
+    let scratch = search.scratch_capacities();
+    assert!(scratch.distances < 16);
+    assert!(scratch.predecessors < 16);
+    assert!(scratch.settled < 16);
+    assert!(scratch.heap < 16);
+}
+
+#[test]
 fn bank_budget_accepts_the_goal_after_500000_predecessors() {
     // A 1-wide corridor guarantees that the goal is pop 500001.
     let wc = bake(500_001, 1, &[]);
@@ -1238,6 +1267,54 @@ fn compare_real_bank_targets(
         started.elapsed()
     );
     costs
+}
+
+#[test]
+fn first_target_rc_booth_stays_in_the_frozen_search_ballpark_on_real_289_pack() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let from = tile(2653, 3289, 0);
+    let targets = [
+        tile(2655, 3286, 0),
+        tile(2657, 3286, 0),
+        tile(2656, 3287, 0),
+    ];
+    let state = WorldState {
+        map_members: true,
+        ..WorldState::empty()
+    };
+    let started = Instant::now();
+    let search = find_first_with(
+        &world.collision,
+        &world.graph,
+        from,
+        &targets,
+        FindOptions {
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        },
+        &state,
+    );
+    let elapsed = started.elapsed();
+    let scratch = search.scratch_capacities();
+    eprintln!(
+        "RC booth first-goal: elapsed={elapsed:?}, settled={}, scratch capacities={scratch:?}",
+        search.settled()
+    );
+
+    let route = search.route().expect("diagnosis stand is reachable");
+    assert_eq!(route.dest, targets[0]);
+    assert_eq!(route.ticks, 12.5);
+    assert!(
+        search.settled() < 5_000,
+        "first-goal search must not flood the packed world"
+    );
+    assert!(
+        scratch.distances + scratch.predecessors + scratch.settled + scratch.heap < 16_384,
+        "first-goal scratch must stay near the short route, got {scratch:?}"
+    );
 }
 
 fn validate_real_route(

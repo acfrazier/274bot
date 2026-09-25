@@ -54,6 +54,23 @@ const UNREACHABLE_PASSES: u32 = 3;
 const BACKOFF_MIN: u32 = 2;
 const BACKOFF_MAX: u32 = 16;
 
+#[cfg(test)]
+thread_local! {
+    static SCENE_TEST_AGE_MS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+fn scene_now(cx: &mut Cx<'_>) -> Instant {
+    let now = cx.clock().now();
+    #[cfg(test)]
+    let now = SCENE_TEST_AGE_MS.with(|age| now + Duration::from_millis(age.get()));
+    now
+}
+
+#[cfg(test)]
+fn age_scene_time(millis: u64) {
+    SCENE_TEST_AGE_MS.with(|age| age.set(millis));
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 struct Tile {
     x: i32,
@@ -223,6 +240,14 @@ struct SceneStep {
     delay_left: u8,
 }
 
+impl SceneStep {
+    fn should_reclick(&self, current: WorldTile, now: Instant) -> bool {
+        current == self.last_tile
+            || now.saturating_duration_since(self.last_issued)
+                >= Duration::from_millis(SCENE_RECLICK_MS)
+    }
+}
+
 enum Phase {
     NeedWalk,
     Walking(Walk),
@@ -326,11 +351,8 @@ impl Resilient {
                     let Some(current) = here() else {
                         return Some(false);
                     };
-                    let now = cx.clock().now();
-                    let stalled = current == scene.last_tile;
-                    let reclick_due = now.saturating_duration_since(scene.last_issued)
-                        >= Duration::from_millis(SCENE_RECLICK_MS);
-                    if stalled || reclick_due {
+                    let now = scene_now(cx);
+                    if scene.should_reclick(current, now) {
                         self.emit_scene_walk(current, cx);
                         scene.last_issued = now;
                     }
@@ -412,7 +434,7 @@ impl Resilient {
             return Some(false);
         };
         self.emit_scene_walk(current, cx);
-        let last_issued = cx.clock().now();
+        let last_issued = scene_now(cx);
         cx.clock().arm(SCENE_TIMEOUT_MS);
         self.phase = Phase::Scene(SceneStep {
             last_issued,
@@ -623,6 +645,7 @@ mod tests {
         walk_wait::on_reset();
         crate::load::reach_query::on_reset();
         machine::on_hold(false);
+        age_scene_time(0);
     }
 
     fn post_here(x: i32, z: i32) {
@@ -660,24 +683,50 @@ mod tests {
         }
     }
 
-    fn fail_walk(seq: u64, token: u64, x: i32, z: i32, failed: bool) {
+    fn post_walk_outcome(
+        seq: u64,
+        token: u64,
+        here: WorldTile,
+        dest: WorldTile,
+        radius: i32,
+        failed: bool,
+    ) {
         observed::post(seq, |post| {
             post.session(true)
-                .here(observed::Tile { x, z, level: 0 })
+                .here(observed::Tile {
+                    x: here.x,
+                    z: here.z,
+                    level: here.level,
+                })
                 .walk_outcome(WalkOutcome {
                     seq,
                     generation: 0,
                     request_id: token,
                     failed,
                     tile: observed::Tile {
-                        x: 10,
-                        z: 0,
-                        level: 0,
+                        x: dest.x,
+                        z: dest.z,
+                        level: dest.level,
                     },
-                    radius: 0,
+                    radius,
                     allow_teleports: false,
                 });
         });
+    }
+
+    fn fail_walk(seq: u64, token: u64, x: i32, z: i32, failed: bool) {
+        post_walk_outcome(
+            seq,
+            token,
+            WorldTile { x, z, level: 0 },
+            WorldTile {
+                x: 10,
+                z: 0,
+                level: 0,
+            },
+            0,
+            failed,
+        );
     }
 
     #[test]
@@ -750,6 +799,134 @@ mod tests {
             machine::merge_ops(Vec::new()).is_empty(),
             "the completed scene pass backoffs instead of ending"
         );
+        assert_eq!(machine::take(h), Take::Pending);
+    }
+
+    #[test]
+    fn scene_walk_emits_the_clamped_target_on_the_current_plane() {
+        reset();
+        post_here(0, 0);
+        let dest = WorldTile {
+            x: 200,
+            z: 60,
+            level: 1,
+        };
+        let args = json!({
+            "tile": { "x": dest.x, "z": dest.z, "level": dest.level },
+            "opts": { "radius": 0 },
+        });
+        let Started::Running(h) = machine::start("walk-resilient", args, Vec::new(), 0) else {
+            panic!("walk-resilient runs");
+        };
+        machine::step(&mut NoJs);
+        let token = match machine::merge_ops(Vec::new()).as_slice() {
+            [InteractReq::Walk {
+                x: 200,
+                z: 60,
+                level: 1,
+                request_id,
+                ..
+            }] => *request_id,
+            other => panic!("expected the baked walk, got {other:?}"),
+        };
+        post_walk_outcome(
+            2,
+            token,
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            dest,
+            0,
+            true,
+        );
+        machine::step(&mut NoJs);
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::WalkTo {
+                x: 48,
+                z: 48,
+                level: 0,
+            }]
+        );
+        assert_eq!(machine::take(h), Take::Pending);
+    }
+
+    #[test]
+    fn moving_scene_step_reclicks_at_2400_ms_not_before() {
+        reset();
+        post_here(0, 0);
+        let h = start(None);
+        machine::step(&mut NoJs);
+        let token = walk_token();
+        fail_walk(1, token, 0, 0, true);
+        machine::step(&mut NoJs);
+        assert!(matches!(
+            machine::merge_ops(Vec::new()).as_slice(),
+            [InteractReq::WalkTo { .. }]
+        ));
+
+        age_scene_time(SCENE_RECLICK_MS - 1);
+        observed::post(2, |post| {
+            post.session(true).here(observed::Tile {
+                x: 1,
+                z: 0,
+                level: 0,
+            });
+        });
+        machine::step(&mut NoJs);
+        machine::step(&mut NoJs);
+        assert!(
+            machine::merge_ops(Vec::new()).is_empty(),
+            "moving before 2400 ms must not re-click"
+        );
+
+        age_scene_time(SCENE_RECLICK_MS);
+        observed::post(3, |post| {
+            post.session(true).here(observed::Tile {
+                x: 2,
+                z: 0,
+                level: 0,
+            });
+        });
+        machine::step(&mut NoJs);
+        machine::step(&mut NoJs);
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::WalkTo {
+                x: 10,
+                z: 0,
+                level: 0,
+            }]
+        );
+        assert_eq!(machine::take(h), Take::Pending);
+    }
+
+    #[test]
+    fn scene_radius_plus_one_progress_restarts_the_baked_walk() {
+        reset();
+        post_here(0, 0);
+        let h = start(None);
+        machine::step(&mut NoJs);
+        let token = walk_token();
+        fail_walk(1, token, 0, 0, true);
+        machine::step(&mut NoJs);
+        assert!(matches!(
+            machine::merge_ops(Vec::new()).as_slice(),
+            [InteractReq::WalkTo { .. }]
+        ));
+
+        observed::post(2, |post| {
+            post.session(true).here(observed::Tile {
+                x: 9,
+                z: 0,
+                level: 0,
+            });
+        });
+        machine::step(&mut NoJs);
+        let retry = walk_token();
+        assert_ne!(retry, token);
         assert_eq!(machine::take(h), Take::Pending);
     }
 
@@ -1029,6 +1206,38 @@ mod tests {
         assert!(machine::merge_ops(Vec::new()).is_empty());
         assert_eq!(machine::take(h), Take::Pending);
         machine::on_hold(false);
+    }
+
+    #[test]
+    fn displaced_walk_skips_the_unowned_scene_click() {
+        reset();
+        post_here(0, 0);
+        let h = start(None);
+        machine::step(&mut NoJs);
+        let displaced = walk_token();
+        let replacement = walk_wait::dispatch(&json!({
+            "op": "begin",
+            "x": 20,
+            "z": 0,
+            "level": 0,
+            "radius": 0,
+            "allow_teleports": false,
+        }))
+        .as_u64()
+        .expect("replacement token");
+        assert!(walk_wait::owns(replacement));
+        assert!(!walk_wait::owns(displaced));
+
+        machine::tests::expire_deadlines();
+        machine::step(&mut NoJs);
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::AbortWalk {
+                request_id: displaced,
+            }],
+            "a displaced wait may abort its old host follow but not issue an unfenced scene walk"
+        );
+        assert_eq!(machine::take(h), Take::Pending);
     }
 
     #[test]

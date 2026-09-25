@@ -126,7 +126,7 @@ pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, samp
 pub use scatter::{scatter_tile_for, tele_args};
 use script_runtime::*;
 pub use walk_plan::PendingBankFetch;
-use walk_plan::{route_or_bank_fetch, RouteOutcome};
+use walk_plan::{bank_fetch_after_no_path, route_or_bank_fetch, RouteOutcome};
 
 #[cfg(test)]
 use script::ScriptCtx;

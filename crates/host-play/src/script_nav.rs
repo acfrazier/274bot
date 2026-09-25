@@ -4,12 +4,17 @@ use std::thread;
 use std::time::Instant;
 
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav::router::{find_many_with, find_missing_item_reqs, FindOptions, MissingReq, Route};
+use nav::router::{
+    find_first_with, find_missing_item_reqs, FindOptions, MissingReq, Route, RouteError,
+};
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
 use nav::WorldState;
 
-use super::{debug_enabled, route_inspect, route_or_bank_fetch, PendingBankFetch, RouteOutcome};
+use super::{
+    bank_fetch_after_no_path, debug_enabled, route_inspect, route_or_bank_fetch, PendingBankFetch,
+    RouteOutcome,
+};
 #[derive(Default)]
 pub(crate) struct RouteCompletion {
     #[cfg(test)]
@@ -274,6 +279,60 @@ impl ScriptWalkArm {
         .then_some(receiver)
     }
 
+    #[allow(clippy::too_many_arguments)] // admission mirrors the wire request identity
+    fn gate_route(
+        &self,
+        bot: &mut NavBot,
+        to: WorldTile,
+        radius: i32,
+        key: (WorldTile, i32, bool, bool, bool),
+        retarget: bool,
+        request_id: u64,
+    ) -> Option<bool> {
+        if bot.bank_fetch.is_some()
+            || (!retarget && (bot.route.is_some() || bot.route_worker.is_some()))
+        {
+            log_walk_arm(&self.name, || {
+                format!(
+                    "queue_route refused-in-flight dest={to:?} r={radius} request_id={request_id} \
+                     bank_fetch={} retarget={retarget} route={} worker={}",
+                    bot.bank_fetch.is_some(),
+                    bot.route.is_some(),
+                    bot.route_worker.is_some()
+                )
+            });
+            bot.note_failure(bot.route_generation, request_id, to, radius, key.2);
+            return Some(false);
+        }
+        if bot.requested_route == Some(key)
+            && (bot.route_worker.is_some() || bot.route.is_some() || bot.pending_route.is_some())
+        {
+            // Same-id retransmission and legacy request_id 0 keep the
+            // in-flight find. A later distinct nonzero wait is refused
+            // without restarting search or reassigning the armed id.
+            if request_id != 0 && request_id != bot.walk_request_id {
+                log_walk_arm(&self.name, || {
+                    format!(
+                        "queue_route coalesced-refused-distinct-id dest={to:?} r={radius} \
+                         request_id={request_id} armed_id={}",
+                        bot.walk_request_id
+                    )
+                });
+                bot.note_failure(bot.route_generation, request_id, to, radius, key.2);
+                return Some(false);
+            }
+            log_walk_arm(&self.name, || {
+                format!(
+                    "queue_route coalesced dest={to:?} r={radius} request_id={request_id} \
+                     generation={}",
+                    bot.route_generation
+                )
+            });
+            return Some(true);
+        }
+        None
+    }
+
     #[allow(clippy::too_many_arguments)] // queue state plus borrowed arm-time scene
     fn queue_route_impl(
         &self,
@@ -311,79 +370,34 @@ impl ScriptWalkArm {
             z: hz,
             level: hl,
         };
+        let key = (
+            to,
+            radius,
+            opts.allow_teleports,
+            opts.allow_wilderness,
+            opts.allow_bank_fetch,
+        );
+        {
+            let mut navs = self.navs.lock().unwrap();
+            let bot = navs.entry(self.name.clone()).or_default();
+            if let Some(result) = self.gate_route(bot, to, radius, key, retarget, request_id) {
+                return result;
+            }
+        }
+        // Resolve live-scene geometry only after this request passes the
+        // refusal/coalescing gates, but outside the process-wide nav mutex.
+        // The second gate below closes the race with another arming thread.
+        let live_candidates = if radius > 0 {
+            snapshot.and_then(|snapshot| solid_target_approach_tiles(snapshot, to))
+        } else {
+            None
+        };
         let token = {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();
-            if bot.bank_fetch.is_some()
-                || (!retarget && (bot.route.is_some() || bot.route_worker.is_some()))
-            {
-                log_walk_arm(&self.name, || {
-                    format!(
-                        "queue_route refused-in-flight dest={to:?} r={radius} request_id={request_id} \
-                         bank_fetch={} retarget={retarget} route={} worker={}",
-                        bot.bank_fetch.is_some(),
-                        bot.route.is_some(),
-                        bot.route_worker.is_some()
-                    )
-                });
-                bot.note_failure(
-                    bot.route_generation,
-                    request_id,
-                    to,
-                    radius,
-                    opts.allow_teleports,
-                );
-                return false;
+            if let Some(result) = self.gate_route(bot, to, radius, key, retarget, request_id) {
+                return result;
             }
-            let key = (
-                to,
-                radius,
-                opts.allow_teleports,
-                opts.allow_wilderness,
-                opts.allow_bank_fetch,
-            );
-            if bot.requested_route == Some(key)
-                && (bot.route_worker.is_some()
-                    || bot.route.is_some()
-                    || bot.pending_route.is_some())
-            {
-                // Same-id retransmission and legacy request_id 0 keep the
-                // in-flight find. A later distinct nonzero wait is refused
-                // without restarting search or reassigning the armed id.
-                if request_id != 0 && request_id != bot.walk_request_id {
-                    log_walk_arm(&self.name, || {
-                        format!(
-                            "queue_route coalesced-refused-distinct-id dest={to:?} r={radius} \
-                             request_id={request_id} armed_id={}",
-                            bot.walk_request_id
-                        )
-                    });
-                    bot.note_failure(
-                        bot.route_generation,
-                        request_id,
-                        to,
-                        radius,
-                        opts.allow_teleports,
-                    );
-                    return false;
-                }
-                log_walk_arm(&self.name, || {
-                    format!(
-                        "queue_route coalesced dest={to:?} r={radius} request_id={request_id} \
-                         generation={}",
-                        bot.route_generation
-                    )
-                });
-                return true;
-            }
-            // Resolve live-scene geometry only after this request wins the
-            // refusal/coalescing gates. The detached worker receives owned
-            // coordinates, never the borrowed snapshot.
-            let live_candidates = if radius > 0 {
-                snapshot.and_then(|snapshot| solid_target_approach_tiles(snapshot, to))
-            } else {
-                None
-            };
             if let Some(ess) = bot.traveller.essence() {
                 opts.essence = Some(ess);
             }
@@ -698,14 +712,19 @@ impl ScriptRouteRequest {
             .collect()
     }
 
-    fn calculate_many(&self, candidates: &[WorldTile], state: &WorldState) -> RouteOutcome {
+    fn calculate_first(
+        &self,
+        candidates: &[WorldTile],
+        state: &WorldState,
+        label: &str,
+    ) -> RouteOutcome {
         if candidates.is_empty() {
             return RouteOutcome::NoPath;
         }
         let debug = debug_enabled();
         let slot = walk_arm_worker_slot();
         let started = debug.then(Instant::now);
-        let routes = find_many_with(
+        let search = find_first_with(
             &self.world.collision,
             &self.world.graph,
             self.from,
@@ -713,41 +732,33 @@ impl ScriptRouteRequest {
             self.opts,
             state,
         );
-        let best = routes
-            .results()
-            .iter()
-            .enumerate()
-            .filter_map(|(index, result)| result.as_ref().ok().map(|cost| (index, cost.ticks)))
-            .min_by(|left, right| {
-                left.1
-                    .total_cmp(&right.1)
-                    .then_with(|| left.0.cmp(&right.0))
-            });
         if debug {
             let elapsed_ms = started.unwrap().elapsed().as_millis();
+            let scratch = search.scratch_capacities();
             log_walk_arm(&slot, || {
                 format!(
-                    "approach multi end candidates={} settled={} elapsed_ms={elapsed_ms} routed={}",
+                    "{label} first end candidates={} settled={} scratch={}/{}/{}/{} \
+                     elapsed_ms={elapsed_ms} routed={}",
                     candidates.len(),
-                    routes.settled(),
-                    best.is_some()
+                    search.settled(),
+                    scratch.distances,
+                    scratch.predecessors,
+                    scratch.settled,
+                    scratch.heap,
+                    search.route().is_ok()
                 )
             });
         }
-        if let Some((index, _)) = best {
-            return match routes.route(index) {
-                Ok(route) => RouteOutcome::Routed(route),
-                Err(_) => RouteOutcome::NoPath,
-            };
+        match search.into_route() {
+            Ok(route) => RouteOutcome::Routed(route),
+            Err(RouteError::NoPath) => {
+                // The shared strict search already exhausted every reachable
+                // node. BankBudget may run its relaxed missing-item diagnosis,
+                // but must not repeat that strict flood once per candidate.
+                self.calculate_in_order(candidates, state, label, true)
+            }
+            Err(RouteError::BudgetExhausted) => RouteOutcome::NoPath,
         }
-
-        // BankBudget remains a host policy above the strict router. Only
-        // after the shared strict search found no target can a candidate's
-        // missing-item diagnosis produce a session.
-        if self.opts.allow_bank_fetch {
-            return self.calculate_in_order(candidates, state, "approach bank");
-        }
-        RouteOutcome::NoPath
     }
 
     fn calculate_in_order(
@@ -755,6 +766,7 @@ impl ScriptRouteRequest {
         candidates: &[WorldTile],
         state: &WorldState,
         label: &str,
+        strict_failed: bool,
     ) -> RouteOutcome {
         let debug = debug_enabled();
         let slot = walk_arm_worker_slot();
@@ -768,8 +780,18 @@ impl ScriptRouteRequest {
                 });
             }
             let started = debug.then(Instant::now);
-            let outcome =
-                route_or_bank_fetch(&self.world, self.from, target, self.opts, state, &self.bank);
+            let outcome = if strict_failed {
+                bank_fetch_after_no_path(
+                    &self.world,
+                    self.from,
+                    target,
+                    self.opts,
+                    state,
+                    &self.bank,
+                )
+            } else {
+                route_or_bank_fetch(&self.world, self.from, target, self.opts, state, &self.bank)
+            };
             if debug {
                 let elapsed_ms = started.unwrap().elapsed().as_millis();
                 log_walk_arm(&slot, || {
@@ -800,6 +822,7 @@ impl ScriptRouteRequest {
             );
         }
 
+        let corrected_solid_target = self.live_candidates.is_some();
         if let Some(candidates) = self.live_candidates.as_ref() {
             let candidates = candidates.as_slice();
             if debug_enabled() {
@@ -813,15 +836,16 @@ impl ScriptRouteRequest {
                     )
                 });
             }
-            let outcome = self.calculate_many(candidates, state);
+            let outcome = self.calculate_first(candidates, state, "approach primary");
             if !matches!(outcome, RouteOutcome::NoPath) {
                 return outcome;
             }
         }
 
         // Frozen PathFinder falls back after target-cardinal goals fail.
-        // Preserve this host's previous radius policy for empty or unroutable
-        // corrected goals, and for standable/off-scene destinations.
+        // Preserve this host's radius goal set for empty or unroutable
+        // corrected goals, and the full old sequential policy for
+        // standable/off-scene destinations.
         let generated = approach_tiles(&self.world, self.from, self.to, self.radius);
         if debug_enabled() {
             let slot = walk_arm_worker_slot();
@@ -834,7 +858,11 @@ impl ScriptRouteRequest {
                 )
             });
         }
-        self.calculate_in_order(&generated, state, "approach fallback")
+        if corrected_solid_target {
+            self.calculate_first(&generated, state, "approach fallback")
+        } else {
+            self.calculate_in_order(&generated, state, "approach fallback", false)
+        }
     }
 }
 impl NavBot {

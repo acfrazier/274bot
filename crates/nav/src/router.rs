@@ -313,6 +313,109 @@ pub struct SearchCapacities {
     pub heap: usize,
 }
 
+/// One first-settled-target search. Dijkstra settles nodes in increasing
+/// route cost, so the route is the cheapest reachable input target without
+/// paying to prove whether every other target is reachable.
+pub struct FirstRouteSearch {
+    route: Result<Route, RouteError>,
+    settled: usize,
+    capacities: SearchCapacities,
+}
+
+impl FirstRouteSearch {
+    pub fn route(&self) -> Result<&Route, RouteError> {
+        self.route.as_ref().map_err(|error| *error)
+    }
+
+    pub fn into_route(self) -> Result<Route, RouteError> {
+        self.route
+    }
+
+    pub fn settled(&self) -> usize {
+        self.settled
+    }
+
+    /// Peak scratch entry capacities at the point the first target settled.
+    pub fn scratch_capacities(&self) -> SearchCapacities {
+        self.capacities
+    }
+}
+
+/// Search until the cheapest reachable target settles, using the same native
+/// options and 4M-node cap as [`find_with`]. Small goal sets are scanned
+/// inline without allocation; larger fallback sets build one membership map
+/// instead of scanning every target for every settled node.
+pub fn find_first_with(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+) -> FirstRouteSearch {
+    if targets.is_empty() {
+        return FirstRouteSearch {
+            route: Err(RouteError::NoPath),
+            settled: 0,
+            capacities: SearchCapacities::default(),
+        };
+    }
+    if targets.contains(&from) {
+        return FirstRouteSearch {
+            route: Ok(Route {
+                legs: vec![Leg::Walk { tiles: vec![from] }],
+                dest: from,
+                ticks: 0.0,
+            }),
+            settled: 0,
+            capacities: SearchCapacities::default(),
+        };
+    }
+
+    let mut goals = Goals::First {
+        targets: FirstTargets::new(targets),
+        found: None,
+    };
+    let search = search_kernel(
+        collision,
+        graph,
+        from,
+        CostModel::running(),
+        NODE_BUDGET,
+        opts.allow_teleports,
+        opts.allow_wilderness,
+        state,
+        opts.essence.as_ref(),
+        false,
+        &[],
+        &mut goals,
+        None,
+    );
+    let route = match goals {
+        Goals::First {
+            found: Some((dest, cost)),
+            ..
+        } => {
+            let (legs, ticks) = reconstruct(
+                dest,
+                &search.came_from,
+                graph,
+                CostModel::running(),
+                opts.essence.as_ref(),
+            );
+            debug_assert_eq!(ticks, cost.ticks);
+            Ok(Route { legs, dest, ticks })
+        }
+        _ if search.stop == SearchStop::Budget => Err(RouteError::BudgetExhausted),
+        _ => Err(RouteError::NoPath),
+    };
+    FirstRouteSearch {
+        route,
+        settled: search.settled,
+        capacities: search.capacities,
+    }
+}
+
 /// Per-input results in caller order, with one predecessor tree for lazy
 /// reconstruction. The graph is borrowed, not copied, and the heap/dist/done
 /// scratch is dropped when the search returns.
@@ -707,10 +810,36 @@ fn tile_in_any_avoid(tile: WorldTile, avoid: &[AvoidRect]) -> bool {
     avoid.iter().any(|r| r.contains(tile))
 }
 
+enum FirstTargets<'a> {
+    Inline(&'a [WorldTile]),
+    Indexed(HashSet<WorldTile>),
+}
+
+impl<'a> FirstTargets<'a> {
+    fn new(targets: &'a [WorldTile]) -> Self {
+        if targets.len() <= 8 {
+            Self::Inline(targets)
+        } else {
+            Self::Indexed(targets.iter().copied().collect())
+        }
+    }
+
+    fn contains(&self, tile: &WorldTile) -> bool {
+        match self {
+            Self::Inline(targets) => targets.contains(tile),
+            Self::Indexed(targets) => targets.contains(tile),
+        }
+    }
+}
+
 enum Goals<'a> {
     Single {
         to: WorldTile,
         cost: Option<TargetCost>,
+    },
+    First {
+        targets: FirstTargets<'a>,
+        found: Option<(WorldTile, TargetCost)>,
     },
     Many {
         unique: &'a HashMap<WorldTile, usize>,
@@ -726,6 +855,14 @@ impl Goals<'_> {
             Goals::Single { to, cost: found } => {
                 if *to == tile {
                     *found = Some(cost);
+                    true
+                } else {
+                    false
+                }
+            }
+            Goals::First { targets, found } => {
+                if targets.contains(&tile) {
+                    *found = Some((tile, cost));
                     true
                 } else {
                     false
@@ -884,7 +1021,7 @@ fn search_kernel(
     goals: &mut Goals<'_>,
     deadline: Option<Instant>,
 ) -> SearchOutcome {
-    let record_capacities = matches!(goals, Goals::Many { .. });
+    let record_capacities = matches!(goals, Goals::First { .. } | Goals::Many { .. });
     let mut dist: HashMap<WorldTile, f64> = HashMap::new();
     let mut came_from: HashMap<WorldTile, Back> = HashMap::new();
     let mut heap: BinaryHeap<HeapNode> = BinaryHeap::new();

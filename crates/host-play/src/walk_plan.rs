@@ -46,43 +46,57 @@ pub(super) fn route_or_bank_fetch(
 ) -> RouteOutcome {
     match find_with(&world.collision, &world.graph, from, to, opts, state) {
         Ok(route) => RouteOutcome::Routed(route),
-        Err(_) if opts.allow_bank_fetch => {
-            let Some(missing) =
-                find_missing_item_reqs(&world.collision, &world.graph, from, to, opts, state)
-            else {
-                return RouteOutcome::NoPath;
-            };
-            let Some(fetch) = plan_bank_fetch(&missing, state, bank, world.banks(), from) else {
-                return RouteOutcome::NoPath;
-            };
-            // Re-find against the post-session state (ADR 0005: find itself
-            // stayed fail-closed; the session is what unblocks).
-            let Ok(route) = find_with(
-                &world.collision,
-                &world.graph,
-                from,
-                to,
-                FindOptions {
-                    allow_bank_fetch: false,
-                    ..opts
-                },
-                &fetch.state,
-            ) else {
-                return RouteOutcome::NoPath;
-            };
-            RouteOutcome::BankSession {
-                pending: PendingBankFetch {
-                    steps: fetch.steps.into(),
-                    dest: to,
-                    opts: FindOptions {
-                        allow_bank_fetch: false,
-                        ..opts
-                    },
-                    final_route: route.clone(),
-                },
-                route,
-            }
-        }
-        Err(_) => RouteOutcome::NoPath,
+        Err(_) => bank_fetch_after_no_path(world, from, to, opts, state, bank),
+    }
+}
+
+/// BankBudget diagnosis after the caller's strict search already proved
+/// `NoPath`. Keeping this separate prevents a multi-target caller from
+/// repeating the same full strict flood once per candidate.
+pub(super) fn bank_fetch_after_no_path(
+    world: &NavWorld,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    bank: &[(i32, i32)],
+) -> RouteOutcome {
+    if !opts.allow_bank_fetch {
+        return RouteOutcome::NoPath;
+    }
+    let Some(missing) =
+        find_missing_item_reqs(&world.collision, &world.graph, from, to, opts, state)
+    else {
+        return RouteOutcome::NoPath;
+    };
+    let Some(fetch) = plan_bank_fetch(&missing, state, bank, world.banks(), from) else {
+        return RouteOutcome::NoPath;
+    };
+    // Re-find against the post-session state (ADR 0005: find itself stayed
+    // fail-closed; the session is what unblocks).
+    let Ok(route) = find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        to,
+        FindOptions {
+            allow_bank_fetch: false,
+            ..opts
+        },
+        &fetch.state,
+    ) else {
+        return RouteOutcome::NoPath;
+    };
+    RouteOutcome::BankSession {
+        pending: PendingBankFetch {
+            steps: fetch.steps.into(),
+            dest: to,
+            opts: FindOptions {
+                allow_bank_fetch: false,
+                ..opts
+            },
+            final_route: route.clone(),
+        },
+        route,
     }
 }

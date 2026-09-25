@@ -10304,8 +10304,11 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
 /// A 5×5 world walled between x=1 and x=2, crossed only by a door
 /// gated on wearing a knife (obj `knife_id`), with a bank booth
 /// stand at (0, 4).
-fn knife_nav_world(knife_id: i32) -> NavWorld {
+fn knife_nav_world_with_target(knife_id: i32, solid_target: bool) -> NavWorld {
     let mut flags = vec![0u32; 25];
+    if solid_target {
+        flags[4 * 5 + 4] |= client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
+    }
     for z in 0..5 {
         flags[z * 5 + 1] |= client::dash3d::CollisionFlag::W_E as u32;
         flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
@@ -10363,6 +10366,10 @@ fn knife_nav_world(knife_id: i32) -> NavWorld {
             access: nav::pack::BankAccess::Booth { op: 2 },
         }],
     )
+}
+
+fn knife_nav_world(knife_id: i32) -> NavWorld {
+    knife_nav_world_with_target(knife_id, false)
 }
 
 /// Task 8 — the BankBudget session unit: the inventory is full of
@@ -10451,6 +10458,60 @@ fn bank_fetch_session_deposits_withdraws_wears_then_finds() {
     )
     .expect("the post-session strict re-find crosses");
     assert_eq!(r.dest, to);
+}
+
+#[test]
+fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
+    let mut client = bank_fetch_client();
+    client.collision[0].flags[4][4] |= client::dash3d::CollisionFlag::SQ_BLOCKED;
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let world = Arc::new(knife_nav_world_with_target(2, true));
+    let state = WorldState::from_snapshot(&snapshot);
+    let bank_rows: Vec<(i32, i32)> = snapshot
+        .bank()
+        .iter()
+        .map(|it| (it.def.id, it.count))
+        .collect();
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let arm = ScriptWalkArm {
+        here: Some((0, 4, 0)),
+        world: Some(Arc::clone(&world)),
+        navs: Arc::clone(&navs),
+        name: "alice".into(),
+        state: Some(state),
+        bank: bank_rows,
+    };
+    let worker_done = arm
+        .queue_route_in_snapshot_synced(
+            &snapshot,
+            4,
+            4,
+            0,
+            FindOptions {
+                allow_bank_fetch: true,
+                ..FindOptions::default()
+            },
+            1,
+            true,
+            71,
+        )
+        .expect("solid-target route accepted");
+    worker_done
+        .recv_timeout(Duration::from_secs(1))
+        .expect("route worker completes");
+
+    let navs = navs.lock().unwrap();
+    let fetch = navs
+        .get("alice")
+        .and_then(|bot| bot.bank_fetch.as_ref())
+        .expect("missing worn knife plans a bank session after the shared strict NoPath");
+    assert_eq!(
+        (fetch.dest.x - 4).abs().max((fetch.dest.z - 4).abs()),
+        1,
+        "the post-session route still ends at a target-adjacent stand"
+    );
+    assert_eq!(fetch.final_route.dest, fetch.dest);
 }
 
 /// Fix round — BankBudget execute on the live walk arm: `allow_bank_fetch`
