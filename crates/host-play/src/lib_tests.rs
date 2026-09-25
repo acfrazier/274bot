@@ -13236,6 +13236,7 @@ fn welcome_hold_skips_compiled_tick_until_observed_close() {
     let open = login_readiness::WelcomeObservation {
         session_epoch: welcome.session_epoch(),
         tick: 1,
+        now: Instant::now(),
         ingame: true,
         scene_state: 2,
         welcome_interface_id: 42,

@@ -9,6 +9,7 @@
 //! closed state is observed. Operator Pause/Stop/Logout are not resumed
 //! here.
 
+use std::time::{Duration, Instant};
 use api::interact::{Driver, Interactions, SendReason, SendResult};
 use api::snapshot::GameSnapshot;
 
@@ -21,6 +22,7 @@ pub fn welcome_is_open(welcome_interface_id: i32, main_modal_id: i32) -> bool {
 /// Bound the dismiss loop: a few spaced attempts, then a visible stop.
 const MAX_CLOSE_ATTEMPTS: u8 = 3;
 const RETRY_TICKS: u64 = 2;
+const WELCOME_DISMISS_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Facts the slot pump already has; no extra snapshot/FlatBuffer field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +30,8 @@ pub struct WelcomeObservation {
     /// Bumped on logout/reconnect so a pending close cannot cross sessions.
     pub session_epoch: u64,
     pub tick: u64,
+    /// Monotonic clock sampled once by the host observe frame.
+    pub now: Instant,
     pub ingame: bool,
     pub scene_state: i32,
     /// `Client::welcome_interface_id`, not a hardcoded layer.
@@ -91,6 +95,7 @@ pub struct LoginReadiness {
     close_attempts: u8,
     last_close_tick: Option<u64>,
     close_epoch: Option<u64>,
+    episode_started: Option<Instant>,
     failure: Option<String>,
     last_notice: Option<String>,
 }
@@ -103,6 +108,7 @@ impl Default for LoginReadiness {
             close_attempts: 0,
             last_close_tick: None,
             close_epoch: None,
+            episode_started: None,
             failure: None,
             last_notice: None,
         }
@@ -162,6 +168,7 @@ impl LoginReadiness {
                 self.close_attempts = 0;
                 self.last_close_tick = None;
                 self.close_epoch = None;
+                self.episode_started = None;
                 self.failure = None;
                 return self.emit(
                     false,
@@ -182,7 +189,17 @@ impl LoginReadiness {
             self.close_attempts = 0;
             self.last_close_tick = None;
             self.close_epoch = None;
+            self.episode_started = Some(obs.now);
             self.failure = None;
+        }
+
+        let episode_started = self.episode_started.get_or_insert(obs.now);
+        if obs.now.saturating_duration_since(*episode_started) >= WELCOME_DISMISS_TIMEOUT {
+            return self.fail_with(format!(
+                "welcome: dismissal timed out after {}s for interface {}; close it manually or reconnect",
+                WELCOME_DISMISS_TIMEOUT.as_secs(),
+                obs.welcome_interface_id,
+            ));
         }
 
         if !obs.allow_close {
@@ -305,6 +322,7 @@ mod tests {
         WelcomeObservation {
             session_epoch: epoch,
             tick,
+            now: Instant::now(),
             ingame: true,
             scene_state: 2,
             welcome_interface_id: welcome,
@@ -441,6 +459,7 @@ mod tests {
         let logged_out = WelcomeObservation {
             session_epoch: 1,
             tick: 2,
+            now: Instant::now(),
             ingame: false,
             scene_state: 0,
             welcome_interface_id: -1,
@@ -572,6 +591,42 @@ mod tests {
         assert!(step.hold);
         assert_eq!(step.action, WelcomeAction::None);
         assert_eq!(closes, 0);
+    }
+
+    #[test]
+    fn stalled_player_tick_has_an_elapsed_failure_bound() {
+        let started = Instant::now();
+        let mut readiness = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
+        let mut open = open_at(1, 42);
+        open.now = started;
+        let first = readiness.step(&open, || {
+            CloseAttempt::Refused(SendReason::SceneUnavailable)
+        });
+        assert!(first.failure.is_none());
+
+        open.now = started + WELCOME_DISMISS_TIMEOUT;
+        let timed_out = readiness.step(&open, || panic!("tick spacing blocks another close"));
+        assert!(timed_out.hold);
+        assert!(
+            timed_out
+                .failure
+                .as_deref()
+                .is_some_and(|failure| failure.contains("timed out") && failure.contains("42")),
+            "timeout must be visible and name the interface: {:?}",
+            timed_out.failure
+        );
+
+        let closed = WelcomeObservation {
+            now: started + WELCOME_DISMISS_TIMEOUT + Duration::from_millis(1),
+            main_modal_id: -1,
+            ..open
+        };
+        let settled = readiness.step(&closed, || panic!("closed modal needs no action"));
+        assert!(!settled.hold);
+        assert!(settled.failure.is_none(), "closure clears the episode failure");
     }
 
     struct NoopScript;

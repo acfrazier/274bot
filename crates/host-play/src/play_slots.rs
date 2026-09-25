@@ -838,6 +838,7 @@ fn spawn_slot_thread(
                             let welcome_obs = login_readiness::WelcomeObservation {
                                 session_epoch,
                                 tick: *script_tick,
+                                now: Instant::now(),
                                 ingame: c.ingame,
                                 scene_state: c.scene_state,
                                 welcome_interface_id: c.welcome_interface_id,
