@@ -99,6 +99,19 @@ fn melee_partner_trade_and_type_only_imports_resolve() {
     let Some(root) = script::rs2b0t_root() else {
         return;
     };
+    if ["BrimhavenMossGiants", "JiveMarketDumper", "JiveDragons"]
+        .iter()
+        .any(|name| {
+            !root
+                .join("src/bot/scripts")
+                .join(name)
+                .join(format!("{name}.ts"))
+                .is_file()
+        })
+    {
+        eprintln!("skip: pinned catalog lacks the melee partner-trade cards");
+        return;
+    }
     let dir = scratch("blocked-cards");
     let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))

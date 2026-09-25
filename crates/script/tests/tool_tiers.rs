@@ -217,6 +217,11 @@ fn ranging_guild_catalog_card_spawns_without_best_from_tiers_not_impl() {
     let Some(root) = script::rs2b0t_root() else {
         return;
     };
+    let card_path = root.join("src/bot/scripts/RangingGuild/RangingGuild.ts");
+    if !card_path.is_file() {
+        eprintln!("skip: pinned catalog lacks RangingGuild");
+        return;
+    }
     let dir = scratch("ranging-card");
     let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))

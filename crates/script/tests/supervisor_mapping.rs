@@ -157,6 +157,11 @@ fn ranging_guild_catalog_row_not_supervisor_unloadable() {
     let Some(root) = script::rs2b0t_root() else {
         return;
     };
+    let card_path = root.join("src/bot/scripts/RangingGuild/RangingGuild.ts");
+    if !card_path.is_file() {
+        eprintln!("skip: pinned catalog lacks RangingGuild");
+        return;
+    }
     let dir = std::env::temp_dir().join(format!(
         "274bot-ranging-supervisor-{}-{}",
         std::process::id(),

@@ -227,6 +227,14 @@ fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
     port
 }
 
+fn ephemeral_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
 fn runtime_checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf, u16) {
     let (root, cache, _) = checked_fixture(revision);
     let packs = identity_packs();
@@ -250,6 +258,10 @@ fn runtime_checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf
 fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
     for revision in [274_u16, 289] {
         let (root, cache, manifest) = checked_fixture(revision);
+        // OnDemand hubs are keyed by (game_host, game_port); parallel panel
+        // tests must not share the default local ports with different caches.
+        let game_port = ephemeral_port();
+        let asset_port = ephemeral_port();
         let args = parse_args(
             [
                 "--smoke".to_string(),
@@ -259,6 +271,10 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
                 cache.display().to_string(),
                 "--cache-manifest".to_string(),
                 manifest.display().to_string(),
+                "--port".to_string(),
+                game_port.to_string(),
+                "--http-port".to_string(),
+                asset_port.to_string(),
             ],
             None,
         )
@@ -331,6 +347,7 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
         cache_dir: Some(cache),
         cache_manifest: Some(manifest),
         unpack_dir: Some(unpack),
+        port: Some(ephemeral_port()),
         http_port: Some(port),
         vault_path: Some(root.join("startup.vault")),
         ..host_play::ProfileOptions::default()

@@ -2166,9 +2166,8 @@ fn slot_start_load_reserved_name_via_compiled_ids_is_checked_at_load() {
 // Persist uses the default store path naming for the operator file.
 #[test]
 fn default_js_store_is_dot_274bot_json() {
-    let p = script::load::default_js_store();
-    let s = p.to_string_lossy().to_string();
-    assert!(s.ends_with(".274bot/js-scripts.json"), "{s}");
+    let path = script::load::default_js_store();
+    assert!(path.ends_with(std::path::Path::new(".274bot").join("js-scripts.json")));
 }
 
 // (8) The catalog shape loads: a TS file with a typed default-export

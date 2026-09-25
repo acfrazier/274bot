@@ -4,12 +4,23 @@ use client::config::if_type::{ComponentType, IfType, IfTypeMut};
 use client::io::ServerProt;
 use script::isolate_fb::decode_snapshot;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use super::script_snapshot_fb;
 use super::SettledStart;
 
 const HINT: usize = 0;
 const BOARD: usize = 1;
 const ROOT: usize = 2;
+
+fn isolated_cache_dir() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let path =
+        std::env::temp_dir().join(format!("274bot-host-play-cache-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    path.to_string_lossy().into_owned()
+}
 
 /// A client whose open main modal walks the hint panel first: the root's
 /// children are pushed in reverse (the search pops the last child), so
@@ -19,7 +30,7 @@ fn client_with_hint_and_board() -> Client {
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: isolated_cache_dir(),
         members: true,
         lowmem: false,
     });
@@ -371,7 +382,7 @@ fn attached_client() -> Client {
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 1,
-        cache_dir: "/tmp".into(),
+        cache_dir: isolated_cache_dir(),
         members: true,
         lowmem: false,
     });

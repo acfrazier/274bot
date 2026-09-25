@@ -2,7 +2,7 @@ use super::*;
 use api::interact::RUN_ORB_IFACE;
 use client::dash3d::TerrainOverlayShape;
 use client::io::{ClientProt, ClientProt289};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 /// Force the wgpu backend's process-wide init to fail so every
@@ -13,6 +13,10 @@ use std::time::Instant;
 /// the first renderer construction wins — call before any test
 /// constructs one.
 static FORCE_CPU_BACKEND: OnceLock<()> = OnceLock::new();
+
+// `BOT_CPU` is a process-wide override. Keep the one test that mutates it
+// isolated from tests that assert per-slot CPU preferences.
+static BOT_CPU_ENV_LOCK: Mutex<()> = Mutex::new(());
 fn force_cpu_backend() {
     FORCE_CPU_BACKEND.get_or_init(|| {
         std::env::set_var("R274_TEST_FORCE_NO_GPU", "1");
@@ -1168,6 +1172,7 @@ fn backend_flip_rearms_share_light_without_dropping_overlay() {
 
 #[test]
 fn prefer_cpu_rebuilds_renderer_not_client() {
+    let _env_lock = BOT_CPU_ENV_LOCK.lock().unwrap();
     force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
@@ -1205,6 +1210,7 @@ fn prefer_cpu_rebuilds_renderer_not_client() {
 
 #[test]
 fn bot_cpu_env_forces_cpu_even_when_slot_input_prefers_gpu() {
+    let _env_lock = BOT_CPU_ENV_LOCK.lock();
     force_cpu_backend();
     let prev = std::env::var("BOT_CPU").ok();
     std::env::set_var("BOT_CPU", "1");

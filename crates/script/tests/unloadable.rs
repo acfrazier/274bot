@@ -211,6 +211,11 @@ fn pinned_flour_collector_transpiles_and_instantiates() {
         eprintln!("skip pinned FlourCollector proof: RS2B0T is not configured");
         return;
     };
+    let card_path = root.join("src/bot/scripts/FlourCollector/FlourCollector.ts");
+    if !card_path.is_file() {
+        eprintln!("skip pinned FlourCollector proof: card is unavailable");
+        return;
+    }
     let dir = std::env::temp_dir().join(format!("274bot-pinned-flour-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let mut library = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));

@@ -395,9 +395,9 @@ fn bind_input_follows_a_linked_file_and_only_not_found_is_absence() {
     std::fs::create_dir_all(&root).unwrap();
     let target = root.join("vault-bytes");
     std::fs::write(&target, "vault v1").unwrap();
-    let linked = root.join("vault");
     #[cfg(unix)]
     {
+        let linked = root.join("vault");
         std::os::unix::fs::symlink(&target, &linked).unwrap();
         let first = bind_input(&linked);
         assert!(first.resolved(), "{:?}", first.note);
