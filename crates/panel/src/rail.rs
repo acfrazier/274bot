@@ -280,17 +280,17 @@ mod tests {
 
     #[test]
     fn traffic_light_maps_all_four_states() {
-        // Unknown / logged out: not ingame, no error.
+        // Unknown / logged out: disconnected, no error.
         assert_eq!(traffic_light(false, false, false), Light::Grey);
-        // A FIFO-queued login slot is not ingame, so it is grey, not running.
+        // A FIFO-queued login slot is disconnected, so it is grey, not running.
         assert_eq!(traffic_light(false, false, true), Light::Grey);
-        // Error red wins over ingame and running.
+        // Error red wins over connection and running.
         assert_eq!(traffic_light(false, true, false), Light::Red);
         assert_eq!(traffic_light(true, true, true), Light::Red);
         assert_eq!(traffic_light(false, true, true), Light::Red);
-        // Idle yellow: ingame and nothing running.
+        // Idle yellow: connected and nothing running.
         assert_eq!(traffic_light(true, false, false), Light::Yellow);
-        // Running green: ingame and (script running or nav queued).
+        // Running green: connected and (script running or nav queued).
         assert_eq!(traffic_light(true, false, true), Light::Green);
     }
 

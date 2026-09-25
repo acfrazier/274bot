@@ -657,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn losing_close_eligibility_pauses_time_but_not_attempt_budget() {
+    fn losing_close_eligibility_restarts_time_but_not_attempt_budget() {
         let started = Instant::now();
         let mut readiness = LoginReadiness {
             session_epoch: 1,

@@ -9,6 +9,7 @@ use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
 
+use super::play_status::lock_statuses;
 use super::{
     deposit_all_backpack, log_walk_arm_bot, open_bank_at_here, withdraw_id, NavBot, ScriptWalkArm,
     SlotStatus,
@@ -205,7 +206,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 if bank_fetch_freezes_follow(bot) {
                     let queued = bot.route.as_ref().map(|r| r.dest);
                     drop(all);
-                    let mut rows = statuses.lock().unwrap();
+                    let mut rows = lock_statuses(statuses);
                     if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
                         match queued {
                             Some(d) => {
@@ -276,7 +277,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
         }
         bot.route.as_ref().map(|r| r.dest)
     };
-    let mut rows = statuses.lock().unwrap();
+    let mut rows = lock_statuses(statuses);
     if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
         match queued {
             Some(d) => {

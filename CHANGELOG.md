@@ -33,8 +33,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   Stop and unload clear published paint even offline. Status-lock poison from
   a panicked worker is recovered at every access, and script-slot poison is
   contained at terminal retirement. Welcome dismissal keeps its spaced attempt
-  bound and reports a visible failure after 10 eligible seconds, pausing that
-  elapsed bound while the scene cannot accept a close.
+  bound and reports a visible failure after 10 eligible seconds; the window
+  restarts while the scene cannot accept a close.
 
 ### Script host
 
