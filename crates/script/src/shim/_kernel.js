@@ -51,6 +51,11 @@ export function distanceTo(a, b) {
     return globalThis.__rs2b0t_distance(a, b);
 }
 
+export function planarDistanceTo(a, b) {
+    if (!a || !b) return Infinity;
+    return globalThis.__rs2b0t_distance(a, b, true);
+}
+
 // Walk arrival (frozen `isArrived`) from the posted player tile, in Rust.
 export function arrived(dest, radius) {
     return globalThis.__rs2b0t_reach('arrived', dest, radius) === true;

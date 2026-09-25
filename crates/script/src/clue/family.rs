@@ -65,7 +65,7 @@ impl Family for Clue {
             match kind {
                 "callback.enabled" => {
                     if !cx.has(HOOK_ENABLED) {
-                        self.resume = Some(false);
+                        self.resume = Some(true);
                         continue;
                     }
                     self.last_hook = Some(HOOK_ENABLED);

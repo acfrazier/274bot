@@ -199,6 +199,7 @@ export default class T extends LoopingBot {
                 (globalThis.__events ||= []).push(['reset']);
             },
         };
+        globalThis.__cakeOpts = opts;
         globalThis.__result = await stealCakes(opts);
         globalThis.__returns = (globalThis.__returns ?? 0) + 1;
     }
@@ -307,6 +308,60 @@ fn native_cake_stall_does_not_roundtrip_js_snapshot_collections() {
 
     tick(&iso, 1);
     assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+    iso.join();
+}
+
+#[test]
+fn hooks_are_resolved_again_at_each_invocation() {
+    let steal = ["Steal from".to_string()];
+    let locs = [loc_row(2561, Some("Baker's stall"), 2667, 3310, 1, &steal)];
+    let cake = [ItemRowInput::nc(Some("Cake"), 1)];
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 28").unwrap();
+    let mut encoder = IsolateBuf::new();
+    let mut last = None;
+    let mut snap = base_snapshot(tile(2668, 3312, 0));
+    snap.locs = &locs;
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+
+    iso.probe(
+        r#"(() => {
+            globalThis.__dynamicAbort = false;
+            globalThis.__dynamicSteals = 0;
+            globalThis.__dynamicReceivers = [];
+            globalThis.__cakeOpts.abort = function () {
+                globalThis.__dynamicReceivers.push(this === globalThis.__cakeOpts);
+                return globalThis.__dynamicAbort;
+            };
+            globalThis.__cakeOpts.onSteal = function () {
+                globalThis.__dynamicReceivers.push(this === globalThis.__cakeOpts);
+                globalThis.__dynamicSteals += 1;
+            };
+            return true;
+        })()"#,
+    )
+    .unwrap();
+
+    snap.inv = &cake;
+    snap.tick = 2;
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
+    tick(&iso, 2);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("globalThis.__dynamicSteals").unwrap(), 1);
+
+    iso.probe("globalThis.__dynamicAbort = true").unwrap();
+    assert_eq!(wait_result(&iso), "aborted");
+    let receivers = iso.probe("globalThis.__dynamicReceivers").unwrap();
+    assert!(
+        receivers
+            .as_array()
+            .expect("dynamic hook receivers")
+            .iter()
+            .all(|value| value == true),
+        "{receivers:?}"
+    );
     iso.join();
 }
 

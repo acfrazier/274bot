@@ -705,9 +705,9 @@ export interface NativeApi {
   sceneNpcs(input: { types: number[]; actions: string[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;
   /** Sync posted-tab status copy. A missing page is snapshot-unavailable and a null tab is quest-tab-unbound. Not a Promise and not a request op. */
   questStatus(input: { name: string }): HelperResult<{ status: 'notStarted' | 'inProgress' | 'complete' | 'unknown'; as_of_sequence: number }>;
-  /** Sync owned-root begin. Admits one posted quest row and returns its token without clicking; a refusal is `{ ok: false, error }`. */
+  /** Sync owned-root begin. Admits one posted quest row and returns its token without clicking; refusals include `invalid-args`, unavailable/unbound scene data, an unknown quest, an occupied modal, `busy`, `stale`, and `frozen`. */
   questJournalBegin(input: { name: string }): HelperResult<{ token: number }>;
-  /** One awaited run. Rust clicks the admitted row, acquires its exact modal, returns its lines, and closes only that modal. */
+  /** One awaited run. Rust clicks the admitted row, acquires its exact modal, returns its lines, and closes only that modal inside a bounded observation window. */
   questJournalRun(input: { token: number }): Promise<QuestJournalOutcome>;
   foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;
   gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;
@@ -834,6 +834,7 @@ export type HuntOutcome<T> =
   | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
 /** Callbacks frozen for one clue run. Rust awaits each returned promise before advancing the machine. */
 export interface ClueHooks {
+  /** Gates a held step; absent defaults to true. */
   enabled?(): boolean | Promise<boolean>;
   log?(message: string): void | Promise<void>;
   setStatus?(message: string): void | Promise<void>;

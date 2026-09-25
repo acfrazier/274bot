@@ -935,7 +935,7 @@ fn example_clue_held_step_v2_is_one_read_only_held_step_call() {
 }
 
 #[test]
-fn v2_clue_run_without_hooks_defaults_enabled_false_until_a_terminal() {
+fn v2_clue_run_without_hooks_defaults_enabled_true_and_progresses() {
     let src = r#"
 export const apiVersion = 2;
 let started = false;
@@ -969,11 +969,42 @@ export async function tick(api) {
         2,
         &[(2677, 1)],
         &Scene {
-            ours: true,
+            here: Some(script::isolate_fb::TileInput {
+                x: 3200,
+                z: 3218,
+                level: 1,
+            }),
             ..Scene::default()
         },
     );
     iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Walk {
+            x: 3209,
+            z: 3218,
+            level: 1,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "an absent enabled hook defaults true and advances into the search arm"
+    );
+    assert!(iso.probe("globalThis.__out").unwrap().is_null());
+
+    post_scene(
+        &iso,
+        3,
+        &[(2677, 1)],
+        &Scene {
+            ours: true,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
     let out = iso.probe("globalThis.__out").unwrap();
     assert_eq!(out["kind"], "done", "{out:?}");
     assert_eq!(out["value"]["kind"], "yield", "{out:?}");
@@ -1144,5 +1175,550 @@ export async function tick(api) {
     assert_eq!(out["value"]["kind"], "yield", "{out:?}");
     assert!(iso.probe("globalThis.__error").unwrap().is_null());
     assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+const LIVE_CLUE_RUN: &str = r#"
+export const apiVersion = 2;
+let started = false;
+export async function tick(api) {
+  if (started) return;
+  started = true;
+  const begin = api.clue.begin();
+  globalThis.__begin = begin;
+  globalThis.__out = null;
+  globalThis.__error = null;
+  try {
+    globalThis.__out = await api.clue.run(begin.value);
+  } catch (error) {
+    globalThis.__error = String(error && error.message ? error.message : error);
+  }
+}
+"#;
+
+fn spawn_live_clue_run() -> LoadIsolate {
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    LoadIsolate::spawn_with_game_data(LIVE_CLUE_RUN.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap()
+}
+
+fn live_clue_tick(
+    iso: &LoadIsolate,
+    tick: u64,
+    page: &[(i32, i32)],
+    scene: &Scene<'_>,
+) -> Vec<InteractReq> {
+    post_scene(iso, tick, page, scene);
+    iso.on_game_tick(tick);
+    assert!(iso.probe("true").is_ok());
+    iso.drain_interacts()
+}
+
+fn assert_live_yield(iso: &LoadIsolate) {
+    let out = iso.probe("globalThis.__out").unwrap();
+    assert_eq!(out["kind"], "done", "{out:?}");
+    assert_eq!(out["value"]["kind"], "yield", "{out:?}");
+    assert!(iso.probe("globalThis.__error").unwrap().is_null());
+}
+
+fn clue_walk(x: i32, z: i32, level: i32) -> InteractReq {
+    InteractReq::Walk {
+        x,
+        z,
+        level,
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+        request_id: 0,
+    }
+}
+
+fn clue_npc<'a>(
+    index: i32,
+    id: i32,
+    name: &'a str,
+    tile: script::isolate_fb::TileInput,
+    distance: i32,
+    actions: &'a [String],
+) -> script::isolate_fb::SceneEntityInput<'a> {
+    script::isolate_fb::SceneEntityInput {
+        index,
+        id,
+        name: Some(name),
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+        distance,
+        health: 10,
+        max_health: 10,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: tile.x,
+        nz: tile.z,
+    }
+}
+
+fn clue_stock(
+    id: i32,
+    name: &str,
+    slot: i32,
+    component: i32,
+) -> script::isolate_fb::ItemRowInput<'_> {
+    script::isolate_fb::ItemRowInput {
+        name: Some(name),
+        count: 500,
+        id,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: component,
+        slot,
+    }
+}
+
+#[test]
+fn v2_clue_run_reads_gate_toll_scene_and_shops_once() {
+    const PASS: i32 = 1854;
+    const SHANTAY: i32 = 836;
+    const DEST: (i32, i32, i32) = (3209, 3218, 1);
+    const SPAWN: (i32, i32, i32) = (3304, 3123, 0);
+    let iso = spawn_live_clue_run();
+    let page = [(2677, 1)];
+    let packed = [(2677, 1), (PASS, 1)];
+    let named = [script::isolate_fb::CarryInput {
+        id: PASS,
+        count: 1,
+        name: Some("Shantay pass"),
+    }];
+    let stock = [clue_stock(PASS, "Shantay pass", 16, 3900)];
+    let pack_names = [(PASS, "Shantay pass")];
+    let trade = ["Trade".to_string()];
+    let keeper = [clue_npc(
+        12,
+        SHANTAY,
+        "Shantay",
+        script::isolate_fb::TileInput {
+            x: SPAWN.0,
+            z: SPAWN.1,
+            level: SPAWN.2,
+        },
+        1,
+        &trade,
+    )];
+    let away = script::isolate_fb::TileInput {
+        x: 3200,
+        z: 3218,
+        level: 1,
+    };
+    let spawn = script::isolate_fb::TileInput {
+        x: SPAWN.0,
+        z: SPAWN.1,
+        level: SPAWN.2,
+    };
+
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            1,
+            &page,
+            &Scene {
+                here: Some(away),
+                missing_carry: &named,
+                ..Scene::default()
+            },
+        ),
+        vec![clue_walk(DEST.0, DEST.1, DEST.2)]
+    );
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            2,
+            &page,
+            &Scene {
+                here: Some(away),
+                missing_carry: &named,
+                ..Scene::default()
+            },
+        ),
+        vec![clue_walk(SPAWN.0, SPAWN.1, SPAWN.2)]
+    );
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            3,
+            &page,
+            &Scene {
+                here: Some(away),
+                missing_carry: &named,
+                ..Scene::default()
+            },
+        ),
+        vec![clue_walk(SPAWN.0, SPAWN.1, SPAWN.2)]
+    );
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            4,
+            &page,
+            &Scene {
+                here: Some(spawn),
+                npcs: &keeper,
+                missing_carry: &named,
+                ..Scene::default()
+            },
+        ),
+        vec![InteractReq::Npc {
+            name: "Shantay".to_string(),
+            action: "Trade".to_string(),
+            index: Some(12),
+        }]
+    );
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            5,
+            &page,
+            &Scene {
+                here: Some(spawn),
+                npcs: &keeper,
+                missing_carry: &named,
+                shop_open: true,
+                shop_stock: &stock,
+                ..Scene::default()
+            },
+        ),
+        vec![InteractReq::ShopButton {
+            kind: "buy".to_string(),
+            name: "Shantay pass".to_string(),
+            id: PASS,
+            slot: 16,
+            component: 3900,
+            chunk: 1,
+        }]
+    );
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            6,
+            &packed,
+            &Scene {
+                here: Some(spawn),
+                npcs: &keeper,
+                names: &pack_names,
+                missing_carry: &named,
+                shop_open: true,
+                shop_stock: &stock,
+                ..Scene::default()
+            },
+        ),
+        vec![InteractReq::CloseModal]
+    );
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            7,
+            &packed,
+            &Scene {
+                here: Some(spawn),
+                names: &pack_names,
+                missing_carry: &named,
+                ..Scene::default()
+            },
+        ),
+        vec![clue_walk(DEST.0, DEST.1, DEST.2)]
+    );
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            8,
+            &packed,
+            &Scene {
+                here: Some(spawn),
+                names: &pack_names,
+                missing_carry: &named,
+                ..Scene::default()
+            },
+        ),
+        vec![clue_walk(DEST.0, DEST.1, DEST.2)],
+        "the held pass cannot start a second shop trip"
+    );
+    assert!(live_clue_tick(
+        &iso,
+        9,
+        &packed,
+        &Scene {
+            ours: true,
+            ..Scene::default()
+        },
+    )
+    .is_empty());
+    assert_live_yield(&iso);
+    iso.join();
+}
+
+#[test]
+fn v2_clue_run_reads_guarded_combat_scene_and_redigs_owned_death() {
+    let iso = spawn_live_clue_run();
+    let page = [(2723, 1), (952, 1)];
+    let names = [(952, "Spade")];
+    let attack = ["Attack".to_string()];
+    let wizard_tile = script::isolate_fb::TileInput {
+        x: 3058,
+        z: 3884,
+        level: 0,
+    };
+    let mut mine = clue_npc(7, 107, "Zamorak Wizard", wizard_tile, 3, &attack);
+    mine.in_combat = true;
+    mine.target_kind = 2;
+    mine.target_index = 42;
+    let decoy = clue_npc(8, 108, "Zamorak Wizard", wizard_tile, 1, &attack);
+    let alive = [decoy, mine];
+    let dead = [script::isolate_fb::SceneEntityInput {
+        health: 0,
+        max_health: 10,
+        in_combat: true,
+        target_kind: 2,
+        target_index: 99,
+        ..mine
+    }];
+    let stats = [script::isolate_fb::StatInput {
+        index: 3,
+        name: "hitpoints",
+        xp: 0,
+        base: 40,
+        effective: 40,
+    }];
+    let overlay_off = [script::isolate_fb::VarpInput {
+        index: 95,
+        value: 0,
+    }];
+    let overlay_on = [script::isolate_fb::VarpInput {
+        index: 95,
+        value: 1,
+    }];
+    let far = script::isolate_fb::TileInput {
+        x: 3100,
+        z: 3300,
+        level: 0,
+    };
+    let arrived = script::isolate_fb::TileInput {
+        x: 3058,
+        z: 3884,
+        level: 0,
+    };
+    let dig = InteractReq::Held {
+        name: "Spade".to_string(),
+        action: "Dig".to_string(),
+    };
+
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            1,
+            &page,
+            &Scene {
+                here: Some(far),
+                names: &names,
+                stats: &stats,
+                trio: true,
+                ..Scene::default()
+            },
+        ),
+        vec![clue_walk(3058, 3884, 0)]
+    );
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            2,
+            &page,
+            &Scene {
+                here: Some(arrived),
+                names: &names,
+                stats: &stats,
+                trio: true,
+                ..Scene::default()
+            },
+        ),
+        vec![dig.clone()]
+    );
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            3,
+            &page,
+            &Scene {
+                here: Some(arrived),
+                names: &names,
+                npcs: &alive,
+                varps: &overlay_off,
+                stats: &stats,
+                self_slot: 42,
+                self_target_kind: 1,
+                self_target_index: 7,
+                trio: true,
+                ..Scene::default()
+            },
+        ),
+        vec![InteractReq::IfButton { component_id: 5621 }]
+    );
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            4,
+            &page,
+            &Scene {
+                here: Some(arrived),
+                names: &names,
+                npcs: &alive,
+                varps: &overlay_on,
+                stats: &stats,
+                self_slot: 42,
+                self_target_kind: 1,
+                self_target_index: 7,
+                trio: true,
+                ..Scene::default()
+            },
+        ),
+        vec![InteractReq::Npc {
+            name: "Zamorak Wizard".to_string(),
+            action: "Attack".to_string(),
+            index: Some(7),
+        }],
+        "the farther wizard targeting self wins over the nearer decoy"
+    );
+    assert_eq!(
+        live_clue_tick(
+            &iso,
+            5,
+            &page,
+            &Scene {
+                here: Some(arrived),
+                names: &names,
+                npcs: &dead,
+                varps: &overlay_on,
+                stats: &stats,
+                self_slot: 42,
+                self_target_kind: 1,
+                self_target_index: 7,
+                trio: true,
+                ..Scene::default()
+            },
+        ),
+        vec![dig],
+        "zero health with a positive maximum and the self target pair proves the owned kill"
+    );
+    assert!(live_clue_tick(
+        &iso,
+        6,
+        &page,
+        &Scene {
+            ours: true,
+            ..Scene::default()
+        },
+    )
+    .is_empty());
+    assert_live_yield(&iso);
+    iso.join();
+}
+
+const PUZZLE_PIECE_B: i32 = 2749;
+const PUZZLE_COMPONENT: i32 = 6600;
+
+fn puzzle_rows(solved: bool) -> Vec<script::isolate_fb::ItemRowInput<'static>> {
+    let mut rows = Vec::with_capacity(24);
+    for slot in 0..25 {
+        let target = if solved {
+            (slot != 24).then_some(slot)
+        } else if slot == 24 {
+            Some(23)
+        } else if slot == 23 {
+            None
+        } else {
+            Some(slot)
+        };
+        if let Some(target) = target {
+            rows.push(script::isolate_fb::ItemRowInput {
+                name: Some("Sliding piece"),
+                count: 1,
+                id: PUZZLE_PIECE_B + target,
+                ops: &[],
+                noted: false,
+                cert: -1,
+                component_id: PUZZLE_COMPONENT,
+                slot,
+            });
+        }
+    }
+    rows
+}
+
+#[test]
+fn v2_clue_run_reads_puzzle_board_and_generation() {
+    let iso = spawn_live_clue_run();
+    let page = [(2794, 1), (2795, 1)];
+    assert_eq!(
+        live_clue_tick(&iso, 1, &page, &Scene::default()),
+        vec![InteractReq::Held {
+            name: "Puzzle box".to_string(),
+            action: "Open".to_string(),
+        }]
+    );
+
+    let one_move = puzzle_rows(false);
+    let one_move_scene = Scene {
+        puzzle: Some(PostedPuzzle {
+            component_id: PUZZLE_COMPONENT,
+            size: 25,
+            items: &one_move,
+            generation: 7,
+        }),
+        ..Scene::default()
+    };
+    assert_eq!(
+        live_clue_tick(&iso, 2, &page, &one_move_scene),
+        vec![InteractReq::PuzzleMove {
+            id: PUZZLE_PIECE_B + 23,
+            slot: 24,
+            component: PUZZLE_COMPONENT,
+            generation: 7,
+        }]
+    );
+
+    let solved = puzzle_rows(true);
+    let solved_scene = Scene {
+        puzzle: Some(PostedPuzzle {
+            component_id: PUZZLE_COMPONENT,
+            size: 25,
+            items: &solved,
+            generation: 8,
+        }),
+        ..Scene::default()
+    };
+    assert_eq!(
+        live_clue_tick(&iso, 3, &page, &solved_scene),
+        vec![InteractReq::CloseModal]
+    );
+    assert!(
+        live_clue_tick(&iso, 4, &page, &solved_scene).is_empty(),
+        "the solved board is not closed twice"
+    );
+    assert!(live_clue_tick(
+        &iso,
+        5,
+        &page,
+        &Scene {
+            ours: true,
+            ..Scene::default()
+        },
+    )
+    .is_empty());
+    assert_live_yield(&iso);
     iso.join();
 }

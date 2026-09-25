@@ -252,11 +252,11 @@ Example: `crates/script/examples/quest_facts_v2.ts`.
 selects the first posted journal row whose name matches after trim and ASCII
 folding, but does not click it. The Rust `quest-journal` machine owns the
 selected row's `if-button`, the acquisition window, the exact root/text pair,
-its single `close-modal`, and the wait for an explicit closed pair.
+its single `close-modal`, and the bounded wait for an explicit closed pair.
 
 | Method | OK | Errors |
 | --- | --- | --- |
-| `questJournalBegin({ name })` | `{ token }` | `invalid-args`, `snapshot-unavailable`, `quest-tab-unbound`, `unknown-quest`, `main-modal-occupied`, `busy`, `stale` |
+| `questJournalBegin({ name })` | `{ token }` | `invalid-args`, `snapshot-unavailable`, `quest-tab-unbound`, `unknown-quest`, `main-modal-occupied`, `busy`, `stale`, `frozen` |
 | `await questJournalRun({ token })` | one `QuestJournalOutcome` settlement | `invalid-args`, `stale`, or a host abort |
 
 A successful machine settlement is outer `{ kind: 'done', value }`, where
@@ -269,12 +269,12 @@ machine aborts. A still-closed pair waits rather than returning empty lines.
 Only the explicit `{ root: -1, texts: [] }` pair is free or closed. An omitted
 pair is `snapshot-unavailable` at begin; a positive root is occupied at begin;
 root `-1` with non-empty texts is unusable. After the click, an unavailable or
-unusable acquisition frame is retried inside the same 3-second window, and a
-permanently unusable page releases the token as `modal-timeout`. After
-acquisition, the same root with different texts or a different positive root
-is stale and is never closed. Pause and hold freeze the acquisition window.
-The journal pages remain private isolate scene data and are not exposed on
-`api.snapshot`.
+unusable acquisition frame is retried inside a 3-second window. Dispatching
+`close-modal` arms a fresh 3-second window: omitted and unusable pairs are
+retried, while a replacement positive pair is stale. A permanently unusable,
+still-open, or unobserved page releases the token as `modal-timeout`. Pause and
+hold freeze either window. The journal pages remain private isolate scene data
+and are not exposed on `api.snapshot`.
 
 ## Clue helpers
 
@@ -621,10 +621,10 @@ previous token and emits nothing for it.
 A missing, negative, non-integer or otherwise unsafe token settles
 `{ kind: 'refused', reason: 'invalid-args' }`. The optional frozen hooks are
 `enabled()`, `log(message)` and `setStatus(message)`; Rust invokes and awaits
-them at the corresponding machine transitions. A thrown hook rejects the
-Promise with that value. A dead token settles as `refused` with `stale`; a host
-reset, supersession or termination settles with the corresponding outer
-`aborted` outcome.
+them at the corresponding machine transitions. An absent `enabled` hook
+defaults to true. A thrown hook rejects the Promise with that value. A dead
+token settles as `refused` with `stale`; a host reset, supersession or
+termination settles with the corresponding outer `aborted` outcome.
 
 Every snapshot page is read on the machine pass that consumes it: along with
 the pack, `here`, loc, ground, npc, main-modal, chat and board slots, the acquire
@@ -638,7 +638,7 @@ redispatch them; only terminal kinds appear inside a successful run outcome.
 | `kind` | Meaning |
 | --- | --- |
 | `wait` | nothing this tick: frozen by pause/hold, or the session idled after `enabled()` returned false, or the identified step was already reported, or — while collecting — the pages are still empty inside the reward window, or the posted pack page carried no `inv_size`; a dig row that has not arrived waits the same way, and so does the guarded encounter with no wizard of the row family posted on the npc page — no spawn posted is no click and no Attack |
-| `callback.enabled` | invoke and await the frozen `enabled()` hook; an absent hook answers false |
+| `callback.enabled` | invoke and await the frozen `enabled()` hook; an absent hook answers true |
 | `callback.log` | invoke and await `log(message)` when supplied |
 | `callback.setStatus` | invoke and await `setStatus(message)` when supplied: the identified step's progress line, and — on a finished collect — the exact `'clue solved'` string, which the machine posts and no adapter invents |
 | `walk` | a search row, an unguarded dig row, a guarded row, a talk step or a key-keeper row that has not arrived: walk to `{ x, z, level }` — the decoded `trail_coord`, the talk step's own target tile, or the key keeper's published spawn with its `plane` as the `level` |
@@ -873,9 +873,9 @@ refuses an item it no longer holds — a casket the dig produced is the landed
 `Open` that follows, and a `none-held` right after a `Dig` still aborts: only
 the casket `Open` reaches the collect below. Arrived with no `Spade` on the
 posted pack page is the named `supplies-needed` step: the token stays live and
-the next call re-reads the page. Nothing is
-acquired and nothing is invented: no `ensureSpade`, no bank fetch, no ground
-scan, no public `no-spade` error and no `abandon`.
+the next Rust-family pass re-reads the page. Nothing is acquired and nothing is
+invented: no `ensureSpade`, no bank fetch, no ground scan, no public `no-spade`
+error and no `abandon`.
 
 A held row is a **guarded dig row** when the selected family carries a
 decodable `trail_coord` on a row with **no** `trail_loc`, `trail_sextant=yes`,
@@ -890,10 +890,10 @@ The first Dig is the spawn, so this row's walk-then-Dig is only the start. Once
 reported, the row walks to its decoded tile exactly like the unguarded sibling
 and Digs with the Spade from that same arrived page. From that Dig on the
 machine holds the encounter in its own session state — no second scheduler,
-never a `Phase::Fighting` — and each following call reads the pages the wrapper
-marshals at call time, in that order: the posted npc page is observed first,
-the Protect from Magic click is only ever raised behind a posted wizard of the
-row family, and only a posted-on overlay leaves the Attack:
+never a `Phase::Fighting` — and each following Rust-family pass reads the latest
+posted scene in that order: the npc page is observed first, the Protect from
+Magic click is only ever raised behind a posted wizard of the row family, and
+only a posted-on overlay leaves the Attack:
 
 | Kind | When |
 | --- | --- |
@@ -966,7 +966,8 @@ family covered for a non-unique jm2 spawn, three a `category` or a bare `name`
 type are the only identities this arm can walk to and match against the posted
 npc page, and neither is invented for them.
 
-The arm is one verb per call, over the pages the wrapper marshals at call time:
+The arm emits at most one verb per Rust-family pass, reading the latest posted
+scene:
 
 | Kind | When |
 | --- | --- |
@@ -1014,8 +1015,8 @@ with a box sitting in the same pack. The Open's `name` is that item's selected
 display (`Puzzle box`) and its `action` is `Open`, the same first-name-match
 `held` class the casket uses — never the alias and never an item id.
 
-The recalled frozen run is one verb per call, over the board the wrapper
-marshals at call time:
+The recalled frozen run advances at most one verb per Rust-family pass, reading
+the latest posted board:
 
 1. while the posted board is not readable — the closed `{ component_id: -1,
    size: 0, items: [] }` SNAP posts, or any observed size that is not 25, or a
@@ -1097,19 +1098,19 @@ positive-count rows; a page that did not post it is a `wait`, and the client's
 the frozen WARNING and then finishes the same way; that is a log line through
 `callback.log`, not a new `HelperResult` error.
 
-Finishing the collect is the machine's own three-step completion, one step per
-call and never the landed `none-held` abort:
+Finishing the collect is the machine's own three-pass completion, never the
+landed `none-held` abort:
 
-1. `callback.setStatus` with the exact `'clue solved'` string. The adapters
-   forward the machine's message; no adapter invents it and none remaps `done`
+1. `callback.setStatus` with the exact `'clue solved'` string. The family
+   forwards the machine's message; no adapter invents it and none remaps `done`
    onto it.
 2. `grind-ready`: a continue kind with the token still live, no verb and no
    delay. It fires because no gear restore is pending: the Entrana list is
    empty, so the reclaim in front of this step has already run and `done` is the
    only step left.
-3. `done`: the token dies on it, so the next call with that token is `stale`
-   and a fresh `begin` is what a later pickup needs. It is this machine's
-   `kind`, not hunt's `status: 'done'`.
+3. `done`: the token dies on it, so a later run with that token is `stale` and
+   a fresh `begin` is what a later pickup needs. It is this machine's `kind`,
+   not hunt's `status: 'done'`.
 
 Once the latch is armed nothing loots again — the completion runs before any
 identify — and a frozen call still waits with the latch where it is. A

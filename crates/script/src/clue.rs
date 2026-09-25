@@ -1,11 +1,12 @@
 //! Isolate-owned clue-session machine: `api.clue.begin` plus one awaited
 //! `api.clue.run`, the v1 SolveClue execute family, and Sherlock.
 //!
-//! One token per isolate over the landed held-step identify. Callers that
-//! omit marshalled pages are filled from the isolate scene
-//! ([`crate::observed`]); Sherlock and the unit tests still pass pages.
-//! Verbs are [`verb_req`]. The v1 adapter's `execute` awaits the `clue`
-//! family; `validate` is the enabled gate plus one begin. This machine owns
+//! One token per isolate over the landed held-step identify. Each Rust-family
+//! pass fills its facts from the latest posted isolate scene
+//! ([`crate::observed`]); Sherlock and unit tests may still supply facts
+//! directly. Verbs are [`verb_req`]. The v1 adapter's `execute` awaits the
+//! `clue` family; `validate` is the enabled gate plus one begin. This machine
+//! owns
 //! the token, the generation captured at begin, the frozen clock, the
 //! identify call, the callback kinds and the idle end state.
 //!
@@ -52,10 +53,10 @@
 //! spawns the family wizard the cap documents (`trail_hard` → Zamorak Wizard,
 //! `trail_hard2` → Saradomin Wizard), so the walk-then-Dig is only the spawn:
 //! after it the machine observes the posted npc page first and only then
-//! raises Protect from Magic with the selected `if-button` while the
-//! marshalled overlay varp says the overlay is not already up — a call with no
-//! matching spawn posted clicks nothing and Attacks nothing — and enqueues one
-//! `Attack` for a posted npc from that family on the posted `here` level
+//! raises Protect from Magic with the selected `if-button` while the posted
+//! overlay varp says the overlay is not already up — a pass with no matching
+//! spawn posted clicks nothing and Attacks nothing — and emits one `Attack` for
+//! a posted npc from that family on the posted `here` level
 //! inside the frozen radius, measured by the posted `distance` when the row
 //! carried one and by the row's own posted tile otherwise — preferring the row
 //! that targets the player, else the nearest match, and never the nearest
@@ -71,13 +72,12 @@
 //! fight shifts its own stamps, so a frozen session never spends the grace.
 //!
 //! A held `role: "casket"` row is the held casket item: once its own report is
-//! posted it dispatches the generic held step — the selected item display name
-//! joined by the row's own id, and the frozen `Open` — enqueued by the wrapper
-//! as `InteractReq::Held` the way the journal enqueues its modal clicks. It
-//! repeats while that same casket id stays held, and a different held row
-//! re-arms the gate. The name is the identity the host resolves by first name
-//! match: never the row alias, never an item id, and never a scan of the item
-//! table.
+//! posted the clue family emits the generic held step as `InteractReq::Held` —
+//! the selected item display name joined by the row's own id, and the frozen
+//! `Open`. It repeats while that same casket id stays held, and a different
+//! held row re-arms the gate. The name is the identity the host resolves by
+//! first name match: never the row alias, never an item id, and never a scan of
+//! the item table.
 //!
 //! That Open is also the trail-end seam. The alias' own `_hard_` is captured
 //! while the row is still in hand, and the first call that identifies
@@ -118,12 +118,12 @@
 //! `id`, `slot` and `component` with this call's board generation. Every call
 //! re-reads the board and replans, because a sent click is not an observed
 //! move: the frozen engine drops a stale-slot click, and the frozen `want`
-//! board is what the next call compares against. A board the plan has solved
-//! is closed and then idled — the frozen `finally` close — and the exit is the
-//! same either way: solved, stalled, unreadable, past `MAX_MOVES` or a board
-//! that never opened all latch the step, so a solved box is never opened or
-//! closed twice while the same step stays held. The latch is what re-talks:
-//! the next live call falls through to the `Steady` arms below, where the nine
+//! board is what the next family pass compares against. A board the plan has
+//! solved is closed and then idled — the frozen `finally` close — and the exit
+//! is the same either way: solved, stalled, unreadable, past `MAX_MOVES` or a
+//! board that never opened all latch the step, so a solved box is never opened
+//! or closed twice while the same step stays held. The latch is what re-talks:
+//! the next family pass falls through to the `Steady` arms below, where the nine
 //! desc-only puzzle riddles the selected `talk_key.talk` family publishes are
 //! the landed talk step, and every other latched row idles.
 //!
@@ -207,7 +207,7 @@
 //! scene: a published tile and a packed type are the only identities this arm
 //! can walk to and match against the posted npc page, and neither is invented.
 //!
-//! The hunt is one verb per call over this call's own marshalled pages. The key
+//! The hunt is one verb per family pass over the latest posted scene. The key
 //! already on the posted pack page ends it: the original riddle idles with
 //! `wait`, no Attack, no gate and no completion kind — a key banked but not
 //! held is not observed at all. Otherwise the walk goes to the published
@@ -274,12 +274,11 @@
 //! step and its token alone, so a strip whose gear is already banked still owes
 //! its reclaim after a relog. `on_stop` is the fresh task instance — operator
 //! Stop, a new Start — and clears the stripped list and the abandon latch with
-//! the step. Pause and hold freeze this machine's own clock,
-//! so a frozen call emits no callback, no walk, no loc and no held, and does
-//! not advance the session. Nothing is cached here and there is no world
-//! copy: the pages are the ones the wrapper hands in at call time, and the
-//! player tile, the slot count and the `hold || ours` interrupt fall back to
-//! the isolate scene when the wrapper omits them.
+//! the step. Pause and hold freeze this machine's own clock, so a frozen family
+//! pass emits no callback, no walk, no loc and no held, and does not advance
+//! the session. Nothing is cached here and there is no world copy: every pass
+//! fills its pages from the latest posted isolate scene, including the player
+//! tile, slot count and `hold || ours` interrupt.
 
 mod acquire;
 mod combat;
@@ -344,9 +343,9 @@ const CLUE_SOLVED: &str = "clue solved";
 /// verb rides it and the token stays live.
 const GRIND_READY: &str = "grind-ready";
 
-/// The finished collect's own end: the token dies with it, so the next call
-/// with that token is `stale`. Never a hunt `status: "done"` — it is this
-/// machine's own `kind`.
+/// The finished collect's own end: the token dies with it, so a later run with
+/// that token is `stale`. Never a hunt `status: "done"` — it is this machine's
+/// own `kind`.
 const DONE: &str = "done";
 
 /// The posted effective hitpoints at or below zero kill the token. A page that
@@ -690,16 +689,15 @@ struct Acquire {
     /// one, so a tool whose item never lands keeps working the giver it has
     /// instead of inventing a fourth stop or abandoning the chain.
     stop: usize,
-    /// This stop's chat has been posted open: the next call that posts it
-    /// closed is the stop's own completion, and the chain advances from it.
+    /// This stop's chat has been posted open: the later family pass that posts
+    /// it closed is the stop's own completion, and the chain advances from it.
     open: bool,
 }
 
-/// One `next` call's posted puzzle board: the identified component, the
-/// observed slot count and the sparse rows the wrapper marshalled out of
-/// `snapshot.puzzle_board`, plus the board session generation that rides the
-/// click. The board and its generation are one observation, so they are read
-/// together.
+/// One family pass's posted puzzle board: the identified component, observed
+/// slot count and sparse rows copied from the isolate scene, plus the board
+/// session generation that rides the click. The board and its generation are
+/// one observation, so they are read together.
 struct PostedBoard {
     component_id: i32,
     size: i32,
@@ -1379,15 +1377,14 @@ impl ClueRuntime {
     }
 
     /// `Steady` on an identified non-casket row: a search membership walks to
-    /// its decoded tile and then dispatches the picker from this call's pages;
-    /// every other row idles exactly as before.
+    /// its decoded tile and then dispatches the picker from this pass's posted
+    /// scene; every other row idles exactly as before.
     ///
-    /// The two pages are the wrapper's call-time marshalling of
-    /// `host().snapshot` — `here` and the posted loc page — and never a
-    /// cached world copy. Emitting `walk` and `loc` repeats while the row
-    /// stays held, because arrival is `here` and a stale loc id is the
-    /// host's own refuse: the session waits the tick out instead of
-    /// abandoning, and the pick is re-read next call.
+    /// The two pages are the latest posted `here` and loc page, never a cached
+    /// world copy. Emitting `walk` and `loc` repeats while the row stays held,
+    /// because arrival is `here` and a stale loc id is the host's own refuse:
+    /// the session waits the tick out instead of abandoning, and the later
+    /// family pass re-picks from its posted scene.
     fn search(&mut self, row: &TrailMembershipRow, input: &Value) -> Value {
         let Some(tile) = search_tile(row) else {
             // Not a search membership: the coord-bearing rows without the loc
@@ -1921,8 +1918,8 @@ pub fn on_stop() {
 }
 
 /// The machine's only entry point: the selected pin comes from the native
-/// registration's captured `game_data`, and the payload is the wrapper's
-/// marshalled call — never a host wire.
+/// registration's captured `game_data`, and each family pass hydrates its facts
+/// from the posted isolate scene before dispatch. No host wire is involved.
 pub fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "begin" => {

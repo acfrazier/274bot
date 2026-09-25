@@ -5,13 +5,17 @@ function call(payload) {
 }
 
 function callback(opts, name) {
-    const fn = opts[name];
-    return typeof fn === 'function' ? (...args) => fn.apply(opts, args) : undefined;
+    return (...args) => {
+        const fn = opts[name];
+        return typeof fn === 'function' ? fn.apply(opts, args) : undefined;
+    };
 }
 
 function booleanCallback(opts, name) {
-    const fn = opts[name];
-    return typeof fn === 'function' ? () => !!fn.call(opts) : undefined;
+    return () => {
+        const fn = opts[name];
+        return typeof fn === 'function' ? !!fn.call(opts) : false;
+    };
 }
 
 function lockoutTick(opts) {

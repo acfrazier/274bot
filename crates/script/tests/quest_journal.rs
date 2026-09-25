@@ -599,6 +599,93 @@ fn snapshot_unavailable_retries_within_the_window_then_closes() {
 }
 
 #[test]
+fn closing_snapshot_unavailable_retries_then_recovers() {
+    let mut j = Journal::new();
+    let rows = [row("Cook's Assistant", "notStarted", Some(1234))];
+    j.post(Post::at(1).rows(&rows).closed_pair());
+    j.request(json!({ "name": "Cook's Assistant" }));
+    j.tick(1);
+    assert_eq!(
+        j.iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 1234 }]
+    );
+
+    let texts = vec!["@dre@The Cook's Quest".to_string()];
+    j.post(Post::at(2).pair(77, &texts));
+    j.tick(2);
+    assert_eq!(j.iso.drain_interacts(), vec![InteractReq::CloseModal]);
+
+    j.post(Post::at(3).full());
+    j.tick(3);
+    assert!(j.outcome().is_null(), "an omitted closing pair is retried");
+    assert!(j.iso.drain_interacts().is_empty());
+
+    let unusable = vec!["orphaned modal text".to_string()];
+    j.post(Post::at(4).pair(-1, &unusable).full());
+    j.tick(4);
+    assert!(
+        j.outcome().is_null(),
+        "an inconsistent closing pair is retried"
+    );
+    assert!(j.iso.drain_interacts().is_empty());
+
+    j.post(Post::at(5).closed_pair().full());
+    j.tick(5);
+    let outcome = j.outcome();
+    assert_eq!(outcome["kind"], "done", "{outcome}");
+    assert_eq!(outcome["value"]["kind"], "done", "{outcome}");
+    assert_eq!(outcome["value"]["as_of_sequence"], 2, "{outcome}");
+    assert_eq!(outcome["value"]["closed_as_of_sequence"], 5, "{outcome}");
+    assert!(j.iso.drain_interacts().is_empty());
+    j.iso.join();
+}
+
+#[test]
+fn closing_timeout_settles_and_releases_the_journal() {
+    let mut j = Journal::new();
+    let rows = [row("Cook's Assistant", "notStarted", Some(1234))];
+    j.post(Post::at(1).rows(&rows).closed_pair());
+    j.request(json!({ "name": "Cook's Assistant" }));
+    j.tick(1);
+    assert_eq!(
+        j.iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 1234 }]
+    );
+
+    let texts = vec!["@dre@The Cook's Quest".to_string()];
+    j.post(Post::at(2).pair(77, &texts));
+    j.tick(2);
+    assert_eq!(j.iso.drain_interacts(), vec![InteractReq::CloseModal]);
+
+    std::thread::sleep(Duration::from_millis(PAST_WINDOW_MS));
+    j.post(Post::at(3).full());
+    j.tick(3);
+    let outcome = j.outcome();
+    assert_eq!(outcome["kind"], "done", "{outcome}");
+    assert_eq!(outcome["value"]["kind"], "aborted", "{outcome}");
+    assert_eq!(outcome["value"]["reason"], "modal-timeout", "{outcome}");
+    assert!(j.iso.drain_interacts().is_empty());
+
+    j.post(Post::at(4).closed_pair().full());
+    let _ = j.probe(
+        "globalThis.__questStarted = false; \
+         globalThis.__questOut = null; \
+         globalThis.__questBegin = null; true",
+    );
+    j.request(json!({ "name": "Cook's Assistant" }));
+    j.tick(4);
+    assert_eq!(j.begin_result()["ok"], true);
+    assert_eq!(
+        j.iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 1234 }],
+        "the closing timeout released the journal"
+    );
+    j.iso.reset_session_work();
+    j.tick(5);
+    j.iso.join();
+}
+
+#[test]
 fn acquisition_timeout_settles_the_run_without_closing() {
     let mut j = Journal::new();
     let rows = [row("Cook's Assistant", "notStarted", Some(1234))];

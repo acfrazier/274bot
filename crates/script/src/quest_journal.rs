@@ -27,10 +27,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 
-/// Frozen acquisition window: the click has to produce a paired post whose
-/// root is not `-1` inside this window, or the token is `modal-timeout`. This
-/// is the journal machine's own window — it is not `modals::CLOSE_TIMEOUT_MS`
-/// and the public timeout is `modal-timeout`, not `timeout`.
+/// Frozen observation window: the click has to produce a paired post whose
+/// root is not `-1`, and a dispatched close has to produce an explicit closed
+/// pair, inside this window. Otherwise the token is `modal-timeout`. This is
+/// the journal machine's own window — it is not
+/// `modals::CLOSE_TIMEOUT_MS` — and the public timeout is `modal-timeout`, not
+/// `timeout`.
 pub const ACQUIRE_TIMEOUT_MS: u64 = 3_000;
 
 thread_local! {
@@ -105,11 +107,11 @@ impl JournalRuntime {
         json!({ "kind": "aborted", "token": self.token, "reason": reason })
     }
 
-    /// A missing or internally inconsistent pair while the click is in flight
-    /// is an unobserved acquisition frame, not a terminal. It shares the
-    /// click's frozen deadline so a permanently unusable page releases the
+    /// A missing or internally inconsistent pair while an observation is in
+    /// flight is not a terminal. Acquisition and closing each arm their own
+    /// frozen window, so a permanently unusable page eventually releases the
     /// token as `modal-timeout`.
-    fn acquisition_unavailable(&mut self) -> Value {
+    fn observation_unavailable(&mut self) -> Value {
         if self.frozen() || !self.clock.bound_reached() {
             json!({ "kind": "wait", "token": self.token })
         } else {
@@ -203,14 +205,14 @@ impl JournalRuntime {
         }
         let Some((root, texts)) = posted_pair() else {
             return if self.phase == Phase::AwaitingAcquire {
-                self.acquisition_unavailable()
+                self.observation_unavailable()
             } else {
                 self.refuse("snapshot-unavailable")
             };
         };
         if root == -1 && !texts.is_empty() {
             return if self.phase == Phase::AwaitingAcquire {
-                self.acquisition_unavailable()
+                self.observation_unavailable()
             } else {
                 self.refuse("snapshot-unavailable")
             };
@@ -277,10 +279,18 @@ impl JournalRuntime {
             return self.aborted("stale");
         }
         let Some((root, texts)) = posted_pair() else {
-            return self.refuse("snapshot-unavailable");
+            return if self.phase == Phase::Closing {
+                self.observation_unavailable()
+            } else {
+                self.refuse("snapshot-unavailable")
+            };
         };
         if root == -1 && !texts.is_empty() {
-            return self.refuse("snapshot-unavailable");
+            return if self.phase == Phase::Closing {
+                self.observation_unavailable()
+            } else {
+                self.refuse("snapshot-unavailable")
+            };
         }
         if self.frozen() {
             return json!({ "kind": "wait", "token": self.token });
@@ -299,6 +309,7 @@ impl JournalRuntime {
                     // One close-modal, only while the latest pair is still
                     // the acquired root and the acquired texts.
                     self.phase = Phase::Closing;
+                    self.clock.arm(ACQUIRE_TIMEOUT_MS);
                     json!({ "kind": "close-modal", "token": self.token })
                 } else {
                     self.aborted("stale")
@@ -322,8 +333,9 @@ impl JournalRuntime {
                         "closed_as_of_sequence": sequence,
                     })
                 } else if self.still_owned(root, &texts) {
-                    // Still open. A second close does not emit another verb.
-                    json!({ "kind": "wait", "token": self.token })
+                    // Still open. A second close does not emit another verb,
+                    // but a permanently open modal cannot retain the token.
+                    self.observation_unavailable()
                 } else {
                     self.aborted("stale")
                 }

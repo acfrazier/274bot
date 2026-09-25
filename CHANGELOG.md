@@ -16,8 +16,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - Baker-stall restocking now awaits one Rust step machine; Rust owns selected
   stall facts, callback polling, waits, steal verbs, stand swaps and lockout
   sequencing while callbacks retain the options object as their receiver.
-- Entity-query `withinOf` again follows the frozen planar x/z Chebyshev
-  distance, independent of storey.
 - The v2 clue session is begin plus one awaited run; Rust owns its continuation
   table, optional callbacks, waits and typed verb emission.
 - The v2 quest journal is begin plus one awaited run; Rust owns its row click,

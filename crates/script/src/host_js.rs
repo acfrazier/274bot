@@ -544,11 +544,11 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  sceneNpcs(input: { types: number[]; actions: string[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;\n");
     out.push_str("  /** Sync posted-tab status copy. A missing page is snapshot-unavailable and a null tab is quest-tab-unbound. Not a Promise and not a request op. */\n");
     out.push_str("  questStatus(input: { name: string }): HelperResult<{ status: 'notStarted' | 'inProgress' | 'complete' | 'unknown'; as_of_sequence: number }>;\n");
-    out.push_str("  /** Sync owned-root begin. Admits one posted quest row and returns its token without clicking; a refusal is `{ ok: false, error }`. */\n");
+    out.push_str("  /** Sync owned-root begin. Admits one posted quest row and returns its token without clicking; refusals include `invalid-args`, unavailable/unbound scene data, an unknown quest, an occupied modal, `busy`, `stale`, and `frozen`. */\n");
     out.push_str(
         "  questJournalBegin(input: { name: string }): HelperResult<{ token: number }>;\n",
     );
-    out.push_str("  /** One awaited run. Rust clicks the admitted row, acquires its exact modal, returns its lines, and closes only that modal. */\n");
+    out.push_str("  /** One awaited run. Rust clicks the admitted row, acquires its exact modal, returns its lines, and closes only that modal inside a bounded observation window. */\n");
     out.push_str("  questJournalRun(input: { token: number }): Promise<QuestJournalOutcome>;\n");
     out.push_str("  foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;\n");
     out.push_str("  gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;\n");
@@ -696,6 +696,7 @@ fn render_native_v2(out: &mut String) {
     );
     out.push_str("/** Callbacks frozen for one clue run. Rust awaits each returned promise before advancing the machine. */\n");
     out.push_str("export interface ClueHooks {\n");
+    out.push_str("  /** Gates a held step; absent defaults to true. */\n");
     out.push_str("  enabled?(): boolean | Promise<boolean>;\n");
     out.push_str("  log?(message: string): void | Promise<void>;\n");
     out.push_str("  setStatus?(message: string): void | Promise<void>;\n");
