@@ -66,7 +66,7 @@ pub fn air_operation_gates() -> &'static [OperationGate] {
         OperationGate {
             source: "NatureRunnerLogic.ts RUNES['Air runes']",
             call: "BANK_LOCATIONS named Falador East",
-            host_shape: "host content.named_banks",
+            host_shape: "typed native named-bank facts",
             kind: GateKind::UnusedByCase,
             owner: "named-bank t_bced5c76; Air uses hardcoded Tile(3013,3355,0)",
         },

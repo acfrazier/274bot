@@ -7,7 +7,7 @@ use bank::{
     action_slot, all_slot, deposit_all_backpack, dispatch_observed_bank_op, open_bank_at_here,
     withdraw_id,
 };
-pub(super) use bank::{fill_withdraw_action, nearest_bank_booth};
+pub(super) use bank::fill_withdraw_action;
 #[path = "script_nav.rs"]
 mod script_nav;
 use script_nav::log_walk_arm_bot;

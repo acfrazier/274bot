@@ -66,6 +66,7 @@ pub(crate) use prayer::{prayer_v1_scenario, prayer_v2_scenario};
 pub(crate) use production::{
     alcher_custom_alias_scenario, alcher_custom_name_scenario, alcher_custom_scenario,
     alcher_defaults_scenario, alcher_fire_battlestaff_scenario, alcher_large_batch_scenario,
+    alcher_dwarven_mine_scenario,
     alcher_low_scenario, alcher_ordered_scenario, alcher_scenario, alcher_swarm_drain_scenario,
     ardy_cakes_fight_scenario, ardy_cakes_scenario, ardy_thiever_fight_scenario,
     ardy_thiever_knight_scenario, ardy_thiever_scenario, bank_fletcher_cut_string_scenario,

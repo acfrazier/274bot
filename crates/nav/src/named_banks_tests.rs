@@ -55,8 +55,8 @@ fn unsupported_access_is_air_fallback_not_an_invented_route_target() {
 fn a_bank_stand_can_have_a_wall_face_without_being_a_blocked_footprint() {
     use crate::{collision::{pack_walk, WorldCollision}, transport::TransportGraph, world::NavWorld};
     use client::dash3d::CollisionFlag;
-    // Varrock West's preferred stand is west of its booth, against the
-    // east-facing counter wall. The player can step onto it from the west.
+    // A synthetic east-facing counter wall still admits a step from the west.
+    // Real Varrock West's south-facing divider is covered by the pack proof.
     let mut flags = vec![CollisionFlag::SQ_BLOCKED as u32; 4 * 4 * 4];
     flags[2 * 4 + 1] = 0;
     flags[2 * 4 + 2] = CollisionFlag::W_E as u32;
@@ -65,7 +65,9 @@ fn a_bank_stand_can_have_a_wall_face_without_being_a_blocked_footprint() {
         origin: t(3183, 3438), width: 4, height: 4, walk, blocked, flags: None,
     }, TransportGraph::default(), Vec::new());
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let facts = world.named_bank_facts(Some(&data));
+    assert!(world.named_bank_facts().is_none(), "an early read must not bind empty placements");
+    world.bind_named_bank_facts(&data).unwrap();
+    let facts = world.named_bank_facts().unwrap();
     let bank = facts.banks().iter().find(|bank| bank.name == "Varrock West").unwrap();
     assert!(bank.routable, "a wall face is not a blocked bank stand");
     assert_eq!(bank.tile, t(3185, 3440));

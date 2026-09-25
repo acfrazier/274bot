@@ -10,6 +10,12 @@ use crate::script_runtime::{
 };
 use crate::{debug_enabled, Play};
 
+fn invalidate_bank_pick(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+    if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+        bot.bank_pick.reset();
+    }
+}
+
 /// Cloneable overlay source for a catalog Traveller (`InteractReq::Walk`).
 /// The panel paints this when WalkTo's [`WalkArm`] is idle so a script
 /// walk shows the same path / click as a picker walk.
@@ -32,6 +38,7 @@ impl ScriptNavPaint {
 #[derive(Clone)]
 pub struct ScriptStartHandle {
     scripts: ScriptWall,
+    navs: Arc<Mutex<HashMap<String, NavBot>>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
 }
@@ -54,10 +61,9 @@ impl ScriptStartHandle {
         if debug_enabled() {
             eprintln!("[script {name}] start load");
         }
-        let result = script_slot_or_insert(&self.scripts, name)
-            .lock()
-            .unwrap()
-            .start_load_with_settings_and_game_data(
+        let slot = script_slot_or_insert(&self.scripts, name);
+        let mut slot = slot.lock().unwrap();
+        let result = slot.start_load_with_settings_and_game_data(
                 source,
                 shape,
                 settings_bag.as_ref(),
@@ -65,6 +71,7 @@ impl ScriptStartHandle {
                 self.game_data.clone(),
                 Arc::clone(&self.named_banks),
             );
+        if result.is_ok() { invalidate_bank_pick(&self.navs, name); }
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
         }
@@ -98,6 +105,7 @@ impl ScriptStartHandle {
             Arc::clone(&self.named_banks),
         );
         if result.is_ok() {
+            invalidate_bank_pick(&self.navs, name);
             if let Some(bag) = settings_bag.as_ref() {
                 slot.post_settings_bag(bag);
             }
@@ -116,10 +124,10 @@ impl ScriptStartHandle {
             eprintln!("[script {name}] start compiled {}", id.0);
         }
         let make = script::factory(id).ok_or_else(|| format!("not ported: {}", id.0))?;
-        let result = script_slot_or_insert(&self.scripts, name)
-            .lock()
-            .unwrap()
-            .start_compiled(make(), self.game_data.clone());
+        let slot = script_slot_or_insert(&self.scripts, name);
+        let mut slot = slot.lock().unwrap();
+        let result = slot.start_compiled(make(), self.game_data.clone());
+        if result.is_ok() { invalidate_bank_pick(&self.navs, name); }
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
         }
@@ -157,10 +165,11 @@ impl Play {
             return Err(format!("no slot: {name}"));
         }
         let make = script::factory(id).ok_or_else(|| format!("not ported: {}", id.0))?;
-        script_slot_or_insert(&self.scripts, name)
-            .lock()
-            .unwrap()
-            .start_compiled(make(), self.game_data.clone())?;
+        let slot = script_slot_or_insert(&self.scripts, name);
+        let mut slot = slot.lock().unwrap();
+        slot.start_compiled(make(), self.game_data.clone())?;
+        invalidate_bank_pick(&self.navs, name);
+        drop(slot);
         self.wake(name);
         Ok(())
     }
@@ -195,10 +204,9 @@ impl Play {
         if debug_enabled() {
             eprintln!("[script {name}] start load");
         }
-        let result = script_slot_or_insert(&self.scripts, name)
-            .lock()
-            .unwrap()
-            .start_load_with_settings_and_game_data_typed(
+        let slot = script_slot_or_insert(&self.scripts, name);
+        let mut slot = slot.lock().unwrap();
+        let result = slot.start_load_with_settings_and_game_data_typed(
                 source,
                 shape,
                 settings_bag.as_ref(),
@@ -210,6 +218,8 @@ impl Play {
             eprintln!("[script {name}] start failed: {e}");
         }
         result?;
+        invalidate_bank_pick(&self.navs, name);
+        drop(slot);
         self.wake(name);
         Ok(())
     }
@@ -219,6 +229,7 @@ impl Play {
     pub fn script_start_handle(&self) -> ScriptStartHandle {
         ScriptStartHandle {
             scripts: Arc::clone(&self.scripts),
+            navs: Arc::clone(&self.navs),
             game_data: self.game_data.clone(),
             named_banks: Arc::clone(&self.named_banks),
         }
@@ -246,9 +257,13 @@ impl Play {
 
     /// Stop `name`'s script: teardown hook, instance dropped, Idle.
     pub fn script_stop(&self, name: &str) {
-        if let Some(slot) = script_slot(&self.scripts, name) {
-            slot.lock().unwrap().stop();
-        }
+        let slot = script_slot(&self.scripts, name);
+        let mut guard = slot.as_ref().map(|slot| slot.lock().unwrap());
+        if let Some(slot) = guard.as_mut() { slot.stop(); }
+        // Keep the script admission lock until its bank epoch is invalidated.
+        // A previously dequeued worker can no longer publish or arm a route.
+        invalidate_bank_pick(&self.navs, name);
+        drop(guard);
         self.wake(name);
     }
 

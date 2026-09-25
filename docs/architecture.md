@@ -155,7 +155,7 @@ owners.
 | `cake_stall.rs` | Baker-stall pins | posted facts, selection in `script` |
 | `gather_methods.rs` | gather-methods query | over the posted family |
 | `gather_tools.rs` | gather-tool identity, use, wield | posted facts |
-| `named_banks.rs` | bank-alias row shapes | geometry resolution lives in `nav` |
+| `named_banks.rs` | frozen bank catalog, eligibility and selected-content access rows | stand resolution lives in `nav` |
 | `game_data_tests.rs` | test body | logical `game_data::tests` |
 
 ### host
@@ -188,7 +188,7 @@ owners.
 | `essence.rs` | essence-mine return latch | session-gated return hop |
 | `grid.rs` | walkability grids | step-grid surface |
 | `manifest.rs` | bound pack manifest | bake identity checks |
-| `named_banks.rs` | bank-alias geometry resolution | caller passes preferences, no `script` dep |
+| `named_banks.rs` | selected-world bank stand resolution | captured account eligibility stays with the caller, no `script` dep |
 | `pack.rs` | pack wire codec and bake hub | pack encode and decode, stable exports |
 | `pack/config_parse.rs` | pack config parsers | content config text |
 | `pack/mapsquare.rs` | mapsquare parse and geometry | mapsquare bake rows |

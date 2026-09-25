@@ -925,262 +925,113 @@ fn many_targets_share_admitted_teleports_and_essence_returns() {
 
 #[test]
 fn bank_targets_match_independent_find_with_on_real_289_pack() {
-    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
-        return;
-    };
-    let raw: Vec<_> = world.banks().iter().map(|b| b.tile).collect();
-    assert!(
-        raw.len() >= 64,
-        "289 bank pack must contain the 64-stand workload"
-    );
-    let ring = [
-        (0, 1),
-        (0, -1),
-        (1, 0),
-        (-1, 0),
-        (-1, -1),
-        (1, -1),
-        (-1, 1),
-        (1, 1),
-    ];
-    let resolved: Vec<_> = raw
-        .iter()
-        .filter_map(|booth| {
-            ring.iter()
-                .map(|&(dx, dz)| tile(booth.x + dx, booth.z + dz, booth.level))
-                .find(|&stand| !raw.contains(&stand) && world.collision.walkable(stand))
-        })
-        .collect();
-    eprintln!(
-        "289 packed bank booth targets: {}, adjacent walk stands: {} ({} unresolved)",
-        raw.len(),
-        resolved.len(),
-        raw.len() - resolved.len()
-    );
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else { return; };
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    world.bind_named_bank_facts(&data).unwrap();
+    let facts = world.named_bank_facts().unwrap();
+    let placements = &data.bank_placements().unwrap().rows;
+    for bank in facts.banks().iter().filter(|bank| bank.routable) {
+        assert!(world.collision.standable(bank.tile), "blocked stand: {}", bank.name);
+        assert!(placements.iter().any(|p| {
+            if p.name != bank.name || p.level != bank.tile.level { return false; }
+            let dx = (p.x - bank.tile.x).max(bank.tile.x - (p.x + p.width - 1)).max(0);
+            let dz = (p.z - bank.tile.z).max(bank.tile.z - (p.z + p.length - 1)).max(0);
+            dx.max(dz) == 1
+        }), "{} needs a real adjacent selected-content access", bank.name);
+    }
+    let named = |name: &str| facts.banks().iter().find(|bank| bank.name == name).unwrap().tile;
+    assert_eq!(named("Varrock West"), tile(3185, 3440, 0));
+    assert_ne!(world.collision.walkable_word(3185, 3440, 0) & CollisionFlag::W_S as u32, 0);
+    assert_eq!(named("Ardougne East"), tile(2655, 3283, 0), "customer side, not the bankers' aisle");
+    let raw: Vec<_> = world.banks().iter().map(|bank| bank.tile).collect();
+    assert!(raw.len() >= 64, "289 pack must contain the 64-bank workload");
+    let resolved: Vec<_> = facts.banks().iter().filter(|bank| bank.routable).collect();
     let mut targets = raw.clone();
-    targets.extend_from_slice(&resolved);
+    targets.extend(resolved.iter().map(|bank| bank.tile));
     let empty = WorldState::empty();
     let members = WorldState {
         map_members: true,
-        quests: HashSet::from([
-            "Prince Ali Rescue".to_string(),
-            "Rune Mysteries".to_string(),
-        ]),
-        inv: HashMap::from([(995, 10), (554, 100), (556, 100), (563, 100)]),
-        stats: HashMap::from([(6, 99)]),
+        quests: HashSet::from(["Prince Ali Rescue".into(), "Rune Mysteries".into(), "Lost City".into(), "Shilo Village".into()]),
+        inv: HashMap::from([(995, 10000), (554, 1000), (556, 1000), (563, 1000)]),
+        stats: HashMap::from([(6, 99), (10, 99)]),
         ..WorldState::empty()
     };
-    // The default two origins compare every booth target and every resolved
-    // stand against independent find_with (including blocked/raw booth errors).
     for (label, from, state) in [
         ("lumbridge", tile(3222, 3218, 0), &empty),
         ("dwarven_mine", tile(3016, 9840, 0), &members),
     ] {
-        let start = Instant::now();
-        let many = find_many_with(
-            &world.collision,
-            &world.graph,
-            from,
-            &targets,
-            FindOptions::default(),
-            state,
-        );
-        let shared = start.elapsed();
-        let start = Instant::now();
-        let mut successes = 0usize;
-        for (index, &target) in targets.iter().enumerate() {
-            let independent = find_with(
-                &world.collision,
-                &world.graph,
-                from,
-                target,
-                FindOptions::default(),
-                state,
-            );
-            match independent {
-                Ok(expected) => {
-                    successes += 1;
-                    assert_eq!(
-                        many.results()[index].as_ref().unwrap().ticks,
-                        expected.ticks,
-                        "{label} target {index} {target:?}"
-                    );
-                    let actual = many.route(index).unwrap();
-                    assert_eq!(actual.dest, target);
-                    assert_eq!(actual.ticks, expected.ticks);
-                    validate_real_route(&world.collision, &world.graph, &actual, state, false, &[]);
-                }
-                Err(error) => assert_eq!(
-                    many.results()[index],
-                    Err(error.into()),
-                    "{label} target {index} {target:?}"
-                ),
-            }
+        // Unbounded no-avoid rows compare directly to native find_with, not a
+        // differently capped search. Raw booths and actual C1 stands coexist.
+        let costs = compare_real_bank_targets(&world, label, from, &targets,
+            FindOptions::default(), state, &[], None);
+        for name in ["Varrock West", "Edgeville", "Falador East"] {
+            let index = resolved.iter().position(|bank| bank.name == name).unwrap();
+            assert!(costs[raw.len() + index].is_ok(), "{label}: {name} must be a reachable C1 stand");
         }
-        eprintln!("bank real 289 {label}: {} targets, {successes} successes, {} settled, shared {:?}, independent {:?}",
-            targets.len(), many.settled(), shared, start.elapsed());
-        assert!(
-            resolved
-                .iter()
-                .enumerate()
-                .any(|(i, _)| many.results()[raw.len() + i].is_ok()),
-            "resolved walk stands must include reachable banks"
-        );
+        if label == "dwarven_mine" {
+            let cost = |name| costs[raw.len() + resolved.iter().position(|bank| bank.name == name).unwrap()].unwrap();
+            assert!(cost("Falador East") < cost("Edgeville"), "recorded dungeon witness must prefer walking over air proximity");
+            eprintln!("dungeon witness: Falador East={} Edgeville={}", cost("Falador East"), cost("Edgeville"));
+        }
     }
-
-    // Same fixed query settings for each comparison. Avoidances, wilderness,
-    // essence and admitted native teleports use the same shared kernel.
-    let probes: Vec<_> = resolved
-        .iter()
-        .copied()
-        .take(8)
-        .chain([
-            tile(3013, 3355, 0),
-            tile(3094, 3489, 0),
-            tile(3213, 3424, 0),
-        ])
-        .collect();
-    let avoid = [AvoidRect {
-        min_x: 3015,
-        max_x: 3017,
-        min_z: 9839,
-        max_z: 9841,
-        level: Some(0),
-    }];
-    for (from, state, opts, rects, budget) in [
-        (
-            tile(3016, 9840, 0),
-            &empty,
-            FindOptions::default(),
-            &[][..],
-            BANK_TARGET_BUDGET,
-        ),
-        (
-            tile(3016, 9840, 0),
-            &members,
-            FindOptions {
-                allow_wilderness: true,
-                ..FindOptions::default()
-            },
-            &avoid[..],
-            BANK_TARGET_BUDGET,
-        ),
-        (
-            tile(3222, 3218, 0),
-            &members,
-            FindOptions {
-                allow_teleports: true,
-                ..FindOptions::default()
-            },
-            &[][..],
-            BANK_TARGET_BUDGET,
-        ),
-        (
-            tile(3222, 3218, 0),
-            &empty,
-            FindOptions::default(),
-            &[][..],
-            50,
-        ),
+    let probes = [named("Falador East"), named("Varrock West"), named("Edgeville"), named("Shilo Village"), named("Zanaris")];
+    let inside_avoid = [AvoidRect { min_x: 3015, max_x: 3017, min_z: 9839, max_z: 9841, level: Some(0) }];
+    let outside_avoid = [AvoidRect { min_x: 3223, max_x: 3226, min_z: 3215, max_z: 3221, level: Some(0) }];
+    let essence = crate::essence::essence_session_for_wizard(553);
+    for (label, from, state, opts, avoid, budget) in [
+        ("empty", tile(3016,9840,0), &empty, FindOptions::default(), &[][..], BANK_TARGET_BUDGET),
+        ("members-wilderness", tile(3016,9840,0), &members, FindOptions { allow_wilderness:true, ..Default::default() }, &[][..], BANK_TARGET_BUDGET),
+        ("origin-inside-avoid", tile(3016,9840,0), &members, FindOptions::default(), &inside_avoid[..], BANK_TARGET_BUDGET),
+        ("origin-outside-avoid", tile(3222,3218,0), &members, FindOptions::default(), &outside_avoid[..], BANK_TARGET_BUDGET),
+        ("teleports", tile(3222,3218,0), &members, FindOptions { allow_teleports:true, ..Default::default() }, &[][..], BANK_TARGET_BUDGET),
+        ("essence-no-return", tile(2912,4833,0), &members, FindOptions::default(), &[][..], BANK_TARGET_BUDGET),
+        ("essence-return", tile(2912,4833,0), &members, FindOptions { essence, ..Default::default() }, &[][..], BANK_TARGET_BUDGET),
+        ("budget", tile(3222,3218,0), &empty, FindOptions::default(), &[][..], 50),
     ] {
-        let many = find_many_with_avoid_bounded(
-            &world.collision,
-            &world.graph,
-            from,
-            &probes,
-            opts,
-            state,
-            rects,
-            budget,
-        );
-        if budget == 50 {
-            assert!(
-                many.results().contains(&Err(TargetError::BudgetExhausted)),
-                "real pack bounded row must exercise the budget error"
-            );
-        }
-        for (index, &target) in probes.iter().enumerate() {
-            let independent = find_with_avoid_bounded(
-                &world.collision,
-                &world.graph,
-                from,
-                target,
-                opts,
-                state,
-                rects,
-                budget,
-            );
-            match independent {
-                Ok(route) => {
-                    assert_eq!(
-                        many.results()[index].as_ref().unwrap().ticks,
-                        route.ticks,
-                        "matrix target {index}, origin {from:?}"
-                    );
-                    validate_real_route(
-                        &world.collision,
-                        &world.graph,
-                        &many.route(index).unwrap(),
-                        state,
-                        opts.allow_wilderness,
-                        rects,
-                    );
-                }
-                Err(error) => assert_eq!(
-                    many.results()[index],
-                    Err(error.into()),
-                    "matrix target {index}, origin {from:?}"
-                ),
-            }
-        }
+        let costs = compare_real_bank_targets(&world, label, from, &probes, opts, state, avoid, Some(budget));
+        if label == "budget" { assert!(costs.contains(&Err(TargetError::BudgetExhausted))); }
+        if label == "essence-no-return" { assert!(costs.iter().all(Result::is_err)); }
+        if label == "essence-return" { assert!(costs[1].is_ok(), "captured Aubury return must reach Varrock West"); }
     }
-    // Find-only timing receipt: 64 packed bank placements, using an
-    // adjacent walk stand wherever the selected world supplies one and raw
-    // interact tiles for unresolved placements. Both loops use this exact
-    // target list/state. Timings are diagnostic, not a CI threshold.
-    let mut workload: Vec<_> = resolved.iter().copied().take(64).collect();
-    workload.extend(raw.iter().copied().take(64 - workload.len()));
-    let from = tile(3222, 3218, 0);
-    let start = Instant::now();
-    let many = find_many_with(
-        &world.collision,
-        &world.graph,
-        from,
-        &workload,
-        FindOptions::default(),
-        &empty,
-    );
-    let shared = start.elapsed();
-    let start = Instant::now();
-    let individual: Vec<_> = workload
-        .iter()
-        .map(|&target| {
-            find_with(
-                &world.collision,
-                &world.graph,
-                from,
-                target,
-                FindOptions::default(),
-                &empty,
-            )
-        })
-        .collect();
-    let naive = start.elapsed();
-    let success = individual.iter().filter(|result| result.is_ok()).count();
-    for (index, result) in individual.iter().enumerate() {
-        assert_eq!(
-            many.results()[index]
-                .as_ref()
-                .map(|cost| cost.ticks)
-                .map_err(|&e| e),
-            result
-                .as_ref()
-                .map(|route| route.ticks)
-                .map_err(|&e| e.into())
-        );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compare_real_bank_targets(
+    world: &crate::world::NavWorld, label: &str, from: WorldTile, targets: &[WorldTile],
+    opts: FindOptions, state: &WorldState, avoid: &[AvoidRect], budget: Option<usize>,
+) -> Vec<Result<f64, TargetError>> {
+    let started = Instant::now();
+    let many = match budget {
+        Some(budget) => find_many_with_avoid_bounded(&world.collision, &world.graph, from, targets, opts, state, avoid, budget),
+        None => find_many_with(&world.collision, &world.graph, from, targets, opts, state),
+    };
+    let shared = started.elapsed();
+    let started = Instant::now();
+    let mut costs = Vec::with_capacity(targets.len());
+    let mut teleported = false;
+    let mut returned = false;
+    for (index, &target) in targets.iter().enumerate() {
+        let independent = match budget {
+            Some(budget) => find_with_avoid_bounded(&world.collision, &world.graph, from, target, opts, state, avoid, budget),
+            None => find_with(&world.collision, &world.graph, from, target, opts, state),
+        };
+        let cost = independent.as_ref().map(|route| route.ticks).map_err(|&error| error.into());
+        assert_eq!(many.results()[index].as_ref().map(|cost| cost.ticks).map_err(|&error| error),
+            cost, "{label}: target {index} {target:?}");
+        if independent.is_ok() {
+            let actual = many.route(index).unwrap();
+            assert_eq!(actual.dest, target);
+            validate_real_route(&world.collision, &world.graph, &actual, state, opts, avoid);
+            teleported |= actual.legs.iter().any(|leg| matches!(leg, Leg::Transport { edge } if edge.kind == TransportKind::Teleport));
+            returned |= actual.legs.iter().any(|leg| matches!(leg, Leg::Transport { edge } if edge.kind == TransportKind::EssenceExit));
+        }
+        costs.push(cost);
     }
-    eprintln!("bank 64-stand real 289: shared {:?}, naive {:?}, {} settled, {success} successes, {} errors, scratch capacities {:?}",
-        shared, naive, many.settled(), 64-success, many.scratch_capacities());
+    if label == "teleports" { assert!(teleported, "matrix must actually use an admitted native teleport"); }
+    if label == "essence-return" { assert!(returned, "matrix must actually use the captured return"); }
+    eprintln!("bank real 289 {label}: targets={} successes={} settled={} shared={:?} independent={:?}",
+        targets.len(), costs.iter().filter(|cost| cost.is_ok()).count(), many.settled(), shared, started.elapsed());
+    costs
 }
 
 fn validate_real_route(
@@ -1188,7 +1039,7 @@ fn validate_real_route(
     graph: &TransportGraph,
     route: &crate::router::Route,
     state: &WorldState,
-    allow_wilderness: bool,
+    opts: FindOptions,
     avoid: &[AvoidRect],
 ) {
     let mut sum = 0.0;
@@ -1206,7 +1057,7 @@ fn validate_real_route(
                         graph,
                         step[0],
                         step[1],
-                        allow_wilderness
+                        opts.allow_wilderness
                     ));
                     assert!(
                         super::tile_in_any_avoid(step[0], avoid)
@@ -1219,6 +1070,17 @@ fn validate_real_route(
             Leg::Transport { edge } => {
                 let previous = current.expect("transport follows walk");
                 assert!(state.allows(edge));
+                match edge.kind {
+                    TransportKind::Teleport => {
+                        assert!(opts.allow_teleports && graph.teleports.contains(edge));
+                    }
+                    TransportKind::EssenceExit => {
+                        let session = opts.essence.as_ref().expect("return must use captured entry wizard");
+                        assert!(crate::essence::ESSENCE_MINE_PORTALS.contains(&edge.at));
+                        assert_eq!(*edge, crate::essence::essence_return_edge(edge.at, session));
+                    }
+                    _ => assert!(graph.edges.contains(edge), "transport must belong to the bound graph"),
+                }
                 if edge.kind != TransportKind::Teleport {
                     assert!(collision.standable(previous));
                     assert_eq!(previous.level, edge.at.level);
@@ -1233,7 +1095,7 @@ fn validate_real_route(
                     graph,
                     previous,
                     edge.to,
-                    allow_wilderness
+                    opts.allow_wilderness
                 ));
                 if edge.kind == TransportKind::Teleport {
                     assert!(

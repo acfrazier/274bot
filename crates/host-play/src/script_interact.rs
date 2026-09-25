@@ -9,7 +9,7 @@ use nav::world::NavWorld;
 use nav::WorldState;
 
 use super::{
-    abort_script_walk, action_slot, all_slot, nearest_bank_booth, route_inspect, NavBot,
+    abort_script_walk, action_slot, all_slot, route_inspect, NavBot,
     ScriptWalkArm,
 };
 use crate::catalog_core::ScriptAct;
@@ -306,28 +306,11 @@ pub(crate) fn dispatch_script_interact_cached(
                 );
             }
             InteractReq::WalkNearestBank => {
-                if let (Some((hx, hz, hl)), Some(nav_world)) = (here, world.as_deref()) {
-                    if let Some(tile) = nearest_bank_booth(nav_world, (hx, hz, hl)) {
-                        let arm = ScriptWalkArm {
-                            here,
-                            world: world.clone(),
-                            navs: Arc::clone(navs),
-                            name: name.to_string(),
-                            state: state.clone(),
-                            bank: snapshot
-                                .bank()
-                                .iter()
-                                .map(|item| (item.def.id, item.count))
-                                .collect(),
-                        };
-                        wrote |= arm.route_with_radius(
-                            tile.x,
-                            tile.z,
-                            tile.level,
-                            FindOptions::default(),
-                            1,
-                        );
-                    }
+                if let Some((x, z, level)) = here {
+                    wrote |= super::bank::queue_bank_walk(
+                        navs, name, world, state.clone(), WorldTile { x, z, level },
+                        snapshot.stats().iter().find(|stat| stat.index == 10).map(|stat| stat.base),
+                    );
                 }
             }
             InteractReq::WalkTo { x, z, level } => {

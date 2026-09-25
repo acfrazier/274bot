@@ -42,17 +42,25 @@ impl NavWorld {
         &self.banks
     }
 
-    /// Bind the complete frozen roster to this revision's access placements and
-    /// the loaded collision. Unresolved entries remain air-fallback candidates.
-    pub fn named_bank_facts(
+    /// The explicitly bound selected-content roster. Reading an unbound world
+    /// never initializes it: a later profile bind must still resolve geometry.
+    pub fn named_bank_facts(&self) -> Option<&Arc<api::named_banks::NamedBankFacts>> {
+        self.named_banks.get()
+    }
+
+    /// Bind selected-content placements once. A repeated bind is rejected,
+    /// rather than accepting a data argument whose value would be ignored.
+    pub fn bind_named_bank_facts(
         &self,
-        data: Option<&api::game_data::SelectedGameData>,
-    ) -> Arc<api::named_banks::NamedBankFacts> {
-        Arc::clone(self.named_banks.get_or_init(|| Arc::new(crate::named_banks::resolve(
+        data: &api::game_data::SelectedGameData,
+    ) -> Result<(), &'static str> {
+        if self.named_banks.get().is_some() { return Err("bank facts already bound"); }
+        let facts = Arc::new(crate::named_banks::resolve(
             api::named_banks::BANK_CATALOG,
-            data.and_then(|data| data.bank_placements()).map_or(&[], |facts| facts.rows.as_slice()),
+            data.bank_placements().map_or(&[], |facts| facts.rows.as_slice()),
             |tile| self.collision.standable(tile),
-        ))))
+        ));
+        self.named_banks.set(facts).map_err(|_| "bank facts already bound")
     }
 
     /// Decode already-read pack bytes into the router's world. Whole-world

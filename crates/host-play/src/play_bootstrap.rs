@@ -365,7 +365,13 @@ impl Play {
         let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
         let named_banks = world
             .as_deref()
-            .map(|world| world.named_bank_facts(game_data.as_deref()))
+            .map(|world| {
+                if let Some(data) = game_data.as_deref() {
+                    // A profile world may already be shared by another Play.
+                    let _ = world.bind_named_bank_facts(data);
+                }
+                world.named_bank_facts().cloned().unwrap_or_default()
+            })
             .unwrap_or_default();
         Play {
             statuses: Arc::new(Mutex::new(Vec::new())),

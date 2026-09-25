@@ -26,11 +26,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   wall faces (including Varrock West), while still excluding blocked footprints.
   The selection waiter also bounds requests dropped before host admission;
   explicit v2 opt-ins override settings for both routing and air fallback.
+  Native `walk-nearest-bank` reuses the winning route instead of flooding again;
+  Stop/reload invalidates pending picks without replacing an existing follow.
+  World bank facts now require explicit binding, so an early read cannot freeze
+  an empty placement roster.
 - `Banking.open`, periodic banking and world bank opens now share a Rust-owned
   select/walk/access continuation. Nearby banks still beat distant presets;
   explicit destinations remain the no-scene fallback. NPC and object access
   metadata survive selection, and deposit callbacks wait for loaded bank stock.
   An NPC bank without a dialogue choice never selects an unrelated first option.
+  A focused `alcher_dwarven_mine` scenario observes dungeon exit, the selected
+  Falador East bank, real withdrawal and fresh High Alchemy XP.
 
 - Baker-stall restocking now awaits one Rust step machine; Rust owns selected
   stall facts, callback polling, waits, steal verbs, stand swaps and lockout

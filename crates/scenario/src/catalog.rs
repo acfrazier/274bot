@@ -106,6 +106,7 @@ const REGISTRY: &[Entry] = &[
     Entry::new("thiever", scenarios::thiever_scenario),
     Entry::new("alcher", scenarios::alcher_scenario),
     Entry::new("alcher_defaults", scenarios::alcher_defaults_scenario),
+    Entry::new("alcher_dwarven_mine", scenarios::alcher_dwarven_mine_scenario),
     Entry::new("alcher_custom", scenarios::alcher_custom_scenario),
     Entry::new(
         "alcher_custom_alias",
