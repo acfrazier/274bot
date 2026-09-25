@@ -4919,6 +4919,52 @@ fn rail_remove_clears_focus_when_last_member() {
 }
 
 #[test]
+fn rail_remove_returns_before_connected_logout_settles() {
+    let mut s = Session::new();
+    let mut play = empty_play();
+    play.attach_arm("alice", SlotArm::new(7, false));
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        ingame: true,
+        ..SlotStatus::default()
+    });
+    let statuses = Arc::clone(&play.statuses);
+    s.play = Some(play);
+    s.wall.load("alice");
+    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.slots.insert(
+        "alice".into(),
+        SlotIo {
+            input: SlotInput::new(),
+            pixels: FrameBuf::new(),
+        },
+    );
+
+    let (returned, observe_return) = std::sync::mpsc::channel();
+    let release = thread::spawn(move || {
+        let returned_before_release = observe_return
+            .recv_timeout(Duration::from_millis(250))
+            .is_ok();
+        if let Some(status) = statuses
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|status| status.username == "alice")
+        {
+            status.ingame = false;
+        }
+        returned_before_release
+    });
+
+    s.rail_remove("alice");
+    let _ = returned.send(());
+    assert!(
+        release.join().unwrap(),
+        "rail removal must return before clean logout settles"
+    );
+}
+
+#[test]
 fn set_multibox_on_syncs_focus_wall() {
     let mut s = Session::new();
     s.set_multibox(true);

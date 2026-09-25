@@ -55,26 +55,29 @@ const THREAD_STACK: usize = 1024 * 1024;
 /// `tick_latch`).
 type NavStepKey = (u64, Option<(i32, i32, i32)>);
 impl Play {
-    /// Stop one running slot: flag its arm `stop`, drop its login-FIFO
-    /// place immediately (a queued slot must not keep later slots behind
-    /// it even if the thread is still blocked in `wait_for_permit`),
-    /// drop the status row and arm, then join the thread. The slot body
-    /// checks `stop` every 20 ms in `run_client`; startup retry progress
-    /// also transfers the arm stop into the client's shell, so an HTTP
-    /// countdown adds at most its one-second tick. Do **not** abort the TCP
-    /// link here — the caller sends a clean IF logout before calling this.
-    pub fn stop_slot(&mut self, name: &str) {
-        let arm = self.arms.get(name).cloned();
-        if let Some(arm) = arm.as_ref() {
+    /// Publish Stop before any join. The queue lock is taken only after the
+    /// arm control lock has been released by `notify_retry_wait`; no shared
+    /// status/script lock is held here.
+    pub(super) fn signal_slot_stop(&self, name: &str) {
+        if let Some(arm) = self.arms.get(name) {
             arm.stop.store(true, Ordering::Relaxed);
             arm.notify_retry_wait();
-            let mut queue = self.queue.lock();
-            queue.leave_owner(arm.queue_owner);
+            self.queue.lock().leave_owner(arm.queue_owner);
         }
+    }
+
+    /// Retire all name-owned registries and return the worker handle without
+    /// joining it. Locks are acquired and released one at a time except for
+    /// the established script-wall -> script-slot order.
+    fn take_slot_for_stop(&mut self, name: &str) -> Option<thread::JoinHandle<()>> {
+        let arm = self.arms.get(name).cloned();
+        self.signal_slot_stop(name);
         self.spawned.remove(name);
-        self.statuses.lock().unwrap().retain(|s| s.username != name);
+        self.statuses
+            .lock()
+            .unwrap()
+            .retain(|status| status.username != name);
         self.arms.remove(name);
-        // Release the wall lock before the slot lock (wall-then-slot order).
         let removed = self.scripts.lock().unwrap().remove(name);
         if let Some(slot) = removed {
             slot.lock().unwrap().stop();
@@ -89,13 +92,52 @@ impl Play {
             self.focused = None;
             self.queue.lock().set_preferred_owner(None);
         }
-        // Wake a parked thread so its next probe sees `stop`; the wake end
-        // stays alive (removed after the join) so the poll cannot miss it.
-        if let Some(handle) = self.handles.remove(name) {
+        let handle = self.handles.remove(name);
+        if handle.is_some() {
             self.wake(name);
-            let _ = handle.join();
         }
         self.wakes.remove(name);
+        handle
+    }
+
+    /// Stop and retire a slot without joining its worker on the caller.
+    /// [`Play::reap_stopped_slots`] joins only handles already known finished.
+    pub fn begin_stop_slot(&mut self, name: &str) {
+        self.reap_stopped_slots();
+        if self.retiring.contains_key(name) {
+            return;
+        }
+        if let Some(handle) = self.take_slot_for_stop(name) {
+            self.retiring.insert(name.to_string(), handle);
+        }
+    }
+
+    /// Join completed asynchronous stops. `is_finished` makes every join in
+    /// this method non-blocking.
+    pub fn reap_stopped_slots(&mut self) {
+        let finished: Vec<String> = self
+            .retiring
+            .iter()
+            .filter(|(_, handle)| handle.is_finished())
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in finished {
+            if let Some(handle) = self.retiring.remove(&name) {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    /// Synchronous stop for CLI/tests and final teardown. UI removal uses
+    /// [`Play::begin_stop_slot`] instead.
+    pub fn stop_slot(&mut self, name: &str) {
+        if let Some(handle) = self.retiring.remove(name) {
+            let _ = handle.join();
+            return;
+        }
+        if let Some(handle) = self.take_slot_for_stop(name) {
+            let _ = handle.join();
+        }
     }
 
     /// Register a control arm without spawning a slot thread (panel unit
@@ -104,25 +146,6 @@ impl Play {
         self.arms.insert(name.to_string(), arm);
     }
 
-    /// Poll until `name` reports `!ingame` (or is absent), or `timeout`
-    /// elapses. Used by rail ✕ after arming a clean logout so `stop_slot`
-    /// does not cut the TCP link while still ingame.
-    pub fn wait_until_not_ingame(&self, name: &str, timeout: Duration) -> bool {
-        let deadline = Instant::now() + timeout;
-        loop {
-            if !self
-                .statuses()
-                .iter()
-                .any(|s| s.username == name && s.ingame)
-            {
-                return true;
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
-    }
 
     /// Spawn one more slot on this play's FIFO. No-op if `username` is
     /// already in the status list (already running). `None` arm behaves as
@@ -148,6 +171,16 @@ impl Play {
         arm: Option<Arc<SlotArm>>,
     ) -> Result<(), String> {
         self.connection.require_bot_operation()?;
+        if self
+            .retiring
+            .get(&profile.username)
+            .is_some_and(|handle| !handle.is_finished())
+        {
+            return Err(format!("slot {} is still stopping", profile.username));
+        }
+        if let Some(handle) = self.retiring.remove(&profile.username) {
+            let _ = handle.join();
+        }
         let world_round = self
             .connection
             .profile()

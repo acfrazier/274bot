@@ -174,6 +174,9 @@ pub struct Play {
     /// Shared status rows; panel tests push fakes here for `pump_status`.
     pub statuses: Arc<Mutex<Vec<SlotStatus>>>,
     handles: HashMap<String, thread::JoinHandle<()>>,
+    /// Stop-requested workers awaiting a non-blocking [`JoinHandle::is_finished`]
+    /// reap. UI callers never join these while they are live.
+    retiring: HashMap<String, thread::JoinHandle<()>>,
     connection: PlayConnection,
     auto_world: Option<u16>,
     /// Generated facts only when the profile cache matches a checked-in asset.
@@ -357,14 +360,20 @@ impl Play {
     }
 }
 
-/// Stop every slot thread and join it before the play goes away, so no
-/// observe hook (the panel's per-frame paint reads `picker::pack`) can run
-/// after the shared nav world is detached.
+/// Stop every worker before joining any of them, so one slot stuck in
+/// cooperative shutdown cannot delay the stop signal for the rest.
 impl Drop for Play {
     fn drop(&mut self) {
         let names: Vec<String> = self.handles.keys().cloned().collect();
+        for name in &names {
+            self.signal_slot_stop(name);
+            self.wake(name);
+        }
         for name in names {
             self.stop_slot(&name);
+        }
+        for (_, handle) in self.retiring.drain() {
+            let _ = handle.join();
         }
     }
 }

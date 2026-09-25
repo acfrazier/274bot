@@ -1156,6 +1156,52 @@ fn stop_before_worker_start_retires_entries_and_respawn_has_one_row() {
 }
 
 #[test]
+fn begin_stop_slot_retires_without_joining_live_worker() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let arm = SlotArm::new(7, false);
+    play.arms.insert("alice".into(), Arc::clone(&arm));
+    play.spawned.insert("alice".into());
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    });
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    play.handles.insert(
+        "alice".into(),
+        thread::spawn(move || {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        }),
+    );
+    entered_rx.recv().unwrap();
+
+    play.begin_stop_slot("alice");
+
+    assert!(arm.stop.load(Ordering::Relaxed));
+    assert!(!play.handles.contains_key("alice"));
+    assert!(
+        play.retiring.contains_key("alice"),
+        "the live join is deferred for a finished-only reap"
+    );
+    assert!(play.statuses().is_empty());
+    release_tx.send(()).unwrap();
+    play.stop_slot("alice");
+    assert!(play.retiring.is_empty());
+}
+
+#[test]
 fn stop_slot_wakes_a_parked_thread_before_joining() {
     let mut play = run_with_io(
         &PlayOptions {
@@ -1744,6 +1790,30 @@ fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
     );
 }
 
+#[test]
+fn refused_logout_stays_pending_instead_of_latching_success() {
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: true,
+    });
+    client.ingame = true;
+    let arm = SlotArm::new(0, false);
+    arm.want_logout.store(true, Ordering::Relaxed);
+
+    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(
+        arm.want_logout.load(Ordering::Relaxed),
+        "missing logout interface must leave the request pending"
+    );
+    assert!(
+        !arm.latch.load(Ordering::Relaxed),
+        "a refused send is not a completed logout"
+    );
+}
+
 /// Fill the default 29-grant / 60 s idle address limit so the next request has
 /// to wait instead of being granted on arrival.
 fn fill_address_window(queue: &SharedLoginQueue) -> Instant {
@@ -2261,39 +2331,6 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
     assert!(play.login_queue_uids().is_empty());
 }
 
-#[test]
-fn wait_until_not_ingame_observes_status_flip() {
-    let play = run_with_io(
-        &PlayOptions {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    );
-    play.statuses.lock().unwrap().push(SlotStatus {
-        username: "alice".into(),
-        ingame: true,
-        ..SlotStatus::default()
-    });
-    let statuses = Arc::clone(&play.statuses);
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(30));
-        if let Some(s) = statuses
-            .lock()
-            .unwrap()
-            .iter_mut()
-            .find(|s| s.username == "alice")
-        {
-            s.ingame = false;
-        }
-    });
-    assert!(play.wait_until_not_ingame("alice", Duration::from_secs(1)));
-}
 
 #[test]
 fn focus_selects_the_sampled_slot() {

@@ -975,6 +975,9 @@ pub struct Session {
     pub play: Option<Play>,
     /// Per-username slot IO.
     pub slots: HashMap<String, SlotIo>,
+    /// Rail removals waiting for clean disconnect or their bounded deadline.
+    /// The UI frame only polls these; worker joins stay in `Play`.
+    pending_slot_removals: HashMap<String, Instant>,
     /// The focused slot's live capture sender; `None` while capture is off,
     /// so UI send paths no-op.
     pub capture_tx: Option<Sender<InputEv>>,
@@ -1211,6 +1214,7 @@ pub struct Session {
 
 /// Keep each per-name panel log bounded.
 const LOG_CAP: usize = 200;
+const SLOT_REMOVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Log bucket for vault errors and lines with no username.
 pub const PROCESS: &str = "*";
@@ -1375,6 +1379,7 @@ impl Session {
             error: None,
             play: None,
             slots: HashMap::new(),
+            pending_slot_removals: HashMap::new(),
             capture_tx: None,
             mainland: Arc::new(AtomicBool::new(
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
@@ -2967,9 +2972,45 @@ impl Session {
         }
     }
 
+    /// Advance clean rail removals without sleeping or joining on the UI
+    /// thread. A disconnected slot stops immediately; a connected one gets
+    /// the bounded clean-logout window before Stop is signalled.
+    fn pump_slot_removals(&mut self) {
+        if let Some(play) = self.play.as_mut() {
+            play.reap_stopped_slots();
+        }
+        if self.pending_slot_removals.is_empty() {
+            return;
+        }
+        let statuses = self
+            .play
+            .as_ref()
+            .map(Play::statuses)
+            .unwrap_or_default();
+        let now = Instant::now();
+        let ready: Vec<String> = self
+            .pending_slot_removals
+            .iter()
+            .filter(|(name, started)| {
+                !statuses
+                    .iter()
+                    .any(|status| status.username == name.as_str() && status.ingame)
+                    || now.saturating_duration_since(**started) >= SLOT_REMOVE_TIMEOUT
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in ready {
+            if let Some(play) = self.play.as_mut() {
+                play.begin_stop_slot(&name);
+            }
+            self.pending_slot_removals.remove(&name);
+        }
+    }
+
     /// Poll slot statuses and append log lines for transitions (slot up,
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
+        self.pump_slot_removals();
         // Per-frame mirrors that must not lag a focus/renderer/wall change:
         // the sidecar-50 cadence latch, and the speaker teardown when the
         // owning slot is no longer running.
@@ -3966,34 +4007,35 @@ impl Session {
         }
     }
 
-    /// Remove a member from the rail: focus a neighbour if this name was
-    /// focused, drop it from the wall, clear its logout latch, arm a clean
-    /// logout when ingame (without `stop`), wait until `!ingame` or ~10 s,
-    /// then `stop_slot` and forget its IO. Not-ingame members stop immediately.
+    /// Remove a member from the rail and return immediately. Connected slots
+    /// get a bounded clean-logout window advanced by [`Session::pump_status`];
+    /// disconnected workers are stopped asynchronously. Neither path sleeps
+    /// or joins on the UI call stack.
     pub fn rail_remove(&mut self, name: &str) {
         let focused = self.focused_name();
         let neighbour = self.wall.focus_neighbour(name, focused.as_deref());
         self.wall.rail_remove(name);
         self.wall.clear_latch(name);
-        if let Some(play) = &self.play {
-            let ingame = play
-                .statuses()
+        let connected = self.play.as_ref().is_some_and(|play| {
+            play.statuses()
                 .iter()
-                .any(|s| s.username == name && s.ingame);
-            if ingame {
+                .any(|status| status.username == name && status.ingame)
+        });
+        if connected {
+            if let Some(play) = self.play.as_ref() {
                 if let Some(arm) = play.arm(name) {
-                    // Clean logout only — do not set stop until !ingame.
+                    // Clean logout only — Stop follows disconnect or timeout.
                     arm.want_logout.store(true, Ordering::Relaxed);
                 }
-                // The logout press lives in the probe; kick a parked slot
-                // so the clean logout is pressed instead of waiting on the
-                // game-tick park timeout.
                 play.wake(name);
-                play.wait_until_not_ingame(name, Duration::from_secs(10));
             }
-        }
-        if let Some(play) = &mut self.play {
-            play.stop_slot(name);
+            self.pending_slot_removals
+                .insert(name.to_string(), Instant::now());
+        } else {
+            self.pending_slot_removals.remove(name);
+            if let Some(play) = self.play.as_mut() {
+                play.begin_stop_slot(name);
+            }
         }
         if reset_frontend_slot_lifetime(
             name,

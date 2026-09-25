@@ -377,6 +377,7 @@ impl Play {
             statuses: Arc::new(Mutex::new(Vec::new())),
             auto_world: None,
             handles: HashMap::new(),
+            retiring: HashMap::new(),
             connection,
             game_data,
             named_banks,

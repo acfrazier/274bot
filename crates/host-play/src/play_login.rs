@@ -377,7 +377,12 @@ pub(super) fn tick_flags(
         arm.withdraw_login();
     }
     if arm.want_logout.load(Ordering::Relaxed) && client.ingame {
-        api::interact::logout(client, ifaces);
+        if !api::interact::logout(client, ifaces) {
+            // Missing/refused IF is still pending. A removal deadline may set
+            // Stop, in which case fall back to a dirty disconnect rather than
+            // reporting a logout that was never sent.
+            return arm.stop.load(Ordering::Relaxed);
+        }
         arm.want_logout.store(false, Ordering::Relaxed);
         arm.latch.store(true, Ordering::Relaxed);
         arm.withdraw_login();
