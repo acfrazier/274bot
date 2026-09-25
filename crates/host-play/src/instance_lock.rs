@@ -122,13 +122,22 @@ fn instance_holder_path() -> PathBuf {
 }
 
 pub fn instance_conflict_message(holder: &InstanceHolder) -> String {
+    let lock = instance_lock_path();
+    let dir = lock
+        .parent()
+        .expect("instance.lock lives in the bot directory")
+        .display();
     match (holder.kind, holder.pid) {
         (Some(kind), Some(pid)) => format!(
-            "Another 274bot {} (pid {}) is using ~/.274bot — running both can overwrite each other's settings",
+            "Another 274bot {} (pid {}) is using {} — running both can overwrite each other's settings",
             kind.label(),
-            pid
+            pid,
+            dir
         ),
-        _ => "Another 274bot instance (pid unknown) is using ~/.274bot — running both can overwrite each other's settings".into(),
+        _ => format!(
+            "Another 274bot instance (pid unknown) is using {} — running both can overwrite each other's settings",
+            dir
+        ),
     }
 }
 

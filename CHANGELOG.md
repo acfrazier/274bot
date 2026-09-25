@@ -141,9 +141,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   (tmp + fsync + rename) after the lock is taken so a second instance can
   read it on Windows, where `LockFileEx` is mandatory, and is removed on a
   clean lock drop. A second instance warns and offers Exit (default) or
-  Continue anyway; it accepts only a complete newline-terminated marker
-  whose pid is still alive, otherwise retries briefly and warns
-  (`pid unknown`) instead of failing startup. `--live` / memory / stress /
+  Continue anyway, naming the real bot directory (the parent of
+  `instance.lock`) in the warning; it accepts only a complete
+  newline-terminated marker whose pid is still alive, otherwise retries
+  briefly and warns (`pid unknown`) instead of failing startup. `--live` / memory / stress /
   harness boots skip the lock. `File::try_lock` is cfg-free
   (POSIX `flock` / Windows `LockFileEx`).
 - Start (and Start all) after a fresh launch now runs the rs2b0t catalog script
