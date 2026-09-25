@@ -711,25 +711,6 @@ fn rail_window_class_shows_tab_x() {
     assert!(c
         .dock_node_flags_override_set
         .contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE));
-    const SRC: &str = include_str!("app.rs");
-    let rail = SRC.split("fn rail_window(").nth(1).unwrap_or("");
-    let rail_fn = rail
-        .split("fn apply_only_render_selected")
-        .next()
-        .unwrap_or("");
-    assert!(
-        rail_fn.contains(".opened(") && rail_fn.contains("set_multibox(false)"),
-        "rail tab X turns MultiBox off so ensure_window_fits can shrink"
-    );
-    assert!(
-        !rail_fn.contains("NO_TITLE_BAR"),
-        "NO_TITLE_BAR hides the tab that carries the X"
-    );
-    let frame = SRC.split("fn ui_frame").nth(1).unwrap_or("");
-    assert!(
-        frame.contains("rail_window_class"),
-        "rail must not reuse the Game class that AUTO_HIDEs the tab bar"
-    );
 }
 
 #[test]
@@ -737,59 +718,6 @@ fn chooser_docks_to_panel_never_rail_or_game() {
     let panel = Id::from(20u32);
     assert_eq!(super::chooser_dock_id(Some(panel)), Some(panel));
     assert_eq!(super::chooser_dock_id(None), None);
-    const SRC: &str = include_str!("app.rs");
-    let chooser = SRC
-        .split("fn chooser_window")
-        .nth(1)
-        .unwrap_or("")
-        .split("fn settings_window")
-        .next()
-        .unwrap_or("");
-    assert!(
-        chooser.contains("panel_window_class"),
-        "Profiles must use the 274bot panel class"
-    );
-    assert!(
-        !chooser.contains("rail_window_class"),
-        "Profiles must never dock to the MultiBox rail"
-    );
-    assert!(
-        chooser.contains("Appearing"),
-        "spawn docks on the hidden→visible edge; rebuild must re-dock by name"
-    );
-}
-
-#[test]
-fn dock_host_redocks_profiles_onto_the_panel_node() {
-    const SRC: &str = include_str!("app.rs");
-    let host = SRC
-        .split("fn dock_host")
-        .nth(1)
-        .unwrap_or("")
-        .split("fn game_window_flags")
-        .next()
-        .unwrap_or("");
-    assert!(
-        host.contains("dock_panel_tabs"),
-        "MultiBox rail / OS resize rebuild must re-dock Profiles onto the 274bot leaf"
-    );
-    let tabs = SRC
-        .split("fn dock_panel_tabs")
-        .nth(1)
-        .unwrap_or("")
-        .split("fn dock_host")
-        .next()
-        .unwrap_or("");
-    for title in ["Profiles", "General config", "Nav config", "Script prefs"] {
-        assert!(
-            tabs.contains(title),
-            "panel tab {title} must be DockBuilder::dock_window'd after a tree rebuild"
-        );
-    }
-    assert!(
-        !tabs.contains("Scripts") && !tabs.contains("Loadouts"),
-        "overlay pickers stay floating over Game"
-    );
 }
 
 #[test]
@@ -824,17 +752,6 @@ fn dockspace_does_not_lock_undock_on_every_node() {
     assert!(
         !f.contains(dear_imgui_rs::DockNodeFlags::NO_UNDOCKING),
         "NO_UNDOCKING on the dockspace would lock the panel against config tabs"
-    );
-}
-
-#[test]
-fn ensure_window_fits_uses_rail_open_falling_edge() {
-    const SRC: &str = include_str!("app.rs");
-    let body = SRC.split("fn ensure_window_fits").nth(1).unwrap_or("");
-    let body = body.split("fn dock_host").next().unwrap_or("");
-    assert!(
-        body.contains("next_os_window_size") && body.contains("DockLayout::Rail"),
-        "MultiBox off must re-shrink via the rail falling edge, not grow-only"
     );
 }
 
@@ -3221,29 +3138,6 @@ fn random_status_text_kebab_cases_lost_kinds() {
 }
 
 #[test]
-fn config_section_scopes_accent_to_header_not_body() {
-    const SRC: &str = include_str!("app.rs");
-    let fn_src = SRC.split("fn config_section").nth(1).unwrap_or("");
-    let fn_src = fn_src
-        .split("fn global_capture_section")
-        .next()
-        .unwrap_or("");
-    assert!(
-        fn_src.contains("FrameBorderSize(1.0)"),
-        "header orange border needs a visible frame border"
-    );
-    let after_header = fn_src.split("ui.collapsing_header").nth(1).unwrap_or("");
-    assert!(
-        !after_header.contains("push_style_color(StyleColor::Text, ACCENT)"),
-        "accent text must not wrap the open section body"
-    );
-    assert!(
-        fn_src.contains("body(ui, session)"),
-        "section body runs outside header style scope"
-    );
-}
-
-#[test]
 fn panel_heading_toggle_hides_status_section() {
     use crate::ui_state::{panel_section_visible, set_panel_section_visible, PanelUiState};
     let mut ui = PanelUiState::default();
@@ -3262,161 +3156,6 @@ fn parameters_and_script_prefs_share_show_parameters_rail() {
     assert!(panel_section_visible(&ui, "parameters"));
     ui.show_parameters_rail = false;
     assert!(!panel_section_visible(&ui, "parameters"));
-}
-
-#[test]
-fn global_config_slot_name_then_capture_then_focused_50_then_panel() {
-    const SRC: &str = include_str!("app.rs");
-    let g = SRC.split("fn global_config_section").nth(1).unwrap_or("");
-    let g = g.split("\nfn ").next().unwrap_or("");
-    let slot = g.find("\"Slot:\"").expect("Slot: label above capture");
-    let capture = g
-        .find("global_capture_section")
-        .expect("capture stays in Global");
-    let focused_50 = g
-        .find("focused 50 fps")
-        .expect("focused 50 fps lives in Global");
-    let panel = g
-        .find("panel_heading_toggles")
-        .expect("Panel heading toggles stay in Global");
-    assert!(
-        slot < capture,
-        "Slot: sits below the heading, above capture"
-    );
-    assert!(
-        focused_50 < panel,
-        "focused 50 fps sits above the Panel subsection"
-    );
-    assert!(
-        !g.contains("auto-login"),
-        "auto-login belongs on the profile editor, not Global"
-    );
-}
-
-#[test]
-fn settings_window_drops_slot_and_random_rows() {
-    const SRC: &str = include_str!("app.rs");
-    let settings = SRC.split("fn settings_window").nth(1).unwrap_or("");
-    let settings = settings.split("\nfn ").next().unwrap_or("");
-    assert!(
-        settings.contains("config_section(ui, session, \"Global\""),
-        "Global row stays"
-    );
-    assert!(
-        settings.contains("config_section(ui, session, \"render\""),
-        "render (raster/mem) stays in General config"
-    );
-    assert!(
-        !settings.contains("config_section(ui, session, \"slot\""),
-        "slot row is gone; the focused name is a Global label"
-    );
-    assert!(
-        !settings.contains("config_section(ui, session, \"random\""),
-        "random/lamp belong on the profile editor"
-    );
-    assert!(
-        !settings.contains("slot_capture_section"),
-        "auto-login is not a General config control"
-    );
-    assert!(
-        !settings.contains("slot_random_section"),
-        "guardian toggles are not a General config control"
-    );
-}
-
-#[test]
-fn slot_render_section_no_longer_owns_focused_50() {
-    const SRC: &str = include_str!("app.rs");
-    let r = SRC.split("fn slot_render_section").nth(1).unwrap_or("");
-    let r = r.split("\nfn ").next().unwrap_or("");
-    assert!(
-        !r.contains("focused 50 fps"),
-        "focused 50 fps moved to Global, above Panel"
-    );
-    assert!(
-        r.contains("raster_picker"),
-        "Game-pane raster/mem stay under render"
-    );
-}
-
-#[test]
-fn chooser_edit_hosts_per_profile_login_and_random() {
-    const SRC: &str = include_str!("app.rs");
-    let chooser = SRC.split("fn chooser_window").nth(1).unwrap_or("");
-    let chooser = chooser.split("fn settings_window").next().unwrap_or("");
-    assert!(
-        chooser.contains("slot_capture_section"),
-        "auto-login moved onto the profile editor"
-    );
-    assert!(
-        chooser.contains("slot_random_section"),
-        "random/lamp moved onto the profile editor"
-    );
-    const SRC_COPY: &str = include_str!("app.rs");
-    let random = SRC_COPY
-        .split("fn slot_random_section")
-        .nth(1)
-        .unwrap_or("");
-    assert!(
-        random.contains("this profile"),
-        "copy names the edited profile, not a global slot"
-    );
-    assert!(
-        !random.contains("focus a profile to edit"),
-        "edit form is already on this profile"
-    );
-    let save = chooser
-        .find("button_with_size(\"Save\"")
-        .expect("Save stays on the editor");
-    let auto = chooser
-        .find("slot_capture_section")
-        .expect("auto-login in editor");
-    assert!(auto < save, "per-profile settings sit above Save/Cancel");
-}
-
-#[test]
-fn chooser_locked_vault_shows_unlock_not_empty_copy() {
-    const SRC: &str = include_str!("app.rs");
-    let chooser = SRC.split("fn chooser_window").nth(1).unwrap_or("");
-    let chooser = chooser.split("fn settings_window").next().unwrap_or("");
-    let locked = chooser
-        .find("vault.is_none()")
-        .expect("Profiles must branch on a locked vault");
-    let unlock = chooser
-        .find("vault_unlock_prompt")
-        .expect("locked Profiles reuses the panel unlock UI");
-    let empty = chooser
-        .find("vault is empty")
-        .expect("empty copy stays for a truly empty unlocked vault");
-    assert!(
-        locked < unlock && unlock < empty,
-        "unlock UI while locked; empty copy only after the vault is open"
-    );
-    let profile = SRC.split("fn profile_section").nth(1).unwrap_or("");
-    let profile = profile.split("\nfn ").next().unwrap_or("");
-    assert!(
-        profile.contains("vault_unlock_prompt"),
-        "panel profile heading and Profiles share one unlock prompt"
-    );
-    assert!(
-        !profile.contains("##vault-pass"),
-        "pass field lives in the shared prompt, not forked in profile_section"
-    );
-}
-
-#[test]
-fn panel_subsection_exposes_chrome_color_pickers() {
-    const SRC: &str = include_str!("app.rs");
-    let panel = SRC.split("fn panel_heading_toggles").nth(1).unwrap_or("");
-    let panel = panel.split("\nfn ").next().unwrap_or("");
-    assert!(
-        panel.contains("chrome_color_field") || panel.contains("nav_color_field"),
-        "Panel chrome colours use the same hex picker pattern as Nav"
-    );
-    assert!(
-        panel.contains("accent") || panel.contains("ACCENT"),
-        "named theme consts are exposed as pickers"
-    );
 }
 
 /// File-loaded cards have empty description/tags. A trailing

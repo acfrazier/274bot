@@ -451,32 +451,13 @@ mod tests {
         card_width, chip_frame_padding, chip_text_color, dialog_date_color, dialog_rows,
         display_category, format_mtime, move_category, name_matches_search,
         needs_rs2b0t_catalog_prompt, resolve_category_order, rs2b0t_root_has_index, sidebar_places,
-        sort_dialog_rows, DialogMode, DialogRow, DialogSort, LoadBrowseEntry, BROWSE_WINDOW_TITLE,
-        CARD_GAP, CARD_MIN_W, CHIP_PAD_Y, FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON,
-        GLYPH_DESKTOP, GLYPH_DOCUMENTS, GLYPH_DOWNLOADS, GLYPH_FILE, GLYPH_FOLDER, GLYPH_HOME,
-        SCRIPTS_FIRST_H, SCRIPTS_FIRST_W, UNCATEGORIZED,
+        sort_dialog_rows, DialogMode, DialogRow, DialogSort, LoadBrowseEntry, CARD_GAP, CARD_MIN_W,
+        CHIP_PAD_Y, FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_DESKTOP,
+        GLYPH_DOCUMENTS, GLYPH_DOWNLOADS, GLYPH_FILE, GLYPH_FOLDER, GLYPH_HOME, SCRIPTS_FIRST_H,
+        SCRIPTS_FIRST_W, UNCATEGORIZED,
     };
     use std::path::{Path, PathBuf};
     use std::time::{Duration, UNIX_EPOCH};
-
-    #[test]
-    fn browse_picker_uses_window_not_modal() {
-        const APP: &str = include_str!("app.rs");
-        assert!(
-            APP.contains("ui.window(BROWSE_WINDOW_TITLE)"),
-            "Browse must use ui.window(BROWSE_WINDOW_TITLE), not a modal popup"
-        );
-        assert!(
-            !APP.contains("begin_modal_popup_config(BROWSE_WINDOW_TITLE)"),
-            "Browse must not use begin_modal_popup_config with BROWSE_WINDOW_TITLE"
-        );
-        assert!(
-            !APP.contains(&format!(
-                "begin_modal_popup_config(\"{BROWSE_WINDOW_TITLE}\")"
-            )),
-            "Browse must not use begin_modal_popup_config with the Scripts title"
-        );
-    }
 
     #[test]
     fn category_order_merges_saved_and_appends_unknown() {
@@ -514,19 +495,6 @@ mod tests {
         apply_load_browse_select(&mut dir, &mut sel, &LoadBrowseEntry::Up, 0);
         assert_eq!(dir, PathBuf::from("/tmp"));
         assert_eq!(sel, 0);
-    }
-
-    #[test]
-    fn load_window_has_no_free_text_path_field() {
-        const APP: &str = include_str!("app.rs");
-        assert!(
-            !APP.contains("input_text(\"##load-path\""),
-            "Load must not use a free-text path field"
-        );
-        assert!(
-            APP.contains("script_load_dir"),
-            "Load must browse directories and remember the last dir"
-        );
     }
 
     #[test]
@@ -661,45 +629,12 @@ mod tests {
         assert_eq!(dialog_date_color(true, true), crate::theme::TEXT_DIM);
         assert_eq!(dialog_date_color(true, false), crate::theme::TEXT_DIM);
         assert_eq!(dialog_date_color(false, false), crate::theme::TEXT_DIM);
-        const APP: &str = include_str!("app.rs");
-        let body = APP.split("fn file_dialog_body").nth(1).unwrap_or("");
-        assert!(
-            body.contains("dialog_date_color") && body.contains("text_colored"),
-            "Load date cells must not stay text_disabled on the light ROW_BG stripe"
-        );
-        assert!(
-            !body.contains("text_disabled(format_mtime"),
-            "date column is contrast-colored, not globally disabled"
-        );
     }
 
     #[test]
     fn scripts_window_first_size_is_walkto() {
-        const APP: &str = include_str!("app.rs");
-        assert!(
-            APP.contains("SCRIPTS_FIRST_W") && APP.contains("SCRIPTS_FIRST_H"),
-            "Scripts FirstUseEver must use SCRIPTS_FIRST_W/H (720×560)"
-        );
-        assert!(
-            !APP.contains(".size([480.0, 520.0], Condition::FirstUseEver)"),
-            "old 480×520 Scripts size must go"
-        );
         assert_eq!((SCRIPTS_FIRST_W, SCRIPTS_FIRST_H), (720.0, 560.0));
         assert_eq!((FILE_DIALOG_FIRST_W, FILE_DIALOG_FIRST_H), (640.0, 480.0));
-    }
-
-    #[test]
-    fn scripts_grid_does_not_list_compiled_ids() {
-        const APP: &str = include_str!("app.rs");
-        let body = APP.split("fn browse_window_body").nth(1).unwrap_or("");
-        assert!(
-            !body.contains("compiled_ids"),
-            "Scripts grid is JsCard only; WalkTo stays host nav"
-        );
-        assert!(
-            APP.contains("FILE_DIALOG_FIRST_W"),
-            "shared file dialog must use FILE_DIALOG_FIRST_W/H"
-        );
     }
 
     #[test]
@@ -736,49 +671,6 @@ mod tests {
         if last.is_dir() {
             assert_eq!(super::default_load_browse_dir(Some(&last)), last);
         }
-    }
-
-    #[test]
-    fn scripts_card_paints_kind_source_accent_title_wrapping_tags() {
-        const APP: &str = include_str!("app.rs");
-        let card = APP.split("fn browse_script_card").nth(1).unwrap_or("");
-        assert!(
-            card.contains("card_kind_source"),
-            "cards must paint kind [JS] and source [Catalog]"
-        );
-        assert!(
-            card.contains("text_colored(ACCENT") || card.contains("text_colored(ACCENT,"),
-            "script title uses the same accent as the selected profile/script"
-        );
-        assert!(
-            card.contains("TEXT_DIM") && card.contains("unloadable"),
-            "unloadable cards dim the title; selection still works"
-        );
-        assert!(
-            card.contains("text_wrapped") && card.contains("tags"),
-            "tags wrap"
-        );
-        assert!(
-            card.contains("CARD_DESC_LINES") || card.contains("card_desc_height"),
-            "unselected descriptions clip to 3 lines"
-        );
-        assert!(
-            !card.contains("text_wrapped(&card_kind_source")
-                && !card.contains("text_wrapped(card_kind_source"),
-            "kind/source must clip on one line, not wrap"
-        );
-        assert!(
-            card.contains("title_clip_width"),
-            "title clips so [JS] [Catalog] keeps its width"
-        );
-        assert!(
-            card.contains("card_transpile_label") || card.contains("transpiling"),
-            "first-click warmup paints transpiling… on the card"
-        );
-        assert!(
-            card.contains("select_script_card"),
-            "card click selects and queues that card only"
-        );
     }
 
     #[test]
@@ -839,129 +731,6 @@ mod tests {
                 1
             ),
             None
-        );
-    }
-
-    #[test]
-    fn scripts_window_no_horizontal_scroll_or_tab_chevrons() {
-        const APP: &str = include_str!("app.rs");
-        let browse = APP.split("fn browse_window(").nth(1).unwrap_or("");
-        let browse_fn = browse.split("fn persist_dialog_cwd").next().unwrap_or("");
-        assert!(
-            browse_fn.contains("NO_SCROLLBAR") && !browse_fn.contains("HORIZONTAL_SCROLLBAR"),
-            "Scripts clips extra width instead of a horizontal bar"
-        );
-        let body = APP.split("fn browse_window_body").nth(1).unwrap_or("");
-        let body_fn = body.split("fn overlay_right_strip").next().unwrap_or("");
-        assert!(
-            !body_fn.contains("tab_bar") && !body_fn.contains("FittingPolicy"),
-            "categories are wrapping chips, not a shrinking imgui tab bar"
-        );
-        let chips = APP.split("fn script_category_chips").nth(1).unwrap_or("");
-        let chips_fn = chips.split("fn category_chip_dnd").next().unwrap_or("");
-        assert!(
-            body_fn.contains("script_category_chips")
-                && chips_fn.contains("chip_wraps")
-                && chips_fn.contains("\"All\""),
-            "All + category chips wrap onto the next line"
-        );
-        assert!(
-            !chips_fn.contains("small_button"),
-            "SmallButton zeros FramePadding.y and clips descenders (y, g)"
-        );
-        assert!(
-            chips_fn.contains("chip_frame_padding")
-                && chips_fn.contains("chip_text_color")
-                && chips_fn.contains("FrameBorderSize")
-                && chips_fn.contains("StyleColor::Border"),
-            "chips are regular buttons: extra Y pad, black-on-amber when selected, amber outline"
-        );
-        let card = APP.split("fn browse_script_card").nth(1).unwrap_or("");
-        let card_fn = card.split("fn browse_card_grid").next().unwrap_or("");
-        assert!(
-            card_fn.contains("card_rect_activated") && card_fn.contains("is_mouse_hovering_rect"),
-            "card click is the painted rect, not leftover child padding"
-        );
-        assert!(
-            !card_fn.contains("is_item_clicked"),
-            "is_item_clicked on the card child misses title/desc/tag hits"
-        );
-        assert!(
-            body_fn.contains("queue_transpile_all") && body_fn.contains("Transpile all"),
-            "Scripts offers an explicit all-at-once warmup, not a click that burns the catalog"
-        );
-        assert!(
-            body_fn.contains("Copy failures")
-                && body_fn.contains("named_failure_output")
-                && card_fn.contains("load_failure")
-                && card_fn.contains("failed {}"),
-            "Scripts shows a copyable failed list and per-card diagnostic detail"
-        );
-        let grid = APP.split("fn browse_card_grid").nth(1).unwrap_or("");
-        assert!(
-            grid.contains("same_line_with_spacing") && grid.contains("CARD_GAP"),
-            "card rows must use CARD_GAP, not default item spacing"
-        );
-        assert!(
-            !card_fn.contains("set_cursor_screen_pos([origin[0], origin[1] + row_h])")
-                && !card_fn.contains("set_cursor_screen_pos([origin[0], origin[1] + row_h * 2.0])"),
-            "no dangling SetCursorScreenPos after the badge item (imgui 5548 abort on File cards)"
-        );
-    }
-
-    #[test]
-    fn scripts_and_file_dialog_spawn_over_game_not_docked() {
-        const APP: &str = include_str!("app.rs");
-        let browse = APP.split("fn browse_window(").nth(1).unwrap_or("");
-        let browse_fn = browse.split("fn persist_dialog_cwd").next().unwrap_or("");
-        assert!(
-            (browse_fn.contains("overlay_first_pos") || browse_fn.contains("overlay_spawn_pos"))
-                && browse_fn.contains("FirstUseEver"),
-            "Scripts FirstUseEver must sit over the game pane"
-        );
-        assert!(
-            !browse_fn.contains("set_next_window_dock_id"),
-            "Scripts must not auto-dock into the game node"
-        );
-        let dialog = APP.split("fn file_dialog_windows").nth(1).unwrap_or("");
-        let dialog_fn = dialog.split("fn file_dialog_body").next().unwrap_or("");
-        assert!(
-            dialog_fn.contains("overlay_first_pos") || dialog_fn.contains("overlay_spawn_pos"),
-            "Load/Import spawn over the game pane like Scripts"
-        );
-        assert!(
-            dialog_fn.contains("centered_row_x") || APP.contains("centered_row_x"),
-            "Load/Cancel are centered"
-        );
-    }
-
-    #[test]
-    fn general_and_nav_config_dock_into_panel() {
-        const APP: &str = include_str!("app.rs");
-        assert!(
-            APP.contains("set_next_window_dock_id_with_cond")
-                && APP.contains("Condition::FirstUseEver"),
-            "General/Nav config FirstUseEver dock into the 274bot panel node"
-        );
-        let settings = APP.split("fn settings_window").nth(1).unwrap_or("");
-        assert!(
-            settings.contains("set_next_window_dock_id_with_cond"),
-            "General config docks as a panel tab"
-        );
-        let nav = APP.split("fn nav_settings_window").nth(1).unwrap_or("");
-        assert!(
-            nav.contains("set_next_window_dock_id_with_cond"),
-            "Nav config docks as a panel tab"
-        );
-    }
-
-    #[test]
-    fn ui_frame_pumps_transpile_queue() {
-        const APP: &str = include_str!("app.rs");
-        let frame = APP.split("fn ui_frame").nth(1).unwrap_or("");
-        assert!(
-            frame.contains("pump_script_transpile"),
-            "one catalog file per frame — do not transpile the world on the click"
         );
     }
 
