@@ -103,7 +103,11 @@ fn serve_fixture_crc(
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let mut socket = loop {
             match listener.accept() {
-                Ok((socket, _)) => break socket,
+                Ok((socket, _)) => {
+                    // Accepted sockets inherit O_NONBLOCK from the listener on macOS/BSD.
+                    let _ = socket.set_nonblocking(false);
+                    break socket;
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     assert!(
                         std::time::Instant::now() < deadline,

@@ -261,7 +261,11 @@ fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
         let body = crc_body(&packs);
         while Instant::now() < deadline {
             let (mut sock, _) = match listener.accept() {
-                Ok(conn) => conn,
+                Ok(conn) => {
+                    // Accepted sockets inherit O_NONBLOCK from the listener on macOS/BSD.
+                    let _ = conn.0.set_nonblocking(false);
+                    conn
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(5));
                     continue;

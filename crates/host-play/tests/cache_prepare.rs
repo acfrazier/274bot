@@ -166,7 +166,11 @@ fn serve_packs(packs: Arc<Vec<(String, Vec<u8>)>>) -> (u16, thread::JoinHandle<V
         let mut served = Vec::new();
         while Instant::now() < deadline && served.len() < packs.len() {
             let (mut sock, _) = match listener.accept() {
-                Ok(conn) => conn,
+                Ok(conn) => {
+                    // Accepted sockets inherit O_NONBLOCK from the listener on macOS/BSD.
+                    let _ = conn.0.set_nonblocking(false);
+                    conn
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(5));
                     continue;
