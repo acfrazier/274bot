@@ -5223,6 +5223,35 @@ fn readd_during_rail_removal_cancels_the_old_lifetime() {
 }
 
 #[test]
+fn multibox_reseed_cancels_pending_removal_for_running_member() {
+    let (mut session, arm) = connected_removal_session("rail-remove-multibox-reseed.vault");
+    session.wall.load("bob");
+    session.focus.lock().unwrap().focused = Some("bob".into());
+    let started = Instant::now();
+
+    session.rail_remove_at("alice", started);
+    assert!(!session.slots.contains_key("alice"));
+    session.set_multibox(false);
+    session.set_multibox(true);
+
+    assert!(session.wall.members.iter().any(|name| name == "alice"));
+    assert!(
+        session.slots.contains_key("alice"),
+        "re-seeding a running member must restore its retained IO"
+    );
+    assert!(!session.pending_slot_removals.contains_key("alice"));
+
+    session.play.as_ref().unwrap().statuses.lock().unwrap()[0].connected = false;
+    session.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);
+    let current = session.play.as_ref().unwrap().arm("alice").unwrap();
+    assert!(Arc::ptr_eq(&current, &arm));
+    assert!(
+        !arm.stop.load(Ordering::Relaxed),
+        "the cancelled removal must not stop the re-seeded lifetime"
+    );
+}
+
+#[test]
 fn login_during_rail_removal_cancels_the_old_timeout() {
     let (mut session, arm) = connected_removal_session("rail-remove-login.vault");
     let started = Instant::now();

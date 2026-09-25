@@ -4049,6 +4049,12 @@ impl Session {
                 .as_ref()
                 .map(|p| p.statuses().iter().map(|s| s.username.clone()).collect())
                 .unwrap_or_default();
+            // Re-seeding adopts these live lifetimes even when another member
+            // keeps focus, so cancel their rail teardown before rebuilding the
+            // wall and restore any retained IO.
+            for name in &running {
+                self.cancel_slot_removal(name);
+            }
             self.wall.on_multibox_on(&running);
             // After seed: if focus is missing or not a wall member, restore
             // last_focus when it is on the wall, else the first member.
