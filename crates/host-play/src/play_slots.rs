@@ -886,6 +886,7 @@ fn spawn_slot_thread(
                             // status lock (scripts -> statuses is the only
                             // order the two mutexes may nest).
                             let paint = script_paint_of(&slot_scripts, name);
+                            let login_latched = arm_latch_obs.login_latched();
                             let (up, here) = {
                                 let mut all = slot_statuses.lock().unwrap();
                                 let mut up = false;
@@ -896,7 +897,7 @@ fn spawn_slot_thread(
                                         // player observation can authorize game actions.
                                         s.ingame = ready;
                                         s.scene_state = nav_snapshot.scene_state();
-                                        s.login_latched = arm_latch_obs.login_latched();
+                                        s.login_latched = login_latched;
                                         apply_startup_phase(s, name, ready, c.ingame);
                                         s.runenergy = if ready { c.runenergy } else { 0 };
                                         s.run_sends = run_sends;

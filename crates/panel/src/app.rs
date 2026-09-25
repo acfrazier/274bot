@@ -1796,7 +1796,7 @@ fn logout_enabled(vault_open: bool, focused: bool, connected: bool, queued: bool
 }
 
 /// Log in / Logout above WalkTo. Always drawn; disabled while the vault
-/// is locked or no profile is focused. Logout needs an ingame or genuinely
+/// is locked or no profile is focused. Logout needs a connected or genuinely
 /// queued focused slot, so an unloaded profile cannot be latched accidentally.
 fn login_logout_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];

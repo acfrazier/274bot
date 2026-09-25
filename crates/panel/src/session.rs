@@ -4267,14 +4267,7 @@ impl Session {
         self.statuses()
             .iter()
             .find(|s| s.username == name)
-            .filter(|s| {
-                s.ingame
-                    && s.tile_x >= 0
-                    && s.tile_z >= 0
-                    && (s.tile_x != 0 || s.tile_z != 0)
-                    && (0..=3).contains(&s.tile_level)
-            })
-            .map(|s| (s.tile_x, s.tile_z, s.tile_level))
+            .and_then(SlotStatus::ready_tile)
     }
 
     /// The named slot's valid login-FIFO place `(position, total)` while

@@ -345,6 +345,29 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
 }
 
 #[test]
+fn connected_session_boundary_keeps_the_connection_published() {
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        connected: true,
+        ingame: true,
+        bytes_in: 123,
+        ..SlotStatus::default()
+    }]));
+
+    assert!(publish_session_boundary_status(
+        &statuses, "alice", true, true, true
+    ));
+
+    let row = &statuses.lock().unwrap()[0];
+    assert!(
+        row.connected,
+        "a new authenticated session must not transiently publish disconnected"
+    );
+    assert!(!row.ingame, "the new session still closes the producer gate");
+    assert_eq!(row.bytes_in, 0);
+}
+
+#[test]
 fn disconnected_row_drops_session_counters_but_retains_script_paint() {
     let paint = Arc::new(script::shim::ScriptPaint::default());
     let statuses = Arc::new(Mutex::new(vec![SlotStatus {

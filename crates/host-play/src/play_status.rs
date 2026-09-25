@@ -106,6 +106,17 @@ impl SlotStatus {
         self.ingame && self.scene_state == 2
     }
 
+    /// Current producer-authorized routing tile. Disconnected/loading rows,
+    /// reset sentinels, and invalid client planes have no usable origin.
+    pub fn ready_tile(&self) -> Option<(i32, i32, i32)> {
+        (self.ingame
+            && self.tile_x >= 0
+            && self.tile_z >= 0
+            && (self.tile_x != 0 || self.tile_z != 0)
+            && (0..=3).contains(&self.tile_level))
+        .then_some((self.tile_x, self.tile_z, self.tile_level))
+    }
+
     /// A preparation failure that is terminal for the current slot lifetime.
     /// Login errors also use `StartupPhase::Error`, but are retryable and do
     /// not carry this producer-owned asset-initialization fact.
@@ -383,6 +394,7 @@ pub(super) fn publish_slot_observation_reset(statuses: &Arc<Mutex<Vec<SlotStatus
         .find(|s| s.username == name)
     {
         reset_slot_observation(s);
+        s.connected = true;
     }
 }
 
