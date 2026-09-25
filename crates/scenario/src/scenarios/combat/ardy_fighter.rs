@@ -15,14 +15,17 @@ pub(crate) const GUARD_DROP_IDS: [i32; 6] = [
     NATURE_RUNE_ID,
 ];
 /// ArdyFighter sets its combat style only when out of combat after the first
-/// cake restock, so the first Guard fight can come before it. Frozen rs2b0t at
-/// `00d39a17` on this cell's fixture (A/S/HP 40, Defence 1, Thieving 5,
-/// Adamant scimitar, foodTarget 1, empty food) set Strength at 7.5 s and 45.3 s;
-/// its strong-account runs at 44.6 s and 76.6 s. Worst style time 76.6 s is 128
-/// engine ticks at 600 ms, plus up to 30 ticks for the first Strength hit after
-/// a fight = 158 ticks; at the 1.25 runner dirties per engine tick calibration
-/// (`moss_giant.rs`) that is 198, rounded up to 250 for one extra fight cycle.
-const ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS: u32 = 250;
+/// cake restock, so the first Guard fight can come before it, and a Guard drop
+/// that lands first sends PeriodicBank (`bankEveryItems=1`) on a bank round
+/// trip before the style is set (live `ardyfighter-window-r1`). Frozen rs2b0t at
+/// `00d39a17` on this cell's fixture (A/S/HP 40, Defence 1, Thieving 5, Adamant
+/// scimitar, foodTarget 1, empty food) set Strength at 7.5 s and 45.3 s; strong
+/// accounts at 44.6 s and 76.6 s. Worst style time 76.6 s = 128 engine ticks at
+/// 600 ms, + 30 for the first Strength hit, + 60 for one market↔East Ardougne
+/// booth round trip (~20 tiles each way at one tile per tick, plus open and
+/// deposit) = 218 ticks; at 1.25 runner dirties per engine tick (`moss_giant.rs`)
+/// that is 273, rounded up to 320.
+const ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS: u32 = 320;
 const ARDY_FIGHTER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "target",
