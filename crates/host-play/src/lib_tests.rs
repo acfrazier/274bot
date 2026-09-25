@@ -2230,16 +2230,13 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
     let window_started = fill_address_window(&play.queue);
     let dead = SlotArm::new(7, true);
     dead.bypass_asset_startup_for_test();
+    let (queued, panic_worker) = dead.hold_worker_queue_panic_for_test();
     let dead_owner = dead.queue_owner;
     play.spawn_slot(profile("dead", 7), None, None, Some(Arc::clone(&dead)));
-    assert!(
-        wait_until(5_000, || play
-            .queue
-            .lock()
-            .status_owner(dead_owner)
-            .is_some()),
-        "the spawned worker must reach its blocked FIFO wait"
-    );
+    queued
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the spawned worker must publish its blocked FIFO place");
+    assert!(play.queue.lock().status_owner(dead_owner).is_some());
 
     let script = play
         .scripts
@@ -2260,13 +2257,14 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
         panic!("synthetic status publisher panic");
     });
     assert!(poisoner.join().is_err());
-    assert!(
-        wait_until(2_000, || play
-            .handles
-            .get("dead")
-            .is_some_and(thread::JoinHandle::is_finished)),
-        "the real worker must unwind through its retirement guard"
-    );
+    panic_worker.send(()).unwrap();
+    while !play
+        .handles
+        .get("dead")
+        .is_some_and(thread::JoinHandle::is_finished)
+    {
+        thread::yield_now();
+    }
     assert!(play.queue.lock().status_owner(dead_owner).is_none());
     {
         let rows = play.statuses();

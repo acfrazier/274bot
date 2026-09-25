@@ -46,6 +46,8 @@ type WorkerStartGate = (
 );
 #[cfg(test)]
 type RetryRaceGate = (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>);
+#[cfg(test)]
+type WorkerQueuePanicGate = (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>);
 
 /// Per-slot control arm. The panel flips these to make a slot sit on the
 /// title screen (no handshake) until login is armed, request a clean IF
@@ -95,6 +97,10 @@ pub struct SlotArm {
     retry_notify_gate: parking_lot::Mutex<Option<RetryRaceGate>>,
     #[cfg(test)]
     stop_cleanup_signal: parking_lot::Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    /// Deterministic panic after FIFO publication, used to prove the
+    /// worker-scope retirement guard.
+    #[cfg(test)]
+    worker_queue_panic_gate: parking_lot::Mutex<Option<WorkerQueuePanicGate>>,
 }
 
 impl SlotArm {
@@ -128,6 +134,8 @@ impl SlotArm {
             retry_notify_gate: parking_lot::Mutex::new(None),
             #[cfg(test)]
             stop_cleanup_signal: parking_lot::Mutex::new(None),
+            #[cfg(test)]
+            worker_queue_panic_gate: parking_lot::Mutex::new(None),
         })
     }
     /// Enter the spawned worker at the queue/login seam. Production slots
@@ -160,6 +168,25 @@ impl SlotArm {
         entered.send(()).unwrap();
         release.recv().unwrap();
         Some(published)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hold_worker_queue_panic_for_test(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        *self.worker_queue_panic_gate.lock() = Some((entered_tx, release_rx));
+        (entered_rx, release_tx)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_after_queue_for_test(&self) {
+        if let Some((entered, release)) = self.worker_queue_panic_gate.lock().take() {
+            entered.send(()).unwrap();
+            release.recv().unwrap();
+            panic!("synthetic queued worker panic");
+        }
     }
 
     #[cfg(test)]

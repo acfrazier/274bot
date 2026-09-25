@@ -565,6 +565,8 @@ fn spawn_slot_thread(
                     // the last park publish through queue/connect.
                     publish_login_latched_from_arm(&slot_statuses, &username, &arm);
                     enqueue_queue_place(&slot_queue, &slot_statuses, &username, uid, &arm);
+                    #[cfg(test)]
+                    arm.panic_after_queue_for_test();
                     if let Some(round) = world_round.as_mut() {
                         let worlds = connection
                             .profile()
