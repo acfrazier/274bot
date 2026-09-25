@@ -2057,38 +2057,159 @@ fn picker_select_then_confirm_arms_once_and_advances_route_generation() {
     assert_eq!(s.route_gen(), armed_generation);
 }
 
-#[test]
-fn picker_selection_cannot_cross_same_name_slot_replacement() {
-    let mut s = Session::new();
-    let world = open_world(3, 3);
-    let _fixture = bind_picker_session(
-        &mut s,
-        &world,
-        Tile {
-            x: 0,
-            z: 1,
-            level: 0,
-        },
-    );
-    s.select_picker_tile(
-        &world,
-        Tile {
-            x: 2,
-            z: 2,
-            level: 0,
-        },
-    );
+fn push_session_slot(
+    s: &mut Session,
+    name: &str,
+    origin: Tile,
+    world: Option<u16>,
+    connected: bool,
+    ingame: bool,
+) {
     s.play
         .as_mut()
         .unwrap()
-        .attach_arm("alice", SlotArm::new(1, false));
-    assert!(!s.confirm_picker_walk(&world));
-    assert_eq!(
-        s.error,
-        Some(host_play::walk_map::ActionError::Stale.to_string())
+        .attach_arm(name, SlotArm::new(1, false));
+    s.play
+        .as_ref()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(SlotStatus {
+            username: name.into(),
+            world,
+            connected,
+            ingame,
+            tile_x: origin.x,
+            tile_z: origin.z,
+            tile_level: origin.level,
+            ..Default::default()
+        });
+}
+
+#[test]
+fn picker_focus_switch_walks_the_newly_focused_bot() {
+    let mut s = Session::new();
+    let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let dest = Tile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let _fixture = bind_picker_session(&mut s, &world, origin);
+    push_session_slot(
+        &mut s,
+        "bob",
+        Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+        None,
+        true,
+        true,
     );
-    assert!(s.travellers.lock().unwrap().is_empty());
+    s.statuses = s.play.as_ref().unwrap().statuses();
+    s.wall.load("alice");
+    s.wall.load("bob");
+    assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
+    s.focus.lock().unwrap().focused = Some("bob".into());
+    s.play.as_mut().unwrap().focus("bob");
+    assert!(s.map_model.pending().is_some());
+    assert!(s.confirm_picker_walk(&world));
+    assert!(s.error.is_none());
+    let arms = s.travellers.lock().unwrap();
+    assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
+    assert!(!arms.contains_key("alice"));
+}
+
+#[test]
+fn picker_group_walk_several_slots_reports_like_start_all() {
+    use host_play::walk_map::{WalkExclude, WalkSlotStatus};
+    let mut s = Session::new();
+    let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let dest = Tile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let _fixture = bind_picker_session(&mut s, &world, origin);
+    push_session_slot(
+        &mut s,
+        "bob",
+        Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+        None,
+        true,
+        true,
+    );
+    push_session_slot(&mut s, "logged-out", origin, None, false, false);
+    push_session_slot(
+        &mut s,
+        "nopos",
+        Tile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        None,
+        true,
+        true,
+    );
+    s.statuses = s.play.as_ref().unwrap().statuses();
+    for name in ["alice", "bob", "logged-out", "nopos"] {
+        s.wall.load(name);
+    }
+    assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
+    s.refresh_walk_send();
+    s.set_walk_send_mode(super::WalkSendMode::Group);
+    s.walk_send_all_eligible();
+    let rows: Vec<(&str, bool, Option<WalkExclude>)> = s
+        .walk_send
+        .rows()
+        .iter()
+        .map(|row| {
+            (
+                row.name.as_str(),
+                row.checked,
+                match row.status {
+                    WalkSlotStatus::Eligible(_) => None,
+                    WalkSlotStatus::Excluded(reason) => Some(reason),
+                },
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("alice", true, None),
+            ("bob", true, None),
+            ("logged-out", false, Some(WalkExclude::NotLoggedIn)),
+            ("nopos", false, Some(WalkExclude::NoPosition)),
+        ]
+    );
+    assert_eq!(s.walk_send.walk_label(), "Walk 2 bots");
+    assert!(s.confirm_picker_group_walk(&world));
+    assert_eq!(s.error.as_deref(), Some("2 walking"));
     assert!(s.map_model.pending().is_none());
+    assert_eq!(s.walk_dest, Some(dest));
+    let arms = s.travellers.lock().unwrap();
+    assert_eq!(arms["alice"].lock().unwrap().queued_tile(), Some(dest));
+    assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
+    assert!(!arms.contains_key("logged-out"));
 }
 
 #[test]
@@ -2185,7 +2306,7 @@ fn picker_teleport_follows_session_target_and_host() {
     assert_eq!(local.target(), client::BotTarget::Local);
     assert!(local.map_teleport_authorized());
     let (labels, actions, status) = walkto_panel_state(&local);
-    assert_eq!(labels, &["recentre", "Walk", "Teleport"][..]);
+    assert_eq!(labels, &["recentre", "Walk", "Send", "Teleport"][..]);
     assert_eq!(actions, (false, true));
     assert_eq!(status, "blocked 1000 1001 1 (teleport only) · ok");
 
@@ -2198,7 +2319,7 @@ fn picker_teleport_follows_session_target_and_host() {
     assert!(prod.debug_ui());
     assert!(!prod.map_teleport_authorized());
     let (labels, actions, status) = walkto_panel_state(&prod);
-    assert_eq!(labels, &["recentre", "Walk"][..]);
+    assert_eq!(labels, &["recentre", "Walk", "Send"][..]);
     assert_eq!(actions, (false, false));
     assert_eq!(status, "blocked 1000 1001 1 · ok");
 
@@ -2210,7 +2331,7 @@ fn picker_teleport_follows_session_target_and_host() {
     assert_eq!(remote.target(), client::BotTarget::Local);
     assert!(!remote.map_teleport_authorized());
     let (labels, actions, status) = walkto_panel_state(&remote);
-    assert_eq!(labels, &["recentre", "Walk"][..]);
+    assert_eq!(labels, &["recentre", "Walk", "Send"][..]);
     assert_eq!(actions, (false, false));
     assert_eq!(status, "blocked 1000 1001 1 · ok");
 }

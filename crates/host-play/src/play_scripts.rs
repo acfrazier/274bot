@@ -164,6 +164,22 @@ impl Play {
         self.spawned.contains(name) || self.arms.contains_key(name)
     }
 
+    #[cfg(test)]
+    pub(crate) fn mark_script_running_for_walk(&self, name: &str) {
+        struct Dummy;
+        impl script::Script for Dummy {
+            fn name(&self) -> &str {
+                "walk-exclude"
+            }
+            fn tick(&mut self, _ctx: &mut script::ScriptCtx<'_>) {}
+        }
+        let slot = crate::script_runtime::script_slot_or_insert(&self.scripts, name);
+        slot.lock()
+            .unwrap()
+            .start_compiled(Box::new(Dummy), None)
+            .unwrap();
+    }
+
     /// Paint is status-owned once published. Script lifecycle commands clear
     /// it directly because a disconnected slot has no observe pass. Call only
     /// after releasing the script-slot guard: script -> status is the sole

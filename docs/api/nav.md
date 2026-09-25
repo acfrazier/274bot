@@ -277,10 +277,11 @@ POIs. Route and destination are vector markers. Reach uses bound
 `.navreach` or `reach unavailable`. Wheel zooms toward the cursor; click
 selects through
 `host_play::walk_map::MapModel` (radius-16 walkable query, blocked clicks
-stay view-only). Footer **Recentre** / **Walk** consume that pending
-selection once via `Play::map_walk`; a missing origin or stale focus
+stay view-only). Footer **Recentre** / **Walk** / **Send** consume that
+pending destination once via `Play::map_walk` (the bot focused at confirm,
+or a group of eligible wall bots); a missing origin or a running script
 refuses instead of storing a later login dest. Local engines also get
-**Teleport** (`Play::map_teleport`, loopback-guarded). Close/hide
+**Teleport** (`Play::map_teleport`, loopback-guarded, focused-only). Close/hide
 unregisters textures and drops CPU pixels. `BOT_CPU=1` still uses this
 map path (panel UI GPU). `walk_status_text` mirrors the armed dest and
 clears on any terminal outcome.

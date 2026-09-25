@@ -981,6 +981,59 @@ static PATH_CAM: Mutex<PathCamHold> = Mutex::new(PathCamHold {
     vel: 0.0,
 });
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkSendMode {
+    Focused,
+    Group,
+}
+
+#[derive(Debug, Clone)]
+pub struct WalkSendRow {
+    pub name: String,
+    pub status: host_play::walk_map::WalkSlotStatus,
+    pub checked: bool,
+}
+
+/// Send control state. Eligibility rows are rebuilt on open/refresh, not
+/// every frame. The bot list is the rail membership when MultiBox has any.
+#[derive(Debug, Clone)]
+pub struct WalkSendState {
+    pub mode: WalkSendMode,
+    rows: Vec<WalkSendRow>,
+    walk_label: String,
+}
+
+impl Default for WalkSendState {
+    fn default() -> Self {
+        Self {
+            mode: WalkSendMode::Focused,
+            rows: Vec::new(),
+            walk_label: "Walk".into(),
+        }
+    }
+}
+
+impl WalkSendState {
+    pub fn rows(&self) -> &[WalkSendRow] {
+        &self.rows
+    }
+
+    pub fn walk_label(&self) -> &str {
+        &self.walk_label
+    }
+
+    pub fn checked_count(&self) -> usize {
+        self.rows.iter().filter(|row| row.checked).count()
+    }
+
+    fn sync_walk_label(&mut self) {
+        self.walk_label = match self.mode {
+            WalkSendMode::Focused => "Walk".into(),
+            WalkSendMode::Group => format!("Walk {} bots", self.checked_count()),
+        };
+    }
+}
+
 pub struct Session {
     /// Shared focus policy; slot threads read it every frame (observe) to
     /// apply `client.set_draw(draw_for_slot(&focus, name))`, so only the
@@ -1050,6 +1103,8 @@ pub struct Session {
     /// One application-owned map view/catalogue, never a copy on each bot.
     pub map_model: host_play::walk_map::MapModel,
     pub map_catalogue: Option<Arc<host_play::walk_map::Catalogue>>,
+    /// WalkTo Send: focused vs group checklist. Recomputed on open/refresh.
+    pub walk_send: WalkSendState,
     /// Nav config window open flag (non-modal, same as General config).
     pub nav_settings_open: bool,
     /// Non-modal settings window (renderer / capture / mem).
@@ -1427,6 +1482,7 @@ impl Session {
             walkto_open: false,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
+            walk_send: WalkSendState::default(),
             nav_settings_open: false,
             global_settings_open: false,
             tutorial_getvar_sent: HashSet::new(),
@@ -3460,7 +3516,7 @@ impl Session {
         focus.focused = Some(name.to_string());
         let capture = focus.capture;
         drop(focus);
-        self.map_model.clear_selection();
+        // Destination is not a bot: switching focus keeps the pending tile.
         // Mirror onto the play: which slot the panel samples (host-play
         // keeps it as pure bookkeeping — no socket adopt/park).
         if let Some(play) = self.play.as_mut() {
@@ -4261,30 +4317,36 @@ impl Session {
     /// from its live snapshot), or the fail-closed empty state when the
     /// slot has not published yet (still logging in / no player decoded).
     fn focused_walk_state(&self) -> WorldState {
-        self.focused_name()
-            .and_then(|name| {
-                self.nav_states
-                    .lock()
-                    .unwrap()
-                    .get(&name)
-                    .map(|(_, w)| w.clone().with_map_members(self.map_members()))
-            })
-            .unwrap_or_else(|| WorldState::empty().with_map_members(self.map_members()))
+        self.walk_state(self.focused_name().as_deref())
+    }
+
+    fn walk_state(&self, name: Option<&str>) -> WorldState {
+        name.and_then(|name| {
+            self.nav_states
+                .lock()
+                .unwrap()
+                .get(name)
+                .map(|(_, w)| w.clone().with_map_members(self.map_members()))
+        })
+        .unwrap_or_else(|| WorldState::empty().with_map_members(self.map_members()))
     }
 
     /// Open bank rows (obj id, count) from the focused slot's last
     /// published snapshot — empty when the bank is closed or no slot is
     /// focused (BankBudget has no closed-bank inventory).
     fn focused_walk_bank(&self) -> Vec<(i32, i32)> {
-        self.focused_name()
-            .and_then(|name| {
-                self.nav_states
-                    .lock()
-                    .unwrap()
-                    .get(&name)
-                    .map(|(snap, _)| snap.bank().iter().map(|it| (it.def.id, it.count)).collect())
-            })
-            .unwrap_or_default()
+        self.walk_bank(self.focused_name().as_deref())
+    }
+
+    fn walk_bank(&self, name: Option<&str>) -> Vec<(i32, i32)> {
+        name.and_then(|name| {
+            self.nav_states
+                .lock()
+                .unwrap()
+                .get(name)
+                .map(|(snap, _)| snap.bank().iter().map(|it| (it.def.id, it.count)).collect())
+        })
+        .unwrap_or_default()
     }
 
     pub fn map_nav_digest(&self) -> nav::map::identity::Digest {
@@ -4315,23 +4377,13 @@ impl Session {
         use host_play::walk_map::MapContext;
         let name = self.focused_name();
         let nav = self.map_nav_digest_for(Some(world));
-        let session = name
-            .as_ref()
-            .and_then(|name| {
-                self.frontend_gens
-                    .lock()
-                    .unwrap()
-                    .get(name)
-                    .map(|g| g.session)
-            })
-            .unwrap_or(0);
         MapContext {
             focus: name
                 .as_deref()
                 .and_then(|name| self.play.as_ref()?.map_focus(name)),
             nav,
             overlay: self.map_catalogue.as_ref().map(|c| c.key()),
-            generation: self.profile_generation.wrapping_add(session),
+            generation: self.profile_generation,
         }
     }
 
@@ -4339,6 +4391,17 @@ impl Session {
         let context = self.picker_context(world);
         self.map_model.bind(context);
         self.map_model.select_tile(world, requested)
+    }
+
+    pub fn select_picker_coordinates(
+        &mut self,
+        world: &NavWorld,
+        input: &str,
+    ) -> Result<Option<Tile>, host_play::walk_map::ActionError> {
+        let requested = host_play::walk_map::MapModel::parse_coordinates(input)?;
+        let target = self.select_picker_tile(world, requested);
+        self.map_model.center = [f64::from(requested.x) + 0.5, f64::from(requested.z) + 0.5];
+        Ok(target)
     }
 
     pub fn select_picker_poi(&mut self, index: usize) -> bool {
@@ -4409,6 +4472,144 @@ impl Session {
                 false
             }
         }
+    }
+
+    fn walk_send_names(&self) -> Vec<String> {
+        if !self.wall.members.is_empty() {
+            return self.wall.members.clone();
+        }
+        if let Some(name) = self.focused_name() {
+            return vec![name];
+        }
+        self.statuses.iter().map(|s| s.username.clone()).collect()
+    }
+
+    pub fn refresh_walk_send(&mut self) {
+        use host_play::walk_map::{WalkExclude, WalkSlotStatus};
+        let names = self.walk_send_names();
+        let prev: HashMap<String, bool> = self
+            .walk_send
+            .rows
+            .iter()
+            .map(|row| (row.name.clone(), row.checked))
+            .collect();
+        let play = self.play.as_ref();
+        let mut rows = Vec::with_capacity(names.len());
+        for name in names {
+            let status = match play {
+                Some(play) => play.walk_eligibility(&name),
+                None => WalkSlotStatus::Excluded(WalkExclude::NotLoggedIn),
+            };
+            let checked =
+                status.is_eligible() && prev.get(&name).copied().unwrap_or(status.is_eligible());
+            rows.push(WalkSendRow {
+                name,
+                status,
+                checked,
+            });
+        }
+        self.walk_send.rows = rows;
+        self.walk_send.sync_walk_label();
+    }
+
+    pub fn set_walk_send_mode(&mut self, mode: WalkSendMode) {
+        self.walk_send.mode = mode;
+        if mode == WalkSendMode::Group && self.walk_send.checked_count() == 0 {
+            for row in &mut self.walk_send.rows {
+                row.checked = row.status.is_eligible();
+            }
+        }
+        self.walk_send.sync_walk_label();
+    }
+
+    pub fn walk_send_all_eligible(&mut self) {
+        for row in &mut self.walk_send.rows {
+            row.checked = row.status.is_eligible();
+        }
+        self.walk_send.sync_walk_label();
+    }
+
+    pub fn walk_send_none(&mut self) {
+        for row in &mut self.walk_send.rows {
+            row.checked = false;
+        }
+        self.walk_send.sync_walk_label();
+    }
+
+    pub fn set_walk_send_checked(&mut self, index: usize, checked: bool) {
+        if let Some(row) = self.walk_send.rows.get_mut(index) {
+            if row.status.is_eligible() {
+                row.checked = checked;
+            }
+        }
+        self.walk_send.sync_walk_label();
+    }
+
+    pub fn confirm_picker_group_walk(&mut self, world: &NavWorld) -> bool {
+        use host_play::walk_map::{ActionError, WalkSlotOutcomeKind, WalkSlotRequest};
+        let names: Vec<String> = self
+            .walk_send
+            .rows
+            .iter()
+            .filter(|row| row.checked)
+            .map(|row| row.name.clone())
+            .collect();
+        let context = self.picker_context(world);
+        let plan = match self.map_model.confirm_walk_plan(
+            &context,
+            FindOptions {
+                allow_teleports: self.ui.nav.allow_teleports,
+                allow_wilderness: self.ui.nav.allow_wilderness,
+                allow_bank_fetch: self.ui.nav.allow_bank_fetch,
+                ..Default::default()
+            },
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return false;
+            }
+        };
+        self.walk_dest = Some(plan.destination());
+        if self.play.is_none() {
+            self.error = Some(ActionError::NoFocus.to_string());
+            return false;
+        }
+        let states: Vec<WorldState> = names
+            .iter()
+            .map(|name| self.walk_state(Some(name)))
+            .collect();
+        let banks: Vec<Vec<(i32, i32)>> = names
+            .iter()
+            .map(|name| self.walk_bank(Some(name)))
+            .collect();
+        let reqs: Vec<WalkSlotRequest<'_>> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| WalkSlotRequest {
+                name,
+                state: &states[i],
+                bank: &banks[i],
+            })
+            .collect();
+        let report =
+            self.play
+                .as_ref()
+                .unwrap()
+                .map_walk_group(plan, &context, &reqs, &self.travellers);
+        {
+            let mut latch = self.tick_latch.lock().unwrap();
+            for outcome in &report.outcomes {
+                if matches!(outcome.kind, WalkSlotOutcomeKind::Walking) {
+                    latch.remove(&outcome.name);
+                }
+            }
+        }
+        self.walk_clear.store(false, Ordering::Relaxed);
+        self.route_gen = self.route_gen.wrapping_add(1);
+        let walking = report.walking_count();
+        self.error = Some(report.summary());
+        walking > 0
     }
 
     pub fn confirm_picker_teleport(&mut self, world: &NavWorld) -> bool {

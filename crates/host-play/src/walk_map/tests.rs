@@ -179,6 +179,27 @@ fn offline_play(world: NavWorld) -> crate::Play {
     play
 }
 
+fn push_slot(
+    play: &mut crate::Play,
+    name: &str,
+    origin: Tile,
+    world: Option<u16>,
+    connected: bool,
+    ingame: bool,
+) {
+    play.attach_arm(name, crate::SlotArm::new(1, false));
+    play.statuses.lock().unwrap().push(crate::SlotStatus {
+        username: name.into(),
+        world,
+        connected,
+        ingame,
+        tile_x: origin.x,
+        tile_z: origin.z,
+        tile_level: origin.level,
+        ..Default::default()
+    });
+}
+
 #[test]
 fn merged_bridge_access_annotation_and_label_remain_distinct() {
     let world = Arc::new(world(
@@ -362,7 +383,7 @@ fn radius_snap_miss_extremes_and_plane_changes_cannot_arm() {
 }
 
 #[test]
-fn confirmations_capture_once_and_expire_on_focus_identity_or_origin_loss() {
+fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
     let world = world(t(0, 0, 0), 5, &[]);
     let ctx = context();
     let mut model = MapModel::default();
@@ -376,10 +397,6 @@ fn confirmations_capture_once_and_expire_on_focus_identity_or_origin_loss() {
     );
     assert!(model.pending().is_none());
     for changed in [
-        MapContext {
-            focus: context().focus,
-            ..ctx
-        },
         MapContext {
             overlay: Some(digest(4)),
             ..ctx
@@ -402,6 +419,20 @@ fn confirmations_capture_once_and_expire_on_focus_identity_or_origin_loss() {
             ActionError::Stale
         );
     }
+    model.select_tile(&world, t(2, 2, 0));
+    let other_focus = MapContext {
+        focus: context().focus,
+        ..ctx
+    };
+    let switched = model
+        .confirm(
+            ActionKind::Walk,
+            &other_focus,
+            Some(t(0, 0, 0)),
+            FindOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(switched.destination(), t(2, 2, 0));
     model.select_tile(&world, t(2, 2, 0));
     let opts = FindOptions {
         allow_teleports: true,
@@ -484,7 +515,7 @@ fn play_map_teleport_authorized_follows_bound_target_and_host() {
 }
 
 #[test]
-fn host_rejects_remote_teleport_and_expired_slot_before_queueing() {
+fn host_rejects_remote_teleport_before_queueing() {
     let mut play = offline_play(world(t(3200, 3200, 0), 8, &[]));
     play.focused = Some("alice".into());
     play.arms
@@ -520,20 +551,6 @@ fn host_rejects_remote_teleport_and_expired_slot_before_queueing() {
         play.map_teleport(command, &ctx),
         Err(ActionError::Unauthorized)
     );
-    assert!(play.cheats.lock().unwrap()["alice"].is_empty());
-    model.select_tile(play.world.as_deref().unwrap(), t(3203, 3204, 2));
-    let command = model
-        .confirm(
-            ActionKind::Teleport,
-            &ctx,
-            Some(t(3201, 3201, 0)),
-            FindOptions::default(),
-        )
-        .unwrap();
-    // Same username and uid do not preserve the old slot's authority.
-    play.arms
-        .insert("alice".into(), crate::SlotArm::new(1, false));
-    assert_eq!(play.map_teleport(command, &ctx), Err(ActionError::Stale));
     assert!(play.cheats.lock().unwrap()["alice"].is_empty());
 }
 
@@ -1112,4 +1129,182 @@ fn replacing_a_manual_arm_cannot_reuse_a_cached_route_stamp() {
         first, replacement,
         "same destination but a different route after arm replacement"
     );
+}
+
+#[test]
+fn single_bot_walk_and_teleport_follow_a_focus_switch() {
+    let nav = world(t(3200, 3200, 0), 8, &[]);
+    let fixture = MapFixture::new(&nav, "local-289");
+    let mut play = fixture.play(t(3201, 3201, 0));
+    push_slot(&mut play, "bob", t(3202, 3202, 0), None, true, true);
+    play.cheats
+        .lock()
+        .unwrap()
+        .insert("alice".into(), Default::default());
+    play.cheats
+        .lock()
+        .unwrap()
+        .insert("bob".into(), Default::default());
+    let dest_ctx = bound_context(&play);
+    let baked = play.world().unwrap();
+    let dest = t(3205, 3206, 0);
+    let mut model = MapModel::default();
+    model.bind(dest_ctx);
+    assert_eq!(model.select_tile(&baked, dest), Some(dest));
+    play.focus("bob");
+    let bob_ctx = MapContext {
+        focus: play.map_focus("bob"),
+        ..dest_ctx
+    };
+    let command = model
+        .confirm(
+            ActionKind::Walk,
+            &bob_ctx,
+            Some(t(3202, 3202, 0)),
+            FindOptions::default(),
+        )
+        .unwrap();
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+    play.map_walk(command, &bob_ctx, &WorldState::empty(), &[], &arms)
+        .unwrap();
+    assert_eq!(
+        arms.lock().unwrap()["bob"].lock().unwrap().queued_tile(),
+        Some(dest)
+    );
+    assert!(!arms.lock().unwrap().contains_key("alice"));
+
+    model.bind(bob_ctx);
+    assert_eq!(model.select_tile(&baked, dest), Some(dest));
+    let command = model
+        .confirm(
+            ActionKind::Teleport,
+            &bob_ctx,
+            Some(t(3202, 3202, 0)),
+            FindOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(play.map_teleport(command, &bob_ctx), Ok(()));
+    let queues = play.cheats.lock().unwrap();
+    assert_eq!(queues["alice"].len(), 0);
+    assert_eq!(queues["bob"].len(), 1);
+}
+
+#[test]
+fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
+    let nav = world(t(3200, 3200, 0), 8, &[]);
+    let fixture = MapFixture::new(&nav, "local-289");
+    let mut play = fixture.play(t(3201, 3201, 0));
+    push_slot(&mut play, "bob", t(3202, 3202, 0), None, true, true);
+    push_slot(
+        &mut play,
+        "logged-out",
+        t(3201, 3201, 0),
+        None,
+        false,
+        false,
+    );
+    push_slot(&mut play, "nopos", t(0, 0, 0), None, true, true);
+    push_slot(&mut play, "scripter", t(3204, 3204, 0), None, true, true);
+    play.mark_script_running_for_walk("scripter");
+    push_slot(&mut play, "bot3", t(3201, 3201, 1), None, true, true);
+
+    let dest_ctx = bound_context(&play);
+    let baked = play.world().unwrap();
+    let mut model = MapModel::default();
+    model.bind(dest_ctx);
+    let dest = t(3205, 3206, 0);
+    assert_eq!(model.select_tile(&baked, dest), Some(dest));
+
+    let empty = WorldState::empty();
+    let bank: [(i32, i32); 0] = [];
+    let names = ["alice", "bob", "logged-out", "nopos", "scripter", "bot3"];
+    let reqs: Vec<WalkSlotRequest<'_>> = names
+        .iter()
+        .map(|name| WalkSlotRequest {
+            name,
+            state: &empty,
+            bank: &bank,
+        })
+        .collect();
+
+    assert_eq!(
+        match play.walk_eligibility("alice") {
+            WalkSlotStatus::Eligible(ready) => ready.origin,
+            other => panic!("{other:?}"),
+        },
+        t(3201, 3201, 0)
+    );
+    assert_eq!(
+        match play.walk_eligibility("bob") {
+            WalkSlotStatus::Eligible(ready) => ready.origin,
+            other => panic!("{other:?}"),
+        },
+        t(3202, 3202, 0)
+    );
+    assert_eq!(
+        play.walk_eligibility("logged-out"),
+        WalkSlotStatus::Excluded(WalkExclude::NotLoggedIn)
+    );
+    assert_eq!(
+        play.walk_eligibility("nopos"),
+        WalkSlotStatus::Excluded(WalkExclude::NoPosition)
+    );
+    assert_eq!(
+        play.walk_eligibility("scripter"),
+        WalkSlotStatus::Excluded(WalkExclude::RunningScript)
+    );
+
+    let plan = model
+        .confirm_walk_plan(&dest_ctx, FindOptions::default())
+        .unwrap();
+    assert!(model.pending().is_none());
+    assert_eq!(
+        model
+            .confirm_walk_plan(&dest_ctx, FindOptions::default())
+            .unwrap_err(),
+        ActionError::NoSelection
+    );
+
+    let alice_cmd = plan.command("alice", t(3201, 3201, 0));
+    let bob_cmd = plan.command("bob", t(3202, 3202, 0));
+    assert_eq!(alice_cmd.origin(), t(3201, 3201, 0));
+    assert_eq!(bob_cmd.origin(), t(3202, 3202, 0));
+    assert_eq!(alice_cmd.destination(), dest);
+    assert_eq!(bob_cmd.destination(), dest);
+
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let report = play.map_walk_group(plan, &dest_ctx, &reqs, &arms);
+    let kinds: Vec<(&str, WalkSlotOutcomeKind)> = report
+        .outcomes
+        .iter()
+        .map(|o| (o.name.as_str(), o.kind))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ("alice", WalkSlotOutcomeKind::Walking),
+            ("bob", WalkSlotOutcomeKind::Walking),
+            (
+                "logged-out",
+                WalkSlotOutcomeKind::Excluded(WalkExclude::NotLoggedIn)
+            ),
+            (
+                "nopos",
+                WalkSlotOutcomeKind::Excluded(WalkExclude::NoPosition)
+            ),
+            (
+                "scripter",
+                WalkSlotOutcomeKind::Excluded(WalkExclude::RunningScript)
+            ),
+            ("bot3", WalkSlotOutcomeKind::Failed(ActionError::NoPath)),
+        ]
+    );
+    assert_eq!(
+        report.summary(),
+        "2 walking, 1 not logged in: logged-out, 1 no position yet: nopos, 1 running a script: scripter, 1 no path: bot3"
+    );
+    let arms = arms.lock().unwrap();
+    assert_eq!(arms["alice"].lock().unwrap().queued_tile(), Some(dest));
+    assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
+    assert!(!arms.contains_key("bot3"));
 }

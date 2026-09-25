@@ -7,7 +7,9 @@ mod observations;
 mod routes;
 
 pub use actions::{
-    ActionError, ActionKind, FocusToken, Layers, MapCommand, MapContext, MapModel, Selection,
+    ActionError, ActionKind, FocusToken, GroupWalkReport, Layers, MapCommand, MapContext, MapModel,
+    MapWalkPlan, Selection, WalkExclude, WalkSlotOutcome, WalkSlotOutcomeKind, WalkSlotReady,
+    WalkSlotRequest, WalkSlotStatus,
 };
 pub use catalogue::{
     AuthenticatedServices, Catalogue, Entry, Meaning, Search, SourceStatus, BANK_API_NOTE,

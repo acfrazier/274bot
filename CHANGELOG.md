@@ -61,17 +61,22 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   ordered by Chebyshev distance, Manhattan distance, x, then z. A miss has no
   walk target; debug Teleport still uses the requested tile. Place-label
   anchors remain view jumps unless they have a proven stand.
-- Shared map confirmations consume the selection once, preserving its captured
-  slot lifetime/world/nav binding and taking routing options at confirmation.
-  Panel adapters walk through `Play::map_walk`, refuse a missing observed
-  player, and send debug Teleport only through `Play::map_teleport`. Walk
-  needs the snapped target. Debug Teleport is a cheat: it uses the requested
-  tile and does not require walkability or radius-16 snap. It is authorized
-  only for a Local target on a loopback host; the panel and host share that
-  predicate, and an unsnapped selection is labelled teleport-only only when
-  Teleport is available.
-  The replacement picker supplies selection-time binding; confirmation does
-  not rebind an old click to a new slot or profile.
+- Shared map confirmations consume the selection once. The destination binds
+  tile/POI, plane and nav identity, not a bot. Walk options are taken at
+  confirmation. Panel adapters walk through `Play::map_walk`, refuse a missing
+  observed player, and send debug Teleport only through `Play::map_teleport`.
+  Walk needs the snapped target. Debug Teleport is a cheat: it uses the
+  requested tile and does not require walkability or radius-16 snap. It is
+  authorized only for a Local target on a loopback host; the panel and host
+  share that predicate, and an unsnapped selection is labelled teleport-only
+  only when Teleport is available. Walk and Teleport act on the bot focused
+  at confirm. A different nav pack still invalidates the pending destination.
+- WalkTo Send walks the focused bot (default) or a Group checklist of wall
+  bots (All eligible / None). Ineligible bots stay listed and greyed with a
+  host reason: not logged in, no position yet, or running a script (stop the
+  script to include it). Confirm reads Walk N bots; each eligible bot gets
+  its own command, origin and routing options, then a Start-all-style
+  summary (`4 walking, 1 no path: bot3`). Debug Teleport stays focused-only.
 - The shared route projection borrows actual routes with driven-live, script,
   then manual precedence, matching the in-game overlay. Its generation changes
   across arm replacement, including a new path to the same destination.

@@ -593,12 +593,12 @@ fn right_align_x(cursor_x: f32, avail_x: f32, width: f32) -> f32 {
     cursor_x + avail_x - width
 }
 
-/// Footer labels: Teleport only when debug teleport is authorized.
+/// Footer labels: Send sits next to Walk; Teleport only when authorized.
 pub(crate) fn walkto_footer_labels(teleport: bool) -> &'static [&'static str] {
     if teleport {
-        &["recentre", "Walk", "Teleport"]
+        &["recentre", "Walk", "Send", "Teleport"]
     } else {
-        &["recentre", "Walk"]
+        &["recentre", "Walk", "Send"]
     }
 }
 
@@ -1112,8 +1112,12 @@ fn picker_map_body(
         status,
     ));
     let spacing = ui.clone_style().item_spacing()[0];
+    let walk_label = session.walk_send.walk_label();
     let labels = walkto_footer_labels(teleport);
-    let cluster = labels.iter().map(|l| button_w(ui, l)).sum::<f32>()
+    let cluster = labels
+        .iter()
+        .map(|label| button_w(ui, if *label == "Walk" { walk_label } else { label }))
+        .sum::<f32>()
         + spacing * (labels.len().saturating_sub(1) as f32);
     let x = right_align_x(ui.cursor_pos()[0], ui.content_region_avail()[0], cluster);
     ui.same_line_with_pos(x);
@@ -1126,14 +1130,33 @@ fn picker_map_body(
     }
     ui.same_line();
     let (can_walk, can_teleport) = walkto_actions_enabled(session.map_model.pending(), teleport);
+    let group = session.walk_send.mode == crate::session::WalkSendMode::Group;
+    let walk_ready = if group {
+        can_walk && session.walk_send.checked_count() > 0
+    } else {
+        can_walk
+    };
     {
-        let _off = ui.begin_disabled_with_cond(!can_walk);
-        if ui.button("Walk") && can_walk && session.confirm_picker_walk(world) {
-            session.walkto_open = false;
-            PREV_OPEN.store(false, Ordering::Relaxed);
-            session.map_model.close();
+        let _off = ui.begin_disabled_with_cond(!walk_ready);
+        if ui.button(walk_label) && walk_ready {
+            let ok = if group {
+                session.confirm_picker_group_walk(world)
+            } else {
+                session.confirm_picker_walk(world)
+            };
+            if ok {
+                session.walkto_open = false;
+                PREV_OPEN.store(false, Ordering::Relaxed);
+                session.map_model.close();
+            }
         }
     }
+    ui.same_line();
+    if ui.button("Send") {
+        session.refresh_walk_send();
+        ui.open_popup("##walkto-send");
+    }
+    draw_walk_send_popup(ui, session);
     if teleport {
         ui.same_line();
         let _off = ui.begin_disabled_with_cond(!can_teleport);
@@ -1144,6 +1167,53 @@ fn picker_map_body(
         }
     }
     record_picker_layout(ui, &toolbar, canvas_inner, canvas_item_max, footer_h);
+}
+
+fn draw_walk_send_popup(ui: &Ui, session: &mut Session) {
+    ui.popup("##walkto-send", || {
+        use crate::session::WalkSendMode;
+        use crate::theme::TEXT_DIM;
+        use host_play::walk_map::WalkSlotStatus;
+        if ui.radio_button(
+            "Focused bot",
+            session.walk_send.mode == WalkSendMode::Focused,
+        ) {
+            session.set_walk_send_mode(WalkSendMode::Focused);
+        }
+        if ui.radio_button("Group", session.walk_send.mode == WalkSendMode::Group) {
+            session.set_walk_send_mode(WalkSendMode::Group);
+        }
+        if session.walk_send.mode == WalkSendMode::Group {
+            if ui.button("All eligible") {
+                session.walk_send_all_eligible();
+            }
+            ui.same_line();
+            if ui.button("None") {
+                session.walk_send_none();
+            }
+            let n = session.walk_send.rows().len();
+            for i in 0..n {
+                let _id = ui.push_id(i);
+                let eligible = session.walk_send.rows()[i].status.is_eligible();
+                if eligible {
+                    let mut checked = session.walk_send.rows()[i].checked;
+                    let changed =
+                        ui.checkbox(session.walk_send.rows()[i].name.as_str(), &mut checked);
+                    if changed {
+                        session.set_walk_send_checked(i, checked);
+                    }
+                } else {
+                    let _off = ui.begin_disabled_with_cond(true);
+                    let mut dummy = false;
+                    ui.checkbox(session.walk_send.rows()[i].name.as_str(), &mut dummy);
+                    ui.same_line();
+                    if let WalkSlotStatus::Excluded(reason) = session.walk_send.rows()[i].status {
+                        ui.text_colored(TEXT_DIM, reason.as_str());
+                    }
+                }
+            }
+        }
+    });
 }
 
 fn draw_search_hits(ui: &Ui, session: &mut Session, map: &mut WalkMapRenderer, world: &NavWorld) {
@@ -1189,11 +1259,7 @@ fn draw_search_hits(ui: &Ui, session: &mut Session, map: &mut WalkMapRenderer, w
 }
 
 fn apply_search_jump(session: &mut Session, map: &mut WalkMapRenderer, world: &NavWorld) {
-    bind_map_model(session, world);
-    match session
-        .map_model
-        .select_coordinates(world, map.search.trim())
-    {
+    match session.select_picker_coordinates(world, map.search.trim()) {
         Ok(_) => {
             sync_view_from_model(&session.map_model);
             return;

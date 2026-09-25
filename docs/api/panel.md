@@ -331,14 +331,21 @@ plus optional map-owned overlay toggles (not per-tile quads), vector route
 and destination, wheel-zoom toward
 the cursor, click-to-pick uses the canvas rect (`is_mouse_hovering_rect`),
 header plane/zoom/search/layer controls that wrap at the default Game pane
-and narrower widths, footer **Recentre** / **Walk**, and **Teleport**
-(Local target on a loopback host, guarded by
-`host_play::walk_map`). Walk needs a snapped walkable target. Debug
-**Teleport** uses the clicked tile even when blocked, and is enabled
+and narrower widths, footer **Recentre** / **Walk** / **Send**, and
+**Teleport** (Local target on a loopback host, guarded by
+`host_play::walk_map`). Walk needs a snapped walkable target. The map
+selection is a destination (tile/POI, plane, nav identity), not a bot.
+**Send** chooses **Focused bot** (default) or **Group** — a checklist of
+wall bots with **All eligible / None**. Ineligible bots stay listed,
+greyed, with a host reason (not logged in, no position yet, running a
+script). Group confirm reads **Walk N bots**; each eligible bot gets its
+own command and a Start-all-style summary. Debug **Teleport** uses the
+clicked tile even when blocked, stays focused-only, and is enabled
 whenever there is a selection and Teleport is authorized. Confirmations
-consume the pending `MapModel` selection once; missing origin or stale
-focus refuse instead of storing a later login dest. Status `walk`
-mirrors the armed dest.
+consume the pending `MapModel` selection once and act on the bot focused
+at confirm; missing origin or a running script refuse instead of storing
+a later login dest. A different nav pack invalidates the destination.
+Status `walk` mirrors the armed dest.
 
 ## Headless proof
 

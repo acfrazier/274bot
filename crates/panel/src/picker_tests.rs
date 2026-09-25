@@ -270,10 +270,10 @@ fn right_align_x_sits_the_cluster_on_the_content_edge() {
 
 #[test]
 fn walkto_footer_adds_teleport_on_local_engine() {
-    assert_eq!(walkto_footer_labels(false), &["recentre", "Walk"]);
+    assert_eq!(walkto_footer_labels(false), &["recentre", "Walk", "Send"]);
     assert_eq!(
         walkto_footer_labels(true),
-        &["recentre", "Walk", "Teleport"]
+        &["recentre", "Walk", "Send", "Teleport"]
     );
 }
 
