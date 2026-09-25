@@ -292,9 +292,10 @@ pub fn find_with_avoid_bounded(
 /// Native bank-search cap: 500,000 non-goal expansions precede an accepted
 /// goal, which has 1-based settle ordinal 500,001.
 pub const BANK_TARGET_BUDGET: usize = 500_001;
-/// Settles a first-goal search may spend while its backward proof has not
-/// shown any goal reachable. A proof of reachability lifts the search to
-/// [`find_with`]'s full budget; a proof of unreachability stops it at once.
+/// Settles a first-goal search's goal set keeps the search going while the
+/// set's backward proof has not shown any of its goals reachable. A proof of
+/// reachability lifts the set to [`find_with`]'s full budget; a proof of
+/// unreachability stops it at once.
 /// Only a goal set unreachable from a large region whose own backward region
 /// is also large spends all of it: on the 289 bake, stands fed through
 /// ladders by the unstamped upper planes. Measured reachable in-scene stands
@@ -319,8 +320,9 @@ pub struct TargetCost {
 /// Allocated entry capacities for this request's search scratch at stop.
 /// HashMap/heap capacities never shrink during the flood; these are their
 /// peak allocated entry capacities, not retained per worker or pack bytes.
-/// `reverse` and `reverse_queue` are the backward proof's set and queue
-/// (zero when no proof ran); they are dropped as soon as the proof decides.
+/// `reverse` and `reverse_queue` are the larger of the goal sets' backward
+/// proof sets and queues (zero when no proof ran); each proof's scratch is
+/// dropped as soon as it decides or its set stops.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SearchCapacities {
     pub distances: usize,
@@ -357,13 +359,15 @@ pub enum ReverseProof {
 pub enum FallbackRoute {
     /// The cheapest fallback goal, settled on the way.
     Routed(Route),
-    /// No fallback goal settles within this search: everything reachable
-    /// settled ([`RouteError::NoPath`]) or the budget was spent
+    /// No fallback goal can settle: the set's own proof shows it
+    /// unreachable, or everything reachable settled
+    /// ([`RouteError::NoPath`]); or the settles spent passed its own budget
+    /// without its proof showing a goal reachable
     /// ([`RouteError::BudgetExhausted`]).
     Failed(RouteError),
-    /// The preferred goals were proven unreachable before the search
-    /// reached any fallback goal; a search over the fallback set alone
-    /// decides it.
+    /// Only more settles could decide it: its proof shows a goal reachable,
+    /// or the preferred proof stopped the search within the fallback's
+    /// budget. A search over the fallback set alone decides it.
     Undecided,
 }
 
@@ -441,12 +445,16 @@ pub fn find_first_with(
 /// [`find_first_with`] over preferred `targets` with a `fallback` goal set,
 /// sharing one search: the cheapest reachable preferred goal wins even over
 /// a cheaper fallback goal, and the search records the first fallback goal
-/// it settles on the way ([`FallbackRoute`]). When the budget stops the
-/// search, the fallback set gets no budget of its own: a fallback goal had
-/// to settle within the settles already spent. When the preferred proof
-/// stops it early, the fallback set is [`FallbackRoute::Undecided`] for the
-/// caller to search alone, and that search is then the only one of the two
-/// that can be budget-limited.
+/// it settles on the way ([`FallbackRoute`]). The search stops as it would
+/// over the preferred goals alone; the fallback set keeps its own budget
+/// and backward proof, and is decided then only when that needs no more
+/// settles. Its proof starts when the preferred set stops, caught up to one
+/// step per settle spent (so a preferred goal that settles costs it
+/// nothing, and only one proof's scratch is live at a time): proven
+/// unreachable, or past its budget without proving a goal reachable, it
+/// has failed; otherwise it is [`FallbackRoute::Undecided`] for the caller
+/// to search alone, which decides it as that search would have. Of the two
+/// searches, at most one then stops at the unproven budget.
 pub fn find_first_with_fallback(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -473,10 +481,10 @@ pub fn find_first_with_fallback(
 
 /// The proof-carrying goal search behind [`find_first_with_fallback`]
 /// (strict gates) and the single-target BankBudget diagnosis
-/// (`relax_carry_worn`). The backward closure honors the same gates as the
-/// forward search, so a strict proof never hides a relaxed route. `budget`
-/// holds until the proof shows a goal reachable, then `reachable_budget`
-/// applies.
+/// (`relax_carry_worn`). The backward closures honor the same gates as the
+/// forward search, so a strict proof never hides a relaxed route. Each goal
+/// set's `budget` holds until its own proof shows it reachable, then
+/// `reachable_budget` applies ([`FirstGoals`]).
 #[allow(clippy::too_many_arguments)] // search surface plus relaxation/avoid/budgets
 fn first_search(
     collision: &WorldCollision,
@@ -514,18 +522,30 @@ fn first_search(
         };
     }
 
-    let mut goals = Goals::First {
-        targets: FirstTargets::new(targets),
-        fallback: FirstTargets::new(fallback),
-        found: None,
-        fallback_found: None,
+    let gates = ProofGates {
+        collision,
+        graph,
+        state,
+        essence: opts.essence.as_ref(),
+        from,
+        use_teleports: opts.allow_teleports,
+        allow_wilderness: opts.allow_wilderness,
+        relax_carry_worn,
     };
+    let mut goals = Goals::First(Box::new(FirstGoals::new(
+        gates,
+        targets,
+        fallback,
+        budget,
+        reachable_budget,
+    )));
+    // The goal sets hold the budgets.
     let search = search_kernel(
         collision,
         graph,
         from,
         CostModel::running(),
-        budget,
+        usize::MAX,
         opts.allow_teleports,
         opts.allow_wilderness,
         state,
@@ -533,18 +553,9 @@ fn first_search(
         relax_carry_worn,
         avoid,
         &mut goals,
-        Some(ProofRequest {
-            seeds: targets,
-            reachable_budget,
-        }),
         None,
     );
-    let Goals::First {
-        found,
-        fallback_found,
-        ..
-    } = goals
-    else {
+    let Goals::First(first) = goals else {
         unreachable!("a first-goal search keeps its goals");
     };
     let route_to = |(dest, cost): (WorldTile, TargetCost)| {
@@ -558,21 +569,21 @@ fn first_search(
         debug_assert_eq!(ticks, cost.ticks);
         Route { legs, dest, ticks }
     };
-    let route = match found {
+    // A preferred set still searching when the search stopped had
+    // everything reachable settled under it.
+    let exhausted = first.preferred.live();
+    let route = match first.preferred.found {
         Some(goal) => Ok(route_to(goal)),
-        None if search.stop == SearchStop::Budget => Err(RouteError::BudgetExhausted),
-        None => Err(RouteError::NoPath),
+        None => Err(first.preferred.closed.unwrap_or(RouteError::NoPath)),
     };
     let fallback_route = if route.is_ok() || fallback.is_empty() {
         None
     } else {
-        Some(match fallback_found {
-            Some(goal) => FallbackRoute::Routed(route_to(goal)),
-            None if search.stop == SearchStop::Budget => {
-                FallbackRoute::Failed(RouteError::BudgetExhausted)
-            }
-            None if search.proof == ReverseProof::Unreachable => FallbackRoute::Undecided,
-            None => FallbackRoute::Failed(RouteError::NoPath),
+        Some(match (first.fallback.found, first.fallback.closed) {
+            (Some(goal), _) => FallbackRoute::Routed(route_to(goal)),
+            (None, Some(error)) => FallbackRoute::Failed(error),
+            (None, None) if exhausted => FallbackRoute::Failed(RouteError::NoPath),
+            (None, None) => FallbackRoute::Undecided,
         })
     };
     FirstRouteSearch {
@@ -726,7 +737,6 @@ pub fn find_many_with_avoid_bounded_until<'a>(
             false,
             avoid,
             &mut goals,
-            None,
             deadline,
         )
     };
@@ -1013,14 +1023,10 @@ enum Goals<'a> {
         to: WorldTile,
         cost: Option<TargetCost>,
     },
-    /// The first preferred goal to settle ends the search; the first
-    /// fallback goal to settle is only recorded.
-    First {
-        targets: FirstTargets<'a>,
-        fallback: FirstTargets<'a>,
-        found: Option<(WorldTile, TargetCost)>,
-        fallback_found: Option<(WorldTile, TargetCost)>,
-    },
+    /// A preferred and a fallback goal set, each with its own budget and
+    /// backward proof ([`FirstGoals`]); boxed, as its two proofs' inline
+    /// state dwarfs the other shapes.
+    First(Box<FirstGoals<'a>>),
     Many {
         unique: &'a HashMap<WorldTile, usize>,
         costs: &'a mut [Result<TargetCost, TargetError>],
@@ -1028,10 +1034,19 @@ enum Goals<'a> {
     },
 }
 
+/// What one settled node decided for the search.
+enum Settle {
+    Continue,
+    /// Stop with the node counted: it decided the goals.
+    Stop,
+    /// Stop without counting the node: no goal set may spend it.
+    Spent,
+}
+
 impl Goals<'_> {
-    fn accept(&mut self, tile: WorldTile, ticks: f64, settled_at: usize) -> bool {
+    fn settle(&mut self, tile: WorldTile, ticks: f64, settled_at: usize) -> Settle {
         let cost = TargetCost { ticks, settled_at };
-        match self {
+        let done = match self {
             Goals::Single { to, cost: found } => {
                 if *to == tile {
                     *found = Some(cost);
@@ -1040,21 +1055,7 @@ impl Goals<'_> {
                     false
                 }
             }
-            Goals::First {
-                targets,
-                fallback,
-                found,
-                fallback_found,
-            } => {
-                if targets.contains(&tile) {
-                    *found = Some((tile, cost));
-                    return true;
-                }
-                if fallback_found.is_none() && fallback.contains(&tile) {
-                    *fallback_found = Some((tile, cost));
-                }
-                false
-            }
+            Goals::First(first) => return first.settle(tile, cost),
             Goals::Many {
                 unique,
                 costs,
@@ -1068,6 +1069,160 @@ impl Goals<'_> {
                 }
                 *remaining == 0
             }
+        };
+        if done {
+            Settle::Stop
+        } else {
+            Settle::Continue
+        }
+    }
+
+    /// The backward proofs' final report, dropping their scratch.
+    fn finish_proofs(&mut self) -> ReverseReport {
+        match self {
+            Goals::First(first) => first.finish_proofs(),
+            Goals::Single { .. } | Goals::Many { .. } => ReverseReport::default(),
+        }
+    }
+}
+
+/// One goal set of a first-goal search: its first goal to settle, the
+/// settles it may spend, and its backward proof.
+struct GoalSet<'a> {
+    targets: FirstTargets<'a>,
+    seeds: &'a [WorldTile],
+    found: Option<(WorldTile, TargetCost)>,
+    /// The unproven budget until the proof shows a goal reachable, then the
+    /// reachable budget.
+    budget: usize,
+    proof: ReverseRun<'a>,
+    /// Why no goal of the set can settle within its budget.
+    closed: Option<RouteError>,
+}
+
+impl<'a> GoalSet<'a> {
+    /// An empty set is closed from the start.
+    fn new(targets: &'a [WorldTile], budget: usize) -> Self {
+        Self {
+            targets: FirstTargets::new(targets),
+            seeds: targets,
+            found: None,
+            budget,
+            proof: ReverseRun::default(),
+            closed: targets.is_empty().then_some(RouteError::NoPath),
+        }
+    }
+
+    fn live(&self) -> bool {
+        self.found.is_none() && self.closed.is_none()
+    }
+
+    fn close(&mut self, error: RouteError) {
+        self.closed = Some(error);
+        self.proof.finish();
+    }
+
+    /// Records the set's first goal to settle.
+    fn accept(&mut self, tile: WorldTile, cost: TargetCost) -> bool {
+        if self.found.is_some() || !self.targets.contains(&tile) {
+            return false;
+        }
+        self.found = Some((tile, cost));
+        self.proof.finish();
+        true
+    }
+
+    /// Runs the proof to one backward step per settle so far: reachability
+    /// lifts the budget, unreachability closes the set.
+    fn prove_to(&mut self, gates: ProofGates<'a>, steps: usize, reachable_budget: usize) {
+        match self.proof.run_to(gates, self.seeds, steps) {
+            Some(ReverseProof::Reachable) => self.budget = self.budget.max(reachable_budget),
+            Some(ReverseProof::Unreachable) => self.close(RouteError::NoPath),
+            _ => {}
+        }
+    }
+}
+
+/// A first-goal search's preferred and fallback goal sets. The preferred
+/// set runs the search: its proof steps once per settle and lifts or ends
+/// it, and its first goal to settle ends it. The fallback set only records
+/// its first goal on the way. Its own proof matters only once the preferred
+/// set stops without a goal, so it starts then, caught up to one step per
+/// settle spent, and decides the set if that needs no further settle.
+struct FirstGoals<'a> {
+    gates: ProofGates<'a>,
+    reachable_budget: usize,
+    preferred: GoalSet<'a>,
+    fallback: GoalSet<'a>,
+}
+
+impl<'a> FirstGoals<'a> {
+    fn new(
+        gates: ProofGates<'a>,
+        targets: &'a [WorldTile],
+        fallback: &'a [WorldTile],
+        budget: usize,
+        reachable_budget: usize,
+    ) -> Self {
+        let mut preferred = GoalSet::new(targets, budget);
+        preferred.prove_to(gates, 0, reachable_budget);
+        Self {
+            gates,
+            reachable_budget,
+            preferred,
+            fallback: GoalSet::new(fallback, budget),
+        }
+    }
+
+    fn settle(&mut self, tile: WorldTile, cost: TargetCost) -> Settle {
+        let settled = cost.settled_at;
+        if settled > self.preferred.budget {
+            self.preferred.close(RouteError::BudgetExhausted);
+            self.decide_fallback(settled - 1);
+            return Settle::Spent;
+        }
+        if self.preferred.accept(tile, cost) {
+            return Settle::Stop;
+        }
+        self.fallback.accept(tile, cost);
+        self.preferred
+            .prove_to(self.gates, settled, self.reachable_budget);
+        if self.preferred.live() {
+            return Settle::Continue;
+        }
+        self.decide_fallback(settled);
+        Settle::Stop
+    }
+
+    /// After the preferred set stops without a goal at `settled` settles,
+    /// the fallback set is decided if that needs no further settle. Its
+    /// proof is caught up to one step per settle, up to its budget, as a
+    /// search over it alone would have stepped it: shown unreachable, the
+    /// set has failed; not shown reachable once the settles spent reach its
+    /// budget, the next settle would have stopped that search. Otherwise it
+    /// stays undecided.
+    fn decide_fallback(&mut self, settled: usize) {
+        if !self.fallback.live() {
+            return;
+        }
+        let steps = settled.min(self.fallback.budget);
+        self.fallback
+            .prove_to(self.gates, steps, self.reachable_budget);
+        if self.fallback.live() && settled >= self.fallback.budget {
+            self.fallback.close(RouteError::BudgetExhausted);
+        }
+    }
+
+    /// The preferred proof's outcome, and the larger scratch of the two
+    /// proofs (the fallback's starts only after the preferred one's is
+    /// dropped).
+    fn finish_proofs(&mut self) -> ReverseReport {
+        let preferred = self.preferred.proof.finish();
+        let fallback = self.fallback.proof.finish();
+        ReverseReport {
+            proof: preferred.proof,
+            seen: preferred.seen.max(fallback.seen),
+            queue: preferred.queue.max(fallback.queue),
         }
     }
 }
@@ -1150,37 +1305,65 @@ struct ReverseReport {
     queue: usize,
 }
 
-/// The backward proof inside one goal search: live closure scratch until the
-/// proof decides, then only its report.
+/// The forward search's gates, as its backward proofs borrow them.
+#[derive(Clone, Copy)]
+struct ProofGates<'a> {
+    collision: &'a WorldCollision,
+    graph: &'a TransportGraph,
+    state: &'a WorldState,
+    essence: Option<&'a EssenceSession>,
+    from: WorldTile,
+    use_teleports: bool,
+    allow_wilderness: bool,
+    relax_carry_worn: bool,
+}
+
+/// One goal set's backward proof: not yet started, then live closure
+/// scratch until the proof decides, then only its report.
 #[derive(Default)]
 struct ReverseRun<'a> {
+    started: bool,
+    /// Backward steps taken since the proof started.
+    steps: usize,
     closure: Option<ReverseClosure<'a>>,
     report: ReverseReport,
 }
 
 impl<'a> ReverseRun<'a> {
-    fn begin(&mut self, mut closure: ReverseClosure<'a>, seeds: &[WorldTile]) {
-        for &seed in seeds {
-            if let Some(proof) = closure.admit(seed) {
+    /// Starts the proof from `seeds` if it has not started, then steps it
+    /// until it has taken `steps` backward steps. A decision drops the
+    /// closure's scratch and is returned once.
+    fn run_to(
+        &mut self,
+        gates: ProofGates<'a>,
+        seeds: &[WorldTile],
+        steps: usize,
+    ) -> Option<ReverseProof> {
+        if !self.started {
+            self.started = true;
+            let mut closure = ReverseClosure::new(gates);
+            for &seed in seeds {
+                if let Some(proof) = closure.admit(seed) {
+                    self.report = closure.report(proof);
+                    return Some(proof);
+                }
+            }
+            self.closure = Some(closure);
+        }
+        while self.steps < steps {
+            let closure = self.closure.as_mut()?;
+            self.steps += 1;
+            if let Some(proof) = closure.step() {
                 self.report = closure.report(proof);
-                return;
+                self.closure = None;
+                return Some(proof);
             }
         }
-        self.closure = Some(closure);
+        None
     }
 
-    /// One backward step, taken per forward settle. A decision drops the
-    /// closure's scratch and is returned once.
-    fn step(&mut self) -> Option<ReverseProof> {
-        let proof = self.closure.as_mut()?.step()?;
-        if let Some(closure) = self.closure.take() {
-            self.report = closure.report(proof);
-        }
-        Some(proof)
-    }
-
-    /// The final report; a closure still running when the forward search
-    /// stops is [`ReverseProof::Open`].
+    /// The final report, dropping live scratch: a closure still running
+    /// when its set or the search stops is [`ReverseProof::Open`].
     fn finish(&mut self) -> ReverseReport {
         if let Some(closure) = self.closure.take() {
             self.report = closure.report(ReverseProof::Open);
@@ -1220,17 +1403,17 @@ struct ReverseClosure<'a> {
 }
 
 impl<'a> ReverseClosure<'a> {
-    #[allow(clippy::too_many_arguments)] // the kernel's gates, borrowed as-is
-    fn new(
-        collision: &'a WorldCollision,
-        graph: &'a TransportGraph,
-        state: &'a WorldState,
-        essence: Option<&'a EssenceSession>,
-        from: WorldTile,
-        use_teleports: bool,
-        allow_wilderness: bool,
-        relax_carry_worn: bool,
-    ) -> Self {
+    fn new(gates: ProofGates<'a>) -> Self {
+        let ProofGates {
+            collision,
+            graph,
+            state,
+            essence,
+            from,
+            use_teleports,
+            allow_wilderness,
+            relax_carry_worn,
+        } = gates;
         let landings = if use_teleports {
             let level = graph.wilderness.level(from);
             graph
@@ -1410,7 +1593,6 @@ fn find_bounded_impl(
         avoid,
         &mut goals,
         None,
-        None,
     );
     match goals {
         Goals::Single {
@@ -1429,28 +1611,19 @@ fn find_bounded_impl(
     }
 }
 
-/// A goal search's backward proof: the goal tiles, and the node budget the
-/// forward search may use once the proof shows a goal reachable.
-#[derive(Clone, Copy)]
-struct ProofRequest<'a> {
-    seeds: &'a [WorldTile],
-    reachable_budget: usize,
-}
-
 /// The Dijkstra kernel shared by every search shape. `relax_carry_worn` is
 /// the BankBudget diagnosis arm only: it drops the `item_req`/`worn_req`
 /// gates so the session can tell a missing-item failure from a
-/// skill/quest/varp gate. A `proof` runs the backward [`ReverseClosure`]
-/// from its goal tiles one step per settled node: the search stops as
-/// [`SearchStop::Exhausted`] once no goal can be reachable, and `budget`
-/// rises to the proof's `reachable_budget` once one provably is.
+/// skill/quest/varp gate. `budget` caps every search; within it, `goals`
+/// decide at each settled node whether the search goes on (a first-goal
+/// search's sets run their own budgets and backward proofs).
 #[allow(clippy::too_many_arguments)]
 fn search_kernel(
     collision: &WorldCollision,
     graph: &TransportGraph,
     from: WorldTile,
     model: CostModel,
-    mut budget: usize,
+    budget: usize,
     use_teleports: bool,
     allow_wilderness: bool,
     state: &WorldState,
@@ -1458,30 +1631,9 @@ fn search_kernel(
     relax_carry_worn: bool,
     avoid: &[AvoidRect],
     goals: &mut Goals<'_>,
-    proof: Option<ProofRequest<'_>>,
     deadline: Option<Instant>,
 ) -> SearchOutcome {
-    let record_capacities =
-        proof.is_some() || matches!(goals, Goals::First { .. } | Goals::Many { .. });
-    let mut reverse = ReverseRun::default();
-    if let Some(proof) = proof {
-        reverse.begin(
-            ReverseClosure::new(
-                collision,
-                graph,
-                state,
-                essence,
-                from,
-                use_teleports,
-                allow_wilderness,
-                relax_carry_worn,
-            ),
-            proof.seeds,
-        );
-        if reverse.report.proof == ReverseProof::Reachable {
-            budget = budget.max(proof.reachable_budget);
-        }
-    }
+    let record_capacities = matches!(goals, Goals::First(_) | Goals::Many { .. });
     let mut dist: HashMap<WorldTile, f64> = HashMap::new();
     let mut came_from: HashMap<WorldTile, Back> = HashMap::new();
     let mut heap: BinaryHeap<HeapNode> = BinaryHeap::new();
@@ -1506,7 +1658,7 @@ fn search_kernel(
                 expanded,
                 SearchStop::Deadline,
                 record_capacities,
-                reverse.finish(),
+                goals.finish_proofs(),
             );
         }
         heap_pops += 1;
@@ -1521,57 +1673,30 @@ fn search_kernel(
             continue;
         }
         expanded += 1;
-        if expanded > budget {
+        let stop = if expanded > budget {
+            Some((budget, SearchStop::Budget))
+        } else {
+            match goals.settle(cur, n.cost, expanded) {
+                Settle::Continue => None,
+                Settle::Stop => Some((expanded, SearchStop::Completed)),
+                Settle::Spent => Some((expanded - 1, SearchStop::Budget)),
+            }
+        };
+        if let Some((settled, stop)) = stop {
             return SearchOutcome::finish(
                 came_from,
                 &dist,
                 &done,
                 &heap,
-                budget,
+                settled,
                 if expired() {
                     SearchStop::Deadline
                 } else {
-                    SearchStop::Budget
+                    stop
                 },
                 record_capacities,
-                reverse.finish(),
+                goals.finish_proofs(),
             );
-        }
-        if goals.accept(cur, n.cost, expanded) {
-            return SearchOutcome::finish(
-                came_from,
-                &dist,
-                &done,
-                &heap,
-                expanded,
-                if expired() {
-                    SearchStop::Deadline
-                } else {
-                    SearchStop::Completed
-                },
-                record_capacities,
-                reverse.finish(),
-            );
-        }
-        match reverse.step() {
-            Some(ReverseProof::Unreachable) => {
-                return SearchOutcome::finish(
-                    came_from,
-                    &dist,
-                    &done,
-                    &heap,
-                    expanded,
-                    SearchStop::Exhausted,
-                    record_capacities,
-                    reverse.finish(),
-                );
-            }
-            Some(ReverseProof::Reachable) => {
-                if let Some(proof) = proof {
-                    budget = budget.max(proof.reachable_budget);
-                }
-            }
-            _ => {}
         }
 
         let escaping = !avoid.is_empty() && tile_in_any_avoid(cur, avoid);
@@ -1727,7 +1852,7 @@ fn search_kernel(
             SearchStop::Exhausted
         },
         record_capacities,
-        reverse.finish(),
+        goals.finish_proofs(),
     )
 }
 

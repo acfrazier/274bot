@@ -59,7 +59,8 @@ impl WorldState {
     pub fn from_snapshot(s: &GameSnapshot) -> Self {
         let mut inv = HashMap::new();
         for &(id, n) in s.inv() {
-            *inv.entry(id).or_insert(0) += n;
+            let held = inv.entry(id).or_insert(0i32);
+            *held = held.saturating_add(n);
         }
         let worn: HashSet<i32> = s
             .equipment()

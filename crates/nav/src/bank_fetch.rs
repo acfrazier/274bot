@@ -117,14 +117,14 @@ pub fn plan_bank_fetch(
 
     // Bank trip. The deposit moves the carried stacks into the bank, so
     // every needed amount may come from the bank's rows plus the
-    // backpack: `supply` is the combined count.
+    // backpack: `supply` is the combined count, saturated at a full stack.
     let bank_count = |id: i32| {
         bank.iter()
             .find(|&&(i, _)| i == id)
             .map(|&(_, c)| c)
             .unwrap_or(0)
     };
-    let supply = |id: i32| bank_count(id) + state.inv.get(&id).copied().unwrap_or(0);
+    let supply = |id: i32| bank_count(id).saturating_add(state.inv.get(&id).copied().unwrap_or(0));
     for r in missing {
         match r {
             MissingReq::Carry { id, count } => {
@@ -189,7 +189,9 @@ pub fn plan_bank_fetch(
 /// route it serves: exactly the supply [`plan_bank_fetch`] checks. Every
 /// carried obj can be worn in place; with a bank stand to walk to, every
 /// obj in the open bank's rows (an obj's first row, as the planner reads
-/// it) plus the backpack can be carried at their combined count, and worn.
+/// it) plus the backpack can be carried at their combined count (saturated
+/// at a full stack, so a bank row never takes a carried fact away), and
+/// worn.
 /// A strict search under this state reaches only goals whose
 /// `item_req`/`worn_req` gates a session can meet, and [`plan_bank_fetch`]
 /// plans every such route's missing facts, so a goal behind an obj the
@@ -212,7 +214,8 @@ pub fn fetchable_state(
         let mut read = HashSet::new();
         for &(id, count) in bank {
             if read.insert(id) && count >= 1 {
-                *fetchable.inv.entry(id).or_insert(0) += count;
+                let held = fetchable.inv.entry(id).or_insert(0);
+                *held = held.saturating_add(count);
                 fetchable.worn.insert(id);
             }
         }

@@ -1121,6 +1121,92 @@ fn first_target_proof_of_reachability_lifts_the_unproven_budget() {
     assert_eq!(search(64).route().err(), Some(RouteError::BudgetExhausted));
 }
 
+/// R6-B1: a fallback set keeps its own proof when the preferred budget stops
+/// the search. On a 1024² plane the preferred goal lies on a plane no move
+/// reaches, too large for its proof to close, so the stands stop at the
+/// unproven budget. The radius tile sits in a sealed room whose only way in
+/// is a teleport dearer than walking the whole plane: its proof meets the
+/// landing at once, but it settles only after the plane, past the stands'
+/// budget. It is left undecided rather than failed, and the search over it
+/// alone, under the budget its proof lifts, routes to it.
+#[test]
+fn fallback_proven_reachable_past_the_preferred_budget_still_routes() {
+    const SIZE: i32 = 1024;
+    let mut ring = Vec::new();
+    for x in 600..=604 {
+        for z in 600..=604 {
+            if x == 600 || x == 604 || z == 600 || z == 604 {
+                ring.push((x, z, CollisionFlag::SQ_BLOCKED as u32));
+            }
+        }
+    }
+    let wc = bake(SIZE as usize, SIZE as usize, &ring);
+    let graph = teleport(tile(601, 601, 0), 1_000, vec![], vec![]);
+    let from = tile(20, 20, 0);
+    let stands = [tile(20, 20, 1)];
+    let fallback = [tile(603, 603, 0)];
+    let opts = FindOptions {
+        allow_teleports: true,
+        ..FindOptions::default()
+    };
+    let state = WorldState::empty();
+
+    let shared = find_first_with_fallback(&wc, &graph, from, &stands, &fallback, opts, &state);
+    assert_eq!(shared.route().err(), Some(RouteError::BudgetExhausted));
+    assert_eq!(shared.settled(), FIRST_TARGET_BUDGET);
+    assert_eq!(shared.fallback(), Some(&FallbackRoute::Undecided));
+
+    let alone = find_first_with(&wc, &graph, from, &fallback, opts, &state);
+    assert_eq!(alone.proof(), ReverseProof::Reachable);
+    assert_eq!(alone.route().map(|route| route.dest), Ok(fallback[0]));
+    assert!(
+        alone.settled() > (SIZE * SIZE) as usize - 25,
+        "{}",
+        alone.settled()
+    );
+}
+
+/// The fallback set's budget, lifted by its own proof, decides it at the
+/// settles the preferred budget spent: lifted to exactly those settles, a
+/// search over it alone would stop there, so it has failed; one settle more
+/// leaves it undecided.
+#[test]
+fn fallback_fails_only_when_its_own_budget_is_spent_with_the_preferred() {
+    let (wc, _) = sealed_room(false);
+    let graph = teleport(tile(200, 200, 0), 1_000, vec![], vec![]);
+    let from = tile(20, 20, 0);
+    let stands = [tile(20, 20, 1)];
+    let fallback = [tile(202, 202, 0)];
+    let opts = FindOptions {
+        allow_teleports: true,
+        ..FindOptions::default()
+    };
+    let state = WorldState::empty();
+    let search = |reachable_budget| {
+        super::first_search(
+            &wc,
+            &graph,
+            from,
+            &stands,
+            &fallback,
+            opts,
+            &state,
+            false,
+            &[],
+            64,
+            reachable_budget,
+        )
+    };
+
+    let spent = search(64);
+    assert_eq!(spent.settled(), 64);
+    assert_eq!(
+        spent.fallback(),
+        Some(&FallbackRoute::Failed(RouteError::BudgetExhausted))
+    );
+    assert_eq!(search(65).fallback(), Some(&FallbackRoute::Undecided));
+}
+
 #[test]
 fn bank_budget_accepts_the_goal_after_500000_predecessors() {
     // A 1-wide corridor guarantees that the goal is pop 500001.

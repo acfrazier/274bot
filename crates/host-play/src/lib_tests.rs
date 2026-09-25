@@ -16867,6 +16867,83 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
     }
 }
 
+/// A full bank stack must not take a carried fact away. The door to the
+/// target's one stand needs a coin carried (one is) and obj 3 worn (it is
+/// carried); the bank's coin row is a full stack. Wearing obj 3 in place is
+/// the whole session, with no bank trip.
+#[test]
+fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
+    use client::dash3d::CollisionFlag;
+    use nav::bank_fetch::BankStep;
+
+    const SIZE: usize = 32;
+    let from = WorldTile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let target = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    let stand = WorldTile {
+        x: 9,
+        z: 10,
+        level: 0,
+    };
+    let mut flags = vec![CollisionFlag::SQ_BLOCKED as u32; SIZE * SIZE];
+    for tile in [from, stand] {
+        flags[tile.z as usize * SIZE + tile.x as usize] = 0;
+    }
+    let mut graph = TransportGraph::default();
+    graph.at.entry(from).or_default().push(0);
+    graph.edges.push(TransportEdge {
+        kind: TransportKind::Door,
+        at: from,
+        to: stand,
+        loc_id: 1,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![(995, 1)],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![3],
+        members_req: false,
+        wildy_cap: None,
+    });
+    let booth = nav::pack::BankStand {
+        name: "Bank booth".into(),
+        tile: from,
+        access: nav::pack::BankAccess::Booth { op: 2 },
+    };
+    let world = Arc::new(raw_flags_world(&flags, SIZE, graph, vec![booth]));
+    let snapshot = raw_flags_scene(&flags, SIZE, (0, 0), from);
+    let (route, session) = arm_route_outcome(
+        world,
+        &snapshot,
+        from,
+        target,
+        1,
+        FindOptions {
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        },
+        Some(WorldState {
+            inv: HashMap::from([(3, 1), (995, 1)]),
+            ..WorldState::empty()
+        }),
+        vec![(995, i32::MAX)],
+    );
+    let session = session.expect("wearing the carried obj 3 opens the door");
+    assert_eq!(session.dest, stand);
+    assert_eq!(Vec::from(session.steps), vec![BankStep::Wear { id: 3 }]);
+    assert_eq!(route.map(|route| route.dest), Some(stand));
+}
+
 /// AR-1 / frozen `'closest'` (`WalkExecutor.ts:316-325`): an r=12 WalkNear
 /// in open terrain routes to an approach tile 12 tiles from the dest, where
 /// the BFS rank of the dest is past the 512 arrival budget, so `is_arrived`
