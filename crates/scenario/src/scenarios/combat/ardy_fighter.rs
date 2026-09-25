@@ -14,6 +14,15 @@ pub(crate) const GUARD_DROP_IDS: [i32; 6] = [
     CHAOS_RUNE_ID,
     NATURE_RUNE_ID,
 ];
+/// ArdyFighter sets its combat style only when out of combat after the first
+/// cake restock, so the first Guard fight can come before it. Frozen rs2b0t at
+/// `00d39a17` on this cell's fixture (A/S/HP 40, Defence 1, Thieving 5,
+/// Adamant scimitar, foodTarget 1, empty food) set Strength at 7.5 s and 45.3 s;
+/// its strong-account runs at 44.6 s and 76.6 s. Worst style time 76.6 s is 128
+/// engine ticks at 600 ms, plus up to 30 ticks for the first Strength hit after
+/// a fight = 158 ticks; at the 1.25 runner dirties per engine tick calibration
+/// (`moss_giant.rs`) that is 198, rounded up to 250 for one extra fight cycle.
+const ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS: u32 = 250;
 const ARDY_FIGHTER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "target",
@@ -109,7 +118,7 @@ const ARDY_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
 /// Nothing in the deposit class is prepared: `bankEveryItems=1` would
 /// otherwise treat a pre-Start listed item as the trip end.
 pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
-    combat_bank_scenario(
+    let mut scenario = combat_bank_scenario(
         "ardy_fighter_bank",
         "ArdyFighter",
         ARDOUGNE_GUARD,
@@ -151,5 +160,12 @@ pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
                 },
             ),
         ],
-    )
+    );
+    let style_watch = scenario
+        .steps
+        .iter_mut()
+        .find(|step| step.name == "watch Strength XP from the selected melee style after Start")
+        .expect("ardy fighter bank has a post-Start Strength watch");
+    style_watch.wait.budget_ticks = ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS;
+    scenario
 }
