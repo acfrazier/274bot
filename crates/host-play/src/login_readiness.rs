@@ -189,17 +189,8 @@ impl LoginReadiness {
             self.close_attempts = 0;
             self.last_close_tick = None;
             self.close_epoch = None;
-            self.episode_started = Some(obs.now);
+            self.episode_started = None;
             self.failure = None;
-        }
-
-        let episode_started = self.episode_started.get_or_insert(obs.now);
-        if obs.now.saturating_duration_since(*episode_started) >= WELCOME_DISMISS_TIMEOUT {
-            return self.fail_with(format!(
-                "welcome: dismissal timed out after {}s for interface {}; close it manually or reconnect",
-                WELCOME_DISMISS_TIMEOUT.as_secs(),
-                obs.welcome_interface_id,
-            ));
         }
 
         if !obs.allow_close {
@@ -211,6 +202,15 @@ impl LoginReadiness {
                     obs.welcome_interface_id
                 )),
             );
+        }
+
+        let episode_started = self.episode_started.get_or_insert(obs.now);
+        if obs.now.saturating_duration_since(*episode_started) >= WELCOME_DISMISS_TIMEOUT {
+            return self.fail_with(format!(
+                "welcome: dismissal timed out after {}s for interface {}; close it manually or reconnect",
+                WELCOME_DISMISS_TIMEOUT.as_secs(),
+                obs.welcome_interface_id,
+            ));
         }
 
         let can_try = match self.last_close_tick {
@@ -594,21 +594,42 @@ mod tests {
     }
 
     #[test]
-    fn stalled_player_tick_has_an_elapsed_failure_bound() {
+    fn slow_scene_loading_does_not_spend_the_elapsed_dismissal_bound() {
         let started = Instant::now();
         let mut readiness = LoginReadiness {
             session_epoch: 1,
             ..Default::default()
         };
-        let mut open = open_at(1, 42);
-        open.now = started;
-        let first = readiness.step(&open, || {
-            CloseAttempt::Refused(SendReason::SceneUnavailable)
-        });
+        let mut loading = WelcomeObservation {
+            now: started,
+            allow_close: false,
+            scene_state: 1,
+            ..open_at(1, 42)
+        };
+        let first = readiness.step(&loading, || panic!("loading scene cannot close"));
         assert!(first.failure.is_none());
 
-        open.now = started + WELCOME_DISMISS_TIMEOUT;
-        let timed_out = readiness.step(&open, || panic!("tick spacing blocks another close"));
+        loading.now = started + WELCOME_DISMISS_TIMEOUT + Duration::from_secs(4);
+        let still_loading = readiness.step(&loading, || panic!("loading scene cannot close"));
+        assert!(
+            still_loading.failure.is_none(),
+            "scene build time is outside the dismissal episode"
+        );
+
+        let eligible_started = loading.now;
+        let mut eligible = WelcomeObservation {
+            allow_close: true,
+            scene_state: 2,
+            ..loading
+        };
+        let first_attempt = readiness.step(&eligible, || {
+            CloseAttempt::Refused(SendReason::SceneUnavailable)
+        });
+        assert!(first_attempt.failure.is_none());
+
+        eligible.now = eligible_started + WELCOME_DISMISS_TIMEOUT;
+        let timed_out =
+            readiness.step(&eligible, || panic!("tick spacing blocks another close"));
         assert!(timed_out.hold);
         assert!(
             timed_out
@@ -620,9 +641,9 @@ mod tests {
         );
 
         let closed = WelcomeObservation {
-            now: started + WELCOME_DISMISS_TIMEOUT + Duration::from_millis(1),
+            now: eligible.now + Duration::from_millis(1),
             main_modal_id: -1,
-            ..open
+            ..eligible
         };
         let settled = readiness.step(&closed, || panic!("closed modal needs no action"));
         assert!(!settled.hold);
