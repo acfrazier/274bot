@@ -146,6 +146,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   (`pid unknown`) instead of failing startup. `--live` / memory / stress /
   harness boots skip the lock. `File::try_lock` is cfg-free
   (POSIX `flock` / Windows `LockFileEx`).
+- Start (and Start all) after a fresh launch now runs the rs2b0t catalog script
+  saved on the profile. Before, Start failed with `unavailable: <name>` until
+  Browse or Load had filled the catalog, although the script section already
+  showed the saved name.
 
 ### Slot lifecycle
 

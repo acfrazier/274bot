@@ -1040,6 +1040,37 @@ fn catalog_refresh_warns_before_stopping_running() {
     s.play.as_ref().unwrap().script_stop("alice");
 }
 
+#[test]
+fn start_after_launch_runs_saved_catalog_assignment_before_any_browse() {
+    let (mut s, dir) = session_with_play(&["alice"]);
+    let root = dir.join("catalog-launch");
+    fake_catalog(&root, &[("RunBot", BOT_TS)]);
+    let iso = script::IsolatedEnv::enter("launch-start");
+    iso.set_rs2b0t(&root);
+    s.persist_successful_assignment(
+        "alice",
+        ScriptAssignment {
+            source_kind: "catalog".into(),
+            identity: "RunBot".into(),
+            display_name: "RunBot".into(),
+            unavailable: None,
+        },
+    );
+    focus_profile(&mut s, "alice");
+    assert!(
+        s.js.get(script::ScriptSource::Catalog, "RunBot").is_none(),
+        "fresh launch: catalog not filled yet"
+    );
+    s.script_start_selected();
+    settle(&mut s);
+    assert_eq!(s.error, None, "{:?}", s.error);
+    assert_eq!(
+        s.play.as_ref().unwrap().script_state("alice"),
+        script::RunState::Running
+    );
+    s.play.as_ref().unwrap().script_stop("alice");
+}
+
 fn focus_profile(s: &mut Session, name: &str) {
     s.focus.lock().unwrap().focused = Some(name.into());
     s.restore_script_heading(name);

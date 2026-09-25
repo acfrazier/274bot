@@ -351,6 +351,11 @@ impl Session {
                 Ok(())
             }
             script::ScriptSel::Loaded(source, lookup) => {
+                // A saved catalog assignment restored at launch names a card
+                // before any Browse/Load has filled the catalog.
+                if source == script::ScriptSource::Catalog {
+                    self.fill_rs2b0t_cards_once();
+                }
                 let card = self
                     .js
                     .get(source, &lookup)
