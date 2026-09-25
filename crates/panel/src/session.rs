@@ -4184,15 +4184,21 @@ impl Session {
         true
     }
 
-    /// The focused slot's observed tile `(x, z, level)`, `None` when
-    /// nothing is focused or the slot has not reported a position yet
-    /// (both coordinates zero).
+    /// The focused slot's valid observed tile `(x, z, level)`. A disconnected
+    /// or not-ready slot and negative/out-of-plane producer sentinels have no
+    /// routing origin.
     pub fn focused_tile(&self) -> Option<(i32, i32, i32)> {
         let name = self.focused_name()?;
         self.statuses()
             .iter()
             .find(|s| s.username == name)
-            .filter(|s| s.tile_x != 0 || s.tile_z != 0)
+            .filter(|s| {
+                s.ingame
+                    && s.tile_x >= 0
+                    && s.tile_z >= 0
+                    && (s.tile_x != 0 || s.tile_z != 0)
+                    && (0..=3).contains(&s.tile_level)
+            })
             .map(|s| (s.tile_x, s.tile_z, s.tile_level))
     }
 

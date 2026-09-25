@@ -2016,6 +2016,7 @@ fn confirm_picker_walk_uses_player_plane_not_dest_level() {
     s.focus.lock().unwrap().focused = Some("alice".into());
     s.statuses.push(SlotStatus {
         username: "alice".into(),
+        ingame: true,
         tile_x: 5,
         tile_z: 5,
         tile_level: 1,
@@ -2787,6 +2788,22 @@ fn focused_tile_is_none_without_status() {
     let s = Session::new();
     s.focus.lock().unwrap().focused = Some("alice".into());
     assert_eq!(s.focused_tile(), None, "no status rows yet");
+}
+
+#[test]
+fn disconnected_focused_slot_has_no_tile() {
+    let mut session = Session::new();
+    session.focus.lock().unwrap().focused = Some("alice".into());
+    session.statuses.push(SlotStatus {
+        username: "alice".into(),
+        connected: false,
+        ingame: false,
+        tile_x: -1,
+        tile_z: -1,
+        tile_level: -1,
+        ..SlotStatus::default()
+    });
+    assert_eq!(session.focused_tile(), None);
 }
 
 #[test]

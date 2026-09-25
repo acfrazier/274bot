@@ -321,7 +321,13 @@ impl TuiApp {
     pub fn refresh(&mut self) {
         self.here = self
             .focused_status()
-            .filter(|s| s.ingame)
+            .filter(|s| {
+                s.ingame
+                    && s.tile_x >= 0
+                    && s.tile_z >= 0
+                    && (s.tile_x != 0 || s.tile_z != 0)
+                    && (0..=3).contains(&s.tile_level)
+            })
             .map(|s| WorldTile {
                 x: s.tile_x,
                 z: s.tile_z,
