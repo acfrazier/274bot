@@ -616,6 +616,17 @@ pub struct SlotIo {
     pub pixels: Arc<FrameBuf>,
 }
 
+/// A rail removal is owned by the exact arm that received its clean-logout
+/// request. `io` stays here while that worker drains so re-adding the member
+/// can reattach the same framebuffer and input channels without spawning a
+/// second client lifetime.
+struct PendingSlotRemoval {
+    started: Instant,
+    arm: Arc<SlotArm>,
+    io: Option<SlotIo>,
+}
+
+
 /// Combo highlight: `None` when nothing is focused so the widget cannot
 /// display index 0 as selected.
 pub fn combo_index(focused: Option<&str>, names: &[String]) -> Option<usize> {
@@ -976,8 +987,9 @@ pub struct Session {
     /// Per-username slot IO.
     pub slots: HashMap<String, SlotIo>,
     /// Rail removals waiting for clean disconnect or their bounded deadline.
-    /// The UI frame only polls these; worker joins stay in `Play`.
-    pending_slot_removals: HashMap<String, Instant>,
+    /// Each entry is bound to one arm lifetime; the UI frame only polls these,
+    /// and worker joins stay in `Play`.
+    pending_slot_removals: HashMap<String, PendingSlotRemoval>,
     /// The focused slot's live capture sender; `None` while capture is off,
     /// so UI send paths no-op.
     pub capture_tx: Option<Sender<InputEv>>,
@@ -2976,6 +2988,10 @@ impl Session {
     /// thread. A disconnected slot stops immediately; a connected one gets
     /// the bounded clean-logout window before Stop is signalled.
     fn pump_slot_removals(&mut self) {
+        self.pump_slot_removals_at(Instant::now());
+    }
+
+    fn pump_slot_removals_at(&mut self, now: Instant) {
         if let Some(play) = self.play.as_mut() {
             play.reap_finished_workers();
             play.reap_stopped_slots();
@@ -2984,23 +3000,60 @@ impl Session {
             return;
         }
         let statuses = self.play.as_ref().map(Play::statuses).unwrap_or_default();
-        let now = Instant::now();
-        let ready: Vec<String> = self
+        let ready: Vec<(String, bool)> = self
             .pending_slot_removals
             .iter()
-            .filter(|(name, started)| {
-                !statuses
+            .map(|(name, pending)| {
+                let owns_current_lifetime = self
+                    .play
+                    .as_ref()
+                    .and_then(|play| play.arm(name))
+                    .is_some_and(|arm| Arc::ptr_eq(&arm, &pending.arm));
+                let disconnected = !statuses
                     .iter()
-                    .any(|status| status.username == name.as_str() && status.connected)
-                    || now.saturating_duration_since(**started) >= SLOT_REMOVE_TIMEOUT
+                    .any(|status| status.username == name.as_str() && status.connected);
+                let timed_out =
+                    now.saturating_duration_since(pending.started) >= SLOT_REMOVE_TIMEOUT;
+                (name.clone(), owns_current_lifetime && (disconnected || timed_out))
             })
-            .map(|(name, _)| name.clone())
             .collect();
-        for name in ready {
-            if let Some(play) = self.play.as_mut() {
-                play.begin_stop_slot(&name);
+        for (name, stop) in ready {
+            if stop {
+                if let Some(play) = self.play.as_mut() {
+                    play.begin_stop_slot(&name);
+                }
             }
-            self.pending_slot_removals.remove(&name);
+            if stop
+                || !self
+                    .play
+                    .as_ref()
+                    .and_then(|play| play.arm(&name))
+                    .is_some_and(|arm| {
+                        self.pending_slot_removals
+                            .get(&name)
+                            .is_some_and(|pending| Arc::ptr_eq(&arm, &pending.arm))
+                    })
+            {
+                self.pending_slot_removals.remove(&name);
+            }
+        }
+    }
+
+    /// Cancel a pending rail removal in response to an operator action.
+    /// The retained IO is reusable only when no replacement arm exists or
+    /// when the current arm is the exact lifetime that owned the removal.
+    fn cancel_slot_removal(&mut self, name: &str) {
+        let Some(mut pending) = self.pending_slot_removals.remove(name) else {
+            return;
+        };
+        let current = self.play.as_ref().and_then(|play| play.arm(name));
+        let may_restore_io = current
+            .as_ref()
+            .is_none_or(|arm| Arc::ptr_eq(arm, &pending.arm));
+        if may_restore_io {
+            if let Some(io) = pending.io.take() {
+                self.slots.entry(name.to_string()).or_insert(io);
+            }
         }
     }
 
@@ -3288,6 +3341,7 @@ impl Session {
     /// that slot's `FrameBuf`. No socket is swapped (the channel-head baton
     /// is gone); every slot keeps running.
     pub fn select(&mut self, name: &str) {
+        self.cancel_slot_removal(name);
         let arm = self.arm_for_profile(name);
         self.ensure_slot(name, arm);
         self.apply_focus(name);
@@ -3609,6 +3663,7 @@ impl Session {
     /// Credentials Log in: clear the logout latch, arm an explicit one-shot
     /// handshake, then select (spawn if needed).
     pub fn login(&mut self, name: &str) {
+        self.cancel_slot_removal(name);
         self.wall.clear_latch(name);
         if let Some(play) = self.play.as_mut() {
             play.reap_finished_workers();
@@ -3830,6 +3885,7 @@ impl Session {
     /// spawned holding the title screen until [`Session::login_all`].
     /// Returns whether the name was newly added to the wall.
     pub fn load(&mut self, name: &str) -> bool {
+        self.cancel_slot_removal(name);
         let newly = self.wall.load(name);
         let auto_login = self
             .vault
@@ -3843,7 +3899,11 @@ impl Session {
             // latched logout remains parked.
             if let Some(arm) = play.arm(name) {
                 arm.set_auto_login(auto_login);
-                if !want_login {
+                if want_login && arm.login_latched() {
+                    // A clean logout requested solely for a cancelled rail
+                    // removal must not hold an auto-login profile parked.
+                    arm.arm_explicit_login();
+                } else if !want_login {
                     arm.withdraw_login();
                 }
             } else {
@@ -4017,6 +4077,10 @@ impl Session {
     /// disconnected workers are stopped asynchronously. Neither path sleeps
     /// or joins on the UI call stack.
     pub fn rail_remove(&mut self, name: &str) {
+        self.rail_remove_at(name, Instant::now());
+    }
+
+    fn rail_remove_at(&mut self, name: &str, now: Instant) {
         let focused = self.focused_name();
         let neighbour = self.wall.focus_neighbour(name, focused.as_deref());
         self.wall.rail_remove(name);
@@ -4026,16 +4090,28 @@ impl Session {
                 .iter()
                 .any(|status| status.username == name && status.connected)
         });
-        if connected {
-            if let Some(play) = self.play.as_ref() {
-                if let Some(arm) = play.arm(name) {
-                    // Clean logout only — Stop follows disconnect or timeout.
-                    arm.request_logout();
-                }
-                play.wake(name);
-            }
+        let retained_io = self.slots.remove(name).or_else(|| {
             self.pending_slot_removals
-                .insert(name.to_string(), Instant::now());
+                .remove(name)
+                .and_then(|pending| pending.io)
+        });
+        let arm = self.play.as_ref().and_then(|play| play.arm(name));
+        if connected {
+            if let (Some(play), Some(arm)) = (self.play.as_ref(), arm) {
+                // Clean logout only — Stop follows disconnect or timeout.
+                arm.request_logout();
+                play.wake(name);
+                self.pending_slot_removals.insert(
+                    name.to_string(),
+                    PendingSlotRemoval {
+                        started: now,
+                        arm,
+                        io: retained_io,
+                    },
+                );
+            } else if let Some(play) = self.play.as_mut() {
+                play.begin_stop_slot(name);
+            }
         } else {
             self.pending_slot_removals.remove(name);
             if let Some(play) = self.play.as_mut() {
@@ -4051,8 +4127,6 @@ impl Session {
         ) {
             self.walk_dest = None;
         }
-        // Flat model: each member owns its own framebuffer; stop means drop.
-        self.slots.remove(name);
         self.audio.release(name);
         self.sync_wall_focus();
         if focused.as_deref() == Some(name) {

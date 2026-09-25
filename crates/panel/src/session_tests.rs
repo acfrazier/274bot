@@ -5046,6 +5046,114 @@ fn rail_remove_treats_loading_session_as_connected_without_blocking() {
     );
 }
 
+fn connected_removal_session(test_name: &str) -> (Session, Arc<SlotArm>) {
+    let path = tmp_vault(test_name);
+    let mut session = Session::new();
+    let mut vault = Vault::create(&path, "bot").unwrap();
+    vault.upsert(profile("alice", "pw", 42)).unwrap();
+    session.vault = Some(vault);
+
+    let mut play = empty_play();
+    let arm = SlotArm::new(42, true);
+    play.attach_arm("alice", Arc::clone(&arm));
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        connected: true,
+        ..SlotStatus::default()
+    });
+    session.play = Some(play);
+    session.wall.load("alice");
+    session.slots.insert(
+        "alice".into(),
+        SlotIo {
+            input: SlotInput::new(),
+            pixels: FrameBuf::new(),
+        },
+    );
+    (session, arm)
+}
+
+#[test]
+fn readd_during_rail_removal_cancels_the_old_lifetime() {
+    let (mut session, arm) = connected_removal_session("rail-remove-readd.vault");
+    let started = Instant::now();
+
+    session.rail_remove_at("alice", started);
+    assert!(!session.slots.contains_key("alice"));
+    assert!(session.load("alice"));
+    assert!(
+        session.slots.contains_key("alice"),
+        "re-adding must restore the running lifetime's IO"
+    );
+
+    session
+        .play
+        .as_ref()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()[0]
+        .connected = false;
+    session.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);
+
+    let current = session.play.as_ref().unwrap().arm("alice").unwrap();
+    assert!(
+        Arc::ptr_eq(&current, &arm),
+        "the stale removal must not stop the re-added lifetime"
+    );
+}
+
+#[test]
+fn login_during_rail_removal_cancels_the_old_timeout() {
+    let (mut session, arm) = connected_removal_session("rail-remove-login.vault");
+    let started = Instant::now();
+
+    session.rail_remove_at("alice", started);
+    session.login("alice");
+    session.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);
+
+    let current = session.play.as_ref().unwrap().arm("alice").unwrap();
+    assert!(Arc::ptr_eq(&current, &arm));
+    assert!(arm.wants_login(), "Log in must survive the cancelled removal");
+    assert!(
+        session.slots.contains_key("alice"),
+        "Log in must restore the running lifetime's IO"
+    );
+}
+
+#[test]
+fn rail_removal_pump_stops_its_lifetime_on_disconnect_or_timeout() {
+    let started = Instant::now();
+    let (mut disconnected, disconnected_arm) =
+        connected_removal_session("rail-remove-disconnect.vault");
+    disconnected.rail_remove_at("alice", started);
+    disconnected
+        .play
+        .as_ref()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()[0]
+        .connected = false;
+    disconnected.pump_slot_removals_at(started);
+    assert!(disconnected_arm.stop.load(Ordering::Relaxed));
+    assert!(disconnected.play.as_ref().unwrap().arm("alice").is_none());
+    assert!(disconnected.pending_slot_removals.is_empty());
+
+    let (mut timed_out, timed_out_arm) =
+        connected_removal_session("rail-remove-timeout.vault");
+    timed_out.rail_remove_at("alice", started);
+    timed_out.pump_slot_removals_at(
+        started + super::SLOT_REMOVE_TIMEOUT - Duration::from_nanos(1),
+    );
+    assert!(!timed_out_arm.stop.load(Ordering::Relaxed));
+    assert!(timed_out.play.as_ref().unwrap().arm("alice").is_some());
+    timed_out.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);
+    assert!(timed_out_arm.stop.load(Ordering::Relaxed));
+    assert!(timed_out.play.as_ref().unwrap().arm("alice").is_none());
+    assert!(timed_out.pending_slot_removals.is_empty());
+}
+
 #[test]
 fn set_multibox_on_syncs_focus_wall() {
     let mut s = Session::new();
