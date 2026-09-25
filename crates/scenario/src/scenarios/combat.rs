@@ -1036,6 +1036,7 @@ fn combat_bank_scenario_with_preparation(
         "chaos_druid_bank",
         "moss_giant_bank_start",
         "rock_crab_bank_seeded",
+        "ardy_fighter_bank_seeded",
         "green_dragon_tele_prepared",
     ];
     if !COMBAT_BANK_SKIPS_PREFIGHT_XP.contains(&name) {

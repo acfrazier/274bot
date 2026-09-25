@@ -2143,6 +2143,11 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
             Duration::from_secs(300),
         ),
         ("ardy_fighter_bank", "ArdyFighter", SCRIPT_GOLD_DEADLINE),
+        (
+            "ardy_fighter_bank_seeded",
+            "ArdyFighter",
+            SCRIPT_GOLD_DEADLINE,
+        ),
     ] {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card));
@@ -2283,6 +2288,70 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         }),
         "ardy_fighter_bank watches a Guard drop enter a fresh bank"
     );
+    let seeded = get("ardy_fighter_bank_seeded").expect("ardy_fighter_bank_seeded registered");
+    let seeded_start = seeded
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: CAKE_ID,
+                count: 1,
+            }
+    }));
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: IRON_ORE_ID,
+                count: 1,
+            }
+    }));
+    let seeded_watch = &seeded.steps[seeded_start + 1..];
+    let walk = seeded_watch
+        .iter()
+        .position(|step| {
+            step.name == "watch seeded Iron ore leave the pack after PeriodicBank deposit"
+        })
+        .expect("seeded Ardy PeriodicBank walk/deposit proof");
+    let banked = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch seeded Iron ore enter a fresh East Ardougne bank")
+        .expect("seeded Ardy bank deposit proof");
+    let closed = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch seeded PeriodicBank close")
+        .expect("seeded Ardy bank close proof");
+    let returned = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch return to the market anchor after seeded banking")
+        .expect("seeded Ardy return proof");
+    let fresh_xp = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch fresh Strength XP after the seeded bank return")
+        .expect("seeded Ardy fresh Strength XP proof");
+    assert!(walk < banked && banked < closed && closed < returned && returned < fresh_xp);
+    assert_eq!(seeded_watch[walk].wait.budget_ticks, 60);
+    assert_eq!(seeded_watch[returned].wait.budget_ticks, 40);
+    assert_eq!(seeded_watch[fresh_xp].wait.budget_ticks, 320);
+    assert!(seeded_watch.iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemIdAtMost {
+                id: IRON_ORE_ID,
+                count: 0,
+            }
+    }));
+    assert!(seeded_watch.iter().any(|step| {
+        step.wait.arm
+            == Proof::BankItemId {
+                id: IRON_ORE_ID,
+                count: 1,
+            }
+    }));
+    assert!(seeded_watch
+        .iter()
+        .any(|step| step.wait.arm == Proof::BankClosed));
 }
 
 #[test]
@@ -3101,6 +3170,7 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
         ("hill_giant_loot_deposit", "adamant_scimitar"),
         ("chaos_druid_bank", "adamant_scimitar"),
         ("ardy_fighter_bank", "adamant_scimitar"),
+        ("ardy_fighter_bank_seeded", "adamant_scimitar"),
         ("rock_crab_bank", "adamant_scimitar"),
         ("rock_crab_bank_seeded", "adamant_scimitar"),
         ("green_dragon_bank", "rune_scimitar"),
@@ -3138,6 +3208,15 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     assert!(
         !seeded.contains("givebank"),
         "rock_crab_bank_seeded's PeriodicBank trip restocks nothing: {seeded}"
+    );
+    let ardy_seeded = seed("ardy_fighter_bank_seeded");
+    assert!(
+        ardy_seeded.contains("give iron_ore 1"),
+        "ardy_fighter_bank_seeded seeds a DEFAULT_LOOT Guard drop: {ardy_seeded}"
+    );
+    assert!(
+        ardy_seeded.contains("give cake 1"),
+        "ardy_fighter_bank_seeded keeps one Cake so PeriodicBank owns the trip: {ardy_seeded}"
     );
     let dragon = seed("green_dragon_bank");
     assert!(
