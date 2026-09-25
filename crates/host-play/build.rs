@@ -241,6 +241,7 @@ fn main() {
         println!("cargo:rerun-if-changed={}", staged.display());
     }
 
+    let staged_pois_sha256 = nav::manifest::hash_file(&pois_path).ok();
     let expectation = StampExpectation {
         revision,
         format: FORMAT_ID,
@@ -252,6 +253,7 @@ fn main() {
         staged_reach_bytes: file_len(&reach_path),
         staged_canlight_bytes: file_len(&canlight_path),
         staged_pois_bytes: file_len(&pois_path),
+        staged_pois_sha256: staged_pois_sha256.as_deref(),
         pois_generator: &pois_generator,
     };
     let staged = read_stamp(&stamp_path);

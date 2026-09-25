@@ -131,6 +131,9 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
         staged_canlight_bytes: Some(5),
         staged_pois_bytes: Some(3),
         pois_generator: "pois-gen",
+        staged_pois_sha256: Some(
+            "5656565656565656565656565656565656565656565656565656565656565656",
+        ),
     };
     let error = baked
         .covers(&expected)

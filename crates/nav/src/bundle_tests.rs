@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 
+const STAMP_POIS_SHA256: &str = "5656565656565656565656565656565656565656565656565656565656565656";
 fn stamp(generator: &str, format: &str, cache_id: &str, pack_bytes: u64) -> BakeStamp {
     BakeStamp {
         content_id: None,
@@ -25,7 +26,7 @@ fn stamp(generator: &str, format: &str, cache_id: &str, pack_bytes: u64) -> Bake
         relative_flags: "nav/289/274bot.navflags".into(),
         relative_reach: "nav/289/274bot.navreach".into(),
         relative_canlight: "nav/289/274bot.navcanlight".into(),
-        pois_sha256: Some("56".repeat(32)),
+        pois_sha256: Some(STAMP_POIS_SHA256.into()),
         pois_bytes: Some(3),
         relative_pois: Some("nav/289/274bot.navpois".into()),
         pois_generator: Some("pois-1".into()),
@@ -49,6 +50,7 @@ fn expectation<'a>(inputs: &'a [InputFingerprint]) -> StampExpectation<'a> {
         staged_reach_bytes: Some(9),
         staged_canlight_bytes: Some(5),
         staged_pois_bytes: Some(3),
+        staged_pois_sha256: Some(STAMP_POIS_SHA256),
         pois_generator: "pois-1",
     }
 }
@@ -97,6 +99,11 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
     let mut changed = expectation(&inputs);
     changed.staged_pois_bytes = None;
     assert!(baked.covers(&changed).unwrap_err().contains("navpois"));
+
+    let mut changed = expectation(&inputs);
+    changed.staged_pois_sha256 =
+        Some("0000000000000000000000000000000000000000000000000000000000000000");
+    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
 
     let modified = [InputFingerprint {
         path: "/content/maps/m1.jm2".into(),

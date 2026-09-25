@@ -401,6 +401,7 @@ pub struct StampExpectation<'a> {
     pub staged_reach_bytes: Option<u64>,
     pub staged_canlight_bytes: Option<u64>,
     pub staged_pois_bytes: Option<u64>,
+    pub staged_pois_sha256: Option<&'a str>,
     pub pois_generator: &'a str,
 }
 
@@ -491,6 +492,19 @@ impl BakeStamp {
                 ))
             }
             Some(_) => {}
+        }
+        match (self.pois_sha256.as_deref(), expected.staged_pois_sha256) {
+            (None, _) => return Err("staged navpois is missing".into()),
+            (_, None) => {
+                return Err(format!(
+                    "staged navpois {} is missing",
+                    self.relative_pois.as_deref().unwrap_or("274bot.navpois")
+                ))
+            }
+            (Some(stamped), Some(actual)) if stamped != actual => {
+                return Err("staged navpois digest does not match the stamp".into())
+            }
+            (Some(_), Some(_)) => {}
         }
         if self.inputs.len() != expected.inputs.len() {
             return Err(format!(

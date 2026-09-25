@@ -265,6 +265,43 @@ fn gundai_shantay_duel_and_castle_wars_are_source_service() {
 }
 
 #[test]
+fn noop_open_chest_is_not_a_bank_variant() {
+    let fix = Fixture::new();
+    fix.write("pack/npc.pack", "1=unused\n");
+    fix.write("pack/loc.pack", "3193=loc_3193\n3194=duel_chestopen\n");
+    fix.write(
+        "scripts/minigames/game_duelarena/scripts/misc_locs.rs2",
+        "[oploc1,loc_3193]\n~open_chest(duel_chestopen);\n[oploc2,duel_chestopen]\n@openbank;\n",
+    );
+    fix.write(
+        "scripts/general_use/scripts/chests.rs2",
+        "[proc,open_chest](loc $other_chest)\nreturn;\n",
+    );
+    fix.write(
+        "maps/m52_51.jm2",
+        "==== MAP ====\n==== LOC ====\n0 53 5: 3193 10 2\n==== NPC ====\n",
+    );
+    let doc = decode(
+        &produce(
+            &fix.0,
+            &[],
+            &[
+                loc(3193, "Closed chest", &["Open"]),
+                loc(3194, "Open chest", &["", "Bank", "Shut"]),
+            ],
+        )
+        .bytes,
+    );
+    assert!(
+        !doc.records
+            .as_slice()
+            .iter()
+            .any(|row| row.key.entity == EntityKind::Loc && row.key.id == 3193),
+        "a no-op open_chest must not invent a closed-chest bank variant"
+    );
+}
+
+#[test]
 fn labels_are_search_anchors_not_walk_targets() {
     let fix = bank_tree();
     let doc = decode(
