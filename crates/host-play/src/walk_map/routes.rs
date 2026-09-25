@@ -9,6 +9,20 @@ pub enum RouteSource {
     Script,
     Live,
 }
+
+/// One route-owner precedence for map and in-game paint: driven live,
+/// then script, then manual WalkTo. Hidden layers never change this choice.
+pub fn select_route_source(live: bool, script: bool, manual: bool) -> Option<RouteSource> {
+    if live {
+        Some(RouteSource::Live)
+    } else if script {
+        Some(RouteSource::Script)
+    } else if manual {
+        Some(RouteSource::Manual)
+    } else {
+        None
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RouteStamp {
     pub source: RouteSource,
@@ -46,6 +60,17 @@ impl<'a> RouteProjection<'a> {
             aim: arm.traveller.current_aim(),
         })
     }
+    fn script(bot: &'a crate::script_runtime::NavBot) -> Option<Self> {
+        bot.route.as_ref().map(|route| Self {
+            stamp: RouteStamp {
+                source: RouteSource::Script,
+                generation: bot.map_route_generation,
+                destination: route.dest,
+            },
+            route,
+            aim: bot.traveller.current_aim(),
+        })
+    }
 }
 impl ScriptNavPaint {
     pub fn with_map_route<R>(
@@ -54,24 +79,13 @@ impl ScriptNavPaint {
         read: impl FnOnce(Option<RouteProjection<'_>>) -> R,
     ) -> R {
         let all = self.navs.lock().unwrap();
-        let projection = all.get(name).and_then(|bot| {
-            bot.route.as_ref().map(|route| RouteProjection {
-                stamp: RouteStamp {
-                    source: RouteSource::Script,
-                    generation: bot.map_route_generation,
-                    destination: route.dest,
-                },
-                route,
-                aim: bot.traveller.current_aim(),
-            })
-        });
-        read(projection)
+        read(all.get(name).and_then(RouteProjection::script))
     }
 }
 impl Play {
-    /// Same precedence as the active follow owners: a driven live scenario,
-    /// then a manual arm, then the script route. Caller supplies live only for
-    /// this exact focused slot/world, never another bot's route/session.
+    /// Shared paint precedence: driven live, then script, then manual WalkTo.
+    /// Caller supplies live only for this exact focused slot/world, never
+    /// another bot's route/session.
     pub fn with_map_route<R>(
         &self,
         name: &str,
@@ -79,20 +93,22 @@ impl Play {
         live: Option<RouteProjection<'_>>,
         read: impl FnOnce(Option<RouteProjection<'_>>) -> R,
     ) -> R {
-        if let Some(projection) = live.or_else(|| manual.and_then(RouteProjection::manual)) {
-            return read(Some(projection));
-        }
-        let all = self.navs.lock().unwrap();
-        read(all.get(name).and_then(|bot| {
-            bot.route.as_ref().map(|route| RouteProjection {
-                stamp: RouteStamp {
-                    source: RouteSource::Script,
-                    generation: bot.map_route_generation,
-                    destination: route.dest,
-                },
-                route,
-                aim: bot.traveller.current_aim(),
-            })
-        }))
+        // A driven live route needs no script lock or manual projection.
+        let scripts = live.is_none().then(|| self.navs.lock().unwrap());
+        let script = scripts
+            .as_ref()
+            .and_then(|all| all.get(name))
+            .and_then(RouteProjection::script);
+        let source = select_route_source(
+            live.is_some(),
+            script.is_some(),
+            manual.is_some_and(|arm| arm.route.is_some()),
+        );
+        read(match source {
+            Some(RouteSource::Live) => live,
+            Some(RouteSource::Script) => script,
+            Some(RouteSource::Manual) => manual.and_then(RouteProjection::manual),
+            None => None,
+        })
     }
 }

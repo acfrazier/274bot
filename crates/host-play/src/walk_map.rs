@@ -13,7 +13,7 @@ pub use catalogue::{
     AuthenticatedServices, Catalogue, Entry, Meaning, Search, SourceStatus, BANK_API_NOTE,
 };
 pub use observations::{observed_services, ObservedService, MAX_OBSERVED_SERVICES};
-pub use routes::{RouteProjection, RouteSource, RouteStamp};
+pub use routes::{select_route_source, RouteProjection, RouteSource, RouteStamp};
 
 /// A new route owner must not reuse the same cache stamp as a retired arm at
 /// the same destination. This clock is shared across manual/script owners.

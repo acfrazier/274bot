@@ -18,29 +18,31 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   and place labels. Missing navpois invalidates a warm stamp once. Frozen
   `BANK_CATALOG` / named-bank APIs are unchanged; 274V10 routing bytes are
   unchanged.
-- WalkTo's shared panel/TUI model merges revision-bound client POIs, authenticated
-  `navpois` service/place facts and borrowed navigation transports. Local search
-  preserves access anchors, annotations, adjacent walk stands and teleport
-  **landings** as different facts. Missing client data or `navpois` is explicit;
-  tellers and place labels are unavailable without the supplement.
-- **Intentional snapping change:** the panel previously searched an entire plane
-  for the nearest walkable tile; the TUI searched radius 16 but returned the
-  unwalkable requested tile on a miss. Both now use one radius-16 query (at most
-  33×33 cells), ordered by Chebyshev distance, Manhattan distance, x, then z.
-  A miss has no action target. Blocked place-label anchors remain view jumps.
-- Map confirmation consumes the pending selection once, captures the slot
-  lifetime/world/nav binding and routing options, and uses the existing host
-  walk arm. A missing observed player now refuses the action instead of storing
-  a destination for a later login. Focus, identity and plane changes invalidate
-  selection; debug Teleport checks the actual local loopback target in the host.
-- Shared route overlays borrow the actual live, manual or script route instead
-  of cloning route payloads for map reads. Their cache generation changes across
-  arm replacement, including a new path to the same destination.
-- Map banks are labelled **Map-discovered bank**, distinct from the **Frozen bank
-  API roster**. Canifis can appear at its normalized bridge plane 0 while
-  `nearestBank` still omits it; the frozen bank APIs are unchanged. A geometric,
-  collision-valid adjacent stand proves only a walking destination, not banking
-  eligibility or the permitted interaction side (v1 POIs omit `forceapproach`).
+- Added a shared host map catalogue and search API that merges revision-bound
+  client POIs, authenticated `navpois` service/place facts and borrowed navigation
+  transports. Access anchors, annotations, adjacent walk stands and teleport
+  **landings** remain different facts. Missing client data or `navpois` is
+  explicit; tellers and place labels are unavailable without the supplement.
+- The shared selection model provides a radius-16 query (at most 33×33 cells),
+  ordered by Chebyshev distance, Manhattan distance, x, then z. A miss has no
+  action target; place-label anchors remain view jumps. Replacing the existing
+  panel/TUI pixel/cell picking is part of their separate renderer integration.
+- Shared map confirmations consume the selection once, preserving its captured
+  slot lifetime/world/nav binding and taking routing options at confirmation.
+  Panel adapters use the existing host walk arm, refuse a missing observed
+  player, and check debug Teleport against the bound local loopback target.
+  The replacement picker supplies selection-time binding; confirmation does
+  not rebind an old click to a new slot or profile.
+- The shared route projection borrows actual routes with driven-live, script,
+  then manual precedence, matching the in-game overlay. Its generation changes
+  across arm replacement, including a new path to the same destination.
+- Map catalogue entries expose **Map-discovered bank** provenance, distinct from
+  the **Frozen bank API roster**. Canifis can be discovered at normalized bridge
+  plane 0 while `nearestBank` still omits it; frozen bank APIs are unchanged.
+  A geometric, collision-valid adjacent stand proves a walking destination,
+  not banking eligibility or the permitted interaction side (v1 POIs omit
+  `forceapproach`). Live NPC service extraction borrows the focused snapshot,
+  validates slot/world/nav context and returns at most 128 observed records.
 
 ### Rendering and client
 

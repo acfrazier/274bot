@@ -25,11 +25,12 @@ pub struct ObservedService {
 /// `source` is the binding captured alongside the snapshot; `current` is the
 /// current focused slot/world/nav binding. Old observations never become facts
 /// about a replacement slot with the same username.
+/// Only observed operation slots are classified, which is revision-neutral;
+/// this path never interprets revision-specific mapfunction symbols or IDs.
 pub fn observed_services(
     snapshot: &GameSnapshot,
     source: MapContext,
     current: MapContext,
-    revision: u16,
 ) -> Result<Vec<ObservedService>, ActionError> {
     if source != current || source.focus.is_none() {
         return Err(ActionError::Stale);
@@ -52,7 +53,7 @@ pub fn observed_services(
             active: true,
             mapfunction: None,
         };
-        classify_definition(revision, &definition, |kind, evidence| {
+        classify_definition(0, &definition, |kind, evidence| {
             if records.len() < MAX_OBSERVED_SERVICES {
                 if records.is_empty() {
                     records.reserve_exact(

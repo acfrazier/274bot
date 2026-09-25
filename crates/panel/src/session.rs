@@ -691,12 +691,15 @@ fn live_or_walk_paint(
     walk: (Option<Route>, Option<WorldTile>),
     script: (Option<Route>, Option<WorldTile>),
 ) -> (Option<Route>, Option<WorldTile>) {
-    if driven && live.0.is_some() {
-        live
-    } else if script.0.is_some() {
-        script
-    } else {
-        walk
+    use host_play::walk_map::{select_route_source, RouteSource};
+    match select_route_source(
+        driven && live.0.is_some(),
+        script.0.is_some(),
+        walk.0.is_some(),
+    ) {
+        Some(RouteSource::Live) => live,
+        Some(RouteSource::Script) => script,
+        _ => walk,
     }
 }
 
@@ -1874,6 +1877,7 @@ impl Session {
         let profile = Arc::clone(template.profile());
         self.map_model.close();
         self.map_catalogue = None;
+        self.picker_sel = None;
         crate::picker::set_navflags_binding(
             profile.nav_flags().to_path_buf(),
             profile
@@ -4177,15 +4181,6 @@ impl Session {
         }
     }
 
-    /// Arm a walk to `dest`. The picked dest is always stored so the status
-    /// row shows what the user asked for even when no route could be found.
-    /// Routing needs the player's observed tile and a loaded pack; the
-    /// picker routes via [`Session::arm_walk_on`] when it has both.
-    pub fn arm_walk(&mut self, dest: Tile) {
-        self.walk_dest = Some(dest);
-        self.walk_clear.store(false, Ordering::Relaxed);
-    }
-
     /// The gating facts for the focused slot's WalkTo route: the slot's
     /// last published [`WorldState`] (inv/equipment/stats/varps/quests
     /// from its live snapshot), or the fail-closed empty state when the
@@ -4217,61 +4212,8 @@ impl Session {
             .unwrap_or_default()
     }
 
-    /// Arm a walk to `dest` and route it on `world` from `from` (the
-    /// player's observed tile). On a found route the focused username's
-    /// walk arm stores the route so the observe tick can step it via
-    /// [`nav::traveller::Traveller::follow`]; on `NoPath` only the dest is
-    /// stored and `error` carries a short message. The Nav settings'
-    /// [`FindOptions`] apply: `ui.nav.allow_teleports` unions the any-tile
-    /// teleport layer in and `ui.nav.allow_wilderness` allows entering the
-    /// wilderness. The gating [`WorldState`] is the focused slot's last
-    /// published snapshot facts (see [`Session::nav_states`]); a slot that
-    /// has not published yet falls back to the fail-closed empty state.
-    /// The routing and arm latching live in
-    /// [`host_play::arm_walk_on`] (shared with the TUI) — this wrapper
-    /// only stores the picked dest, applies the panel nav settings, and
-    /// reflects the outcome.
-    /// Callers that do not know the player's tile fall back to
-    /// [`Session::arm_walk`].
-    pub fn arm_walk_on(&mut self, world: &NavWorld, from: Tile, dest: Tile) {
-        self.walk_dest = Some(dest);
-        self.walk_clear.store(false, Ordering::Relaxed);
-        let name = self.focused_name();
-        let state = self.focused_walk_state();
-        let bank = self.focused_walk_bank();
-        let routed = host_play::arm_walk_on(
-            world,
-            from,
-            dest,
-            FindOptions {
-                allow_teleports: self.ui.nav.allow_teleports,
-                allow_wilderness: self.ui.nav.allow_wilderness,
-                allow_bank_fetch: self.ui.nav.allow_bank_fetch,
-                ..FindOptions::default()
-            },
-            &state,
-            &bank,
-            &self.travellers,
-            name.as_deref(),
-        );
-        match routed {
-            Ok(_) => {
-                self.error = None;
-                if let Some(name) = name {
-                    self.tick_latch.lock().unwrap().remove(&name);
-                    // Rising edge: the overlay must paint the new route on
-                    // this frame, not after the 1 s raster cadence.
-                    self.route_gen += 1;
-                }
-            }
-            Err(_) => {
-                self.error = Some(format!("no path to {} {} {}", dest.x, dest.z, dest.level));
-            }
-        }
-    }
-
-    /// Current map command binding. Legacy/grid-only views use an ephemeral
-    /// world-instance identity, never a made-up client/content compatibility proof.
+    /// Current map command binding. Legacy/grid-only views use the profile
+    /// generation, never a pointer address or a client/content compatibility proof.
     pub fn picker_context(&self, world: &NavWorld) -> host_play::walk_map::MapContext {
         use host_play::walk_map::MapContext;
         use nav::map::identity::Digest;
@@ -4287,7 +4229,7 @@ impl Session {
                     .filter(|c| std::ptr::eq(c.world().as_ref(), world))
                     .map(|c| c.nav_identity())
             })
-            .unwrap_or_else(|| Digest::of(&(world as *const NavWorld as usize).to_ne_bytes()));
+            .unwrap_or_else(|| Digest::of(&self.profile_generation.to_be_bytes()));
         let session = name
             .as_ref()
             .and_then(|name| {
@@ -4311,7 +4253,9 @@ impl Session {
     pub fn select_picker_tile(&mut self, world: &NavWorld, requested: Tile) -> Option<Tile> {
         let context = self.picker_context(world);
         self.map_model.bind(context);
-        self.map_model.select_tile(world, requested)
+        let selected = self.map_model.select_tile(world, requested);
+        self.picker_sel = selected;
+        selected
     }
 
     pub fn select_picker_poi(&mut self, index: usize) -> bool {
@@ -4321,7 +4265,10 @@ impl Session {
         let context = self.picker_context(catalogue.world());
         self.map_model.bind(context);
         match self.map_model.select_poi(&catalogue, index) {
-            Ok(()) => true,
+            Ok(()) => {
+                self.picker_sel = self.map_model.pending().and_then(|p| p.target);
+                true
+            }
             Err(error) => {
                 self.error = Some(error.to_string());
                 false
@@ -4344,9 +4291,7 @@ impl Session {
     /// refusal, never an arm stored for a future login.
     pub fn confirm_picker_walk(&mut self, world: &NavWorld) -> bool {
         use host_play::walk_map::{ActionError, ActionKind};
-        if let Some(requested) = self.picker_sel.take() {
-            self.select_picker_tile(world, requested);
-        }
+        self.picker_sel = None;
         let context = self.picker_context(world);
         let origin = self
             .focused_tile()
@@ -4386,14 +4331,10 @@ impl Session {
         }
     }
 
-    pub fn confirm_picker_teleport(&mut self) -> bool {
+    pub fn confirm_picker_teleport(&mut self, world: &NavWorld) -> bool {
         use host_play::walk_map::{ActionError, ActionKind};
-        let Some(world) = crate::picker::pack() else {
-            self.map_model.clear_selection();
-            self.error = Some(ActionError::NoNavigation.to_string());
-            return false;
-        };
-        let context = self.picker_context(&world);
+        self.picker_sel = None;
+        let context = self.picker_context(world);
         let origin = self
             .focused_tile()
             .map(|(x, z, level)| Tile { x, z, level });

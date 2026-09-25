@@ -16,6 +16,28 @@ use nav::WorldState;
 
 use super::*;
 
+use crate as map_host;
+#[path = "../../tests/support/map_fixture.rs"]
+mod map_fixture;
+use map_fixture::MapFixture;
+
+fn bound_context(play: &crate::Play) -> MapContext {
+    MapContext {
+        focus: play.map_focus("alice"),
+        nav: Digest::from_hex(
+            &play
+                .server_profile()
+                .unwrap()
+                .nav_identity()
+                .unwrap()
+                .nav_sha256,
+        )
+        .unwrap(),
+        overlay: None,
+        generation: 1,
+    }
+}
+
 fn t(x: i32, z: i32, level: i32) -> Tile {
     Tile { x, z, level }
 }
@@ -494,7 +516,191 @@ fn host_rejects_remote_teleport_and_expired_slot_before_queueing() {
 }
 
 #[test]
-fn actual_route_projection_follows_live_manual_script_precedence_and_focus() {
+fn local_loopback_teleport_consumes_selection_and_queues_exact_coordinates_once() {
+    let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
+    let origin = t(3201, 3201, 0);
+    let play = fixture.play(origin);
+    play.cheats
+        .lock()
+        .unwrap()
+        .insert("alice".into(), Default::default());
+    let ctx = bound_context(&play);
+    let mut model = MapModel::default();
+    model.bind(ctx);
+    model.select_tile(&play.world().unwrap(), t(3203, 3204, 2));
+    let command = model
+        .confirm(
+            ActionKind::Teleport,
+            &ctx,
+            Some(origin),
+            FindOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(play.map_teleport(command, &ctx), Ok(()));
+    assert_eq!(
+        model
+            .confirm(
+                ActionKind::Teleport,
+                &ctx,
+                Some(origin),
+                FindOptions::default()
+            )
+            .unwrap_err(),
+        ActionError::NoSelection
+    );
+    assert_eq!(
+        play.cheats.lock().unwrap()["alice"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["tele 2,50,50,3,4"]
+    );
+}
+
+#[test]
+fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() {
+    let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
+    let origin = t(3201, 3201, 0);
+    let destination = t(3205, 3206, 0);
+    let play = fixture.play(origin);
+    let ctx = bound_context(&play);
+    let world = play.world().unwrap();
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let mut model = MapModel::default();
+    model.bind(ctx);
+    model.select_tile(&world, destination);
+    let command = model
+        .confirm(ActionKind::Walk, &ctx, Some(origin), FindOptions::default())
+        .unwrap();
+    let route = play
+        .map_walk(command, &ctx, &WorldState::empty(), &[], &arms)
+        .unwrap();
+    assert_eq!(route.dest, wt(3205, 3206, 0));
+    let generation = {
+        let arms = arms.lock().unwrap();
+        let arm = arms["alice"].lock().unwrap();
+        assert_eq!(arm.queued_tile(), Some(destination));
+        arm.route_generation
+    };
+
+    // Both caller-supplied contexts agree, so only the host's actual bound
+    // identity can reject this command.
+    let foreign = MapContext {
+        nav: digest(99),
+        ..ctx
+    };
+    model.bind(foreign);
+    model.select_tile(&world, t(3202, 3202, 0));
+    let command = model
+        .confirm(
+            ActionKind::Walk,
+            &foreign,
+            Some(origin),
+            FindOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        play.map_walk(command, &foreign, &WorldState::empty(), &[], &arms)
+            .unwrap_err(),
+        ActionError::Stale
+    );
+    let arms = arms.lock().unwrap();
+    let arm = arms["alice"].lock().unwrap();
+    assert_eq!(arm.queued_tile(), Some(destination));
+    assert_eq!(arm.route_generation, generation);
+}
+
+#[test]
+fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_identity() {
+    use nav::map::cache::ReadyCatalogue;
+    use nav::map::formats::{CatalogueManifest, PayloadReceipt};
+
+    let world = Arc::new(world(t(0, 0, 0), 8, &[(3, 3, 0)]));
+    let fixture = MapFixture::new(&world, "local-289");
+    let identity = identity();
+    let key = identity.key().unwrap();
+    let directory = fixture.root.join(key.0.to_string());
+    std::fs::create_dir(&directory).unwrap();
+    let document = ClientPois {
+        schema: 1,
+        identity,
+        coverage: coverage(),
+        records: Rows::new(vec![record(
+            EntityKind::Loc,
+            3,
+            3,
+            SourceSpace::ClientVisual {
+                plane: 1,
+                link_below: true,
+            },
+            PoiKind::Bank,
+            "Bridge bank",
+        )])
+        .unwrap(),
+    };
+    let bytes = document.encode().unwrap();
+    let receipt = CatalogueManifest {
+        schema: 1,
+        identity,
+        key,
+        record_count: 1,
+        payload: PayloadReceipt {
+            bytes: bytes.len() as u32,
+            sha256: Digest::of(&bytes),
+        },
+    };
+    std::fs::write(directory.join("client-pois.json"), bytes).unwrap();
+    std::fs::write(
+        directory.join("manifest.json"),
+        serde_json::to_vec(&receipt).unwrap(),
+    )
+    .unwrap();
+    let ready = Arc::new(ReadyCatalogue::open(&directory, identity).unwrap());
+    assert!(matches!(
+        Catalogue::from_ready(
+            Arc::clone(&world),
+            CatalogueIdentity {
+                content: digest(99),
+                ..identity
+            },
+            digest(8),
+            Some(Arc::clone(&ready)),
+            None,
+        ),
+        Err(nav::map::MapError::Identity)
+    ));
+    let catalogue = Catalogue::from_ready(
+        Arc::clone(&world),
+        identity,
+        digest(8),
+        Some(Arc::clone(&ready)),
+        None,
+    )
+    .unwrap();
+    drop(ready);
+    let mut search = Search::default();
+    search.update(&catalogue, "BRIDGE BANK").unwrap();
+    let entries: Vec<_> = search
+        .results()
+        .iter()
+        .map(|&i| {
+            let entry = catalogue.entry(i).unwrap();
+            (
+                entry.name(),
+                entry.meaning(),
+                entry.anchor(),
+                entry.walk_target(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        entries,
+        [("Bridge bank", Meaning::Access, t(3, 3, 0), Some(t(2, 3, 0)))]
+    );
+}
+
+#[test]
+fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
     let world = world(t(0, 0, 0), 5, &[]);
     let route = nav::router::find_with(
         &world.collision,
@@ -530,7 +736,7 @@ fn actual_route_projection_follows_live_manual_script_precedence_and_focus() {
     manual.route_generation = 8;
     assert_eq!(
         play.with_map_route("alice", Some(&manual), None, read),
-        Some((RouteSource::Manual, 8, wt(2, 3, 0)))
+        Some((RouteSource::Script, 7, wt(3, 3, 0)))
     );
     let live = nav::router::Route {
         dest: wt(4, 3, 0),
@@ -545,8 +751,12 @@ fn actual_route_projection_follows_live_manual_script_precedence_and_focus() {
         ),
         Some((RouteSource::Live, 9, wt(4, 3, 0)))
     );
-    manual.route = None;
     play.navs.lock().unwrap().remove("alice");
+    assert_eq!(
+        play.with_map_route("alice", Some(&manual), None, read),
+        Some((RouteSource::Manual, 8, wt(2, 3, 0)))
+    );
+    manual.route = None;
     assert_eq!(
         play.with_map_route("alice", Some(&manual), None, read),
         None
@@ -644,7 +854,7 @@ fn observed_services_expire_with_snapshot_or_focus_and_keep_real_plane_and_slot(
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(&client);
     let ctx = context();
-    let observed = observed_services(&snapshot, ctx, ctx, 289).unwrap();
+    let observed = observed_services(&snapshot, ctx, ctx).unwrap();
     assert_eq!(observed.len(), MAX_OBSERVED_SERVICES);
     assert_eq!(observed.first().unwrap().npc_index, 7);
     assert_eq!(
@@ -667,12 +877,12 @@ fn observed_services_expire_with_snapshot_or_focus_and_keep_real_plane_and_slot(
     }
     let replaced = context();
     assert!(matches!(
-        observed_services(&snapshot, ctx, replaced, 289),
+        observed_services(&snapshot, ctx, replaced),
         Err(ActionError::Stale)
     ));
     snapshot.reset_session(client.gens);
     assert!(matches!(
-        observed_services(&snapshot, ctx, ctx, 289),
+        observed_services(&snapshot, ctx, ctx),
         Err(ActionError::NoOrigin)
     ));
 }

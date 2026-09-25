@@ -16,6 +16,7 @@ use client::dash3d::CollisionFlag;
 use client::io::{Packet, ServerProt};
 use client::render::nav_debug::{CORNER_NE, FACE_N, FACE_S};
 use host::{FrameBuf, SlotInput};
+use host_play as map_host;
 use host_play::profile::ProfileEnvironment;
 use host_play::{ProfileOptions, SlotArm, SlotStatus, StartupPhase};
 use nav::collision::WorldCollision;
@@ -34,6 +35,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use vault::{Profile, ProfileSettings, Vault};
+
+#[path = "../../host-play/tests/support/map_fixture.rs"]
+mod map_fixture;
+use map_fixture::MapFixture;
 
 #[test]
 fn memory_override_changes_spawn_profile_without_persisting_it() {
@@ -804,29 +809,6 @@ fn open_world(w: usize, h: usize) -> NavWorld {
             height: h,
             walk: vec![0u8; w * h],
             blocked: vec![0u64; (w * h).div_ceil(64)],
-            flags: None,
-        },
-        TransportGraph::default(),
-        Vec::new(),
-    )
-}
-
-/// The Rune Essence mine mapsquare (m45_75) as a sealed 64×64
-/// all-walkable bake at (2880,4800): the pad and the four exit portal
-/// placements inside, nothing packed — the session return hop is
-/// synthesized by the router, so a walk out only arms with a latch.
-fn mine_world() -> NavWorld {
-    NavWorld::from_parts(
-        WorldCollision {
-            origin: WorldTile {
-                x: 2880,
-                z: 4800,
-                level: 0,
-            },
-            width: 64,
-            height: 64,
-            walk: vec![0u8; 64 * 64],
-            blocked: vec![0u64; (64usize * 64).div_ceil(64)],
             flags: None,
         },
         TransportGraph::default(),
@@ -2000,6 +1982,22 @@ fn walk_status_is_dash_when_no_route() {
     assert_eq!(s.walk_status_text(), "—");
 }
 
+fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFixture {
+    let fixture = MapFixture::new(world, "local-289");
+    let play = fixture.play(origin);
+    s.server_profile = Some(Arc::clone(fixture.template.profile()));
+    s.statuses = play.statuses();
+    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.play = Some(play);
+    fixture
+}
+
+fn confirm_map_walk(s: &mut Session, world: &NavWorld, origin: Tile, dest: Tile) -> bool {
+    let _fixture = bind_picker_session(s, world, origin);
+    s.select_picker_tile(world, dest);
+    s.confirm_picker_walk(world)
+}
+
 #[test]
 fn picker_without_observed_origin_refuses_and_consumes_selection() {
     let mut s = Session::new();
@@ -2021,51 +2019,139 @@ fn picker_without_observed_origin_refuses_and_consumes_selection() {
 }
 
 #[test]
-fn arm_walk_sets_queued_text() {
+fn picker_select_then_confirm_arms_once_and_advances_route_generation() {
     let mut s = Session::new();
-    s.arm_walk(Tile {
-        x: 3222,
-        z: 3222,
-        level: 0,
-    });
-    assert!(s.walk_status_text().contains("3222"));
-}
-
-#[test]
-fn arm_walk_on_routes_and_arms_focused_traveller() {
-    let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
     let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
     let dest = Tile {
         x: 2,
         z: 2,
         level: 0,
     };
-    s.arm_walk_on(
-        &world,
-        Tile {
-            x: 0,
-            z: 0,
-            level: 0,
-        },
-        dest,
+    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let generation = s.route_gen();
+    assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
+    assert_eq!(s.walk_dest, None);
+    assert!(s.travellers.lock().unwrap().is_empty());
+    assert!(s.confirm_picker_walk(&world));
+    assert_eq!(s.walk_dest, Some(dest));
+    assert!(s.error.is_none());
+    assert!(s.map_model.pending().is_none());
+    assert_eq!(s.picker_sel, None);
+    let armed_generation = s.route_gen();
+    assert_ne!(armed_generation, generation);
+    assert_eq!(
+        s.travellers.lock().unwrap()["alice"]
+            .lock()
+            .unwrap()
+            .queued_tile(),
+        Some(dest)
     );
-    assert_eq!(s.walk_dest, Some(dest), "dest stays stored on success");
-    assert!(s.error.is_none(), "a found route clears the error banner");
-    let queued = s
-        .travellers
-        .lock()
-        .unwrap()
-        .get("alice")
-        .expect("focused walk arm exists")
-        .lock()
-        .unwrap()
-        .queued_tile();
-    assert_eq!(queued, Some(dest));
+    assert!(!s.confirm_picker_walk(&world));
+    assert_eq!(s.route_gen(), armed_generation);
 }
 
 #[test]
-fn arm_walk_on_feeds_the_focused_slots_latched_essence_session() {
+fn picker_selection_cannot_cross_same_name_slot_replacement() {
+    let mut s = Session::new();
+    let world = open_world(3, 3);
+    let _fixture = bind_picker_session(
+        &mut s,
+        &world,
+        Tile {
+            x: 0,
+            z: 1,
+            level: 0,
+        },
+    );
+    s.select_picker_tile(
+        &world,
+        Tile {
+            x: 2,
+            z: 2,
+            level: 0,
+        },
+    );
+    s.play
+        .as_mut()
+        .unwrap()
+        .attach_arm("alice", SlotArm::new(1, false));
+    assert!(!s.confirm_picker_walk(&world));
+    assert_eq!(
+        s.error,
+        Some(host_play::walk_map::ActionError::Stale.to_string())
+    );
+    assert!(s.travellers.lock().unwrap().is_empty());
+    assert!(s.map_model.pending().is_none());
+}
+
+#[test]
+fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
+    use host_play::walk_map::ActionError;
+    let world = open_world(3, 3);
+    let fixture = MapFixture::new(&world, "public-289");
+    let play = fixture.play(Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    });
+    let mut s = Session::new();
+    s.server_profile = Some(Arc::clone(fixture.template.profile()));
+    s.statuses = play.statuses();
+    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.play = Some(play);
+    s.select_picker_tile(
+        &world,
+        Tile {
+            x: 2,
+            z: 2,
+            level: 0,
+        },
+    );
+    assert!(!s.confirm_picker_teleport(&world));
+    assert_eq!(s.error, Some(ActionError::Unauthorized.to_string()));
+    assert!(s.map_model.pending().is_none());
+    assert_eq!(s.picker_sel, None);
+    assert!(!s.confirm_picker_teleport(&world));
+    assert_eq!(s.error, Some(ActionError::NoSelection.to_string()));
+}
+
+/// Both endpoints are real standable map cells; the mine remains an island.
+fn picker_mine_world() -> NavWorld {
+    let (width, height) = (384, 1472);
+    let mut flags = vec![CollisionFlag::SQ_BLOCKED as u32; 4 * width * height];
+    for (west, south) in [(2880, 4800), (3200, 3392)] {
+        for z in south..south + 64 {
+            for x in west..west + 64 {
+                flags[(z - 3392) * width + x - 2880] = 0;
+            }
+        }
+    }
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    NavWorld::from_parts(
+        WorldCollision {
+            origin: WorldTile {
+                x: 2880,
+                z: 3392,
+                level: 0,
+            },
+            width,
+            height,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        vec![],
+    )
+}
+
+#[test]
+fn picker_confirm_feeds_the_focused_slots_latched_essence_session() {
     let mut s = Session::new();
     s.focus.lock().unwrap().focused = Some("alice".into());
     // Alice's walker already latched the mine session (entered via
@@ -2084,25 +2170,22 @@ fn arm_walk_on_feeds_the_focused_slots_latched_essence_session() {
             ..Default::default()
         })),
     );
-    let world = mine_world();
+    let world = picker_mine_world();
     let anchor = Tile {
         x: 3253,
         z: 3401,
         level: 0,
     };
-    s.arm_walk_on(
+    assert!(confirm_map_walk(
+        &mut s,
         &world,
         Tile {
             x: 2912,
             z: 4833,
             level: 0, // the mine pad
         },
-        anchor,
-    );
-    assert!(
-        s.error.is_none(),
-        "the latched session routes out of the mine"
-    );
+        anchor
+    ));
     let queued = s
         .travellers
         .lock()
@@ -2120,13 +2203,14 @@ fn arm_walk_on_feeds_the_focused_slots_latched_essence_session() {
 }
 
 #[test]
-fn arm_walk_on_without_a_latch_keeps_the_mine_sealed() {
+fn picker_confirm_without_a_latch_keeps_the_mine_sealed() {
     let mut s = Session::new();
     s.focus.lock().unwrap().focused = Some("alice".into());
     // No latch: the session return hop is never relaxed — the sealed
     // mine stays NoPath (fail-closed without a session is correct).
-    let world = mine_world();
-    s.arm_walk_on(
+    let world = picker_mine_world();
+    assert!(!confirm_map_walk(
+        &mut s,
         &world,
         Tile {
             x: 2912,
@@ -2137,17 +2221,18 @@ fn arm_walk_on_without_a_latch_keeps_the_mine_sealed() {
             x: 3253,
             z: 3401,
             level: 0,
-        },
-    );
-    assert!(
-        s.error.as_deref().is_some_and(|e| e.contains("no path")),
-        "no latch -> the mine is sealed, got {:?}",
-        s.error
-    );
+        }
+    ));
+    assert!(s
+        .travellers
+        .lock()
+        .unwrap()
+        .values()
+        .all(|arm| arm.lock().unwrap().route.is_none()));
 }
 
 #[test]
-fn arm_walk_on_no_path_stores_dest_and_sets_error() {
+fn picker_confirm_no_path_keeps_destination_without_arming() {
     let mut s = Session::new();
     s.focus.lock().unwrap().focused = Some("alice".into());
     // Block the middle column: (1,0), (1,1), (1,2) on the 3x3 world.
@@ -2177,21 +2262,17 @@ fn arm_walk_on_no_path_stores_dest_and_sets_error() {
         z: 1,
         level: 0,
     };
-    s.arm_walk_on(
+    assert!(!confirm_map_walk(
+        &mut s,
         &world,
         Tile {
             x: 0,
             z: 1,
             level: 0,
         },
-        dest,
-    );
-    assert_eq!(s.walk_dest, Some(dest), "dest stays stored on NoPath");
-    let err = s.error.clone().expect("no-path message set");
-    assert!(
-        err.contains("no path"),
-        "short no-path message, got {err:?}"
-    );
+        dest
+    ));
+    assert_eq!(s.walk_dest, Some(dest));
     assert!(
         s.travellers
             .lock()
@@ -2290,10 +2371,10 @@ fn coins_snapshot_state() -> WorldState {
 }
 
 /// The focused slot's published snapshot facts gate the WalkTo route:
-/// 10 coins on the player let `arm_walk_on` cross a toll that an
-/// empty state refuses.
+/// 10 coins on the player let a confirmed walk cross a toll that
+/// an empty state refuses.
 #[test]
-fn arm_walk_on_uses_focused_slot_state_across_a_toll() {
+fn picker_confirm_uses_focused_slot_state_across_a_toll() {
     let world = toll_world();
     let mut s = Session::new();
     s.focus.lock().unwrap().focused = Some("alice".into());
@@ -2303,24 +2384,20 @@ fn arm_walk_on_uses_focused_slot_state_across_a_toll() {
         "alice".into(),
         (GameSnapshot::new(), coins_snapshot_state()),
     );
-    s.arm_walk_on(
+    assert!(confirm_map_walk(
+        &mut s,
         &world,
         Tile {
             x: 0,
-            z: 0,
+            z: 1,
             level: 0,
         },
         Tile {
             x: 4,
             z: 4,
             level: 0,
-        },
-    );
-    assert!(
-        s.error.is_none(),
-        "coins on the player pay the toll: {:?}",
-        s.error
-    );
+        }
+    ));
     let route = s
         .travellers
         .lock()
@@ -2361,31 +2438,26 @@ fn walk_follow_uses_stored_nav_snapshot() {
     assert!(nav_snapshot_for_follow(&states, "bob").is_none());
 }
 
-/// No published facts for the slot (still logging in / no player
-/// decoded yet) keeps the fail-closed behavior: the toll stays
-/// unusable and `arm_walk_on` reports `NoPath`.
+/// Missing inventory facts leave the toll unusable even with an observed origin.
 #[test]
-fn arm_walk_on_falls_back_to_empty_when_slot_has_no_state() {
+fn picker_confirm_falls_back_to_empty_when_slot_has_no_state() {
     let world = toll_world();
     let mut s = Session::new();
     s.focus.lock().unwrap().focused = Some("alice".into());
-    s.arm_walk_on(
+    assert!(!confirm_map_walk(
+        &mut s,
         &world,
         Tile {
             x: 0,
-            z: 0,
+            z: 1,
             level: 0,
         },
         Tile {
             x: 4,
             z: 4,
             level: 0,
-        },
-    );
-    assert!(
-        s.error.as_ref().unwrap().contains("no path"),
-        "no published facts -> the toll stays unusable"
-    );
+        }
+    ));
     assert!(
         s.travellers
             .lock()
@@ -2397,7 +2469,7 @@ fn arm_walk_on_falls_back_to_empty_when_slot_has_no_state() {
 }
 
 #[test]
-fn arm_walk_on_ignores_teles_until_allow_teleports() {
+fn picker_confirm_ignores_teles_until_allow_teleports() {
     // world: origin cannot walk to dest; a teleport edge can.
     let mut session = Session::new();
     session.focus.lock().unwrap().focused = Some("alice".into());
@@ -2459,21 +2531,13 @@ fn arm_walk_on_ignores_teles_until_allow_teleports() {
     );
     let origin = Tile {
         x: 0,
-        z: 0,
+        z: 1,
         level: 0,
     };
     session.ui.nav.allow_teleports = false;
-    session.arm_walk_on(&world, origin, dest_tile);
-    assert!(
-        session.error.as_ref().unwrap().contains("no path"),
-        "walk-only find must not use the teleport edge"
-    );
+    assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_teleports = true;
-    session.arm_walk_on(&world, origin, dest_tile);
-    assert!(
-        session.error.is_none(),
-        "allow_teleports routes the teleport"
-    );
+    assert!(confirm_map_walk(&mut session, &world, origin, dest_tile));
     let arm = session.travellers.lock().unwrap();
     let route = arm
         .get(&session.focused_name().unwrap())
@@ -2489,11 +2553,11 @@ fn arm_walk_on_ignores_teles_until_allow_teleports() {
 }
 
 #[test]
-fn arm_walk_on_uses_find_with_options() {
+fn picker_confirm_uses_find_with_options() {
     // The tele fixture moved to wildy-north coords, with the teleport
     // landing on a wilderness tile: the teleport edge is the only way
     // across the wall, and its landing is inside the zone. Neither
-    // flag alone may route — `arm_walk_on` must pass both
+    // flag alone may route — confirmation must pass both
     // `ui.nav.allow_teleports` and `ui.nav.allow_wilderness` through
     // to `find_with`.
     let mut session = Session::new();
@@ -2576,23 +2640,11 @@ fn arm_walk_on_uses_find_with_options() {
     };
     session.ui.nav.allow_teleports = false;
     session.ui.nav.allow_wilderness = false;
-    session.arm_walk_on(&world, origin, dest_tile);
-    assert!(
-        session.error.as_ref().unwrap().contains("no path"),
-        "default find must not route into the wilderness"
-    );
+    assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_teleports = true;
-    session.arm_walk_on(&world, origin, dest_tile);
-    assert!(
-        session.error.as_ref().unwrap().contains("no path"),
-        "a teleport landing inside the wilderness stays blocked without allow_wilderness"
-    );
+    assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_wilderness = true;
-    session.arm_walk_on(&world, origin, dest_tile);
-    assert!(
-        session.error.is_none(),
-        "both UI flags must route the teleport into the wilderness"
-    );
+    assert!(confirm_map_walk(&mut session, &world, origin, dest_tile));
     let arm = session.travellers.lock().unwrap();
     let route = arm
         .get(&session.focused_name().unwrap())
@@ -2608,75 +2660,25 @@ fn arm_walk_on_uses_find_with_options() {
 }
 
 #[test]
-fn arm_walk_on_without_focus_skips_route_but_stores_dest() {
-    let mut s = Session::new();
-    let world = open_world(3, 3);
-    let dest = Tile {
-        x: 2,
-        z: 2,
-        level: 0,
-    };
-    s.arm_walk_on(
-        &world,
-        Tile {
-            x: 0,
-            z: 0,
-            level: 0,
-        },
-        dest,
-    );
-    assert_eq!(s.walk_dest, Some(dest));
-    assert!(
-        s.travellers.lock().unwrap().is_empty(),
-        "no focused name to key a walk arm"
-    );
-}
-
-#[test]
-fn arm_walk_on_success_bumps_route_gen() {
-    let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
-    let world = open_world(3, 3);
-    assert_eq!(s.route_gen(), 0);
-    s.arm_walk_on(
-        &world,
-        Tile {
-            x: 0,
-            z: 0,
-            level: 0,
-        },
-        Tile {
-            x: 2,
-            z: 2,
-            level: 0,
-        },
-    );
-    assert_ne!(s.route_gen(), 0, "a new arm must bump the overlay gen");
-}
-
-#[test]
 fn sync_walk_status_copies_queued_and_clears_dest_on_arrived() {
     let mut s = Session::new();
     s.focus.lock().unwrap().focused = Some("alice".into());
-    s.statuses.push(SlotStatus {
-        username: "alice".into(),
-        ..SlotStatus::default()
-    });
     let world = open_world(3, 3);
     let dest = Tile {
         x: 2,
         z: 2,
         level: 0,
     };
-    s.arm_walk_on(
+    assert!(confirm_map_walk(
+        &mut s,
         &world,
         Tile {
             x: 0,
-            z: 0,
+            z: 1,
             level: 0,
         },
-        dest,
-    );
+        dest
+    ));
     s.sync_walk_status();
     assert_eq!(
         (
