@@ -86,8 +86,8 @@ impl Play {
     }
 
     /// Retire all name-owned registries and return the worker handle without
-    /// joining it. Locks are acquired and released one at a time except for
-    /// the established script-wall -> script-slot order.
+    /// joining it. Registry guards are always released before stopping a
+    /// removed script, so cleanup adds no script-wall -> script-slot edge.
     fn take_slot_for_stop(&mut self, name: &str) -> Option<thread::JoinHandle<()>> {
         #[cfg(test)]
         let arm = self.arms.get(name).cloned();
@@ -120,8 +120,8 @@ impl Play {
 
     /// Retire workers that ended without Stop while preserving their terminal
     /// status row for the operator. Joins are non-blocking because every
-    /// selected handle has already finished. Registry locks remain unnested
-    /// except for the established script-wall -> script-slot order.
+    /// selected handle has already finished. Registry guards are never nested;
+    /// a removed script is stopped only after releasing the script wall.
     pub fn reap_finished_workers(&mut self) -> Vec<String> {
         let finished: Vec<String> = self
             .handles
@@ -135,7 +135,8 @@ impl Play {
                 self.queue.lock().leave_owner(arm.queue_owner);
             }
             self.spawned.remove(name);
-            if let Some(slot) = self.scripts.lock().unwrap().remove(name) {
+            let removed = self.scripts.lock().unwrap().remove(name);
+            if let Some(slot) = removed {
                 stop_retired_script(slot);
             }
             self.cheats.lock().unwrap().remove(name);
