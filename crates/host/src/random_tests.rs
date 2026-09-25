@@ -2620,6 +2620,14 @@ fn solve_cube_answers_colour_question_by_shape_position() {
         Some(0),
         "two-word shape still matches"
     );
+    assert_eq!(
+        solve_cube(
+            "What colour is the Halfmoon?",
+            [Some(3063), Some(3079), Some(3091)]
+        ),
+        Some(2),
+        "the public rs2b2t server spells the shape as one word"
+    );
 }
 
 #[test]

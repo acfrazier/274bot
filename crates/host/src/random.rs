@@ -596,6 +596,9 @@ fn cube_part(id: i32) -> Option<(&'static str, &'static str)> {
 /// `solveCube`): "What colour is the X?" picks the model whose shape is
 /// X, "Which shape is X?" the model whose colour is X, in answer-button
 /// order. An unknown model or unrecognised question → `None` (no click).
+/// Names compare case- and spacing-insensitively: the local engine asks
+/// about the "Half Moon" while the public rs2b2t server asks about the
+/// "Halfmoon".
 fn solve_cube(question: &str, models: [Option<i32>; 3]) -> Option<usize> {
     let parts: [Option<(&str, &str)>; 3] = models.map(|id| id.and_then(cube_part));
     if parts.iter().any(Option::is_none) {
@@ -606,21 +609,29 @@ fn solve_cube(question: &str, models: [Option<i32>; 3]) -> Option<usize> {
         .strip_prefix("what colour is the ")
         .and_then(|r| r.strip_suffix('?'))
     {
-        let shape = shape.trim();
         return parts
             .iter()
-            .position(|p| p.expect("checked above").0 == shape);
+            .position(|p| same_name(p.expect("checked above").0, shape));
     }
     if let Some(colour) = q
         .strip_prefix("which shape is ")
         .and_then(|r| r.strip_suffix('?'))
     {
-        let colour = colour.trim();
         return parts
             .iter()
-            .position(|p| p.expect("checked above").1 == colour);
+            .position(|p| same_name(p.expect("checked above").1, colour));
     }
     None
+}
+
+/// Whether two cube names match, ignoring ASCII case and whitespace.
+fn same_name(a: &str, b: &str) -> bool {
+    fn letters(s: &str) -> impl Iterator<Item = char> + '_ {
+        s.chars()
+            .filter(|c| !c.is_whitespace())
+            .map(|c| c.to_ascii_lowercase())
+    }
+    letters(a).eq(letters(b))
 }
 
 /// Whether the local player stands on the mime stage square.

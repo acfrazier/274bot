@@ -53,6 +53,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   bound and reports a visible failure after 10 eligible seconds; the window
   restarts while the scene cannot accept a close.
 
+### Random-event guardian
+
+- The strange box now solves "What colour is the Halfmoon?" on the public
+  server as well as the local engine's "Half Moon"; shape and colour names
+  compare ignoring case and spaces. Before, the guardian held the open cube
+  forever.
+
 ### Script host
 - The FlourCollector catalog card now loads its four Murder Mystery area facts
   through the shim; EssMiner stays visibly dimmed until native Gatherer support
