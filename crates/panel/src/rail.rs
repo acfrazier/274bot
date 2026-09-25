@@ -89,13 +89,13 @@ impl Light {
     }
 }
 
-/// The cap head title: member name plus a brief status. A grey (not ingame,
-/// no error) member names the login step it is in, so a slot that is still
-/// starting or loading does not read "logged out" until it is ready.
+/// The cap head title: member name plus a brief status. A non-error member
+/// that is not game-ready names the login step it is in, independently of
+/// whether its authenticated connection makes the traffic light yellow.
 pub fn cap_title(name: &str, light: Light, status: Option<&host_play::SlotStatus>) -> String {
     use host_play::StartupPhase;
     let step = status
-        .filter(|_| light == Light::Grey)
+        .filter(|s| light != Light::Red && !s.ingame)
         .and_then(|s| match s.startup_phase {
             StartupPhase::Preparing => Some("starting".to_string()),
             StartupPhase::Queueing
@@ -321,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn grey_cap_names_the_login_step_until_ready() {
+    fn cap_names_the_login_step_until_ready() {
         use host_play::{SlotStatus, StartupPhase};
         let at = |phase, queue: (i32, i32)| SlotStatus {
             username: "bob".into(),
@@ -351,6 +351,21 @@ mod tests {
         assert_eq!(
             title(&at(StartupPhase::LoadingScene, (-1, -1))),
             "bob: loading"
+        );
+        let connected_loading = SlotStatus {
+            connected: true,
+            ..at(StartupPhase::LoadingScene, (-1, -1))
+        };
+        let connected_light = traffic_light(
+            connected_loading.connected,
+            connected_loading.error.is_some(),
+            false,
+        );
+        assert_eq!(connected_light, Light::Yellow);
+        assert_eq!(
+            cap_title("bob", connected_light, Some(&connected_loading)),
+            "bob: loading",
+            "connection color must not hide the lifecycle phase"
         );
         assert_eq!(
             cap_title(
