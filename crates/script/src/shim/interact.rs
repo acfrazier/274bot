@@ -81,7 +81,7 @@ pub enum InteractReq {
         use_zanaris_bank: bool,
         request_id: u64,
     },
-    /// Select the nearest packed booth stand in Rust and route within one tile.
+    /// Select the nearest packed booth stand in Rust and route to that exact stand.
     #[serde(rename = "walk-nearest-bank")]
     WalkNearestBank,
     /// Stop the armed scripted walk follow (frozen: a `walkResilient` that
