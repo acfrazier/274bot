@@ -4042,6 +4042,40 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
 }
 
 #[test]
+fn explicit_login_arms_a_fresh_non_auto_profile() {
+    let path = tmp_vault("fresh-explicit-login.vault");
+    let mut session = Session::new();
+    session.vault = Some(Vault::create(&path, "bot").unwrap());
+    let mut alice = profile("alice", "pw", 42);
+    alice.settings.auto_login = false;
+    session.vault.as_mut().unwrap().upsert(alice).unwrap();
+    session.skip_slot_spawn = true;
+    session.play = Some(host_play::run_with_io(
+        &host_play::PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    ));
+
+    session.login("alice");
+
+    let arm = session
+        .play
+        .as_ref()
+        .and_then(|play| play.arm("alice"))
+        .expect("fresh explicit login creates an arm");
+    assert!(arm.wants_login());
+    assert!(!arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.login_latched());
+}
+
+#[test]
 fn arm_login_all_cancels_pending_logout() {
     // A title-screen member keeps want_logout=true (the slot body only
     // clears it when it observes ingame); Login all must cancel it or

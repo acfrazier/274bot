@@ -3619,7 +3619,7 @@ impl Session {
         }
         if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
             arm.arm_explicit_login();
-        } else if self.slots.contains_key(name) {
+        } else {
             let arm = self.arm_for_profile(name);
             if let Some(arm) = arm.as_ref() {
                 arm.arm_explicit_login();
