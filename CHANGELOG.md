@@ -18,6 +18,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   sequencing while callbacks retain the options object as their receiver.
 - Entity-query `withinOf` again follows the frozen planar x/z Chebyshev
   distance, independent of storey.
+- The v2 clue session is begin plus one awaited run; Rust owns its continuation
+  table, optional callbacks, waits and typed verb emission.
+- The v2 quest journal is begin plus one awaited run; Rust owns its row click,
+  modal acquisition, retry window, exact-pair close and timeout.
+- The obsolete clue-verb JSON adapter is removed; the clue machine emits typed
+  interact requests directly.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 
@@ -95,14 +101,8 @@ best-effort and untested in this release.
   light fire, shop, chat dialog (make/makeX/makeFromPanel/chooseOption), dialog,
   reach (npcDialog/entityOp), walkWithHops, walkResilient, trade, partner trade,
   clue/Sherlock and every hunt family run on it.
-- The v2 clue session is begin plus one awaited run; Rust now owns its
-  continuation table, callbacks, waits and verb mapping.
-- The v2 quest journal is begin plus one awaited run; Rust owns its row click,
-  modal acquisition, exact-pair close and timeout.
 - The v2 hunt family is begin plus one awaited run with typed `.d.ts` inputs;
   the nine v2 hunt examples are rewritten to that contract.
-- The obsolete clue-verb JSON adapter is removed; the clue machine emits
-  typed interact requests directly.
 - Paint: canvas ops record on a tape and flush once per pass; paint frames are
   shared by `Arc` with sender-side caps; the FlatBuffer paint codec is removed.
   `fmtDuration`/`fmtXpHr`/`etaHours`/`levelProgress`/`paintSkillShort` emit the
@@ -131,8 +131,6 @@ best-effort and untested in this release.
   v2 `api.tick` advances on every eligible tick, including while an async tick
   is pending. In the ResetSession window the v2 quest journal/status return
   `snapshot-unavailable`.
-- `EntityQuery.withinOf` preserves both tile levels when measuring distance;
-  an entity at the same x/z on another plane is outside the radius.
 - `RunManager.override({ runAuto?, energyMin? })` supplies the matching host
   slot's per-session auto-run overlay. Missing fields fall through to host
   defaults (`runAuto: true`, `energyMin: 20`); Start or Stop clears the overlay.
@@ -173,8 +171,10 @@ best-effort and untested in this release.
   their fights on 289 (each eat clears the attack); the prepared cells are the
   representatives. `moss_giant_bank`, `ardy_fighter_bank` and the earned-loot
   step of `rock_crab_bank` depend on the frozen Fight hold or drop RNG.
-- Fence residuals for 0.1.9: several in-isolate helpers still take untyped
-  JSON arguments (no additional host wire).
+- Fence residuals for 0.1.9: `cake_stall.js` still pumps a Rust begin/next
+  driver instead of one machine await; the v2 clue and quest-journal APIs are
+  still begin/next; several in-isolate helpers still take untyped JSON
+  arguments (no additional host wire).
 - Lumbridge fountain banding on the GPU path needs a vertex-format change
   (0.1.9). Measurement-only performance claims are deferred to 0.1.9.
 
