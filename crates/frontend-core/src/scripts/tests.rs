@@ -496,3 +496,45 @@ fn a_ready_start_keeps_the_start_all_report_shown() {
     assert_eq!(f.scripts.take_notice(), None, "the report is not replaced");
     f.core.play().unwrap().script_stop("alice");
 }
+
+/// Start with a prior load failure: the banner lists the failure, then the
+/// front end shows its own error; the Start settling Ready leaves that newer
+/// error alone. Without the newer error the listing is cleared.
+#[test]
+fn a_ready_start_never_erases_a_newer_front_end_banner() {
+    for newer in [Some("map: no route to 3200,3200"), None] {
+        let mut f = fixture("ready-newer-banner", &["alice"]);
+        std::fs::write(f.dir.join("gate.ts"), "export const fail = true;").unwrap();
+        let card = f.card(
+            "retry.ts",
+            "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('first-load');\nexport function tick(api) {}\n",
+        );
+        f.assign("alice", &card);
+        f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
+        f.settle();
+        std::fs::write(f.dir.join("gate.ts"), "export const fail = false;").unwrap();
+
+        // The front end's banner, as the panel and the TUI keep it.
+        let mut banner: Option<String> = None;
+        f.scripts.take_notice();
+        f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
+        f.scripts.show_load_failures();
+        f.scripts.take_notice().unwrap().apply(&mut banner);
+        assert!(banner.as_deref().unwrap_or("").contains("first-load"));
+        if let Some(error) = newer {
+            banner = Some(error.to_string());
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while f.scripts.starts_pending() && Instant::now() < deadline {
+            f.core.poll();
+            f.scripts.poll(&mut f.core);
+            if let Some(notice) = f.scripts.take_notice() {
+                notice.apply(&mut banner);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!f.scripts.starts_pending());
+        assert_eq!(banner.as_deref(), newer, "newer banner {newer:?}");
+        f.core.play().unwrap().script_stop("alice");
+    }
+}

@@ -72,6 +72,29 @@ pub struct SettingsWrite {
 pub enum Notice {
     Show(String),
     Clear,
+    /// Replace the banner with `with` only while it still shows `shown`:
+    /// an asynchronous update (a Start settling) never erases a newer
+    /// message the front end or another command put there.
+    Retract {
+        shown: String,
+        with: Option<String>,
+    },
+}
+
+impl Notice {
+    /// Apply this notice to a front end's banner (the one both the panel
+    /// and the TUI use).
+    pub fn apply(self, banner: &mut Option<String>) {
+        match self {
+            Self::Show(text) => *banner = Some(text),
+            Self::Clear => *banner = None,
+            Self::Retract { shown, with } => {
+                if banner.as_deref() == Some(shown.as_str()) {
+                    *banner = with;
+                }
+            }
+        }
+    }
 }
 
 /// Which operator action a pending Start came from: it decides where a
@@ -672,12 +695,17 @@ impl Scripts {
                     let key = pending.card.identity_key();
                     let had_failure = self.js.load_failure(&key).is_some();
                     // Only a banner still listing load failures is refreshed;
-                    // any other message (a Start all report) stays.
-                    let listing = had_failure
-                        && self.shown.as_deref() == Some(self.js.named_failure_output().as_str());
+                    // anything shown since (a Start all report, a front-end
+                    // error) stays: the front end checks what it displays.
+                    let listing = self
+                        .shown
+                        .take_if(|shown| had_failure && *shown == self.js.named_failure_output());
                     let _ = self.js.record_start_result(&pending.card, Ok(()));
-                    if listing {
-                        self.show_load_failures();
+                    if let Some(shown) = listing {
+                        let with = (!self.js.load_failures().is_empty())
+                            .then(|| self.js.named_failure_output());
+                        self.shown.clone_from(&with);
+                        self.notice = Some(Notice::Retract { shown, with });
                     }
                     // Persisting is bookkeeping: only its failure is shown.
                     self.persist_assignment(core, &name, pending.card.assignment());

@@ -1566,10 +1566,8 @@ impl TuiSession {
 
     /// Show the script coordinator's latest notice on the strip.
     fn apply_script_notice(&mut self, app: &mut TuiApp) {
-        match self.scripts.take_notice() {
-            Some(frontend_core::Notice::Show(text)) => app.error = Some(text),
-            Some(frontend_core::Notice::Clear) => app.error = None,
-            None => {}
+        if let Some(notice) = self.scripts.take_notice() {
+            notice.apply(&mut app.error);
         }
     }
 

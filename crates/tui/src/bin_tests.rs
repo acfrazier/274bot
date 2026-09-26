@@ -2141,3 +2141,43 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
     assert_eq!(app.error.as_deref(), Some(report.summary()));
     session.core.play().unwrap().script_stop("bob");
 }
+
+/// Start with a prior load failure lists it on the strip; a newer front-end
+/// error replaces it; the Start settling Ready leaves that error shown.
+#[test]
+fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
+    let iso = IsolatedEnv::enter("tui-ready-newer-error");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    std::fs::write(iso.dir.join("gate.ts"), "export const fail = true;").unwrap();
+    let path = iso.dir.join("retry.ts");
+    std::fs::write(
+        &path,
+        "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('tui-first-load');\nexport function tick(api) {}\n",
+    )
+    .unwrap();
+    let card = session.scripts.js.load(&path).unwrap();
+    let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+    focus_member(&mut session, &mut app, "alice");
+    session.script_start(&mut app, &sel);
+    settle_starts(&mut session, &mut app);
+    std::fs::write(iso.dir.join("gate.ts"), "export const fail = false;").unwrap();
+
+    session.script_start(&mut app, &sel);
+    assert!(
+        app.error
+            .as_deref()
+            .unwrap_or("")
+            .contains("tui-first-load"),
+        "{:?}",
+        app.error
+    );
+    app.error = Some("map: no route".into());
+    settle_starts(&mut session, &mut app);
+    assert!(session
+        .scripts
+        .js
+        .load_failure(&card.identity_key())
+        .is_none());
+    assert_eq!(app.error.as_deref(), Some("map: no route"));
+    session.core.play().unwrap().script_stop("alice");
+}

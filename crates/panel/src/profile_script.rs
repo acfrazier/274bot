@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use frontend_core::scripts::ReloadOutcome;
-use frontend_core::{Notice, Scripts};
+use frontend_core::Scripts;
 use serde_json::{Map, Value};
 use vault::ScriptAssignment;
 
@@ -17,10 +17,8 @@ use crate::session::Session;
 impl Session {
     /// Show the coordinator's latest notice on the banner.
     fn apply_script_notice(&mut self) {
-        match self.scripts.take_notice() {
-            Some(Notice::Show(text)) => self.error = Some(text),
-            Some(Notice::Clear) => self.error = None,
-            None => {}
+        if let Some(notice) = self.scripts.take_notice() {
+            notice.apply(&mut self.error);
         }
     }
 

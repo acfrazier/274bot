@@ -2061,3 +2061,28 @@ fn a_failed_parameter_save_is_not_pushed_to_the_run() {
     );
     play.script_stop("alice");
 }
+
+/// A banner set after a Start (here a profile-write failure) survives that
+/// Start settling Ready, even when the Start cleared a load failure.
+#[test]
+fn panel_ready_start_keeps_a_newer_banner() {
+    let (mut s, dir) = session_with_play(&["alice"]);
+    let helper = write_bot(&dir, "gate.ts", "export const fail = true;");
+    let path = write_bot(
+        &dir,
+        "retry.ts",
+        "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('panel-first-load');\nexport function tick(api) {}\n",
+    );
+    let card = s.scripts.js.load(&path).unwrap();
+    let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
+    start_sel(&mut s, "alice", sel.clone()).unwrap();
+    settle(&mut s);
+    fs::write(&helper, "export const fail = false;").unwrap();
+
+    start_sel(&mut s, "alice", sel).unwrap();
+    s.error = Some("script: vault write failed".into());
+    settle(&mut s);
+    assert!(s.scripts.js.load_failure(&card.identity_key()).is_none());
+    assert_eq!(s.error.as_deref(), Some("script: vault write failed"));
+    s.core.play().unwrap().script_stop("alice");
+}
