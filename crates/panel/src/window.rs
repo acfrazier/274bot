@@ -636,6 +636,8 @@ impl AppWindow {
         F: FnMut(&imgui::Ui, &mut Gpu),
     {
         let _profile_frame = client::profiling::UI_FRAME.start();
+        #[cfg(feature = "memory-profile")]
+        let _memory_profile_frame = host_play::memory::PanelFrameTimer::start();
         self.imgui
             .platform
             .prepare_frame(&self.window, &mut self.imgui.context);

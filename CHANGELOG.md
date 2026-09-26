@@ -32,6 +32,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   the catalog's diagonal bank anchor. Exact-booth seed opens now send once
   and await the bank acknowledgement, preventing queued reopens from
   invalidating Herblore and shop seed deposits.
+### Performance measurement
+
+- The opt-in `memory-profile` harness now accepts 50-slot runs, representative
+  catalog scenarios, custom teardown windows, panel-frame histograms, startup
+  readiness, process CPU, and feature-gated host loop/observe/raster counters.
+  A find-only 289 navigation corpus reports cold and warm searches plus peak
+  scratch capacity. Normal builds do not compile the host timing registry.
 
 ### Navigation
 

@@ -18,6 +18,38 @@ static ALLOCS: AtomicU64 = AtomicU64::new(0);
 static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
 static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
 
+const PANEL_FRAME_BUCKETS: usize = 251;
+static PANEL_FRAME_MS: [AtomicU64; PANEL_FRAME_BUCKETS] =
+    [const { AtomicU64::new(0) }; PANEL_FRAME_BUCKETS];
+
+/// Whole-panel frame timer installed only by a memory-profile panel build.
+///
+/// Buckets are millisecond ceilings from 0 through 249; bucket 250 includes
+/// every slower frame. The cumulative histogram lets the receipt runner
+/// difference exactly the observation window it selected.
+pub struct PanelFrameTimer(Instant);
+
+impl PanelFrameTimer {
+    pub fn start() -> Self {
+        Self(Instant::now())
+    }
+}
+
+impl Drop for PanelFrameTimer {
+    fn drop(&mut self) {
+        let elapsed_us = self.0.elapsed().as_micros() as usize;
+        let elapsed_ms = elapsed_us.div_ceil(1000).min(PANEL_FRAME_BUCKETS - 1);
+        PANEL_FRAME_MS[elapsed_ms].fetch_add(1, Relaxed);
+    }
+}
+
+fn panel_frame_histogram() -> Vec<u64> {
+    PANEL_FRAME_MS
+        .iter()
+        .map(|bucket| bucket.load(Relaxed))
+        .collect()
+}
+
 /// Installed only by benchmark-enabled frontend binaries; no logging or
 /// allocation inside allocator callbacks. Requested Rust bytes exclude
 /// V8 / native / GPU allocators.
@@ -130,6 +162,7 @@ pub struct Config {
     pub workload: Workload,
     pub warmup: Duration,
     pub observe: Duration,
+    pub teardown: Duration,
 }
 
 impl Config {
@@ -165,6 +198,7 @@ impl Config {
             workload,
             warmup: duration("BOT_MEMORY_WARMUP_S", 120)?,
             observe: duration("BOT_MEMORY_OBSERVE_S", 600)?,
+            teardown: duration("BOT_MEMORY_TEARDOWN_S", 60)?,
         }))
     }
 }
@@ -172,10 +206,12 @@ impl Config {
 pub fn parse_n(n: &str) -> Result<usize, String> {
     match n {
         "1" => Ok(1),
+        "10" => Ok(10),
         "16" => Ok(16),
         "32" => Ok(32),
+        "50" => Ok(50),
         "128" => Ok(128),
-        _ => Err("BOT_MEMORY_N must be 1, 16, 32, or 128".into()),
+        _ => Err("BOT_MEMORY_N must be 1, 10, 16, 32, 50, or 128".into()),
     }
 }
 
@@ -190,6 +226,10 @@ pub enum RenderPolicy {
     FocusedOne,
     /// Explicit low-end: fixed focus 0 full-rate; others 1 fps skip-paint.
     FocusedPlusBackground,
+    /// Existing panel `stress50`: one drawing head, 49 simulation-only slots.
+    Stress50,
+    /// Existing panel `stress50_full`: every wall member draws at full rate.
+    Stress50Full,
 }
 
 impl RenderPolicy {
@@ -199,6 +239,8 @@ impl RenderPolicy {
             Self::FixedOne => "fixed-one",
             Self::FocusedOne => "focused-one",
             Self::FocusedPlusBackground => "focused-plus-background",
+            Self::Stress50 => "stress50",
+            Self::Stress50Full => "stress50-full",
         }
     }
 
@@ -224,12 +266,14 @@ pub fn parse_render_policy(frontend: &str) -> Result<RenderPolicy, String> {
         (false, Some("fixed-one")) => Ok(RenderPolicy::FixedOne),
         (false, Some("focused-one")) => Ok(RenderPolicy::FocusedOne),
         (false, Some("focused-plus-background")) => Ok(RenderPolicy::FocusedPlusBackground),
+        (false, Some("stress50")) => Ok(RenderPolicy::Stress50),
+        (false, Some("stress50-full")) => Ok(RenderPolicy::Stress50Full),
         (false, Some("rotating-all")) => Ok(RenderPolicy::RotatingAll),
         (true, Some(_)) => Err(
             "BOT_MEMORY_SINGLE_RENDERER conflicts with BOT_MEMORY_RENDER_POLICY".into(),
         ),
         (false, Some(other)) => Err(format!(
-            "BOT_MEMORY_RENDER_POLICY must be rotating-all, fixed-one, focused-one, or focused-plus-background; got {other}"
+            "BOT_MEMORY_RENDER_POLICY must be rotating-all, fixed-one, focused-one, focused-plus-background, stress50, or stress50-full; got {other}"
         )),
     }
 }
@@ -301,12 +345,12 @@ struct Seed {
     started: bool,
 }
 
-/// Per-slot Thiever seed runners installed by [`Run::prepare`] for
-/// seeded-idle/active/lifecycle. Unseeded idle leaves this empty.
+/// Per-slot benchmark seed runners installed by [`Run::prepare`] for
+/// seeded-idle, active, and lifecycle runs. Unseeded idle leaves this empty.
 static SEEDS: Mutex<Option<HashMap<String, Arc<Mutex<Seed>>>>> = Mutex::new(None);
 
-/// Called from the existing frontend slot observe hook. Drives the Thiever
-/// scenario seed/proof; unseeded idle installs no seeds.
+/// Called from the existing frontend slot observe hook. Drives the selected
+/// benchmark's seed/proof; unseeded idle installs no seeds.
 pub(crate) fn client_frame(c: &mut client::client::Client, name: &str, hold: bool) {
     crate::memory_diagnostics::frame(c, name, hold);
     let seed = {
@@ -360,11 +404,27 @@ fn seed_runner(
     }
 }
 
-type ScriptCard = (
-    script::JsCard,
-    serde_json::Map<String, serde_json::Value>,
-    Vec<(String, String)>,
-);
+struct ScriptCard {
+    card: script::JsCard,
+    bag: serde_json::Map<String, serde_json::Value>,
+    siblings: Vec<(String, String)>,
+    loadouts: Vec<script::Loadout>,
+}
+
+fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Vec<script::Loadout> {
+    settings
+        .fixture_loadouts
+        .unwrap_or(&[])
+        .iter()
+        .map(|row| {
+            row.carry
+                .iter()
+                .fold(script::Loadout::new(row.name), |loadout, &(item, qty)| {
+                    loadout.with_carry(item, qty)
+                })
+        })
+        .collect()
+}
 
 /// Prepared memory-benchmark run shared by panel-play and tui-play.
 pub struct Run {
@@ -381,6 +441,7 @@ pub struct Run {
     stopped: bool,
     teardown: Option<Instant>,
     card: Option<ScriptCard>,
+    scenario_name: Option<String>,
     output: std::fs::File,
     diagnostics: bool,
     /// Historical `BOT_MEMORY_SINGLE_RENDERER=1` only (old metadata summaries).
@@ -405,11 +466,11 @@ pub enum SeedNav {
 }
 
 impl Run {
-    /// Mint ephemeral accounts, throwaway vault, optional Thiever card, and
-    /// install seed runners via [`SeedNav::LoadDefault`]. Prefer
+    /// Mint ephemeral accounts, a throwaway vault, and an optional benchmark
+    /// card, then install seed runners via [`SeedNav::LoadDefault`]. Prefer
     /// [`prepare_with_seed_nav`] from panel/TUI so seeds share `Play::world`.
-    /// Idle modes: no card or RS2B0T. SeededIdle runs the Thiever setup only.
-    /// Active/lifecycle: RS2B0T required.
+    /// Idle modes need no card or RS2B0T. SeededIdle runs the Thiever setup
+    /// only. Active/lifecycle runs require RS2B0T.
     pub fn prepare(config: Config, frontend: &'static str) -> Result<Self, String> {
         Self::prepare_with_seed_nav(config, frontend, SeedNav::LoadDefault)
     }
@@ -448,10 +509,25 @@ impl Run {
         let mut vault = Vault::create(&path, &pass).map_err(|e| e.to_string())?;
 
         for (i, name) in names.iter().enumerate() {
-            let settings = ProfileSettings {
+            let mut settings = ProfileSettings {
                 auto_login: true,
                 ..ProfileSettings::default()
             };
+            match render_policy {
+                RenderPolicy::Stress50 => {
+                    settings.lowmem = true;
+                    settings.raster = if i == 0 {
+                        vault::RasterMode::Gpu
+                    } else {
+                        vault::RasterMode::Off
+                    };
+                }
+                RenderPolicy::Stress50Full => {
+                    settings.lowmem = true;
+                    settings.raster = vault::RasterMode::Gpu;
+                }
+                _ => {}
+            }
             vault
                 .upsert(Profile {
                     username: name.clone(),
@@ -464,21 +540,28 @@ impl Run {
         // Seeds install after Play exists (or via prepare's LoadDefault path).
         *SEEDS.lock().unwrap() = Some(HashMap::new());
 
-        let card = if matches!(config.workload, Workload::Idle | Workload::SeededIdle) {
+        let scenario_name = if matches!(config.workload, Workload::Idle | Workload::SeededIdle) {
             None
         } else {
+            Some(std::env::var("BOT_MEMORY_SCENARIO").unwrap_or_else(|_| "thiever".to_string()))
+        };
+        let card = if let Some(scenario_name) = scenario_name.as_deref() {
+            let benchmark = scenario::get(scenario_name)
+                .ok_or_else(|| format!("unknown BOT_MEMORY_SCENARIO {scenario_name}"))?;
+            let card_name = benchmark.settings.start_script.ok_or_else(|| {
+                format!("BOT_MEMORY_SCENARIO {scenario_name} has no catalog script")
+            })?;
             let root = std::env::var_os("RS2B0T")
                 .map(PathBuf::from)
-                .ok_or("RS2B0T is required for the Thiever benchmark")?;
+                .ok_or("RS2B0T is required for the active memory benchmark")?;
             let mut library = script::JsLibrary::new(dir.join("scripts.json"));
             library.register_rs2b0t(&root, &dir.join("rs2b0t-path"))?;
-            library.ensure_js(script::ScriptSource::Catalog, "Thiever")?;
+            library.ensure_js(script::ScriptSource::Catalog, card_name)?;
             let card = library
-                .get(script::ScriptSource::Catalog, "Thiever")
+                .get(script::ScriptSource::Catalog, card_name)
                 .cloned()
-                .ok_or("missing Thiever")?;
-            let scenario = scenario::get("thiever").ok_or("missing Thiever scenario")?;
-            let inject = scenario::settings_inject_map(scenario.settings.script_settings_inject);
+                .ok_or_else(|| format!("missing catalog card {card_name}"))?;
+            let inject = scenario::settings_inject_map(benchmark.settings.script_settings_inject);
             let bag = script::settings_store::merge_bag(
                 &card.settings_schema,
                 &serde_json::Map::new(),
@@ -495,7 +578,14 @@ impl Run {
                     api_family: Some(card.api_family.as_str().into()),
                 },
             )?;
-            Some((card, bag, siblings))
+            Some(ScriptCard {
+                card,
+                bag,
+                siblings,
+                loadouts: scenario_loadouts(&benchmark.settings),
+            })
+        } else {
+            None
         };
 
         let output_path = std::env::var_os("BOT_MEMORY_OUTPUT")
@@ -542,6 +632,7 @@ impl Run {
             stopped: false,
             teardown: None,
             card,
+            scenario_name,
             output,
             diagnostics,
             diagnostic_output,
@@ -551,7 +642,7 @@ impl Run {
         })
     }
 
-    /// Install Thiever seed runners for non-idle workloads.
+    /// Install the selected scenario's seed runners for non-idle workloads.
     ///
     /// [`SeedNav::FromPlay`] clones the Play-owned Arc (or keeps `None` when
     /// the pack failed) — no second `load_pack`. [`SeedNav::LoadDefault`]
@@ -572,10 +663,17 @@ impl Run {
         for name in &self.names {
             let mut scenario = if self.config.workload == Workload::SeededIdle {
                 seeded_idle_scenario()
-            } else if std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1") {
+            } else if self.scenario_name.as_deref() == Some("thiever")
+                && std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1")
+            {
                 scenario::thiever_sustained_scenario()
             } else {
-                scenario::get("thiever").ok_or("missing Thiever scenario")?
+                let scenario_name = self
+                    .scenario_name
+                    .as_deref()
+                    .ok_or("active benchmark is missing its scenario")?;
+                scenario::get(scenario_name)
+                    .ok_or_else(|| format!("missing benchmark scenario {scenario_name}"))?
             };
             scenario.settings.terminal_shot = None;
             let seed = seed_runner(scenario, name, seed_world.clone());
@@ -590,11 +688,13 @@ impl Run {
     }
 
     fn start_script(&self, play: &Play, name: &str) -> Result<(), String> {
-        let Some((card, bag, siblings)) = &self.card else {
+        let Some(card) = &self.card else {
             return Ok(());
         };
-        if std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1") {
-            let mut bag = bag.clone();
+        if self.scenario_name.as_deref() == Some("thiever")
+            && std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1")
+        {
+            let mut bag = card.bag.clone();
             bag.insert("banking".into(), serde_json::json!("Auto"));
             bag.insert("loadout".into(), serde_json::json!("Memory food"));
             bag.insert("foodWithdraw".into(), serde_json::json!(22));
@@ -602,9 +702,9 @@ impl Run {
             let slot = crate::script_slot_or_insert(&play.scripts, name);
             let mut slot = slot.lock().unwrap();
             slot.start_load_with_loadouts_and_game_data(
-                card.js.clone(),
-                card.shape,
-                siblings.clone(),
+                card.card.js.clone(),
+                card.card.shape,
+                card.siblings.clone(),
                 &[script::Loadout::new("Memory food").with_carry("Lobster", 1)],
                 play.game_data(),
                 play.named_banks(),
@@ -618,14 +718,14 @@ impl Run {
         let slot = crate::script_slot_or_insert(&play.scripts, name);
         let mut slot = slot.lock().unwrap();
         slot.start_load_with_loadouts_and_game_data(
-            card.js.clone(),
-            card.shape,
-            siblings.clone(),
-            &[],
+            card.card.js.clone(),
+            card.card.shape,
+            card.siblings.clone(),
+            &card.loadouts,
             play.game_data(),
             play.named_banks(),
         )?;
-        slot.post_settings_bag(bag);
+        slot.post_settings_bag(&card.bag);
         drop(slot);
         play.wake(name);
         Ok(())
@@ -665,7 +765,7 @@ impl Run {
                 };
                 match status {
                     scenario::RunnerStatus::Failed(msg) => {
-                        let failure = format!("Thiever seed/proof failed for {name}: {msg}");
+                        let failure = format!("benchmark seed/proof failed for {name}: {msg}");
                         if self.diagnostics {
                             self.write_diagnostics(play, Some(&failure))?;
                         }
@@ -820,6 +920,29 @@ impl Run {
             value["process_cpu_system_s"] = cpu.map(|v| v.1).into();
             value["allocation_counting"] = (!cfg!(feature = "memory-profile-no-alloc")).into();
             value["diagnostic_sidecar"] = self.diagnostics.into();
+            value["benchmark_scenario"] = self.scenario_name.clone().into();
+            value["startup_ready_s"] = self
+                .warm
+                .map(|ready| ready.duration_since(self.started).as_secs_f64())
+                .into();
+            let host_timings = host::performance_profile::snapshots();
+            value["host_profile_slots"] = host_timings.len().into();
+            value["host_loop_total_ns"] = host_timings
+                .iter()
+                .map(|timing| timing.loop_ns)
+                .sum::<u64>()
+                .into();
+            value["host_observe_total_ns"] = host_timings
+                .iter()
+                .map(|timing| timing.observe_ns)
+                .sum::<u64>()
+                .into();
+            value["host_raster_total_ns"] = host_timings
+                .iter()
+                .map(|timing| timing.raster_ns)
+                .sum::<u64>()
+                .into();
+            value["panel_frame_histogram_ms"] = serde_json::json!(panel_frame_histogram());
             // Requested mode metadata only — not observed GPU/cadence proof.
             value["single_renderer"] = self.single_renderer.into();
             value["render_policy"] = self.render_policy.as_str().into();
@@ -870,7 +993,7 @@ impl Run {
 
         Ok(self
             .teardown
-            .is_some_and(|t| t.elapsed() >= Duration::from_secs(60)))
+            .is_some_and(|t| t.elapsed() >= self.config.teardown))
     }
 
     // Two boundary reads preserve script progress evidence when verbose
@@ -959,16 +1082,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_n_accepts_1_16_32_128() {
-        assert_eq!(parse_n("1").unwrap(), 1);
-        assert_eq!(parse_n("16").unwrap(), 16);
-        assert_eq!(parse_n("32").unwrap(), 32);
-        assert_eq!(parse_n("128").unwrap(), 128);
+    fn parse_n_accepts_campaign_and_legacy_sizes() {
+        for n in [1usize, 10, 16, 32, 50, 128] {
+            assert_eq!(parse_n(&n.to_string()).unwrap(), n);
+        }
     }
 
     #[test]
     fn parse_n_rejects_invalid() {
-        for s in ["0", "2", "50", "", "-1"] {
+        for s in ["0", "2", "49", "51", "", "-1"] {
             assert!(parse_n(s).is_err(), "expected err for {s:?}");
         }
     }
@@ -1016,6 +1138,16 @@ mod tests {
         assert_eq!(
             parse_render_policy("panel").unwrap(),
             RenderPolicy::FocusedPlusBackground
+        );
+        std::env::set_var("BOT_MEMORY_RENDER_POLICY", "stress50");
+        assert_eq!(
+            parse_render_policy("panel").unwrap(),
+            RenderPolicy::Stress50
+        );
+        std::env::set_var("BOT_MEMORY_RENDER_POLICY", "stress50-full");
+        assert_eq!(
+            parse_render_policy("panel").unwrap(),
+            RenderPolicy::Stress50Full
         );
         assert!(parse_render_policy("tui").is_err());
     }
@@ -1161,12 +1293,16 @@ mod tests {
             "BOT_MEMORY_WORKLOAD",
             "BOT_MEMORY_WARMUP_S",
             "BOT_MEMORY_OBSERVE_S",
+            "BOT_MEMORY_TEARDOWN_S",
         ]);
         std::env::set_var("BOT_MEMORY_N", "1");
         std::env::set_var("BOT_MEMORY_WARMUP_S", "0");
         assert!(Config::from_env().is_err());
         std::env::remove_var("BOT_MEMORY_WARMUP_S");
         std::env::set_var("BOT_MEMORY_OBSERVE_S", "0");
+        assert!(Config::from_env().is_err());
+        std::env::remove_var("BOT_MEMORY_OBSERVE_S");
+        std::env::set_var("BOT_MEMORY_TEARDOWN_S", "0");
         assert!(Config::from_env().is_err());
     }
 
@@ -1178,6 +1314,7 @@ mod tests {
             "BOT_MEMORY_WORKLOAD",
             "BOT_MEMORY_WARMUP_S",
             "BOT_MEMORY_OBSERVE_S",
+            "BOT_MEMORY_TEARDOWN_S",
         ]);
         std::env::set_var("BOT_MEMORY_N", "32");
         let cfg = Config::from_env().unwrap().expect("Some");
@@ -1185,6 +1322,7 @@ mod tests {
         assert_eq!(cfg.workload, Workload::Idle);
         assert_eq!(cfg.warmup.as_secs(), 120);
         assert_eq!(cfg.observe.as_secs(), 600);
+        assert_eq!(cfg.teardown.as_secs(), 60);
     }
 
     #[test]
@@ -1289,6 +1427,7 @@ mod tests {
             workload,
             warmup: Duration::from_secs(1),
             observe: Duration::from_secs(1),
+            teardown: Duration::from_secs(1),
         }
     }
 

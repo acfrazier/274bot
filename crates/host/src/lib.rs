@@ -2,6 +2,8 @@
 
 mod auto_run;
 pub mod login_queue;
+#[cfg(feature = "performance-profile")]
+pub mod performance_profile;
 mod random;
 mod slot;
 mod slot_io;
@@ -242,6 +244,10 @@ impl Host {
             lamp_skill,
             run_policy_override,
         );
+        #[cfg(feature = "performance-profile")]
+        {
+            slot.profile = Some(performance_profile::register(username));
+        }
         let mut run_sends = 0u32;
         // The last published random-event status: `client_frame` returns it
         // and the next observe copies it onto the slot's status row and
@@ -514,6 +520,8 @@ impl Host {
             slot.skip_n = slot.skip_n.wrapping_add(1);
         }
         slot.log_n = slot.log_n.wrapping_add(1);
+        #[cfg(feature = "performance-profile")]
+        slot.publish_profile();
         let result = slot.after_drain(client);
         // Random-event guardian (spec pump placement): the snapshot is
         // fresh after the drain. Sync the live toggle from the shared
@@ -888,6 +896,10 @@ struct SlotLoop {
     /// Totals at the last `BOT_DEBUG` window line (deltas, not cumulatives).
     dbg: DebugSnap,
     dbg_at: Option<Instant>,
+    #[cfg(feature = "performance-profile")]
+    profile: Option<Arc<performance_profile::SlotTiming>>,
+    #[cfg(feature = "performance-profile")]
+    profile_published_at: Instant,
 }
 
 impl SlotLoop {
@@ -937,7 +949,22 @@ impl SlotLoop {
             log_n: 0,
             dbg: DebugSnap::default(),
             dbg_at: None,
+            #[cfg(feature = "performance-profile")]
+            profile: None,
+            #[cfg(feature = "performance-profile")]
+            profile_published_at: Instant::now(),
         }
+    }
+
+    #[cfg(feature = "performance-profile")]
+    fn publish_profile(&mut self) {
+        if self.profile_published_at.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        if let Some(profile) = &self.profile {
+            profile.publish(self.loop_ns, self.observe_ns, self.raster_ns);
+        }
+        self.profile_published_at = Instant::now();
     }
 
     fn after_drain(&mut self, client: &mut Client) -> DrainResult {

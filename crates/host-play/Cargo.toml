@@ -46,7 +46,7 @@ windows-sys = { version = "0.59", features = [
 [features]
 # Opt-in memory benchmark harness. No effect unless BOT_MEMORY_N is set.
 # Frontend binaries install CountingAllocator (T3).
-memory-profile = ["script/memory-profile", "dep:scenario"]
+memory-profile = ["script/memory-profile", "host/performance-profile", "dep:scenario"]
 
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
 memory-profile-no-alloc = ["memory-profile"]

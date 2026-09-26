@@ -2362,6 +2362,7 @@ dependencies = [
  "client",
  "libc",
  "num-bigint",
+ "parking_lot",
  "vault",
  "windows-sys 0.59.0",
 ]

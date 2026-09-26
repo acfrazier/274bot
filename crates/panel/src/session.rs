@@ -2360,7 +2360,12 @@ impl Session {
     pub fn prepare_memory(&mut self, run: &host_play::memory::Run) -> Result<(), String> {
         self.persist_ui = false;
         self.mainland.store(true, Ordering::Relaxed);
-        self.scatter.store(false, Ordering::Relaxed);
+        let stress_wall = matches!(
+            run.render_policy,
+            host_play::memory::RenderPolicy::Stress50
+                | host_play::memory::RenderPolicy::Stress50Full
+        );
+        self.scatter.store(stress_wall, Ordering::Relaxed);
         if !self.start_vault(&run.vault, &run.pass) {
             return Err(self
                 .error
@@ -2379,6 +2384,13 @@ impl Session {
         self.sync_wall_focus();
         self.wall.chooser_open = false;
         self.memory_focus(run);
+        if stress_wall {
+            self.set_live_full_rate(matches!(
+                run.render_policy,
+                host_play::memory::RenderPolicy::Stress50Full
+            ));
+            self.sync_sidecar_cadence();
+        }
         self.login_all();
         Ok(())
     }
