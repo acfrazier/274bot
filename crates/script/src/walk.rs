@@ -236,7 +236,7 @@ fn walk_chebyshev(a: WorldTile, b: WorldTile) -> i32 {
     }
 }
 
-fn here() -> Option<WorldTile> {
+pub(crate) fn here() -> Option<WorldTile> {
     observed::with(|scene| {
         scene.since_login().here().map(|t| WorldTile {
             x: t.x,
@@ -248,7 +248,7 @@ fn here() -> Option<WorldTile> {
 
 /// Frozen `EventSignal.pending()` for an owned random. Guardian `hold`
 /// freezes the row (`machine::on_hold`) instead of aborting the walk.
-fn interrupted() -> bool {
+pub(crate) fn interrupted() -> bool {
     observed::with(|scene| scene.since_login().ours().unwrap_or(false))
 }
 
@@ -1410,6 +1410,20 @@ pub(crate) struct WalkOpening {
 }
 
 impl WalkOpening {
+    /// A walk-opening leg another family drives (frozen `Anchor.ts:121–124`).
+    pub(crate) fn new(dest: WorldTile, radius: i32, obstacles: Vec<String>) -> Self {
+        Self {
+            dest,
+            radius,
+            obstacles,
+            segment: 0,
+            phase: OpeningPhase::NeedWalk,
+            logs: VecDeque::new(),
+            result: None,
+            waiting: false,
+        }
+    }
+
     fn abort_walk(&self, cx: &mut Cx<'_>) {
         match &self.phase {
             OpeningPhase::Walking(walk) | OpeningPhase::Approach { walk, .. } => walk.abort(cx),
@@ -1417,11 +1431,12 @@ impl WalkOpening {
         }
     }
 
-    fn pop_log(&mut self) -> Option<String> {
+    pub(crate) fn pop_log(&mut self) -> Option<String> {
         self.logs.pop_front()
     }
 
-    fn advance(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
+    /// `Some(result)` once the frozen `walkOpening` returned; `None` waits.
+    pub(crate) fn advance(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         if interrupted() {
             self.abort_walk(cx);
             self.logs
@@ -1546,16 +1561,7 @@ impl Family for WalkOpening {
         if arrived(dest, args.radius) {
             return Begin::Done(true);
         }
-        Begin::Run(Self {
-            dest,
-            radius: args.radius,
-            obstacles: args.obstacles,
-            segment: 0,
-            phase: OpeningPhase::NeedWalk,
-            logs: VecDeque::new(),
-            result: None,
-            waiting: false,
-        })
+        Begin::Run(Self::new(dest, args.radius, args.obstacles))
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
@@ -1591,7 +1597,7 @@ const LOG: usize = 0;
 const SUSTAIN: usize = 1;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::load::callback_v8::HeldCallback;
     use crate::machine::{self, Called, Outcome, Pending, Started, Take};
@@ -1599,7 +1605,7 @@ mod tests {
     use crate::walk_wait;
     use serde_json::Value;
 
-    struct NoJs;
+    pub(crate) struct NoJs;
 
     impl machine::Js for NoJs {
         fn queue_len(&mut self) -> usize {
@@ -1619,7 +1625,7 @@ mod tests {
         }
     }
 
-    fn reset() {
+    pub(crate) fn reset() {
         observed::on_reset();
         machine::on_reset();
         walk_wait::on_reset();
@@ -1629,7 +1635,7 @@ mod tests {
         reset_scene_time();
     }
 
-    fn post_here(x: i32, z: i32) {
+    pub(crate) fn post_here(x: i32, z: i32) {
         observed::post(1, |post| {
             post.session(true).here(observed::Tile { x, z, level: 0 });
         });
@@ -1664,7 +1670,7 @@ mod tests {
         }
     }
 
-    fn post_walk_outcome(
+    pub(crate) fn post_walk_outcome(
         seq: u64,
         token: u64,
         here: WorldTile,
@@ -2401,7 +2407,7 @@ mod tests {
         assert_eq!(machine::take(h), Take::Pending);
     }
 
-    fn door_loc(id: i32, x: i32, z: i32) -> crate::observed::SceneRow {
+    pub(crate) fn door_loc(id: i32, x: i32, z: i32) -> crate::observed::SceneRow {
         let dist = x.abs().max(z.abs());
         crate::observed::SceneRow {
             id,
@@ -2613,7 +2619,7 @@ mod tests {
         scene
     }
 
-    fn post_walled_scene(doors: Vec<crate::observed::SceneRow>) {
+    pub(crate) fn post_walled_scene(doors: Vec<crate::observed::SceneRow>) {
         use std::sync::Arc;
         let scene = wall_west_of_dest();
         let here = WorldTile {
