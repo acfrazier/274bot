@@ -24,6 +24,13 @@ export async function runMachine(family, args, hooks) {
     return out;
 }
 
+// Start a Rust machine family that settles inside its begin (a frozen
+// synchronous call) and return its envelope without awaiting:
+// `{ kind: 'done', value }` or `{ kind: 'refused', reason }`.
+export function machineNow(family, args) {
+    return globalThis.__rs2b0t_machine_start(family, args, {});
+}
+
 export const proxy = (ns, members) =>
     new Proxy(members, {
         get(target, prop) {

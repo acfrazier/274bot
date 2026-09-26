@@ -1593,6 +1593,159 @@ impl Family for WalkOpening {
     }
 }
 
+/// Frozen `DirectNavigator.walk` (`DirectNavigator.ts:9–26`): clamp the
+/// target to 48 tiles around the player, `toLocal` it against the posted
+/// scene window (false when there is no player tile or it falls outside),
+/// and one scene click on the player's plane (`Input.walk(lx, lz)`).
+fn scene_click(dest: WorldTile, cx: &mut Cx<'_>) -> bool {
+    let Some(me) = here() else {
+        return false;
+    };
+    let clamp = |value: i32, around: i32| {
+        value.clamp(
+            around.saturating_sub(SCENE_CLAMP_TILES),
+            around.saturating_add(SCENE_CLAMP_TILES),
+        )
+    };
+    let target = WorldTile {
+        x: clamp(dest.x, me.x),
+        z: clamp(dest.z, me.z),
+        level: me.level,
+    };
+    let in_scene = crate::load::reach_query::with_view(|view| {
+        let lx = target.x - view.base_x;
+        let lz = target.z - view.base_z;
+        view.available && lx >= 0 && lz >= 0 && lx < view.width && lz < view.height
+    });
+    if !in_scene {
+        return false;
+    }
+    cx.emit(InteractReq::WalkTo {
+        x: target.x,
+        z: target.z,
+        level: target.level,
+    });
+    true
+}
+
+#[derive(Deserialize)]
+pub(crate) struct DirectClickArgs {
+    dest: Tile,
+}
+
+/// Frozen synchronous `DirectNavigator.walk(dest)`: settles in its begin.
+pub(crate) struct DirectClick;
+
+impl Family for DirectClick {
+    const NAME: &'static str = "direct-walk-click";
+    type Args = DirectClickArgs;
+    type Output = bool;
+
+    fn begin(args: DirectClickArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        Begin::Done(scene_click(args.dest.world(), cx))
+    }
+
+    fn step(&mut self, _cx: &mut Cx<'_>) -> Step<bool> {
+        Step::Done(false)
+    }
+}
+
+/// Frozen `DirectNavigator.walkTo` positional defaults (`DirectNavigator.ts:28`).
+fn direct_radius() -> i32 {
+    2
+}
+
+fn direct_timeout_ms() -> u64 {
+    45_000
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DirectWalkArgs {
+    dest: Tile,
+    #[serde(default = "direct_radius")]
+    radius: i32,
+    #[serde(default = "direct_timeout_ms")]
+    timeout_ms: u64,
+}
+
+/// Frozen `DirectNavigator.walkTo(dest, radius, timeoutMs)`
+/// (`DirectNavigator.ts:28–54`): until the deadline, every two ticks,
+/// arrival (`isArrived`) ends true; otherwise the scene click is reissued
+/// when 2400 ms passed or the player did not move.
+pub(crate) struct DirectWalk {
+    dest: WorldTile,
+    radius: i32,
+    last_issued: Option<Instant>,
+    last_tile: Option<WorldTile>,
+    delay_left: u8,
+}
+
+impl DirectWalk {
+    /// One frozen loop body after the deadline check.
+    fn iterate(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
+        let Some(me) = here() else {
+            return Some(false);
+        };
+        if arrived(self.dest, self.radius) {
+            return Some(true);
+        }
+        let now = scene_now(cx);
+        let stalled = self
+            .last_tile
+            .is_some_and(|last| last.x == me.x && last.z == me.z);
+        let due = self.last_issued.is_none_or(|at| {
+            now.saturating_duration_since(at) > Duration::from_millis(SCENE_RECLICK_MS)
+        });
+        if due || stalled {
+            scene_click(self.dest, cx);
+            self.last_issued = Some(now);
+        }
+        self.last_tile = Some(me);
+        self.delay_left = SCENE_CHECK_TICKS;
+        None
+    }
+}
+
+impl Family for DirectWalk {
+    const NAME: &'static str = "direct-walk";
+    type Args = DirectWalkArgs;
+    type Output = bool;
+
+    fn begin(args: DirectWalkArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        // `while (performance.now() < deadline)` never runs a zero bound.
+        if args.timeout_ms == 0 {
+            return Begin::Done(false);
+        }
+        cx.clock().arm(args.timeout_ms);
+        let mut walk = Self {
+            dest: args.dest.world(),
+            radius: args.radius,
+            last_issued: None,
+            last_tile: here(),
+            delay_left: 0,
+        };
+        match walk.iterate(cx) {
+            Some(done) => Begin::Done(done),
+            None => Begin::Run(walk),
+        }
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        if self.delay_left > 1 {
+            self.delay_left -= 1;
+            return Step::Wait;
+        }
+        if cx.clock().bound_reached() {
+            return Step::Done(false);
+        }
+        match self.iterate(cx) {
+            Some(done) => Step::Done(done),
+            None => Step::Wait,
+        }
+    }
+}
+
 const LOG: usize = 0;
 const SUSTAIN: usize = 1;
 
