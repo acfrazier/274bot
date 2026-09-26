@@ -16,6 +16,7 @@ use crate::isolate_fb::SnapshotReader;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, Ops, Scene, Text};
 use crate::reach_entity::{NpcReach, NpcReachOpts, TalkExpect};
+use crate::shim::InteractReq;
 use crate::walk::Resilient;
 use crate::walk_wait;
 use api::snapshot::WorldTile;
@@ -244,6 +245,14 @@ impl Family for NpcDialog {
         }
     }
 
+    /// A superseded reach stops the walk it armed.
+    fn release(&self) -> Option<InteractReq> {
+        match &self.phase {
+            Phase::CloseIn(walk) | Phase::WalkStand(walk) => walk.release(),
+            Phase::Talk(reach) => reach.release(),
+        }
+    }
+
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<&'static str> {
         if let Some(Reply::Threw(thrown)) = cx.reply() {
             return Step::Fail(thrown);
@@ -267,6 +276,11 @@ impl Family for NpcDialog {
             }
             let obs = observed::with(Observation::from_scene);
             if !obs.ingame || pending_posts() != self.pending_mark || obs.pending() {
+                // Stop the walk this reach armed: the host follow is only
+                // frozen by a hold and would resume after it.
+                if let Some(op) = self.release() {
+                    cx.emit(op);
+                }
                 return Step::Done("retry");
             }
             let walking = matches!(self.phase, Phase::CloseIn(_) | Phase::WalkStand(_));
@@ -1047,6 +1061,38 @@ mod tests {
         snap.hold = false;
         observe(&snap, NativeFactsInput::default());
         assert_eq!(next_token(&talk)["status"], "retry");
+    }
+
+    #[test]
+    fn a_superseded_reach_stops_its_close_in_walk() {
+        reset();
+        let mut far = base();
+        far.here = Some(TileInput {
+            x: 0,
+            z: 0,
+            level: 0,
+        });
+        observe(&far, NativeFactsInput::default());
+        let first = begin_named("Traiborn", 20, 20, None);
+        let token = first["request_id"].as_u64().expect("close-in walk");
+        let Started::Running(_) = machine::start(
+            "reach-npc-dialog",
+            json!({ "name": "Traiborn", "near": { "x": 30, "z": 30, "level": 0 } }),
+            Vec::new(),
+            0,
+        ) else {
+            panic!("second reach runs");
+        };
+        let ops = machine::merge_ops(Vec::new());
+        assert_eq!(
+            ops.first(),
+            Some(&InteractReq::AbortWalk { request_id: token }),
+            "the superseded close-in walk is stopped first: {ops:?}"
+        );
+        assert!(matches!(
+            ops.get(1),
+            Some(InteractReq::WalkNear { x: 30, .. })
+        ));
     }
 
     #[test]

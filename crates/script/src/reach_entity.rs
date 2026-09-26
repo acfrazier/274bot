@@ -798,6 +798,15 @@ impl NpcReach {
         self.logs.pop_front()
     }
 
+    /// The host walk a door clear of this reach has armed, as the op that
+    /// stops it ([`Resilient::release`]).
+    pub(crate) fn release(&self) -> Option<InteractReq> {
+        match &self.phase {
+            NpcReachPhase::Clearing { clear, .. } => clear.release(),
+            _ => None,
+        }
+    }
+
     fn expect(&self) -> bool {
         let (modal, cont) = chat_state();
         let ready = modal != -1 || cont;

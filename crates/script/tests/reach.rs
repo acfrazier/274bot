@@ -525,6 +525,47 @@ fn npc_dialog_opens_the_door_in_front_of_an_unreachable_npc_then_talks() {
 /// The door-approach walk of an interrupted reach is stopped: a guardian
 /// hold only freezes the host follow, which would resume after release.
 #[test]
+fn a_hold_during_the_door_approach_stops_the_armed_walk() {
+    let iso = spawn(NPC_DIALOG);
+    let open = ["Open".to_string()];
+    let talk = ["Talk-to".to_string()];
+    let g = grid((5, 5), &[(6, 5)], &[]);
+    let with_door = [barrier("Door", &open, 1530, 7, 5, 2)];
+    let npcs = [npc("Traiborn", &talk, 4, 8, 5, 3, false)];
+    let mut snap = base(stand());
+    snap.reach = view(&g);
+    snap.locs = &with_door;
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let request_id = match iso.drain_interacts().as_slice() {
+        [InteractReq::WalkNear {
+            x: 7,
+            z: 5,
+            request_id,
+            ..
+        }] => *request_id,
+        other => panic!("walk to the blocking door first, got {other:?}"),
+    };
+    snap.tick = 2;
+    snap.hold = true;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert!(iso.drain_interacts().is_empty(), "held rows do not step");
+    snap.tick = 3;
+    snap.hold = false;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__ok").unwrap(), "retry");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::AbortWalk { request_id }],
+        "the interrupted reach stops its host walk"
+    );
+    iso.join();
+}
+
+#[test]
 fn hold_and_reset_do_not_emit_another_talk() {
     let iso = spawn(NPC_DIALOG);
     let actions = ["Talk-to".to_string()];
