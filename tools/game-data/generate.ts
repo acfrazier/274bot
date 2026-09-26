@@ -88,10 +88,43 @@ export function assertPinned(spec: Revision) {
     const engineInputs = [...decoderSources, 'data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'];
     const dirtyEngine = execFileSync('git', ['-C', spec.engine, 'status', '--porcelain', '--untracked-files=all', '--', ...engineInputs], { encoding: 'utf8' }).trim();
     if (dirtyEngine) throw new Error(`${spec.revision}: relevant engine inputs are dirty:\n${dirtyEngine}`);
-    // the placement family reads every on-disk map and the published pack, so the dirty gate covers both, not only the maps named in contentFiles
-    const dirtyContent = execFileSync('git', ['-C', spec.content, 'status', '--porcelain', '--untracked-files=all', '--', ...contentFiles, PLACEMENT_MAPS_DIRECTORY, 'pack/loc.pack'], { encoding: 'utf8' }).trim();
+    const dirtyContent = contentDirt(spec.content);
     if (dirtyContent) throw new Error(`${spec.revision}: relevant content inputs are dirty:\n${dirtyContent}`);
     return { engineCommit, contentCommit };
+}
+/**
+ * Every content path the extractors read beyond `contentFiles`: the placement
+ * families read every on-disk map, the bank and cook families every `.loc`
+ * (and the bank family every `.npc`) config under `scripts/`, and both packs.
+ * A git pathspec `*` spans directories, so the tree specs cover every depth.
+ */
+export const CONTENT_TREE_PATHSPECS = ['maps', 'scripts/*.loc', 'scripts/*.npc', 'pack/loc.pack', 'pack/npc.pack'];
+/** Porcelain status of every selected-content input; empty when clean. */
+export function contentDirt(content: string) {
+    return execFileSync('git', ['-C', content, 'status', '--porcelain', '--untracked-files=all', '--', ...contentFiles, ...CONTENT_TREE_PATHSPECS], { encoding: 'utf8' }).trim();
+}
+/**
+ * The rs2b0t sources the generator reads, as git blob ids at the pinned
+ * commit (`git rev-parse 00d39a17e056df6c5e461f3f2cfd3598ff9720b6:<path>`).
+ * The pin is a `git archive` export without history, so identity is checked
+ * per file: a different commit or a local edit changes the blob id.
+ */
+export const RS2B0T_PIN = {
+    commit: '00d39a17e056df6c5e461f3f2cfd3598ff9720b6',
+    blobs: {
+        'src/bot/api/bank/BankLocations.ts': '82171ae05322fa3abfd7db1161eb3efd1a3543e6',
+        'src/bot/data/cookLocations.ts': '7c5b1a858662cd06b345228de63c7b5628ae591f',
+        'src/bot/data/cookingRanges.ts': '4606747ff64fc31c2b9af20b7853d2c7dd655a48',
+        'tools/cooking/gen-cooksurfaces.ts': '83db08d8327eb0356daea08e75fda29f8aaf0b4b',
+    } as Record<string, string>,
+};
+/** Refuse an rs2b0t root whose read sources are not the pinned commit's blobs. */
+export function assertRs2b0tPinned(rs2b0tRoot: string, pin = RS2B0T_PIN) {
+    for (const [relative, expected] of Object.entries(pin.blobs)) {
+        const bytes = fs.readFileSync(path.join(rs2b0tRoot, relative));
+        const blob = crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+        if (blob !== expected) throw new Error(`rs2b0t ${relative}: blob ${blob} is not ${pin.commit}'s ${expected} (dirty or not the pinned export)`);
+    }
 }
 /**
  * `tradeable` is the engine's own decode after load: opcode 15 (`tradeable=no`), a nonzero `dummyitem`, or a note of an
@@ -3018,12 +3051,13 @@ async function generate(spec: Revision) {
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const piles = pileModels(objModule.default.configs); const items = objModule.default.configs.map((obj) => row(obj, piles)); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
     const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const gatherPlacements = extractGatherPlacementsFacts(spec.content, gatherMethods.woods); if (gatherPlacements.woods.length !== 6) throw new Error(`${spec.revision}: expected six published woods, got ${gatherPlacements.woods.length}`); if (gatherPlacements.facts.coverage.length !== 1 || gatherPlacements.facts.coverage[0].class !== 'unknown' || gatherPlacements.facts.coverage[0].family !== 'mining') throw new Error(`${spec.revision}: gather placements must record mining as unknown coverage`); const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision); if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) throw new Error(`${spec.revision}: quest identity join mismatch`); if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) throw new Error(`${spec.revision}: quest coverage mismatch`); if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`); const trails = extractTrailFacts(spec.content, objModule.default.configs); assertTrailPins(trails, spec.revision); const talkKey = extractTalkKeyFacts(spec.content, objModule.default.configs); assertTalkKeyPins(talkKey.facts, spec.revision); assertTalkKeyNpcJoins(talkKey.facts, npcModule.default.configs); const trioGivers = extractTrioGiversFacts(spec.content); assertTrioGiverPins(trioGivers.facts, spec.revision); assertTrioGiverNpcJoins(trioGivers.facts, npcModule.default.configs); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const bankSource = path.join(envPath('RS2B0T', path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0')), 'src/bot/api/bank/BankLocations.ts');
+    const rs2b0tRoot = envPath('RS2B0T', path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0'));
+    assertRs2b0tPinned(rs2b0tRoot);
+    const bankSource = path.join(rs2b0tRoot, 'src/bot/api/bank/BankLocations.ts');
     const bankCatalog = await extractBankCatalog(spec.engine, fs.readFileSync(bankSource, 'utf8'));
     const bankPlacements = extractBankPlacements(spec.content, bankCatalog);
     const bankInputs = { catalog: { path: 'rs2b0t-00d39a17e0/src/bot/api/bank/BankLocations.ts', ...sha256(bankSource) }, ...bankPlacements.inputs };
     fs.writeFileSync(path.join(root, 'crates/api/data/game-data/bank-catalog.rs'), bankCatalogRust(bankCatalog));
-    const rs2b0tRoot = envPath('RS2B0T', path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0'));
     const cookFiles = { cookLocations: 'src/bot/data/cookLocations.ts', cookingRanges: 'src/bot/data/cookingRanges.ts', genCookSurfaces: 'tools/cooking/gen-cooksurfaces.ts' };
     const cookCatalog = await extractCookCatalog(spec.engine, {
         cookLocations: fs.readFileSync(path.join(rs2b0tRoot, cookFiles.cookLocations), 'utf8'),

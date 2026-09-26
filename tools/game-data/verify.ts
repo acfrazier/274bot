@@ -4,7 +4,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import { extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, gatherContentFiles, questIdentityContentFiles, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parsePack } from './generate.ts';
-import { bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces } from './generate.ts';
+import { assertRs2b0tPinned, bankCatalogRust, contentDirt, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces } from './generate.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected: Record<number, { engine: string; content: string; engineRoot: string; contentRoot: string; cache: { cache_id: string; content_id: string; nav_sha256: string; flags_sha256: string } }> = {
     274: { engine: '4c95f87efe00b068cadbd229d94736626907bd1a', content: '000c19997e07206131bcb3c884265840efce416d', engineRoot: process.env.GAME_DATA_274_ENGINE || '/Users/acfrazier/experiments/Server/engine', contentRoot: process.env.GAME_DATA_274_CONTENT || '/Users/acfrazier/experiments/Server/content', cache: { cache_id: '4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c', content_id: '0d14c891b5727142379c6d8844bd5bb1ff9874d4d996db1dc5ceea0e9062469c', nav_sha256: '05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4', flags_sha256: '92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb' } },
@@ -59,7 +59,7 @@ for (const revision of [274, 289]) {
     const file = path.join(root, `crates/api/data/game-data/${revision}.json`); const payload = JSON.parse(fs.readFileSync(file, 'utf8')) as any; const pin = expected[revision]; const manifestRow = manifest.revisions.find((entry) => entry.revision === revision); if (!manifestRow) throw new Error(`${revision}: missing manifest row`);
     assertEqual(payload.schema_version, 4, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`); assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`); assertEqual(commit(pin.engineRoot), pin.engine, `${revision} live engine commit`); assertEqual(commit(pin.contentRoot), pin.content, `${revision} live content commit`);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
-    const sourcePaths = [...decoderSources, 'data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config']; const dirtyEngine = execFileSync('git', ['-C', pin.engineRoot, 'status', '--porcelain', '--untracked-files=all', '--', ...sourcePaths], { encoding: 'utf8' }).trim(); if (dirtyEngine) throw new Error(`${revision}: relevant engine inputs are dirty: ${dirtyEngine}`); const dirtyContent = execFileSync('git', ['-C', pin.contentRoot, 'status', '--porcelain', '--untracked-files=all', '--', ...contentFiles, 'maps'], { encoding: 'utf8' }).trim(); if (dirtyContent) throw new Error(`${revision}: relevant content inputs are dirty: ${dirtyContent}`);
+    const sourcePaths = [...decoderSources, 'data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config']; const dirtyEngine = execFileSync('git', ['-C', pin.engineRoot, 'status', '--porcelain', '--untracked-files=all', '--', ...sourcePaths], { encoding: 'utf8' }).trim(); if (dirtyEngine) throw new Error(`${revision}: relevant engine inputs are dirty: ${dirtyEngine}`); const dirtyContent = contentDirt(pin.contentRoot); if (dirtyContent) throw new Error(`${revision}: relevant content inputs are dirty: ${dirtyContent}`);
     assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: any) => input.path)), JSON.stringify(contentFiles), `${revision} complete content provenance`);
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
     const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
@@ -427,7 +427,9 @@ for (const revision of [274, 289]) {
     for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS', 'frozen', 'invented', 'family-unavailable']) {
         if (trioGiversBlob.includes(banned)) throw new Error(`${revision}: trio_givers published ${banned}`);
     }
-    const bankSource = path.join(process.env.RS2B0T ?? path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0'), 'src/bot/api/bank/BankLocations.ts');
+    const rs2b0tRoot = process.env.RS2B0T ?? path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0');
+    assertRs2b0tPinned(rs2b0tRoot);
+    const bankSource = path.join(rs2b0tRoot, 'src/bot/api/bank/BankLocations.ts');
     const bankCatalog = await extractBankCatalog(pin.engineRoot, fs.readFileSync(bankSource, 'utf8'));
     const bankPlacements = extractBankPlacements(pin.contentRoot, bankCatalog);
     assertEqual(JSON.stringify(payload.bank_placements), JSON.stringify(bankPlacements.facts), `${revision} bank access placements match selected content`);
@@ -436,7 +438,6 @@ for (const revision of [274, 289]) {
         ...bankPlacements.inputs,
     }), `${revision} bank catalog and placement inputs`);
     assertEqual(fs.readFileSync(path.join(root, 'crates/api/data/game-data/bank-catalog.rs'), 'utf8'), bankCatalogRust(bankCatalog), `${revision} compiled bank roster matches frozen AST`);
-    const rs2b0tRoot = process.env.RS2B0T ?? path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0');
     const cookFiles = ['src/bot/data/cookLocations.ts', 'src/bot/data/cookingRanges.ts', 'tools/cooking/gen-cooksurfaces.ts'];
     const [cookLocations, cookingRanges, genCookSurfaces] = cookFiles.map((file) => fs.readFileSync(path.join(rs2b0tRoot, file), 'utf8'));
     const cookCatalog = await extractCookCatalog(pin.engineRoot, { cookLocations, cookingRanges, genCookSurfaces });
