@@ -111,3 +111,6 @@ jobs:
         run: |
           cargo test --workspace
           cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace
+          # Exercise targets hidden behind required-features in their manifests.
+          cargo test -p script --features load --tests
+          cargo test -p host-play --features memory-profile --tests

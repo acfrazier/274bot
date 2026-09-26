@@ -1011,6 +1011,15 @@ mod tests {
 
     #[test]
     fn chicken_killer_bank_requires_combat_loot_fresh_deposit_return_and_further_work() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(chicken_killer_bank_requires_combat_loot_fresh_deposit_return_and_further_work_checks)
+            .expect("spawn the chicken killer checks")
+            .join()
+            .expect("chicken killer checks");
+    }
+
+    fn chicken_killer_bank_requires_combat_loot_fresh_deposit_return_and_further_work_checks() {
         let mut baseline = chicken_bank_obs(FALADOR_CHICKENS, &[], &[], 100);
         assert!(validate_case_baseline(CoreCase::ChickenKillerBank, &baseline).is_err());
         baseline.levels.insert("attack".into(), 30);
@@ -1884,6 +1893,17 @@ mod tests {
 
     #[test]
     fn alcher_swarm_drain_requires_ordered_hit_guardian_resume_and_poor_consumption() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(
+                alcher_swarm_drain_requires_ordered_hit_guardian_resume_and_poor_consumption_checks,
+            )
+            .expect("spawn the Alcher swarm checks")
+            .join()
+            .expect("Alcher swarm checks");
+    }
+
+    fn alcher_swarm_drain_requires_ordered_hit_guardian_resume_and_poor_consumption_checks() {
         let case = CoreCase::parse("alcher_swarm_drain").expect("swarm core case");
         let mut baseline = alcher_spell_obs(&[], &[], 10_000, 70, 1);
         baseline.bank_generation = 1;
@@ -2545,10 +2565,18 @@ export default class NativeStop extends LoopingBot {{
             obj_names: None,
             compiled: script::CompiledTick::default(),
         };
-        slot.on_game_tick(&mut ctx);
         let deadline = Instant::now() + Duration::from_secs(5);
-        while slot.state() == script::RunState::Running && Instant::now() < deadline {
+        while slot.state() == script::RunState::Running
+            || slot.state() == script::RunState::Starting
+        {
+            slot.on_game_tick(&mut ctx);
             slot.drain_logs();
+            if slot.lifecycle_receipt().is_some() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
             std::thread::sleep(Duration::from_millis(5));
         }
         slot.lifecycle_receipt().unwrap_or_else(|| {
@@ -2832,6 +2860,15 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn gem_cutter_requires_chisel_preservation_and_no_crush() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(gem_cutter_requires_chisel_preservation_and_no_crush_checks)
+            .expect("spawn the gem cutter checks")
+            .join()
+            .expect("gem cutter checks");
+    }
+
+    fn gem_cutter_requires_chisel_preservation_and_no_crush_checks() {
         for (case, named) in [
             (CoreCase::GemCutter, false),
             (CoreCase::GemCutterNamed, true),
@@ -3403,6 +3440,15 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn superheater_requires_exact_ids_staff_and_bank_cycle() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(superheater_requires_exact_ids_staff_and_bank_cycle_checks)
+            .expect("spawn the superheater checks")
+            .join()
+            .expect("superheater checks");
+    }
+
+    fn superheater_requires_exact_ids_staff_and_bank_cycle_checks() {
         for (case, bar, primary, secondary, staff, steel, smithing) in [
             (
                 CoreCase::Superheater,
@@ -3742,6 +3788,15 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn potion_maker_requires_staged_unf_finished_deposit_and_further_product() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(potion_maker_requires_staged_unf_finished_deposit_and_further_product_checks)
+            .expect("spawn the potion maker checks")
+            .join()
+            .expect("potion maker checks");
+    }
+
+    fn potion_maker_requires_staged_unf_finished_deposit_and_further_product_checks() {
         for (case, herb, unf, secondary, finished, wrong_unf, wrong_finished, named, level) in [
             (
                 CoreCase::PotionMaker,
@@ -3907,6 +3962,15 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn tanner_bot_requires_widget_conversion_deposit_restock_and_further_tan() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(tanner_bot_requires_widget_conversion_deposit_restock_and_further_tan_checks)
+            .expect("spawn the tanner checks")
+            .join()
+            .expect("tanner checks");
+    }
+
+    fn tanner_bot_requires_widget_conversion_deposit_restock_and_further_tan_checks() {
         for (case, product, wrong, tan_all) in [
             (
                 CoreCase::TannerBot,
@@ -4116,6 +4180,15 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn rune_crafter_requires_temple_conversion_portal_deposit_restock_and_further_craft() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(rune_crafter_requires_temple_conversion_portal_deposit_restock_and_further_craft_checks)
+            .expect("spawn the rune crafter checks")
+            .join()
+            .expect("rune crafter checks");
+    }
+
+    fn rune_crafter_requires_temple_conversion_portal_deposit_restock_and_further_craft_checks() {
         for (case, bank, ruins, altar, rune, wrong, talisman, rc_level) in [
             (
                 CoreCase::RuneCrafter,
@@ -4401,6 +4474,15 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn ardy_cakes_requires_stall_food_xp_fresh_deposit_return_and_further_steal() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(ardy_cakes_requires_stall_food_xp_fresh_deposit_return_and_further_steal_checks)
+            .expect("spawn the Ardy cakes checks")
+            .join()
+            .expect("Ardy cakes checks");
+    }
+
+    fn ardy_cakes_requires_stall_food_xp_fresh_deposit_return_and_further_steal_checks() {
         let baseline = ardy_obs(
             ARDY_CAKES_STAND,
             &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES)],
@@ -4555,6 +4637,17 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn ardy_thiever_requires_coins_xp_fresh_deposit_return_and_further_pickpocket() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(
+                ardy_thiever_requires_coins_xp_fresh_deposit_return_and_further_pickpocket_checks,
+            )
+            .expect("spawn the Ardy thiever checks")
+            .join()
+            .expect("Ardy thiever checks");
+    }
+
+    fn ardy_thiever_requires_coins_xp_fresh_deposit_return_and_further_pickpocket_checks() {
         for (case, thieving) in [
             (CoreCase::ArdyThiever, 40),
             (CoreCase::ArdyThieverKnight, 55),
@@ -4790,6 +4883,17 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn gnome_chop_requires_log_xp_upstairs_deposit_ground_return_and_further_chop() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(
+                gnome_chop_requires_log_xp_upstairs_deposit_ground_return_and_further_chop_checks,
+            )
+            .expect("spawn the gnome chop checks")
+            .join()
+            .expect("gnome chop checks");
+    }
+
+    fn gnome_chop_requires_log_xp_upstairs_deposit_ground_return_and_further_chop_checks() {
         let levels = [("woodcutting", 75), ("fletching", 1)];
         let baseline = resource_obs(
             GNOME_WEST_MAGICS,
@@ -5342,6 +5446,15 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn station_production_requires_xp_product_deposit_restock_return_and_further() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(station_production_requires_xp_product_deposit_restock_return_and_further_checks)
+            .expect("spawn the station production checks")
+            .join()
+            .expect("station production checks");
+    }
+
+    fn station_production_requires_xp_product_deposit_restock_return_and_further_checks() {
         let cook_levels = [("cooking", COOKING_FIXTURE_LEVEL)];
         let baseline = resource_obs(
             CATHERBY_BANK,
@@ -5998,6 +6111,17 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn flax_aio_and_secondary_cycles_require_exact_ids_deposit_return_and_further() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(
+                flax_aio_and_secondary_cycles_require_exact_ids_deposit_return_and_further_checks,
+            )
+            .expect("spawn the flax checks")
+            .join()
+            .expect("flax checks");
+    }
+
+    fn flax_aio_and_secondary_cycles_require_exact_ids_deposit_return_and_further_checks() {
         let craft = [("crafting", 1)];
         let aio_baseline = resource_obs(FLAX_FIELD, &[], &[], &[], &[("crafting", 0)], &craft);
         validate_case_baseline(CoreCase::FlaxAio, &aio_baseline).unwrap();
@@ -6753,6 +6877,15 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn enabled_combat_option_observers_reject_false_positive_witnesses() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(enabled_combat_option_observers_reject_false_positive_witnesses_checks)
+            .expect("spawn the combat option checks")
+            .join()
+            .expect("combat option checks");
+    }
+
+    fn enabled_combat_option_observers_reject_false_positive_witnesses_checks() {
         let dart_case = CoreCase::MossGiantDart;
         let mut dart_baseline = resource_obs(
             MOSS_GIANT_BANK,
@@ -8353,6 +8486,17 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(
+                combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot_checks,
+            )
+            .expect("spawn the combat core checks")
+            .join()
+            .expect("combat core checks");
+    }
+
+    fn combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot_checks() {
         let levels = [
             ("attack", COMBAT_ATTACK_LEVEL),
             ("strength", COMBAT_ATTACK_LEVEL),
@@ -10635,6 +10779,17 @@ export default class NativeStop extends LoopingBot {{
     /// wrong-stand booths and dropped stages must all fail.
     #[test]
     fn bank_cells_require_their_own_deposit_restock_close_return_and_further_work() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(
+                bank_cells_require_their_own_deposit_restock_close_return_and_further_work_checks,
+            )
+            .expect("spawn the bank checks")
+            .join()
+            .expect("bank checks");
+    }
+
+    fn bank_cells_require_their_own_deposit_restock_close_return_and_further_work_checks() {
         // --- auto_fighter_bank: `banking=Auto`, East Ardougne, trout restock.
         let case = CoreCase::parse("auto_fighter_bank").expect("bank case registered");
         assert_eq!(case.card_name(), "AutoFighter");
@@ -12441,6 +12596,15 @@ export default class NativeStop extends LoopingBot {{
     /// negatives. Independent of the noncombat mega-test Firemaker failure.
     #[test]
     fn shop_buyout_cycle_requires_peak_earned_load_and_same_tick_progress() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(shop_buyout_cycle_requires_peak_earned_load_and_same_tick_progress_checks)
+            .expect("spawn the shop buyout checks")
+            .join()
+            .expect("shop buyout checks");
+    }
+
+    fn shop_buyout_cycle_requires_peak_earned_load_and_same_tick_progress_checks() {
         let case = CoreCase::parse("shop_buyout").unwrap();
         assert_eq!(case.card_name(), "ShopBuyout");
         let baseline = noncombat_obs(AEMAD_STAND, &[], &[], &[], &[], &[]);
@@ -12720,6 +12884,15 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn noncombat_core_cells_require_source_cycles_and_refuse_seed_only_paths() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(noncombat_core_cells_require_source_cycles_and_refuse_seed_only_paths_checks)
+            .expect("spawn the noncombat checks")
+            .join()
+            .expect("noncombat checks");
+    }
+
+    fn noncombat_core_cells_require_source_cycles_and_refuse_seed_only_paths_checks() {
         // aio_teleport: Magic XP + Varrock land + law spend, then bank restock
         // and a further tele. Walking or a seeded land without XP fails.
         let case = CoreCase::parse("aio_teleport").unwrap();
@@ -13051,6 +13224,7 @@ export default class NativeStop extends LoopingBot {{
         let mut further = returned.clone();
         further.xp.insert("firemaking".into(), 80);
         further.item_ids.insert(LOGS_ID, 4);
+        further.tick = returned.tick + 1;
         assert!(witness(
             case,
             &baseline,
