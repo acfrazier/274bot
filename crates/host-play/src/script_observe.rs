@@ -752,11 +752,14 @@ pub(crate) fn script_observe_cached(
                 if slot.watchdog().holds_script_actions() {
                     let _dropped = slot.drain_interacts();
                 } else {
-                    // The walk a reconnect interrupted goes out first, on
-                    // the relogged session's first dispatch, ahead of what
-                    // the resumed script asks for (an abort of it included).
+                    // What a reconnect interrupted goes out first, on the
+                    // relogged session's first dispatch, ahead of what the
+                    // resumed script asks for: the walk the host was
+                    // following, then the walk requests the dropped
+                    // connection never dispatched (newer, an abort included).
                     if up && !hold && here.is_some() && snapshot.is_some() {
                         interact.extend(take_carried_walk(navs, name, slot.runtime_generation()));
+                        interact.extend(slot.take_held_walks());
                     }
                     interact.extend(take_script_interacts(slot.drain_interacts(), slot_input));
                 }

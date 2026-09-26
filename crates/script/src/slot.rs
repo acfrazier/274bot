@@ -1371,6 +1371,16 @@ impl SlotScript {
         }
     }
 
+    /// Walk requests a reconnect kept from the dropped connection, once
+    /// ([`LoadIsolate::take_held_walks`]).
+    #[cfg(feature = "load")]
+    pub fn take_held_walks(&self) -> Vec<crate::shim::InteractReq> {
+        match &self.load {
+            Some(isolate) => isolate.take_held_walks(),
+            None => Vec::new(),
+        }
+    }
+
     #[cfg(feature = "load")]
     pub fn drain_lifecycle(&self) -> Vec<crate::shim::InteractReq> {
         match &self.load {

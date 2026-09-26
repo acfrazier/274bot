@@ -1567,7 +1567,10 @@ fn tick_loop(
                     });
                 }
             }
-            IsolateCmd::ResetSession { keep_work } => {
+            IsolateCmd::ResetSession {
+                keep_work,
+                generation: reset_generation,
+            } => {
                 // The scene caches belong to the ended connection: the host
                 // posts a keyframe for the next one.
                 crate::observed::on_reset();
@@ -1632,14 +1635,18 @@ fn tick_loop(
                 clear_unconsumed_paint_click(&mut runtime);
                 super::paint_chrome::reset();
                 super::paint_jive::reset();
-                // The host zeroed its parked-wait count with the session;
-                // the waits still parked are counted again under the new
-                // work generation (settles from the drain follow as facts).
-                if parked_waits > 0 {
+                // The host zeroed its parked-wait count at every reset; the
+                // waits still parked are counted again once, by the reset of
+                // the current generation (an older queued reset was followed
+                // by another zeroing). Settles from the drain follow as facts.
+                if parked_waits > 0
+                    && reset_generation
+                        == work_generation.load(std::sync::atomic::Ordering::Acquire)
+                {
                     let facts = vec![crate::shim::InteractReq::WaitEnqueued; parked_waits as usize];
                     let _ = out.send(ThreadMsg::Interact {
                         bytes: ipc.encode_interact_batch(&facts),
-                        generation: work_generation.load(std::sync::atomic::Ordering::Acquire),
+                        generation: reset_generation,
                     });
                 }
             }

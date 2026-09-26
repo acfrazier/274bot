@@ -372,13 +372,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   more fireplace), and generation fails if a curated surface moves. Without
   game data the list is empty and `resolveCookLocation` reports "game data
   unavailable".
-- A dropped connection the slot relogs through by itself now pauses the whole
-  Load script and resumes it after the relog, as rs2b0t's AutoRelogin does.
-  Every await, step machine and task runtime in flight (a walk, a bank open,
-  a death-recovery walk-back and the walk inside it) stays as one chain, and
-  the slot re-arms the script walk it was following under the same request,
-  so the walk completes instead of returning `false` and nothing else starts
-  beside it. An operator or idle logout, a withdrawn login, Stop and slot
+- A dropped connection now pauses the whole Load script and resumes it after
+  the relog, as rs2b0t's AutoRelogin does. The slot relogs while a script is
+  running or paused even with auto-login off, as rs2b0t does, and stops
+  trying once the script stops. Every await, step machine and task runtime
+  in flight (a walk, a bank open, a death-recovery walk-back and the walk
+  inside it) stays as one chain; the slot re-sends the script walk it was
+  following, and a walk request the dropped connection never sent, under the
+  same request, so the walk completes instead of returning `false` and
+  nothing else starts beside it. An operator or idle logout, Stop and slot
   removal still end the work as before. While a script is paused (operator
   Pause or a reconnect), `Execution.delay` and `delayUntil` timeouts no longer
   run down: a wait resumes with the time it had left.

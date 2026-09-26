@@ -36,8 +36,9 @@ use crate::play_wires::{dispatch_wires, WireCmd};
 use crate::script_runtime::{
     hold_script_nav, nav_world_state_for_observe, observe_script_inv,
     project_npc_boxes_for_isolate_snapshot, projected_npc_boxes, publish_script_paint,
-    reset_script_nav, script_observe_cached, script_paint_of, script_running, script_slot,
-    script_slot_or_insert, slot_arrival_reach, step_nav_bot, NavBot, ScriptSlot, ScriptWall,
+    reset_script_nav, script_active, script_observe_cached, script_paint_of, script_running,
+    script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot, NavBot, ScriptSlot,
+    ScriptWall,
 };
 use crate::{
     catalog_core, debug_enabled, login_readiness, paired_core, public_worlds, Play, RandomClaim,
@@ -358,12 +359,11 @@ impl Play {
 /// belong to the disconnected session and are discarded.
 ///
 /// `reconnect`: the slot relogs through this boundary by itself (see
-/// [`relogs_after`]). A Load script's own work is then held whole for the
-/// relogged session, and the script walk it had armed is re-armed there:
+/// [`end_slot_session`]). A Load script's own work is then held whole for
+/// the relogged session, and the script walk it had armed is re-armed there:
 /// frozen AutoRelogin pauses the script on the disconnect and resumes it on
 /// the new session's scene 2 (`AutoRelogin.ts:180-190`, `159-163`). An
-/// operator or idle logout, a withdrawn login or a slot Stop ends that work
-/// instead.
+/// operator or idle logout, or a slot Stop, ends that work instead.
 pub(super) fn reset_slot_session_work(
     name: &str,
     scripts: &ScriptWall,
@@ -396,11 +396,36 @@ pub(super) fn reset_slot_session_work(
     }
 }
 
-/// Whether the slot will log back in by itself after this session ends: a
-/// login intent the operator has not latched off (Logout, an idle logout)
-/// or withdrawn, on a slot that is not stopping.
-pub(super) fn relogs_after(arm: &SlotArm) -> bool {
-    !arm.stop.load(Ordering::Relaxed) && arm.login_command(false).is_some()
+/// One session boundary of the slot thread: classify it and reset. A drop
+/// relogs when a login is wanted or a script is running or paused (frozen
+/// `wantLogin = credentials && (autoLogin || scriptActive())`,
+/// `AutoRelogin.ts:175-190`), unless the slot is stopping or the operator
+/// latched it logged out (Logout, an idle logout) or asked for a logout.
+/// Off the game with only the script wanting it, the relog is armed here.
+pub(super) fn end_slot_session(
+    name: &str,
+    arm: &SlotArm,
+    ingame: bool,
+    scripts: &ScriptWall,
+    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+) {
+    let active = script_active(scripts, name);
+    let reconnect = !arm.stop.load(Ordering::Relaxed) && arm.relogs_after_drop(active);
+    if reconnect && active && !ingame {
+        arm.arm_script_relog();
+    }
+    reset_slot_session_work(name, scripts, cheats, wires, navs, reconnect);
+}
+
+/// Withdraw a relog armed only for the slot's script once that script is no
+/// longer running or paused (frozen `clearReconnect`, `AutoRelogin.ts:
+/// 196-198`).
+pub(super) fn lapse_idle_script_relog(arm: &SlotArm, scripts: &ScriptWall, name: &str) {
+    if arm.script_relog_armed() && !script_active(scripts, name) {
+        arm.lapse_script_relog();
+    }
 }
 
 /// Compact prior-frame guardian fact for catalog proof. The observe hook
@@ -599,6 +624,7 @@ fn spawn_slot_thread(
                     return;
                 }
                 if !client.ingame {
+                    lapse_idle_script_relog(&arm, &slot_scripts, &username);
                     if !should_handshake(&arm, client.ingame) {
                         // No pending intent (title hold, latched logout, or a
                         // withdrawn wait): a parked slot holds no FIFO place
@@ -696,7 +722,9 @@ fn spawn_slot_thread(
                         continue;
                     }
                     // A withdrawal or stop that lands after the granting poll
-                    // releases the unused reservation before any login call.
+                    // releases the unused reservation before any login call,
+                    // as does a script relog whose script has since stopped.
+                    lapse_idle_script_relog(&arm, &slot_scripts, &username);
                     let Some(login_command) = granted_permit_may_start_login(
                         &slot_queue,
                         uid,
@@ -847,13 +875,14 @@ fn spawn_slot_thread(
                             );
                             if session_boundary {
                                 session_epoch = session_epoch.wrapping_add(1);
-                                reset_slot_session_work(
+                                end_slot_session(
                                     name,
+                                    &arm_latch_obs,
+                                    c.ingame,
                                     &slot_scripts,
                                     &slot_cheats,
                                     &slot_wires,
                                     &slot_navs,
-                                    relogs_after(&arm_latch_obs),
                                 );
                                 last_nav_step = None;
                             }
@@ -1111,13 +1140,14 @@ fn spawn_slot_thread(
                     knock,
                 );
                 publish_slot_disconnected(&slot_statuses, &username);
-                reset_slot_session_work(
+                end_slot_session(
                     &username,
+                    &arm,
+                    client.ingame,
                     &slot_scripts,
                     &slot_cheats,
                     &slot_wires,
                     &slot_navs,
-                    relogs_after(&arm),
                 );
                 if arm.stop.load(Ordering::Relaxed) {
                     return;

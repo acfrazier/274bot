@@ -112,6 +112,9 @@ enum IsolateCmd {
     /// script's work is held for the next session instead of ended.
     ResetSession {
         keep_work: bool,
+        /// The work generation this reset opened: only the reset of the
+        /// current generation restates the parked waits.
+        generation: u64,
     },
     /// The host's FlatBuffer snapshot blob (schema: `crates/script/
     /// schema/isolate.fbs`), decoded on the isolate thread into the
@@ -284,6 +287,13 @@ pub struct LoadIsolate {
     interacts: Mutex<Vec<crate::shim::InteractReq>>,
     /// Watchdog lifecycle facts from the same FlatBuffer batch.
     lifecycle: Mutex<Vec<crate::shim::InteractReq>>,
+    /// Script walk requests (walk, walk-near, abort-walk) a reconnect kept
+    /// from the dropped connection before any host dispatch, oldest first,
+    /// for the relogged session ([`LoadIsolate::take_held_walks`]).
+    held_walks: Mutex<Vec<crate::shim::InteractReq>>,
+    /// A reconnect is holding the script's work: walk requests of batches
+    /// from the dropped connection are kept, not discarded.
+    holding_walks: AtomicBool,
     /// The latest paint frame the tick thread forwarded (the
     /// [`crate::shim::ScriptPaint`] the recorder built after each tick),
     /// shared with every reader instead of copied per read.
@@ -497,6 +507,8 @@ impl LoadIsolate {
             script_cut: AtomicBool::new(false),
             interacts: Mutex::new(Vec::new()),
             lifecycle: Mutex::new(Vec::new()),
+            held_walks: Mutex::new(Vec::new()),
+            holding_walks: AtomicBool::new(false),
             paint: Mutex::new(None),
             ignored_randoms: Mutex::new(Vec::new()),
             handle: Some(handle),
@@ -942,6 +954,19 @@ impl LoadIsolate {
         std::mem::take(&mut *self.interacts.lock().unwrap())
     }
 
+    /// The script walk requests a reconnect kept from the dropped
+    /// connection (never dispatched there), once, oldest first: the relogged
+    /// session dispatches them ahead of the script's new requests, so a walk
+    /// the script emitted just before the drop still goes out and its held
+    /// wait settles on it (frozen resumes the walker itself,
+    /// `AutoRelogin.ts:159-163`).
+    pub fn take_held_walks(&self) -> Vec<crate::shim::InteractReq> {
+        self.pump_logs();
+        self.holding_walks
+            .store(false, std::sync::atomic::Ordering::Release);
+        std::mem::take(&mut *self.held_walks.lock().unwrap())
+    }
+
     /// Put a host-drained batch back in front of requests that arrived
     /// afterward. Used when an operator Pause wins the host's final
     /// dispatch fence: no verb is lost, and Resume observes original order.
@@ -995,6 +1020,9 @@ impl LoadIsolate {
         // No game ticks arrive while disconnected, so preserve the active
         // execution's existing runaway horizon before clearing `in_flight`.
         self.arm_active_execution_deadline(teardown::ExecutionInterrupt::SessionReset);
+        // Fold what the tick thread already sent under the ended generation,
+        // so a reconnect can keep its undispatched walk requests.
+        self.pump_logs();
         let had_active_error = self.tick_outcome_error_generation.lock().unwrap().is_some();
         let generation = {
             let mut interacts = self.interacts.lock().unwrap();
@@ -1006,6 +1034,16 @@ impl LoadIsolate {
                 NEXT_PAINT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 std::sync::atomic::Ordering::Release,
             );
+            {
+                let mut held = self.held_walks.lock().unwrap();
+                if keep_work {
+                    hold_walk_requests(&mut held, interacts.drain(..));
+                } else {
+                    held.clear();
+                }
+            }
+            self.holding_walks
+                .store(keep_work, std::sync::atomic::Ordering::Release);
             interacts.clear();
             self.lifecycle.lock().unwrap().clear();
             generation
@@ -1030,7 +1068,10 @@ impl LoadIsolate {
             }
         }
         *self.in_flight.lock().unwrap() = None;
-        self.send(IsolateCmd::ResetSession { keep_work });
+        self.send(IsolateCmd::ResetSession {
+            keep_work,
+            generation,
+        });
         generation
     }
 
@@ -1287,6 +1328,16 @@ impl LoadIsolate {
                             .work_generation
                             .load(std::sync::atomic::Ordering::Acquire)
                     {
+                        // A tick that ran across a reconnect's reset: its
+                        // walk requests never reached the host.
+                        if self
+                            .holding_walks
+                            .load(std::sync::atomic::Ordering::Acquire)
+                        {
+                            if let Ok(reqs) = crate::isolate_fb::decode_interact_batch(&bytes) {
+                                hold_walk_requests(&mut self.held_walks.lock().unwrap(), reqs);
+                            }
+                        }
                         continue;
                     }
                     match crate::isolate_fb::decode_interact_batch(&bytes) {
@@ -1431,6 +1482,28 @@ fn ensure_platform() {
     INIT.call_once(|| {
         rustyscript::init_platform(1, true);
     });
+}
+
+/// Walk requests a reconnect keeps; `held` stays bounded.
+const HELD_WALKS: usize = 8;
+
+/// Keep the walk-control requests of `reqs` (walk, walk-near, abort-walk)
+/// in order, dropping the oldest past [`HELD_WALKS`].
+fn hold_walk_requests(
+    held: &mut Vec<crate::shim::InteractReq>,
+    reqs: impl IntoIterator<Item = crate::shim::InteractReq>,
+) {
+    held.extend(reqs.into_iter().filter(|req| {
+        matches!(
+            req,
+            crate::shim::InteractReq::Walk { .. }
+                | crate::shim::InteractReq::WalkNear { .. }
+                | crate::shim::InteractReq::AbortWalk { .. }
+        )
+    }));
+    if held.len() > HELD_WALKS {
+        held.drain(..held.len() - HELD_WALKS);
+    }
 }
 
 #[cfg(test)]

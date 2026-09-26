@@ -14498,99 +14498,380 @@ fn session_reset_clears_live_recovery_walk() {
         .stop();
 }
 
+/// A Load script walking on a 64×64 open world, driven through
+/// `script_observe` frame by frame, for the reconnect lifecycle.
+struct ReconnectRig {
+    scripts: ScriptWall,
+    cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
+    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    world: Option<Arc<NavWorld>>,
+    client: Client,
+    snap: GameSnapshot,
+}
+
+type ArmedWalk = (u64, Option<(WorldTile, i32, bool, bool, bool)>);
+
+impl ReconnectRig {
+    fn new(x: i32, z: i32) -> Self {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        Self::start(&scripts, x, z);
+        let client = bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&client);
+        Self {
+            scripts,
+            cheats: Arc::new(Mutex::new(HashMap::new())),
+            wires: Arc::new(Mutex::new(HashMap::new())),
+            navs: Arc::new(Mutex::new(HashMap::new())),
+            world: Some(Arc::new(open_world(64, 64))),
+            client,
+            snap,
+        }
+    }
+
+    /// Start a script whose loop walks to `(x, z)` (radius 1).
+    fn start(scripts: &ScriptWall, x: i32, z: i32) {
+        script_slot_or_insert(scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load_settled(
+                walk_resilient_src(x, z, 1),
+                script::LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+    }
+
+    fn slot(&self) -> ScriptSlot {
+        script_slot(&self.scripts, "alice").unwrap()
+    }
+
+    /// One observed frame, then wait for the isolate to finish its work.
+    fn frame(&mut self, tick: u64, tick_edge: bool) {
+        script_observe(
+            &mut self.client,
+            "alice",
+            true,
+            tick_edge,
+            tick,
+            Some((3, 3, 0)),
+            None,
+            None,
+            Some(&self.snap),
+            None,
+            &self.scripts,
+            &self.cheats,
+            &self.navs,
+            &self.world,
+            false,
+            false,
+        );
+        self.slot().lock().unwrap().probe("true").unwrap();
+    }
+
+    /// A frame that posts and ticks, then one that dispatches what the
+    /// tick queued.
+    fn frames(&mut self, tick: u64) {
+        self.frame(tick, true);
+        self.frame(tick, false);
+    }
+
+    fn armed(&self) -> ArmedWalk {
+        let navs = self.navs.lock().unwrap();
+        navs.get("alice")
+            .map_or((0, None), |bot| (bot.walk_request_id, bot.requested_route))
+    }
+
+    /// Every script walk host-play dispatched: (request id, dest x, dest z).
+    fn walks(&self) -> Vec<(u64, i32, i32)> {
+        let navs = self.navs.lock().unwrap();
+        navs.get("alice")
+            .map(|bot| {
+                bot.acts
+                    .published()
+                    .rows
+                    .into_iter()
+                    .filter_map(|row| match row.act {
+                        crate::catalog_core::ScriptAct::Walk {
+                            dest, request_id, ..
+                        } => Some((request_id, dest.x, dest.z)),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn boundary(&self, reconnect: bool) {
+        reset_slot_session_work(
+            "alice",
+            &self.scripts,
+            &self.cheats,
+            &self.wires,
+            &self.navs,
+            reconnect,
+        );
+    }
+
+    fn wait_state(&self, want: script::RunState) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let state = {
+                let slot = self.slot();
+                let mut slot = slot.lock().unwrap();
+                slot.observe_lifecycle();
+                slot.state()
+            };
+            if state == want {
+                return;
+            }
+            assert!(Instant::now() < deadline, "slot stuck in {state:?}");
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+fn walk_dest(x: i32, z: i32) -> Option<(WorldTile, i32, bool, bool, bool)> {
+    Some((WorldTile { x, z, level: 0 }, 1, false, true, true))
+}
+
 /// A reconnect mid-walk: the relogged session's first dispatch re-arms the
 /// walk the held script is still waiting on, under its own request id (so
 /// the wait settles on it). An operator logout carries nothing.
 #[test]
 fn a_reconnect_re_arms_the_held_script_walk_on_the_relogged_session() {
-    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
-    let world = Some(Arc::new(open_world(64, 64)));
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_load_settled(
-            walk_resilient_src(40, 40, 1),
-            script::LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-    let mut c = bank_client();
-    let mut snap = GameSnapshot::new();
-    snap.rebuild(&c);
-    let here = Some((3, 3, 0));
-    // One frame posts and ticks; the next dispatches what the tick queued.
-    let frames = |c: &mut Client, tick: u64| {
-        for tick_edge in [true, false] {
-            script_observe(
-                c,
-                "alice",
-                true,
-                tick_edge,
-                tick,
-                here,
-                None,
-                None,
-                Some(&snap),
-                None,
-                &scripts,
-                &cheats,
-                &navs,
-                &world,
-                false,
-                false,
-            );
-            script_slot(&scripts, "alice")
-                .unwrap()
-                .lock()
-                .unwrap()
-                .probe("true")
-                .unwrap();
-        }
-    };
-    let armed = |navs: &Arc<Mutex<HashMap<String, NavBot>>>| {
-        let navs = navs.lock().unwrap();
-        let bot = &navs["alice"];
-        (bot.walk_request_id, bot.requested_route)
-    };
-    let dest = WorldTile {
-        x: 40,
-        z: 40,
-        level: 0,
-    };
-
-    frames(&mut c, 1);
-    let (request_id, requested) = armed(&navs);
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (request_id, requested) = rig.armed();
     assert_ne!(request_id, 0, "the script walk is armed");
-    assert_eq!(requested, Some((dest, 1, false, true, true)));
+    assert_eq!(requested, walk_dest(40, 40));
 
-    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs, true);
-    assert_eq!(armed(&navs), (0, None), "the old connection's follow ends");
-    frames(&mut c, 2);
+    rig.boundary(true);
+    assert_eq!(rig.armed(), (0, None), "the old connection's follow ends");
+    rig.frames(2);
     assert_eq!(
-        armed(&navs),
+        rig.armed(),
         (request_id, requested),
         "the relogged session re-arms the same walk"
     );
-    let slot = script_slot(&scripts, "alice").unwrap();
     assert_eq!(
-        slot.lock().unwrap().probe("__rs_ok").unwrap(),
+        rig.slot().lock().unwrap().probe("__rs_ok").unwrap(),
         serde_json::Value::Null,
         "and the script is still waiting on it"
     );
 
-    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs, false);
-    frames(&mut c, 3);
-    assert_eq!(
-        armed(&navs),
-        (0, None),
-        "an operator logout carries nothing"
+    rig.boundary(false);
+    rig.frames(3);
+    assert_eq!(rig.armed(), (0, None), "an operator logout carries nothing");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// The script emits its walk and the connection drops before host-play
+/// drains it: the request never reached the old session, so the relogged
+/// session dispatches it, once, under its own request id.
+#[test]
+fn a_walk_emitted_just_before_the_drop_goes_out_after_the_relog() {
+    let mut rig = ReconnectRig::new(40, 40);
+    // The posting frame only: the tick queues the walk, nothing drains it.
+    rig.frame(1, true);
+    assert_eq!(rig.armed(), (0, None));
+
+    rig.boundary(true);
+    rig.frames(2);
+    let (request_id, requested) = rig.armed();
+    assert_ne!(
+        request_id, 0,
+        "the undispatched walk goes out after the relog"
     );
-    slot.lock().unwrap().stop();
+    assert_eq!(requested, walk_dest(40, 40));
+    assert_eq!(rig.walks(), vec![(request_id, 40, 40)], "exactly once");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Frozen relogs a running or paused script whatever the auto-login
+/// checkbox says (`AutoRelogin.ts:175-190`): under the default profile
+/// (auto-login off) a drop still relogs and the script's work is held.
+#[test]
+fn an_active_script_relogs_a_dropped_connection_with_auto_login_off() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    assert!(!should_handshake(&arm, false), "auto-login is off");
+    rig.frames(1);
+    let armed = rig.armed();
+
+    end_slot_session(
+        "alice",
+        &arm,
+        false,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+    );
+    assert!(should_handshake(&arm, false), "the active script relogs");
+    // The relogged session's own boundary is a reconnect too.
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    end_slot_session(
+        "alice",
+        &arm,
+        true,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+    );
+    rig.frames(2);
+    assert_eq!(rig.armed(), armed, "and its walk carries on");
+    assert!(
+        !should_handshake(&arm, false),
+        "once back, auto-login stays off"
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
+/// A relog armed only for the script lapses when the script stops before
+/// it happens (frozen `clearReconnect`, `AutoRelogin.ts:196-198`).
+#[test]
+fn a_script_relog_lapses_when_the_script_stops_first() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.frames(1);
+    end_slot_session(
+        "alice",
+        &arm,
+        false,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+    );
+    assert!(should_handshake(&arm, false));
+
+    rig.slot().lock().unwrap().stop();
+    rig.wait_state(script::RunState::Idle);
+    lapse_idle_script_relog(&arm, &rig.scripts, "alice");
+    assert!(
+        !should_handshake(&arm, false),
+        "nothing wants the relog now"
+    );
+}
+
+/// An operator Logout latches the slot: the drop that follows neither
+/// relogs nor holds the script's work, so a later Log in starts no
+/// carried walk.
+#[test]
+fn an_operator_logout_ends_the_script_work_and_does_not_relog() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.frames(1);
+    let before = rig.walks().len();
+
+    arm.request_logout();
+    arm.acknowledge_logout(arm.logout_command(true).unwrap());
+    end_slot_session(
+        "alice",
+        &arm,
+        false,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+    );
+    assert!(!should_handshake(&arm, false), "a Logout does not relog");
+
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    end_slot_session(
+        "alice",
+        &arm,
+        true,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+    );
+    rig.frames(2);
+    assert_eq!(rig.armed(), (0, None), "the walk ended with the session");
+    assert_eq!(rig.walks().len(), before, "and nothing re-dispatched it");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Operator Pause while the reconnect holds the script: the relog does not
+/// resume it, and Resume sends the carried walk once, no other.
+#[test]
+fn pause_during_a_reconnect_hold_defers_the_carried_walk_to_resume() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (request_id, requested) = rig.armed();
+
+    rig.boundary(true);
+    assert!(!rig.slot().lock().unwrap().pause());
+    rig.frames(2);
+    assert_eq!(rig.armed(), (0, None), "paused: nothing goes out");
+
+    rig.slot().lock().unwrap().resume();
+    rig.frames(3);
+    assert_eq!(rig.armed(), (request_id, requested));
+    assert_eq!(
+        rig.walks(),
+        vec![(request_id, 40, 40), (request_id, 40, 40)],
+        "the original dispatch and its carried re-dispatch, nothing else"
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Stop then Start of another script before the relog: the old run's
+/// carried walk never arms for the new run, whose own walk is the only one.
+#[test]
+fn stop_and_start_before_the_relog_drop_the_old_runs_carried_walk() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (old_id, _) = rig.armed();
+
+    rig.boundary(true);
+    rig.slot().lock().unwrap().stop();
+    rig.wait_state(script::RunState::Idle);
+    ReconnectRig::start(&rig.scripts, 20, 20);
+    rig.frames(2);
+    let (new_id, requested) = rig.armed();
+    assert_ne!(new_id, old_id);
+    assert_eq!(requested, walk_dest(20, 20), "only the new run walks");
+    assert_eq!(rig.walks(), vec![(old_id, 40, 40), (new_id, 20, 20)]);
+    rig.slot().lock().unwrap().stop();
+}
+
+/// A runtime recreated during the hold (the watchdog restart; a runaway
+/// cut takes the same path): the old run's carried walk never arms, and
+/// the new run starts its own walk as the only chain.
+#[test]
+fn a_restart_during_a_reconnect_hold_drops_the_old_runs_carried_walk() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (old_id, _) = rig.armed();
+
+    rig.boundary(true);
+    {
+        let slot = rig.slot();
+        let mut slot = slot.lock().unwrap();
+        slot.on_is_up(true);
+        let now = Instant::now();
+        slot.feed_watchdog(now, Some((3, 3, 0)), &[], false, true, &[]);
+        slot.restart_load_from_identity(now).unwrap();
+    }
+    rig.wait_state(script::RunState::Running);
+    rig.frames(2);
+    let (new_id, requested) = rig.armed();
+    assert_ne!(new_id, old_id);
+    assert_eq!(requested, walk_dest(40, 40));
+    assert_eq!(rig.walks(), vec![(old_id, 40, 40), (new_id, 40, 40)]);
+    rig.slot().lock().unwrap().stop();
 }
 
 #[test]

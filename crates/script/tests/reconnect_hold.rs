@@ -350,3 +350,150 @@ export default class T extends LoopingBot {
     assert_eq!(value(&iso, "globalThis.__ok"), false, "the rest of it does");
     iso.join();
 }
+
+/// Operator Pause and Resume while the reconnect still holds the script do
+/// not restart its clocks: the hold alone keeps them stopped until the
+/// relogged session's first tick.
+#[test]
+fn pause_and_resume_during_a_reconnect_hold_keep_the_wait_clock_stopped() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        globalThis.__ok = null;
+        globalThis.__ok = await Execution.delayUntil(() => false, 600);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = ingame_snapshot();
+    tick(&iso, &snap);
+
+    iso.reconnect_session_work();
+    iso.pause();
+    iso.resume();
+    sleep(Duration::from_millis(900));
+    let here = snap.here.unwrap();
+    relog(&iso, &mut snap, 2, here);
+    assert_eq!(
+        value(&iso, "globalThis.__ok"),
+        serde_json::Value::Null,
+        "a Resume while still disconnected does not restart the clock"
+    );
+    iso.join();
+}
+
+const HELD_WALK: &str = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        globalThis.__ok = null;
+        globalThis.__ok = await Traversal.walkResilient(
+            { x: 3300, z: 3300, level: 0 },
+            { radius: 1, timeoutMs: 300000 },
+        );
+    }
+}
+"#;
+
+/// The reviewer's probe: the tick emits the walk and the connection drops
+/// before the host drains it. The walk never reached the old session; the
+/// reconnect keeps it for the relogged one, once, and the held wait
+/// settles on it.
+#[test]
+fn a_walk_emitted_but_not_drained_before_the_drop_is_kept_for_the_relog() {
+    let iso = LoadIsolate::spawn(HELD_WALK.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = ingame_snapshot();
+    snap.here = Some(tile(3222, 3222));
+    tick(&iso, &snap);
+    iso.reconnect_session_work();
+    let next = relog(&iso, &mut snap, 2, tile(3240, 3240));
+    assert!(walks(&iso.drain_interacts()).is_empty(), "no second walk");
+    let held = iso.take_held_walks();
+    assert!(
+        matches!(
+            walks(&held).as_slice(),
+            [InteractReq::WalkNear { x: 3300, z: 3300, request_id, .. }] if *request_id != 0
+        ),
+        "the undispatched walk is held: {held:?}"
+    );
+    assert!(iso.take_held_walks().is_empty(), "once");
+
+    snap.tick = next;
+    snap.here = Some(tile(3300, 3301));
+    tick(&iso, &snap);
+    assert_eq!(
+        value(&iso, "globalThis.__ok"),
+        true,
+        "the held walk arrives"
+    );
+    iso.join();
+}
+
+/// The reset races the tick that walks: whether that tick finished before
+/// the reset, ran across it (its batch reaches the host stale) or never
+/// ran, exactly one walk goes out after the relog.
+#[test]
+fn a_walk_racing_the_drop_goes_out_exactly_once_after_the_relog() {
+    for _ in 0..8 {
+        let iso = LoadIsolate::spawn(HELD_WALK.into(), LoadShape::CompatClass, vec![]).unwrap();
+        let mut snap = ingame_snapshot();
+        snap.here = Some(tile(3222, 3222));
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(1);
+        iso.reconnect_session_work();
+        relog(&iso, &mut snap, 2, tile(3240, 3240));
+        let mut out = iso.take_held_walks();
+        out.extend(iso.drain_interacts());
+        assert_eq!(walks(&out).len(), 1, "one walk: {out:?}");
+        iso.join();
+    }
+}
+
+/// Two boundaries of one disconnect queued behind a busy isolate restate
+/// the parked wait once, not once per reset.
+#[test]
+fn queued_resets_of_one_disconnect_restate_a_parked_wait_once() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        await Execution.delayUntil(() => false, 0);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = ingame_snapshot();
+    tick(&iso, &snap);
+    let enqueued = |facts: &[InteractReq]| {
+        facts
+            .iter()
+            .filter(|fact| matches!(fact, InteractReq::WaitEnqueued))
+            .count()
+    };
+    assert_eq!(enqueued(&iso.drain_lifecycle()), 1, "one wait parked");
+
+    std::thread::scope(|scope| {
+        let busy = scope.spawn(|| {
+            iso.probe("(() => { const t = Date.now() + 300; while (Date.now() < t) {} })()")
+        });
+        sleep(Duration::from_millis(50));
+        iso.reconnect_session_work();
+        iso.reconnect_session_work();
+        busy.join().unwrap().unwrap();
+    });
+    let here = snap.here.unwrap();
+    relog(&iso, &mut snap, 2, here);
+    assert_eq!(
+        enqueued(&iso.drain_lifecycle()),
+        1,
+        "the one parked wait is counted once"
+    );
+    iso.join();
+}

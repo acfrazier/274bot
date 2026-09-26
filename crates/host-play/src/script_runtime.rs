@@ -158,6 +158,20 @@ pub(super) fn script_running(scripts: &ScriptWall, name: &str) -> bool {
         .is_some_and(|state| state == script::RunState::Running)
 }
 
+/// A script is running or paused on the slot (frozen `scriptActive()`,
+/// `AutoRelogin.ts:138-141`): started and not stopping. An offline slot's
+/// started script reads Paused.
+pub(super) fn script_active(scripts: &ScriptWall, name: &str) -> bool {
+    script_slot(scripts, name)
+        .and_then(|slot| slot.lock().ok().map(|slot| slot.state()))
+        .is_some_and(|state| {
+            matches!(
+                state,
+                script::RunState::Starting | script::RunState::Running | script::RunState::Paused
+            )
+        })
+}
+
 /// Puzzle-board post tests: the production observe path
 /// ([`with_script_snapshot_input`] via [`script_snapshot_fb`]) over a
 /// client whose main modal holds both a hint panel (a TYPE_INV without

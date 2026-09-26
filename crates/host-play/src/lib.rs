@@ -126,7 +126,10 @@ use play_login::{
 };
 use play_slots::SlotFrame;
 #[cfg(test)]
-use play_slots::{observe_slot_catalog_and_paired, reset_slot_session_work};
+use play_slots::{
+    end_slot_session, lapse_idle_script_relog, observe_slot_catalog_and_paired,
+    reset_slot_session_work,
+};
 #[cfg(test)]
 use play_status::{
     apply_startup_phase, mark_login_started, publish_session_boundary_status,
