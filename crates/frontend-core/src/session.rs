@@ -10,7 +10,7 @@
 //! logout bounded by [`SLOT_REMOVE_TIMEOUT`], and workers are joined only
 //! once finished.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -132,9 +132,11 @@ pub struct OperatorSession<Io> {
     /// Durable vault writes, created with the first write.
     writer: Option<ProfileWriter>,
     writes: HashMap<OperationId, PendingWrite>,
-    /// Profiles whose first save (new or renamed name) is not durable yet:
-    /// no slot may start from their staged credentials.
-    unsaved: HashSet<String>,
+    /// The durable (last committed) value of every profile with a queued
+    /// write; `None` when it has no durable row yet (a first save or a
+    /// rename target). Spawns and arms read this, never the staged vault:
+    /// an unsaved edit reaches a slot only through its post-write mirror.
+    durable: HashMap<String, Option<Profile>>,
     #[cfg(any(test, feature = "test-support"))]
     write_gate: Arc<std::sync::Mutex<()>>,
     /// The newest write per profile: only its failure restores the durable
@@ -164,7 +166,7 @@ impl<Io> OperatorSession<Io> {
             operations: OperationBook::default(),
             writer: None,
             writes: HashMap::new(),
-            unsaved: HashSet::new(),
+            durable: HashMap::new(),
             #[cfg(any(test, feature = "test-support"))]
             write_gate: Arc::default(),
             latest_write: HashMap::new(),
@@ -299,7 +301,7 @@ impl<Io> OperatorSession<Io> {
     /// the outgoing and incoming slots are woken so a parked worker re-reads
     /// its draw state within a frame.
     pub fn select(&mut self, name: &str) -> Selection {
-        if self.selected.as_deref() == Some(name) || self.unsaved.contains(name) {
+        if self.selected.as_deref() == Some(name) || self.profile_saving(name) {
             return Selection::Unchanged;
         }
         let previous = self.selected.replace(name.to_string());
@@ -316,7 +318,7 @@ impl<Io> OperatorSession<Io> {
     /// while a fleet logout latch starts the worker in an explicit
     /// logged-out hold.
     pub fn arm_for_profile(&self, name: &str) -> Option<Arc<SlotArm>> {
-        let profile = self.vault.as_ref().and_then(|v| v.get(name))?;
+        let profile = self.durable_profile(name)?;
         let arm = SlotArm::new(profile.uid, profile.settings.auto_login);
         arm.random_events
             .store(profile.settings.random_events, Ordering::Relaxed);
@@ -340,7 +342,7 @@ impl<Io> OperatorSession<Io> {
         restart_terminal: bool,
         surface: &mut S,
     ) -> Result<(), String> {
-        if self.unsaved.contains(name) {
+        if self.profile_saving(name) {
             return Err(format!("{name}: {SAVING}"));
         }
         if self
@@ -353,7 +355,7 @@ impl<Io> OperatorSession<Io> {
         if self.slots.contains_key(name) && (self.play.is_none() || !restart_terminal) {
             return Ok(());
         }
-        let Some(mut profile) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() else {
+        let Some(mut profile) = self.durable_profile(name).cloned() else {
             return Ok(());
         };
         surface.lifetime_reset(name);
@@ -443,7 +445,7 @@ impl<Io> OperatorSession<Io> {
         name: &str,
         surface: &mut S,
     ) -> bool {
-        if self.unsaved.contains(name) {
+        if self.profile_saving(name) {
             self.operations
                 .set(op, name, Outcome::Skipped(SAVING.into()));
             return false;
@@ -451,9 +453,7 @@ impl<Io> OperatorSession<Io> {
         let cancelled_removal = self.cancel_removal(name);
         let added = self.fleet.add(name);
         let auto_login = self
-            .vault
-            .as_ref()
-            .and_then(|v| v.get(name))
+            .durable_profile(name)
             .map(|p| p.settings.auto_login)
             .unwrap_or(false);
         let want_login = self.fleet.should_auto_login(name, auto_login);
@@ -622,7 +622,7 @@ impl<Io> OperatorSession<Io> {
         surface: &mut S,
     ) -> Removal {
         let op = self.operations.open(ActionKind::Remove);
-        if self.unsaved.contains(name) {
+        if self.profile_saving(name) {
             self.operations
                 .set(op, name, Outcome::Failed(SAVING.into()));
             return Removal {
@@ -1001,14 +1001,11 @@ impl<Io> OperatorSession<Io> {
         label: &'static str,
     ) -> Result<OperationId, String> {
         self.ensure_writer();
-        let vault = self
-            .vault
-            .as_mut()
+        self.hold_durable(&profile.username)
             .ok_or_else(|| format!("{label}: vault locked"))?;
-        if vault.get(&profile.username).is_none() {
-            self.unsaved.insert(profile.username.clone());
+        if let Some(vault) = self.vault.as_mut() {
+            vault.stage_upsert(profile.clone());
         }
-        vault.stage_upsert(profile.clone());
         Ok(self.submit_write(
             ActionKind::SaveProfile,
             vec![VaultChange::Upsert(profile)],
@@ -1028,15 +1025,13 @@ impl<Io> OperatorSession<Io> {
         label: &'static str,
     ) -> Result<OperationId, String> {
         self.ensure_writer();
-        let vault = self
-            .vault
-            .as_mut()
+        self.hold_durable(&profile.username)
             .ok_or_else(|| format!("{label}: vault locked"))?;
-        if vault.get(&profile.username).is_none() {
-            self.unsaved.insert(profile.username.clone());
+        self.hold_durable(old);
+        if let Some(vault) = self.vault.as_mut() {
+            vault.stage_upsert(profile.clone());
+            vault.stage_remove(old);
         }
-        vault.stage_upsert(profile.clone());
-        vault.stage_remove(old);
         Ok(self.submit_write(
             ActionKind::SaveProfile,
             vec![
@@ -1051,16 +1046,20 @@ impl<Io> OperatorSession<Io> {
     /// Delete a vault profile only; a live member is not logged out or
     /// dropped. Returns `None` when there was no such profile.
     pub fn vault_remove(&mut self, name: &str) -> Result<Option<OperationId>, String> {
-        if self.unsaved.contains(name) {
+        if self.profile_saving(name) {
             return Err(format!("chooser: {name}: {SAVING}"));
         }
         self.ensure_writer();
         let vault = self
             .vault
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| "chooser: vault locked".to_string())?;
-        if !vault.stage_remove(name) {
+        if vault.get(name).is_none() {
             return Ok(None);
+        }
+        self.hold_durable(name);
+        if let Some(vault) = self.vault.as_mut() {
+            vault.stage_remove(name);
         }
         Ok(Some(self.submit_write(
             ActionKind::DeleteProfile,
@@ -1155,11 +1154,28 @@ impl<Io> OperatorSession<Io> {
         self.save_profile(profile, mirror, "random")
     }
 
-    /// Whether `name`'s first save (new or renamed profile) is still being
-    /// written. Such a profile cannot be selected, loaded, removed or
-    /// deleted until the write settles.
+    /// Whether `name` has no durable row yet: its first save (new or
+    /// renamed profile) is still being written. Such a profile cannot be
+    /// selected, loaded, removed or deleted until the write settles.
     pub fn profile_saving(&self, name: &str) -> bool {
-        self.unsaved.contains(name)
+        matches!(self.durable.get(name), Some(None))
+    }
+
+    /// The profile as last committed to disk: what a spawn or arm may use.
+    /// Equal to the vault row unless a write for `name` is still queued.
+    pub fn durable_profile(&self, name: &str) -> Option<&Profile> {
+        match self.durable.get(name) {
+            Some(durable) => durable.as_ref(),
+            None => self.vault.as_ref().and_then(|v| v.get(name)),
+        }
+    }
+
+    /// Record `name`'s durable value before its first queued change is
+    /// staged. `None` when the vault is locked.
+    fn hold_durable(&mut self, name: &str) -> Option<()> {
+        let current = self.vault.as_ref()?.get(name).cloned();
+        self.durable.entry(name.to_string()).or_insert(current);
+        Some(())
     }
 
     /// Failed profile writes since the last take, as `label: error` lines.
@@ -1189,11 +1205,18 @@ impl<Io> OperatorSession<Io> {
         // Profiles whose newest queued write this is: only those may be put
         // back on failure, so an older failure cannot undo a newer edit.
         let mut newest = Vec::new();
+        let mut committed = None;
         for (name, durable) in written.durable {
+            if name == pending.member {
+                committed.clone_from(&durable);
+            }
             if self.latest_write.get(&name) == Some(&written.op) {
                 self.latest_write.remove(&name);
-                self.unsaved.remove(&name);
+                self.durable.remove(&name);
                 newest.push((name, durable));
+            } else if let Some(held) = self.durable.get_mut(&name) {
+                // A newer write is still queued: track what is durable now.
+                held.clone_from(&durable);
             }
         }
         let member = pending.member;
@@ -1207,7 +1230,7 @@ impl<Io> OperatorSession<Io> {
             }
             Ok(()) => {
                 self.operations.set(written.op, &member, Outcome::Completed);
-                self.apply_mirror(&member, pending.mirror);
+                self.apply_mirror(&member, pending.mirror, committed);
             }
             Err(error) => {
                 if let Some(vault) = self.vault.as_mut() {
@@ -1223,7 +1246,7 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    fn apply_mirror(&mut self, name: &str, mirror: ArmMirror) {
+    fn apply_mirror(&mut self, name: &str, mirror: ArmMirror, committed: Option<Profile>) {
         let Some(play) = self.play.as_mut() else {
             return;
         };
@@ -1247,8 +1270,9 @@ impl<Io> OperatorSession<Io> {
                 }
             }
             ArmMirror::Remember => {
-                let profile = self.vault.as_ref().and_then(|v| v.get(name)).cloned();
-                if let Some(profile) = profile {
+                // The committed row, not the staged vault (a newer edit may
+                // be queued behind this one).
+                if let Some(profile) = committed {
                     play.remember_profile(profile);
                 }
             }
@@ -1280,6 +1304,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     pub fn set_vault(&mut self, vault: Option<Vault>) {
+        self.flush_writes();
         self.vault = vault;
         self.writer = None;
     }

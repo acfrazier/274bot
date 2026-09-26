@@ -2498,6 +2498,9 @@ impl Session {
                     .save_profile(p, frontend_core::ArmMirror::None, "stress");
             }
         }
+        // Harness setup, not a frame path: the spawns below read the durable
+        // rows, so the raster prefs must be on disk first.
+        self.core.flush_writes();
         self.set_multibox(true);
         self.scatter.store(true, Ordering::Relaxed);
         self.wall.chooser_open = false;
