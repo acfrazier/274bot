@@ -277,29 +277,19 @@ fn resume_rewrites_uncheckpointed_tiles_byte_identically() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-#[test]
-fn completed_from_disk_accepts_a_valid_png() {
-    let root = std::env::temp_dir().join(format!("274bot-raster-disk-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    let key = TileKey {
-        plane: 0,
-        lod: 0,
-        x: 3,
-        z: 4,
-    };
-    let png = encode_png(&vec![20u8; TILE_RGBA_BYTES]).unwrap();
-    let path = root.join(key.relative_path().unwrap());
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, &png).unwrap();
-    let unit = completed_from_disk(&root, key).unwrap();
-    assert_eq!(unit.key, UnitKey::Terrain { tile: key });
-    std::fs::remove_dir_all(&root).unwrap();
+/// A varied tile, so its IDAT spans most of the file.
+fn patterned_png() -> Vec<u8> {
+    let rgba: Vec<u8> = (0..TILE_RGBA_BYTES)
+        .map(|i| (i.wrapping_mul(31) ^ (i >> 7)) as u8)
+        .collect();
+    encode_png(&rgba).unwrap()
 }
 
 #[test]
-fn resume_adopts_valid_disk_tiles_the_checkpoint_never_listed() {
-    // A close mid-bake checkpoints nothing, so resume must pick up every
-    // valid tile already written instead of rasterizing it again.
+fn resume_adopts_only_disk_tiles_that_fully_decode() {
+    // A close mid-bake checkpoints nothing, so resume adopts every tile file
+    // already written. The receipt comes from the file itself, so a file
+    // damaged after its IHDR must fail a full decode and be rendered again.
     let root = std::env::temp_dir().join(format!("274bot-raster-adopt-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let key = |x| TileKey {
@@ -308,9 +298,17 @@ fn resume_adopts_valid_disk_tiles_the_checkpoint_never_listed() {
         x,
         z: 7,
     };
-    let (valid, corrupt, missing) = (key(1), key(2), key(3));
-    let png = encode_png(&vec![40u8; TILE_RGBA_BYTES]).unwrap();
-    for (tile, bytes) in [(valid, png.as_slice()), (corrupt, b"not a png".as_slice())] {
+    let (valid, truncated, crc, garbage, missing) = (key(1), key(2), key(3), key(4), key(5));
+    let png = patterned_png();
+    let mut crc_damaged = png.clone();
+    crc_damaged[png.len() / 2] ^= 0x5a;
+    let files = [
+        (valid, png.clone()),
+        (truncated, png[..png.len() / 2].to_vec()),
+        (crc, crc_damaged),
+        (garbage, b"not a png".to_vec()),
+    ];
+    for (tile, bytes) in &files {
         let path = root.join(tile.relative_path().unwrap());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, bytes).unwrap();
@@ -320,7 +318,7 @@ fn resume_adopts_valid_disk_tiles_the_checkpoint_never_listed() {
     let mut completed_bytes = 0;
     adopt_existing_tiles(
         &root,
-        [valid, corrupt, missing],
+        [valid, truncated, crc, garbage, missing],
         |_| false,
         &mut completed,
         &mut completed_keys,
@@ -341,17 +339,19 @@ fn resume_adopts_valid_disk_tiles_the_checkpoint_never_listed() {
     assert_eq!(completed_bytes, png.len() as u64);
 
     // A tile the checkpoint does list must still verify on disk.
-    let mut completed = Vec::new();
-    let mut completed_keys = BTreeSet::new();
-    let mut completed_bytes = 0;
-    assert!(adopt_existing_tiles(
-        &root,
-        [corrupt],
-        |tile| tile == corrupt,
-        &mut completed,
-        &mut completed_keys,
-        &mut completed_bytes,
-    )
-    .is_err());
+    for damaged in [truncated, crc] {
+        let mut completed = Vec::new();
+        let mut completed_keys = BTreeSet::new();
+        let mut completed_bytes = 0;
+        assert!(adopt_existing_tiles(
+            &root,
+            [damaged],
+            |tile| tile == damaged,
+            &mut completed,
+            &mut completed_keys,
+            &mut completed_bytes,
+        )
+        .is_err());
+    }
     std::fs::remove_dir_all(&root).unwrap();
 }

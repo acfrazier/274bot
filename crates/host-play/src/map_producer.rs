@@ -87,7 +87,7 @@ impl MapBakeProducer for NativeMapProducer {
     }
 }
 
-fn run_images(
+pub(crate) fn run_images(
     input: nav::map::producer::ClientMapInput<'_>,
     writer: &mut BakeWriter,
 ) -> Result<BakeOutput, MapCacheError> {

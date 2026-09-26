@@ -1710,7 +1710,9 @@ impl MapDemandManager {
     }
 
     /// Reap a finished worker without touching ready artefacts.  This is safe
-    /// to call from a UI cadence and never scans the generated cache.
+    /// to call from a UI cadence and never scans the generated cache.  Once
+    /// the last consumer has gone, the finished job's bookkeeping is dropped
+    /// too, so a closed map keeps nothing but the manager itself.
     pub fn reap(&self) {
         let mut active = self.inner.active.lock();
         let finished = (*active)
@@ -1723,6 +1725,24 @@ impl MapDemandManager {
                     let _ = join.join();
                 }
             }
+        }
+        let unused = (*active).as_ref().is_some_and(|job| {
+            job.join.is_none() && job.consumers.load(AtomicOrdering::Acquire) == 0
+        });
+        if unused {
+            *active = None;
+        }
+        drop(active);
+        // A Weak slot whose value is gone still pins its Arc allocation, and
+        // an emptied BTreeMap keeps its root node, so drop empty maps too.
+        let mut cache = self.inner.ready.lock();
+        cache.catalogues.retain(|_, ready| ready.strong_count() > 0);
+        cache.images.retain(|_, ready| ready.strong_count() > 0);
+        if cache.catalogues.is_empty() {
+            cache.catalogues = BTreeMap::new();
+        }
+        if cache.images.is_empty() {
+            cache.images = BTreeMap::new();
         }
     }
 }
@@ -2760,6 +2780,168 @@ mod tests {
             .unwrap());
         assert!(writer.should_skip(UnitKey::Terrain { tile: key }));
         drop(writer);
+        let _ = fs::remove_dir_all(root.path());
+    }
+
+    /// A minimal client snapshot for the real raster: one floor, one loc
+    /// definition, no sprites, and three plane-0 mapsquares of that floor.
+    fn synthetic_client_snapshot(dir: &Path) -> (PathBuf, PathBuf) {
+        use client::io::cache_289::synthetic_jag;
+        let (jag, snapshot) = (dir.join("jag"), dir.join("snapshot"));
+        fs::create_dir_all(&jag).unwrap();
+        fs::create_dir_all(&snapshot).unwrap();
+        let config: [(&str, &[u8]); 3] = [
+            ("flo.dat", &[0, 1, 1, 0x40, 0x80, 0x20, 0]),
+            ("loc.dat", &[0, 1, 0]),
+            ("loc.idx", &[0, 1, 0, 1]),
+        ];
+        fs::write(jag.join("config"), synthetic_jag(&config)).unwrap();
+        for sprites in ["media", "textures"] {
+            fs::write(jag.join(sprites), synthetic_jag(&[("index.dat", &[0, 0])])).unwrap();
+        }
+        // Plane 0: underlay 1 (opcode 82) with a varied explicit height;
+        // planes 1-3 empty.
+        let mut land = Vec::new();
+        for plane in 0..4 {
+            for cell in 0..64 * 64u32 {
+                if plane == 0 {
+                    land.extend([82, 1, (cell % 23) as u8 + 2]);
+                } else {
+                    land.push(0);
+                }
+            }
+        }
+        let (mut index, mut maps) = (Vec::new(), Vec::new());
+        for (file, x) in [50u16, 51, 52].into_iter().enumerate() {
+            index.extend((x << 8 | 50).to_be_bytes());
+            index.extend((file as u16).to_be_bytes());
+            index.extend(u16::MAX.to_be_bytes());
+            index.push(0);
+            maps.extend((file as u32).to_le_bytes());
+            maps.extend((land.len() as u32).to_le_bytes());
+            maps.extend(&land);
+        }
+        fs::write(
+            jag.join("versionlist"),
+            synthetic_jag(&[("map_index", index.as_slice())]),
+        )
+        .unwrap();
+        fs::write(snapshot.join("maps.bin"), maps).unwrap();
+        (jag, snapshot)
+    }
+
+    /// Bake the synthetic snapshot through the production image path
+    /// (`run_images`: `bake_images_into` then `finish_image_bake`) into
+    /// `root`'s partial directory. `pause_at_zoom` closes the bake once the
+    /// base tiles are done. Returns the finished directory.
+    fn native_image_bake(
+        root: &MapCacheRoot,
+        jag: &Path,
+        snapshot: &Path,
+        pause_at_zoom: bool,
+    ) -> Result<PathBuf, MapCacheError> {
+        let content = Digest([9; 32]);
+        let input = nav::map::producer::ClientMapInput::new(289, content, jag, snapshot)?;
+        let policy = nav::map::raster::bake_policy().identity()?;
+        let request = BakeRequest {
+            artifact: ArtifactKind::Images,
+            descriptor: MapProfileDescriptor::new(289, content, policy, Digest([3; 32]))?,
+        };
+        let (plan, _) = nav::map::raster::plan_images(input)?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let progress: Arc<dyn Fn(MapProgress) + Send + Sync> = {
+            let cancel = Arc::clone(&cancel);
+            Arc::new(move |progress: MapProgress| {
+                if pause_at_zoom && progress.stage == MapStage::BuildingZoomLevels {
+                    cancel.store(true, AtomicOrdering::Release);
+                }
+            })
+        };
+        let mut writer = BakeWriter::open(
+            root.clone(),
+            &request,
+            BakePlan {
+                planned_units: plan.tiles().len() as u32,
+                stage: BakeStage::BaseTerrain,
+            },
+            cancel,
+            progress,
+            BTreeSet::new(),
+        )?;
+        let output = crate::map_producer::run_images(input, &mut writer)?;
+        writer.finish(output)
+    }
+
+    #[test]
+    fn native_image_resume_adopts_intact_tiles_and_rebakes_damaged_ones() {
+        let root = temp_root("native-resume");
+        let (jag, snapshot) = synthetic_client_snapshot(&root.path().join("client"));
+        assert!(matches!(
+            native_image_bake(&root, &jag, &snapshot, true),
+            Err(MapCacheError::Cancelled)
+        ));
+        let partial = fs::read_dir(root.path().join("289/images"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.to_string_lossy().ends_with(".partial"))
+            .expect("closed bake keeps its partial directory");
+        let base = |x| {
+            partial.join(
+                TileKey {
+                    plane: 0,
+                    lod: 0,
+                    x,
+                    z: 50,
+                }
+                .relative_path()
+                .unwrap(),
+            )
+        };
+        // Tile 50 stays intact; 51 is cut after its header; 52 has a byte
+        // flipped inside its image data (chunk CRC mismatch).
+        let intact = file_id(&base(50));
+        let bytes = fs::read(base(51)).unwrap();
+        fs::write(base(51), &bytes[..bytes.len() / 2]).unwrap();
+        let mut bytes = fs::read(base(52)).unwrap();
+        let middle = bytes.len() / 2;
+        bytes[middle] ^= 0x5a;
+        fs::write(base(52), &bytes).unwrap();
+
+        let resumed = native_image_bake(&root, &jag, &snapshot, false).unwrap();
+        assert_eq!(
+            file_id(&resumed.join(base(50).strip_prefix(&partial).unwrap())),
+            intact
+        );
+        let cold_root = temp_root("native-cold");
+        let cold = native_image_bake(&cold_root, &jag, &snapshot, false).unwrap();
+        assert_eq!(
+            fs::read(resumed.join("manifest.json")).unwrap(),
+            fs::read(cold.join("manifest.json")).unwrap(),
+            "a resumed bake must publish the same tiles as a cold one"
+        );
+        let _ = fs::remove_dir_all(root.path());
+        let _ = fs::remove_dir_all(cold_root.path());
+    }
+
+    #[test]
+    fn closing_the_last_handle_drops_the_finished_job() {
+        let root = temp_root("reap-drops-job");
+        let manager = MapDemandManager::new(root.clone(), FixtureProducer::new(false));
+        let handle = manager
+            .request(descriptor(&root), MapDemand::Images)
+            .unwrap();
+        wait_ready(&handle);
+        let job = Arc::downgrade(&handle.status);
+        drop(handle);
+        let start = Instant::now();
+        while job.upgrade().is_some() {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "a closed, finished job is still held by the manager"
+            );
+            manager.reap();
+            thread::sleep(Duration::from_millis(5));
+        }
         let _ = fs::remove_dir_all(root.path());
     }
 

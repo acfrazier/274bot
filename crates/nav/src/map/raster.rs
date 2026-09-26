@@ -639,6 +639,10 @@ pub fn bake_images_into(
     }))
 }
 
+/// Adopt tiles a previous, interrupted bake already wrote into `directory`.
+/// A tile the checkpoint lists (`skip`) must verify; any other file is
+/// adopted only if it fully decodes as one of this bake's tiles and is
+/// otherwise rendered again.
 fn adopt_existing_tiles(
     directory: &Path,
     keys: impl IntoIterator<Item = TileKey>,
@@ -647,9 +651,11 @@ fn adopt_existing_tiles(
     completed_keys: &mut BTreeSet<TileKey>,
     completed_bytes: &mut u64,
 ) -> Result<(), MapError> {
+    let mut compressed = Vec::new();
+    let mut pixels = Vec::new();
     for key in keys {
         let required = skip(key);
-        match completed_from_disk(directory, key) {
+        match completed_from_disk(directory, key, &mut compressed, &mut pixels) {
             Ok(unit) => {
                 *completed_bytes = completed_bytes
                     .checked_add(u64::from(unit.payload.bytes))
@@ -667,18 +673,26 @@ fn adopt_existing_tiles(
     Ok(())
 }
 
-fn completed_from_disk(directory: &Path, key: TileKey) -> Result<CompletedUnit, MapError> {
-    let mut buffer = Vec::new();
+/// Receipt for a tile file on disk. The receipt comes from the file itself,
+/// so the header check alone would accept a file damaged after its IHDR;
+/// the tile is fully decoded (chunk CRCs, zlib stream, 258×258 RGBA8).
+fn completed_from_disk(
+    directory: &Path,
+    key: TileKey,
+    compressed: &mut Vec<u8>,
+    pixels: &mut Vec<u8>,
+) -> Result<CompletedUnit, MapError> {
     read_bounded(
         &directory.join(key.relative_path()?),
         MAX_PNG_BYTES as usize,
-        &mut buffer,
+        compressed,
     )?;
     let payload = PayloadReceipt {
-        bytes: buffer.len() as u32,
-        sha256: Digest::of(&buffer),
+        bytes: compressed.len() as u32,
+        sha256: Digest::of(compressed),
     };
-    TileReceipt { key, payload }.verify_png(&buffer)?;
+    TileReceipt { key, payload }.verify_png(compressed)?;
+    decode_png_into(compressed, pixels)?;
     Ok(CompletedUnit {
         key: UnitKey::Terrain { tile: key },
         payload,
@@ -1418,7 +1432,19 @@ fn encode_png(rgba: &[u8]) -> Result<Vec<u8>, MapError> {
 }
 
 fn decode_png(bytes: &[u8]) -> Result<Vec<u8>, MapError> {
-    let decoder = Decoder::new(Cursor::new(bytes));
+    let mut output = Vec::new();
+    decode_png_into(bytes, &mut output)?;
+    Ok(output)
+}
+
+/// Decode one 258×258 RGBA8 tile into `output`, reusing its allocation.
+/// Chunk CRCs and the zlib Adler-32 are checked, and the stream must reach
+/// IEND, so a truncated or damaged file is an error.
+fn decode_png_into(bytes: &[u8], output: &mut Vec<u8>) -> Result<(), MapError> {
+    let mut options = png::DecodeOptions::default();
+    options.set_ignore_crc(false);
+    options.set_ignore_adler32(false);
+    let decoder = Decoder::new_with_options(Cursor::new(bytes), options);
     let mut reader = decoder
         .read_info()
         .map_err(|_| MapError::Invalid("PNG decode header"))?;
@@ -1436,14 +1462,17 @@ fn decode_png(bytes: &[u8]) -> Result<Vec<u8>, MapError> {
     if size != TILE_RGBA_BYTES {
         return Err(MapError::Invalid("PNG decoded length"));
     }
-    let mut output = vec![0; size];
+    output.resize(size, 0);
     let frame = reader
-        .next_frame(&mut output)
+        .next_frame(output)
         .map_err(|_| MapError::Invalid("PNG decode data"))?;
     if frame.buffer_size() != TILE_RGBA_BYTES {
         return Err(MapError::Invalid("PNG frame length"));
     }
-    Ok(output)
+    reader
+        .finish()
+        .map_err(|_| MapError::Invalid("PNG trailing chunks"))?;
+    Ok(())
 }
 
 fn complete_tile(
