@@ -55,6 +55,23 @@ harnesses use the configured engine/cache path from the resolved profile.
 Windows uses `USERPROFILE` only when `HOME` is unavailable; an explicitly
 blank `HOME` remains explicit.
 
+Catalog `stat_xp_gain` proofs capture all later cumulative skill baselines
+immediately before `StartScript`, excluding preparation XP. A gain remains
+observable even if another skill or an item is watched first.
+`fresh_stat_xp_gain` is deliberately different: it arms only when its own
+step begins, so an earlier trip cannot qualify a later bank-return phase.
+Scenarios without `StartScript` retain first-watch cumulative baselines.
+
+The `ardy_cakes_fight` fixture waits, within its ordinary bounded scenario
+step, for a nearby unengaged Guard with native scene line of sight before
+starting the catalog script. It prepares Attack, Strength and Hitpoints 70
+with the same adamant scimitar so back-to-back Guard fights do not consume
+the entire stall watch. Qualification still requires real post-Start
+Strength XP, Thieving XP and an exact Cake; watch budgets and the overall
+deadline are unchanged. Script kill messages alone are not XP evidence:
+in a crowded single-combat camp, a selected NPC can disappear after
+another player kills it while the observing slot receives no XP.
+
 ## Fleet preparation and basic samples
 
 Both frontends expose the same opt-in `host_play::memory::{Config, Run, Sample}`

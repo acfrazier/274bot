@@ -1,6 +1,8 @@
 use super::*;
 pub(crate) const THIEVING_STAT: i32 = 17;
 const ARDY_CAKES_BALLAST_KNIVES: i32 = 22;
+// Finish back-to-back Guard fights inside the bounded post-Start stall watch.
+const ARDY_CAKES_FIGHT_LEVEL: i32 = 70;
 pub(crate) const CAKE_ID: i32 = 1891;
 pub(crate) const BREAD_ID: i32 = 2309;
 pub(crate) const CHOCOLATE_SLICE_ID: i32 = 1901;
@@ -308,9 +310,9 @@ pub(crate) fn ardy_cakes_fight_scenario() -> Scenario {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
                 cheat(c, "setstat thieving 5");
-                cheat(c, &format!("setstat attack {COMBAT_ATTACK_LEVEL}"));
-                cheat(c, &format!("setstat strength {COMBAT_ATTACK_LEVEL}"));
-                cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat attack {ARDY_CAKES_FIGHT_LEVEL}"));
+                cheat(c, &format!("setstat strength {ARDY_CAKES_FIGHT_LEVEL}"));
+                cheat(c, &format!("setstat hitpoints {ARDY_CAKES_FIGHT_LEVEL}"));
                 cheat(c, "give adamant_scimitar 1");
                 cheat(c, &format!("give knife {ARDY_CAKES_BALLAST_KNIVES}"));
                 cheat(c, &tele_args(stand.level, stand.x, stand.z));
@@ -336,24 +338,24 @@ pub(crate) fn ardy_cakes_fight_scenario() -> Scenario {
             },
         ),
         (
-            "confirm Attack 40 before Start",
+            "confirm Attack 70 before Start",
             Proof::Stat {
                 id: 0,
-                min: COMBAT_ATTACK_LEVEL,
+                min: ARDY_CAKES_FIGHT_LEVEL,
             },
         ),
         (
-            "confirm Strength 40 before Start",
+            "confirm Strength 70 before Start",
             Proof::Stat {
                 id: STRENGTH_STAT,
-                min: COMBAT_ATTACK_LEVEL,
+                min: ARDY_CAKES_FIGHT_LEVEL,
             },
         ),
         (
-            "confirm Hitpoints 40 before Start",
+            "confirm Hitpoints 70 before Start",
             Proof::Stat {
                 id: HITPOINTS_STAT,
-                min: COMBAT_ATTACK_LEVEL,
+                min: ARDY_CAKES_FIGHT_LEVEL,
             },
         ),
         (
@@ -413,14 +415,24 @@ pub(crate) fn ardy_cakes_fight_scenario() -> Scenario {
         COMBAT_SCIMITAR_ID,
     ));
     steps.push(select_strength_combat_style_step());
+    // A full pack can be stolen without any combat when the roaming guards
+    // are elsewhere or already fighting. Do not Start the FightBack cell
+    // until the server's bounded guard-catch prerequisites are observable.
+    steps.push(bank_fletcher_watch(
+        "wait for an unengaged Guard in sight of the stall stand before Start",
+        Proof::NpcNameUnengagedInSight {
+            name: "Guard",
+            radius: 5,
+        },
+    ));
     steps.push(start_catalog_step());
     for (step_name, arm) in [
-        ("watch Thieving XP from Baker's stall after Start", first_xp),
-        ("watch exact Cake 1891 stolen after Start", cake),
         (
             "watch Strength XP from FightBack on the catching Guard after Start",
             style_xp,
         ),
+        ("watch Thieving XP from Baker's stall after Start", first_xp),
+        ("watch exact Cake 1891 stolen after Start", cake),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }

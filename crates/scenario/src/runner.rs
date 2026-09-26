@@ -160,8 +160,8 @@ pub struct ScenarioRunner {
     engine_speed_ms: Option<u32>,
     engine_speed_sent: bool,
     evidence: Option<Evidence>,
-    /// Skill XP baselines captured when a watch step with [`Proof::StatXpGain`]
-    /// begins — `(skill id, xp at step start)`.
+    /// Cumulative skill XP baselines: captured at StartScript for its later
+    /// watches, otherwise when the first XP watch for that skill begins.
     xp_baselines: Vec<(i32, i32)>,
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
@@ -687,6 +687,21 @@ impl ScenarioRunner {
             }
             _ => None,
         };
+        if matches!(self.current_step().kind, StepKind::StartScript) {
+            // Several skills can advance before their sequential watches
+            // begin (a catching Guard can die before the first cake is stolen).
+            // Seed XP is excluded; fresh return-trip watches stay step-local.
+            self.xp_baselines.clear();
+            for index in self.step + 1..self.scenario.steps.len() {
+                let proof = self.scenario.steps[index].wait.arm;
+                if matches!(proof, Proof::StatXpGain { .. }) {
+                    self.capture_xp_baseline(proof);
+                }
+            }
+            if matches!(self.scenario.proof, Proof::StatXpGain { .. }) {
+                self.capture_xp_baseline(self.scenario.proof);
+            }
+        }
         self.capture_xp_baseline(self.current_step().wait.arm);
     }
 

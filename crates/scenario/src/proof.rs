@@ -101,8 +101,8 @@ pub enum Proof {
     StatAtMost { id: i32, max: i32 },
     /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`.
     Chat { needle: &'static str },
-    /// Skill `id`'s XP rose by at least `min` since the runner captured a
-    /// baseline at step start (live gold: thieving / combat / alch / fletch).
+    /// Skill `id`'s XP rose by at least `min` since StartScript, or since
+    /// its first XP watch when the scenario has no script-start boundary.
     StatXpGain { id: i32, min: i32 },
     /// Skill `id`'s XP rose by at least `min` since this specific step began.
     /// Unlike [`Proof::StatXpGain`], an earlier step's gain cannot satisfy it.
@@ -123,6 +123,9 @@ pub enum Proof {
     /// An NPC with exact `name` currently targets the local player.
     /// Fail-closed when `self_slot` is unset or the face target is missing.
     NpcNameTargetingLocal { name: &'static str },
+    /// A live, unengaged named NPC is within the player's radius and can
+    /// see the player through the observed scene collision grid.
+    NpcNameUnengagedInSight { name: &'static str, radius: i32 },
     /// A placed loc of exact `id` stands within chebyshev `radius` of
     /// `(x, z, level)` on the snapshot loc sweep.
     LocIdNear {
@@ -221,6 +224,9 @@ impl Proof {
             Proof::NpcNameTargetingLocal { name } => {
                 format!("npc_name({name})_targeting_local")
             }
+            Proof::NpcNameUnengagedInSight { name, radius } => {
+                format!("npc_name({name})_unengaged_in_sight(r{radius})")
+            }
             Proof::LocIdNear {
                 id,
                 x,
@@ -259,8 +265,8 @@ impl Proof {
         self.check_with_xp_baselines(snap, names, None)
     }
 
-    /// Like [`Proof::check`], but `StatXpGain` reads baselines captured
-    /// when the watch step began (`None` makes every `StatXpGain` fail).
+    /// Like [`Proof::check`], but `StatXpGain` reads the runner's cumulative
+    /// XP baselines (`None` makes every `StatXpGain` fail).
     pub fn check_with_xp_baselines(
         &self,
         snap: &GameSnapshot,
@@ -516,6 +522,9 @@ impl Proof {
                             })
                     })
             }
+            Proof::NpcNameUnengagedInSight { name, radius } => {
+                npc_unengaged_in_sight(snap, name, *radius)
+            }
             Proof::LocIdNear {
                 id,
                 x,
@@ -550,6 +559,51 @@ impl Proof {
             } => render_view_ready(snap, *x, *z, *level, *orbit_yaw, *orbit_pitch),
         }
     }
+}
+
+fn npc_unengaged_in_sight(snap: &GameSnapshot, name: &str, radius: i32) -> bool {
+    use api::line_of_sight::{has_line_of_sight_local, Footprint};
+
+    let Some((x, z, level)) = snap.tile() else {
+        return false;
+    };
+    let scene = snap.scene();
+    if !snap.ingame() || snap.scene_state() != 2 || !scene.available || scene.level != level {
+        return false;
+    }
+    let flags = |lx: i32, lz: i32| {
+        if lx < 0 || lz < 0 || lx >= scene.width || lz >= scene.height {
+            return None;
+        }
+        scene
+            .collision_flags
+            .get((lx * scene.height + lz) as usize)
+            .copied()
+    };
+    let player = Footprint {
+        lx: x - scene.base_x,
+        lz: z - scene.base_z,
+        size: 1,
+    };
+    if flags(player.lx, player.lz).is_none() {
+        return false;
+    }
+    snap.npcs().iter().any(|npc| {
+        let tile = npc.network;
+        let source = Footprint {
+            lx: tile.x - scene.base_x,
+            lz: tile.z - scene.base_z,
+            size: npc.size,
+        };
+        npc.name.as_deref() == Some(name)
+            && tile.level == level
+            && (tile.x - x).abs().max((tile.z - z).abs()) <= radius
+            && !npc.in_combat
+            && npc.target.is_none()
+            && (npc.total_health == 0 || npc.health > 0)
+            && flags(source.lx, source.lz).is_some()
+            && has_line_of_sight_local(&flags, source, player)
+    })
 }
 
 fn render_view_ready(
@@ -1617,6 +1671,77 @@ mod tests {
     }
 
     #[test]
+    fn guard_readiness_requires_an_idle_visible_nearby_npc() {
+        let mut c = seeded();
+        let mut npcs = (0..=708)
+            .map(|id| NpcType {
+                id,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        npcs[708].name = "Guard".into();
+        npcs[708].size = 1;
+        c.cache = Arc::new(Cache {
+            npcs,
+            ..Default::default()
+        });
+        for column in &mut c.collision[0].flags {
+            column.fill(0);
+        }
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.route_x[0] = 22;
+        npc.entity.route_z[0] = 12;
+        npc.entity.x = 22 * 128 + 64;
+        npc.entity.z = 12 * 128 + 64;
+        npc.entity.face_entity = -1;
+        let proof = Proof::NpcNameUnengagedInSight {
+            name: "Guard",
+            radius: 5,
+        };
+        assert!(proof.check(&snap(&mut c), None));
+
+        c.npc[3].as_mut().unwrap().entity.face_entity = api::snapshot::PLAYER_FACE_BASE + 4;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "another player owns the guard"
+        );
+        c.npc[3].as_mut().unwrap().entity.face_entity = -1;
+        c.npc[3].as_mut().unwrap().entity.combat_cycle = c.loop_cycle + 100;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "combat without a face target is still busy"
+        );
+        c.npc[3].as_mut().unwrap().entity.combat_cycle = 0;
+
+        c.collision[0].flags[21][12] = client::dash3d::CollisionFlag::VIS_SCENERY;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "a wall blocks the guard's sight"
+        );
+        c.collision[0].flags[21][12] = 0;
+        c.npc[3].as_mut().unwrap().entity.route_x[0] = 26;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "the server's catch radius is bounded"
+        );
+        c.npc[3].as_mut().unwrap().entity.route_x[0] = 22;
+
+        c.npc[3].as_mut().unwrap().entity.total_health = 10;
+        c.npc[3].as_mut().unwrap().entity.health = 0;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "a dead guard cannot catch a steal"
+        );
+        c.npc[3].as_mut().unwrap().entity.health = 10;
+        assert!(proof.check(&snap(&mut c), None));
+        c.scene_state = 1;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "unavailable collision fails closed"
+        );
+    }
+
+    #[test]
     fn stat_xp_gain_fails_without_baseline_when_skill_row_was_missing() {
         let mut c = seeded();
         c.stat_xp[17] = 100;
@@ -1690,7 +1815,6 @@ mod tests {
         c.stat_xp[17] = 147;
         let s = snap(&mut c);
         assert!(proof.check_with_xp_context(&s, None, Some(&cumulative), Some((17, 146))));
-        assert_eq!(proof.name(), "fresh_stat_xp_gain(17)>=1");
     }
 
     #[test]

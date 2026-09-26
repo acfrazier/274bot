@@ -15,6 +15,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   session/pack detach; flood cache keys use Weak/`Arc` world identity and empty
   demand releases ownership (WalkTo close still uses `release_map_leases`).
 
+### Scenario qualification
+
+- Cumulative catalog XP proofs now arm immediately before script Start,
+  excluding seeded XP without losing real gains that arrive before a later
+  sequential watch. Fresh bank-return XP proofs remain step-local.
+- ArdyCakes FightBack waits for an idle nearby Guard with line of sight and
+  prepares melee stats at 70 before Start. It retains real combat XP,
+  Thieving XP and Cake requirements within the existing time bounds.
 ### Navigation
 
 - Radius walks to a solid in-scene target now route to one of its wall-valid

@@ -1361,6 +1361,62 @@ fn runecraft_xp_watch_before_product_catches_simultaneous_craft() {
 }
 
 #[test]
+fn ardy_cakes_fight_observes_both_skills_regardless_of_gain_order() {
+    for (combat_before_start, thieving_first) in [(false, false), (false, true), (true, false)] {
+        let mut scenario = crate::get("ardy_cakes_fight").unwrap();
+        let start = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        // Keep the real Start and proof sequence; preparation is already
+        // acknowledged, just as it is when the live pump starts the card.
+        scenario.steps.drain(..start);
+        scenario.seed.mainland = false;
+        scenario.settings.require_mainland_base = false;
+        for step in &mut scenario.steps {
+            step.wait.budget_ticks = 4;
+        }
+        let mut c = seeded_client();
+        c.stat_xp[2] = 37_224;
+        c.stat_xp[17] = 388;
+        if combat_before_start {
+            c.stat_xp[2] += 96;
+        }
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick(&mut c);
+
+        // A roaming Guard can catch the first steal or a later one.
+        // Either skill may gain XP before its individual watch begins.
+        for thieving in [thieving_first, !thieving_first] {
+            if thieving {
+                c.stat_xp[17] += 16;
+                set_inv(&mut c, &[(1891, 1)]);
+            } else if !combat_before_start {
+                c.stat_xp[2] += 96;
+            }
+            c.bump_gens(ServerProt::UPDATE_STAT);
+            runner.tick(&mut c);
+        }
+        tick_until_done(&mut runner, &mut c);
+
+        if combat_before_start {
+            assert!(
+                matches!(runner.status(), RunnerStatus::Failed(_)),
+                "preparation XP must not count as script-caused combat"
+            );
+        } else {
+            assert_eq!(
+                runner.status(),
+                RunnerStatus::Passed,
+                "both post-Start XP gains must survive either watch order"
+            );
+        }
+    }
+}
+
+#[test]
 fn fresh_xp_watch_does_not_consume_a_prior_step_gain() {
     const SKILL: i32 = 17;
     let cumulative = Proof::StatXpGain { id: SKILL, min: 1 };
@@ -1372,6 +1428,11 @@ fn fresh_xp_watch_does_not_consume_a_prior_step_gain() {
             mainland: false,
         },
         steps: vec![
+            Step {
+                name: "start the catalog card",
+                kind: StepKind::StartScript,
+                wait: wait(Proof::IngameScene2, 1),
+            },
             Step {
                 name: "watch the earlier gain",
                 kind: StepKind::Perform {
@@ -1402,7 +1463,7 @@ fn fresh_xp_watch_does_not_consume_a_prior_step_gain() {
     runner.tick(&mut c);
     assert_eq!(
         runner.status(),
-        RunnerStatus::Running { step: 1, total: 2 },
+        RunnerStatus::Running { step: 2, total: 3 },
         "the first gain advances only to the fresh watch"
     );
 
@@ -1410,7 +1471,7 @@ fn fresh_xp_watch_does_not_consume_a_prior_step_gain() {
     runner.tick(&mut c);
     assert_eq!(
         runner.status(),
-        RunnerStatus::Running { step: 1, total: 2 },
+        RunnerStatus::Running { step: 2, total: 3 },
         "unchanged XP cannot reuse the prior step gain"
     );
 

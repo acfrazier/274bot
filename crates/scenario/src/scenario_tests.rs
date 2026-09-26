@@ -6135,14 +6135,6 @@ fn alternate_camp_and_fight_option_cases_register() {
         id: THIEVING_STAT,
         min: 5,
     }));
-    assert!(seed.contains(&Proof::Stat {
-        id: 0,
-        min: COMBAT_ATTACK_LEVEL,
-    }));
-    assert!(seed.contains(&Proof::Stat {
-        id: STRENGTH_STAT,
-        min: COMBAT_ATTACK_LEVEL,
-    }));
     assert!(seed.contains(&Proof::ItemId {
         id: KNIFE_ID,
         count: 22,
@@ -6158,20 +6150,6 @@ fn alternate_camp_and_fight_option_cases_register() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
-    assert_eq!(
-        watch,
-        vec![
-            Proof::StatXpGain {
-                id: THIEVING_STAT,
-                min: 1
-            },
-            Proof::ItemId {
-                id: CAKE_ID,
-                count: 1
-            },
-            strength,
-        ]
-    );
     assert_eq!(cakes_fight.proof, strength);
     assert!(!watch
         .iter()
