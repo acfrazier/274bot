@@ -3,9 +3,8 @@ use super::{
     live_client_trail, live_or_walk_paint, load_live_example_card, nav_snapshot_for_follow,
     null_raster_live_entries_for_target, parse_getvar_line, publish_frontend_slot,
     publish_nav_debug, reset_frontend_slot_lifetime, script_active, script_pause_enabled,
-    script_self_stop_observed, script_stop_enabled, seed_on_first_world, start_catalog_with_core,
-    stress_live_entries_for_target, temp_live_vault_from, ProfilePreparationCompletion, Session,
-    SlotIo, WalkArm,
+    script_stop_enabled, seed_on_first_world, stress_live_entries_for_target, temp_live_vault_from,
+    ProfilePreparationCompletion, Session, SlotIo, WalkArm,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -73,74 +72,6 @@ fn memory_override_changes_spawn_profile_without_persisting_it() {
 
 use crate::nav_settings::{effective, NavSettings};
 use script::IsolatedEnv;
-
-#[test]
-fn catalog_core_start_marker_precedes_actual_isolate_start() {
-    let watch = host_play::catalog_core::CoreWatch::default();
-    let mut baseline = host_play::catalog_core::Observation {
-        ingame: true,
-        scene_state: 2,
-        player: Some("catalogtest".into()),
-        tile: Some((2661, 3306, 0)),
-        ..host_play::catalog_core::Observation::default()
-    };
-    baseline.levels.insert("thieving".into(), 50);
-    baseline.levels.insert("hitpoints".into(), 50);
-    baseline.effective_levels.insert("thieving".into(), 50);
-    baseline.effective_levels.insert("hitpoints".into(), 50);
-    baseline.items.insert("Lobster".into(), 10);
-    watch.configure(host_play::catalog_core::CoreCase::Thiever, "catalogtest");
-    watch.observe("catalogtest", baseline, false);
-
-    start_catalog_with_core(&watch, "catalogtest", || {
-        assert!(
-            watch
-                .qualify()
-                .unwrap_err()
-                .contains("no post-Start observations"),
-            "the core baseline must be frozen before isolate Start"
-        );
-        Ok(())
-    })
-    .unwrap();
-}
-
-#[test]
-fn catalog_core_initial_login_then_preparation_then_start_uses_current_session() {
-    let watch = host_play::catalog_core::CoreWatch::default();
-    watch.configure(host_play::catalog_core::CoreCase::Thiever, "catalogtest");
-    watch.observe(
-        "catalogtest",
-        host_play::catalog_core::Observation::default(),
-        true,
-    );
-
-    let mut prepared = host_play::catalog_core::Observation {
-        ingame: true,
-        scene_state: 2,
-        player: Some("catalogtest".into()),
-        tile: Some((2661, 3306, 0)),
-        ..host_play::catalog_core::Observation::default()
-    };
-    prepared.levels.insert("thieving".into(), 50);
-    prepared.levels.insert("hitpoints".into(), 50);
-    prepared.effective_levels.insert("thieving".into(), 50);
-    prepared.effective_levels.insert("hitpoints".into(), 50);
-    prepared.items.insert("Lobster".into(), 10);
-    watch.observe("catalogtest", prepared, false);
-
-    let mut started = false;
-    start_catalog_with_core(&watch, "catalogtest", || {
-        started = true;
-        Ok(())
-    })
-    .unwrap();
-    assert!(started);
-    assert!(watch
-        .qualify()
-        .unwrap_err()
-        .contains("no post-Start observations"));
-}
 
 fn checked_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
     let fixture =
@@ -3721,36 +3652,6 @@ fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
             "trade_bot".into()
         ))
     );
-}
-
-#[test]
-fn script_self_stop_requires_idle_and_receipt_reason() {
-    let receipt = script::ScriptLifecycleReceipt {
-        runtime_generation: 1,
-        state: script::ScriptTerminalState::Stopped,
-        tick: 9,
-        reason: "confirmed loaded current-generation bank exhaustion".into(),
-    };
-    assert!(script_self_stop_observed(
-        script::RunState::Idle,
-        Some(&receipt),
-        "confirmed loaded current-generation bank exhaustion"
-    ));
-    assert!(!script_self_stop_observed(
-        script::RunState::Running,
-        Some(&receipt),
-        "confirmed loaded current-generation bank exhaustion"
-    ));
-    assert!(!script_self_stop_observed(
-        script::RunState::Idle,
-        Some(&receipt),
-        "stalled while bury"
-    ));
-    assert!(!script_self_stop_observed(
-        script::RunState::Idle,
-        None,
-        "confirmed"
-    ));
 }
 
 #[test]

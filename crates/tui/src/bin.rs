@@ -35,6 +35,9 @@ use crossterm::terminal::{
 };
 #[cfg(test)]
 use host_play::arm_walk_on;
+use host_play::live_gate::{self, CoreGate, LiveCore, PassHold};
+use host_play::live_start::{self, PendingCatalogStart, StartArming};
+use host_play::paired_core::PairWatch;
 use host_play::walk_map::{
     observed_services, ActionError, ActionKind, Catalogue, MapContext, WalkExclude,
     WalkSlotRequest, WalkSlotStatus,
@@ -85,6 +88,12 @@ pub struct Args {
     pub live: Option<String>,
     pub world: Option<u16>,
     pub profile: ProfileOptions,
+    /// `--catalog-core`: qualify the `--live` run under the shared catalog
+    /// core witness (the panel `catalog_watch` mode).
+    pub catalog_core: bool,
+    /// `--pair-core`: qualify a paired `--live` run under the shared pair
+    /// witness (the panel `pair_watch` mode).
+    pub pair_core: bool,
 }
 
 fn usage() -> ! {
@@ -93,7 +102,8 @@ fn usage() -> ! {
          [--prod] [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] \
          [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass PASS] \
-         [--world N] [--live script_<name>] [--user USER]... (default user: first vault profile)"
+         [--world N] [--live script_<name> [--catalog-core | --pair-core]] [--user USER]... \
+         (default user: first vault profile)"
     );
     std::process::exit(2);
 }
@@ -107,9 +117,23 @@ fn need_value(
         .ok_or_else(|| format!("tui-play: {flag} needs a value"))
 }
 
-/// `--live NAME` wins over `BOT_LIVE`; empty env is ignored.
-/// `--help`/`-h` print the usage line (exit 2, the CLI family's
-/// convention). Shared server/profile flags are consumed first by host-play.
+/// `BOT_LIVE_CORE=catalog|pair`, the environment form of `--catalog-core` /
+/// `--pair-core` for harnesses that only pass environment. Empty is unset.
+fn live_core_from_env(value: Option<&str>) -> Result<(bool, bool), String> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok((false, false)),
+        Some("catalog") => Ok((true, false)),
+        Some("pair") => Ok((false, true)),
+        Some(other) => Err(format!(
+            "tui-play: BOT_LIVE_CORE={other:?}: expected catalog or pair"
+        )),
+    }
+}
+
+/// `--live NAME` wins over `BOT_LIVE`, and a core flag over `BOT_LIVE_CORE`;
+/// empty env is ignored. `--help`/`-h` print the usage line (exit 2, the CLI
+/// family's convention). Shared server/profile flags are consumed first by
+/// host-play.
 pub fn parse_args() -> Args {
     match parse_args_from(env::args().skip(1)) {
         Ok(args) => args,
@@ -125,13 +149,17 @@ pub fn parse_args() -> Args {
 /// Testable CLI parse. Does not flip [`client::set_bot_target`].
 pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Args, String> {
     let (profile, rest) = parse_profile_args(args).map_err(|e| format!("tui-play: {e}"))?;
+    let (catalog_core, pair_core) = live_core_from_env(env::var("BOT_LIVE_CORE").ok().as_deref())?;
     let mut parsed = Args {
         pass: env::var("BOT_VAULT_PASS").ok(),
         world: None,
         users: Vec::new(),
         live: env::var("BOT_LIVE").ok().filter(|s| !s.is_empty()),
         profile,
+        catalog_core,
+        pair_core,
     };
+    let mut core_flags: Option<(bool, bool)> = None;
     let mut it = rest.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_ref() {
@@ -144,9 +172,20 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
                 )?);
             }
             "--live" => parsed.live = Some(need_value(&mut it, "--live")?),
+            "--catalog-core" => core_flags.get_or_insert((false, false)).0 = true,
+            "--pair-core" => core_flags.get_or_insert((false, false)).1 = true,
             "--help" | "-h" => return Err("usage".into()),
             other => return Err(format!("tui-play: unknown {other}")),
         }
+    }
+    if let Some((catalog_core, pair_core)) = core_flags {
+        parsed.catalog_core = catalog_core;
+        parsed.pair_core = pair_core;
+    }
+    if (parsed.catalog_core || parsed.pair_core) && parsed.live.is_none() {
+        return Err(
+            "tui-play: --catalog-core/--pair-core qualify a --live script_<name> run".into(),
+        );
     }
     Ok(parsed)
 }
@@ -329,18 +368,6 @@ fn step_walk_arm_follow<D: api::interact::Driver>(
     }
 }
 
-/// Catalog card live_prepare stashes so the StartScript pump can
-/// `script_start_load` once after seed waits.
-struct PendingCatalogStart {
-    slot: String,
-    js: String,
-    shape: script::LoadShape,
-    bag: Option<serde_json::Map<String, serde_json::Value>>,
-    siblings: Vec<(String, String)>,
-    loadouts: Vec<script::Loadout>,
-    compiled: Option<script::CompiledId>,
-}
-
 fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<script::Loadout> {
     settings
         .fixture_loadouts
@@ -356,75 +383,35 @@ fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<scrip
         .collect()
 }
 
-fn start_stashed_catalog_card(
-    handle: &host_play::ScriptStartHandle,
-    card: &PendingCatalogStart,
-) -> Result<(), String> {
-    if let Some(id) = card.compiled {
-        return handle.start_compiled(&card.slot, id);
-    }
-    let result = if card.loadouts.is_empty() {
-        handle.start_load(
-            &card.slot,
+/// The isolate Starts a live card stashes: both slots with their role bags
+/// under the pair gate, else the driven slot alone.
+fn live_card_starts(
+    live_core: LiveCore,
+    names: &[String],
+    card: &script::JsCard,
+    bag: Option<serde_json::Map<String, serde_json::Value>>,
+    siblings: Vec<(String, String)>,
+    loadouts: Vec<script::Loadout>,
+    pair_watch: &PairWatch,
+) -> Result<Vec<PendingCatalogStart>, String> {
+    match live_core {
+        LiveCore::Pair(case) => live_start::pair_starts(
+            names,
+            case,
             card.js.clone(),
             card.shape,
-            card.bag.clone(),
-            card.siblings.clone(),
-        )
-    } else {
-        handle.start_load_with_loadouts(
-            &card.slot,
+            &card.settings_schema,
+            siblings,
+            pair_watch,
+        ),
+        LiveCore::Off | LiveCore::Catalog(_) => Ok(vec![PendingCatalogStart::load(
+            names[0].clone(),
             card.js.clone(),
             card.shape,
-            card.bag.clone(),
-            card.siblings.clone(),
-            &card.loadouts,
-        )
-    };
-    if result.is_ok() && std::env::var_os("BOT_DEBUG").is_some() {
-        let fixture_names = card
-            .loadouts
-            .iter()
-            .map(|loadout| loadout.name.as_str())
-            .collect::<Vec<_>>();
-        let selected_loadout = card
-            .bag
-            .as_ref()
-            .and_then(|bag| bag.get("loadout"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("<unset>");
-        eprintln!(
-            "[tui-play] catalog start fixtures={} names={fixture_names:?} loadout={selected_loadout:?}",
-            card.loadouts.len()
-        );
-    }
-    result
-}
-
-/// When the runner is on [`scenario::StepKind::StartScript`], start the
-/// stashed catalog isolate once. Returns false when Start was attempted
-/// and failed, so the pump must not consume the one-tick wait.
-fn fire_pending_catalog_start(
-    pending: &Mutex<Option<PendingCatalogStart>>,
-    handle: &Mutex<Option<host_play::ScriptStartHandle>>,
-    runner: &scenario::ScenarioRunner,
-) -> bool {
-    if !runner.on_start_script() {
-        return true;
-    }
-    let mut pending = pending.lock().unwrap();
-    let Some(card) = pending.as_ref() else {
-        return true;
-    };
-    let handle = handle.lock().unwrap();
-    let Some(h) = handle.as_ref() else {
-        return false;
-    };
-    if start_stashed_catalog_card(h, card).is_ok() {
-        pending.take();
-        true
-    } else {
-        false
+            bag,
+            siblings,
+            loadouts,
+        )]),
     }
 }
 
@@ -476,12 +463,19 @@ pub struct TuiSession {
     /// per-frame hook; the UI loop reads its status/evidence).
     scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
     /// Catalog card `live_prepare_script` stashes; the live pump Starts
-    /// it once on [`scenario::StepKind::StartScript`].
-    pending_script: Arc<Mutex<Option<PendingCatalogStart>>>,
-    /// Isolate-start handle the per-frame hook uses (filled after Play).
-    script_start_handle: Arc<Mutex<Option<host_play::ScriptStartHandle>>>,
+    /// them once on [`scenario::StepKind::StartScript`].
+    pending_script: Arc<Mutex<Vec<PendingCatalogStart>>>,
+    /// Isolate-start handle and core watches the per-frame hook arms Start
+    /// with (filled after Play).
+    start_arming: Arc<Mutex<StartArming>>,
     /// The `--live` run's scenario name, for the PASS/FAIL label.
     live_name: Option<String>,
+    /// `--catalog-core` / `--pair-core`: the shared witness the next
+    /// `--live` prepare arms.
+    live_catalog_core: bool,
+    live_pair_core: bool,
+    /// The core witness's own ceiling (`None` without a core gate).
+    live_core_deadline: Option<Instant>,
     /// `BUDGET_S` soak: keep pumping after proof PASS until this instant.
     live_soak_until: Option<Instant>,
     live_announced_pass: bool,
@@ -563,9 +557,12 @@ impl TuiSession {
             walk_clear: Arc::new(AtomicBool::new(false)),
             nav_world: Arc::new(Mutex::new(None)),
             scenario: Arc::new(Mutex::new(None)),
-            pending_script: Arc::new(Mutex::new(None)),
-            script_start_handle: Arc::new(Mutex::new(None)),
+            pending_script: Arc::new(Mutex::new(Vec::new())),
+            start_arming: Arc::new(Mutex::new(StartArming::default())),
             live_name: None,
+            live_catalog_core: false,
+            live_pair_core: false,
+            live_core_deadline: None,
             live_soak_until: None,
             live_announced_pass: false,
             live_wait_script_stop: None,
@@ -675,7 +672,7 @@ impl TuiSession {
         let nav_world = Arc::clone(&self.nav_world);
         let scenario = Arc::clone(&self.scenario);
         let pending_script = Arc::clone(&self.pending_script);
-        let script_start_handle = Arc::clone(&self.script_start_handle);
+        let start_arming = Arc::clone(&self.start_arming);
         let options = self.options.clone();
         let (mainland, host_options) = mainland_seed_options(&options);
         let mainland_sent = Arc::new(Mutex::new(HashSet::new()));
@@ -722,7 +719,11 @@ impl TuiSession {
             // Hold freezes scenario follow like `step_nav_bot`.
             if let Some(runner) = scenario.lock().unwrap().as_mut() {
                 if runner.drives(name) {
-                    if fire_pending_catalog_start(&pending_script, &script_start_handle, runner) {
+                    if live_start::fire_pending_catalog_start(
+                        &mut pending_script.lock().unwrap(),
+                        runner.on_start_script(),
+                        || start_arming.lock().unwrap().clone(),
+                    ) {
                         runner.tick_with_hold(c, hold);
                     }
                 } else if let Some(index) = runner.companion_for(name) {
@@ -793,7 +794,11 @@ impl TuiSession {
                 }
             );
         }
-        *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
+        *self.start_arming.lock().unwrap() = StartArming {
+            handle: Some(play.script_start_handle()),
+            catalog: Some(play.catalog_core_watch()),
+            pair: Some(play.paired_core_watch()),
+        };
         self.core.start(vault, play);
         Ok(())
     }
@@ -898,34 +903,48 @@ impl TuiSession {
         self.core.select(name);
     }
 
-    /// `--live script_*` boot: minted ephemeral vault + spawn + runner.
+    /// `--live script_*` boot: minted ephemeral vault + spawn + runner. With
+    /// `--catalog-core` / `--pair-core` the Play-owned witness is armed
+    /// before either slot publishes, exactly like the panel watches.
     fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
         self.persist_ui = false;
+        let live_core = LiveCore::resolve(
+            scenario.name,
+            scenario.seed.profiles.len(),
+            self.live_catalog_core,
+            self.live_pair_core,
+        )?;
         let name = scenario.name.to_string();
         let start_script = scenario.settings.start_script;
         let start_file = scenario.settings.start_file;
         let wait_script_stop = scenario.settings.wait_script_stop;
         let settings_inject = scenario.settings.script_settings_inject;
+        let scenario_deadline = scenario.settings.deadline;
         let fixture_loadouts = scenario_fixture_loadouts(&scenario.settings);
         let names = mint_live_names(scenario.seed.profiles.len());
         let entries = mint_live_entries_for_target(&names, self.target());
         let pass = live_vault_passphrase_for(self.target());
         let path = temp_live_vault(&entries, &pass);
         self.unlock_at(&path, &pass)?;
+        let play = self
+            .core
+            .play()
+            .ok_or_else(|| "live prepare needs the unlocked play".to_string())?;
+        live_core.configure(play, &names)?;
+        let (catalog_watch, pair_watch) = (play.catalog_core_watch(), play.paired_core_watch());
         self.live_name = Some(name);
         self.live_wait_script_stop = wait_script_stop;
         self.live_stop_wait_started = None;
-        let world = self.core.play().and_then(|play| play.world());
+        let world = play.world();
         let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
-        if let Some(budget) = scenario::budget_s_from_env() {
+        let budget = scenario::budget_s_from_env();
+        if let Some(budget) = budget {
             runner.set_deadline(budget);
             self.live_soak_until = Some(Instant::now() + budget);
             self.live_announced_pass = false;
         }
         runner.set_live_names(&names);
-        if let Some(play) = self.core.play() {
-            runner.set_obj_names(play.obj_names());
-        }
+        runner.set_obj_names(play.obj_names());
         *self.scenario.lock().unwrap() = Some(runner);
         self.scripts.inject = scenario::settings_inject_map(settings_inject);
         self.names = names.clone();
@@ -961,38 +980,21 @@ impl TuiSession {
                 &identity,
                 &card.settings_schema,
             );
-            let siblings = script::resolve_sibling_modules(
-                &card.path,
-                &card.origin,
-                self.scripts.js.cache(),
-                script::CacheMeta {
-                    kind: card.kind,
-                    source: card.source,
-                    shape: None,
-                    api_family: Some(card.api_family.as_str().into()),
-                },
-            )?;
-            *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
-                slot: names[0].clone(),
-                js: card.js.clone(),
-                shape: card.shape,
+            let siblings = self.sibling_modules_for_card(&card)?;
+            *self.pending_script.lock().unwrap() = live_card_starts(
+                live_core,
+                &names,
+                &card,
                 bag,
                 siblings,
-                loadouts: fixture_loadouts.clone(),
-                compiled: None,
-            });
+                fixture_loadouts,
+                &pair_watch,
+            )?;
         } else if let Some(card_name) = start_script {
             if let Some(id) = script::compiled_id(card_name) {
                 self.script_sel = Some(script::ScriptSel::Compiled(id));
-                *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
-                    slot: names[0].clone(),
-                    js: String::new(),
-                    shape: script::LoadShape::Reject,
-                    bag: None,
-                    siblings: Vec::new(),
-                    loadouts: Vec::new(),
-                    compiled: Some(id),
-                });
+                *self.pending_script.lock().unwrap() =
+                    vec![PendingCatalogStart::compiled(names[0].clone(), id)];
             } else {
                 self.fill_rs2b0t_cards_once();
                 self.scripts
@@ -1016,30 +1018,44 @@ impl TuiSession {
                     card_name,
                     &card.settings_schema,
                 );
-                let siblings = script::resolve_sibling_modules(
-                    &card.path,
-                    &card.origin,
-                    self.scripts.js.cache(),
-                    script::CacheMeta {
-                        kind: card.kind,
-                        source: card.source,
-                        shape: None,
-                        api_family: Some(card.api_family.as_str().into()),
-                    },
-                )?;
-                *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
-                    slot: names[0].clone(),
-                    js: card.js.clone(),
-                    shape: card.shape,
+                let siblings = self.sibling_modules_for_card(&card)?;
+                *self.pending_script.lock().unwrap() = live_card_starts(
+                    live_core,
+                    &names,
+                    &card,
                     bag,
                     siblings,
-                    loadouts: fixture_loadouts,
-                    compiled: None,
-                });
+                    fixture_loadouts,
+                    &pair_watch,
+                )?;
             }
         }
-
+        self.live_core_deadline = live_gate::core_deadline(
+            Some(&catalog_watch),
+            Some(&pair_watch),
+            budget,
+            scenario_deadline,
+            Instant::now(),
+        );
         Ok(())
+    }
+
+    /// The sibling modules a card's isolate resolves at Start.
+    fn sibling_modules_for_card(
+        &self,
+        card: &script::JsCard,
+    ) -> Result<Vec<(String, String)>, String> {
+        script::resolve_sibling_modules(
+            &card.path,
+            &card.origin,
+            self.scripts.js.cache(),
+            script::CacheMeta {
+                kind: card.kind,
+                source: card.source,
+                shape: None,
+                api_family: Some(card.api_family.as_str().into()),
+            },
+        )
     }
 
     fn map_members(&self) -> bool {
@@ -2071,47 +2087,83 @@ impl TuiSession {
         let Some(play) = self.core.play() else {
             return false;
         };
-        matches!(play.script_state(name), script::RunState::Idle)
-            && play
-                .script_lifecycle_receipt(name)
-                .is_some_and(|receipt| receipt.reason.contains(needle))
+        live_gate::script_self_stop_observed(
+            play.script_state(name),
+            play.script_lifecycle_receipt(name).as_ref(),
+            needle,
+        )
     }
 
     /// The `--live` terminal state: `Some(exit code)` when the runner
     /// passed (0) or failed (1); `None` while it runs. Proof lines are
     /// returned, not printed, so a headed loop can hold them until after
-    /// alternate-screen restore.
+    /// alternate-screen restore. The shared live gate decides exactly as the
+    /// panel watches do: a configured core witness that failed fails the
+    /// run, one still Pending holds the PASS before the clean-stop grace.
     fn live_status(&mut self) -> (Option<i32>, Vec<ProofLine>) {
         let name = self.live_name.as_deref().unwrap_or("script");
+        let now = Instant::now();
+        let catalog = self.core.play().map(|play| play.catalog_core_watch());
+        let pair = self.core.play().map(|play| play.paired_core_watch());
+        let core_gate =
+            live_gate::catalog_core_gate(catalog.as_ref(), self.live_core_deadline, now);
+        let pair_gate = live_gate::pair_core_gate(pair.as_ref(), self.live_core_deadline, now);
+        // The witness receipts ride with the terminal line: stdout before a
+        // PASS, stderr before a FAIL, labelled with the `--live` token.
+        let witnesses = |ok: bool| {
+            let label = format!("script_{name}");
+            [
+                (
+                    live_gate::CATALOG_CORE_TAG,
+                    live_gate::catalog_core_record(catalog.as_ref(), &core_gate),
+                ),
+                (
+                    live_gate::PAIRED_CORE_TAG,
+                    live_gate::pair_core_record(pair.as_ref(), &pair_gate),
+                ),
+            ]
+            .into_iter()
+            .filter_map(|(tag, witness)| witness.map(|witness| format!("{tag}: {label} {witness}")))
+            .map(|line| {
+                if ok {
+                    ProofLine::Stdout(line)
+                } else {
+                    ProofLine::Stderr(line)
+                }
+            })
+            .collect::<Vec<_>>()
+        };
+        let fail = |receipt: String, message: &str| {
+            let mut lines = witnesses(false);
+            lines.push(ProofLine::Stderr(receipt));
+            lines.push(ProofLine::Stderr(format!("FAIL: {message}")));
+            (Some(1), lines)
+        };
         if let Some(message) = self.terminal_startup_failure() {
-            return (
-                Some(1),
-                vec![
-                    ProofLine::Stderr(format!("FAIL: live {name} startup: {message}")),
-                    ProofLine::Stderr(format!("FAIL: {message}")),
-                ],
-            );
+            return fail(format!("FAIL: live {name} startup: {message}"), &message);
+        }
+        for gate in [&core_gate, &pair_gate] {
+            if let CoreGate::Failed(message) = gate {
+                return fail(format!("FAIL: live {name} {message}"), message);
+            }
         }
         let status = self.scenario.lock().unwrap().as_ref().map(|r| r.status());
-        if let (Some(scenario::RunnerStatus::Passed), Some(needle)) =
-            (&status, self.live_wait_script_stop)
-        {
-            if !self.script_self_stop_observed(needle) {
-                let started = self.live_stop_wait_started.get_or_insert_with(Instant::now);
-                if started.elapsed() >= Duration::from_secs(45) {
-                    return (
-                        Some(1),
-                        vec![
-                            ProofLine::Stderr(format!(
-                                "FAIL: live {name} timed out waiting for script Idle and clean stop reason {needle:?}"
-                            )),
-                            ProofLine::Stderr(format!(
-                                "FAIL: timed out waiting for script Idle and clean stop reason {needle:?}"
-                            )),
-                        ],
-                    );
+        if let Some(scenario::RunnerStatus::Passed) = &status {
+            let mut grace = self.live_stop_wait_started;
+            let hold = live_gate::pass_hold(
+                &[&core_gate, &pair_gate],
+                self.live_wait_script_stop,
+                |needle| self.script_self_stop_observed(needle),
+                &mut grace,
+                now,
+            );
+            self.live_stop_wait_started = grace;
+            match hold {
+                PassHold::Core | PassHold::CleanStop => return (None, Vec::new()),
+                PassHold::TimedOut(message) => {
+                    return fail(format!("FAIL: live {name} {message}"), &message);
                 }
-                return (None, Vec::new());
+                PassHold::Release { .. } => {}
             }
         }
         let evidence = self
@@ -2123,10 +2175,15 @@ impl TuiSession {
             .map(|ev| ev.to_json())
             .unwrap_or_default();
         let soaking = self.live_soak_until.is_some_and(|t| Instant::now() < t);
-        let (code, lines, announced) =
+        let (code, proof, announced) =
             live_proof(name, status, &evidence, soaking, self.live_announced_pass);
+        let mut lines = match code {
+            Some(1) => witnesses(false),
+            _ if announced && !self.live_announced_pass => witnesses(true),
+            _ => Vec::new(),
+        };
+        lines.extend(proof);
         self.live_announced_pass = announced;
-        let mut lines = lines;
         if code == Some(1) && std::env::var_os("BOT_DEBUG").is_some() {
             if let (Some(slot), Some(play)) = (self.names.first(), self.core.play()) {
                 if let Some(receipt) = play.script_lifecycle_receipt(slot) {
@@ -2385,6 +2442,8 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         RunMode::Live(name) => {
             let scenario = live_scenario(&name)?;
             session.options.mainland = scenario.seed.mainland;
+            session.live_catalog_core = args.catalog_core;
+            session.live_pair_core = args.pair_core;
             session.live_prepare_script(scenario)?;
             let mut app = TuiApp::new(format!(
                 "tui-play --live {name} · {}",

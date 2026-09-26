@@ -32,6 +32,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   the catalog's diagonal bank anchor. Exact-booth seed opens now send once
   and await the bank acknowledgement, preventing queued reopens from
   invalidating Herblore and shop seed deposits.
+- `tui-play --live script_<name> --catalog-core` (or `--pair-core`;
+  `BOT_LIVE_CORE=catalog|pair` is the environment form) qualifies a run
+  under the same shared core witness as the panel's `catalog_watch` /
+  `pair_watch`: the witness is armed before the slots publish, frozen at the
+  actual isolate Start, and a scenario PASS is held while it is Pending,
+  before the unchanged 45-second clean-stop grace starts. The gate lives in
+  `host_play::live_gate` / `live_start`, and both front ends call it.
+  `CATALOG_CORE:` / `PAIRED_CORE:` receipts ride with the terminal line.
+- The paired proofs (`nature_crafter_air`, `mule_crafter_air`,
+  `flax_runner`, `duel_arena`) refuse to run without the pair gate instead
+  of reporting their Start snapshot as PASS, in panel-play and tui-play.
 
 ### Performance measurement
 

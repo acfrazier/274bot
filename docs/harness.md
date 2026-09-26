@@ -77,6 +77,31 @@ Script kill messages alone are not XP evidence:
 in a crowded single-combat camp, a selected NPC can disappear after
 another player kills it while the observing slot receives no XP.
 
+### Core-gated qualification
+
+A scenario PASS alone proves the scenario's own predicates. The shared core
+witnesses in `host-play` (`catalog_core`, `paired_core`) prove the full
+post-Start cycle. Both front ends run them through one gate,
+`host_play::live_gate`:
+
+```sh
+cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever --catalog-core
+cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_flax_runner --pair-core
+# environment form for harnesses that pass only environment:
+BOT_LIVE_CORE=catalog cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
+```
+
+These are the panel's `catalog_watch` / `pair_watch` modes. The witness is
+armed before either slot publishes, and its Start baseline is frozen
+immediately before the actual isolate Start. While the witness is Pending,
+a scenario PASS is held and the 45-second clean-stop grace has not started.
+A failed witness, or one still unqualified at the scenario deadline
+(`BUDGET_S` when set), fails the run. The compact witness receipt is printed
+as `CATALOG_CORE: script_<name> {…}` / `PAIRED_CORE: script_<name> {…}`
+next to the terminal line. The paired proofs (`nature_crafter_air`,
+`mule_crafter_air`, `flax_runner`, `duel_arena`) refuse to run without the
+pair gate.
+
 ## Fleet preparation and basic samples
 
 Both frontends expose the same opt-in `host_play::memory::{Config, Run, Sample}`

@@ -31,6 +31,8 @@ use client::sound::output::AudioOut;
 use frontend_core::MapBakeChoice;
 use host::{FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
+use host_play::live_gate::LiveCore;
+use host_play::live_start::{self, PendingCatalogStart, StartArming};
 use host_play::map_cache::MapDemand;
 use host_play::profile::ProfileEnvironment;
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
@@ -57,43 +59,6 @@ use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
 use frontend_core::{OperatorSession, SlotAttach, SlotSurface};
 
-/// Catalog card live_prepare stashes so the StartScript pump can
-/// `script_start_load` once after seed waits. Fleet P2P golds stash one
-/// entry per slot (driven + companion).
-#[derive(Clone)]
-struct PendingCatalogStart {
-    slot: String,
-    js: String,
-    shape: script::LoadShape,
-    bag: Option<serde_json::Map<String, serde_json::Value>>,
-    siblings: Vec<(String, String)>,
-    /// Scenario-owned loadouts for harness Start; empty uses operator store.
-    loadouts: Vec<script::Loadout>,
-    /// Compiled registry card; when set, Start uses `start_compiled`.
-    compiled: Option<script::CompiledId>,
-    /// Start was accepted; kept until its isolate setup settles so a setup
-    /// failure still fails the core watch with its reason.
-    started: bool,
-}
-
-/// Freeze the already-published prepared observation immediately before the
-/// actual isolate Start call. A successful Start cannot overtake its baseline.
-fn start_catalog_with_core<F>(
-    watch: &host_play::catalog_core::CoreWatch,
-    slot: &str,
-    start: F,
-) -> Result<(), String>
-where
-    F: FnOnce() -> Result<(), String>,
-{
-    watch.begin_start(slot)?;
-    let result = start();
-    if let Err(error) = &result {
-        watch.fail_start(slot, error.clone());
-    }
-    result
-}
-
 fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<script::Loadout> {
     settings
         .fixture_loadouts
@@ -107,33 +72,6 @@ fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<scrip
                 })
         })
         .collect()
-}
-
-fn start_stashed_catalog_card(
-    handle: &host_play::ScriptStartHandle,
-    card: &PendingCatalogStart,
-) -> Result<(), String> {
-    if let Some(id) = card.compiled {
-        return handle.start_compiled(&card.slot, id);
-    }
-    if card.loadouts.is_empty() {
-        handle.start_load(
-            &card.slot,
-            card.js.clone(),
-            card.shape,
-            card.bag.clone(),
-            card.siblings.clone(),
-        )
-    } else {
-        handle.start_load_with_loadouts(
-            &card.slot,
-            card.js.clone(),
-            card.shape,
-            card.bag.clone(),
-            card.siblings.clone(),
-            &card.loadouts,
-        )
-    }
 }
 
 enum ExternalReloadPending {
@@ -188,110 +126,6 @@ pub(crate) enum ProfilePreparationCompletion {
     Failed,
 }
 
-/// When the runner is on [`scenario::StepKind::StartScript`], start every
-/// stashed isolate. Returns false when Start was attempted and failed,
-/// so the pump must not consume the one-tick wait. Started cards stay
-/// stashed until their setup settles: Start returns before V8 setup, so a
-/// setup failure fails the core watch here, with its diagnostic.
-fn fire_pending_catalog_start(
-    pending: &Mutex<Vec<PendingCatalogStart>>,
-    handle: &Mutex<Option<host_play::ScriptStartHandle>>,
-    core_watch: &Mutex<Option<host_play::catalog_core::CoreWatch>>,
-    pair_watch: &Mutex<Option<host_play::paired_core::PairWatch>>,
-    runner: &scenario::ScenarioRunner,
-) -> bool {
-    let mut pending = pending.lock().unwrap();
-    if pending.iter().any(|card| card.started) {
-        if let Some(h) = handle.lock().unwrap().as_ref() {
-            settle_started_catalog_cards(&mut pending, h, core_watch, pair_watch);
-        }
-    }
-    if !runner.on_start_script() {
-        return true;
-    }
-    if pending.iter().all(|card| card.started) {
-        return true;
-    }
-    let handle = handle.lock().unwrap();
-    let Some(h) = handle.as_ref() else {
-        return false;
-    };
-    let pair = pair_watch.lock().unwrap().clone().unwrap_or_default();
-    if pair.configured() {
-        if pending.len() != 2 {
-            pair.fail_start("pair core requires actual scripts on both visible slots");
-            return false;
-        }
-        match pair.barrier() {
-            host_play::paired_core::StartBarrier::Wait => return false,
-            host_play::paired_core::StartBarrier::RejectStartedWhileUnready => {
-                pair.fail_start("pair core Start while the counterpart is unready");
-                return false;
-            }
-            host_play::paired_core::StartBarrier::StartBoth => {}
-        }
-        if pair
-            .begin_shared_start(&pending[0].slot, &pending[1].slot)
-            .is_err()
-        {
-            return false;
-        }
-        for card in pending.iter_mut() {
-            if let Err(error) = start_stashed_catalog_card(h, card) {
-                pair.fail_start(error);
-                return false;
-            }
-            card.started = true;
-        }
-        return true;
-    }
-    let watch = core_watch.lock().unwrap().clone().unwrap_or_default();
-    for card in pending.iter_mut().filter(|card| !card.started) {
-        if start_catalog_with_core(&watch, &card.slot, || start_stashed_catalog_card(h, card))
-            .is_err()
-        {
-            return false;
-        }
-        card.started = true;
-    }
-    true
-}
-
-/// Drop started cards whose setup settled; a failed setup fails the watch
-/// that armed its Start (the refusal path `fail_start` already covers).
-fn settle_started_catalog_cards(
-    pending: &mut Vec<PendingCatalogStart>,
-    handle: &host_play::ScriptStartHandle,
-    core_watch: &Mutex<Option<host_play::catalog_core::CoreWatch>>,
-    pair_watch: &Mutex<Option<host_play::paired_core::PairWatch>>,
-) {
-    let mut failed = Vec::new();
-    pending.retain(|card| {
-        if !card.started {
-            return true;
-        }
-        match handle.poll_start(&card.slot) {
-            script::StartPoll::Pending => true,
-            script::StartPoll::Settled(script::StartOutcome::Failed(error)) => {
-                failed.push((card.slot.clone(), error));
-                false
-            }
-            script::StartPoll::Settled(
-                script::StartOutcome::Ready | script::StartOutcome::Cancelled,
-            )
-            | script::StartPoll::NotOwed => false,
-        }
-    });
-    for (slot, error) in failed {
-        let pair = pair_watch.lock().unwrap().clone().unwrap_or_default();
-        if pair.configured() {
-            pair.fail_start(error);
-        } else if let Some(watch) = core_watch.lock().unwrap().clone() {
-            watch.fail_start(&slot, error);
-        }
-    }
-}
-
 /// Load one exact in-tree example and return the File card selected by
 /// canonical-path identity. Never looks up the shared stem.
 fn load_live_example_card(
@@ -307,16 +141,6 @@ fn load_live_example_card(
     js.get(script::ScriptSource::File, &identity)
         .cloned()
         .ok_or_else(|| format!("file example {file_name} missing after identity load"))
-}
-
-/// Existing isolate Idle + lifecycle receipt reason. Not a game-chat read.
-pub(crate) fn script_self_stop_observed(
-    state: script::RunState,
-    receipt: Option<&script::ScriptLifecycleReceipt>,
-    needle: &str,
-) -> bool {
-    matches!(state, script::RunState::Idle)
-        && receipt.is_some_and(|receipt| receipt.reason.contains(needle))
 }
 
 /// Stash StartScript isolate(s). Driven slot always. When
@@ -390,48 +214,6 @@ fn stash_compiled_start(
         compiled: Some(id),
         started: false,
     }];
-}
-
-#[allow(clippy::too_many_arguments)] // pair start packs names/case/watch fields
-fn stash_pair_starts(
-    pending: &Mutex<Vec<PendingCatalogStart>>,
-    names: &[String],
-    case: host_play::paired_core::PairCase,
-    js: String,
-    shape: script::LoadShape,
-    schema: &[script::SettingDef],
-    siblings: Vec<(String, String)>,
-    watch: &host_play::paired_core::PairWatch,
-) -> Result<(), String> {
-    if names.len() != 2 {
-        return Err("pair core watch supports exactly two driven slots".into());
-    }
-    let a_bag = host_play::paired_core::pair_settings(case, schema, 0, &names[0], &names[1])?;
-    let b_bag = host_play::paired_core::pair_settings(case, schema, 1, &names[1], &names[0])?;
-    watch.install_prepared_settings(&names[0], a_bag.clone(), &names[1], b_bag.clone())?;
-    *pending.lock().unwrap() = vec![
-        PendingCatalogStart {
-            slot: names[0].clone(),
-            js: js.clone(),
-            shape,
-            bag: Some(a_bag),
-            siblings: siblings.clone(),
-            loadouts: Vec::new(),
-            compiled: None,
-            started: false,
-        },
-        PendingCatalogStart {
-            slot: names[1].clone(),
-            js,
-            shape,
-            bag: Some(b_bag),
-            siblings,
-            loadouts: Vec::new(),
-            compiled: None,
-            started: false,
-        },
-    ];
-    Ok(())
 }
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
@@ -2567,29 +2349,20 @@ impl Session {
             }
             scenario::FixtureMode::Prepare => unreachable!("prepare rejected above"),
         };
-        if self.catalog_core_enabled && self.pair_core_enabled {
-            return Err("catalog core and pair core watches are mutually exclusive".into());
-        }
         if self.external_core_enabled && (self.catalog_core_enabled || self.pair_core_enabled) {
             return Err(
                 "external loader watch is mutually exclusive with catalog/pair core".into(),
             );
         }
-        let core_case = if self.catalog_core_enabled {
-            if names.len() != 1 {
-                return Err("catalog core watch supports exactly one driven slot".into());
-            }
-            Some(host_play::catalog_core::CoreCase::parse(scenario.name)?)
-        } else {
-            None
-        };
-        let pair_case = if self.pair_core_enabled {
-            if names.len() != 2 {
-                return Err("pair core watch supports exactly two driven slots".into());
-            }
-            Some(host_play::paired_core::PairCase::parse(scenario.name)?)
-        } else {
-            None
+        let live_core = LiveCore::resolve(
+            scenario.name,
+            names.len(),
+            self.catalog_core_enabled,
+            self.pair_core_enabled,
+        )?;
+        let pair_case = match live_core {
+            LiveCore::Pair(case) => Some(case),
+            LiveCore::Off | LiveCore::Catalog(_) => None,
         };
         let mut inject = scenario::settings_inject_map(view.script_settings_inject);
         if pair_case.is_none() {
@@ -2610,29 +2383,12 @@ impl Session {
                 .clone()
                 .unwrap_or_else(|| "unlock_at failed".into()));
         }
-        if let Some(case) = core_case {
-            let watch = self
-                .catalog_core_watch()
-                .ok_or_else(|| "catalog core watch handle unavailable".to_string())?;
-            watch.configure(case, names[0].clone());
-        }
-        if let Some(case) = pair_case {
-            let watch = self
-                .paired_core_watch()
-                .ok_or_else(|| "pair core watch handle unavailable".to_string())?;
-            watch.configure(case, names[0].clone(), names[1].clone());
-            if case == host_play::paired_core::PairCase::Duel {
-                let weapon_id = self
-                    .core
-                    .play()
-                    .and_then(|play| play.game_data())
-                    .and_then(|data| {
-                        data.item_by_alias(host_play::paired_core::DUEL_WEAPON_ALIAS)
-                            .map(|item| item.id)
-                    })
-                    .ok_or_else(|| "selected cache has no bronze_scimitar".to_string())?;
-                watch.install_duel_weapon(weapon_id)?;
-            }
+        if live_core != LiveCore::Off {
+            let play = self
+                .core
+                .play()
+                .ok_or_else(|| "live core watch needs the unlocked play".to_string())?;
+            live_core.configure(play, &names)?;
         }
         if self.external_core_enabled {
             let frozen = host_play::external_loader::resolve_source(self.external_ts.as_deref())?;
@@ -2748,8 +2504,7 @@ impl Session {
                     let watch = self
                         .paired_core_watch()
                         .ok_or_else(|| "pair core watch handle unavailable".to_string())?;
-                    stash_pair_starts(
-                        &self.pending_script,
+                    *self.pending_script.lock().unwrap() = live_start::pair_starts(
                         &names,
                         case,
                         card.js.clone(),
@@ -2798,8 +2553,7 @@ impl Session {
                     let watch = self
                         .paired_core_watch()
                         .ok_or_else(|| "pair core watch handle unavailable".to_string())?;
-                    stash_pair_starts(
-                        &self.pending_script,
+                    *self.pending_script.lock().unwrap() = live_start::pair_starts(
                         &names,
                         case,
                         card.js.clone(),
@@ -3007,12 +2761,14 @@ impl Session {
             // same way `step_nav_bot` freezes (route stays latched).
             if let Some(runner) = scenario.lock().unwrap().as_mut() {
                 if runner.drives(name) {
-                    if fire_pending_catalog_start(
-                        &pending_script,
-                        &script_start_handle,
-                        &catalog_core_watch,
-                        &paired_core_watch,
-                        runner,
+                    if live_start::fire_pending_catalog_start(
+                        &mut pending_script.lock().unwrap(),
+                        runner.on_start_script(),
+                        || StartArming {
+                            handle: script_start_handle.lock().unwrap().clone(),
+                            catalog: catalog_core_watch.lock().unwrap().clone(),
+                            pair: paired_core_watch.lock().unwrap().clone(),
+                        },
                     ) {
                         runner.tick_with_hold(c, hold);
                     }
@@ -4643,7 +4399,7 @@ impl Session {
         let Some(play) = self.core.play() else {
             return false;
         };
-        script_self_stop_observed(
+        host_play::live_gate::script_self_stop_observed(
             play.script_state(&name),
             play.script_lifecycle_receipt(&name).as_ref(),
             needle,

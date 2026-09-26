@@ -556,6 +556,166 @@ fn parse_args_from_accepts_revision_profile_and_ordered_overrides() {
 }
 
 #[test]
+fn core_gate_flags_need_a_live_run_and_parse_the_environment_form() {
+    let catalog = parse_args_from(["--live", "script_thiever", "--catalog-core"]).unwrap();
+    assert!(catalog.catalog_core && !catalog.pair_core);
+    let pair = parse_args_from(["--pair-core", "--live", "script_flax_runner"]).unwrap();
+    assert!(pair.pair_core && !pair.catalog_core);
+    assert!(parse_args_from(["--catalog-core"]).is_err());
+    assert_eq!(live_core_from_env(Some("catalog")), Ok((true, false)));
+    assert_eq!(live_core_from_env(Some("pair")), Ok((false, true)));
+    assert_eq!(live_core_from_env(Some(" ")), Ok((false, false)));
+    assert!(live_core_from_env(Some("core")).is_err());
+}
+
+/// A one-step scenario the synthetic client passes, so the runner reports
+/// Passed before any shared witness has qualified.
+fn passed_runner() -> scenario::ScenarioRunner {
+    use scenario::{Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait};
+    let scenario = Scenario {
+        name: "core_hold",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "energy",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    c.runenergy = 5;
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::Stat { id: 16, min: 5 },
+                budget_ticks: 5,
+            },
+        }],
+        proof: Proof::Stat { id: 16, min: 5 },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut c = client::client::Client::new(client::client::ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: true,
+    });
+    c.ingame = true;
+    c.scene_state = 2;
+    runner.tick(&mut c);
+    c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), scenario::RunnerStatus::Passed);
+    runner
+}
+
+#[test]
+fn catalog_core_holds_live_pass_until_the_witness_qualifies_or_its_deadline_fails() {
+    let play = empty_play();
+    play.catalog_core_watch()
+        .configure(host_play::catalog_core::CoreCase::Thiever, "alice");
+    let mut session = TuiSession::new(dummy_options());
+    session.inject_play(play);
+    session.live_name = Some("core_hold".into());
+    *session.scenario.lock().unwrap() = Some(passed_runner());
+    session.live_core_deadline = Some(Instant::now() + Duration::from_secs(60));
+    assert_eq!(
+        session.live_status(),
+        (None, Vec::new()),
+        "a scenario-only PASS is not a catalog core PASS"
+    );
+
+    session.live_core_deadline = Some(Instant::now() - Duration::from_secs(1));
+    let (code, lines) = session.live_status();
+    assert_eq!(code, Some(1));
+    let stderr = |needle: &str| {
+        lines
+            .iter()
+            .any(|line| matches!(line, ProofLine::Stderr(text) if text.contains(needle)))
+    };
+    assert!(stderr("CATALOG_CORE: script_core_hold "), "{lines:?}");
+    assert!(stderr("catalog core did not qualify"), "{lines:?}");
+    assert!(
+        !lines
+            .iter()
+            .any(|line| matches!(line, ProofLine::Stdout(text) if text.starts_with("PASS:"))),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn paired_proof_refuses_a_live_run_without_the_pair_gate() {
+    let _iso = IsolatedEnv::enter("tui-pair-refusal");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let error = session
+        .live_prepare_script(scenario::get("nature_crafter_air").expect("registered"))
+        .expect_err("a paired proof must not run outside the pair gate");
+    assert!(error.contains("pair core gate"), "{error}");
+    assert!(session.core.play().is_none(), "refused before any boot");
+    assert!(session.pending_script.lock().unwrap().is_empty());
+}
+
+#[test]
+fn pair_gate_stashes_both_slots_with_complementary_role_bags() {
+    let iso = IsolatedEnv::enter("tui-pair-gate");
+    let root = iso.dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("NatureCrafter")).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        r#"
+import NatureCrafter from './NatureCrafter/NatureCrafter.js';
+ScriptRegistry.register({ name: 'NatureCrafter', create: () => new NatureCrafter() });
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("NatureCrafter/NatureCrafter.ts"),
+        "export default class NatureCrafter extends LoopingBot { override loop() {} }",
+    )
+    .unwrap();
+    iso.set_rs2b0t(&root);
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session.live_pair_core = true;
+    session
+        .live_prepare_script(scenario::get("nature_crafter_air").expect("registered"))
+        .expect("prepare");
+    let pending = session.pending_script.lock().unwrap();
+    let slots = pending
+        .iter()
+        .map(|start| start.slot.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        slots,
+        [session.names[0].as_str(), session.names[1].as_str()]
+    );
+    let modes = pending
+        .iter()
+        .map(|start| {
+            start
+                .bag
+                .as_ref()
+                .and_then(|bag| bag.get("mode"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(modes, [Some("Master"), Some("Runner")]);
+    assert!(session
+        .core
+        .play()
+        .expect("play")
+        .paired_core_watch()
+        .configured());
+    assert!(session.live_core_deadline.is_some());
+}
+
+#[test]
 fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
     for revision in [274_u16, 289] {
         let (root, cache, manifest) = checked_fixture(revision);
@@ -693,14 +853,13 @@ fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
         session.core.fleet().contains(&name),
         "the minted driver is a loaded member"
     );
+    let pending = session.pending_script.lock().unwrap();
     assert_eq!(
-        session
-            .pending_script
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|pending| pending.slot.as_str()),
-        Some(name.as_str()),
+        pending
+            .iter()
+            .map(|pending| pending.slot.as_str())
+            .collect::<Vec<_>>(),
+        [name.as_str()],
         "preparation stages the selected card for StartScript"
     );
 }
@@ -753,23 +912,14 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
                 "bone_burier_v2".into()
             ))
         );
-        let bag = session
-            .pending_script
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|pending| pending.bag.clone())
-            .expect("settings bag");
+        let pending = session.pending_script.lock().unwrap().clone();
+        let [pending] = pending.as_slice() else {
+            panic!("{name}: one File start stashed, got {}", pending.len());
+        };
+        let bag = pending.bag.clone().expect("settings bag");
         assert_eq!(bag.get("boneName"), Some(&serde_json::json!("identity")));
         assert!(
-            session
-                .pending_script
-                .lock()
-                .unwrap()
-                .as_ref()
-                .expect("file start stashed")
-                .loadouts
-                .is_empty(),
+            pending.loadouts.is_empty(),
             "native-v2 File starts keep ordinary operator loadout behavior"
         );
         assert_eq!(
@@ -805,7 +955,9 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         .live_prepare_script(scenario::get("thiever").expect("registered"))
         .expect("prepare");
     let pending = session.pending_script.lock().unwrap();
-    let pending = pending.as_ref().expect("catalog start stashed");
+    let [pending] = pending.as_slice() else {
+        panic!("one catalog start stashed, got {}", pending.len());
+    };
     let bag = pending
         .bag
         .clone()

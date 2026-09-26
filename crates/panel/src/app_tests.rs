@@ -5,13 +5,13 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use super::{
-    apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for, catalog_core_gate,
+    apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
     chooser_should_open_popup, clamp_hop_label_px, debug_caption, drive_startup,
     edit_parameters_enabled, game_window_flags, hold_script_terminal_shot, live_null_tick,
     live_script_tick, live_smoke_tick, live_stress_tick, loading_text, logout_enabled,
     manual_shot_label, parse_args, parse_live_args, progress_channel, request_clean_stop_capture,
     request_native_failure_capture, runner_config, script_failure_scenario, smoke_settled,
-    smoke_should_fire, startup_progress, Boot, CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke,
+    smoke_should_fire, startup_progress, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke,
     LiveStress, PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
     StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
     SMOKE_DEADLINE, SMOKE_SETTLE,
@@ -34,26 +34,6 @@ fn logout_is_enabled_only_for_a_loaded_ingame_or_queued_focus() {
     assert!(!logout_enabled(true, true, false, false));
     assert!(logout_enabled(true, true, true, false));
     assert!(logout_enabled(true, true, false, true));
-}
-
-#[test]
-fn headed_core_gate_rejects_scenario_only_pass_and_times_out() {
-    let watch = host_play::catalog_core::CoreWatch::default();
-    watch.configure(host_play::catalog_core::CoreCase::Thiever, "catalogtest");
-    let deadline = Instant::now() + Duration::from_secs(30);
-
-    assert!(matches!(
-        catalog_core_gate(Some(&watch), Some(deadline), Instant::now()),
-        CoreGate::Pending
-    ));
-    assert!(matches!(
-        catalog_core_gate(
-            Some(&watch),
-            Some(deadline),
-            deadline + Duration::from_secs(1)
-        ),
-        CoreGate::Failed(_)
-    ));
 }
 
 fn checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {

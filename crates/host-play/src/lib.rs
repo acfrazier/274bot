@@ -8,6 +8,8 @@ pub mod audio;
 pub mod cache;
 pub mod catalog_core;
 pub mod external_loader;
+pub mod live_gate;
+pub mod live_start;
 pub mod login_readiness;
 pub mod map_bind;
 pub mod map_cache;

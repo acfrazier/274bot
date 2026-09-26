@@ -339,6 +339,8 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `catalog_core_hunt.rs` | hunt proof witness | hold, retreat, spot, enter, leave, key, cell, bank |
 | `catalog_core_ranging.rs` | ranging-guild proof witness | post-Start work only |
 | `paired_core.rs` | paired full-cycle proof witness | Air, Mule, Flax, Duel |
+| `live_gate.rs` | live proof gate for every scenario watch | which shared witness a run qualifies under (paired proofs refuse without the pair gate), per-poll core-gate verdicts, the PASS hold: Pending core first, then the 45 s clean-stop grace; panel and `tui-play` both call it |
+| `live_start.rs` | live catalog Start transaction | stashed isolate Starts fired on StartScript, witness armed immediately before each actual Start, setup failures fail the armed witness |
 | `script_runtime.rs` | per-slot observe, dispatch, and nav continuation | script wall and walk continuation |
 | `route_inspect.rs` | inspect off-pump job | admission, calculation, publication |
 | `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
@@ -353,7 +355,7 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `resource_view.rs` | live-slot facts and panel-ui prefs | live worker count/traffic the core meter samples, background count, `panel-ui.json` |
 | `scatter.rs` | seed tiles for the wall | nav world, else Lumbridge |
 | `progress.rs` | preparation progress values | small, copy-free |
-| `lib_tests.rs` | test body | grouped, not an owner |
+| `lib_tests.rs`, `live_gate_tests.rs`, `live_start_tests.rs` | test bodies | grouped, not owners |
 
 ### scenario
 
@@ -426,7 +428,7 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `loadouts.rs` | loadout editor | equipment and supply CRUD |
 | `script_picker.rs` | script browse picker | category order and badges |
 | `nav_settings.rs` | nav settings pane | find opt-ins and pack selection |
-| `live_harness.rs` | headed live and smoke watch | tick and capture qualification |
+| `live_harness.rs` | headed live and smoke watch | tick and capture qualification; gate decisions come from `host_play::live_gate` |
 | `ui_state.rs` | persisted UI prefs | focused profile and collapsed maps |
 | `theme.rs` | theme tokens | colors and metrics |
 | `wall.rs` | wall UI state | chooser, grid, render-all warning (membership is `frontend_core::Fleet`) |
@@ -439,7 +441,7 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | --- | --- | --- |
 | `lib.rs` | crate facade and re-exports | second view of `Play`, no GPU |
 | `main.rs` | `tui-play` entrypoint | flags and run modes |
-| `bin.rs` | headless session and dispatch | `OperatorSession<()>` + headless surface; copies the core projection into the app when it moved; hands every terminal event to the app and dispatches the returned action onto the core |
+| `bin.rs` | headless session and dispatch | `OperatorSession<()>` + headless surface; copies the core projection into the app when it moved; hands every terminal event to the app and dispatches the returned action onto the core; `--live` (with `--catalog-core` / `--pair-core`) decides through `host_play::live_gate` |
 | `app.rs` | view model and pane behaviour | app state, including copies of the core projection (fleet rows and counts, selected detail, meter); map, script and chat pane keys and clicks |
 | `layout.rs` | shell geometry | size classes (80x24 compact, 120x40 standard, large), pane rects, the last draw's hit regions |
 | `shell.rs` | shell drawing | header (fleet counts, compact meter), fleet and detail panes, log drawer, footer naming the keyboard scope |
