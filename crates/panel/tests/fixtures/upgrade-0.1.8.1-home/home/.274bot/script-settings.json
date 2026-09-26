@@ -1,0 +1,7 @@
+{
+  "catalog:ChickenKiller": {
+    "buryBones": false,
+    "eatAtPercent": 47.0,
+    "loadout": "melee-main"
+  }
+}

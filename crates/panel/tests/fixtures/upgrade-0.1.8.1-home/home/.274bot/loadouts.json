@@ -1,0 +1,37 @@
+[
+  {
+    "name": "melee-main",
+    "worn": {
+      "hat": "Rune full helm",
+      "righthand": "Rune scimitar"
+    },
+    "carry": [
+      {
+        "item": "Lobster",
+        "qty": 12
+      },
+      {
+        "item": "Strength potion(4)",
+        "qty": 2
+      }
+    ],
+    "unassigned": [
+      "Rune platebody"
+    ]
+  },
+  {
+    "name": "utility",
+    "worn": {
+      "back": "Cape"
+    },
+    "carry": [
+      {
+        "item": "Coins",
+        "qty": 5000
+      }
+    ],
+    "unassigned": [
+      "Ghostspeak amulet"
+    ]
+  }
+]

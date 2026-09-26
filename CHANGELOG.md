@@ -446,6 +446,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   `delayUntil` timeouts no longer run down: a wait resumes with the time it
   had left.
 
+### Upgrade compatibility
+
+- Added a real encrypted 0.1.8.1 home fixture and a permanent behavioral
+  upgrade test covering complete vault profiles/settings/assignments, panel
+  preferences, loadouts and legacy script overrides through a 0.1.9
+  save/reopen. The release audit inventories every operator and derived
+  on-disk artifact, includes the in-flight frontend vault writer, and defines
+  the packaged macOS/Windows/Linux in-place upgrade gate.
+
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 
 A patch on 0.1.8: a public-289 crash, both public worlds, the login queue and
