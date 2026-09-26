@@ -1970,6 +1970,7 @@ dependencies = [
 name = "frontend-core"
 version = "0.1.8"
 dependencies = [
+ "frontend-core",
  "host",
  "host-play",
  "script",

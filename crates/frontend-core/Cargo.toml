@@ -14,6 +14,8 @@ serde_json = "=1.0.140"
 vault = { path = "../vault" }
 
 [dev-dependencies]
+# Integration tests use the fixture seams behind this crate's test-support.
+frontend-core = { path = ".", features = ["test-support"] }
 host-play = { path = "../host-play", features = ["test-support"] }
 
 [features]

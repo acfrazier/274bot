@@ -93,7 +93,7 @@ pub struct SlotArm {
     /// and by [`crate::Play::remember_profile`], so a saved password change
     /// reaches a running worker's next login without a respawn. Private: it
     /// never appears in Debug output or logs.
-    password: parking_lot::Mutex<String>,
+    password: parking_lot::Mutex<Arc<str>>,
     retry_wake: parking_lot::Condvar,
     /// Test seam for worker lifecycle cases whose subject starts at the
     /// login queue, after unrelated asset initialization.
@@ -137,7 +137,7 @@ impl SlotArm {
             world_generation: AtomicU64::new(0),
             reconnect: Arc::new(AtomicBool::new(false)),
             script_active: AtomicBool::new(false),
-            password: parking_lot::Mutex::new(String::new()),
+            password: parking_lot::Mutex::new(Arc::from("")),
             retry_wake: parking_lot::Condvar::new(),
             #[cfg(any(test, feature = "test-support"))]
             bypass_asset_startup: AtomicBool::new(false),
@@ -481,9 +481,10 @@ impl SlotArm {
 }
 
 impl SlotArm {
-    /// The password for the handshake about to start (see the field).
-    pub(super) fn login_password(&self) -> String {
-        self.password.lock().clone()
+    /// The password for the handshake about to start (see the field). A
+    /// shared handle: no copy per handshake.
+    pub(super) fn login_password(&self) -> Arc<str> {
+        Arc::clone(&self.password.lock())
     }
 }
 
@@ -491,8 +492,8 @@ pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
     arm.uid.store(profile.uid, Ordering::Relaxed);
     {
         let mut password = arm.password.lock();
-        if *password != profile.password {
-            password.clone_from(&profile.password);
+        if **password != *profile.password {
+            *password = Arc::from(profile.password.as_str());
         }
     }
     arm.random_events
