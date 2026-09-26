@@ -336,6 +336,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   assuming `Withdraw All/10/1`; a row without the op answers `null`, so a
   catalog fallback (`?? withdrawOp(ops, 'any')`) takes the op the row
   actually has.
+- `describeCombatStyle` names the style the weapon actually trains, as
+  frozen does (`strength (training Strength)`, or `defence (training
+  Defence; controlled unavailable)` after a fallback), instead of echoing
+  the requested style.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 

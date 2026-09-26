@@ -55,8 +55,5 @@ export function parseRangeStyle(name) {
 }
 
 export function describeCombatStyle(resolution) {
-    if (!resolution || typeof resolution.requested !== 'string') {
-        throw notImpl('describeCombatStyle', 'missing requested');
-    }
-    return resolution.requested;
+    return globalThis.__rs2b0t_describe_combat_style(resolution);
 }

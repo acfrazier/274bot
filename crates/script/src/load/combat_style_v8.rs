@@ -1,6 +1,8 @@
 //! v1 `CombatStyleLogic` rune helpers (frozen
 //! `bot/api/combat/CombatStyleLogic.ts`) as one native call each:
-//! `__rs2b0t_combat_style(op, spellName, wielded, heldOrCasts)`.
+//! `__rs2b0t_combat_style(op, spellName, wielded, heldOrCasts)`; and the
+//! frozen `CombatStyle.describeCombatStyle` label table:
+//! `__rs2b0t_describe_combat_style(resolution)`.
 //!
 //! The remaining per-cast costs are `SelectedGameData::runes_per_cast`; the
 //! shim passes the spell name and wielded names already coerced to strings.
@@ -15,7 +17,57 @@ use api::game_data::RemainingRuneCost;
 use rustyscript::Runtime;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
-    cb::install(runtime, "__rs2b0t_combat_style", combat_style)
+    cb::install(runtime, "__rs2b0t_combat_style", combat_style)?;
+    cb::install(
+        runtime,
+        "__rs2b0t_describe_combat_style",
+        describe_combat_style,
+    )
+}
+
+/// Frozen `describeCombatStyle(resolution)` (`api/combat/CombatStyle.ts:148-169`):
+/// the trained skills of the style the weapon actually offers (`effective`,
+/// `:150-163`), with `; <requested> unavailable` when the requested style
+/// fell back (`:165-167`).
+fn describe_combat_style<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let resolution = args.get(0);
+        let effective = cb::get(scope, resolution, "effective")?;
+        let description = effective
+            .is_string()
+            .then(|| effective.to_rust_string_lossy(scope))
+            .and_then(|effective| match effective.as_str() {
+                "attack" => Some("attack (training Attack)"),
+                "strength" => Some("strength (training Strength)"),
+                "controlled" => Some("controlled (training Attack, Strength & Defence)"),
+                "defence" => Some("defence (training Defence)"),
+                _ => None,
+            });
+        let requested = cb::get(scope, resolution, "requested")?;
+        if requested.strict_equals(effective) {
+            return Ok(match description {
+                Some(description) => cb::string(scope, description),
+                None => v8::undefined(scope).into(),
+            });
+        }
+        let Some(description) = description else {
+            return Err(cb::type_error(
+                scope,
+                "Cannot read properties of undefined (reading 'slice')",
+            ));
+        };
+        let requested = cb::to_string(scope, requested)?;
+        let open = &description[..description.len() - 1];
+        Ok(cb::string(
+            scope,
+            &format!("{open}; {requested} unavailable)"),
+        ))
+    })();
+    cb::finish(scope, rv, result);
 }
 
 fn combat_style<'s>(

@@ -32,7 +32,7 @@ export default class T extends LoopingBot {
     assert_eq!(result["resolution"]["requested"], "strength");
     assert_eq!(result["resolution"]["effective"], "strength");
     assert_eq!(result["resolution"]["mode"], 1);
-    assert_eq!(result["description"], "strength");
+    assert_eq!(result["description"], "strength (training Strength)");
     assert!(isolate
         .drain_logs()
         .iter()
@@ -42,11 +42,13 @@ export default class T extends LoopingBot {
 
 /// The frozen `resolveCombatStyle` rules over the posted rows: the requested
 /// style wins, a duplicate mode keeps its first label, and an unoffered style
-/// falls back to the last defensive option.
+/// falls back to the last defensive option, which `describeCombatStyle`
+/// names as the effective style (`CombatStyle.ts:148-169`).
 #[test]
 fn resolution_falls_back_and_drops_duplicate_modes() {
     let source = r#"
 import { Game } from '../../api/game/Game.js';
+import { describeCombatStyle } from '../../api/combat/CombatStyle.js';
 export default class T extends LoopingBot {
     loop() {
         globalThis.result = {
@@ -54,6 +56,8 @@ export default class T extends LoopingBot {
             defence: Game.combatStyleResolution('defence'),
             aggressive: Game.combatStyleResolution('aggressive'),
             unknown: Game.combatStyleResolution('no-such-style'),
+            controlledLabel: describeCombatStyle(Game.combatStyleResolution('controlled')),
+            attackLabel: describeCombatStyle(Game.combatStyleResolution('attack')),
         };
     }
 }
@@ -103,5 +107,10 @@ export default class T extends LoopingBot {
     assert_eq!(result["aggressive"]["mode"], 1);
     // `(Slam)` parses to nothing, so it is not a defensive fallback either.
     assert_eq!(result["unknown"]["mode"], 2);
+    assert_eq!(
+        result["controlledLabel"],
+        "defence (training Defence; controlled unavailable)"
+    );
+    assert_eq!(result["attackLabel"], "attack (training Attack)");
     isolate.join();
 }
