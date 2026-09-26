@@ -16,6 +16,13 @@
 //! process. One JSON line per sample on stdout. macOS reports
 //! `proc_pid_rusage` v4 physical footprint and `malloc_zone_statistics`;
 //! other platforms print RSS only.
+//!
+//! Expected residue on macOS: +64 B `malloc_in_use_delta_bytes` after the
+//! first close, flat afterwards. It is one 128-byte libobjc SyncData block
+//! that the Objective-C runtime allocates when this bare process joins its
+//! first thread (the bake worker, in `MapDemandManager::reap`); it lives for
+//! the process and does not grow per open. The panel initializes libobjc
+//! through its window system long before a map opens.
 use host_play::map_cache::{MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus};
 use host_play::{map_profile_descriptor, NativeMapProducer};
 use std::path::PathBuf;
