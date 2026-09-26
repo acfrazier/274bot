@@ -11,28 +11,21 @@ pub struct InvItemName {
 
 /// Food form keys for `foodName`, using selected item catalog when present.
 pub fn food_forms_for(data: Option<&SelectedGameData>, food_name: &str) -> Vec<String> {
-    let key = string_food_key(food_name);
-    match data {
-        Some(data) => keep_list::food_forms(data.items(), &key),
-        None => vec![key],
-    }
+    keep_list::food_forms(data.map_or(&[], |data| data.items()), food_name)
 }
 
+/// Frozen `foodCount(items, foodName)` (`food.ts:78-80`): the slots holding
+/// any form of the food. Matches borrowed names; allocates nothing.
 pub fn food_count(
     data: Option<&SelectedGameData>,
     items: &[InvItemName],
     food_name: &str,
 ) -> usize {
-    let forms = food_forms_for(data, food_name);
+    let forms = keep_list::FoodForms::new(data.map_or(&[], |data| data.items()), food_name);
     items
         .iter()
-        .filter(|row| row_is_food_slot(row, &forms))
+        .filter(|row| forms.contains(row.name.as_deref().unwrap_or("")))
         .count()
-}
-
-fn row_is_food_slot(row: &InvItemName, forms: &[String]) -> bool {
-    let name = row.name.as_deref().unwrap_or("");
-    forms.contains(&name.to_lowercase())
 }
 
 pub fn food_heal_amount(data: Option<&SelectedGameData>, food_name: &str) -> FoodHealOutcome {
@@ -72,28 +65,31 @@ pub const MIN_EAT_HP: i32 = 5;
 /// (274 and 289) carries its own fixed heal, so the exact step answers it.
 /// `None` only when the answer needs selected facts the host does not have.
 pub fn frozen_food_heal_amount(data: Option<&SelectedGameData>, food_name: &str) -> Option<i32> {
-    let key = string_food_key(food_name);
+    let key = food_name.trim();
     if key.is_empty() {
         return Some(DEFAULT_FOOD_HEAL);
     }
     let data = data?;
-    if let Some(heal) = data.fixed_food_heal(&key) {
+    if let Some(heal) = data.fixed_food_heal(key) {
         return Some(heal);
     }
     Some(
         data.fixed_food_heals()
             .find(|(name, _)| {
-                let name = name.to_lowercase();
-                key.contains(&name) || name.contains(&key)
+                contains_ignore_ascii_case(key, name) || contains_ignore_ascii_case(name, key)
             })
             .map_or(DEFAULT_FOOD_HEAL, |(_, heal)| heal),
     )
 }
 
-fn string_food_key(food_name: &str) -> String {
-    // Match v1 `String(foodName).trim().toLowerCase()` including odd coercions
-    // handled at the JS marshal boundary before this runs.
-    food_name.trim().to_lowercase()
+/// JS `hay.toLowerCase().includes(needle.toLowerCase())` for the ASCII item
+/// names, without the copies.
+fn contains_ignore_ascii_case(hay: &str, needle: &str) -> bool {
+    needle.is_empty()
+        || hay
+            .as_bytes()
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 #[cfg(test)]
