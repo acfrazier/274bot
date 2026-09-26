@@ -89,10 +89,15 @@ pub struct SlotArm {
     /// A script is running or paused on the slot, as the slot thread last
     /// published it ([`SlotArm::set_script_active`]).
     script_active: AtomicBool,
+    /// The password the next handshake sends. Set from the profile at spawn
+    /// and by [`crate::Play::remember_profile`], so a saved password change
+    /// reaches a running worker's next login without a respawn. Private: it
+    /// never appears in Debug output or logs.
+    password: parking_lot::Mutex<String>,
     retry_wake: parking_lot::Condvar,
     /// Test seam for worker lifecycle cases whose subject starts at the
     /// login queue, after unrelated asset initialization.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) bypass_asset_startup: AtomicBool,
     /// Deterministic worker-entry gate for lifecycle race regressions.
     #[cfg(test)]
@@ -132,8 +137,9 @@ impl SlotArm {
             world_generation: AtomicU64::new(0),
             reconnect: Arc::new(AtomicBool::new(false)),
             script_active: AtomicBool::new(false),
+            password: parking_lot::Mutex::new(String::new()),
             retry_wake: parking_lot::Condvar::new(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             bypass_asset_startup: AtomicBool::new(false),
             #[cfg(test)]
             worker_start_gate: parking_lot::Mutex::new(None),
@@ -149,8 +155,8 @@ impl SlotArm {
     }
     /// Enter the spawned worker at the queue/login seam. Production slots
     /// always run the complete asset startup.
-    #[cfg(test)]
-    pub(crate) fn bypass_asset_startup_for_test(&self) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn bypass_asset_startup_for_test(&self) {
         self.bypass_asset_startup.store(true, Ordering::Relaxed);
     }
 
@@ -474,8 +480,21 @@ impl SlotArm {
     }
 }
 
+impl SlotArm {
+    /// The password for the handshake about to start (see the field).
+    pub(super) fn login_password(&self) -> String {
+        self.password.lock().clone()
+    }
+}
+
 pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
     arm.uid.store(profile.uid, Ordering::Relaxed);
+    {
+        let mut password = arm.password.lock();
+        if *password != profile.password {
+            password.clone_from(&profile.password);
+        }
+    }
     arm.random_events
         .store(profile.settings.random_events, Ordering::Relaxed);
     arm.lamp_auto

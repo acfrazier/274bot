@@ -19,4 +19,4 @@ host-play = { path = "../host-play", features = ["test-support"] }
 [features]
 # Test-only lifecycle fixtures (arm-only spawns). Enabled from front-end
 # dev-dependencies, never production builds.
-test-support = []
+test-support = ["host-play/test-support"]

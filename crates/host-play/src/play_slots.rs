@@ -539,7 +539,6 @@ fn spawn_slot_thread(
 ) {
     let username = profile.username.clone();
     let uid = profile.uid;
-    let password = profile.password.clone();
     let connection = connection.clone();
     let mainland = match &connection {
         PlayConnection::Legacy(options) => options.mainland,
@@ -601,9 +600,9 @@ fn spawn_slot_thread(
             // `maininit` is renderer-free now: progress recording lives on
             // the Client, and no `Renderer` is constructed for a headless
             // slot.
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             let bypass_asset_startup = arm.bypass_asset_startup.load(Ordering::Relaxed);
-            #[cfg(not(test))]
+            #[cfg(not(any(test, feature = "test-support")))]
             let bypass_asset_startup = false;
             if !bypass_asset_startup {
                 client.maininit_with_progress(Some(&mut |client, message, percent| {
@@ -760,6 +759,9 @@ fn spawn_slot_thread(
                             "[host-play] slot {username}: handshake begin reconnect={reconnect}"
                         );
                     }
+                    // Read at each handshake, not captured at spawn: a
+                    // password saved since then applies to this login.
+                    let password = arm.login_password();
                     let login = login_and_acknowledge_permit(&mut permit, || {
                         client.login(&username, &password, reconnect)
                     });

@@ -235,6 +235,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   profile goes back to its saved value. A new or renamed profile is selected
   (and its bot started) only after its save succeeded, and a rename saves
   the new name and removes the old one in one write.
+- A saved password change now applies to a bot that is already running
+  (for example parked on the login screen): its next login uses the new
+  password. Before (also in 0.1.8.1), a bot kept logging in with the
+  password it was started with until it was removed and loaded again.
 - Stop all now also stops a bot whose script is still shutting down for a
   Reload; before, the reloaded script started again after Stop all.
 - In the TUI, `x` removes the bot from the strip at once and Tab no longer

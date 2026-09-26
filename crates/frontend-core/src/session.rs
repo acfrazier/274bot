@@ -147,6 +147,8 @@ pub struct OperatorSession<Io> {
     starts: HashMap<String, OperationId>,
     settled_starts: Vec<StartSettled>,
     spawn_workers: bool,
+    #[cfg(any(test, feature = "test-support"))]
+    bypass_asset_startup: bool,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
 }
@@ -174,6 +176,8 @@ impl<Io> OperatorSession<Io> {
             starts: HashMap::new(),
             settled_starts: Vec::new(),
             spawn_workers: true,
+            #[cfg(any(test, feature = "test-support"))]
+            bypass_asset_startup: false,
             _instance: instance,
         }
     }
@@ -367,6 +371,10 @@ impl<Io> OperatorSession<Io> {
             }
             self.slots.insert(name.to_string(), attach.io);
             return Ok(());
+        }
+        #[cfg(any(test, feature = "test-support"))]
+        if let (true, Some(arm)) = (self.bypass_asset_startup, arm.as_ref()) {
+            arm.bypass_asset_startup_for_test();
         }
         if let Some(play) = self.play.as_mut() {
             if let Err(error) = play.try_spawn_slot(profile, attach.input, attach.mailbox, arm) {
@@ -1286,6 +1294,12 @@ impl<Io> OperatorSession<Io> {
     /// thread, so lifecycle tests never contact a server.
     pub fn set_spawn_workers(&mut self, on: bool) {
         self.spawn_workers = on;
+    }
+
+    /// Fixture seam: spawned workers skip client asset startup and go
+    /// straight to the login queue (a fake login server needs no cache).
+    pub fn set_bypass_asset_startup(&mut self, on: bool) {
+        self.bypass_asset_startup = on;
     }
 
     /// Direct vault access for fixture setup. Settles queued writes first
