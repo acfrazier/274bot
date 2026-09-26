@@ -34,10 +34,10 @@ use crate::play_status::{
 };
 use crate::play_wires::{dispatch_wires, WireCmd};
 use crate::script_runtime::{
-    nav_world_state_for_observe, observe_script_inv, project_npc_boxes_for_isolate_snapshot,
-    projected_npc_boxes, publish_script_paint, reset_script_nav, script_observe_cached,
-    script_paint_of, script_running, script_slot, script_slot_or_insert, slot_arrival_reach,
-    step_nav_bot, NavBot, ScriptSlot, ScriptWall,
+    hold_script_nav, nav_world_state_for_observe, observe_script_inv,
+    project_npc_boxes_for_isolate_snapshot, projected_npc_boxes, publish_script_paint,
+    reset_script_nav, script_observe_cached, script_paint_of, script_running, script_slot,
+    script_slot_or_insert, slot_arrival_reach, step_nav_bot, NavBot, ScriptSlot, ScriptWall,
 };
 use crate::{
     catalog_core, debug_enabled, login_readiness, paired_core, public_worlds, Play, RandomClaim,
@@ -354,26 +354,53 @@ impl Play {
 }
 /// End one connected session without carrying deferred game actions into the
 /// next login. Operator intent survives (`on_is_up(false)` pauses a started
-/// script); packets, isolate interactions, route workers and navigation state
+/// script); packets, isolate interactions, route follows and scene caches
 /// belong to the disconnected session and are discarded.
+///
+/// `reconnect`: the slot relogs through this boundary by itself (see
+/// [`relogs_after`]). A Load script's own work is then held whole for the
+/// relogged session, and the script walk it had armed is re-armed there:
+/// frozen AutoRelogin pauses the script on the disconnect and resumes it on
+/// the new session's scene 2 (`AutoRelogin.ts:180-190`, `159-163`). An
+/// operator or idle logout, a withdrawn login or a slot Stop ends that work
+/// instead.
 pub(super) fn reset_slot_session_work(
     name: &str,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    reconnect: bool,
 ) {
-    if let Some(slot) = script_slot(scripts, name) {
+    // `Some(carry)`: the script held its work; `carry` names the run whose
+    // armed walk the relogged session re-arms.
+    let held = script_slot(scripts, name).and_then(|slot| {
         let mut slot = slot.lock().unwrap();
-        slot.reset_session_work();
-    }
+        if reconnect && slot.load_active() {
+            let carry = slot.reconnect_session_work();
+            Some(carry.then(|| slot.runtime_generation()))
+        } else {
+            slot.reset_session_work();
+            None
+        }
+    });
     if let Some(queue) = cheats.lock().unwrap().get_mut(name) {
         queue.clear();
     }
     if let Some(queue) = wires.lock().unwrap().get_mut(name) {
         queue.clear();
     }
-    reset_script_nav(navs, name);
+    match held {
+        Some(carry) => hold_script_nav(navs, name, carry),
+        None => reset_script_nav(navs, name),
+    }
+}
+
+/// Whether the slot will log back in by itself after this session ends: a
+/// login intent the operator has not latched off (Logout, an idle logout)
+/// or withdrawn, on a slot that is not stopping.
+pub(super) fn relogs_after(arm: &SlotArm) -> bool {
+    !arm.stop.load(Ordering::Relaxed) && arm.login_command(false).is_some()
 }
 
 /// Compact prior-frame guardian fact for catalog proof. The observe hook
@@ -820,7 +847,14 @@ fn spawn_slot_thread(
                             );
                             if session_boundary {
                                 session_epoch = session_epoch.wrapping_add(1);
-                                reset_slot_session_work(name, &slot_scripts, &slot_cheats, &slot_wires, &slot_navs);
+                                reset_slot_session_work(
+                                    name,
+                                    &slot_scripts,
+                                    &slot_cheats,
+                                    &slot_wires,
+                                    &slot_navs,
+                                    relogs_after(&arm_latch_obs),
+                                );
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
@@ -1083,6 +1117,7 @@ fn spawn_slot_thread(
                     &slot_cheats,
                     &slot_wires,
                     &slot_navs,
+                    relogs_after(&arm),
                 );
                 if arm.stop.load(Ordering::Relaxed) {
                     return;

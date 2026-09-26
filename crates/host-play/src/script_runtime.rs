@@ -10,10 +10,12 @@ use bank::{
 };
 #[path = "script_nav.rs"]
 mod script_nav;
-use script_nav::log_walk_arm_bot;
 #[cfg(test)]
 pub(super) use script_nav::{approach_tiles, ScriptRouteRequest};
-pub(super) use script_nav::{reset_script_nav, NavBot, PostedWalkOutcome, ScriptWalkArm};
+pub(super) use script_nav::{
+    hold_script_nav, reset_script_nav, NavBot, PostedWalkOutcome, ScriptWalkArm,
+};
+use script_nav::{log_walk_arm_bot, take_carried_walk};
 #[path = "script_walk.rs"]
 mod script_walk;
 #[cfg(test)]

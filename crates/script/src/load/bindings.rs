@@ -165,6 +165,17 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("register now: {e}"))?;
     runtime
         .register_function(
+            "__rs2b0t_wait_now",
+            |_args: &[rustyscript::serde_json::Value]| {
+                let start = CLOCK_START.get_or_init(Instant::now);
+                Ok(rustyscript::serde_json::Value::from(
+                    super::wait_clock::now_ms(*start, Instant::now()),
+                ))
+            },
+        )
+        .map_err(|e| format!("register wait now: {e}"))?;
+    runtime
+        .register_function(
             "__rs2b0t_range_supply_empty",
             |args: &[serde_json::Value]| {
                 Ok(serde_json::Value::Bool(

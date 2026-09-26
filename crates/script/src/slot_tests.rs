@@ -1544,3 +1544,107 @@ fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
     slot.sync_compiled_clue(false);
     assert!(!owns(&data), "Stop clears the strip list with the step");
 }
+
+#[cfg(feature = "load")]
+const HELD_WALK: &str = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        globalThis.__ok = null;
+        globalThis.__ok = await Traversal.walkResilient(
+            { x: 2820, z: 3556, level: 0 },
+            { radius: 1, timeoutMs: 300000 },
+        );
+    }
+}
+"#;
+
+/// Post a snapshot at `here` for tick `n`, run the tick and wait for it,
+/// then feed the watchdog what the host drains after it.
+#[cfg(feature = "load")]
+fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
+    let here = (2823, 3555, 0);
+    let mut input = crate::isolate_fb::tests::empty_input(n);
+    input.here = Some(crate::isolate_fb::TileInput {
+        x: here.0,
+        z: here.1,
+        level: here.2,
+    });
+    let bytes = slot.encode_snapshot_delta(&input, false);
+    assert!(slot.post_snapshot(bytes));
+    let iso = slot.load.as_ref().expect("load isolate");
+    iso.on_game_tick(n);
+    iso.probe("true").unwrap();
+    let facts = slot.drain_lifecycle();
+    slot.feed_watchdog(now, Some(here), &[], false, true, &facts);
+}
+
+/// The walk a reconnect holds is still the loop's parked wait: the watchdog
+/// count the session boundary zeroed must see it again, or the resumed walk
+/// reads as a hung loop after 10 s.
+#[cfg(feature = "load")]
+#[test]
+fn a_walk_held_across_a_reconnect_is_still_a_parked_wait() {
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts(HELD_WALK.into(), LoadShape::CompatClass, vec![], &[])
+        .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
+    let now = Instant::now();
+    held_walk_tick(&mut slot, 1, now);
+    assert!(slot.watchdog().wait_active(), "the walk is parked");
+
+    assert!(slot.reconnect_session_work(), "the script walk is carried");
+    slot.on_is_up(true);
+    held_walk_tick(&mut slot, 2, now);
+    assert!(
+        slot.watchdog().wait_active(),
+        "the held walk is still the parked wait"
+    );
+    assert_eq!(
+        slot.feed_watchdog(
+            now + crate::watchdog::SCHEDULER_WARN + Duration::from_secs(1),
+            Some((2823, 3555, 0)),
+            &[],
+            false,
+            true,
+            &[],
+        ),
+        crate::watchdog::WatchdogAction::None,
+        "no hung-loop warning while the held walk runs"
+    );
+    slot.stop();
+    wait_state(&mut slot, RunState::Idle);
+}
+
+/// A second disconnect with no relog leaves the script held; operator Stop
+/// (the path script stop and profile removal share) still ends it.
+#[cfg(feature = "load")]
+#[test]
+fn stop_ends_a_script_held_across_a_reconnect() {
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts(HELD_WALK.into(), LoadShape::CompatClass, vec![], &[])
+        .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
+    let now = Instant::now();
+    held_walk_tick(&mut slot, 1, now);
+
+    slot.reconnect_session_work();
+    slot.on_is_up(true);
+    held_walk_tick(&mut slot, 2, now);
+    let iso = slot.load.as_ref().expect("load isolate");
+    assert_eq!(
+        iso.probe("globalThis.__ok").unwrap(),
+        serde_json::Value::Null,
+        "the walk carried on across the relog"
+    );
+
+    slot.reconnect_session_work();
+    assert_eq!(slot.state(), RunState::Paused);
+    slot.stop();
+    wait_state(&mut slot, RunState::Idle);
+    assert!(slot.load.is_none(), "the held isolate is gone");
+}

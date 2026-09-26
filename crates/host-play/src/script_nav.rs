@@ -116,6 +116,17 @@ pub(crate) struct NavBot {
     /// The game requests this slot's script sent, as dispatched here. Host
     /// data the catalog hunt watch reads; not an isolate wire.
     pub(crate) acts: crate::catalog_core::ScriptActLedger,
+    /// The script walk a reconnect interrupted, re-armed on the relogged
+    /// session ([`hold_script_nav`], [`take_carried_walk`]).
+    pub(crate) carried_walk: Option<CarriedWalk>,
+}
+
+/// A script walk held across a reconnect.
+pub(crate) struct CarriedWalk {
+    /// The script run it belongs to (`SlotScript::runtime_generation`): a
+    /// Stop, Start or watchdog restart since the reconnect drops it.
+    runtime_generation: u64,
+    request: script::shim::InteractReq,
 }
 
 /// The shared script walk arm: both `ctx.walk` (default options) and
@@ -1130,18 +1141,95 @@ impl NavBot {
     }
 }
 
+/// End the session's navigation: every route, find, bank-fetch session,
+/// inspect and bank pick of the slot, and a walk a reconnect was carrying.
 pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(nav) = navs.lock().unwrap().get_mut(name) {
-        nav.route_generation = nav.route_generation.wrapping_add(1);
-        nav.route_worker = None;
-        nav.pending_route = None;
-        nav.requested_route = None;
-        nav.traveller.clear();
-        nav.route = None;
-        nav.bank_fetch = None;
-        nav.walk_request_id = 0;
+        end_route_follow(nav);
         nav.clear_walk_outcome();
         route_inspect::reset_inspect(nav);
         nav.bank_pick.reset();
+        nav.carried_walk = None;
     }
+}
+
+/// A reconnect the slot relogs through with its Load script's work held
+/// (`SlotScript::reconnect_session_work`). The connection's route follow
+/// ends as in [`reset_script_nav`]; what the held script still waits on
+/// stays: the published walk outcome, and the route-inspect and bank-pick
+/// workers with their results (pure computations, valid on any session).
+///
+/// With `carry` (the script run's `runtime_generation`), the walk the
+/// script had armed is kept and re-armed on the relogged session under its
+/// own request id ([`take_carried_walk`]), so the held walk wait settles on
+/// it. Frozen resumes the paused `WalkExecutor.walkTo` itself
+/// (`AutoRelogin.ts:159-163`), which repaths from wherever the player
+/// stands when its follow sees a deviation or a stall
+/// (`WalkExecutor.ts:916-918`, `1097-1099`).
+pub(crate) fn hold_script_nav(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    carry: Option<u64>,
+) {
+    if let Some(nav) = navs.lock().unwrap().get_mut(name) {
+        let armed = nav.route.is_some()
+            || nav.route_worker.is_some()
+            || nav.pending_route.is_some()
+            || nav.bank_fetch.is_some();
+        if let (Some(runtime_generation), true, Some(requested)) =
+            (carry, armed, nav.requested_route)
+        {
+            let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch) = requested;
+            let request_id = nav.walk_request_id;
+            let request = if radius > 0 {
+                script::shim::InteractReq::WalkNear {
+                    x: to.x,
+                    z: to.z,
+                    level: to.level,
+                    radius,
+                    allow_teleports,
+                    allow_wilderness,
+                    allow_bank_fetch,
+                    request_id,
+                }
+            } else {
+                script::shim::InteractReq::Walk {
+                    x: to.x,
+                    z: to.z,
+                    level: to.level,
+                    allow_teleports,
+                    allow_wilderness,
+                    allow_bank_fetch,
+                    request_id,
+                }
+            };
+            nav.carried_walk = Some(CarriedWalk {
+                runtime_generation,
+                request,
+            });
+        }
+        end_route_follow(nav);
+    }
+}
+
+/// The walk a reconnect carried for the script run `runtime_generation`,
+/// once: the caller dispatches it ahead of the run's own requests.
+pub(crate) fn take_carried_walk(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    runtime_generation: u64,
+) -> Option<script::shim::InteractReq> {
+    let carried = navs.lock().unwrap().get_mut(name)?.carried_walk.take()?;
+    (carried.runtime_generation == runtime_generation).then_some(carried.request)
+}
+
+fn end_route_follow(nav: &mut NavBot) {
+    nav.route_generation = nav.route_generation.wrapping_add(1);
+    nav.route_worker = None;
+    nav.pending_route = None;
+    nav.requested_route = None;
+    nav.traveller.clear();
+    nav.route = None;
+    nav.bank_fetch = None;
+    nav.walk_request_id = 0;
 }

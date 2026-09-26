@@ -5456,7 +5456,7 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
         },
     )])));
 
-    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs);
+    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs, false);
 
     let script = script_slot(&scripts, "alice").unwrap();
     let script = script.lock().unwrap();
@@ -14463,10 +14463,23 @@ fn session_reset_clears_live_recovery_walk() {
         "alice".into(),
         NavBot {
             route_worker: Some(Arc::new(())),
+            requested_route: Some((
+                WorldTile {
+                    x: 100,
+                    z: 100,
+                    level: 0,
+                },
+                3,
+                false,
+                true,
+                false,
+            )),
             ..NavBot::default()
         },
     );
-    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs);
+    // A reconnect: the script's work is held, but the watchdog's own
+    // recovery walk ends with the session and is not carried.
+    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs, true);
     assert!(script_slot(&scripts, "alice")
         .unwrap()
         .lock()
@@ -14477,11 +14490,107 @@ fn session_reset_clears_live_recovery_walk() {
     let bot = navs.lock().unwrap();
     let bot = bot.get("alice").unwrap();
     assert!(bot.route_worker.is_none());
+    assert!(bot.carried_walk.is_none());
     script_slot(&scripts, "alice")
         .unwrap()
         .lock()
         .unwrap()
         .stop();
+}
+
+/// A reconnect mid-walk: the relogged session's first dispatch re-arms the
+/// walk the held script is still waiting on, under its own request id (so
+/// the wait settles on it). An operator logout carries nothing.
+#[test]
+fn a_reconnect_re_arms_the_held_script_walk_on_the_relogged_session() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let world = Some(Arc::new(open_world(64, 64)));
+    script_slot_or_insert(&scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_load_settled(
+            walk_resilient_src(40, 40, 1),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+    let mut c = bank_client();
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let here = Some((3, 3, 0));
+    // One frame posts and ticks; the next dispatches what the tick queued.
+    let frames = |c: &mut Client, tick: u64| {
+        for tick_edge in [true, false] {
+            script_observe(
+                c,
+                "alice",
+                true,
+                tick_edge,
+                tick,
+                here,
+                None,
+                None,
+                Some(&snap),
+                None,
+                &scripts,
+                &cheats,
+                &navs,
+                &world,
+                false,
+                false,
+            );
+            script_slot(&scripts, "alice")
+                .unwrap()
+                .lock()
+                .unwrap()
+                .probe("true")
+                .unwrap();
+        }
+    };
+    let armed = |navs: &Arc<Mutex<HashMap<String, NavBot>>>| {
+        let navs = navs.lock().unwrap();
+        let bot = &navs["alice"];
+        (bot.walk_request_id, bot.requested_route)
+    };
+    let dest = WorldTile {
+        x: 40,
+        z: 40,
+        level: 0,
+    };
+
+    frames(&mut c, 1);
+    let (request_id, requested) = armed(&navs);
+    assert_ne!(request_id, 0, "the script walk is armed");
+    assert_eq!(requested, Some((dest, 1, false, true, true)));
+
+    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs, true);
+    assert_eq!(armed(&navs), (0, None), "the old connection's follow ends");
+    frames(&mut c, 2);
+    assert_eq!(
+        armed(&navs),
+        (request_id, requested),
+        "the relogged session re-arms the same walk"
+    );
+    let slot = script_slot(&scripts, "alice").unwrap();
+    assert_eq!(
+        slot.lock().unwrap().probe("__rs_ok").unwrap(),
+        serde_json::Value::Null,
+        "and the script is still waiting on it"
+    );
+
+    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs, false);
+    frames(&mut c, 3);
+    assert_eq!(
+        armed(&navs),
+        (0, None),
+        "an operator logout carries nothing"
+    );
+    slot.lock().unwrap().stop();
 }
 
 #[test]

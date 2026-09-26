@@ -969,6 +969,47 @@ fn extends_stale_window(cmd: &IsolateCmd, generation: u64, latest: &mut u64) -> 
     }
 }
 
+/// Apply `frozen` to the script's work when it differs from the freeze in
+/// force (`applied`): operator Pause and a reconnect's hold share it.
+fn sync_work_freeze(applied: &mut bool, frozen: bool) {
+    if *applied == frozen {
+        return;
+    }
+    *applied = frozen;
+    if frozen {
+        crate::periodic_bank::on_pause();
+        crate::cake_stall::on_pause();
+        crate::walk_wait::on_pause();
+        crate::inspect_wait::on_pause();
+        crate::machine::on_pause();
+        crate::hunt_fight::on_pause();
+        crate::hunt_lair::on_pause();
+        crate::hunt_leave::on_pause();
+        crate::hunt_key::on_pause();
+        crate::hunt_cell::on_pause();
+        crate::hunt_bank::on_pause();
+        crate::quest_journal::on_pause();
+        crate::clue::on_pause();
+    } else {
+        crate::periodic_bank::on_resume();
+        crate::cake_stall::on_resume();
+        crate::walk_wait::on_resume();
+        crate::inspect_wait::on_resume();
+        crate::machine::on_resume();
+        crate::hunt_fight::on_resume();
+        crate::hunt_lair::on_resume();
+        crate::hunt_leave::on_resume();
+        crate::hunt_key::on_resume();
+        crate::hunt_cell::on_resume();
+        crate::hunt_bank::on_resume();
+        crate::quest_journal::on_resume();
+        crate::clue::on_resume();
+    }
+    // Frozen `ScriptContext.resume` shifts parked waits by the paused span
+    // (`ScriptContext.ts:101-117`).
+    crate::load::wait_clock::set_paused(frozen, Instant::now());
+}
+
 /// The tick loop: commands are serialized on this thread; ticks run
 /// with a time budget, slow ticks are logged and stale queued ticks are
 /// skipped, and errors never kill the isolate.
@@ -1004,6 +1045,15 @@ fn tick_loop(
     #[cfg(feature = "memory-profile")]
     let mut last_heap_sample = None::<Instant>;
     let mut paused = false;
+    // A reconnect holds the script's work (`ResetSession { keep_work }`)
+    // until the relogged session's first tick. It and operator Pause each
+    // freeze that work; `work_frozen` is the freeze last applied.
+    let mut session_held = false;
+    let mut work_frozen = false;
+    // Execution waits parked, as this thread's tick batches counted them.
+    // A session boundary zeroes the host watchdog's count; the reset
+    // restates it.
+    let mut parked_waits: u32 = 0;
     let mut pending: VecDeque<IsolateCmd> = VecDeque::new();
     // Host-owned hold gate (SEC-004): set from the posted FlatBuffer
     // snapshot, never from a JS-writable `__rs2b0t_host.hold`.
@@ -1112,6 +1162,16 @@ fn tick_loop(
                 generation,
                 input_identity,
             } => {
+                if session_held
+                    && generation == work_generation.load(std::sync::atomic::Ordering::Acquire)
+                {
+                    // The relogged session's first tick: frozen AutoRelogin
+                    // resumes the script at ingame and scene 2
+                    // (`AutoRelogin.ts:159-163`), which is what lets the
+                    // host tick again.
+                    session_held = false;
+                    sync_work_freeze(&mut work_frozen, paused);
+                }
                 if paused
                     || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
                 {
@@ -1389,6 +1449,9 @@ fn tick_loop(
                 // Machine-emitted ops join the batch in Rust at the JS
                 // queue position where they were emitted.
                 let taken = take_tick_output(&mut runtime, &out, n, generation, true, &teardown);
+                parked_waits = parked_waits
+                    .saturating_add(taken.enqueued)
+                    .saturating_sub(taken.settled);
                 taken.log_rejected(&out, n, generation);
                 let mut reqs = crate::machine::merge_ops(taken.rows);
                 stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
@@ -1504,22 +1567,26 @@ fn tick_loop(
                     });
                 }
             }
-            IsolateCmd::ResetSession => {
+            IsolateCmd::ResetSession { keep_work } => {
+                // The scene caches belong to the ended connection: the host
+                // posts a keyframe for the next one.
                 crate::observed::on_reset();
                 super::reach_query::on_reset();
-                crate::cake_stall::on_reset();
-                crate::walk_wait::on_reset();
-                crate::inspect_wait::on_reset();
-                crate::death_recovery::on_reset();
-                crate::machine::on_reset();
-                crate::hunt_fight::on_reset();
-                crate::hunt_lair::on_reset();
-                crate::hunt_leave::on_reset();
-                crate::hunt_key::on_reset();
-                crate::hunt_cell::on_reset();
-                crate::hunt_bank::on_reset();
-                crate::quest_journal::on_reset();
-                crate::clue::on_reset();
+                if !keep_work {
+                    crate::cake_stall::on_reset();
+                    crate::walk_wait::on_reset();
+                    crate::inspect_wait::on_reset();
+                    crate::death_recovery::on_reset();
+                    crate::machine::on_reset();
+                    crate::hunt_fight::on_reset();
+                    crate::hunt_lair::on_reset();
+                    crate::hunt_leave::on_reset();
+                    crate::hunt_key::on_reset();
+                    crate::hunt_cell::on_reset();
+                    crate::hunt_bank::on_reset();
+                    crate::quest_journal::on_reset();
+                    crate::clue::on_reset();
+                }
                 event_producer.reset();
                 if events_consumed {
                     // The compat runner's queue is the only holder of
@@ -1529,7 +1596,16 @@ fn tick_loop(
                     let _ =
                         runtime.eval::<()>("globalThis.__rs2b0t_pending_native_event_batch = null");
                 }
-                if v2_native {
+                if keep_work {
+                    // Frozen AutoRelogin pauses the whole script on a
+                    // disconnect and resumes it after the relog
+                    // (`AutoRelogin.ts:180-190`, `159-163`): every parked
+                    // await, machine row and task runtime stays as it is,
+                    // its clocks stopped (`ScriptContext.ts:92-117`), and no
+                    // JS runs until the new session's first tick.
+                    session_held = true;
+                    sync_work_freeze(&mut work_frozen, true);
+                } else if v2_native {
                     let _ = runtime.eval::<()>(
                         "if (typeof globalThis.__rs_v2_reset_session === 'function') globalThis.__rs_v2_reset_session()",
                     );
@@ -1556,41 +1632,27 @@ fn tick_loop(
                 clear_unconsumed_paint_click(&mut runtime);
                 super::paint_chrome::reset();
                 super::paint_jive::reset();
+                // The host zeroed its parked-wait count with the session;
+                // the waits still parked are counted again under the new
+                // work generation (settles from the drain follow as facts).
+                if parked_waits > 0 {
+                    let facts = vec![crate::shim::InteractReq::WaitEnqueued; parked_waits as usize];
+                    let _ = out.send(ThreadMsg::Interact {
+                        bytes: ipc.encode_interact_batch(&facts),
+                        generation: work_generation.load(std::sync::atomic::Ordering::Acquire),
+                    });
+                }
             }
             IsolateCmd::Pause => {
                 paused = true;
                 let _ = event_producer.set_paused(true);
-                crate::periodic_bank::on_pause();
-                crate::cake_stall::on_pause();
-                crate::walk_wait::on_pause();
-                crate::inspect_wait::on_pause();
-                crate::machine::on_pause();
-                crate::hunt_fight::on_pause();
-                crate::hunt_lair::on_pause();
-                crate::hunt_leave::on_pause();
-                crate::hunt_key::on_pause();
-                crate::hunt_cell::on_pause();
-                crate::hunt_bank::on_pause();
-                crate::quest_journal::on_pause();
-                crate::clue::on_pause();
+                sync_work_freeze(&mut work_frozen, true);
                 clear_unconsumed_paint_click(&mut runtime);
             }
             IsolateCmd::Resume => {
                 paused = false;
                 let _ = event_producer.set_paused(false);
-                crate::periodic_bank::on_resume();
-                crate::cake_stall::on_resume();
-                crate::walk_wait::on_resume();
-                crate::inspect_wait::on_resume();
-                crate::machine::on_resume();
-                crate::hunt_fight::on_resume();
-                crate::hunt_lair::on_resume();
-                crate::hunt_leave::on_resume();
-                crate::hunt_key::on_resume();
-                crate::hunt_cell::on_resume();
-                crate::hunt_bank::on_resume();
-                crate::quest_journal::on_resume();
-                crate::clue::on_resume();
+                sync_work_freeze(&mut work_frozen, session_held);
             }
             IsolateCmd::PaintClick { id, generation } => {
                 if paused

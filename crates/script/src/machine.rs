@@ -96,11 +96,18 @@
 //!   in the tick's pump, or, for an outcome reached after the pump (the
 //!   resume pass, a supersede by the tick's own JS), in the machine-only
 //!   settle that follows the resume pass in the same tick.
-//! - **ResetSession** ([`on_reset`]): every live row is aborted and its
-//!   await settles `{ kind: 'aborted', reason: 'reset' }`; held callbacks
-//!   and pending promises are released; pending ops are dropped with the
-//!   JS queue, including ops of machines started during the reset drain
-//!   ([`drop_ops`]).
+//! - **ResetSession, session ended** ([`on_reset`]): every live row is
+//!   aborted and its await settles `{ kind: 'aborted', reason: 'reset' }`;
+//!   held callbacks and pending promises are released; pending ops are
+//!   dropped with the JS queue, including ops of machines started during
+//!   the reset drain ([`drop_ops`]).
+//! - **ResetSession, reconnect**: nothing here is reset. Every row, held
+//!   callback and pending promise stays, frozen like a Pause, so the whole
+//!   chain the script had in flight (a walk started inside another row's
+//!   callback included) resumes together on the relogged session's first
+//!   tick, as frozen AutoRelogin resumes the paused script
+//!   (`AutoRelogin.ts:180-190`, `159-163`). Pending ops are dropped with
+//!   the JS queue; the host re-arms the script walk it was following.
 //! - **Pause / guardian hold** ([`on_pause`], [`on_resume`], [`on_hold`]):
 //!   rows are not stepped nor promises polled, and every row's
 //!   [`InstantTaskClock`] freezes, so deadlines resume where they stopped.

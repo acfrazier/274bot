@@ -17,8 +17,8 @@ use script::{ScriptCtx, SlotScript};
 use super::{
     abort_script_walk, action_slot, apply_watchdog_nav_action, dispatch_observed_bank_op,
     dispatch_script_interact_cached, fill_withdraw_action, pack_cached_reach, recovery_walk_idle,
-    route_inspect, script_slot, with_script_snapshot_input_shorts, NavBot, PostedWalkOutcome,
-    ScriptWalkArm, ScriptWall,
+    route_inspect, script_slot, take_carried_walk, with_script_snapshot_input_shorts, NavBot,
+    PostedWalkOutcome, ScriptWalkArm, ScriptWall,
 };
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
@@ -752,6 +752,12 @@ pub(crate) fn script_observe_cached(
                 if slot.watchdog().holds_script_actions() {
                     let _dropped = slot.drain_interacts();
                 } else {
+                    // The walk a reconnect interrupted goes out first, on
+                    // the relogged session's first dispatch, ahead of what
+                    // the resumed script asks for (an abort of it included).
+                    if up && !hold && here.is_some() && snapshot.is_some() {
+                        interact.extend(take_carried_walk(navs, name, slot.runtime_generation()));
+                    }
                     interact.extend(take_script_interacts(slot.drain_interacts(), slot_input));
                 }
             }

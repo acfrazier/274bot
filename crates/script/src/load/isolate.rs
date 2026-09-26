@@ -108,7 +108,11 @@ enum IsolateCmd {
         generation: u64,
         input_identity: u64,
     },
-    ResetSession,
+    /// A session boundary. `keep_work`: the host relogs through it, so the
+    /// script's work is held for the next session instead of ended.
+    ResetSession {
+        keep_work: bool,
+    },
     /// The host's FlatBuffer snapshot blob (schema: `crates/script/
     /// schema/isolate.fbs`), decoded on the isolate thread into the
     /// JS object the Game/Inventory/Skills/EventSignal shims read
@@ -964,12 +968,30 @@ impl LoadIsolate {
         std::mem::take(&mut *self.lifecycle.lock().unwrap())
     }
 
-    /// Discard work from the previous connection, including batches that
-    /// an already running tick has not forwarded yet. Script state and
-    /// parked waits survive; the next snapshot is posted before a new tick.
-    /// Returns the new work generation. An active error transfers to that
-    /// generation so the first completed clean loop can recover it.
+    /// The session ended (operator logout, idle logout, no relog coming):
+    /// discard work from the previous connection, including batches that an
+    /// already running tick has not forwarded yet, and end the script's
+    /// in-flight machine rows and task runtimes (their awaits settle
+    /// `aborted`). Script state and parked Execution waits survive; the next
+    /// snapshot is posted before a new tick. Returns the new work
+    /// generation. An active error transfers to that generation so the
+    /// first completed clean loop can recover it.
     pub fn reset_session_work(&self) -> u64 {
+        self.reset_session(false)
+    }
+
+    /// The connection dropped and the host relogs: discard the connection's
+    /// work like [`LoadIsolate::reset_session_work`], but hold the script's
+    /// own — every parked await, machine row and task runtime, their clocks
+    /// and the Execution wait clock stopped — until the relogged session's
+    /// first tick. Frozen AutoRelogin pauses the whole script across a
+    /// disconnect and resumes it on the new session's scene 2
+    /// (`AutoRelogin.ts:180-190`, `159-163`; `ScriptContext.ts:92-117`).
+    pub fn reconnect_session_work(&self) -> u64 {
+        self.reset_session(true)
+    }
+
+    fn reset_session(&self, keep_work: bool) -> u64 {
         // No game ticks arrive while disconnected, so preserve the active
         // execution's existing runaway horizon before clearing `in_flight`.
         self.arm_active_execution_deadline(teardown::ExecutionInterrupt::SessionReset);
@@ -1008,7 +1030,7 @@ impl LoadIsolate {
             }
         }
         *self.in_flight.lock().unwrap() = None;
-        self.send(IsolateCmd::ResetSession);
+        self.send(IsolateCmd::ResetSession { keep_work });
         generation
     }
 

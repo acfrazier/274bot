@@ -23,8 +23,10 @@ function trySettle(wait, tick, now) {
     return wait.timeoutAt !== null && now >= wait.timeoutAt ? false : undefined;
 }
 
-// Parked waits in enqueue order; wall-clock waits use isolate time
-// (performance.now()), like the rs2b0t Scheduler.
+// Parked waits in enqueue order. Time waits and timeouts are measured on
+// the host's wait clock, which stands still while the script is paused
+// (rs2b0t ScriptContext.resume shifts them by the paused span).
+const waitNow = () => globalThis.rustyscript.functions.__rs2b0t_wait_now();
 const park = {
     waits: [],
 
@@ -58,7 +60,7 @@ const park = {
 
 export const Execution = {
     async delay(ms) {
-        await park.enqueue({ kind: 'time', dueAt: performance.now() + ms });
+        await park.enqueue({ kind: 'time', dueAt: waitNow() + ms });
     },
 
     async delayTicks(n) {
@@ -75,7 +77,7 @@ export const Execution = {
         return park.enqueue({
             kind: 'cond',
             cond,
-            timeoutAt: timeoutMs > 0 ? performance.now() + timeoutMs : null,
+            timeoutAt: timeoutMs > 0 ? waitNow() + timeoutMs : null,
         });
     },
 
@@ -114,7 +116,7 @@ export function parkMachine(handle) {
 // tick and fired tick listeners). It only settles due waits; their
 // continuations run as the call returns.
 globalThis.__rs2b0t_pump = (n) => {
-    park.settle(n, performance.now());
+    park.settle(n, waitNow());
 };
 
 // After the pump, a machine that resumed on a settled callback promise

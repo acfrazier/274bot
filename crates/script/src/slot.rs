@@ -967,8 +967,26 @@ impl SlotScript {
     }
 
     /// Re-gate a started script and invalidate deferred actions and snapshot
-    /// deltas at a connection boundary. Operator run intent is retained.
+    /// deltas at a connection boundary that ends the session (operator or
+    /// idle logout, or no relog coming): a Load script's in-flight machine
+    /// rows and task runtimes end. Operator run intent is retained.
     pub fn reset_session_work(&mut self) {
+        self.session_boundary(false);
+    }
+
+    /// The connection dropped and the host relogs: as
+    /// [`SlotScript::reset_session_work`], except that a Load script's work
+    /// is held whole for the relogged session
+    /// ([`LoadIsolate::reconnect_session_work`]); a compiled script's live
+    /// step still ends. Returns whether the host should re-arm, on the new
+    /// session, the script walk it was following: the script's work was
+    /// held and the walk is not the watchdog's own recovery walk, which the
+    /// boundary ends.
+    pub fn reconnect_session_work(&mut self) -> bool {
+        self.session_boundary(true)
+    }
+
+    fn session_boundary(&mut self, reconnect: bool) -> bool {
         self.on_is_up(false);
         #[cfg(feature = "load")]
         if !self.load_active() {
@@ -982,8 +1000,13 @@ impl SlotScript {
         #[cfg(feature = "load")]
         {
             let carried_error = self.active_tick_error_generation.is_some();
+            let held = reconnect && self.load.is_some();
             if let Some(isolate) = &self.load {
-                let generation = isolate.reset_session_work();
+                let generation = if held {
+                    isolate.reconnect_session_work()
+                } else {
+                    isolate.reset_session_work()
+                };
                 self.active_tick_error_generation = carried_error.then_some(generation);
             } else {
                 self.active_tick_error_generation = None;
@@ -993,8 +1016,13 @@ impl SlotScript {
             self.reach_cache.clear();
 
             let abort = self.watchdog.abort_owned_recovery();
-            let reset = self.watchdog.on_session_reset(Instant::now());
-            let _ = (abort, reset);
+            let _ = self.watchdog.on_session_reset(Instant::now());
+            held && abort != WatchdogAction::AbortWalk
+        }
+        #[cfg(not(feature = "load"))]
+        {
+            let _ = reconnect;
+            false
         }
     }
 

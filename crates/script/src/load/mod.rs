@@ -71,6 +71,8 @@ mod supply_v8;
 mod targets_v8;
 #[cfg(feature = "load")]
 mod tools_v8;
+#[cfg(feature = "load")]
+mod wait_clock;
 
 pub use shape::{
     collect_raw_sibling_hashes, detect_shape, first_unloadable_for_card,

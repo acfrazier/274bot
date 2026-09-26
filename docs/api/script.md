@@ -30,6 +30,15 @@ inventory count as “all catalog scripts / all options qualified.”
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
 
+A dropped connection the slot relogs through by itself (a login intent the
+operator has not latched off or withdrawn) pauses a Load script whole: every
+await, step machine and task runtime stays, their clocks and the
+`Execution` wait clock stop, and the script resumes on the relogged session's
+first tick with the script walk it was following re-armed. An operator or idle
+logout, a withdrawn login, Stop or slot removal ends the session instead: the
+in-flight machine rows and task runtimes end (`aborted`, `reset`). Compiled
+scripts end their live step at either boundary.
+
 ### File Load and catalog cards
 
 - **Load** registers a picker card tagged **File** from an absolute/relative
