@@ -178,19 +178,14 @@ mod tests {
 
     #[test]
     fn shared_profile_parser_keeps_explicit_overrides_order_independent() {
-        let parsed = args(&[
-            "--cache",
-            "/tmp/host-play-explicit-cache",
-            "--prod",
-            "--user",
-            "alice",
-        ])
-        .unwrap();
         let home =
             std::env::temp_dir().join(format!("274bot-host-play-parser-{}", std::process::id()));
         if home.exists() {
             std::fs::remove_dir_all(&home).unwrap();
         }
+        let cache = home.join("host-play-explicit-cache");
+        let cache_arg = cache.to_string_lossy().into_owned();
+        let parsed = args(&["--cache", &cache_arg, "--prod", "--user", "alice"]).unwrap();
         let selection = parsed
             .profile
             .resolve_with_env(
@@ -202,10 +197,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(selection.game_host(), "w1.rs2b2t.com");
-        assert_eq!(
-            selection.cache_dir(),
-            std::path::Path::new("/tmp/host-play-explicit-cache")
-        );
+        assert_eq!(selection.cache_dir(), cache);
         assert_eq!(selection.revision(), ClientRevision::R289);
         assert_eq!(parsed.users, ["alice"]);
         std::fs::remove_dir_all(home).unwrap();

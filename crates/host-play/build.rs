@@ -38,8 +38,8 @@
 use std::path::{Path, PathBuf};
 
 use nav::bake::{
-    config_jag_for, content_inputs, generator_identity, verify_cache_manifest, BakeRequest,
-    GENERATOR_SOURCES,
+    config_jag_for, content_inputs, generator_identity, pois_generator_identity,
+    verify_cache_manifest, BakeRequest, GENERATOR_SOURCES, POIS_GENERATOR_SOURCES,
 };
 use nav::bundle::{
     artifact_layout, fingerprints, merge_identity_rows, resource_root_for_build, BakeStamp,
@@ -84,6 +84,21 @@ fn main() {
         .map(|(label, text)| (*label, text.as_str()))
         .collect();
     let generator = generator_identity(&source_refs);
+    let mut pois_sources = Vec::new();
+    for relative in POIS_GENERATOR_SOURCES {
+        let path = nav_dir.join(relative);
+        println!("cargo:rerun-if-changed={}", path.display());
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) => fail(&format!("navpois generator source {}: {e}", path.display())),
+        };
+        pois_sources.push((relative, text));
+    }
+    let pois_refs: Vec<(&str, &str)> = pois_sources
+        .iter()
+        .map(|(label, text)| (*label, text.as_str()))
+        .collect();
+    let pois_generator = pois_generator_identity(&pois_refs);
 
     // Checked-in rows describe prebuilt resource bundles a packager shipped.
     let checked_in_path = manifest_dir.join("src/bundled-nav-identities.json");
@@ -210,6 +225,7 @@ fn main() {
     let flags_path = resource_root.join(&layout.relative_flags);
     let reach_path = resource_root.join(&layout.relative_reach);
     let canlight_path = resource_root.join(&layout.relative_canlight);
+    let pois_path = resource_root.join(&layout.relative_pois);
     let stamp_path = resource_root.join(&layout.relative_stamp);
     // Staged artifacts are watched so that a later build notices one that was
     // deleted or replaced (cargo treats a missing watched path as changed),
@@ -219,11 +235,13 @@ fn main() {
         &flags_path,
         &reach_path,
         &canlight_path,
+        &pois_path,
         &stamp_path,
     ] {
         println!("cargo:rerun-if-changed={}", staged.display());
     }
 
+    let staged_pois_sha256 = nav::manifest::hash_file(&pois_path).ok();
     let expectation = StampExpectation {
         revision,
         format: FORMAT_ID,
@@ -234,6 +252,9 @@ fn main() {
         staged_flags_bytes: file_len(&flags_path),
         staged_reach_bytes: file_len(&reach_path),
         staged_canlight_bytes: file_len(&canlight_path),
+        staged_pois_bytes: file_len(&pois_path),
+        staged_pois_sha256: staged_pois_sha256.as_deref(),
+        pois_generator: &pois_generator,
     };
     let staged = read_stamp(&stamp_path);
     let (row, reused) = match staged
@@ -256,6 +277,7 @@ fn main() {
                 reach_sha256: Some(staged.as_ref().expect("stamp").reach_sha256.clone()),
                 canlight_sha256: Some(staged.as_ref().expect("stamp").canlight_sha256.clone()),
                 canlight_identity: Some(staged.as_ref().expect("stamp").canlight_identity.clone()),
+                pois_sha256: staged.as_ref().expect("stamp").pois_sha256.clone(),
                 relative_path: layout.relative_pack.clone(),
             },
             true,
@@ -268,6 +290,7 @@ fn main() {
                 &manifest,
                 manifest_source.as_deref(),
                 &generator,
+                &pois_generator,
                 &cache_id,
                 &content_id,
                 &input_fingerprints,
@@ -313,6 +336,7 @@ fn bake_and_stage(
     cache: &CacheManifest,
     manifest_source: Option<&Path>,
     generator: &str,
+    pois_generator: &str,
     cache_id: &str,
     content_id: &str,
     input_fingerprints: &[nav::bundle::InputFingerprint],
@@ -331,6 +355,7 @@ fn bake_and_stage(
         config_jag,
         cache: Some(cache),
         require_all_door_configs: true,
+        content_id: Some(content_id),
     })?;
     for note in &baked.notes {
         println!("cargo:warning=nav bundle: {note}");
@@ -339,12 +364,16 @@ fn bake_and_stage(
         .manifest
         .ok_or_else(|| "a bound bake carries its manifest".to_string())?;
     manifest.content_id = Some(content_id.into());
+    let pois = baked
+        .pois
+        .ok_or_else(|| "a bound bake stamps navpois".to_string())?;
     let summary = baked.summary;
 
     let pack_path = resource_root.join(&layout.relative_pack);
     let flags_path = resource_root.join(&layout.relative_flags);
     let reach_path = resource_root.join(&layout.relative_reach);
     let canlight_path = resource_root.join(&layout.relative_canlight);
+    let pois_path = resource_root.join(&layout.relative_pois);
     let dir = pack_path
         .parent()
         .ok_or_else(|| format!("resource path {} has no parent", pack_path.display()))?;
@@ -353,6 +382,7 @@ fn bake_and_stage(
     write_atomic(&flags_path, &baked.flags)?;
     write_atomic(&reach_path, &baked.reach)?;
     write_atomic(&canlight_path, &baked.canlight)?;
+    write_atomic(&pois_path, &pois)?;
     let nav_manifest_bytes =
         serde_json::to_vec_pretty(&manifest).map_err(|e| format!("navigation manifest: {e}"))?;
     write_atomic(
@@ -372,6 +402,10 @@ fn bake_and_stage(
         .canlight_sha256
         .clone()
         .ok_or_else(|| "a bound bake stamps the canlight digest".to_string())?;
+    let pois_sha256 = manifest
+        .pois_sha256
+        .clone()
+        .ok_or_else(|| "a bound bake stamps the navpois digest".to_string())?;
     let stamp = BakeStamp {
         generator: generator.to_string(),
         format: FORMAT_ID.to_string(),
@@ -389,6 +423,10 @@ fn bake_and_stage(
         flags_bytes: baked.flags.len() as u64,
         reach_bytes: baked.reach.len() as u64,
         canlight_bytes: baked.canlight.len() as u64,
+        pois_sha256: Some(pois_sha256.clone()),
+        pois_bytes: Some(pois.len() as u64),
+        relative_pois: Some(layout.relative_pois.clone()),
+        pois_generator: Some(pois_generator.to_string()),
         relative_pack: layout.relative_pack.clone(),
         relative_flags: layout.relative_flags.clone(),
         relative_reach: layout.relative_reach.clone(),
@@ -400,7 +438,7 @@ fn bake_and_stage(
     write_atomic(&resource_root.join(&layout.relative_stamp), &stamp_bytes)?;
 
     println!(
-        "cargo:warning=nav bundle: baked {} mapsquares into a {}x{} grid, {} walkable tiles, {} edges, {} banks; pack {} bytes, flags {} bytes, reach {} bytes -> {}",
+        "cargo:warning=nav bundle: baked {} mapsquares into a {}x{} grid, {} walkable tiles, {} edges, {} banks; pack {} bytes, flags {} bytes, reach {} bytes, pois {} bytes -> {}",
         summary.mapsquares,
         summary.width,
         summary.height,
@@ -410,6 +448,7 @@ fn bake_and_stage(
         baked.pack.len(),
         baked.flags.len(),
         baked.reach.len(),
+        pois.len(),
         pack_path.display()
     );
     Ok(NavIdentityRow {
@@ -423,6 +462,7 @@ fn bake_and_stage(
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
         canlight_identity: Some(baked.canlight_identity),
+        pois_sha256: Some(pois_sha256),
         relative_path: layout.relative_pack.clone(),
     })
 }

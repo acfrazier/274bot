@@ -247,6 +247,10 @@ pub struct SceneRow {
     pub level: i32,
     pub distance: i32,
     pub actions: Ops,
+    /// Placed loc wall shape; zero for rows that are not locs.
+    pub shape: u8,
+    /// Placed loc wall angle; zero for rows that are not locs.
+    pub angle: u8,
 }
 
 impl SceneRow {
@@ -259,6 +263,8 @@ impl SceneRow {
             level: row.level(),
             distance: row.distance(),
             actions: strings.ops(&row.actions()),
+            shape: u8::try_from(row.shape()).unwrap_or_default(),
+            angle: u8::try_from(row.angle()).unwrap_or_default(),
         }
     }
 
@@ -312,6 +318,7 @@ pub struct Skills {
     pub prayer: Option<Skill>,
     pub magic: Option<Skill>,
     pub firemaking: Option<Skill>,
+    pub fishing: Option<Skill>,
     /// Every skill the client uses (`Skill::used`, by stat index) has a
     /// posted base level above 0. The rs2b0t `activeStatsReady` rule: a
     /// freshly logged-in client posts 0 until the stat packets arrive.
@@ -338,6 +345,8 @@ impl Skills {
                 &mut skills.magic
             } else if name.eq_ignore_ascii_case("firemaking") {
                 &mut skills.firemaking
+            } else if name.eq_ignore_ascii_case("fishing") {
+                &mut skills.fishing
             } else {
                 continue;
             };
@@ -478,6 +487,8 @@ pub struct WalkOutcome {
     pub tile: Tile,
     pub radius: i32,
     pub allow_teleports: bool,
+    /// The settled route end is frozen `'blocked'`.
+    pub blocked: bool,
 }
 
 /// Which post carried a page, in which scene. Equal stamps are the same
@@ -558,6 +569,8 @@ scene_pages! {
         ours: bool,
         scene_state: i32,
         animating: bool,
+        /// The local player's primary animation id (`-1` idle).
+        self_anim: i32,
         in_combat: bool,
         self_slot: i32,
         self_target_kind: i32,
@@ -582,6 +595,7 @@ scene_pages! {
         trade_decline_id: i32,
         shop_open: bool,
         walk_outcome: WalkOutcome,
+        bank_selection: crate::isolate_fb::BankSelectionInput,
         /// The posted root of side tab 0, or `-1` when a posted side-tab
         /// table has no row for it.
         combat_tab_root: i32,
@@ -780,6 +794,9 @@ impl Scene {
         }
         if snap.has_animating() {
             p.animating(snap.animating());
+        }
+        if snap.has_self_anim() {
+            p.self_anim(snap.self_anim());
         }
         if snap.has_in_combat() {
             p.in_combat(snap.in_combat());
@@ -1014,6 +1031,9 @@ impl Scene {
                     .collect(),
             );
         }
+        if let Some(result) = snap.bank_selection() {
+            p.bank_selection(result);
+        }
         if let Some(pair) = snap.main_modal_texts() {
             p.main_modal_texts(ModalTexts {
                 root: pair.root(),
@@ -1107,6 +1127,7 @@ impl Scene {
                 },
                 radius: snap.walk_outcome_radius(),
                 allow_teleports: snap.walk_outcome_allow_teleports(),
+                blocked: snap.walk_outcome_blocked(),
             });
         }
     }
@@ -1213,6 +1234,8 @@ mod tests {
             size: 1,
             nx: 10,
             nz: 20,
+            shape: 0,
+            angle: 0,
         }
     }
 

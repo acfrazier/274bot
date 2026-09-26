@@ -5,7 +5,7 @@
 import { snap, notImpl, runMachine } from '../../shim/_kernel.js';
 
 // What a call ended by a reset or a newer shop call resolves to.
-const ABORTED = { open: false, buy: 0, sell: 0, close: undefined };
+const ABORTED = { open: false, buy: 0, sell: 0, sellall: 0, close: undefined };
 
 async function run(kind, name, qty, pick) {
     const out = await runMachine(
@@ -13,7 +13,7 @@ async function run(kind, name, qty, pick) {
         { kind, name: name ?? '', qty: qty ?? 1 },
         { pick: typeof pick === 'function' ? pick : undefined },
     );
-    if (out.kind === 'refused') throw notImpl('Shop.' + kind, out.reason);
+    if (out.kind === 'refused') throw notImpl(kind === 'sellall' ? 'Shop.sellAll' : 'Shop.' + kind, out.reason);
     if (out.kind !== 'done') return ABORTED[kind];
     return out.value ?? undefined;
 }
@@ -47,6 +47,9 @@ export const Shop = new Proxy(
         },
         sell(name, qty, pick) {
             return run('sell', String(name ?? ''), qty ?? 1, pick);
+        },
+        sellAll(name, pick) {
+            return run('sellall', String(name ?? ''), 1, pick);
         },
         close() {
             return run('close', '', 1);

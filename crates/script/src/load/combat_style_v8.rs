@@ -1,6 +1,11 @@
 //! v1 `CombatStyleLogic` rune helpers (frozen
 //! `bot/api/combat/CombatStyleLogic.ts`) as one native call each:
-//! `__rs2b0t_combat_style(op, spellName, wielded, heldOrCasts)`.
+//! `__rs2b0t_combat_style(op, spellName, wielded, heldOrCasts)`; and the
+//! frozen `CombatStyle` tables: `__rs2b0t_describe_combat_style(resolution)`,
+//! `__rs2b0t_parse_combat_style` / `__rs2b0t_try_parse_combat_style(name)`
+//! and `__rs2b0t_parse_range_style(name)`; and the frozen `AttackClock`
+//! ([`crate::attack_clock`]): `__rs2b0t_swing_started()` and
+//! `__rs2b0t_attack_clock_{new,observe,attacked,reset}`.
 //!
 //! The remaining per-cast costs are `SelectedGameData::runes_per_cast`; the
 //! shim passes the spell name and wielded names already coerced to strings.
@@ -15,7 +20,217 @@ use api::game_data::RemainingRuneCost;
 use rustyscript::Runtime;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
-    cb::install(runtime, "__rs2b0t_combat_style", combat_style)
+    cb::install(runtime, "__rs2b0t_combat_style", combat_style)?;
+    cb::install(
+        runtime,
+        "__rs2b0t_describe_combat_style",
+        describe_combat_style,
+    )?;
+    cb::install(runtime, "__rs2b0t_parse_combat_style", parse_combat_style)?;
+    cb::install(
+        runtime,
+        "__rs2b0t_try_parse_combat_style",
+        try_parse_combat_style,
+    )?;
+    cb::install(runtime, "__rs2b0t_parse_range_style", parse_range_style)?;
+    cb::install(runtime, "__rs2b0t_swing_started", swing_started)?;
+    cb::install(runtime, "__rs2b0t_attack_clock_new", clock_new)?;
+    cb::install(runtime, "__rs2b0t_attack_clock_observe", clock_observe)?;
+    cb::install(runtime, "__rs2b0t_attack_clock_attacked", clock_attacked)?;
+    cb::install(runtime, "__rs2b0t_attack_clock_reset", clock_reset)
+}
+
+/// A JS number argument as the frozen clock compares it (`!==` / `===`): a
+/// non-number never equals a number, which NaN reproduces.
+fn js_number(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> f64 {
+    if value.is_number() {
+        value.number_value(scope).unwrap_or(f64::NAN)
+    } else {
+        f64::NAN
+    }
+}
+
+/// An `AttackClock` instance slot; an unknown or malformed one is `not impl`.
+fn clock_slot<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    value: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, usize> {
+    let slot = number(scope, value)?;
+    if slot.is_finite() && slot >= 0.0 && slot.fract() == 0.0 {
+        Ok(slot as usize)
+    } else {
+        Err(not_impl(scope, "AttackClock"))
+    }
+}
+
+fn unknown_clock<'s>(scope: &mut v8::HandleScope<'s>) -> cb::Throw<'s> {
+    not_impl(scope, "AttackClock")
+}
+
+/// Frozen `swingStartedThisTick()` (`fightUpkeep.ts:16-19`): the module clock.
+fn swing_started<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    _args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+) {
+    let started = crate::attack_clock::swing_started_this_tick();
+    rv.set(v8::Boolean::new(scope, started).into());
+}
+
+/// `new AttackClock()` (`eatTiming.ts:27-29`): the new instance's slot.
+fn clock_new<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    _args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+) {
+    rv.set(cb::num(scope, crate::attack_clock::clock_new() as f64));
+}
+
+/// `clock.observe(anim, tick)` (`eatTiming.ts:31-39`) with the caller's anim.
+fn clock_observe<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = clock_slot(scope, args.get(0)).and_then(|slot| {
+        let anim = js_number(scope, args.get(1));
+        let tick = js_number(scope, args.get(2));
+        crate::attack_clock::clock_observe(slot, anim, tick)
+            .map(|()| v8::undefined(scope).into())
+            .ok_or_else(|| unknown_clock(scope))
+    });
+    cb::finish(scope, rv, result);
+}
+
+/// `clock.attackedThisTick(tick)` (`eatTiming.ts:42-44`).
+fn clock_attacked<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = clock_slot(scope, args.get(0)).and_then(|slot| {
+        let tick = js_number(scope, args.get(1));
+        crate::attack_clock::clock_attacked(slot, tick)
+            .map(|attacked| v8::Boolean::new(scope, attacked).into())
+            .ok_or_else(|| unknown_clock(scope))
+    });
+    cb::finish(scope, rv, result);
+}
+
+/// `clock.reset()` (`eatTiming.ts:46-49`).
+fn clock_reset<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = clock_slot(scope, args.get(0)).and_then(|slot| {
+        crate::attack_clock::clock_reset(slot)
+            .map(|()| v8::undefined(scope).into())
+            .ok_or_else(|| unknown_clock(scope))
+    });
+    cb::finish(scope, rv, result);
+}
+
+/// Frozen `COMBAT_STYLE` (`api/combat/CombatStyle.ts:3-13`): the melee style a
+/// trimmed, lowercased token names.
+pub(super) fn melee_style(name: &str) -> Option<&'static str> {
+    match name.trim().to_lowercase().as_str() {
+        "attack" | "accurate" => Some("attack"),
+        "strength" | "aggressive" => Some("strength"),
+        "controlled" | "shared" => Some("controlled"),
+        "defence" | "defense" | "defensive" => Some("defence"),
+        _ => None,
+    }
+}
+
+/// Frozen `RANGE_STYLE_MODE` (`CombatStyle.ts:171-177`).
+fn range_mode(name: &str) -> Option<f64> {
+    match name.trim().to_lowercase().as_str() {
+        "accurate" => Some(0.0),
+        "rapid" => Some(1.0),
+        "longrange" | "long range" | "long-range" => Some(2.0),
+        _ => None,
+    }
+}
+
+/// Frozen `parseCombatStyle` (`CombatStyle.ts:39-41`): unknown is `strength`.
+fn parse_combat_style<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = cb::to_string(scope, args.get(0))
+        .map(|name| cb::string(scope, melee_style(&name).unwrap_or("strength")));
+    cb::finish(scope, rv, result);
+}
+
+/// Frozen `tryParseCombatStyle` (`CombatStyle.ts:47-49`): unknown is `null`.
+fn try_parse_combat_style<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = cb::to_string(scope, args.get(0)).map(|name| match melee_style(&name) {
+        Some(style) => cb::string(scope, style),
+        None => v8::null(scope).into(),
+    });
+    cb::finish(scope, rv, result);
+}
+
+/// Frozen `parseRangeStyle` (`CombatStyle.ts:181-183`): unknown is mode 1.
+fn parse_range_style<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = cb::to_string(scope, args.get(0))
+        .map(|name| cb::num(scope, range_mode(&name).unwrap_or(1.0)));
+    cb::finish(scope, rv, result);
+}
+
+/// Frozen `describeCombatStyle(resolution)` (`api/combat/CombatStyle.ts:148-169`):
+/// the trained skills of the style the weapon actually offers (`effective`,
+/// `:150-163`), with `; <requested> unavailable` when the requested style
+/// fell back (`:165-167`).
+fn describe_combat_style<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let resolution = args.get(0);
+        let effective = cb::get(scope, resolution, "effective")?;
+        let description = effective
+            .is_string()
+            .then(|| effective.to_rust_string_lossy(scope))
+            .and_then(|effective| match effective.as_str() {
+                "attack" => Some("attack (training Attack)"),
+                "strength" => Some("strength (training Strength)"),
+                "controlled" => Some("controlled (training Attack, Strength & Defence)"),
+                "defence" => Some("defence (training Defence)"),
+                _ => None,
+            });
+        let requested = cb::get(scope, resolution, "requested")?;
+        if requested.strict_equals(effective) {
+            return Ok(match description {
+                Some(description) => cb::string(scope, description),
+                None => v8::undefined(scope).into(),
+            });
+        }
+        let Some(description) = description else {
+            return Err(cb::type_error(
+                scope,
+                "Cannot read properties of undefined (reading 'slice')",
+            ));
+        };
+        let requested = cb::to_string(scope, requested)?;
+        let open = &description[..description.len() - 1];
+        Ok(cb::string(
+            scope,
+            &format!("{open}; {requested} unavailable)"),
+        ))
+    })();
+    cb::finish(scope, rv, result);
 }
 
 fn combat_style<'s>(

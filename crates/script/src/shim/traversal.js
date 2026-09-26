@@ -46,8 +46,10 @@ async function walkWorld(tile, opts = {}) {
 export const Traversal = proxy('Traversal', {
     walkTo: walkWorld,
     // Frozen Traversal.walkResilient: Rust owns the baked walk, retries,
-    // attempts/no-progress, interrupt and arrival (`walk-resilient`).
+    // attempts/no-progress, verify probe, interrupt, arrival and the
+    // teleport policy (`walk-resilient`). The shim only coerces options.
     async walkResilient(tile, opts = {}) {
+        const policy = opts.policy || {};
         const out = await runMachine(
             'walk-resilient',
             {
@@ -60,14 +62,30 @@ export const Traversal = proxy('Traversal', {
                     ...(typeof opts.timeoutMs === 'number'
                         ? { timeoutMs: Math.floor(opts.timeoutMs) }
                         : {}),
-                    useTeleportCatalog: allowTeleports(opts),
+                    ...(typeof opts.sceneRadius === 'number'
+                        ? { sceneRadius: Math.floor(opts.sceneRadius) }
+                        : {}),
+                    ...(typeof opts.useTeleportCatalog === 'boolean'
+                        ? { useTeleportCatalog: opts.useTeleportCatalog }
+                        : {}),
+                    policy: {
+                        ...(typeof policy.useTeleports === 'boolean'
+                            ? { useTeleports: policy.useTeleports }
+                            : {}),
+                        ...(typeof policy.distanceBeforeTeleport === 'number'
+                            ? { distanceBeforeTeleport: Math.floor(policy.distanceBeforeTeleport) }
+                            : {}),
+                    },
+                    avoidZones: Array.isArray(opts.avoidZones) ? opts.avoidZones.length : 0,
+                    ...(typeof opts.maxBudget === 'number' && opts.maxBudget >= 0
+                        ? { maxBudget: Math.floor(opts.maxBudget) }
+                        : {}),
                 },
             },
             { log: typeof opts.log === 'function' ? opts.log : undefined, sustain: () => Sustain.run() },
         );
         if (out.kind === 'refused') throw notImpl('Traversal.walkResilient', out.reason);
         return out.kind === 'done' && out.value === true;
-
     },
 
     preload() {

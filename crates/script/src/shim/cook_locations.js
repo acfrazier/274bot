@@ -13,13 +13,15 @@ export function cookLocation(name) {
 }
 
 /**
- * Named posted stands only. Auto has no nearest-bank pairing or bankUnlocked
- * policy on this host, so it stays null like Custom and unknown names.
+ * `Custom`, unknown and locked names yield null; `Auto` takes the nearest
+ * bank this account can open. Rust decides; a caller's `unlocked` gets the
+ * `CookLocation` for each index Rust asks about.
  */
-export function resolveCookLocation(name) {
-    const wanted = String(name || '').trim().toLowerCase();
-    if (!wanted || wanted === 'auto' || wanted === CUSTOM_LOCATION.toLowerCase()) {
-        return null;
-    }
-    return cookLocation(name);
+export function resolveCookLocation(setting, from, unlocked) {
+    const index = globalThis.__rs2b0t_resolve_cook_location(
+        String(setting ?? ''),
+        from,
+        unlocked === undefined ? undefined : (i) => unlocked(COOK_LOCATIONS[i]),
+    );
+    return index === null ? null : COOK_LOCATIONS[index];
 }

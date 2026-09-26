@@ -6,21 +6,6 @@
 //! the tick loop. Lifecycle/teardown stays in `isolate`.
 
 use rustyscript::Runtime;
-use std::cell::Cell;
-
-thread_local! {
-    /// The previous post's `animating` flag and tick, the only cross-post
-    /// state the swing-start edge needs (`fight_upkeep.swingStartedThisTick`,
-    /// `eat_timing.AttackClock`: true only on the tick the local player's
-    /// primary animation began). Cleared on `ResetSession` and whenever the JS
-    /// snapshot object is rebuilt.
-    static LAST_ANIMATING: Cell<Option<(bool, u64)>> = const { Cell::new(None) };
-}
-
-/// `ResetSession`: the swing edge starts over with the new session.
-pub(super) fn on_reset() {
-    LAST_ANIMATING.with(|cell| cell.set(None));
-}
 
 /// Materialise the decoded FlatBuffer snapshot as the JS object the
 /// shim reads (`__rs2b0t_host.snapshot`), merging it onto the last
@@ -63,10 +48,6 @@ pub(super) fn materialize_snapshot(
     // to (the same values the shim's `snap()` reads with no snapshot).
     let empty_rows: v8::Local<v8::Value> = v8::Array::new(&mut scope, 0).into();
     let none: v8::Local<v8::Value> = v8::null(&mut scope).into();
-    if !had {
-        // A new snapshot object: no previous post to compare against.
-        LAST_ANIMATING.with(|cell| cell.set(None));
-    }
 
     // `tick` is always carried. A field the buffer carries overwrites
     // the object; a field a delta omits keeps its last value. On the
@@ -297,6 +278,28 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "route_inspect_refused_id_2", zero)?;
         set(&mut scope, obj, "route_inspect_refused_id_3", zero)?;
         set(&mut scope, obj, "route_inspect_unobserved", zero)?;
+    }
+    if let Some(selection) = snap.bank_selection() {
+        let value = if selection.kind == 0 {
+            serde_json::Value::Null
+        } else {
+            serde_json::json!({
+                "request_id": selection.request_id,
+                "generation": selection.generation,
+                "kind": match selection.kind {
+                    1 => "near",
+                    2 => "reachable",
+                    3 => "fallback",
+                    _ => "none",
+                },
+                "bank": crate::bank_select::selected(selection.bank_index),
+            })
+        };
+        let value = rustyscript::deno_core::serde_v8::to_v8(&mut scope, value)
+            .map_err(|e| e.to_string())?;
+        set(&mut scope, obj, "bank_selection", value)?;
+    } else if !had {
+        set(&mut scope, obj, "bank_selection", none)?;
     }
     if snap.has_count_dialog_open() {
         let count_dialog_open = v8::Boolean::new(&mut scope, snap.count_dialog_open());
@@ -659,25 +662,25 @@ pub(super) fn materialize_snapshot(
         set_readonly(&mut scope, host, "ours", falsy)?;
     }
     if snap.has_npcs() {
-        let npcs = scene_entity_array(&mut scope, &snap.npcs())?;
+        let npcs = scene_entity_array(&mut scope, &snap.npcs(), true)?;
         set(&mut scope, obj, "npcs", npcs)?;
     } else if !had {
         set(&mut scope, obj, "npcs", empty_rows)?;
     }
     if snap.has_locs() {
-        let locs = scene_entity_array(&mut scope, &snap.locs())?;
+        let locs = scene_entity_array(&mut scope, &snap.locs(), false)?;
         set(&mut scope, obj, "locs", locs)?;
     } else if !had {
         set(&mut scope, obj, "locs", empty_rows)?;
     }
     if snap.has_players() {
-        let players = scene_entity_array(&mut scope, &snap.players())?;
+        let players = scene_entity_array(&mut scope, &snap.players(), false)?;
         set(&mut scope, obj, "players", players)?;
     } else if !had {
         set(&mut scope, obj, "players", empty_rows)?;
     }
     if snap.has_ground() {
-        let ground = scene_entity_array(&mut scope, &snap.ground())?;
+        let ground = scene_entity_array(&mut scope, &snap.ground(), false)?;
         set(&mut scope, obj, "ground", ground)?;
     } else if !had {
         set(&mut scope, obj, "ground", empty_rows)?;
@@ -773,29 +776,21 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "in_combat", falsy)?;
     }
-    let animating_now = if snap.has_animating() {
+    if snap.has_animating() {
         let animating = v8::Boolean::new(&mut scope, snap.animating());
         set(&mut scope, obj, "animating", animating.into())?;
-        snap.animating()
-    } else if had {
-        LAST_ANIMATING.with(|cell| cell.get().is_some_and(|(anim, _)| anim))
-    } else {
+    } else if !had {
         set(&mut scope, obj, "animating", falsy)?;
-        false
-    };
-    // The one fact `fight_upkeep` / `eat_timing` read: true only on the tick
-    // the local player's primary animation began. The posted flag is a
-    // boolean, so an animation change that keeps it true is invisible here:
-    // the edge is a false->true flip on a new tick, and a second post in the
-    // same tick does not re-arm it (the frozen `AttackClock` answers true only
-    // for the tick it recorded).
-    let tick_number = snap.tick();
-    let swing_started = LAST_ANIMATING.with(|cell| {
-        let previous = cell.replace(Some((animating_now, tick_number)));
-        previous.is_some_and(|(anim, tick)| animating_now && !anim && tick != tick_number)
-    });
-    let swing = v8::Boolean::new(&mut scope, swing_started);
-    set(&mut scope, obj, "swing_started", swing.into())?;
+    }
+    // The local player's primary animation id: frozen `reader.selfAnim()`,
+    // and `Game.animating()` is `selfAnim() !== -1`.
+    if snap.has_self_anim() {
+        let anim = num(&mut scope, f64::from(snap.self_anim()));
+        set(&mut scope, obj, "self_anim", anim)?;
+    } else if !had {
+        let idle = num(&mut scope, -1.0);
+        set(&mut scope, obj, "self_anim", idle)?;
+    }
     if snap.has_main_modal_id() {
         let main_modal_id = num(&mut scope, snap.main_modal_id() as f64);
         set(&mut scope, obj, "main_modal_id", main_modal_id)?;
@@ -883,6 +878,7 @@ pub(super) fn materialize_settings_bag(
     runtime: &mut Runtime,
     bag: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
+    crate::bank_select::settings(bag);
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
@@ -1381,6 +1377,7 @@ fn tile_array<'s>(
 fn scene_entity_object<'s>(
     scope: &mut v8::HandleScope<'s>,
     ent: &crate::isolate_fb::SceneEntityReader<'_>,
+    npc: bool,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let o = v8::Object::new(scope);
     let index = num(scope, ent.index() as f64);
@@ -1443,16 +1440,26 @@ fn scene_entity_object<'s>(
     set(scope, o, "nx", nx)?;
     let nz = num(scope, ent.nz() as f64);
     set(scope, o, "nz", nz)?;
+    if npc && ent.size() >= 1 {
+        // Frozen `ClientAdapter.ts:243,879`: the route-head centre is the
+        // posted SW route origin plus half the NPC footprint.
+        let offset = ent.size() / 2;
+        let network_x = num(scope, ent.nx().saturating_add(offset) as f64);
+        set(scope, o, "network_x", network_x)?;
+        let network_z = num(scope, ent.nz().saturating_add(offset) as f64);
+        set(scope, o, "network_z", network_z)?;
+    }
     Ok(o.into())
 }
 
 fn scene_entity_array<'s>(
     scope: &mut v8::HandleScope<'s>,
     ents: &[crate::isolate_fb::SceneEntityReader<'_>],
+    npc: bool,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, ents.len() as i32);
     for (i, ent) in ents.iter().enumerate() {
-        let ent = scene_entity_object(scope, ent)?;
+        let ent = scene_entity_object(scope, ent, npc)?;
         arr.set_index(scope, i as u32, ent)
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }

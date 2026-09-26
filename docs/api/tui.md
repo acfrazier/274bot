@@ -35,7 +35,7 @@ PASS/FAIL.
 | Status | same `SlotStatus` + `RandomStatus` as the panel, including active world |
 | Inv / stats / locs | focused snapshot |
 | Script | Browse/Start/Pause/Stop + Load over the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
-| Settings | popup: `random_events`, `lamp_skill`, `lamp_auto` (persisted on the profile) |
+| Settings | popup: `random_events`, `lamp_skill`, `lamp_auto` (persisted on the profile); **map bake** `ask`/`always`, the panel's remembered WalkTo terrain-bake choice (`map_bake` in `panel-ui.json`). The TUI map is catalogue-only, so it never bakes terrain or asks. |
 
 `q` quits, `s` settings, `m` spawn the rest of the MultiBox wall.
 

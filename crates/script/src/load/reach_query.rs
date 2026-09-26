@@ -51,6 +51,13 @@ pub(crate) fn on_reset() {
     });
 }
 
+/// Test-only: install a packed reach view without a snapshot stamp.
+/// `observed::post` does not call [`apply`], so this stays until [`on_reset`].
+#[cfg(test)]
+pub(crate) fn set_view_for_tests(view: ReachQueryView) {
+    REACH.with(|slot| slot.borrow_mut().view = view);
+}
+
 /// Read the posted reach view (Rust helpers and machine families).
 pub(crate) fn with_view<R>(f: impl FnOnce(&ReachQueryView) -> R) -> R {
     REACH.with(|slot| f(&slot.borrow().view))

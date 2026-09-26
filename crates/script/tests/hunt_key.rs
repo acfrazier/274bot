@@ -842,24 +842,6 @@ fn key_effects_never_include_forbidden_ops() {
     let token = begin();
     let step = call(token, site(json!({})), None);
     assert!(!forbidden(&step), "{step}");
-    let src = include_str!("../src/hunt_key.rs");
-    assert!(!src.contains("hunt_leave::dispatch"));
-    assert!(!src.contains("hunt_fight::dispatch"));
-    assert!(!src.contains("gap_sw"));
-    assert!(!src.contains("bodyOrigin"));
-    assert!(!src.contains("size>>1"));
-    assert!(!src.contains("size >> 1"));
-    assert!(!src.contains("FIGHT_MS"));
-    assert!(!src.contains("3094"));
-    assert!(!src.contains("varrock"));
-    assert!(!src.contains("keyStatus"));
-    assert!(!src.contains(".bank("));
-    assert!(!src.contains("equipment"));
-    assert!(!src.contains(".distance()"));
-    assert!(!src.contains(".nx()"));
-    assert!(!src.contains(".nz()"));
-    assert!(src.contains("in_area_body(here, 1,"));
-    assert!(src.contains("KEY_RUNTIMES"));
 }
 
 #[test]

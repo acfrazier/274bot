@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertPinned, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import { assertPinned, assertRs2b0tPinned, contentDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
@@ -1639,6 +1639,46 @@ assert.deepEqual(parseJm2NpcPlacements('==== NPC ====\n0 10 20: 669\n1 20 30: 0\
     { plane: 1, lx: 20, lz: 30, npc_id: 0 },
 ]);
 assert.deepEqual(parseJm2NpcPlacements('==== LOC ====\n0 47 62: 2662 10 1\n'), [], 'a LOC row is not an NPC placement');
+assert.deepEqual(
+    [...parseJm2LinkBelow('==== MAP ====\n0 1 1: h1 f2\n1 1 1: h1 f2\n1 2 3: h1 f1\n1 4 5: f3\n==== LOC ====\n1 6 6: 2728\n')],
+    ['1,1', '4,5'],
+    'LINK_BELOW is the level-1 MAP flag 0x2 only',
+);
+{
+    // The rs2b0t sources must be the pinned blobs: a local edit (or another commit) refuses.
+    const pinRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rs2b0t-pin-'));
+    const source = path.join(pinRoot, 'src/bot/data/cookLocations.ts');
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, 'export const MAX_SURFACE_CHEB = 20;\n');
+    const blob = execFileSync('git', ['hash-object', source], { encoding: 'utf8' }).trim();
+    const pin = { commit: 'fixture', blobs: { 'src/bot/data/cookLocations.ts': blob } };
+    assertRs2b0tPinned(pinRoot, pin);
+    fs.writeFileSync(source, 'export const MAX_SURFACE_CHEB = 21;\n');
+    assert.throws(() => assertRs2b0tPinned(pinRoot, pin), /dirty or not the pinned export/);
+    fs.rmSync(pinRoot, { recursive: true, force: true });
+
+    // Any .loc/.npc config under scripts/ and the loc/npc packs are selected-content inputs.
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'content-dirt-'));
+    const git = (...args: string[]) => execFileSync('git', ['-C', content, ...args], { encoding: 'utf8' });
+    git('init', '-q');
+    const loc = path.join(content, 'scripts/areas/area_x/configs/x.loc');
+    fs.mkdirSync(path.dirname(loc), { recursive: true });
+    fs.writeFileSync(loc, '[range]\nname=Range\n');
+    fs.mkdirSync(path.join(content, 'pack'));
+    fs.writeFileSync(path.join(content, 'pack/npc.pack'), '0=man\n');
+    git('add', '-A');
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'fixture');
+    assert.equal(contentDirt(content), '', 'a clean tree has no dirt');
+    fs.writeFileSync(loc, '[range]\nname=Oven\n');
+    assert.match(contentDirt(content), /x\.loc/, 'an edited nested .loc is dirty');
+    git('checkout', '-q', '--', '.');
+    fs.writeFileSync(path.join(content, 'scripts/new.npc'), '[a]\n');
+    assert.match(contentDirt(content), /new\.npc/, 'an untracked .npc is dirty');
+    fs.rmSync(path.join(content, 'scripts/new.npc'));
+    fs.writeFileSync(path.join(content, 'pack/npc.pack'), '0=woman\n');
+    assert.match(contentDirt(content), /npc\.pack/, 'an edited npc.pack is dirty');
+    fs.rmSync(content, { recursive: true, force: true });
+}
 assert.deepEqual(parseJm2NpcPlacements('==== OBJ ====\n0 47 62: 2662\n==== NPC ====\n0 1 2: 5\n'), [{ plane: 0, lx: 1, lz: 2, npc_id: 5 }], 'only the NPC section is a placement source');
 assert.deepEqual(parseJm2NpcPlacements('==== NPC ====\n'), []);
 assert.throws(() => parseJm2NpcPlacements('==== NPC ====\n0 10 20: 669 10 1\n'), /extra tokens/, 'a shape and an angle are not NPC row tokens');

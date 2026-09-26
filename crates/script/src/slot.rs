@@ -3,6 +3,13 @@
 //! (`on_is_up`). `tick` runs on the caller's pump at a game-tick edge and
 //! must return; panics are caught, never abort the process.
 
+mod pending;
+
+pub use pending::{
+    PendingBankOp, PendingBankOpKind, PendingFillBaseline, PendingWithdrawResult, PendingWithdrawX,
+    PendingWithdrawXPhase,
+};
+
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,6 +24,10 @@ use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
 use api::random::{DetectedRandom, RandomClaim};
 use serde::Serialize;
+#[cfg(feature = "load")]
+const CUT_RESTART_LIMIT: usize = 3;
+#[cfg(feature = "load")]
+const CUT_RESTART_WINDOW: Duration = Duration::from_secs(5 * 60);
 
 /// Failure at initial loaded-script Start, distinct from an operational refusal.
 #[cfg(feature = "load")]
@@ -67,178 +78,6 @@ pub struct ScriptLifecycleReceipt {
     pub reason: String,
 }
 
-/// Host-owned second phase of a bank Withdraw-X operation. The first phase
-/// sent the X menu action; this record authorizes one count response only
-/// while the same bank session remains current and before its deadline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PendingWithdrawXPhase {
-    Dialog,
-    Settlement,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PendingWithdrawResult {
-    WithdrawX,
-    WithdrawLoad,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PendingFillBaseline {
-    pub bank_item_id: i32,
-    pub before_used: usize,
-    pub before_count: i32,
-    pub before_stock: i32,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PendingWithdrawX {
-    pub item_id: i32,
-    pub count: i32,
-    pub before: i32,
-    pub target: i32,
-    pub bank_generation: u64,
-    pub phase: PendingWithdrawXPhase,
-    pub deadline: Option<Instant>,
-    pub remaining: Duration,
-    pub result: PendingWithdrawResult,
-    pub fill: Option<PendingFillBaseline>,
-}
-
-impl PendingWithdrawX {
-    pub fn waiting_dialog(
-        item_id: i32,
-        count: i32,
-        before: i32,
-        target: i32,
-        bank_generation: u64,
-    ) -> Self {
-        let remaining = Duration::from_millis(3000);
-        Self {
-            item_id,
-            count,
-            before,
-            target,
-            bank_generation,
-            phase: PendingWithdrawXPhase::Dialog,
-            deadline: Some(Instant::now() + remaining),
-            remaining,
-            result: PendingWithdrawResult::WithdrawX,
-            fill: None,
-        }
-    }
-
-    pub fn waiting_load_dialog(
-        bank_item_id: i32,
-        count: i32,
-        before_used: usize,
-        before_count: i32,
-        before_stock: i32,
-        bank_generation: u64,
-    ) -> Self {
-        let mut pending = Self::waiting_dialog(bank_item_id, count, 0, 0, bank_generation);
-        pending.result = PendingWithdrawResult::WithdrawLoad;
-        pending.fill = Some(PendingFillBaseline {
-            bank_item_id,
-            before_used,
-            before_count,
-            before_stock,
-        });
-        pending
-    }
-
-    pub fn waiting_settlement(mut self) -> Self {
-        self.phase = PendingWithdrawXPhase::Settlement;
-        self.remaining = Duration::from_millis(4000);
-        self.deadline = Some(Instant::now() + self.remaining);
-        self
-    }
-
-    pub fn expired(self) -> bool {
-        self.deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-    }
-
-    fn freeze(&mut self) {
-        if let Some(deadline) = self.deadline.take() {
-            self.remaining = deadline.saturating_duration_since(Instant::now());
-        }
-    }
-
-    fn resume(&mut self) {
-        if self.deadline.is_none() {
-            self.deadline = Some(Instant::now() + self.remaining);
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PendingBankOpKind {
-    Deposit,
-    Withdraw,
-    /// Raw open-only `Withdraw X` (`Bank.withdraw(name, 'Withdraw X')`).
-    /// The frozen caller reads the accepted click as the result
-    /// (`Input.invButton` → `actions.menuAction`) and types the amount +
-    /// Enter itself, so this kind never settles on an inventory delta:
-    /// the sent action plus the still-current bank session acknowledge it.
-    WithdrawXAction,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PendingBankOp {
-    pub kind: PendingBankOpKind,
-    pub item_id: i32,
-    pub before_count: i32,
-    pub before_inventory_count: i32,
-    pub bank_generation: u64,
-    deadline: Option<Instant>,
-    remaining: Duration,
-}
-
-impl PendingBankOp {
-    pub fn new(
-        kind: PendingBankOpKind,
-        item_id: i32,
-        before_count: i32,
-        before_inventory_count: i32,
-        bank_generation: u64,
-    ) -> Self {
-        let remaining = Duration::from_millis(match kind {
-            PendingBankOpKind::Deposit => 2000,
-            PendingBankOpKind::Withdraw => 4000,
-            // The acknowledgment lands on the next observe pass; this bound
-            // only backstops a stalled session, so it keeps the ordinary
-            // withdrawal bound rather than inventing a new one.
-            PendingBankOpKind::WithdrawXAction => 4000,
-        });
-        Self {
-            kind,
-            item_id,
-            before_count,
-            before_inventory_count,
-            bank_generation,
-            deadline: Some(Instant::now() + remaining),
-            remaining,
-        }
-    }
-
-    pub fn expired(self) -> bool {
-        self.deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-    }
-
-    fn freeze(&mut self) {
-        if let Some(deadline) = self.deadline.take() {
-            self.remaining = deadline.saturating_duration_since(Instant::now());
-        }
-    }
-
-    fn resume(&mut self) {
-        if self.deadline.is_none() {
-            self.deadline = Some(Instant::now() + self.remaining);
-        }
-    }
-}
-
 /// Frozen Load identity retained for watchdog recreate. Shared via Arc so
 /// observe never copies source bytes.
 #[cfg(feature = "load")]
@@ -258,6 +97,7 @@ pub struct SlotLoadIdentity {
 enum AfterStop {
     Idle,
     Restart,
+    CutLimit(String),
     Start,
     Fail(String),
 }
@@ -357,6 +197,10 @@ pub struct SlotScript {
     #[cfg(feature = "load")]
     ipc: IsolateBuf,
     last_error: Option<String>,
+    /// Work generation that owns the active tick error, if any. A successful
+    /// tick from a later session must not clear an older diagnostic.
+    #[cfg(feature = "load")]
+    active_tick_error_generation: Option<u64>,
     lifecycle_receipt: Option<ScriptLifecycleReceipt>,
     /// Isolate log lines not yet taken by the panel (`take_pending_logs`).
     pending_logs: Vec<String>,
@@ -377,12 +221,23 @@ pub struct SlotScript {
     load_identity: Option<SlotLoadIdentity>,
     #[cfg(feature = "load")]
     watchdog: ProgressWatchdog,
+    /// Fixed-size rolling window for terminate-driven runtime recreates.
+    /// The third cut inside [`CUT_RESTART_WINDOW`] stops the script.
+    #[cfg(feature = "load")]
+    cut_restart_times: [Option<Instant>; CUT_RESTART_LIMIT],
+    #[cfg(feature = "load")]
+    cut_restart_next: usize,
     /// Stable source identity key for this execution (`catalog:Name` / file path).
     source_identity: Option<String>,
     /// Bumped on each successful Start and watchdog isolate replacement.
     runtime_generation: u64,
     last_settings_fp: Option<String>,
     native_input: Arc<NativeInputAuthority>,
+    /// Script-session run policy shared with the host slot.
+    run_policy_override: Arc<api::run_policy::RunPolicyOverrideCell>,
+    /// Frozen `RecoveryHints`, kept across watchdog isolate restarts.
+    #[cfg(feature = "load")]
+    recovery_hints: Arc<crate::load::RecoveryHintsCell>,
 }
 
 impl Default for SlotScript {
@@ -427,6 +282,8 @@ impl SlotScript {
             #[cfg(feature = "load")]
             ipc: IsolateBuf::new(),
             last_error: None,
+            #[cfg(feature = "load")]
+            active_tick_error_generation: None,
             lifecycle_receipt: None,
             pending_logs: Vec::new(),
             ticks: 0,
@@ -443,11 +300,27 @@ impl SlotScript {
             load_identity: None,
             #[cfg(feature = "load")]
             watchdog: ProgressWatchdog::new(),
+            #[cfg(feature = "load")]
+            cut_restart_times: [None; CUT_RESTART_LIMIT],
+            #[cfg(feature = "load")]
+            cut_restart_next: 0,
             source_identity: None,
             runtime_generation: 0,
             last_settings_fp: None,
             native_input: NativeInputAuthority::new(),
+            run_policy_override: Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
+            #[cfg(feature = "load")]
+            recovery_hints: Arc::new(crate::load::RecoveryHintsCell::new()),
         }
+    }
+
+    /// The host slot reads the same cell as this script slot's V8 binding.
+    pub fn run_policy_override_cell(&self) -> Arc<api::run_policy::RunPolicyOverrideCell> {
+        Arc::clone(&self.run_policy_override)
+    }
+
+    pub fn run_policy_override(&self) -> Option<api::run_policy::RunPolicyOverride> {
+        self.run_policy_override.get()
     }
 
     /// True when either a compiled script or a JS isolate is installed.
@@ -476,12 +349,17 @@ impl SlotScript {
                 if self.load_active() {
                     return Err("loaded script active: stop it first".to_string());
                 }
+                self.run_policy_override.clear();
                 self.compiled = Some(script);
                 self.compiled_selected = selected;
                 #[cfg(feature = "load")]
                 self.compiled_interacts.clear();
                 self.want_run = true;
                 self.last_error = None;
+                #[cfg(feature = "load")]
+                {
+                    self.active_tick_error_generation = None;
+                }
                 self.lifecycle_receipt = None;
                 self.ticks = 0;
                 self.pending_withdraw_x = None;
@@ -588,6 +466,7 @@ impl SlotScript {
                     // in the log instead of silently replacing it.
                     self.pending_logs.push(e.clone());
                 }
+                self.run_policy_override.clear();
                 self.load_identity = Some(SlotLoadIdentity {
                     source: Arc::from(source),
                     shape,
@@ -613,6 +492,7 @@ impl SlotScript {
                         "compiled script active: stop it first".to_string(),
                     ));
                 }
+                self.run_policy_override.clear();
                 let identity = SlotLoadIdentity {
                     source: Arc::from(source),
                     shape,
@@ -637,6 +517,7 @@ impl SlotScript {
         self.watchdog.arm_fresh(Instant::now());
         self.want_run = true;
         self.last_error = None;
+        self.active_tick_error_generation = None;
         self.lifecycle_receipt = None;
         self.ticks = 0;
         self.pending_withdraw_x = None;
@@ -647,6 +528,8 @@ impl SlotScript {
         self.pending_bank_op = None;
         self.bank_op_result_seq = 0;
         self.bank_op_result = false;
+        self.cut_restart_times = [None; CUT_RESTART_LIMIT];
+        self.cut_restart_next = 0;
     }
 
     #[cfg(feature = "load")]
@@ -685,8 +568,10 @@ impl SlotScript {
             identity.siblings.iter().cloned().collect(),
             identity.game_data.clone(),
             Arc::clone(&identity.named_banks),
+            Arc::clone(&self.run_policy_override),
         )?;
         isolate.post_loadouts(&identity.loadouts);
+        isolate.post_recovery_hints(Arc::clone(&self.recovery_hints));
         if let Some(bag) = identity.settings_bag.as_deref() {
             isolate.post_settings_bag(bag);
         }
@@ -698,6 +583,7 @@ impl SlotScript {
         self.reach_cache.clear();
         self.ipc = IsolateBuf::new();
         self.last_error = None;
+        self.active_tick_error_generation = None;
         self.lifecycle_receipt = None;
         self.ticks = 0;
         self.state = RunState::Starting;
@@ -795,6 +681,10 @@ impl SlotScript {
                 }
             }
         }
+        let script_cut = self.load.as_ref().is_some_and(LoadIsolate::take_script_cut);
+        if script_cut {
+            self.handle_script_cut(Instant::now());
+        }
         let Some(rx) = self.stop_rx.take() else {
             return;
         };
@@ -807,9 +697,58 @@ impl SlotScript {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => self.complete_stop(),
         }
     }
+    #[cfg(feature = "load")]
+    fn handle_script_cut(&mut self, now: Instant) {
+        self.cut_restart_times[self.cut_restart_next] = Some(now);
+        self.cut_restart_next = (self.cut_restart_next + 1) % CUT_RESTART_LIMIT;
+        let recent = self
+            .cut_restart_times
+            .iter()
+            .flatten()
+            .filter(|cut| now.saturating_duration_since(**cut) <= CUT_RESTART_WINDOW)
+            .count();
+        if recent >= CUT_RESTART_LIMIT {
+            let error =
+                "script stopped after 3 runaway JavaScript cuts within 5 minutes".to_string();
+            self.pending_logs.push(error.clone());
+            self.last_error = Some(error.clone());
+            self.active_tick_error_generation = None;
+            self.want_run = false;
+            self.revoke_native_input();
+            if !self.begin_async_stop(AfterStop::CutLimit(error.clone())) {
+                self.finish_cut_limit(error);
+            }
+            return;
+        }
+        if let Err(error) = self.apply_load_restart(now) {
+            self.pending_logs.push(error.clone());
+            self.last_error = Some(error.clone());
+            self.want_run = false;
+            self.revoke_native_input();
+            if !self.begin_async_stop(AfterStop::CutLimit(error.clone())) {
+                self.finish_cut_limit(error);
+            }
+        }
+    }
+
+    #[cfg(feature = "load")]
+    fn finish_cut_limit(&mut self, error: String) {
+        self.load_identity = None;
+        self.source_identity = None;
+        self.watchdog.cancel_clear();
+        self.active_tick_error_generation = None;
+        self.last_error = Some(error);
+        self.want_run = false;
+        self.state = RunState::Error;
+        self.runtime_generation = self.runtime_generation.wrapping_add(1);
+        self.last_settings_fp = None;
+    }
 
     #[cfg(feature = "load")]
     fn complete_stop(&mut self) {
+        // Frozen ScriptRunner.ts:389-397 runs onStop before clearing the
+        // RunManager overlay. The reaper has finished the hook at this point.
+        self.run_policy_override.clear();
         self.stop_rx = None;
         self.last_snapshot = None;
         self.last_world_id = None;
@@ -829,6 +768,7 @@ impl SlotScript {
                 self.state = RunState::Idle;
             }
             AfterStop::Fail(e) => self.fail_setup(e),
+            AfterStop::CutLimit(error) => self.finish_cut_limit(error),
             // The cooldown was stamped when the restart was decided.
             AfterStop::Restart => match self.load_identity.clone() {
                 Some(identity) => {
@@ -855,6 +795,7 @@ impl SlotScript {
     #[cfg(feature = "load")]
     fn fail_setup(&mut self, e: String) {
         self.last_error = Some(e.clone());
+        self.active_tick_error_generation = None;
         self.pending_logs.push(e.clone());
         self.load_identity = None;
         self.source_identity = None;
@@ -880,6 +821,7 @@ impl SlotScript {
         if let Some(pending) = &mut self.pending_bank_op {
             pending.freeze();
         }
+        #[cfg(feature = "load")]
         let mut abort_recovery = false;
         if self.has_instance() && matches!(self.state, RunState::Running | RunState::Starting) {
             #[cfg(feature = "load")]
@@ -896,7 +838,14 @@ impl SlotScript {
             }
             self.state = RunState::Paused;
         }
-        abort_recovery
+        #[cfg(feature = "load")]
+        {
+            abort_recovery
+        }
+        #[cfg(not(feature = "load"))]
+        {
+            false
+        }
     }
 
     /// Operator Resume: `want_run` back on. Assumes the client is up; the
@@ -941,6 +890,7 @@ impl SlotScript {
     /// (onStop hook plus the 2 s cap) runs on a reaper; observe completes
     /// it. Compiled teardown still runs on this thread.
     pub fn stop(&mut self) {
+        self.run_policy_override.clear();
         self.lifecycle_receipt = None;
         self.revoke_native_input();
         // The compiled clue machine's abort belongs to the pump thread (its
@@ -961,6 +911,11 @@ impl SlotScript {
         #[cfg(feature = "load")]
         if self.state == RunState::Stopping && matches!(self.after_stop, AfterStop::Fail(_)) {
             return;
+        }
+        self.last_error = None;
+        #[cfg(feature = "load")]
+        {
+            self.active_tick_error_generation = None;
         }
         // A Start that has not reached Ready never ran: nothing to commit.
         #[cfg(feature = "load")]
@@ -1018,8 +973,26 @@ impl SlotScript {
     }
 
     /// Re-gate a started script and invalidate deferred actions and snapshot
-    /// deltas at a connection boundary. Operator run intent is retained.
+    /// deltas at a connection boundary that ends the session (operator or
+    /// idle logout, or no relog coming): a Load script's in-flight machine
+    /// rows and task runtimes end. Operator run intent is retained.
     pub fn reset_session_work(&mut self) {
+        self.session_boundary(false);
+    }
+
+    /// The connection dropped and the host relogs: as
+    /// [`SlotScript::reset_session_work`], except that a Load script's work
+    /// is held whole for the relogged session
+    /// ([`LoadIsolate::reconnect_session_work`]); a compiled script's live
+    /// step still ends. Returns whether the host should re-arm, on the new
+    /// session, the script walk it was following: the script's work was
+    /// held and the walk is not the watchdog's own recovery walk, which the
+    /// boundary ends.
+    pub fn reconnect_session_work(&mut self) -> bool {
+        self.session_boundary(true)
+    }
+
+    fn session_boundary(&mut self, reconnect: bool) -> bool {
         self.on_is_up(false);
         #[cfg(feature = "load")]
         if !self.load_active() {
@@ -1032,106 +1005,30 @@ impl SlotScript {
         }
         #[cfg(feature = "load")]
         {
+            let carried_error = self.active_tick_error_generation.is_some();
+            let held = reconnect && self.load.is_some();
             if let Some(isolate) = &self.load {
-                isolate.reset_session_work();
+                let generation = if held {
+                    isolate.reconnect_session_work()
+                } else {
+                    isolate.reset_session_work()
+                };
+                self.active_tick_error_generation = carried_error.then_some(generation);
+            } else {
+                self.active_tick_error_generation = None;
             }
             self.last_snapshot = None;
             self.last_world_id = None;
             self.reach_cache.clear();
 
             let abort = self.watchdog.abort_owned_recovery();
-            let reset = self.watchdog.on_session_reset(Instant::now());
-            let _ = (abort, reset);
+            let _ = self.watchdog.on_session_reset(Instant::now());
+            held && abort != WatchdogAction::AbortWalk
         }
-    }
-
-    /// Current host-owned Withdraw-X continuation, if one is armed.
-    pub fn pending_withdraw_x(&self) -> Option<PendingWithdrawX> {
-        self.pending_withdraw_x
-    }
-
-    /// Replace the one bounded Withdraw-X continuation for this slot.
-    pub fn set_pending_withdraw_x(&mut self, pending: Option<PendingWithdrawX>) {
-        self.pending_withdraw_x = pending;
-    }
-
-    /// Freeze the monotonic deadline without discarding the operation.
-    pub fn freeze_pending_withdraw_x(&mut self) {
-        if let Some(pending) = &mut self.pending_withdraw_x {
-            pending.freeze();
-        }
-    }
-
-    /// Resume a previously frozen monotonic deadline.
-    pub fn resume_pending_withdraw_x(&mut self) {
-        if let Some(pending) = &mut self.pending_withdraw_x {
-            pending.resume();
-        }
-    }
-
-    /// Last host-owned Withdraw-X result posted to this isolate.
-    pub fn withdraw_x_result(&self) -> (u64, bool) {
-        (self.withdraw_x_result_seq, self.withdraw_x_result)
-    }
-
-    /// Last host-owned withdrawLoad result posted to this isolate.
-    pub fn withdraw_load_result(&self) -> (u64, bool) {
-        (self.withdraw_load_result_seq, self.withdraw_load_result)
-    }
-
-    pub fn pending_bank_op(&self) -> Option<PendingBankOp> {
-        self.pending_bank_op
-    }
-
-    pub fn set_pending_bank_op(&mut self, pending: Option<PendingBankOp>) {
-        self.pending_bank_op = pending;
-    }
-
-    pub fn freeze_pending_bank_op(&mut self) {
-        if let Some(pending) = &mut self.pending_bank_op {
-            pending.freeze();
-        }
-    }
-
-    pub fn resume_pending_bank_op(&mut self) {
-        if let Some(pending) = &mut self.pending_bank_op {
-            pending.resume();
-        }
-    }
-
-    pub fn bank_op_result(&self) -> (u64, bool) {
-        (self.bank_op_result_seq, self.bank_op_result)
-    }
-
-    pub fn complete_bank_op(&mut self, result: bool) {
-        self.pending_bank_op = None;
-        self.bank_op_result_seq = self.bank_op_result_seq.wrapping_add(1);
-        self.bank_op_result = result;
-    }
-
-    /// Lifecycle stamp used to reject work that raced a stop/reconnect.
-    pub fn work_epoch(&self) -> u64 {
-        self.work_epoch
-    }
-
-    /// Complete the current operation and advance the posted result token.
-    pub fn complete_withdraw_x(&mut self, result: bool) {
-        self.pending_withdraw_x = None;
-        self.withdraw_x_result_seq = self.withdraw_x_result_seq.wrapping_add(1);
-        self.withdraw_x_result = result;
-    }
-
-    pub fn complete_withdraw_load(&mut self, result: bool) {
-        self.pending_withdraw_x = None;
-        self.withdraw_load_result_seq = self.withdraw_load_result_seq.wrapping_add(1);
-        self.withdraw_load_result = result;
-    }
-
-    /// Complete the armed shared withdrawal continuation on its result channel.
-    pub fn complete_current_withdrawal(&mut self, result: bool) {
-        match self.pending_withdraw_x.map(|pending| pending.result) {
-            Some(PendingWithdrawResult::WithdrawLoad) => self.complete_withdraw_load(result),
-            Some(PendingWithdrawResult::WithdrawX) | None => self.complete_withdraw_x(result),
+        #[cfg(not(feature = "load"))]
+        {
+            let _ = reconnect;
+            false
         }
     }
 
@@ -1183,13 +1080,24 @@ impl SlotScript {
         if self.runtime_generation != generation {
             return false;
         }
-        match self.state {
-            RunState::Running | RunState::Paused | RunState::Starting => {}
-            _ => return false,
-        }
         let fp = settings_fp(bag);
         if self.last_settings_fp.as_deref() == Some(fp.as_str()) {
             return false;
+        }
+        if self.state == RunState::Stopping {
+            if !matches!(self.after_stop, AfterStop::Start | AfterStop::Restart) {
+                return false;
+            }
+            let Some(load_identity) = &mut self.load_identity else {
+                return false;
+            };
+            load_identity.settings_bag = Some(Arc::new(bag.clone()));
+            self.last_settings_fp = Some(fp);
+            return true;
+        }
+        match self.state {
+            RunState::Running | RunState::Paused | RunState::Starting => {}
+            _ => return false,
         }
         self.post_settings_bag(bag);
         true
@@ -1451,6 +1359,34 @@ impl SlotScript {
         }
     }
 
+    /// Restore a batch drained by the host when Pause wins the final
+    /// dispatch fence. The drained rows precede anything queued since the
+    /// drain, preserving the script's original request order.
+    #[cfg(feature = "load")]
+    pub fn restore_interacts(&mut self, mut drained: Vec<crate::shim::InteractReq>) {
+        debug_assert!(
+            !(self.compiled.is_some() && self.load.is_some()),
+            "a slot never owns both a compiled script and a Load isolate"
+        );
+        match &self.load {
+            Some(isolate) => isolate.restore_interacts(drained),
+            None => {
+                drained.append(&mut self.compiled_interacts);
+                self.compiled_interacts = drained;
+            }
+        }
+    }
+
+    /// Walk requests a reconnect kept from the dropped connection, once
+    /// ([`LoadIsolate::take_held_walks`]).
+    #[cfg(feature = "load")]
+    pub fn take_held_walks(&self) -> Vec<crate::shim::InteractReq> {
+        match &self.load {
+            Some(isolate) => isolate.take_held_walks(),
+            None => Vec::new(),
+        }
+    }
+
     #[cfg(feature = "load")]
     pub fn drain_lifecycle(&self) -> Vec<crate::shim::InteractReq> {
         match &self.load {
@@ -1541,19 +1477,31 @@ impl SlotScript {
         if self.watchdog.frozen() {
             return Err("watchdog restart cancelled: frozen".into());
         }
-        let Some(identity) = self.load_identity.clone() else {
-            return Err("watchdog restart: no retained identity".into());
-        };
         if self.state == RunState::Stopping {
             // A respawn is already queued behind this reap.
             return match self.after_stop {
                 AfterStop::Restart | AfterStop::Start => Ok(()),
-                AfterStop::Idle | AfterStop::Fail(_) => {
+                AfterStop::Idle | AfterStop::Fail(_) | AfterStop::CutLimit(_) => {
                     Err("watchdog restart cancelled: stopping".into())
                 }
             };
         }
+        self.apply_load_restart(now)
+    }
+
+    /// Common retained-identity recreate used by the stall watchdog and by a
+    /// confirmed JavaScript cut. Policy checks belong to the callers: a
+    /// Pause-deadline cut deliberately recreates while operator-paused.
+    #[cfg(feature = "load")]
+    fn apply_load_restart(&mut self, now: Instant) -> Result<(), String> {
+        let Some(identity) = self.load_identity.clone() else {
+            return Err("watchdog restart: no retained identity".into());
+        };
+        self.run_policy_override.clear();
         self.revoke_native_input();
+        // Frozen StallGuard: the restarted script finds `pendingRecovery`
+        // (`StallGuard.ts:34–39`).
+        self.recovery_hints.note_restart();
         if self.begin_async_stop(AfterStop::Restart) {
             // Stamp the recovery and its cooldown at the decision, as the
             // synchronous restart did; the respawn follows the reap.
@@ -1633,6 +1581,24 @@ impl SlotScript {
             None => Err("no load isolate".to_string()),
         }
     }
+    /// Whether this slot's isolate owns an interruptible execution.
+    #[cfg(feature = "load")]
+    #[doc(hidden)]
+    pub fn load_execution_active(&self) -> bool {
+        self.load
+            .as_ref()
+            .is_some_and(LoadIsolate::execution_active)
+    }
+
+    /// Monotonic identity and activity of this slot's latest interruptible
+    /// isolate execution.
+    #[cfg(feature = "load")]
+    #[doc(hidden)]
+    pub fn load_execution_sequence(&self) -> (u64, bool) {
+        self.load
+            .as_ref()
+            .map_or((0, false), LoadIsolate::execution_sequence)
+    }
 
     /// Call only on observed server tick. Dispatches the JS isolate's
     /// `on_game_tick` (compiled path) only while Running && want_run. A
@@ -1672,7 +1638,9 @@ impl SlotScript {
             self.compiled_interacts = ctx.compiled.interacts.take().unwrap_or_default();
         }
         if let Err(payload) = result {
-            self.last_error = Some(format!("script panic: {}", panic_message(&payload)));
+            let message = format!("script panic: {}", panic_message(&payload));
+            self.pending_logs.push(message.clone());
+            self.last_error = Some(message);
             self.state = RunState::Error;
             self.want_run = false;
             self.compiled = None;
@@ -1754,30 +1722,54 @@ impl SlotScript {
     #[cfg(feature = "load")]
     pub fn drain_logs(&mut self) -> Vec<String> {
         self.observe_lifecycle();
-        let (logs, stopped, script_stop) = match &self.load {
+        let (logs, outcomes, stopped, script_stop) = match &self.load {
             Some(isolate) => {
                 let logs = isolate.drain_logs();
-                (logs, isolate.stopped(), isolate.script_stop_receipt())
+                let outcomes = isolate.drain_tick_outcomes();
+                (
+                    logs,
+                    outcomes,
+                    isolate.stopped(),
+                    isolate.script_stop_receipt(),
+                )
             }
-            None => (Vec::new(), false, None),
+            None => (Vec::new(), Vec::new(), false, None),
         };
-        if let Some(err) = logs
-            .iter()
-            .rev()
-            .find(|l| l.starts_with("tick ") || l.contains("script requested stop"))
-        {
-            self.last_error = Some(err.clone());
+        for outcome in outcomes {
+            match outcome {
+                crate::load::TickOutcome::Error {
+                    tick,
+                    generation,
+                    message,
+                } => {
+                    self.last_error = Some(format!("tick {tick}: {message}"));
+                    self.active_tick_error_generation = Some(generation);
+                }
+                crate::load::TickOutcome::Success { generation, .. }
+                    if self.active_tick_error_generation == Some(generation) =>
+                {
+                    self.last_error = None;
+                    self.active_tick_error_generation = None;
+                }
+                crate::load::TickOutcome::Success { .. } => {}
+            }
         }
         self.pending_logs.extend(logs.iter().cloned());
         if stopped {
             let runtime_generation = self.runtime_generation;
             self.stop();
-            self.lifecycle_receipt = script_stop.map(|receipt| ScriptLifecycleReceipt {
-                runtime_generation,
-                state: ScriptTerminalState::Stopped,
-                tick: receipt.tick,
-                reason: receipt.reason,
-            });
+            if let Some(receipt) = script_stop {
+                self.last_error = Some(format!(
+                    "script requested stop on tick {}: {}",
+                    receipt.tick, receipt.reason
+                ));
+                self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
+                    runtime_generation,
+                    state: ScriptTerminalState::Stopped,
+                    tick: receipt.tick,
+                    reason: receipt.reason,
+                });
+            }
             self.observe_lifecycle();
         }
         logs
@@ -1818,6 +1810,7 @@ impl SlotScript {
 
 impl Drop for SlotScript {
     fn drop(&mut self) {
+        self.run_policy_override.clear();
         #[cfg(feature = "load")]
         if let Some(isolate) = self.load.take() {
             let (tx, _rx) = std::sync::mpsc::channel();
@@ -1847,1033 +1840,11 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     "(no message)".to_string()
 }
 
+#[cfg(feature = "load")]
 fn settings_fp(bag: &serde_json::Map<String, serde_json::Value>) -> String {
     serde_json::to_string(bag).unwrap_or_default()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ctx::test_support::NullDriver;
-
-    struct Noop;
-
-    impl Script for Noop {
-        fn name(&self) -> &str {
-            "noop"
-        }
-        fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
-    }
-
-    #[cfg(feature = "load")]
-    fn wait_state(slot: &mut SlotScript, want: RunState) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while slot.state() != want && Instant::now() < deadline {
-            slot.observe_lifecycle();
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert_eq!(slot.state(), want, "last_error={:?}", slot.last_error());
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn script_requested_stop_cleans_slot_work_and_allows_fresh_restart() {
-        let source = r#"
-import { ScriptRunner } from '../../runtime/ScriptRunner.js';
-export default class T extends LoopingBot {
-    loop() {
-        (globalThis.__rs2b0t_host.interact ||= []).push({op: 'set-camera-yaw', yaw: 123});
-        ScriptRunner.stop('finished');
-    }
-}
-"#;
-        let mut slot = SlotScript::new();
-        slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
-            .unwrap();
-        let input = crate::isolate_fb::tests::empty_input(1);
-        slot.encode_snapshot_delta(&input, false);
-        slot.store_last_world_id(Some(123));
-        slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
-        let epoch = slot.work_epoch();
-        slot.load.as_ref().unwrap().on_game_tick(1);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut logs = Vec::new();
-        while matches!(
-            slot.state(),
-            RunState::Starting | RunState::Running | RunState::Stopping
-        ) && Instant::now() < deadline
-        {
-            logs.extend(slot.drain_logs());
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert_eq!(slot.state(), RunState::Idle, "{logs:?}");
-        assert!(logs
-            .iter()
-            .any(|line| line.contains("script requested stop")));
-        assert!(!slot.has_instance());
-        assert!(slot.pending_withdraw_x().is_none());
-        assert_ne!(slot.work_epoch(), epoch);
-        assert!(!slot.has_snapshot_fingerprint());
-        assert_eq!(slot.last_world_id(), None);
-        assert!(slot.drain_interacts().is_empty());
-        assert!(slot.last_error().unwrap().contains("script requested stop"));
-        assert_eq!(
-            slot.lifecycle_receipt(),
-            Some(ScriptLifecycleReceipt {
-                runtime_generation: 1,
-                state: ScriptTerminalState::Stopped,
-                tick: 1,
-                reason: "finished".into(),
-            })
-        );
-        assert_eq!(slot.take_pending_logs(), logs);
-        slot.on_is_up(true);
-        assert_eq!(
-            slot.state(),
-            RunState::Idle,
-            "login cannot restart a stopped card"
-        );
-        slot.start_load_with_loadouts(
-            "export default class T extends LoopingBot { loop() { this.n = (this.n || 0) + 1; } }"
-                .into(),
-            LoadShape::CompatClass,
-            vec![],
-            &[],
-        )
-        .unwrap();
-        slot.load.as_ref().unwrap().on_game_tick(2);
-        wait_state(&mut slot, RunState::Running);
-        assert_eq!(slot.state(), RunState::Running);
-        assert!(slot.last_error().is_none());
-        assert_eq!(
-            slot.lifecycle_receipt(),
-            None,
-            "fresh Start clears the receipt"
-        );
-        slot.stop();
-        assert_eq!(
-            slot.lifecycle_receipt(),
-            None,
-            "operator Stop is not a script-requested Stopped receipt"
-        );
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn script_stop_receipt_bounds_utf8_reason() {
-        let reason = "🙂".repeat(100);
-        let source = format!(
-            r#"
-import {{ ScriptRunner }} from '../../runtime/ScriptRunner.js';
-export default class T extends LoopingBot {{
-  loop() {{ ScriptRunner.stop({reason:?}); }}
-}}
-"#
-        );
-        let mut slot = SlotScript::new();
-        slot.start_load_with_loadouts(source, LoadShape::CompatClass, vec![], &[])
-            .unwrap();
-        let input = crate::isolate_fb::tests::empty_input(1);
-        slot.encode_snapshot_delta(&input, false);
-        slot.load.as_ref().unwrap().on_game_tick(1);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut logs = Vec::new();
-        while matches!(
-            slot.state(),
-            RunState::Starting | RunState::Running | RunState::Stopping
-        ) && Instant::now() < deadline
-        {
-            logs.extend(slot.drain_logs());
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        let receipt = slot.lifecycle_receipt().unwrap_or_else(|| {
-            panic!(
-                "script Stop receipt; state={:?} logs={logs:?}",
-                slot.state()
-            )
-        });
-        assert_eq!(receipt.state, ScriptTerminalState::Stopped);
-        assert!(receipt.reason.len() <= 256);
-        assert!(receipt.reason.chars().all(|ch| ch == '🙂'));
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
-        let mut slot = SlotScript::new();
-        slot.start_compiled(Box::new(Noop), None).unwrap();
-        let text = "x".repeat(1024 * 1024);
-        let mut input = crate::isolate_fb::tests::empty_input(1);
-        input.chat_text = Some(&text);
-        let first = slot.encode_snapshot_delta(&input, false);
-        assert!(first.len() > text.len());
-        slot.store_last_world_id(Some(123));
-        slot.last_error = Some("retained diagnostic".into());
-        slot.pending_logs.push("retained log".into());
-        slot.pause();
-        assert!(slot.has_snapshot_fingerprint());
-        assert_eq!(slot.last_world_id(), Some(123));
-        slot.resume();
-        let delta = slot.encode_snapshot_delta(&input, false);
-        assert!(delta.len() < 1024);
-        slot.stop();
-        assert!(!slot.has_snapshot_fingerprint());
-        assert_eq!(slot.last_world_id(), None);
-        assert_eq!(std::mem::take(&mut slot.ipc).into_backing_capacity(), 0);
-        assert_eq!(slot.last_error.as_deref(), Some("retained diagnostic"));
-        assert_eq!(slot.pending_logs, ["retained log"]);
-        slot.start_compiled(Box::new(Noop), None).unwrap();
-        assert_eq!(slot.encode_snapshot_delta(&input, false), first);
-        // The earlier owned packet remains intact after reuse and Stop.
-        assert!(crate::isolate_fb::SnapshotReader::from_bytes(&first).is_ok());
-    }
-
-    /// F14 M12: a post the wedged isolate refused never reached it, so the
-    /// delta base must not advance: the next encode is a keyframe.
-    #[cfg(feature = "load")]
-    #[test]
-    fn refused_snapshot_post_forces_a_keyframe() {
-        let mut slot = SlotScript::new();
-        slot.start_load_with_loadouts(
-            "export function tick(api) { const t = Date.now(); while (Date.now() - t < 400) {} }"
-                .into(),
-            LoadShape::NativeTick,
-            vec![],
-            &[],
-        )
-        .unwrap();
-        let text = "x".repeat(64 * 1024);
-        let mut input = crate::isolate_fb::tests::empty_input(1);
-        input.chat_text = Some(&text);
-        let keyframe = slot.encode_snapshot_delta(&input, false);
-        assert!(keyframe.len() > text.len());
-        assert!(slot.post_snapshot(keyframe));
-        slot.load.as_ref().unwrap().on_game_tick(1);
-        let mut refused = false;
-        for _ in 0..200 {
-            let delta = slot.encode_snapshot_delta(&input, false);
-            assert!(delta.len() < 1024, "unchanged fields stay out of a delta");
-            if !slot.post_snapshot(delta) {
-                refused = true;
-                break;
-            }
-        }
-        assert!(refused, "the busy isolate's backlog is bounded");
-        assert!(
-            slot.encode_snapshot_delta(&input, false).len() > text.len(),
-            "the post after a refusal carries every field again"
-        );
-        slot.stop();
-    }
-
-    #[test]
-    fn on_random_defaults_to_host_and_override_claims_handle() {
-        use api::random::{DetectedRandom, RandomClaim, RandomKind};
-
-        struct ClaimHandle;
-        impl Script for ClaimHandle {
-            fn name(&self) -> &str {
-                "claim-handle"
-            }
-            fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
-            fn on_random(&mut self, _ev: &DetectedRandom) -> RandomClaim {
-                RandomClaim::Handle
-            }
-        }
-
-        let ev = DetectedRandom {
-            kind: RandomKind::Dialog,
-            name: "genie".to_string(),
-            ours: true,
-            npc_index: Some(0),
-        };
-
-        // Default: Host.
-        let mut s = SlotScript::new();
-        s.start_compiled(Box::new(Noop), None).unwrap();
-        assert_eq!(s.on_random(&ev), RandomClaim::Host);
-
-        // Override: Handle.
-        s.stop();
-        s.start_compiled(Box::new(ClaimHandle), None).unwrap();
-        assert_eq!(s.on_random(&ev), RandomClaim::Handle);
-
-        // Paused: Host — the knock only fires while Running.
-        s.pause();
-        assert_eq!(s.on_random(&ev), RandomClaim::Host);
-
-        // Idle (stopped): Host.
-        s.stop();
-        assert_eq!(s.on_random(&ev), RandomClaim::Host);
-    }
-
-    #[test]
-    fn ticks_counts_dispatched_ticks_since_start() {
-        let mut s = SlotScript::new();
-        s.start_compiled(Box::new(Noop), None).unwrap();
-        let mut d = NullDriver::default();
-        s.on_game_tick(&mut ScriptCtx {
-            driver: &mut d,
-            tick: 1,
-            here: None,
-            walk: None,
-            walk_with: None,
-            inv: None,
-            snapshot: None,
-            obj_names: None,
-            compiled: crate::ctx::CompiledTick::default(),
-        });
-        s.on_game_tick(&mut ScriptCtx {
-            driver: &mut d,
-            tick: 2,
-            here: None,
-            walk: None,
-            walk_with: None,
-            inv: None,
-            snapshot: None,
-            obj_names: None,
-            compiled: crate::ctx::CompiledTick::default(),
-        });
-        assert_eq!(s.ticks, 2);
-
-        // Paused ticks do not count.
-        s.pause();
-        s.on_game_tick(&mut ScriptCtx {
-            driver: &mut d,
-            tick: 3,
-            here: None,
-            walk: None,
-            walk_with: None,
-            inv: None,
-            snapshot: None,
-            obj_names: None,
-            compiled: crate::ctx::CompiledTick::default(),
-        });
-        assert_eq!(s.ticks, 2);
-
-        // A fresh Start resets the counter.
-        s.stop();
-        s.start_compiled(Box::new(Noop), None).unwrap();
-        s.on_game_tick(&mut ScriptCtx {
-            driver: &mut d,
-            tick: 4,
-            here: None,
-            walk: None,
-            walk_with: None,
-            inv: None,
-            snapshot: None,
-            obj_names: None,
-            compiled: crate::ctx::CompiledTick::default(),
-        });
-        assert_eq!(s.ticks, 1);
-    }
-
-    #[test]
-    fn pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort() {
-        let mut slot = SlotScript::new();
-        slot.start_compiled(Box::new(Noop), None).unwrap();
-        slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
-        assert_eq!(
-            slot.pending_withdraw_x().unwrap().remaining,
-            Duration::from_millis(3000)
-        );
-
-        slot.pause();
-        let paused = slot
-            .pending_withdraw_x()
-            .expect("Pause retains pending work");
-        assert!(paused.deadline.is_none(), "Pause freezes monotonic time");
-        slot.resume();
-        assert!(
-            slot.pending_withdraw_x().unwrap().deadline.is_some(),
-            "Resume restores the remaining deadline"
-        );
-
-        slot.stop();
-        assert!(
-            slot.pending_withdraw_x().is_none(),
-            "Stop aborts pending work"
-        );
-
-        slot.start_compiled(Box::new(Noop), None).unwrap();
-        slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
-        let before_reset = slot.withdraw_x_result();
-        slot.reset_session_work();
-        assert!(
-            slot.pending_withdraw_x().is_none(),
-            "reconnect/session reset aborts pending work"
-        );
-        assert_eq!(
-            slot.withdraw_x_result(),
-            (before_reset.0.wrapping_add(1), false),
-            "session reset publishes an explicit abort even if a later bank reuses the generation"
-        );
-
-        slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_load_dialog(
-            2, 20, 1, 0, 20, 3,
-        )));
-        let before_load_reset = slot.withdraw_load_result();
-        slot.reset_session_work();
-        assert_eq!(
-            slot.withdraw_load_result(),
-            (before_load_reset.0.wrapping_add(1), false),
-            "withdrawLoad gets the same explicit abort on generation-reusing session reset"
-        );
-
-        let settlement = PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3).waiting_settlement();
-        assert_eq!(settlement.remaining, Duration::from_millis(4000));
-
-        let mut expired = PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3);
-        expired.deadline = Some(Instant::now() - Duration::from_millis(1));
-        assert!(expired.expired(), "expiry uses monotonic wall time");
-    }
-
-    #[test]
-    fn pending_bank_op_pause_freezes_while_stop_and_reconnect_abort() {
-        let mut slot = SlotScript::new();
-        slot.start_compiled(Box::new(Noop), None).unwrap();
-        slot.set_pending_bank_op(Some(PendingBankOp::new(
-            PendingBankOpKind::Deposit,
-            1,
-            3,
-            0,
-            7,
-        )));
-        assert_eq!(
-            slot.pending_bank_op().unwrap().remaining,
-            Duration::from_millis(2000)
-        );
-
-        slot.pause();
-        assert!(
-            slot.pending_bank_op().unwrap().deadline.is_none(),
-            "Pause freezes the ordinary bank deadline"
-        );
-        slot.resume();
-        assert!(slot.pending_bank_op().unwrap().deadline.is_some());
-
-        slot.stop();
-        assert!(slot.pending_bank_op().is_none(), "Stop drops old-slot work");
-
-        slot.start_compiled(Box::new(Noop), None).unwrap();
-        slot.set_pending_bank_op(Some(PendingBankOp::new(
-            PendingBankOpKind::Withdraw,
-            1,
-            20,
-            0,
-            7,
-        )));
-        assert_eq!(
-            slot.pending_bank_op().unwrap().remaining,
-            Duration::from_millis(4000)
-        );
-        let before = slot.bank_op_result();
-        slot.reset_session_work();
-        assert!(slot.pending_bank_op().is_none());
-        assert_eq!(slot.bank_op_result(), (before.0.wrapping_add(1), false));
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn fenced_settings_reject_stale_identity_generation_and_unchanged_bag() {
-        let mut slot = SlotScript::new();
-        slot.start_compiled(Box::new(Noop), None).unwrap();
-        slot.attach_source_identity("catalog:ChickenKiller");
-        let gen = slot.runtime_generation();
-        let mut bag = serde_json::Map::new();
-        bag.insert("x".into(), serde_json::json!(1));
-        assert!(slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen));
-        assert!(
-            !slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen),
-            "unchanged bag is not reposted"
-        );
-        assert!(!slot.post_settings_bag_fenced(&bag, "catalog:Other", gen));
-        assert!(!slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen.wrapping_add(1)));
-        slot.stop();
-        assert!(slot.source_identity().is_none());
-        assert_ne!(slot.runtime_generation(), gen);
-        assert!(!slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen));
-    }
-
-    #[test]
-    fn stop_clears_identity_and_bumps_runtime_generation() {
-        let mut slot = SlotScript::new();
-        slot.start_compiled(Box::new(Noop), None).unwrap();
-        slot.attach_source_identity("file:shared.ts");
-        let gen = slot.runtime_generation();
-        slot.stop();
-        assert!(slot.source_identity().is_none());
-        assert_eq!(slot.state(), RunState::Idle);
-        assert_ne!(
-            slot.runtime_generation(),
-            gen,
-            "Stop must invalidate the previous execution generation"
-        );
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn slot_stop_delivers_final_logs_exactly_once() {
-        let mut slot = SlotScript::new();
-        slot.start_load(
-            "export default class T extends LoopingBot {
-            loop() {}
-            onStop() { this.log('stopped-ok'); }
-        }"
-            .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-        slot.load.as_ref().unwrap().on_game_tick(1);
-        let _ = slot.probe("1");
-        slot.stop();
-        wait_state(&mut slot, RunState::Idle);
-        let logs = slot.take_pending_logs();
-        let hits = logs.iter().filter(|l| l.contains("stopped-ok")).count();
-        assert_eq!(hits, 1, "exactly one onStop log after take: {logs:?}");
-        slot.stop();
-        let again = slot.take_pending_logs();
-        assert!(
-            again.iter().all(|l| !l.contains("stopped-ok")),
-            "second stop must not rerun the hook: {again:?}"
-        );
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn self_stop_runs_hook_once_then_slot_stop_does_not() {
-        let mut slot = SlotScript::new();
-        slot.start_load(
-            r#"
-import { ScriptRunner } from '../../runtime/ScriptRunner.js';
-export default class T extends LoopingBot {
-    loop() { ScriptRunner.stop('done'); }
-    onStop() { this.log('stopped-ok'); }
-}
-"#
-            .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-        slot.load.as_ref().unwrap().on_game_tick(1);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while matches!(
-            slot.state(),
-            RunState::Starting | RunState::Running | RunState::Stopping
-        ) && Instant::now() < deadline
-        {
-            let _ = slot.drain_logs();
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert_eq!(slot.state(), RunState::Idle);
-        let logs = slot.take_pending_logs();
-        let hits = logs.iter().filter(|l| l.contains("stopped-ok")).count();
-        assert_eq!(hits, 1, "self-stop onStop once: {logs:?}");
-        assert!(logs.iter().any(|l| l.contains("script requested stop")));
-        slot.stop();
-        let again = slot.take_pending_logs();
-        assert!(
-            again.iter().all(|l| !l.contains("stopped-ok")),
-            "join after self-stop then Drop must not rerun: {again:?}"
-        );
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn watchdog_restart_folds_onstop_logs_into_pending() {
-        let mut slot = SlotScript::new();
-        slot.start_load(
-            "export default class T extends LoopingBot {
-            onStart() { globalThis.__gen = (globalThis.__gen || 0) + 1; }
-            loop() { globalThis.__n = (globalThis.__n || 0) + 1; }
-            onStop() { this.log('stopped-ok'); }
-        }"
-            .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-        slot.load.as_ref().unwrap().on_game_tick(1);
-        let _ = slot.probe("1");
-        slot.restart_load_from_identity(Instant::now())
-            .expect("restart from identity");
-        wait_state(&mut slot, RunState::Starting);
-        wait_state(&mut slot, RunState::Running);
-        let logs = slot.take_pending_logs();
-        assert!(
-            logs.iter().any(|l| l.contains("stopped-ok")),
-            "dying isolate onStop must land in pending_logs: {logs:?}"
-        );
-        slot.load.as_ref().unwrap().on_game_tick(1);
-        assert_eq!(slot.probe("__gen").unwrap(), 1, "new isolate onStart runs");
-        slot.stop();
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn restart_still_refuses_pause() {
-        let mut slot = SlotScript::new();
-        slot.start_load(
-            "export default class T extends LoopingBot { loop() {} onStop() { this.log('stopped-ok'); } }"
-                .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-        slot.pause();
-        let err = slot.restart_load_from_identity(Instant::now()).unwrap_err();
-        assert!(
-            err.contains("not running") || err.contains("pause") || err.contains("frozen"),
-            "{err}"
-        );
-        slot.stop();
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn start_load_returns_before_setup_and_becomes_running() {
-        let mut slot = SlotScript::new();
-        let t0 = Instant::now();
-        slot.start_load(
-            "export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }".into(),
-            LoadShape::NativeTick,
-            vec![],
-        )
-        .unwrap();
-        assert!(
-            t0.elapsed() < Duration::from_millis(500),
-            "Start must not wait on V8: {:?}",
-            t0.elapsed()
-        );
-        assert_eq!(slot.state(), RunState::Starting);
-        wait_state(&mut slot, RunState::Running);
-        slot.stop();
-        wait_state(&mut slot, RunState::Idle);
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn start_load_setup_failure_returns_to_idle_with_the_diagnostic() {
-        let mut slot = SlotScript::new();
-        slot.start_load(
-            "throw new Error('zz-setup-proof');\nexport function tick(api) {}".into(),
-            LoadShape::NativeTick,
-            vec![],
-        )
-        .expect("Start returns before setup");
-        slot.attach_source_identity("file:bad.ts");
-        assert_eq!(
-            slot.poll_start(),
-            StartPoll::Pending,
-            "setup has not settled"
-        );
-        wait_state(&mut slot, RunState::Idle);
-        let err = slot.last_error().unwrap_or("").to_string();
-        assert!(err.contains("zz-setup-proof"), "{err}");
-        assert_eq!(
-            slot.poll_start(),
-            StartPoll::Settled(StartOutcome::Failed(err))
-        );
-        assert_eq!(slot.source_identity(), None);
-        assert!(slot.load_identity.is_none());
-        assert_eq!(
-            slot.runtime_generation(),
-            0,
-            "a Start that never reached Ready is not a Start"
-        );
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn stop_during_starting_ends_idle_and_cancels_the_start() {
-        let mut slot = SlotScript::new();
-        slot.start_load(
-            "export function tick(api) {}".into(),
-            LoadShape::NativeTick,
-            vec![],
-        )
-        .unwrap();
-        assert_eq!(slot.state(), RunState::Starting);
-        slot.stop();
-        assert_eq!(slot.state(), RunState::Stopping);
-        wait_state(&mut slot, RunState::Idle);
-        assert_eq!(
-            slot.poll_start(),
-            StartPoll::Settled(StartOutcome::Cancelled)
-        );
-        assert_eq!(slot.last_error(), None);
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn watchdog_restart_during_stop_reap_never_revives_the_slot() {
-        let mut slot = SlotScript::new();
-        slot.start_load(
-            "export function tick(api) {}".into(),
-            LoadShape::NativeTick,
-            vec![],
-        )
-        .unwrap();
-        wait_state(&mut slot, RunState::Running);
-        slot.stop();
-        assert_eq!(slot.state(), RunState::Stopping);
-        assert!(slot.restart_load_from_identity(Instant::now()).is_err());
-        wait_state(&mut slot, RunState::Idle);
-        for _ in 0..20 {
-            slot.observe_lifecycle();
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert_eq!(slot.state(), RunState::Idle);
-        assert!(!slot.load_active());
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn stop_returns_immediately_and_second_start_waits_for_reap() {
-        let src = "export default class T extends LoopingBot {
-            loop() {}
-            onStop() { this.log('stopped-ok'); }
-        }";
-        let mut slot = SlotScript::new();
-        slot.start_load(src.into(), LoadShape::CompatClass, vec![])
-            .unwrap();
-        wait_state(&mut slot, RunState::Running);
-        let t0 = Instant::now();
-        slot.stop();
-        assert!(
-            t0.elapsed() < Duration::from_millis(200),
-            "Stop blocked: {:?}",
-            t0.elapsed()
-        );
-        assert_eq!(slot.state(), RunState::Stopping);
-        slot.start_load(src.into(), LoadShape::CompatClass, vec![])
-            .expect("Start while Stopping is queued");
-        let generation = slot.runtime_generation();
-        assert!(
-            slot.start_load(src.into(), LoadShape::CompatClass, vec![])
-                .is_err(),
-            "a second queued Start is refused"
-        );
-        wait_state(&mut slot, RunState::Starting);
-        wait_state(&mut slot, RunState::Running);
-        assert_eq!(slot.poll_start(), StartPoll::Settled(StartOutcome::Ready));
-        assert_eq!(
-            slot.runtime_generation(),
-            generation,
-            "the generation read after Start is the one that runs"
-        );
-        let logs = slot.take_pending_logs();
-        assert!(
-            logs.iter().any(|l| l.contains("stopped-ok")),
-            "reaped onStop before the queued Start: {logs:?}"
-        );
-        slot.stop();
-        wait_state(&mut slot, RunState::Idle);
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn start_all_over_n_members_does_not_block_per_member() {
-        let src = "export function tick(api) {}".to_string();
-        let mut slots: Vec<SlotScript> = (0..4).map(|_| SlotScript::new()).collect();
-        let t0 = Instant::now();
-        for slot in &mut slots {
-            slot.start_load(src.clone(), LoadShape::NativeTick, vec![])
-                .unwrap();
-            assert_eq!(slot.state(), RunState::Starting);
-        }
-        assert!(
-            t0.elapsed() < Duration::from_millis(500),
-            "Start all blocked per member: {:?}",
-            t0.elapsed()
-        );
-        for slot in &mut slots {
-            wait_state(slot, RunState::Running);
-            slot.stop();
-            wait_state(slot, RunState::Idle);
-        }
-    }
-
-    /// A compiled card that queues one walk per tick onto the ctx's sink —
-    /// the queue the slot parks there — and nothing else.
-    #[cfg(feature = "load")]
-    #[derive(Default)]
-    struct Walker;
-
-    #[cfg(feature = "load")]
-    impl Script for Walker {
-        fn name(&self) -> &str {
-            "Walker"
-        }
-
-        fn tick(&mut self, ctx: &mut ScriptCtx<'_>) {
-            if let Some(sink) = ctx.compiled.interacts.as_mut() {
-                sink.push(crate::shim::InteractReq::Walk {
-                    x: 3,
-                    z: 4,
-                    level: 0,
-                    allow_teleports: false,
-                    allow_wilderness: false,
-                    allow_bank_fetch: false,
-                    request_id: 0,
-                });
-            }
-        }
-    }
-
-    /// The walk `Walker` queues, for comparing whole requests.
-    #[cfg(feature = "load")]
-    fn walker_walk() -> crate::shim::InteractReq {
-        crate::shim::InteractReq::Walk {
-            x: 3,
-            z: 4,
-            level: 0,
-            allow_teleports: false,
-            allow_wilderness: false,
-            allow_bank_fetch: false,
-            request_id: 0,
-        }
-    }
-
-    /// A ctx with no views wired and nothing parked: a compiled tick over it
-    /// is the slot's own queue, installed by the slot.
-    #[cfg(feature = "load")]
-    fn compiled_ctx<'a>(
-        driver: &'a mut dyn api::interact::Driver,
-        selected: Option<&'a api::game_data::SelectedGameData>,
-    ) -> ScriptCtx<'a> {
-        ScriptCtx {
-            driver,
-            tick: 1,
-            here: None,
-            walk: None,
-            walk_with: None,
-            inv: None,
-            snapshot: None,
-            obj_names: None,
-            compiled: crate::CompiledTick {
-                selected,
-                hold: false,
-                interacts: None,
-            },
-        }
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn a_compiled_tick_queues_onto_the_slot_and_one_drain_takes_it() {
-        let mut slot = SlotScript::new();
-        slot.start_compiled(Box::new(Walker), None).unwrap();
-        let mut d = NullDriver::default();
-        slot.on_game_tick(&mut compiled_ctx(&mut d, None));
-        assert_eq!(
-            slot.drain_interacts(),
-            vec![walker_walk()],
-            "the compiled card's verbs ride the slot's own drain"
-        );
-        assert!(
-            slot.drain_interacts().is_empty(),
-            "the drain takes the queue, it never replays it"
-        );
-
-        // A paused card is not ticked, so it queues nothing.
-        slot.pause();
-        slot.on_game_tick(&mut compiled_ctx(&mut d, None));
-        assert!(slot.drain_interacts().is_empty());
-
-        // Stop drops the instance and the queue it had not spent.
-        slot.resume();
-        slot.on_game_tick(&mut compiled_ctx(&mut d, None));
-        slot.stop();
-        assert!(
-            slot.drain_interacts().is_empty(),
-            "Stop must not leak a dead card's requests into the next Start"
-        );
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn a_compiled_start_pins_the_selected_facts_and_stop_clears_them() {
-        let data =
-            api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
-        let mut slot = SlotScript::new();
-        assert!(slot.compiled_game_data().is_none());
-        slot.start_compiled(Box::new(Noop), Some(Arc::clone(&data)))
-            .unwrap();
-        assert!(
-            slot.compiled_game_data().is_some(),
-            "the Start pin rides out to the ctx"
-        );
-        slot.stop();
-        assert!(
-            slot.compiled_game_data().is_none(),
-            "a stopped card keeps no pin"
-        );
-        slot.start_compiled(Box::new(Noop), None).unwrap();
-        assert!(
-            slot.compiled_game_data().is_none(),
-            "a Start with no pin is what a compiled identify fails closed on"
-        );
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
-        let data =
-            api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
-        // The machine's own identify decides what is held: a selected
-        // membership row with a positive count.
-        let held_id = data
-            .trails()
-            .expect("trails")
-            .rows
-            .iter()
-            .find(|row| row.role == "clue")
-            .expect("a selected clue row")
-            .id;
-        let mut slot = SlotScript::new();
-        slot.start_compiled(
-            Box::new(crate::sherlock::Sherlock::default()),
-            Some(Arc::clone(&data)),
-        )
-        .unwrap();
-        let begin = crate::clue::dispatch(
-            Some(&data),
-            &serde_json::json!({ "op": "begin", "generation": 0, "held": [[held_id, 1]] }),
-        );
-        assert_eq!(begin["kind"], "token", "{begin}");
-        let token = begin["token"].as_u64().expect("token");
-        let next = || {
-            serde_json::json!({
-                "op": "next",
-                "token": token,
-                "generation": 0,
-                "held": [[held_id, 1]],
-            })
-        };
-
-        // Running and unfrozen: the machine posts its own gate question.
-        slot.sync_compiled_clue(false);
-        assert_eq!(
-            crate::clue::dispatch(Some(&data), &next())["kind"],
-            "callback.enabled"
-        );
-
-        // Operator Pause, on a frame that dispatches no tick at all: the live
-        // token waits instead, so the pause cannot burn the session's clock.
-        slot.pause();
-        slot.sync_compiled_clue(false);
-        assert_eq!(crate::clue::dispatch(Some(&data), &next())["kind"], "wait");
-        slot.resume();
-        slot.sync_compiled_clue(false);
-        assert_eq!(
-            crate::clue::dispatch(Some(&data), &next())["kind"],
-            "callback.enabled",
-            "a thaw resumes the same session"
-        );
-
-        // The guardian's hold freezes the same live session the same way.
-        slot.sync_compiled_clue(true);
-        assert_eq!(crate::clue::dispatch(Some(&data), &next())["kind"], "wait");
-        slot.sync_compiled_clue(false);
-
-        // Stop is marked wherever it ran and applied on this thread: the live
-        // token is gone, and the next Start begins a fresh session.
-        slot.stop();
-        slot.sync_compiled_clue(false);
-        let after = crate::clue::dispatch(Some(&data), &next());
-        assert_eq!(after["kind"], "aborted", "{after}");
-        let again = crate::clue::dispatch(
-            Some(&data),
-            &serde_json::json!({ "op": "begin", "generation": 0, "held": [[held_id, 1]] }),
-        );
-        assert_eq!(again["kind"], "token", "{again}");
-        assert_ne!(
-            again["token"].as_u64(),
-            Some(token),
-            "the aborted session's token is not reused"
-        );
-    }
-
-    /// The two resets are not each other. A connection boundary
-    /// (`reset_session_work`) aborts the compiled clue machine's live step and
-    /// its token and keeps what the session still owes — the Entrana strip list
-    /// the reclaim reads — while operator Stop is a fresh task instance and
-    /// clears it with the step.
-    #[cfg(feature = "load")]
-    #[test]
-    fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
-        let data =
-            api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
-        // The Entrana-box proof row, and a worn name the frozen matcher folds.
-        const ENTRANA: i32 = 3579;
-        const HELM: i32 = 1163;
-        let mut slot = SlotScript::new();
-        slot.start_compiled(
-            Box::new(crate::sherlock::Sherlock::default()),
-            Some(Arc::clone(&data)),
-        )
-        .unwrap();
-        let begin = crate::clue::dispatch(
-            Some(&data),
-            &serde_json::json!({ "op": "begin", "generation": 0, "held": [[ENTRANA, 1]] }),
-        );
-        assert_eq!(begin["kind"], "token", "{begin}");
-        let token = begin["token"].as_u64().expect("token");
-        // The landed gate first: enabled, the report, the row's own status.
-        let next = |extra: serde_json::Value| {
-            let mut call = serde_json::json!({
-                "op": "next",
-                "token": token,
-                "generation": 0,
-                "held": [[ENTRANA, 1]],
-            });
-            for (key, value) in extra.as_object().expect("extra") {
-                call[key] = value.clone();
-            }
-            crate::clue::dispatch(Some(&data), &call)
-        };
-        assert_eq!(next(serde_json::json!({}))["kind"], "callback.enabled");
-        assert_eq!(
-            next(serde_json::json!({ "resume": true }))["kind"],
-            "callback.log"
-        );
-        assert_eq!(next(serde_json::json!({}))["kind"], "callback.setStatus");
-        // One strip step: the worn restricted row goes off, and the name is
-        // listed for the reclaim.
-        let strip = next(serde_json::json!({
-            "equipment": [{ "id": HELM, "name": "Rune full helm", "count": 1, "slot": 0 }],
-        }));
-        assert_eq!(strip["kind"], "unequip", "{strip}");
-        let owns = |data: &Arc<api::game_data::SelectedGameData>| {
-            crate::clue::dispatch(Some(data), &serde_json::json!({ "op": "ownsEquipment" }))["owns"]
-                == true
-        };
-        assert!(owns(&data), "the strip listed the name");
-
-        // The connection boundary, applied the way the pump applies it.
-        slot.reset_session_work();
-        slot.sync_compiled_clue(false);
-        let dead = crate::clue::dispatch(
-            Some(&data),
-            &serde_json::json!({
-                "op": "next",
-                "token": token,
-                "generation": 0,
-                "held": [[ENTRANA, 1]],
-            }),
-        );
-        assert_eq!(dead["kind"], "aborted", "the boundary kills the step");
-        assert!(
-            owns(&data),
-            "and keeps the list the reclaim still owes after a relog"
-        );
-
-        // Operator Stop: the fresh instance starts the session over.
-        slot.stop();
-        slot.sync_compiled_clue(false);
-        assert!(!owns(&data), "Stop clears the strip list with the step");
-    }
-}
+#[cfg(all(test, feature = "load"))]
+#[path = "slot_tests.rs"]
+mod tests;

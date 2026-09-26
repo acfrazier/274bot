@@ -9,19 +9,29 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use api::RandomKind;
-use host_play::SlotStatus;
+use host_play::{
+    format_background, format_bots, metric_text, ResourceView, SlotStatus, StartupPhase,
+};
 
-/// The state cell: `ingame scene N`, a login error, `logging in…`, or
-/// `waiting`.
+/// The state cell follows the explicit lifecycle phase; `ingame` remains the
+/// stricter game-action readiness gate.
 pub fn state_text(s: &SlotStatus) -> String {
     if s.ingame {
-        format!("ingame scene {}", s.scene_state)
-    } else if let Some(err) = &s.error {
-        format!("login {err}")
-    } else if s.login_started.is_some() {
-        "logging in…".to_string()
-    } else {
-        "waiting".to_string()
+        return format!("ingame scene {}", s.scene_state);
+    }
+    if let Some(err) = &s.error {
+        return format!("login {err}");
+    }
+    if s.login_latched && !s.connected {
+        return "logged out".to_string();
+    }
+    match s.startup_phase {
+        StartupPhase::Preparing => "preparing".to_string(),
+        StartupPhase::Queueing => "waiting".to_string(),
+        StartupPhase::Connecting => "logging in…".to_string(),
+        StartupPhase::LoadingScene => "loading scene…".to_string(),
+        StartupPhase::Ready => "connected".to_string(),
+        StartupPhase::Error => "login error".to_string(),
     }
 }
 
@@ -80,11 +90,29 @@ pub struct StatusPane<'a> {
     pub walk: &'a str,
     /// The mem cell: `lowmem` / `highmem`.
     pub mem: &'a str,
+    pub resources: Option<&'a ResourceView>,
+    pub background_notice: Option<&'a str>,
 }
 
 impl<'a> StatusPane<'a> {
     pub fn new(slot: Option<&'a SlotStatus>, walk: &'a str, mem: &'a str) -> Self {
-        Self { slot, walk, mem }
+        Self {
+            slot,
+            walk,
+            mem,
+            resources: None,
+            background_notice: None,
+        }
+    }
+
+    pub fn resources(mut self, view: &'a ResourceView) -> Self {
+        self.resources = Some(view);
+        self
+    }
+
+    pub fn notice(mut self, notice: Option<&'a str>) -> Self {
+        self.background_notice = notice;
+        self
     }
 }
 
@@ -93,7 +121,7 @@ impl Widget for StatusPane<'_> {
         let block = Block::default().borders(Borders::ALL).title("status");
         let inner = block.inner(area);
         block.render(area, buf);
-        let lines: Vec<Line> = match self.slot {
+        let mut lines: Vec<Line> = match self.slot {
             None => vec![
                 Line::from("state: no slots"),
                 Line::from("player: —"),
@@ -131,6 +159,27 @@ impl Widget for StatusPane<'_> {
                 lines
             }
         };
+        if let Some(view) = self.resources {
+            lines.push(Line::from(format!(
+                "bots: {}",
+                format_bots(view.bots, view.ingame)
+            )));
+            if view.background > 0 {
+                lines.push(Line::from(format!(
+                    "background: {}",
+                    format_background(view.background)
+                )));
+            }
+            lines.push(Line::from(format!("cpu: {}", metric_text(&view.cpu))));
+            lines.push(Line::from(format!("ram: {}", metric_text(&view.ram))));
+            lines.push(Line::from(format!(
+                "traffic: {}",
+                metric_text(&view.traffic)
+            )));
+        }
+        if let Some(notice) = self.background_notice {
+            lines.push(Line::from(format!("notice: {notice}")));
+        }
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .render(inner, buf);
@@ -180,6 +229,13 @@ mod tests {
         assert!(text.contains("ingame scene 2"), "state row: {text:?}");
         assert!(text.contains("tile: 10 11"), "tile row: {text:?}");
         assert!(text.contains("walk: 10 11 0"), "walk row: {text:?}");
+    }
+    #[test]
+    fn connected_loading_scene_is_not_reported_as_logged_out() {
+        let mut slot = status(false, 1);
+        slot.connected = true;
+        slot.startup_phase = host_play::StartupPhase::LoadingScene;
+        assert_eq!(state_text(&slot), "loading scene…");
     }
 
     #[test]
@@ -242,5 +298,29 @@ mod tests {
     fn empty_pane_says_no_slots() {
         let text = render(StatusPane::new(None, "—", "lowmem"), 40, 8);
         assert!(text.contains("no slots"), "empty status: {text:?}");
+    }
+
+    #[test]
+    fn status_shows_shared_resource_rows() {
+        use host_play::{format_bots, Metric, ResourceView};
+        let s = status(true, 2);
+        let view = ResourceView {
+            bots: 2,
+            ingame: 1,
+            background: 1,
+            cpu: Metric::Measuring,
+            ram: Metric::Available("1 MB peak".into()),
+            traffic: Metric::Measuring,
+        };
+        let text = render(
+            StatusPane::new(Some(&s), "—", "lowmem").resources(&view),
+            40,
+            18,
+        );
+        assert!(text.contains(&format_bots(2, 1)), "bots row: {text:?}");
+        assert!(text.contains("cpu:"), "cpu row: {text:?}");
+        assert!(text.contains("ram:"), "ram row: {text:?}");
+        assert!(text.contains("traffic:"), "traffic row: {text:?}");
+        assert!(text.contains("background:"), "background row: {text:?}");
     }
 }

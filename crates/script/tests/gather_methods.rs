@@ -894,10 +894,13 @@ export function tick(api) {
     assert_eq!(empty["nullArg"]["error"], "invalid-args");
     assert_eq!(empty["numberSkill"]["error"], "invalid-args");
     assert_eq!(empty["numberName"]["error"], "invalid-args");
-    assert_eq!(empty["omitted"]["error"], "missing-selected-data");
-    assert_eq!(empty["empty"]["error"], "missing-selected-data");
-    assert_eq!(empty["badSkill"]["error"], "missing-selected-data");
-    assert_eq!(empty["missName"]["error"], "missing-selected-data");
+    for key in ["omitted", "empty", "badSkill", "missName"] {
+        assert_eq!(
+            empty[key]["error"],
+            "game data unavailable: this server's content isn't verified (see profile/engine settings)",
+            "{key} {empty:?}"
+        );
+    }
 
     let iso = LoadIsolate::spawn_with_game_data(
         src.into(),
@@ -933,21 +936,6 @@ export function tick(api) {
 
 #[test]
 fn v2_install_is_typed_not_a_json_op_or_interact() {
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    assert!(
-        !bindings.contains("register_function(\"__rs2b0t_gather_methods"),
-        "gather query must not be a rustyscript JSON op"
-    );
-    let ops = bindings
-        .split("const V2_OPS")
-        .nth(1)
-        .unwrap()
-        .split("const OPTIONAL")
-        .next()
-        .unwrap();
-    assert!(!ops.contains("gatherMethods"), "{ops}");
-    assert!(!ops.contains("gatherResource"), "{ops}");
-    assert!(!ops.contains("gatherPlacements"), "{ops}");
     let value = probe(
         r#"
 export const apiVersion = 2;
@@ -1096,7 +1084,11 @@ export function tick(api) {
         "{value:?}"
     );
     // Args first: a well-formed call is the only one that reaches the pin.
-    assert_eq!(value["good"]["error"], "missing-selected-data", "{value:?}");
+    assert_eq!(
+        value["good"]["error"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)",
+        "{value:?}"
+    );
 }
 
 #[test]

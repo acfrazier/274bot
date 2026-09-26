@@ -51,19 +51,20 @@ pub const FOLD_GLYPH: &str = "\u{2582}";
 /// Unfold the rail blit (raise the head).
 pub const UNFOLD_GLYPH: &str = "\u{2585}";
 
-/// Cap dot state: error red wins, then not-ingame grey (logged out),
-/// then running green, else idle yellow. A FIFO-queued login slot is not
-/// ingame, so it is grey.
+/// Cap dot state: error red wins, then disconnected grey, then running
+/// green, else connected-idle yellow. A FIFO-queued or preparing slot is
+/// disconnected and grey; an authenticated slot stays yellow while its
+/// scene is still loading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Light {
-    /// Unknown / logged out — not ingame and no error.
+    /// Unknown / logged out / reconnecting — disconnected and no error.
     Grey,
     /// Login or runtime error.
     Red,
-    /// Idle — ingame and nothing running (paused/stopping scripts, the
-    /// run orb).
+    /// Connected but not running a script or nav task. This includes scene
+    /// loading plus paused/stopping scripts and the run orb.
     Yellow,
-    /// Running — ingame and a script is Running or nav is queued.
+    /// Connected with a Running script or queued nav task.
     Green,
 }
 
@@ -89,13 +90,13 @@ impl Light {
     }
 }
 
-/// The cap head title: member name plus a brief status. A grey (not ingame,
-/// no error) member names the login step it is in, so a slot that is still
-/// starting or loading does not read "logged out" until it is ready.
+/// The cap head title: member name plus a brief status. A non-error member
+/// that is not game-ready names the login step it is in, independently of
+/// whether its authenticated connection makes the traffic light yellow.
 pub fn cap_title(name: &str, light: Light, status: Option<&host_play::SlotStatus>) -> String {
     use host_play::StartupPhase;
     let step = status
-        .filter(|_| light == Light::Grey)
+        .filter(|s| light != Light::Red && !s.ingame)
         .and_then(|s| match s.startup_phase {
             StartupPhase::Preparing => Some("starting".to_string()),
             StartupPhase::Queueing
@@ -137,11 +138,11 @@ pub fn rail_preview_open(
 }
 
 /// Map a slot's status to its tile's traffic light: error red wins, then
-/// not-ingame → grey, then running → green, else idle yellow.
-pub fn traffic_light(ingame: bool, error: bool, running: bool) -> Light {
+/// disconnected → grey, then running → green, else connected-idle yellow.
+pub fn traffic_light(connected: bool, error: bool, running: bool) -> Light {
     if error {
         Light::Red
-    } else if !ingame {
+    } else if !connected {
         Light::Grey
     } else if running {
         Light::Green
@@ -279,17 +280,17 @@ mod tests {
 
     #[test]
     fn traffic_light_maps_all_four_states() {
-        // Unknown / logged out: not ingame, no error.
+        // Unknown / logged out: disconnected, no error.
         assert_eq!(traffic_light(false, false, false), Light::Grey);
-        // A FIFO-queued login slot is not ingame, so it is grey, not running.
+        // A FIFO-queued login slot is disconnected, so it is grey, not running.
         assert_eq!(traffic_light(false, false, true), Light::Grey);
-        // Error red wins over ingame and running.
+        // Error red wins over connection and running.
         assert_eq!(traffic_light(false, true, false), Light::Red);
         assert_eq!(traffic_light(true, true, true), Light::Red);
         assert_eq!(traffic_light(false, true, true), Light::Red);
-        // Idle yellow: ingame and nothing running.
+        // Idle yellow: connected and nothing running.
         assert_eq!(traffic_light(true, false, false), Light::Yellow);
-        // Running green: ingame and (script running or nav queued).
+        // Running green: connected and (script running or nav queued).
         assert_eq!(traffic_light(true, false, true), Light::Green);
     }
 
@@ -321,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn grey_cap_names_the_login_step_until_ready() {
+    fn cap_names_the_login_step_until_ready() {
         use host_play::{SlotStatus, StartupPhase};
         let at = |phase, queue: (i32, i32)| SlotStatus {
             username: "bob".into(),
@@ -351,6 +352,21 @@ mod tests {
         assert_eq!(
             title(&at(StartupPhase::LoadingScene, (-1, -1))),
             "bob: loading"
+        );
+        let connected_loading = SlotStatus {
+            connected: true,
+            ..at(StartupPhase::LoadingScene, (-1, -1))
+        };
+        let connected_light = traffic_light(
+            connected_loading.connected,
+            connected_loading.error.is_some(),
+            false,
+        );
+        assert_eq!(connected_light, Light::Yellow);
+        assert_eq!(
+            cap_title("bob", connected_light, Some(&connected_loading)),
+            "bob: loading",
+            "connection color must not hide the lifecycle phase"
         );
         assert_eq!(
             cap_title(

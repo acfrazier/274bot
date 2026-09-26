@@ -193,6 +193,55 @@ pub(crate) fn nav_door_scenario() -> Scenario {
     }
 }
 
+/// Inside the East Ardougne house room sealed by the closed diagonal
+/// (`wall_diagonal`, shape 9) door `loc_1530` at (2669,3316).
+const DIAGONAL_ROOM: WorldTile = WorldTile {
+    x: 2671,
+    z: 3316,
+    level: 0,
+};
+/// The East Ardougne south bank booth stand the 0.1.8.1 Thiever could not
+/// reach from that room.
+const DIAGONAL_BANK: WorldTile = WorldTile {
+    x: 2655,
+    z: 3286,
+    level: 0,
+};
+
+/// The `nav_diagonal_door` scenario: cheat-tele into the East Ardougne
+/// house room whose only exit is the closed diagonal door `loc_1530` at
+/// (2669,3316) (closed is the engine default), then `Follow` the baked
+/// route to the south bank. The route's first transport is the door's
+/// packed diagonal crossing, so the traveller opens it and walks through
+/// the freed door tile. PASS is standing on the bank stand.
+pub(crate) fn nav_diagonal_door_scenario() -> Scenario {
+    Scenario {
+        name: "nav_diagonal_door",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            tele_step("tele into the diagonal-door room", DIAGONAL_ROOM),
+            follow_step(
+                "follow through the diagonal door to the south bank",
+                DIAGONAL_BANK,
+            ),
+        ],
+        proof: Proof::Arrived {
+            x: DIAGONAL_BANK.x,
+            z: DIAGONAL_BANK.z,
+            level: DIAGONAL_BANK.level,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            terminal_shot: Some("nav_diagonal_door terminal"),
+            nav: nav_test_paints().with_tick_ms(300),
+            ..Default::default()
+        },
+    }
+}
+
 /// Closed Catherby range-house door (loc 1530) the closer slams.
 const DOOR: WorldTile = WorldTile {
     x: 2816,

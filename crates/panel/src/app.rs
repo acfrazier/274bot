@@ -33,6 +33,7 @@ use crate::script_picker::{
     CARD_GAP, CARD_MIN_W, FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE,
     GLYPH_FOLDER, SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
 };
+use crate::walk_map::WalkMapRenderer;
 use crate::window::{self, Gpu, RedrawMode, ShotStatus, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
@@ -47,12 +48,12 @@ use host_play::progress::{
 
 use crate::input_capture::{capture_keys, discard_unconsumed_native_capture, stream_capture};
 use crate::resource::{
-    cpu_from_delta, format_bots, format_rss_caption, sample_process, traffic_from_samples, Metric,
+    background_ack_text, format_background, format_bots, metric_text, ResourceSampler, ResourceView,
 };
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
     script_pause_enabled, script_status_text, script_stop_enabled, ProfilePreparationCompletion,
-    Session, PROCESS,
+    Session,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
@@ -137,18 +138,8 @@ struct PanelState {
     paint: PaintOverlay,
     /// One cached tile texture per wall member (blitted at TILE_W×TILE_H).
     views: HashMap<String, TileView>,
-    /// Last 1 Hz process sample `(instant, cpu secs)`; `None` before the
-    /// first sample or after a sampler failure (CPU then re-measures).
-    last_proc: Option<(Instant, f64)>,
-    /// Cached 1 Hz CPU metric for the resource card.
-    res_cpu: Metric,
-    /// Cached 1 Hz RAM metric for the resource card.
-    res_ram: Metric,
-    /// Cached 1 Hz traffic metric for the resource card.
-    res_traffic: Metric,
-    /// Last traffic sample `(instant, sum, n_slots)`; `None` until the
-    /// first 1 Hz pass (first rate needs two samples).
-    last_traffic: Option<(Instant, u64, usize)>,
+    /// Shared 1 Hz process/traffic sampler (rail + main-panel resource section).
+    resource_sampler: ResourceSampler,
     /// Headed `--live` watch (`null_raster`, `stress50`, `stress50_full`,
     /// `script_<name>`) or `--smoke`; `None` interactive.
     live: Option<LiveHarness>,
@@ -165,6 +156,8 @@ struct PanelState {
     /// `--live script_*` run starts or lazily on the first write (the
     /// interactive F12 capture has no run start to hook).
     shot_dir: Option<PathBuf>,
+    /// One application-owned WalkTo map renderer (not per bot).
+    walk_map: WalkMapRenderer,
 }
 
 /// Deferred boot work for [`run_panel`]. The unlock / live-harness flows
@@ -516,83 +509,12 @@ fn dispose_idle_views(
 }
 
 impl PanelState {
-    /// 1 Hz process + stream-byte sample for the resource card. CPU needs
-    /// a wall+CPU delta, so the first sample is [`Metric::Measuring`]; RAM
-    /// is available from the start. Traffic needs two samples of summed
-    /// `bytes_in+bytes_out`; zero slots stay Measuring (never fake 0 B/s).
-    /// A process-sampler failure flips CPU/RAM to [`Metric::Error`] and
-    /// re-baselines them, but traffic still samples from statuses.
-    fn sample_resources(&mut self) {
-        let now = Instant::now();
-        // Prefer last_proc for the 1 Hz gate; if the process sampler failed
-        // and cleared it, fall back to last_traffic so we keep sampling
-        // stream bytes without spinning every frame.
-        let due = match &self.last_proc {
-            Some((t, _)) => now.duration_since(*t).as_secs_f64() >= 1.0,
-            None => match &self.last_traffic {
-                Some((t, ..)) => now.duration_since(*t).as_secs_f64() >= 1.0,
-                None => true,
-            },
-        };
-        if !due {
-            return;
-        }
-
-        let statuses = self.session.statuses();
-        let n = statuses.len();
-        let sum: u64 = statuses
-            .iter()
-            .map(|s| s.bytes_in.wrapping_add(s.bytes_out))
-            .sum();
-        match self.last_traffic {
-            Some((t0, sum0, n_prev)) => {
-                let dt = now.duration_since(t0).as_secs_f64();
-                self.res_traffic = traffic_from_samples(sum, sum0, dt, n, n_prev);
-            }
-            None => self.res_traffic = Metric::Measuring,
-        }
-        self.last_traffic = Some((now, sum, n));
-
-        let (rss, cpu) = sample_process();
-        if debug_enabled() {
-            eprintln!("[panel] rss={} traffic_sum={}", rss, sum);
-            if let Some(view) = self.game_view.as_ref() {
-                let s = view.present_stats;
-                eprintln!(
-                    "[panel] present pixmap={} tex={} bind_noop={} bind_rereg={}",
-                    s.pixmap, s.tex, s.bind_noop, s.bind_rereg
-                );
-            }
-        }
-        if rss == 0 && cpu == 0.0 {
-            self.res_cpu = Metric::Error("process sample failed".into());
-            self.res_ram = Metric::Error("process sample failed".into());
-            self.last_proc = None;
-            return;
-        }
-        match self.last_proc {
-            Some((t0, cpu0)) => {
-                let wall = now.duration_since(t0).as_secs_f64();
-                let ncpu = std::thread::available_parallelism()
-                    .map(|n| n.get() as u32)
-                    .unwrap_or(1)
-                    .max(1);
-                self.res_cpu = cpu_from_delta(cpu - cpu0, wall, ncpu);
-            }
-            None => self.res_cpu = Metric::Measuring,
-        }
-        self.res_ram = Metric::Available(format_rss_caption(rss));
-        self.last_proc = Some((now, cpu));
-    }
-}
-
-impl Default for PanelState {
-    fn default() -> Self {
+    fn with_session(session: Session, shot_state: Arc<Mutex<crate::window::ShotState>>) -> Self {
         Self {
             #[cfg(feature = "memory-profile")]
             memory: None,
             game_view: None,
-            session: Session::new(),
+            session,
             dock_inited: false,
             dock_layout: None,
             game_dock_node: None,
@@ -604,17 +526,56 @@ impl Default for PanelState {
             overlay: PathOverlay::new(),
             paint: PaintOverlay::new(),
             views: HashMap::new(),
-            last_proc: None,
-            res_cpu: Metric::Measuring,
-            res_ram: Metric::Measuring,
-            res_traffic: Metric::Measuring,
-            last_traffic: None,
+            resource_sampler: ResourceSampler::default(),
             live: None,
             dock_size: None,
             os_window: None,
-            shot_state: Arc::new(Mutex::new(crate::window::ShotState::default())),
+            shot_state,
             shot_dir: None,
+            walk_map: WalkMapRenderer::new(),
         }
+    }
+
+    /// 1 Hz process + stream-byte sample. The due check does not clone
+    /// statuses; the cached view is borrowed by both panel surfaces.
+    fn sample_resources(&mut self) {
+        let now = Instant::now();
+        if !self.resource_sampler.due(now) {
+            return;
+        }
+        let focused = self.session.focused_name();
+        match self.session.core.play() {
+            Some(play) => self
+                .resource_sampler
+                .sample_play(now, play, focused.as_deref()),
+            None => self
+                .resource_sampler
+                .sample(now, focused.as_deref(), std::iter::empty()),
+        }
+        if debug_enabled() {
+            eprintln!(
+                "[panel] rss={} bots={}",
+                self.resource_sampler.last_rss(),
+                self.resource_sampler.view().bots
+            );
+            if let Some(view) = self.game_view.as_ref() {
+                let s = view.present_stats;
+                eprintln!(
+                    "[panel] present pixmap={} tex={} bind_noop={} bind_rereg={}",
+                    s.pixmap, s.tex, s.bind_noop, s.bind_rereg
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl Default for PanelState {
+    fn default() -> Self {
+        Self::with_session(
+            Session::new(),
+            Arc::new(Mutex::new(crate::window::ShotState::default())),
+        )
     }
 }
 
@@ -1141,14 +1102,11 @@ fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
     let built = ui.window(title).flags(game_window_flags()).build(|| {
         let avail = ui.content_region_avail();
         if state.session.walkto_open {
-            picker::draw_picker(ui, &mut state.session);
+            picker::draw_picker(ui, Some(gpu), &mut state.session, &mut state.walk_map);
+        } else if state.session.multibox && state.session.wall.grid {
+            grid_pane(ui, gpu, state, avail);
         } else {
-            picker::note_closed();
-            if state.session.multibox && state.session.wall.grid {
-                grid_pane(ui, gpu, state, avail);
-            } else {
-                game_pane(ui, gpu, state, avail);
-            }
+            game_pane(ui, gpu, state, avail);
         }
     });
     state.session.set_game_pane_open(built.is_some());
@@ -1229,7 +1187,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         state.overlay.frame(ui, queue, min, size);
         // Script-paint overlay: the focused slot's paint renders in an
         // ImGui window over the chatbox rect — never on the game texture.
-        let statuses = state.session.statuses();
+        let statuses = state.session.statuses().to_vec();
         overlay_script_paint(
             ui,
             gpu,
@@ -1268,7 +1226,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
 /// 330px panel collapsed. `only_render_selected` / fold hide the blit
 /// only. Capture reaches the focused cell's body.
 fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
-    let members = state.session.wall.members.clone();
+    let members = state.session.core.members().to_vec();
     if members.is_empty() {
         ui.text_disabled("no wall members");
         state.paint.release_canvas(gpu);
@@ -1286,7 +1244,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             members.iter().any(|m| m == name) && draw_for_slot(&focus, name)
         });
     }
-    let statuses = state.session.statuses();
+    let statuses = state.session.statuses().to_vec();
     for (i, name) in members.iter().enumerate() {
         let [cx, cy, cw, ch] = cells[i];
         let is_focused = focused.as_deref() == Some(name.as_str());
@@ -1295,11 +1253,11 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         let running = status.is_some_and(|s| s.walk_x != -1)
             || state
                 .session
-                .play
-                .as_ref()
+                .core
+                .play()
                 .is_some_and(|p| p.script_state(name) == script::RunState::Running);
         let light = traffic_light(
-            status.is_some_and(|s| s.ingame),
+            status.is_some_and(|s| s.connected),
             status.is_some_and(|s| s.error.is_some()),
             running,
         );
@@ -1368,7 +1326,12 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
 
 /// Right panel: rs2b0t chrome squished into the 330px strip. Vertical scroll
 /// only — wrap/clip, never a horizontal bar.
-fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgressView>) {
+fn panel_window(
+    ui: &Ui,
+    session: &mut Session,
+    progress: Option<StartupProgressView>,
+    resources: &ResourceView,
+) {
     // The ### suffix preserves the existing docking identity across revisions.
     ui.window(format!("{}###{PANEL_WINDOW}", session.app_title()))
         .flags(WindowFlags::NO_RESIZE | WindowFlags::NO_COLLAPSE)
@@ -1383,16 +1346,28 @@ fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgress
             walkto_button(ui, session);
             slot_config_row(ui, session);
             let order = resolve_heading_order(&session.ui.section_order);
+            // The log fills the leftover height only when nothing follows it.
+            let log_last = !crate::ui_state::panel_section_visible(&session.ui, "parameters")
+                && order
+                    .iter()
+                    .rev()
+                    .find(|id| crate::ui_state::panel_section_visible(&session.ui, id))
+                    .is_some_and(|id| id == "log");
             for id in order {
                 if !crate::ui_state::panel_section_visible(&session.ui, &id) {
                     continue;
                 }
                 match id.as_str() {
                     "status" => status_section(ui, session),
+                    "resource" => {
+                        if !session.multibox {
+                            resource_section(ui, session, resources);
+                        }
+                    }
                     "profile" => profile_section(ui, session),
                     "script" => script_section(ui, session),
                     "debug" => debug_section(ui, session),
-                    "log" => log_section(ui, session),
+                    "log" => log_section(ui, session, log_last),
                     _ => {}
                 }
             }
@@ -1485,11 +1460,11 @@ fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText
 /// Startup banner text for one slot row. The second flag is whether to append
 /// an elapsed timer (Preparing and in-flight login phases; not errors/latched).
 pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option<(String, bool)> {
+    if status.login_latched && !status.connected && status.worker_terminal.is_none() {
+        return Some(("Logged out — select Log in to reconnect".to_string(), false));
+    }
     if let Some(error) = status.error.as_deref() {
         return Some((error.to_string(), false));
-    }
-    if status.login_latched && !status.ingame {
-        return Some(("Logged out — select Log in to reconnect".to_string(), false));
     }
     let message = match status.startup_phase {
         host_play::StartupPhase::Preparing => {
@@ -1652,6 +1627,16 @@ fn kv_row(ui: &Ui, key: &str, value: &str) {
     ui.text_wrapped(value);
 }
 
+fn draw_resource_rows(ui: &Ui, view: &ResourceView, show_background: bool) {
+    kv_row(ui, "bots", &format_bots(view.bots, view.ingame));
+    if show_background && view.background > 0 {
+        kv_row(ui, "background", &format_background(view.background));
+    }
+    kv_row(ui, "cpu", metric_text(&view.cpu));
+    kv_row(ui, "ram", metric_text(&view.ram));
+    kv_row(ui, "traffic", metric_text(&view.traffic));
+}
+
 /// Same-line gap that matches [`equal_button_width`]'s `BUTTON_GAP`.
 fn gap_line(ui: &Ui) {
     ui.same_line_with_spacing(0.0, BUTTON_GAP);
@@ -1725,7 +1710,7 @@ fn profile_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "profile") {
         return;
     }
-    if session.vault.is_none() {
+    if session.core.vault().is_none() {
         vault_unlock_prompt(ui, session);
         return;
     }
@@ -1791,17 +1776,17 @@ fn paint_inverse_combo_arrow(ui: &Ui) {
     .build();
 }
 
-fn logout_enabled(vault_open: bool, focused: bool, ingame: bool, queued: bool) -> bool {
-    vault_open && focused && (ingame || queued)
+fn logout_enabled(vault_open: bool, focused: bool, connected: bool, queued: bool) -> bool {
+    vault_open && focused && (connected || queued)
 }
 
 /// Log in / Logout above WalkTo. Always drawn; disabled while the vault
-/// is locked or no profile is focused. Logout needs an ingame or genuinely
+/// is locked or no profile is focused. Logout needs a connected or genuinely
 /// queued focused slot, so an unloaded profile cannot be latched accidentally.
 fn login_logout_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
     let cells = button_cells(avail, 2);
-    let vault_open = session.vault.is_some();
+    let vault_open = session.core.vault().is_some();
     let focused = session.focused_name();
     let can_login = vault_open && focused.is_some();
     let focused_queued = focused
@@ -1811,7 +1796,7 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
     let can_logout = logout_enabled(
         vault_open,
         focused.is_some(),
-        session.focused_ingame(),
+        session.focused_connected(),
         focused_queued,
     );
     {
@@ -1851,7 +1836,7 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// WalkTo: main-chrome button that opens the collision-dot tile picker.
+/// WalkTo: main-chrome button that opens the native map tile picker.
 fn walkto_button(ui: &Ui, session: &mut Session) {
     let w = ui.content_region_avail()[0];
     if ui.button_with_size("WalkTo", [w, 0.0]) {
@@ -1962,6 +1947,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .as_ref()
         .map(|sel| match sel {
             script::ScriptSel::Loaded(source, identity) => session
+                .scripts
                 .js
                 .get(*source, identity)
                 .map(|card| card.name.clone())
@@ -2030,15 +2016,28 @@ fn script_section(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     let confirming = session.script_reload_confirmation_pending();
-    if ui.button_with_size(if confirming { "Confirm" } else { "Reload" }, [w, 0.0]) {
-        let _ = session.script_reload_clicked();
+    let validating = session.reload_validation_pending();
+    {
+        let _validating = validating.then(|| ui.begin_disabled());
+        let label = if validating {
+            "Validating…"
+        } else if confirming {
+            "Confirm"
+        } else {
+            "Reload"
+        };
+        if ui.button_with_size(label, [w, 0.0]) {
+            session.begin_script_reload_clicked();
+        }
     }
-    ui.set_item_tooltip(if confirming {
+    ui.set_item_tooltip(if validating {
+        "validating candidate script off the UI thread"
+    } else if confirming {
         "confirm reload: restart listed running bots and stop listed paused bots"
     } else {
         "hash source and supported siblings; unchanged skips transpile"
     });
-    if confirming && ui.button_with_size("Cancel reload", [avail, 0.0]) {
+    if (confirming || validating) && ui.button_with_size("Cancel reload", [avail, 0.0]) {
         session.cancel_reload();
     }
 
@@ -2172,7 +2171,7 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
         {
             if p.delivery {
                 if let Some(from) = category_from_key(p.data) {
-                    let present = card_categories(session.js.cards());
+                    let present = card_categories(session.scripts.js.cards());
                     let mut order =
                         resolve_category_order(&session.ui.script_category_order, &present);
                     move_category(&mut order, &from, cat);
@@ -2257,7 +2256,7 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
                 let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                 ui.text_disabled(line);
             }
-            if let Some(failure) = session.js.load_failure(&card.identity_key()) {
+            if let Some(failure) = session.scripts.js.load_failure(&card.identity_key()) {
                 ui.text_colored(ERROR, format!("failed {}", failure.stage.as_str()));
                 if selected {
                     ui.text_wrapped(failure.named_line());
@@ -2315,15 +2314,23 @@ fn browse_card_grid(ui: &Ui, session: &mut Session, cards: &[&script::JsCard]) {
 
 fn browse_window_body(ui: &Ui, session: &mut Session) {
     let w = ui.content_region_avail()[0];
-    let label = if session.catalog_refresh_confirm {
+    let validating = session.reload_validation_pending();
+    let label = if validating {
+        "Validating catalog…"
+    } else if session.scripts.catalog_refresh_confirm() {
         "Confirm catalog reload"
     } else {
         "Refresh catalog"
     };
-    if ui.button_with_size(label, [w, 0.0]) {
-        session.refresh_catalog();
+    {
+        let _validating = validating.then(|| ui.begin_disabled());
+        if ui.button_with_size(label, [w, 0.0]) {
+            session.begin_refresh_catalog();
+        }
     }
-    if session.catalog_refresh_confirm && ui.button_with_size("Cancel reload", [w, 0.0]) {
+    if (session.scripts.catalog_refresh_confirm() || validating)
+        && ui.button_with_size("Cancel reload", [w, 0.0])
+    {
         session.cancel_reload();
     }
     ui.spacing();
@@ -2338,7 +2345,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         }
         ui.spacing();
     }
-    let cards: Vec<script::JsCard> = session.js.cards().to_vec();
+    let cards: Vec<script::JsCard> = session.scripts.js.cards().to_vec();
     let present = card_categories(&cards);
     let order = resolve_category_order(&session.ui.script_category_order, &present);
     if order != session.ui.script_category_order {
@@ -2350,7 +2357,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         ui.spacing();
     }
     let busy = !session.transpile_queue.is_empty();
-    let need = session.js.cards_needing_transpile().len();
+    let need = session.scripts.js.cards_needing_transpile().len();
     if need > 0 || busy {
         let w = ui.content_region_avail()[0];
         let _off = busy.then(|| ui.begin_disabled());
@@ -2373,7 +2380,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         }
         ui.spacing();
     }
-    let named_failures = session.js.named_failure_output();
+    let named_failures = session.scripts.js.named_failure_output();
     if !named_failures.is_empty() {
         // Collapsed by default: the list is long (dim catalog cards are
         // expected misses) and pushes the script browser off screen.
@@ -2381,7 +2388,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         let open = ui.collapsing_header(
             format!(
                 "{} failed###script-failures",
-                session.js.load_failures().len()
+                session.scripts.js.load_failures().len()
             ),
             TreeNodeFlags::NONE,
         );
@@ -2768,6 +2775,17 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 changed = true;
             }
 
+            ui.spacing();
+            ui.text_colored(ACCENT, "WalkTo map");
+            let mut ask = session.map_bake.choice() == frontend_core::MapBakeChoice::Ask;
+            if ui.checkbox("ask before baking terrain", &mut ask) {
+                session.set_map_bake_choice(if ask {
+                    frontend_core::MapBakeChoice::Ask
+                } else {
+                    frontend_core::MapBakeChoice::Always
+                });
+            }
+
             if changed {
                 session.ui.nav = nav;
                 crate::ui_state::save(&session.ui);
@@ -2806,7 +2824,7 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
     }
     match &session.script_sel {
         Some(script::ScriptSel::Loaded(source, name)) => {
-            if let Some(card) = session.js.get(*source, name) {
+            if let Some(card) = session.scripts.js.get(*source, name) {
                 if card.settings_schema.is_empty() {
                     ui.text_disabled("(no parameters)");
                 } else {
@@ -2846,9 +2864,10 @@ fn persist_profile_setting(
         return;
     }
     session
-        .script_settings
+        .scripts
+        .legacy
         .set_value(source, &card.name, id, value);
-    let _ = session.script_settings.save();
+    let _ = session.scripts.legacy.save();
 }
 
 fn script_parameter_editors(ui: &Ui, session: &mut Session) {
@@ -2856,7 +2875,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
         ui.text_wrapped("select a loaded script with a parameter schema");
         return;
     };
-    let Some(card) = session.js.get(source, &name).cloned() else {
+    let Some(card) = session.scripts.js.get(source, &name).cloned() else {
         ui.text_disabled("(script not found)");
         return;
     };
@@ -3014,6 +3033,36 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             ui.set_item_tooltip(help);
         }
     }
+    if session.focused_name().is_some() {
+        apply_to_all_section(ui, session);
+    }
+}
+
+/// Apply to all: copy the focused profile's parameters for this card to
+/// every wall member assigned the same card, after a confirmation naming
+/// the frozen scope. The last result stays below it.
+fn apply_to_all_section(ui: &Ui, session: &mut Session) {
+    ui.separator();
+    if let Some(scope) = session.scripts.prepared_settings_sync() {
+        ui.text_wrapped(scope.prompt());
+        if ui.button("Apply") {
+            session.apply_settings_sync();
+        }
+        ui.same_line();
+        if ui.button("Cancel##apply-to-all") {
+            session.cancel_settings_sync();
+        }
+    } else {
+        if ui.button("Apply to same-card members…") {
+            session.prepare_settings_sync();
+        }
+        ui.set_item_tooltip(
+            "copy these parameters to every wall member assigned this card; members on another card are skipped",
+        );
+    }
+    if let Some(report) = session.scripts.last_settings_sync() {
+        ui.text_wrapped(report.summary());
+    }
 }
 
 /// Script prefs window: typed parameter editors + optional rail preview toggle.
@@ -3060,6 +3109,7 @@ fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
         Some(script::ScriptSel::Compiled(_)) => Some("compiled scripts have no parameter schema"),
         Some(script::ScriptSel::Loaded(source, name)) => {
             let empty = session
+                .scripts
                 .js
                 .get(*source, name)
                 .is_none_or(|card| card.settings_schema.is_empty());
@@ -3207,8 +3257,10 @@ fn status_section(ui: &Ui, session: &mut Session) {
         } else {
             s.startup_progress_message.clone()
         }
-    } else if s.login_started.is_some() {
+    } else if s.startup_phase == host_play::StartupPhase::Connecting {
         "logging in…".to_string()
+    } else if s.startup_phase == host_play::StartupPhase::LoadingScene {
+        "loading scene…".to_string()
     } else if s.login_latched {
         "logged out".to_string()
     } else {
@@ -3244,35 +3296,19 @@ fn status_section(ui: &Ui, session: &mut Session) {
     );
 }
 
-/// Stick to the bottom of the log when the last frame was already there
-/// (1 px slack for float layout). Scrolling up to read history stays put.
-fn log_follow_bottom(scroll_y: f32, scroll_max_y: f32) -> bool {
-    scroll_y >= scroll_max_y - 1.0
+fn resource_section(ui: &Ui, session: &mut Session, view: &ResourceView) {
+    if !section_open(ui, session, "resource") {
+        return;
+    }
+    draw_resource_rows(ui, view, true);
 }
 
-/// log: focused slot's status-transition lines (or PROCESS when none).
-fn log_section(ui: &Ui, session: &mut Session) {
+/// log: the shared structured log (see [`crate::log_pane`]).
+fn log_section(ui: &Ui, session: &mut Session, last: bool) {
     if !section_open(ui, session, "log") {
         return;
     }
-    let key = session
-        .focused_name()
-        .unwrap_or_else(|| PROCESS.to_string());
-    let log_by = session.log_by.lock().unwrap();
-    let empty: Vec<String> = Vec::new();
-    let lines = log_by.get(&key).unwrap_or(&empty);
-    ui.child_window("panel-log")
-        .size([0.0, 80.0])
-        .build(ui, || {
-            let follow = log_follow_bottom(ui.scroll_y(), ui.scroll_max_y());
-            let _wrap = ui.push_text_wrap_pos(0.0);
-            for line in lines.iter() {
-                ui.text_wrapped(line);
-            }
-            if follow {
-                ui.set_scroll_here_y(1.0);
-            }
-        });
+    crate::log_pane::log_body(ui, session, last);
 }
 
 /// Selected picker button: amber fill, dark text (illuminated invert).
@@ -3470,6 +3506,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     let slot = session.focused_name().unwrap_or_else(|| "—".into());
     ui.text_colored(session.ui.chrome.accent_rgba(), slot);
     global_capture_section(ui, session);
+    crate::log_pane::session_log_row(ui, session);
     let mut sidecar = session.focus.lock().unwrap().sidecar_50;
     if ui.checkbox("sidecar 50 fps", &mut sidecar) {
         session.set_sidecar_50(sidecar);
@@ -3558,7 +3595,6 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
 /// only-render-selected, else cap + 1 fps body or renderer-off
 /// placeholder), `+ add bot`, and the 1 Hz resource card.
 fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
-    state.sample_resources();
     let mut open = true;
     ui.window(format!(
         "{}-rail###{RAIL_WINDOW}",
@@ -3570,7 +3606,7 @@ fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         rail_bulk_row(ui, state);
         rail_tiles(ui, gpu, state);
         add_bot_button(ui, state);
-        resource_card(ui, state);
+        resource_card(ui, state.resource_sampler.view());
     });
     if !open {
         state.session.set_multibox(false);
@@ -3741,6 +3777,34 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
     }
 }
 
+fn background_ack_window(ui: &Ui, session: &mut Session, view: &ResourceView) {
+    if session.background_ack_open && session.background_bot_count() == 0 {
+        session.dismiss_background_ack();
+    }
+    if !session.background_ack_open {
+        return;
+    }
+    let mut open = true;
+    let others = session.background_bot_count();
+    let body = background_ack_text(others, view);
+    ui.window("Other profiles keep running")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
+        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
+        .build(|| {
+            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+            ui.text_wrapped(&body);
+            ui.spacing();
+            let w = ui.content_region_avail()[0];
+            if ui.button_with_size("Got it, don't show again", [w, 0.0]) {
+                session.ack_background_bots();
+            }
+        });
+    if !open {
+        session.dismiss_background_ack();
+    }
+}
+
 /// One tile per wall member, in wall order: cap (world number or local
 /// traffic-light dot, name + brief, ✗) then a `TILE_W`×`TILE_H` body. The
 /// body blits the slot's `FrameBuf` when `draw_for_slot` says this member
@@ -3750,8 +3814,8 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
 /// (a sibling button, never part of the name click) removes it.
 fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
-    let members = state.session.wall.members.clone();
-    let statuses = state.session.statuses();
+    let members = state.session.core.members().to_vec();
+    let statuses = state.session.statuses().to_vec();
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     {
         let focus = state.session.focus.lock().unwrap();
@@ -3764,11 +3828,11 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         let running = status.is_some_and(|s| s.walk_x != -1)
             || state
                 .session
-                .play
-                .as_ref()
+                .core
+                .play()
                 .is_some_and(|p| p.script_state(name) == script::RunState::Running);
         let light = traffic_light(
-            status.is_some_and(|s| s.ingame),
+            status.is_some_and(|s| s.connected),
             status.is_some_and(|s| s.error.is_some()),
             running,
         );
@@ -3918,8 +3982,8 @@ fn cell_body(
         match state.session.focused_pixels() {
             Some(buf) => state
                 .session
-                .slots
-                .get(name)
+                .core
+                .slot_io(name)
                 .map(|s| Arc::ptr_eq(&s.pixels, &buf))
                 .unwrap_or(false),
             None => false,
@@ -3929,7 +3993,12 @@ fn cell_body(
         // `take` moves the stored frame out; `present` routes it: the
         // `PixMap` (CPU) arm uploads into the tile's owned texture, the
         // `Texture` (GPU) arm binds the client's frame view directly.
-        if let Some(frame) = state.session.slots.get(name).and_then(|s| s.pixels.take()) {
+        if let Some(frame) = state
+            .session
+            .core
+            .slot_io(name)
+            .and_then(|s| s.pixels.take())
+        {
             tv.view.present(gpu, frame);
         }
     }
@@ -3956,31 +4025,11 @@ fn add_bot_button(ui: &Ui, state: &mut PanelState) {
 /// "measuring…"; a failed process sampler shows error for CPU/RAM only.
 /// The draw/paint counters moved off the slot status row (M2 Task 1), so
 /// the draw row is gone until Task 4's per-slot renderer metrics.
-fn resource_card(ui: &Ui, state: &mut PanelState) {
+fn resource_card(ui: &Ui, view: &ResourceView) {
     ui.spacing();
     ui.text_disabled("resource");
     ui.separator();
-    let statuses = state.session.statuses();
-    let ingame = statuses.iter().filter(|s| s.ingame).count();
-    kv_row(ui, "bots", &format_bots(statuses.len(), ingame));
-    match &state.res_cpu {
-        Metric::Measuring => kv_row(ui, "cpu", "measuring…"),
-        Metric::Available(s) => kv_row(ui, "cpu", s),
-        Metric::Unavailable(r) => kv_row(ui, "cpu", r),
-        Metric::Error(e) => kv_row(ui, "cpu", e),
-    }
-    match &state.res_ram {
-        Metric::Measuring => kv_row(ui, "ram", "measuring…"),
-        Metric::Available(s) => kv_row(ui, "ram", s),
-        Metric::Unavailable(r) => kv_row(ui, "ram", r),
-        Metric::Error(e) => kv_row(ui, "ram", e),
-    }
-    match &state.res_traffic {
-        Metric::Measuring => kv_row(ui, "traffic", "measuring…"),
-        Metric::Available(s) => kv_row(ui, "traffic", s),
-        Metric::Unavailable(r) => kv_row(ui, "traffic", r),
-        Metric::Error(e) => kv_row(ui, "traffic", e),
-    }
+    draw_resource_rows(ui, view, false);
 }
 
 /// Rising-edge helper: `(open_popup, new_prev)`. `open_popup` is true only
@@ -4017,17 +4066,15 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .size_constraints([200.0, 80.0], [f32::MAX, 720.0])
         .build(|| {
             let _wrap = ui.push_text_wrap_pos(0.0);
-            if session.vault.is_none() {
+            if session.core.vault().is_none() {
                 vault_unlock_prompt(ui, session);
             } else {
-            let names: Vec<String> = session
-                .vault
-                .as_ref()
+            let names: Vec<String> = session.core.vault()
                 .map(|v| v.profiles().map(|p| p.username.clone()).collect())
                 .unwrap_or_default();
             let w = ui.content_region_avail()[0];
             let focused = session.focused_name();
-            let members = session.wall.members.clone();
+            let members = session.core.members().to_vec();
             let multibox = session.multibox;
             if multibox && ui.button_with_size("Load all", [w, 0.0]) {
                 session.load_all();
@@ -4056,7 +4103,15 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                             } else {
                                 focused.as_deref() == Some(name.as_str())
                             };
+                            // A profile whose first save is still being
+                            // written is not selectable, editable or
+                            // deletable until the write settles.
+                            let saving = session.core.profile_saving(name);
+                            let _saving = saving.then(|| ui.begin_disabled());
                             let (p, r, e) = chooser_row(ui, name, selected);
+                            if saving {
+                                continue;
+                            }
                             if e {
                                 edit = Some(name.clone());
                             } else if r {
@@ -4115,6 +4170,9 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             }
             }
             ui.spacing();
+            if let Some((_, name)) = &session.saving_profile {
+                ui.text_disabled(format!("saving {name}…"));
+            }
             let w = ui.content_region_avail()[0];
             if ui.button_with_size("Close", [w, 0.0]) {
                 session.wall.chooser_open = false;
@@ -4344,26 +4402,19 @@ fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), S
     Ok(())
 }
 
-/// Open the 274bot panel window. Call after the vault has been started.
-/// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
-/// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
-/// exit 0). `--prepare-fixture` is offline-only and never opens a window.
-pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
-    if let Some(scenario) = args.mode.prepare_fixture_name() {
-        return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
-            eprintln!("FAIL: {e}");
-            std::process::exit(1);
-        });
-    }
-    let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
-    let frame_scale = Arc::clone(&scale);
-    let mut state = PanelState::default();
+fn init_panel_running(
+    args: &PanelArgs,
+    shot_state: Arc<Mutex<crate::window::ShotState>>,
+    permit: host_play::InstancePermit,
+) -> Result<(PanelState, StartupPreparation), window::PanelError> {
+    let mut state = PanelState::with_session(Session::with_instance(permit), shot_state);
     state.session.set_memory_override(args.memory_override);
     state.session.set_nav_paints_override(args.nav_paints);
     state.session.set_catalog_core_enabled(args.catalog_core);
     state.session.set_pair_core_enabled(args.pair_core);
     state.session.set_external_core_enabled(args.external_core);
-    state.session.set_external_ts(args.external_ts);
+    state.session.set_external_ts(args.external_ts.clone());
+    crate::log_pane::apply_session_log_pref(&state.session);
     let fixture_mode = if args.run_prepared {
         scenario::FixtureMode::RunPrepared
     } else {
@@ -4374,18 +4425,9 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         .set_fixture_boot(fixture_mode, args.fixture_path.clone());
     state
         .session
-        .configure_profile(args.profile)
+        .configure_profile(args.profile.clone())
         .map_err(window::PanelError::ServerProfile)?;
-    let mode = args.mode;
-
-    // Deferred boot: unlock / live-harness spawn slot threads, and a slot
-    // renderer is built lazily at its first paint — spawning before GPU
-    // init would let a slot construct its own wgpu device ahead of
-    // `on_gpu_init`'s `inject_device`. The first UI frame presents an
-    // empty panel (so the OS window actually appears); preparation starts
-    // on the next frame, after that present. Slot `maininit` (snapshot /
-    // maps) must not sit on the first-present path.
-    let boot = boot_for(&mode, std::env::var("BOT_VAULT_PASS").ok().as_deref());
+    let boot = boot_for(&args.mode, std::env::var("BOT_VAULT_PASS").ok().as_deref());
     #[cfg(feature = "memory-profile")]
     let boot = match host_play::memory::Config::from_env() {
         Ok(Some(config)) => {
@@ -4402,11 +4444,82 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             std::process::exit(1);
         }
     };
-    let mut startup = StartupPreparation::new(boot);
+    Ok((state, StartupPreparation::new(boot)))
+}
+
+/// `Some(true)` continue, `Some(false)` exit, `None` still open.
+fn instance_conflict_choice(ui: &Ui, holder: &host_play::InstanceHolder) -> Option<bool> {
+    let mut open = true;
+    let mut choice = None;
+    ui.window("Another 274bot is running")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
+        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
+        .build(|| {
+            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+            ui.text_wrapped(host_play::instance_conflict_message(holder));
+            ui.spacing();
+            let avail = ui.content_region_avail()[0];
+            let (w, stack) = button_row_layout(avail, 2);
+            if ui.button_with_size("Exit", [w, 0.0]) {
+                choice = Some(false);
+            }
+            if !stack {
+                ui.same_line();
+            }
+            if ui.button_with_size("Continue anyway", [w, 0.0]) {
+                choice = Some(true);
+            }
+        });
+    if !open {
+        Some(false)
+    } else {
+        choice
+    }
+}
+
+/// Open the 274bot panel window. Call after the vault has been started.
+/// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
+/// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
+/// exit 0). `--prepare-fixture` is offline-only and never opens a window.
+pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
+    if let Some(scenario) = args.mode.prepare_fixture_name() {
+        return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
+            eprintln!("FAIL: {e}");
+            std::process::exit(1);
+        });
+    }
+    let skip_lock = !matches!(args.mode, RunMode::Interactive);
+    #[cfg(feature = "memory-profile")]
+    let skip_lock = skip_lock
+        || host_play::memory::Config::from_env()
+            .ok()
+            .flatten()
+            .is_some();
+    let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    let frame_scale = Arc::clone(&scale);
+    let shot_state = Arc::new(Mutex::new(crate::window::ShotState::default()));
+    let mut instance_prompt = None;
+    let mut running = None;
+    match host_play::resolve_instance_permit(host_play::InstanceKind::Panel, skip_lock) {
+        Ok(host_play::InstancePermitOutcome::Ready(permit)) => {
+            running = Some(init_panel_running(&args, Arc::clone(&shot_state), permit)?);
+        }
+        Ok(host_play::InstancePermitOutcome::NeedsConfirm(holder)) => {
+            instance_prompt = Some(holder);
+        }
+        Err(e) => {
+            eprintln!("panel: instance lock: {e}");
+            std::process::exit(1);
+        }
+    }
     let mut presented = false;
 
     let mut cfg = runner_config();
-    let mut window_title = state.session.app_title();
+    let mut window_title = running
+        .as_ref()
+        .map(|(state, _)| state.session.app_title())
+        .unwrap_or_else(|| "274bot".into());
     cfg.window_title.clone_from(&window_title);
     let os_window: Arc<Mutex<Option<Arc<winit::window::Window>>>> = Arc::new(Mutex::new(None));
     let os_window_init = Arc::clone(&os_window);
@@ -4414,25 +4527,41 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         cfg,
         amber_style,
         move |window, device, queue, _| {
-            // The shared-device seam: seed the client's process-wide GPU
-            // context with the panel's device before any slot renderer can
-            // construct (slots spawn on the first frame, after this).
             client::render::backend::inject_device(device.clone(), queue.clone());
-            // Observed only: HiDpiMode::Default already maps logical
-            // pixels. Applying ScaleAllSizes here would double Retina.
             scale.store(
                 integer_ui_scale(window.scale_factor() as f32).to_bits(),
                 Ordering::Relaxed,
             );
             *os_window_init.lock().unwrap() = Some(Arc::clone(window));
         },
-        Arc::clone(&state.shot_state),
+        Arc::clone(&shot_state),
         move |ui, gpu| {
             let _profile_draw = client::profiling::UI_DRAW.start();
-            // Frame 0 presents chrome with no slots. Frame 1+ polls worker
-            // preparation; Play and slots remain deferred until validation.
+            if let Some(holder) = instance_prompt.as_ref() {
+                match instance_conflict_choice(ui, holder) {
+                    None => return,
+                    Some(false) => std::process::exit(0),
+                    Some(true) => {
+                        instance_prompt = None;
+                        match init_panel_running(
+                            &args,
+                            Arc::clone(&shot_state),
+                            host_play::InstancePermit::skip(),
+                        ) {
+                            Ok(ready) => running = Some(ready),
+                            Err(e) => {
+                                eprintln!("panel: {e}");
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+            }
+            let Some((state, startup)) = running.as_mut() else {
+                return;
+            };
             if presented {
-                drive_startup(&mut state, &mut startup);
+                drive_startup(state, startup);
             }
             presented = true;
             if state.os_window.is_none() {
@@ -4451,8 +4580,8 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                 }
             }
             let _scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
-            let progress = startup_progress(&startup, state.session.profile_generation());
-            ui_frame(ui, gpu, &mut state, progress);
+            let progress = startup_progress(startup, state.session.profile_generation());
+            ui_frame(ui, gpu, state, progress);
         },
     )
 }
@@ -4656,7 +4785,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     #[cfg(feature = "memory-profile")]
     if let Some(run) = state.memory.as_mut() {
         state.session.memory_focus(run);
-        if let Some(play) = state.session.play.as_ref() {
+        if let Some(play) = state.session.core.play() {
             match run.poll(play) {
                 Ok(true) => {
                     eprintln!("PASS: memory panel observation complete");
@@ -4671,7 +4800,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
         }
     }
     state.session.pump_script_transpile();
-    let statuses = state.session.statuses();
+    let statuses = state.session.statuses().to_vec();
     let terminal_shot_status = {
         let label = state
             .session
@@ -4708,11 +4837,34 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     }
     let title = game_window_title(state.session.focused_name().as_deref());
     dock_host(ui, state, &title);
+    state.sample_resources();
     let game_class = game_window_class();
     let panel_class = panel_window_class();
     ui.set_next_window_class(&panel_class);
-    panel_window(ui, &mut state.session, progress);
+    {
+        let resources = state.resource_sampler.view();
+        panel_window(ui, &mut state.session, progress, resources);
+    }
     ui.set_next_window_class(&game_class);
+    // Frame owner: identity replacement and close-release happen outside
+    // the Game window build closure so a rebind cannot keep stale buffers.
+    let nav = state.session.map_nav_digest();
+    let geom = picker::pack().map(|world| {
+        (
+            world.collision.origin.x,
+            world.collision.origin.z,
+            world.collision.width as u32,
+            world.collision.height as u32,
+        )
+    });
+    state.walk_map.sync_identity(nav, geom, Some(gpu));
+    if !state.session.walkto_open {
+        picker::note_closed();
+        state.session.release_walk_map();
+        if state.walk_map.is_open() {
+            state.walk_map.release(Some(gpu));
+        }
+    }
     game_window(ui, gpu, state, &title);
     if state.session.multibox && !state.session.wall.grid {
         ui.set_next_window_class(&rail_window_class());
@@ -4727,6 +4879,10 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     script_prefs_window(ui, &mut state.session, state.panel_dock_node);
     crate::loadouts::window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
+    {
+        let resources = state.resource_sampler.view();
+        background_ack_window(ui, &mut state.session, resources);
+    }
     discard_unconsumed_native_capture();
 }
 

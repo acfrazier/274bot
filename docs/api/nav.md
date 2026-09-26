@@ -33,12 +33,12 @@ maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **9** (v9
-keeps the content-derived bank-stand table after the edges and appends
-per-edge `members_req`; raw `u32` flags are not on the pack wire, the
-optional `274F` sidecar holds them for collision paint; the paint-reach
-bitset is a separate `274R` sidecar bound to the pack identity). `decode`
-accepts version 9 only — v8 and older are `BadVersion`. The `274N` grid
+the derived `TransportGraph`. Magic `b"274V"`, version byte **10** (v10 keeps the content-derived bank-stand table after
+the edges, per-edge `members_req`, a per-edge wilderness teleport cap, and
+the wilderness-level formula after the banks; raw `u32` flags are not on
+the pack wire, the optional `274F` sidecar holds them for collision paint;
+the paint-reach bitset is a separate `274R` sidecar bound to the pack
+identity). `decode` accepts version 10 only — v9 and older are `BadVersion`. The `274N` grid
 decoder (`decode_grid`) stays for old boolean-walk files.
 
 ### Build-time selection, reuse and overrides
@@ -123,12 +123,13 @@ otherwise the captured identity must be one of the checked-in
 `crates/host-play/src/known-cache-identities.json` rows.
 
 Warm builds reuse unchanged artifacts: the staged `nav-build.json` stamp
-records the cache identity, the pack/flags/reach digests, the generator identity
-(the manual id plus the bytes of `bake.rs`/`collision.rs`/`pack.rs`/
-`paint.rs`/`router.rs`/`transport.rs`) and a fingerprint (size + mtime) of every canonical input
+records the cache identity, the pack/flags/reach/canlight/navpois digests, the
+generator identity (the manual id plus the bytes of `bake.rs`/`collision.rs`/
+`pack.rs`/`paint.rs`/`router.rs`/`transport.rs`), the navpois generator
+identity (`map/services.rs`/`map/poi.rs`) and a fingerprint (size + mtime) of every canonical input
 (content tree, config jag, cache archives). Any change to those inputs, to the
 pack format identity (`nav::pack::FORMAT_ID`), to the generator, to the cache
-identity, or a missing/replaced staged artifact (including the reach sidecar) rebakes.
+identity, a missing navpois sidecar, or a missing/replaced staged artifact (including the reach sidecar) rebakes.
 Build preparation additionally computes source and decoded digests to detect
 same-size replacement; runtime computes decoded identity once per prepared
 profile, not per bot. The bundled fast path keeps its cheap
@@ -171,8 +172,12 @@ SpiritTree/Npc), `from`/`to`, `loc_id`, the 1-based menu `option`
 vectors including `worn_req` (**any-of**). Spell teleports have no fixed
 origin: they live on `TransportGraph::teleports` and stay out of Dijkstra
 unless `FindOptions::allow_teleports`. Wilderness tiles stay out unless
-`FindOptions::allow_wilderness`. Both default **off**. `find` also
-fail-closes on live `WorldState`.
+`FindOptions::allow_wilderness`. Both default **off**. Membership is the
+packed `TransportGraph::wilderness` table derived at bake; a graph with
+no zones (a legacy 274N grid) gates nothing. Packed spell and
+jewellery teleports also carry a content-derived wilderness cap; `find`
+will not take them from a tile whose packed `wilderness_level` exceeds
+that cap. `find` also fail-closes on live `WorldState`.
 
 ## Router (`nav::router`)
 
@@ -183,15 +188,20 @@ those in. Tile steps use the client's directional `PL_WALK_*` masks,
 **not** the blanket `walkable()`. Transport take-off is any standable
 tile within **`INTERACT_RADIUS` 1** of the edge `at` (adjacent only — a
 radius of 3 let cow-pen routes “use” the north-west road gate through a
-fence). `Route { legs, dest, ticks }`; `Leg::Walk { tiles }` runs
-collapse, `Leg::Transport { edge }` is one per transport. `RouteError` is
-`NoPath` or `BudgetExhausted` (a node-expansion cap). `find` is CPU-heavy;
-run it off-pump (a short-lived worker) and arm the result.
+fence). Any-tile teleports are refused when the takeoff tile's wilderness
+level exceeds the edge's packed cap (the content
+`~wilderness_level(coord) > N` gate). `Route { legs, dest, ticks }`;
+`Leg::Walk { tiles }` runs collapse, `Leg::Transport { edge }` is one per
+transport. `RouteError` is `NoPath` or `BudgetExhausted` (a node-expansion
+cap). `find` is CPU-heavy; run it off-pump (a short-lived worker) and arm
+the result.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, and teles. NPC-backed hops use
 the live NPC tile (search radius 8). Glider landings settle Chebyshev 1.
-Agility waits packed `edge.ticks` after land.
+Agility waits packed `edge.ticks` after land. A teleport hop that never
+lands (a server-refused wilderness cast) stalls after the hop budget;
+the spell or rub is not resent.
 
 ## Traveller (`nav::traveller`)
 
@@ -201,6 +211,19 @@ progress and `Some(TravelOutcome)` at a terminal state
 (`Arrived`/`Stalled`/`Refused`/`Blocked`/`GaveUp`). One driver send per
 call. `TravelOptions { close_enough, budget_ticks_per_hop, max_hops,
 on_leg, troll_doors }`.
+
+- **`Stalled { why: EndBlocked }`:** no walk of the follow was accepted,
+  the player stands within one tile of the route's last tile on its level,
+  and the client refused the click onto it on five distinct ticks (frozen
+  `'blocked'`, `WalkExecutor.ts:1039-1094`). The player is as close as the
+  live scene allows. Script walks publish it as a settled route end flagged
+  blocked (`walk_outcome_blocked`), and `walkResilient` returns true on it;
+  other callers end the follow as for any stall.
+- **Scene settle:** a transport's approach click the client refuses
+  (unreachable, off scene, scene unavailable) is retried two ticks later,
+  three times per follow, before the follow ends `Refused` — a region
+  rebuild briefly empties the client's local route (frozen
+  `CANDIDATE_SETTLE_TRIES`, `WalkExecutor.ts:1178-1184`).
 
 - **Default door leg:** interact the door transport's menu option, then
   settle `arrived(to, close_enough)` — cheap, no per-tick door polling.
@@ -258,13 +281,23 @@ never latches a bank session, and never changes ordinary walk policies.
 ## WalkTo picker
 
 The panel's main-chrome **WalkTo** button fills the Game pane
-(`crates/panel/src/picker.rs`): north-up walkable tiles from
-`NavWorld.collision` as amber dots, drag/wheel to pan, click (canvas rect,
-`is_mouse_hovering_rect`) highlights the nearest walkable tile, footer
-**Recentre** / **Walk** arms `find` and the panel drives `follow` on the
-focused slot's pump. Local engines also get **Teleport** (cheat to the
-pick). `walk_status_text` mirrors the armed dest and clears on any
-terminal outcome.
+(`crates/panel/src/picker.rs` + `walk_map.rs`). One application-owned
+renderer draws at most 24 terrain tiles (258×258, A's `select_lod`) plus
+one viewport overlay for optional map-owned grid/collision/NSEW/reach/flood
+layers — not a per-tile ImGui quad mesh. Until D binds an image cache the
+map shows a grid and `map imagery unavailable — cache not bound` with no
+POIs. Route and destination are vector markers. Reach uses bound
+`.navreach` or `reach unavailable`. Wheel zooms toward the cursor; click
+selects through
+`host_play::walk_map::MapModel` (radius-16 walkable query, blocked clicks
+stay view-only). Footer **Recentre** / **Walk** / **Send** consume that
+pending destination once via `Play::map_walk` (the bot focused at confirm,
+or a group of eligible wall bots); a missing origin or a running script
+refuses instead of storing a later login dest. Local engines also get
+**Teleport** (`Play::map_teleport`, loopback-guarded, focused-only). Close/hide
+unregisters textures and drops CPU pixels. `BOT_CPU=1` still uses this
+map path (panel UI GPU). `walk_status_text` mirrors the armed dest and
+clears on any terminal outcome.
 
 ## Live tests
 

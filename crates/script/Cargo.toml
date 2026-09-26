@@ -39,7 +39,336 @@ v8 = { version = "=137.2.1", default-features = false, optional = true }
 # The ctx unit test builds an `ObjType` table; the compiled crate itself
 # never touches `client`.
 client = { workspace = true }
-# The named-bank alias tests resolve the shipped catalog configuration
-# (`script::content::BANK_ALIASES`) against real packed world geometry; the
-# compiled crate itself never touches `nav`.
+# Catalog geometry fixtures use the native resolver; the compiled crate
+# itself never depends on nav.
 nav = { path = "../nav" }
+[[test]]
+name = "load_isolate"
+required-features = ["load"]
+[[test]]
+name = "declared_abi"
+required-features = ["load"]
+[[test]]
+name = "catalog_bright_fixture"
+required-features = ["load"]
+[[test]]
+name = "shop_buyout"
+required-features = ["load"]
+[[test]]
+name = "gold_stubs"
+required-features = ["load"]
+[[test]]
+name = "compat_paint_settings"
+required-features = ["load"]
+[[test]]
+name = "tool_tiers"
+required-features = ["load"]
+[[test]]
+name = "supervisor_mapping"
+required-features = ["load"]
+[[test]]
+name = "load_siblings"
+required-features = ["load"]
+[[test]]
+name = "catalog_run"
+required-features = ["load"]
+[[test]]
+name = "herb_data"
+required-features = ["load"]
+[[test]]
+name = "unloadable"
+required-features = ["load"]
+[[test]]
+name = "on_stop"
+required-features = ["load"]
+[[test]]
+name = "events"
+required-features = ["load"]
+[[test]]
+name = "watchdog"
+required-features = ["load"]
+[[test]]
+name = "load_diagnostics"
+required-features = ["load"]
+[[test]]
+name = "paint_frame_share"
+required-features = ["load"]
+[[test]]
+name = "quest_facts"
+required-features = ["load"]
+[[test]]
+name = "supply_helpers"
+required-features = ["load"]
+[[test]]
+name = "clue_facts"
+required-features = ["load"]
+[[test]]
+name = "gather_methods"
+required-features = ["load"]
+[[test]]
+name = "loadout_potion_helpers"
+required-features = ["load"]
+[[test]]
+name = "autocast"
+required-features = ["load"]
+[[test]]
+name = "cake_stall_helpers"
+[[test]]
+name = "cake_stall_native_mapping"
+required-features = ["load"]
+[[test]]
+name = "periodic_bank"
+required-features = ["load"]
+[[test]]
+name = "cook_location_shape"
+required-features = ["load"]
+[[test]]
+name = "named_bank_approach"
+required-features = ["load"]
+[[test]]
+name = "named_bank_locations"
+required-features = ["load"]
+[[test]]
+name = "tool_native_mapping"
+required-features = ["load"]
+[[test]]
+name = "direct_walkto"
+required-features = ["load"]
+[[test]]
+name = "return_to_anchor"
+required-features = ["load"]
+[[test]]
+name = "walk_options"
+required-features = ["load"]
+[[test]]
+name = "quest_journal"
+required-features = ["load"]
+[[test]]
+name = "shop"
+required-features = ["load"]
+[[test]]
+name = "ent"
+required-features = ["load"]
+[[test]]
+name = "dialog"
+required-features = ["load"]
+[[test]]
+name = "host_js"
+[[test]]
+name = "native_api_v2"
+required-features = ["load"]
+[[test]]
+name = "clue_pack"
+required-features = ["load"]
+[[test]]
+name = "hunt_cell"
+required-features = ["load"]
+[[test]]
+name = "hunt_key"
+required-features = ["load"]
+[[test]]
+name = "combat_start_helpers"
+required-features = ["load"]
+[[test]]
+name = "actor_observation"
+required-features = ["load"]
+[[test]]
+name = "paint_formats"
+required-features = ["load"]
+[[test]]
+name = "trade"
+required-features = ["load"]
+[[test]]
+name = "walk_outcome"
+required-features = ["load"]
+[[test]]
+name = "wildy_pit_recovery"
+required-features = ["load"]
+[[test]]
+name = "solve_clue_adapter"
+required-features = ["load"]
+[[test]]
+name = "special"
+required-features = ["load"]
+[[test]]
+name = "spell_facts"
+required-features = ["load"]
+[[test]]
+name = "task_validation"
+required-features = ["load"]
+[[test]]
+name = "teleport"
+required-features = ["load"]
+[[test]]
+name = "thieving_targets_native_mapping"
+required-features = ["load"]
+[[test]]
+name = "tick_subscriber"
+required-features = ["load"]
+[[test]]
+name = "reach"
+required-features = ["load"]
+[[test]]
+name = "reach_distance"
+required-features = ["load"]
+[[test]]
+name = "registry"
+[[test]]
+name = "resource_tool_facts"
+required-features = ["load"]
+[[test]]
+name = "route_inspect_brimhaven_v2"
+required-features = ["load"]
+[[test]]
+name = "rs2b0t_registry"
+required-features = ["load"]
+[[test]]
+name = "settings_bag"
+required-features = ["load"]
+[[test]]
+name = "slot"
+required-features = ["load"]
+[[test]]
+name = "paint_buttons"
+required-features = ["load"]
+[[test]]
+name = "paint_chrome"
+required-features = ["load"]
+[[test]]
+name = "paint_crossings"
+required-features = ["load"]
+[[test]]
+name = "paint_pipeline"
+required-features = ["load"]
+[[test]]
+name = "prayer"
+required-features = ["load"]
+[[test]]
+name = "production"
+required-features = ["load"]
+[[test]]
+name = "loadouts_bag"
+required-features = ["load"]
+[[test]]
+name = "loc_selected_identity"
+required-features = ["load"]
+[[test]]
+name = "modals"
+required-features = ["load"]
+[[test]]
+name = "native_hint_overhead"
+required-features = ["load"]
+[[test]]
+name = "native_npc_box"
+required-features = ["load"]
+[[test]]
+name = "native_quest_status"
+required-features = ["load"]
+[[test]]
+name = "native_retaliate_controls"
+required-features = ["load"]
+[[test]]
+name = "jive_paint"
+required-features = ["load"]
+[[test]]
+name = "js_cache"
+required-features = ["load"]
+[[test]]
+name = "line_of_sight"
+required-features = ["load"]
+[[test]]
+name = "load_picker"
+[[test]]
+name = "load_shape"
+required-features = ["load"]
+[[test]]
+name = "hunt_enter"
+required-features = ["load"]
+[[test]]
+name = "hunt_fight"
+required-features = ["load"]
+[[test]]
+name = "hunt_hold"
+required-features = ["load"]
+[[test]]
+name = "hunt_leave"
+required-features = ["load"]
+[[test]]
+name = "hunt_retreat"
+required-features = ["load"]
+[[test]]
+name = "hunt_walk"
+required-features = ["load"]
+[[test]]
+name = "input_action_at"
+required-features = ["load"]
+[[test]]
+name = "input_inv_button"
+required-features = ["load"]
+[[test]]
+name = "hostile_duel"
+required-features = ["load"]
+[[test]]
+name = "hunt_bank"
+required-features = ["load"]
+[[test]]
+name = "equipment_items_id"
+required-features = ["load"]
+[[test]]
+name = "fire"
+required-features = ["load"]
+[[test]]
+name = "combat_keep_names"
+required-features = ["load"]
+[[test]]
+name = "combat_style_contract"
+required-features = ["load"]
+[[test]]
+name = "death_recovery"
+required-features = ["load"]
+[[test]]
+name = "drive_partner_trade"
+required-features = ["load"]
+[[test]]
+name = "client_adapter_combat_level"
+required-features = ["load"]
+[[test]]
+name = "client_adapter_count_dialog"
+required-features = ["load"]
+[[test]]
+name = "client_adapter_inventory"
+required-features = ["load"]
+[[test]]
+name = "client_adapter_local_walk"
+required-features = ["load"]
+[[test]]
+name = "bone_burier_v2"
+required-features = ["load"]
+[[test]]
+name = "boost_potions_native_mapping"
+required-features = ["load"]
+[[test]]
+name = "canvas"
+required-features = ["load"]
+[[test]]
+name = "blocked_cards"
+required-features = ["load"]
+[[test]]
+name = "bank_withdraw_op"
+required-features = ["load"]
+[[test]]
+name = "chat_dialog_continue"
+required-features = ["load"]
+[[test]]
+name = "client_adapter_self_anim"
+required-features = ["load"]
+[[test]]
+name = "fight_upkeep"
+required-features = ["load"]
+[[test]]
+name = "reconnect_hold"
+required-features = ["load"]
+
+[[example]]
+name = "catalog_inventory"
+required-features = ["load"]

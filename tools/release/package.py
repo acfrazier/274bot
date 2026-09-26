@@ -70,7 +70,7 @@ def main():
     names = ['tui-play'] if a.platform == 'linux' else ['panel-play', 'tui-play']
     nav = a.input / 'nav' / a.revision
     nav_names = ['274bot.navpack', '274bot.navflags', '274bot.navreach',
-                 '274bot.navcanlight', '274bot.navpack.json']
+                 '274bot.navcanlight', '274bot.navpois', '274bot.navpack.json']
     for path in [a.input / (n + suffix) for n in names] + [nav / n for n in nav_names]:
         if not path.is_file():
             p.error('missing required artifact: ' + str(path))

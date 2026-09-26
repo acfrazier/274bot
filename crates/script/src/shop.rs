@@ -1,4 +1,4 @@
-//! Rust-owned observed shop open/buy/sell/close sequencing, the `shop`
+//! Rust-owned observed shop open/buy/sell/sellAll/close sequencing, the `shop`
 //! [`crate::machine`] family.
 //!
 //! The selected caches own the shop interface identities (`shop_template`
@@ -7,9 +7,9 @@
 //! compact snapshot seam owns where those containers currently are and what
 //! they hold. JavaScript starts one machine per call and awaits the frozen
 //! result — the 10/5/1 batching, the packet-per-tick bound, the waits and
-//! the held-count settlement policy stay here. `Shop.sell`'s optional `pick`
-//! callback is called from here over the same-name shop player rows in order
-//! before every batch (the frozen `matches.find(pick)`). A queued click is not
+//! the held-count settlement policy stay here. `Shop.sell` and `Shop.sellAll`
+//! call the optional `pick` hook over same-name shop player rows in order
+//! before each batch (for sellAll, each click). A queued click is not
 //! a transfer: a batch is only counted once the posted container counts moved.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
@@ -31,6 +31,9 @@ pub const CLOSE_WAIT_MS: u64 = 3_000;
 pub const SETTLE_MS: u64 = 3_000;
 /// Frozen batch bound: at most this many user-event packets in one tick.
 pub const MAX_PACKETS_PER_TICK: usize = 5;
+/// Frozen `src/bot/api/shop/Shop.ts:151-176,203-205`: sale attempts stop
+/// after 40 clicks even if the shop keeps accepting stock.
+const SELL_ALL_CLICKS: usize = 40;
 
 thread_local! {
     static GAME_DATA: RefCell<Option<Arc<api::game_data::SelectedGameData>>> =
@@ -129,17 +132,18 @@ pub(crate) enum Kind {
     Open,
     Buy,
     Sell,
+    SellAll,
     Close,
 }
 
 impl Kind {
-    /// The frozen settle value: `open` a boolean, `buy`/`sell` the observed
+    /// The frozen settle value: `open` a boolean, transfers the observed
     /// count, `close` void.
     fn value(self, result: bool, quantity: i32) -> Value {
         match self {
             Self::Open => json!(result),
             Self::Close => Value::Null,
-            Self::Buy | Self::Sell => json!(quantity),
+            Self::Buy | Self::Sell | Self::SellAll => json!(quantity),
         }
     }
 }
@@ -171,7 +175,7 @@ pub(crate) struct ShopArgs {
     qty: Value,
 }
 
-/// One frozen `Shop.open`/`buy`/`sell`/`close` call.
+/// One frozen `Shop.open`/`buy`/`sell`/`sellAll`/`close` call.
 pub(crate) struct Shop {
     phase: Phase,
     kind: Kind,
@@ -179,12 +183,14 @@ pub(crate) struct Shop {
     name: String,
     /// The selected NPC's Trade op (Shop.open only).
     npc_action: String,
-    /// Requested amount (`Buy`/`Sell`; 0 for open/close).
+    /// Requested amount (`Buy`/`Sell`/`SellAll`; 0 for open/close).
     requested: i32,
-    /// `qty: "all"` under `pick`: the picked row's count is the request.
+    /// `qty: "all"` or `SellAll` under `pick`: resolve after choosing a row.
     all: bool,
-    /// `Shop.sell` was given a `pick`: every batch sells the row it picks.
+    /// `Shop.sell` or `Shop.sellAll` was given a `pick`.
     pick: bool,
+    /// Number of SellAll button clicks emitted so far (not transferred items).
+    clicks: usize,
     /// Same-name shop player rows `pick` has not answered yet, in order.
     candidates: Vec<Row>,
     /// Amount observed to have moved so far.
@@ -210,7 +216,7 @@ impl Family for Shop {
     /// `pick` runs in the caller's tick, like the frozen `find(pick)`.
     const KICK_ON_START: bool = true;
     /// Frozen `matches.find(pick)` does not await: a promise is truthy.
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[PICK];
     type Args = ShopArgs;
     type Output = Value;
 
@@ -253,7 +259,7 @@ impl Family for Shop {
                 cx.emit(InteractReq::CloseModal);
                 Begin::Run(shop)
             }
-            Kind::Buy | Kind::Sell => {
+            Kind::Buy | Kind::Sell | Kind::SellAll => {
                 if !probe.shop_open || name.is_empty() {
                     return refused;
                 }
@@ -267,7 +273,7 @@ impl Family for Shop {
                         None => return Begin::Refuse("missing shop player pack".into()),
                     },
                 };
-                if kind == Kind::Sell && cx.has(PICK) {
+                if matches!(kind, Kind::Sell | Kind::SellAll) && cx.has(PICK) {
                     let candidates: Vec<Row> = container
                         .iter()
                         .filter(|row| row.name.eq_ignore_ascii_case(&name))
@@ -276,7 +282,7 @@ impl Family for Shop {
                     let Some(first) = candidates.first() else {
                         return refused;
                     };
-                    shop.all = args.qty == Value::String("all".into());
+                    shop.all = kind == Kind::SellAll || args.qty == Value::String("all".into());
                     shop.requested = if shop.all {
                         0
                     } else {
@@ -299,6 +305,7 @@ impl Family for Shop {
                     return refused;
                 }
                 let requested = match &args.qty {
+                    _ if kind == Kind::SellAll => i32::MAX,
                     Value::String(all) if all == "all" => row.count,
                     qty => match requested(qty) {
                         Some(qty) => qty,
@@ -335,7 +342,7 @@ impl Family for Shop {
         match self.kind {
             Kind::Open => self.open_step(&probe, cx),
             Kind::Close => self.close_step(&probe, cx),
-            Kind::Buy | Kind::Sell => self.transfer_step(&probe, cx),
+            Kind::Buy | Kind::Sell | Kind::SellAll => self.transfer_step(&probe, cx),
         }
     }
 }
@@ -355,6 +362,7 @@ impl Shop {
             batch_delta: 0,
             batch_baseline: 0,
             held_now: 0,
+            clicks: 0,
             pressed: false,
             attempts_left: 0,
         }
@@ -374,7 +382,11 @@ impl Shop {
                 self.candidates.clear();
                 if self.all {
                     self.all = false;
-                    self.requested = row.count;
+                    self.requested = if self.kind == Kind::SellAll {
+                        i32::MAX
+                    } else {
+                        row.count
+                    };
                 }
                 self.held_now = count_of(probe.inv, &self.name);
                 return self.send_batch(&row, cx);
@@ -417,8 +429,18 @@ impl Shop {
     /// Emit the next batch of Buy/Sell ops for the outstanding remainder and
     /// arm the held-count settlement window.
     fn send_batch(&mut self, row: &Row, cx: &mut Cx<'_>) -> Step<Value> {
-        let chunks = plan(self.requested - self.transferred);
-        if chunks.is_empty() {
+        if self.kind == Kind::SellAll && self.clicks >= SELL_ALL_CLICKS {
+            return self.done(false);
+        }
+        let chunks = if self.kind == Kind::SellAll {
+            // Frozen `Shop.ts:151-176`: one Sell 10 per settled click;
+            // re-read the player pack and re-run `pick` before the next one.
+            self.clicks += 1;
+            None
+        } else {
+            Some(plan(self.requested - self.transferred))
+        };
+        if chunks.as_ref().is_some_and(Vec::is_empty) {
             return self.done(self.transferred >= self.requested);
         }
         let kind = if self.kind == Kind::Buy {
@@ -426,7 +448,7 @@ impl Shop {
         } else {
             "sell"
         };
-        for chunk in chunks {
+        for &chunk in chunks.as_deref().unwrap_or(&[10]) {
             cx.emit(InteractReq::ShopButton {
                 kind: kind.into(),
                 name: row.name.to_string(),
@@ -485,13 +507,9 @@ impl Shop {
                 None => return self.done(false),
             },
         };
-        let Some(row) = find_row(container, &self.name).cloned() else {
-            return self.done(self.transferred >= self.requested);
-        };
-        // The frozen `Shop.buy` breaks out on a stock row already at zero.
-        if self.kind == Kind::Buy && row.count <= 0 {
-            return self.done(self.transferred >= self.requested);
-        }
+        // A successful last click can remove the row entirely. Count the
+        // posted backpack change before checking for a row to click again.
+        let row = find_row(container, &self.name).cloned();
         match self.phase {
             Phase::WaitBatch => {
                 let delta = self.batch_delta(probe);
@@ -526,6 +544,13 @@ impl Shop {
                         .collect();
                     self.phase = Phase::Pick;
                     return self.pick_step(probe, None, cx);
+                }
+                let Some(row) = row else {
+                    return self.done(false);
+                };
+                // The frozen `Shop.buy` breaks out on a stock row already at zero.
+                if self.kind == Kind::Buy && row.count <= 0 {
+                    return self.done(false);
                 }
                 self.send_batch(&row, cx)
             }
@@ -812,7 +837,7 @@ mod tests {
         let step = match shop.kind {
             Kind::Open => shop.open_step(probe, &mut cx),
             Kind::Close => shop.close_step(probe, &mut cx),
-            Kind::Buy | Kind::Sell => shop.transfer_step(probe, &mut cx),
+            Kind::Buy | Kind::Sell | Kind::SellAll => shop.transfer_step(probe, &mut cx),
         };
         let out = match step {
             Step::Wait => None,
@@ -820,6 +845,39 @@ mod tests {
             _ => panic!("the shop neither calls back nor fails"),
         };
         (out, ops)
+    }
+
+    #[test]
+    fn sell_all_caps_clicks_even_while_shop_still_has_stock() {
+        let mut rt = shop(Kind::SellAll, "Vial", i32::MAX, Phase::SettleTick);
+        rt.clicks = SELL_ALL_CLICKS - 1;
+        rt.batch_baseline = 100;
+        rt.held_now = 100;
+        let mut clock = InstantTaskClock::new();
+        let pack = [row("Vial", 100, 1)];
+        let inv = [row("Vial", 90, 1)];
+        let (out, ops) = step(&mut rt, &mut clock, &probe(&[], Some(&pack), &inv));
+        assert!(out.is_none());
+        assert_eq!(ops.len(), 1);
+        assert_eq!(rt.clicks, SELL_ALL_CLICKS);
+        let after = [row("Vial", 80, 1)];
+        let (out, ops) = step(&mut rt, &mut clock, &probe(&[], Some(&pack), &after));
+        assert!(out.is_none());
+        assert!(ops.is_empty());
+        let (out, ops) = step(&mut rt, &mut clock, &probe(&[], Some(&pack), &after));
+        assert_eq!(out, Some(json!(20)));
+        assert!(ops.is_empty());
+    }
+
+    #[test]
+    fn sell_all_counts_the_final_stack_when_the_row_disappears() {
+        let mut rt = shop(Kind::SellAll, "Vial", i32::MAX, Phase::WaitBatch);
+        rt.batch_baseline = 7;
+        let mut clock = armed(SETTLE_MS);
+        let empty_pack: [Row; 0] = [];
+        let post = probe(&[], Some(&empty_pack), &[]);
+        assert_eq!(step(&mut rt, &mut clock, &post), (None, vec![]));
+        assert_eq!(step(&mut rt, &mut clock, &post), (Some(json!(7)), vec![]));
     }
 
     #[test]
@@ -912,16 +970,17 @@ mod tests {
     }
 
     #[test]
-    fn a_depleted_stock_row_ends_buy_with_the_partial_count() {
+    fn a_depleted_stock_row_counts_the_last_batch_before_stopping() {
         let mut rt = shop(Kind::Buy, "Feather", 25, Phase::SettleTick);
         rt.transferred = 10;
+        rt.batch_baseline = 10;
         let mut clock = InstantTaskClock::new();
         let empty = [row("Feather", 0, 3)];
         let inv = [row("Feather", 12, 1)];
         assert_eq!(
             step(&mut rt, &mut clock, &probe(&empty, None, &inv)),
-            (Some(json!(10)), vec![]),
-            "partial progress is reported"
+            (Some(json!(12)), vec![]),
+            "last batch movement is counted before stock depletion"
         );
     }
 

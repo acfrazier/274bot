@@ -1,29 +1,15 @@
-// Combat-style constants ChickenKiller SETTINGS needs at eval time.
-import { notImpl } from '../../shim/_kernel.js';
-
-const COMBAT_STYLE = {
-    attack: 'attack',
-    accurate: 'attack',
-    strength: 'strength',
-    aggressive: 'strength',
-    controlled: 'controlled',
-    shared: 'controlled',
-    defence: 'defence',
-    defense: 'defence',
-    defensive: 'defence',
-};
+// Combat-style constants ChickenKiller SETTINGS needs at eval time; the style
+// tables are Rust's (`load/combat_style_v8.rs`).
 
 export const COMBAT_STYLE_OPTIONS = ['attack', 'strength', 'controlled', 'defence'];
 export const RANGE_STYLE_OPTIONS = ['accurate', 'rapid', 'longrange'];
 
 export function parseCombatStyle(name) {
-    const hit = COMBAT_STYLE[String(name).trim().toLowerCase()];
-    if (!hit) throw notImpl('parseCombatStyle');
-    return hit;
+    return globalThis.__rs2b0t_parse_combat_style(String(name));
 }
 
 export function tryParseCombatStyle(name) {
-    return COMBAT_STYLE[String(name).trim().toLowerCase()] ?? null;
+    return globalThis.__rs2b0t_try_parse_combat_style(String(name));
 }
 
 /** SETTINGS split: a leftover melee token in combatStyle is kind melee. */
@@ -48,15 +34,9 @@ export function resolveSplitCombatSettings(rawCombatStyle, rawMeleeStyle) {
 }
 
 export function parseRangeStyle(name) {
-    const n = String(name).trim().toLowerCase();
-    const idx = RANGE_STYLE_OPTIONS.indexOf(n);
-    if (idx < 0) throw notImpl('parseRangeStyle');
-    return idx;
+    return globalThis.__rs2b0t_parse_range_style(String(name));
 }
 
 export function describeCombatStyle(resolution) {
-    if (!resolution || typeof resolution.requested !== 'string') {
-        throw notImpl('describeCombatStyle', 'missing requested');
-    }
-    return resolution.requested;
+    return globalThis.__rs2b0t_describe_combat_style(resolution);
 }

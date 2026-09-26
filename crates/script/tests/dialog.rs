@@ -35,6 +35,8 @@ fn npc<'a>(name: &'a str, actions: &'a [String], index: i32) -> SceneEntityInput
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -695,6 +697,64 @@ export default class T extends LoopingBot {
         iso.probe("__far").unwrap(),
         Value::Null,
         "a queued walk is not an arrival: walkWithHops awaits its result"
+    );
+    iso.join();
+}
+
+#[test]
+fn walk_with_hops_log_promise_does_not_hold_the_walk() {
+    let src = r#"
+import { walkWithHops } from '../../api/ai/quests/exec/primitives.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__lines = [];
+        globalThis.__ok = null;
+        globalThis.__ok = await walkWithHops(
+            { x: 2532, z: 9600, level: 0 },
+            2,
+            [],
+            (line) => {
+                globalThis.__lines.push(line);
+                return new Promise(() => {});
+            },
+        );
+    }
+}
+"#;
+    let iso = spawn(src);
+    let mut snap = base();
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__lines").unwrap(),
+        serde_json::json!(["no hop from (2531,4712) toward z 9600 — trying the baked graph"])
+    );
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::WalkNear {
+                x: 2532,
+                z: 9600,
+                radius: 2,
+                ..
+            }]
+        ),
+        "the fallback walk is queued in the log callback's tick"
+    );
+    snap.tick = 2;
+    snap.here = Some(TileInput {
+        x: 2532,
+        z: 9600,
+        level: 0,
+    });
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        true,
+        "the never-settling log promise must not hold the walk result"
     );
     iso.join();
 }

@@ -1,6 +1,7 @@
 //! Typed local V8 marshalling for supply helpers (v1 food + five v2 methods).
 //! Not a rustyscript `register_function` JSON op.
 
+use super::callback_v8;
 use crate::escape_runes::{self, EscapeRunesError, EscapeRunesFact, RuneCost};
 use crate::food_policy::{self, FoodHealOutcome, InvItemName};
 use crate::keep_list::{self, CombatKeepOptions};
@@ -34,7 +35,126 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     global
         .set(&mut scope, v2_name.into(), v2_fn.into())
         .ok_or_else(|| "supply set v2".to_string())?;
-    Ok(())
+    drop(scope);
+    callback_v8::install(
+        runtime,
+        "__rs2b0t_should_eat_to_use_food",
+        should_eat_to_use_food,
+    )?;
+    callback_v8::install(runtime, "__rs2b0t_eat_at_hp_threshold", eat_at_hp_threshold)
+}
+
+/// JS `Math.max(a, b)`: NaN wins, and `+0` beats `-0`.
+fn js_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a == b {
+        if a.is_sign_positive() {
+            a
+        } else {
+            b
+        }
+    } else {
+        a.max(b)
+    }
+}
+
+/// JS `Math.min(a, b)`: NaN wins, and `-0` beats `+0`.
+fn js_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a == b {
+        if a.is_sign_negative() {
+            a
+        } else {
+            b
+        }
+    } else {
+        a.min(b)
+    }
+}
+
+/// Frozen `eatAtHpThreshold(maxHp, heal, minHp = MIN_EAT_HP)`
+/// (`api/combat/food.ts:112-118`): `minHp` as given when `maxHp <= 0`; else
+/// the HP a full heal fits under, kept below `maxHp` and at least `minHp`.
+fn eat_at_hp_threshold<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let max_hp = args.get(0);
+        let heal = args.get(1);
+        let min_hp = match args.get(2) {
+            min_hp if min_hp.is_undefined() => {
+                callback_v8::num(scope, f64::from(food_policy::MIN_EAT_HP))
+            }
+            min_hp => min_hp,
+        };
+        let zero = callback_v8::num(scope, 0.0);
+        if callback_v8::le(scope, max_hp, zero)? {
+            return Ok(min_hp);
+        }
+        let heal = js_max(0.0, callback_v8::number(scope, heal)?);
+        let heal = callback_v8::num(scope, heal);
+        let full_use = callback_v8::sub(scope, max_hp, heal)?;
+        let one = callback_v8::num(scope, 1.0);
+        let below_max = callback_v8::sub(scope, max_hp, one)?;
+        let below_max = callback_v8::number(scope, below_max)?;
+        let full_use = callback_v8::number(scope, full_use)?;
+        let capped = js_min(below_max, full_use);
+        let floor = callback_v8::number(scope, min_hp)?;
+        Ok(callback_v8::num(scope, js_max(floor, capped)))
+    })();
+    callback_v8::finish(scope, rv, result);
+}
+
+/// Frozen `shouldEatToUseFood` (`api/combat/food.ts:124-143`) with the
+/// caller's option values under JS comparison semantics: nothing to eat or
+/// no HP read (`:131-133`); at or below the floor (`:134-137`); a heal of
+/// zero or less never eats (`:138-141`); else only when the full heal fits
+/// (`:142`).
+fn should_eat_to_use_food<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let opts = args.get(0);
+        let zero = callback_v8::num(scope, 0.0);
+        let food_count = callback_v8::get(scope, opts, "foodCount")?;
+        if callback_v8::le(scope, food_count, zero)? {
+            return Ok(false);
+        }
+        let hp = callback_v8::get(scope, opts, "hp")?;
+        if callback_v8::le(scope, hp, zero)? {
+            return Ok(false);
+        }
+        let max_hp = callback_v8::get(scope, opts, "maxHp")?;
+        if callback_v8::le(scope, max_hp, zero)? {
+            return Ok(false);
+        }
+        let min_hp = callback_v8::get(scope, opts, "minHp")?;
+        let min_hp = if min_hp.is_null_or_undefined() {
+            callback_v8::num(scope, f64::from(food_policy::MIN_EAT_HP))
+        } else {
+            min_hp
+        };
+        if callback_v8::le(scope, hp, min_hp)? {
+            return Ok(true);
+        }
+        let heal = callback_v8::get(scope, opts, "heal")?;
+        // `Math.max(0, heal)`: NaN stays NaN, which is not `<= 0`.
+        let heal = js_max(0.0, callback_v8::number(scope, heal)?);
+        if heal <= 0.0 {
+            return Ok(false);
+        }
+        let room = callback_v8::sub(scope, max_hp, hp)?;
+        let heal = callback_v8::num(scope, heal);
+        callback_v8::ge(scope, room, heal)
+    })()
+    .map(|eat| v8::Boolean::new(scope, eat).into());
+    callback_v8::finish(scope, rv, result);
 }
 
 fn food_count_v1_callback(
@@ -51,6 +171,8 @@ fn food_count_v1_callback(
     }
 }
 
+/// Frozen v1 `foodHealAmount`: the heal as a number, or the explicit
+/// "game data unavailable" error when the answer needs selected facts.
 fn food_heal_v1_callback(
     scope: &mut v8::HandleScope,
     args: v8::FunctionCallbackArguments,
@@ -64,20 +186,10 @@ fn food_heal_v1_callback(
             return;
         }
     };
-    let obj = v8::Object::new(scope);
-    match food_policy::food_heal_amount(supply_v2::selected_data().as_deref(), &food_name) {
-        FoodHealOutcome::Ok(heal) => {
-            let ok = v8::Boolean::new(scope, true);
-            set_key(scope, obj, "ok", ok.into());
-            let value = v8::Integer::new(scope, heal);
-            set_key(scope, obj, "value", value.into());
-        }
-        _ => {
-            let ok = v8::Boolean::new(scope, false);
-            set_key(scope, obj, "ok", ok.into());
-        }
+    match food_policy::frozen_food_heal_amount(supply_v2::selected_data().as_deref(), &food_name) {
+        Some(heal) => rv.set(v8::Integer::new(scope, heal).into()),
+        None => throw_error(scope, supply_v2::GAME_DATA_UNAVAILABLE),
     }
-    rv.set(obj.into());
 }
 
 fn supply_v2_callback(
@@ -488,6 +600,11 @@ fn helper_err<'s>(
     let obj = v8::Object::new(scope);
     let ok = v8::Boolean::new(scope, false);
     set_key(scope, obj, "ok", ok.into());
+    let error = if error == "missing-selected-data" {
+        supply_v2::GAME_DATA_UNAVAILABLE
+    } else {
+        error
+    };
     let err = v8_str(scope, error)?;
     set_key(scope, obj, "error", err);
     Ok(obj.into())

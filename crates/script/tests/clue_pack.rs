@@ -596,7 +596,7 @@ export function tick(api) {
     }),
     keys: api.clue && Object.keys(api.clue),
     begin: typeof api.clue.begin,
-    next: typeof api.clue.next,
+    run: typeof api.clue.run,
     challengeAnswer: typeof api.clue.challengeAnswer,
     deposit: typeof api.clue.deposit,
     requested,
@@ -614,11 +614,11 @@ export function tick(api) {
     assert_eq!(
         value["keys"],
         serde_json::json!([
-            "row", "heldStep", "packPlan", "hardKit", "keep", "begin", "next", "retry"
+            "row", "heldStep", "packPlan", "hardKit", "keep", "begin", "run", "retry"
         ]),
         "{value:?}"
     );
-    for key in ["begin", "next"] {
+    for key in ["begin", "run"] {
         assert_eq!(value[key], "function", "{key} {value:?}");
     }
     for key in ["challengeAnswer", "deposit"] {
@@ -841,7 +841,7 @@ export function tick(api) {
   globalThis.__probe = JSON.stringify({
     kept: api.clue.keep({ name: 'Clue scroll' }),
     begin: typeof api.clue.begin,
-    next: typeof api.clue.next,
+    run: typeof api.clue.run,
     challengeAnswer: typeof api.clue.challengeAnswer,
     deposit: typeof api.clue.deposit,
     retry: typeof api.clue.retry,
@@ -858,12 +858,12 @@ export function tick(api) {
     iso.join();
     assert_eq!(value["kept"]["ok"], true, "{value:?}");
     assert_eq!(value["kept"]["value"]["keep"], true, "{value:?}");
-    for key in ["begin", "next"] {
+    for key in ["begin", "run"] {
         assert_eq!(value[key], "function", "{key} {value:?}");
     }
     assert_eq!(
         value["retry"], "function",
-        "the landed latch clear, after `next`: {value:?}"
+        "the landed latch clear, after a run: {value:?}"
     );
     for key in ["challengeAnswer", "deposit", "noteDeath"] {
         assert_eq!(value[key], "undefined", "{key} {value:?}");

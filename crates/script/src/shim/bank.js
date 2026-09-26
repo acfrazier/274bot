@@ -37,12 +37,9 @@ async function deposit(args, hooks = {}) {
     if (out.kind === 'refused') throw notImpl('Bank.depositAllMatching', out.reason);
 }
 
-// Pick the withdraw op for a requested amount (rs2b0t `withdrawOp`).
-// The posted bank rows carry no op labels; the shim maps the requested
-// amount straight to the `Withdraw …` action label the host dispatches.
+// Frozen `withdrawOp`: the row's own op matching the amount, in Rust.
 export function withdrawOp(ops, which) {
-    const labels = { all: 'Withdraw All', '10': 'Withdraw 10', '1': 'Withdraw 1' };
-    return labels[String(which)] || null;
+    return globalThis.__rs2b0t_withdraw_op(ops, which);
 }
 
 export const Bank = new Proxy(
@@ -248,7 +245,7 @@ export const Bank = new Proxy(
         async openNpcAccess(access, log) {
             const out = await runMachine(
                 'bank_npc_access',
-                { name: String(access.name), op: String(access.op), choose: String(access.choose) },
+                { name: String(access.name), op: String(access.op), choose: String(access.choose ?? '') },
                 { log: typeof log === 'function' ? log : undefined },
             );
             return out.kind === 'done' && out.value === true;

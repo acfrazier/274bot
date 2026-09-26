@@ -486,6 +486,13 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  rows: SceneProjectionRow[];\n");
     out.push_str("  truncated: boolean;\n");
     out.push_str("}\n\n");
+    out.push_str("export interface BankLocation {\n");
+    out.push_str("  name: string;\n  tile: WorldTile;\n  approach?: WorldTile;\n");
+    out.push_str("  requires?: { skill?: { name: string; level: number }; quest?: string; setting?: string };\n");
+    out.push_str(
+        "  access?: { name: string; op: string; openFirst?: { name: string; op: string } };\n",
+    );
+    out.push_str("  npcAccess?: { name: string; op: string; choose?: string };\n}\n\n");
     out.push_str("/** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */\n");
     out.push_str("export interface NativeApi {\n");
     out.push_str("  readonly tick: number;\n");
@@ -517,6 +524,8 @@ fn render_native_v2(out: &mut String) {
     );
     out.push_str("  /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. Same busy refuse as prayerSet. */\n");
     out.push_str("  prayerClear(): Promise<HelperResult<PrayerClearCounts>>;\n");
+    out.push_str("  /** Select without moving. Native wilderness defaults false; an air fallback does not prove reachability. */\n");
+    out.push_str("  bankNearestReachable(input?: { from?: WorldTile; allow_wilderness?: boolean; use_mage_bank?: boolean; use_zanaris_bank?: boolean }): Promise<HelperResult<BankLocation | null>>;\n");
     out.push_str(
         "  foodCount(input: { items: ItemRow[]; foodName: string }): HelperResult<number>;\n",
     );
@@ -536,22 +545,20 @@ fn render_native_v2(out: &mut String) {
     out.push_str(
         "  questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;\n",
     );
-    out.push_str("  /** Sync landed trail-row read, pure pack arithmetic, pure hard-kit status, the pure keep predicate over caller facts, and the clue machine's own begin / next / retry. None is a Promise and none is a request op; `packPlan`, `hardKit`, and `keep` read no snapshot, inventory, or family, and `retry` is the machine's latch clear — never a connection-boundary reset and never a token abort. */\n");
-    out.push_str("  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; keep(input: { name: string; extra?: string[] }): HelperResult<{ keep: boolean }>; begin(input?: object): HelperResult<{ token: number }>; next(input: { token: number; resume?: boolean }): ClueStep; retry(): HelperResult<{ cleared: true }> };\n");
+    out.push_str("  /** Sync landed trail-row read, pure pack arithmetic, pure hard-kit status, the pure keep predicate over caller facts, and the clue machine's begin / one awaited run / retry. `run` is the only Promise and none is a request op; `packPlan`, `hardKit`, and `keep` read no snapshot, inventory, or family, and `retry` is the machine's latch clear — never a connection-boundary reset and never a token abort. */\n");
+    out.push_str("  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; keep(input: { name: string; extra?: string[] }): HelperResult<{ keep: boolean }>; begin(input?: object): HelperResult<{ token: number }>; run(input: { token: number }, hooks?: ClueHooks): Promise<ClueOutcome>; retry(): HelperResult<{ cleared: true }> };\n");
     out.push_str("  /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */\n");
     out.push_str("  sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;\n");
     out.push_str("  /** Sync posted-npc copy. actions is required: omitted is not match-any. Historical copy, not live. Not a Promise and not a request op. */\n");
     out.push_str("  sceneNpcs(input: { types: number[]; actions: string[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;\n");
     out.push_str("  /** Sync posted-tab status copy. A missing page is snapshot-unavailable and a null tab is quest-tab-unbound. Not a Promise and not a request op. */\n");
     out.push_str("  questStatus(input: { name: string }): HelperResult<{ status: 'notStarted' | 'inProgress' | 'complete' | 'unknown'; as_of_sequence: number }>;\n");
-    out.push_str("  /** Sync owned-root begin. One `if-button` per token on the posted row id, enqueued synchronously after a generation check. Not a Promise and not a request op; a refusal is `{ ok: false, error }`. */\n");
+    out.push_str("  /** Sync owned-root begin. Admits one posted quest row and returns its token without clicking; refusals include `invalid-args`, unavailable/unbound scene data, an unknown quest, an occupied modal, `busy`, `stale`, and `frozen`. */\n");
     out.push_str(
         "  questJournalBegin(input: { name: string }): HelperResult<{ token: number }>;\n",
     );
-    out.push_str("  /** Sync owned-root next. Not-done is `{ pending: true }` (no `ok` field) — not empty lines. Not a Promise. */\n");
-    out.push_str("  questJournalNext(input: { token: number }): HelperResult<{ lines: string[]; root: number; as_of_sequence: number }>;\n");
-    out.push_str("  /** Sync owned-root close. One `close-modal` only while the latest pair is still the acquired root and texts. Not-done is `{ pending: true }` (no `ok` field). Not a Promise; never returns journal lines. */\n");
-    out.push_str("  questJournalClose(input: { token: number }): HelperResult<{ closed: true; as_of_sequence: number }>;\n");
+    out.push_str("  /** One awaited run. Rust clicks the admitted row, acquires its exact modal, returns its lines, and closes only that modal inside a bounded observation window. */\n");
+    out.push_str("  questJournalRun(input: { token: number }): Promise<QuestJournalOutcome>;\n");
     out.push_str("  foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;\n");
     out.push_str("  gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;\n");
     out.push_str("  suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;\n");
@@ -696,25 +703,35 @@ fn render_native_v2(out: &mut String) {
     out.push_str(
         "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
     );
-    out.push_str("export type ClueStep =\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'wait' | 'yield' | 'callback.enabled' }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'callback.log' | 'callback.setStatus'; message: string }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'held'; name: string; action: string }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'walk'; x: number; z: number; level: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'loc'; x: number; z: number; level: number; action: string; id: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'npc'; name: string; action: string; index: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'answer-count'; value: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'if-button'; component_id: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'close-modal' }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'obj'; x: number; z: number; level: number; name: string | null; action: string }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'puzzle-move'; id: number; slot: number; component: number; generation: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'continue' | 'answer'; option?: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'shop-button'; name: string; id: number; slot: number; component: number; chunk: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'unequip' | 'wear' | 'deposit'; name: string }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'withdraw'; name: string; action: string }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'walk-nearest-bank' | 'close' }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'open-booth'; x: number; z: number; level: number; id: number; name?: string; action?: string }\n");
-    out.push_str("  | { ok: false; error: string };\n");
+    out.push_str("/** Callbacks frozen for one clue run. Rust awaits each returned promise before advancing the machine. */\n");
+    out.push_str("export interface ClueHooks {\n");
+    out.push_str("  /** Gates a held step; absent defaults to true. */\n");
+    out.push_str("  enabled?(): boolean | Promise<boolean>;\n");
+    out.push_str("  log?(message: string): void | Promise<void>;\n");
+    out.push_str("  setStatus?(message: string): void | Promise<void>;\n");
+    out.push_str("}\n");
+    out.push_str("export type ClueRunValue =\n");
+    out.push_str(
+        "  | { kind: 'yield' | 'done' | 'dead' | 'abandon' | 'guardian-lost'; token: number }\n",
+    );
+    out.push_str("  | { kind: 'aborted'; token: number; reason: string };\n");
+    out.push_str("/** One clue run's settlement. A hook that throws rejects the promise with that value. */\n");
+    out.push_str("export type ClueOutcome =\n");
+    out.push_str("  | { kind: 'done'; value: ClueRunValue }\n");
+    out.push_str("  | { kind: 'refused'; reason: string }\n");
+    out.push_str(
+        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
+    );
+    out.push_str("/** The journal machine's terminal value. `as_of_sequence` observed the acquired lines; `closed_as_of_sequence` later proved that exact modal closed. */\n");
+    out.push_str("export type QuestJournalRunValue =\n");
+    out.push_str("  | { kind: 'done'; token: number; lines: string[]; root: number; as_of_sequence: number; closed_as_of_sequence: number }\n");
+    out.push_str("  | { kind: 'aborted'; token: number; reason: string };\n");
+    out.push_str("export type QuestJournalOutcome =\n");
+    out.push_str("  | { kind: 'done'; value: QuestJournalRunValue }\n");
+    out.push_str("  | { kind: 'refused'; reason: string }\n");
+    out.push_str(
+        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
+    );
 }
 
 const SUPPORTING_INTERFACES: &[TsInterface] = &[
@@ -2683,6 +2700,7 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
     TsField { name: "walk_outcome_radius", ty: "number", optional: false, doc: None },
     TsField { name: "walk_outcome_allow_teleports", ty: "boolean", optional: false, doc: None },
     TsField { name: "walk_outcome_request_id", ty: "number", optional: false, doc: None },
+    TsField { name: "bank_selection", ty: "{ request_id: number; generation: number; kind: 'near' | 'reachable' | 'fallback' | 'none'; bank: BankLocation | null } | null", optional: false, doc: Some("Latest select-only completion; fallback is not a reachability proof.") },
     TsField { name: "route_inspect_seq", ty: "number", optional: false, doc: None },
     TsField { name: "route_inspect_generation", ty: "number", optional: false, doc: None },
     TsField { name: "route_inspect_request_id", ty: "number", optional: false, doc: None },

@@ -7,6 +7,7 @@ pub mod game_view;
 pub mod grid;
 mod input_capture;
 pub mod loadouts;
+pub mod log_pane;
 pub mod nav_settings;
 pub mod overlay;
 pub mod paint;
@@ -20,6 +21,7 @@ pub mod session;
 mod session_catalog;
 pub mod theme;
 pub mod ui_state;
+pub mod walk_map;
 pub mod wall;
 pub mod window;
 
@@ -31,6 +33,9 @@ pub use theme::*;
 
 #[cfg(test)]
 mod srgb_present;
+
+#[cfg(test)]
+pub(crate) mod test_support;
 
 #[cfg(test)]
 /// Serializes tests that hold a Dear ImGui context: only one can be

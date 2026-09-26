@@ -43,6 +43,8 @@ fn npc<'a>(
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -231,7 +233,7 @@ fn open_chat_adjacent_name_without_talk_is_done_and_emits_nothing() {
 }
 
 #[test]
-fn missing_npc_queues_close_in_walk_near_with_request_id() {
+fn missing_npc_close_in_failure_keeps_the_resilient_ladder_going() {
     let iso = spawn(NPC_DIALOG);
     let mut snap = base(TileInput {
         x: 0,
@@ -260,12 +262,25 @@ fn missing_npc_queues_close_in_walk_near_with_request_id() {
     snap.tick = 2;
     post_native(&iso, &snap, fail_native(request_id, 5, 5, 3));
     tick(&iso, 2);
-    assert_eq!(iso.probe("__ok").unwrap(), "retry");
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        Value::Null,
+        "frozen closeIn is a walkResilient ladder: one failed walk does not end it"
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkTo {
+            x: 5,
+            z: 5,
+            level: 0
+        }],
+        "the ladder's scene step follows the failed baked walk"
+    );
     iso.join();
 }
 
 #[test]
-fn stand_generic_fail_still_queues_npc_talk() {
+fn stand_walk_failure_takes_the_ladder_scene_step_before_the_talk() {
     let iso = spawn(NPC_DIALOG);
     let actions = ["Talk-to".to_string()];
     let npcs = [npc("Traiborn", &actions, 9, 8, 5, 3, false)];
@@ -293,10 +308,10 @@ fn stand_generic_fail_still_queues_npc_talk() {
     assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::Npc {
-            name: "Traiborn".into(),
-            action: "Talk-to".into(),
-            index: Some(9),
+        vec![InteractReq::WalkTo {
+            x: 5,
+            z: 5,
+            level: 0
         }]
     );
     iso.join();
@@ -379,115 +394,6 @@ fn fresh_cant_reach_reachable_adj_is_unreachable_without_clear() {
 }
 
 #[test]
-fn one_clear_walk_then_second_cant_reach_is_unreachable() {
-    let iso = spawn(NPC_DIALOG);
-    let actions = ["Talk-to".to_string()];
-    let npcs = [npc("Traiborn", &actions, 4, 8, 5, 2, false)];
-    let mut snap = base(stand());
-    snap.npcs = &npcs;
-    post(&iso, &snap);
-    tick(&iso, 1);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Npc {
-            name: "Traiborn".into(),
-            action: "Talk-to".into(),
-            index: Some(4),
-        }]
-    );
-    let first = [ChatLineInput {
-        seq: 8,
-        text: "I can't reach that!",
-        type_: 0,
-        username: None,
-    }];
-    snap.tick = 2;
-    snap.chat_lines = &first;
-    post(&iso, &snap);
-    tick(&iso, 2);
-    match &iso.drain_interacts()[..] {
-        [InteractReq::WalkNear {
-            x: 8,
-            z: 5,
-            radius: 1,
-            request_id,
-            ..
-        }] => assert_ne!(*request_id, 0),
-        other => panic!("expected one Clear walk-near, got {other:?}"),
-    }
-    snap.tick = 3;
-    snap.here = Some(TileInput {
-        x: 8,
-        z: 5,
-        level: 0,
-    });
-    post(&iso, &snap);
-    tick(&iso, 3);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Npc {
-            name: "Traiborn".into(),
-            action: "Talk-to".into(),
-            index: Some(4),
-        }]
-    );
-    let second = [ChatLineInput {
-        seq: 9,
-        text: "I can't reach that!",
-        type_: 0,
-        username: None,
-    }];
-    snap.tick = 4;
-    snap.chat_lines = &second;
-    post(&iso, &snap);
-    tick(&iso, 4);
-    assert_eq!(iso.probe("__ok").unwrap(), "unreachable");
-    assert!(iso.drain_interacts().is_empty(), "no second Clear");
-    iso.join();
-}
-
-#[test]
-fn clear_correlated_fail_is_unreachable_without_another_npc() {
-    let iso = spawn(NPC_DIALOG);
-    let actions = ["Talk-to".to_string()];
-    let npcs = [npc("Traiborn", &actions, 4, 8, 5, 2, false)];
-    let mut snap = base(stand());
-    snap.npcs = &npcs;
-    post(&iso, &snap);
-    tick(&iso, 1);
-    assert_eq!(iso.drain_interacts().len(), 1);
-    let first = [ChatLineInput {
-        seq: 8,
-        text: "I can't reach that!",
-        type_: 0,
-        username: None,
-    }];
-    snap.tick = 2;
-    snap.chat_lines = &first;
-    post(&iso, &snap);
-    tick(&iso, 2);
-    let request_id = match &iso.drain_interacts()[..] {
-        [InteractReq::WalkNear {
-            x: 8,
-            z: 5,
-            radius: 1,
-            request_id,
-            ..
-        }] => *request_id,
-        other => panic!("expected Clear walk-near, got {other:?}"),
-    };
-    snap.tick = 3;
-    post_native(&iso, &snap, fail_native(request_id, 8, 5, 1));
-    tick(&iso, 3);
-    assert_eq!(iso.probe("__ok").unwrap(), "unreachable");
-    assert!(
-        iso.drain_interacts().is_empty(),
-        "Clear correlated fail must not emit another npc"
-    );
-    iso.join();
-}
-
-#[test]
 fn nearest_same_name_talk_uses_posted_index() {
     let iso = spawn(NPC_DIALOG);
     let actions = ["Talk-to".to_string()];
@@ -511,23 +417,12 @@ fn nearest_same_name_talk_uses_posted_index() {
 }
 
 #[test]
-fn open_ms_zero_retries_without_continue_or_answer() {
-    let iso = spawn(
-        r#"
-import { Reach } from '../../api/walking/Reach.js';
-export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__ok = await Reach.npcDialog({
-            name: 'Traiborn',
-            near: { x: 5, z: 5, level: 0 },
-            openMs: 0,
-        });
-    }
-}
-"#,
-    );
+fn open_ms_zero_talks_again_next_round_instead_of_settling() {
+    // Frozen npcDialog passes `retryAfterTimeout: true` (Reach.ts:288-300):
+    // an unanswered talk waits one tick and clicks again, it does not
+    // settle `retry` after one window.
+    let iso = spawn(NPC_DIALOG);
+    iso.probe("globalThis.__openMs = 0").unwrap();
     let actions = ["Talk-to".to_string()];
     let npcs = [npc("Traiborn", &actions, 4, 6, 5, 1, true)];
     let mut snap = base(stand());
@@ -535,11 +430,138 @@ export default class T extends LoopingBot {
     post(&iso, &snap);
     tick(&iso, 1);
     assert_eq!(iso.drain_interacts().len(), 1);
+    for n in 2..=3 {
+        snap.tick = n;
+        post(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Traiborn".into(),
+            action: "Talk-to".into(),
+            index: Some(4),
+        }],
+        "the next round talks again"
+    );
+    iso.join();
+}
+
+#[test]
+fn npc_dialog_opens_the_door_in_front_of_an_unreachable_npc_then_talks() {
+    // Frozen probeUnreachable (Reach.ts:167-176): the NPC at (8,5) is out
+    // of reach behind the door at (7,5), so the reach walks to the door and
+    // opens it before its first click, then talks.
+    let iso = spawn(NPC_DIALOG);
+    let open = ["Open".to_string()];
+    let talk = ["Talk-to".to_string()];
+    let g = grid((5, 5), &[(6, 5)], &[]);
+    let with_door = [barrier("Door", &open, 1530, 7, 5, 2)];
+    let npcs = [npc("Traiborn", &talk, 4, 8, 5, 3, false)];
+    let mut snap = base(stand());
+    snap.reach = view(&g);
+    snap.locs = &with_door;
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let request_id = match iso.drain_interacts().as_slice() {
+        [InteractReq::WalkNear {
+            x: 7,
+            z: 5,
+            radius: 1,
+            request_id,
+            ..
+        }] => *request_id,
+        other => panic!("walk to the blocking door first, got {other:?}"),
+    };
+    // Frozen approaches the door with walkResilient (Reach.ts:112-114): a
+    // failed baked walk takes the ladder's scene step, not the Open.
     snap.tick = 2;
+    post_native(&iso, &snap, fail_native(request_id, 7, 5, 1));
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkTo {
+            x: 7,
+            z: 5,
+            level: 0
+        }]
+    );
+    let beside = grid((6, 5), &[], &[(7, 5)]);
+    snap.tick = 3;
+    snap.here = Some(TileInput {
+        x: 6,
+        z: 5,
+        level: 0,
+    });
+    snap.reach = view(&beside);
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(7, 5, "Open", 1530)]);
+
+    snap.tick = 4;
+    snap.locs = &[];
+    post(&iso, &snap);
+    tick(&iso, 4);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Traiborn".into(),
+            action: "Talk-to".into(),
+            index: Some(4),
+        }],
+        "the cleared round talks"
+    );
+    snap.tick = 5;
+    snap.chat_modal_id = 241;
+    post(&iso, &snap);
+    tick(&iso, 5);
+    assert_eq!(iso.probe("__ok").unwrap(), "done");
+    assert!(logs(&iso).contains(&"reach: opening blocking 'Door' at (7,5)".to_string()));
+    iso.join();
+}
+
+/// The door-approach walk of an interrupted reach is stopped: a guardian
+/// hold only freezes the host follow, which would resume after release.
+#[test]
+fn a_hold_during_the_door_approach_stops_the_armed_walk() {
+    let iso = spawn(NPC_DIALOG);
+    let open = ["Open".to_string()];
+    let talk = ["Talk-to".to_string()];
+    let g = grid((5, 5), &[(6, 5)], &[]);
+    let with_door = [barrier("Door", &open, 1530, 7, 5, 2)];
+    let npcs = [npc("Traiborn", &talk, 4, 8, 5, 3, false)];
+    let mut snap = base(stand());
+    snap.reach = view(&g);
+    snap.locs = &with_door;
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let request_id = match iso.drain_interacts().as_slice() {
+        [InteractReq::WalkNear {
+            x: 7,
+            z: 5,
+            request_id,
+            ..
+        }] => *request_id,
+        other => panic!("walk to the blocking door first, got {other:?}"),
+    };
+    snap.tick = 2;
+    snap.hold = true;
     post(&iso, &snap);
     tick(&iso, 2);
+    assert!(iso.drain_interacts().is_empty(), "held rows do not step");
+    snap.tick = 3;
+    snap.hold = false;
+    post(&iso, &snap);
+    tick(&iso, 3);
     assert_eq!(iso.probe("__ok").unwrap(), "retry");
-    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::AbortWalk { request_id }],
+        "the interrupted reach stops its host walk"
+    );
     iso.join();
 }
 
@@ -809,9 +831,28 @@ fn entity_op_walks_to_and_opens_the_door_toward_the_target_then_retries() {
         other => panic!("walk to the blocking door, got {other:?}"),
     };
 
-    // The walk fails; frozen ignores its result and still opens the door.
+    // The approach is frozen walkResilient (Reach.ts:112-114): a failed
+    // baked walk takes the scene step; the Open follows once the ladder
+    // ends beside the door.
     snap.tick = 3;
     post_native(&iso, &snap, fail_native(request_id, 7, 5, 1));
+    tick(&iso, 3);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkTo {
+            x: 7,
+            z: 5,
+            level: 0
+        }]
+    );
+    let beside = grid((6, 5), &[], &[(7, 5)]);
+    snap.here = Some(TileInput {
+        x: 6,
+        z: 5,
+        level: 0,
+    });
+    snap.reach = view(&beside);
+    post(&iso, &snap);
     tick(&iso, 3);
     assert_eq!(iso.drain_interacts(), vec![loc_op(7, 5, "Open", 1530)]);
     assert_eq!(iso.probe("__ok").unwrap(), Value::Null);

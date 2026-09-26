@@ -42,6 +42,7 @@ fn run_selected_facts<'s>(
         "item-db" => item_db(scope),
         "food-forms" => food_forms(scope, args.get(1)),
         "range-loadout" => range_loadout(scope, args.get(1), args.get(2)),
+        "ranged-item" => ranged_item(scope, args.get(1), args.get(2), args.get(3), args.get(4)),
         "cert-maps" => cert_maps(scope),
         "cert-link" => cert_link(scope, args.get(1), args.get(2)),
         "obj-catalog" => obj_catalog(scope),
@@ -114,6 +115,22 @@ fn range_loadout<'s>(
     let thrown = v8::Boolean::new(scope, loadout.thrown);
     set_key(scope, row, "thrown", thrown.into());
     Ok(row.into())
+}
+
+fn ranged_item<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    selected: v8::Local<v8::Value>,
+    custom: v8::Local<v8::Value>,
+    fallback: v8::Local<v8::Value>,
+    key: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let selected = js_to_string(scope, selected)?;
+    let custom = js_to_string(scope, custom)?;
+    let fallback = js_to_string(scope, fallback)?;
+    let key = js_to_string(scope, key)?;
+    let resolved =
+        crate::ranged::ranged_item(Some(&selected), Some(&custom), &fallback, key == "bow")?;
+    v8_str(scope, resolved)
 }
 
 fn cert_maps<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {

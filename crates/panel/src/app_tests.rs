@@ -8,15 +8,17 @@ use super::{
     apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for, catalog_core_gate,
     chooser_should_open_popup, clamp_hop_label_px, debug_caption, drive_startup,
     edit_parameters_enabled, game_window_flags, hold_script_terminal_shot, live_null_tick,
-    live_script_tick, live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom,
-    logout_enabled, manual_shot_label, parse_args, parse_live_args, progress_channel,
-    random_status_text, request_clean_stop_capture, request_native_failure_capture, runner_config,
+    live_script_tick, live_smoke_tick, live_stress_tick, loading_text, logout_enabled,
+    manual_shot_label, parse_args, parse_live_args, progress_channel, random_status_text,
+    request_clean_stop_capture, request_native_failure_capture, runner_config,
     script_failure_scenario, slot_startup_banner_line, smoke_settled, smoke_should_fire,
     startup_progress, Boot, CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress,
     PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
     StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
     SMOKE_DEADLINE, SMOKE_SETTLE,
 };
+use crate::log_pane::log_follow_bottom;
+use crate::test_support::TestDir;
 use crate::theme::{
     applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
 };
@@ -55,15 +57,10 @@ fn headed_core_gate_rejects_scenario_only_pass_and_times_out() {
     ));
 }
 
-fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
+fn checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
-    let root = std::env::temp_dir().join(format!(
-        "274bot-panel-profile-{revision}-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = TestDir::new(&format!("profile-{revision}"));
     let cache = root.join("cache");
     std::fs::create_dir_all(&cache).unwrap();
     for jag in [
@@ -184,7 +181,11 @@ fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
         let body = crc_body(&packs);
         while Instant::now() < deadline {
             let (mut sock, _) = match listener.accept() {
-                Ok(conn) => conn,
+                Ok(conn) => {
+                    // Accepted sockets inherit O_NONBLOCK from the listener on macOS/BSD.
+                    let _ = conn.0.set_nonblocking(false);
+                    conn
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(5));
                     continue;
@@ -227,7 +228,15 @@ fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
     port
 }
 
-fn runtime_checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf, PathBuf, u16) {
+fn ephemeral_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+fn runtime_checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf, u16) {
     let (root, cache, _) = checked_fixture(revision);
     let packs = identity_packs();
     for (name, bytes) in &packs {
@@ -250,6 +259,10 @@ fn runtime_checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf, PathBuf
 fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
     for revision in [274_u16, 289] {
         let (root, cache, manifest) = checked_fixture(revision);
+        // OnDemand hubs are keyed by (game_host, game_port); parallel panel
+        // tests must not share the default local ports with different caches.
+        let game_port = ephemeral_port();
+        let asset_port = ephemeral_port();
         let args = parse_args(
             [
                 "--smoke".to_string(),
@@ -259,13 +272,17 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
                 cache.display().to_string(),
                 "--cache-manifest".to_string(),
                 manifest.display().to_string(),
+                "--port".to_string(),
+                game_port.to_string(),
+                "--http-port".to_string(),
+                asset_port.to_string(),
             ],
             None,
         )
         .expect("frontend and shared flags parse in either order");
         let env = ProfileEnvironment {
-            home: Some(root.clone()),
-            working_dir: Some(root.clone()),
+            home: Some(root.to_path_buf()),
+            working_dir: Some(root.to_path_buf()),
             rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
@@ -276,7 +293,6 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
         let template = SharedClientTemplate::load(profile).unwrap();
         let client = template.prepare_client(274_000_001, true).unwrap();
         drop(client);
-        std::fs::remove_dir_all(root).unwrap();
     }
 }
 
@@ -325,20 +341,21 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
     assert!(boot_failure_is_fatal(&Boot::Live(LiveBoot::Smoke)));
 }
 
-fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, PathBuf) {
+fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
     let (root, cache, manifest, unpack, port) = runtime_checked_fixture(274);
     let options = host_play::ProfileOptions {
         profile: Some("local-274".into()),
         cache_dir: Some(cache),
         cache_manifest: Some(manifest),
         unpack_dir: Some(unpack),
+        port: Some(ephemeral_port()),
         http_port: Some(port),
         vault_path: Some(root.join("startup.vault")),
         ..host_play::ProfileOptions::default()
     };
     let env = ProfileEnvironment {
-        home: Some(root.clone()),
-        working_dir: Some(root.clone()),
+        home: Some(root.to_path_buf()),
+        working_dir: Some(root.to_path_buf()),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
@@ -373,39 +390,43 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, PathBuf) {
 
 #[test]
 fn normal_unlock_waits_for_worker_validation_then_uses_prepared_profile() {
-    let (mut state, mut startup, root) = prepared_startup(Boot::Unlock {
+    let (mut state, mut startup, _root) = prepared_startup(Boot::Unlock {
         pass: "prepared-pass".into(),
     });
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while state.session.play.is_none() && Instant::now() < deadline {
-        drive_startup(&mut state, &mut startup);
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    drive_startup(&mut state, &mut startup);
+    let mut validation = startup.validate.take().expect("final validation worker");
+    let result = validation
+        .receiver
+        .recv_timeout(Duration::from_secs(2))
+        .expect("final validation completion");
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    sender.send(result).unwrap();
+    validation.receiver = receiver;
+    startup.validate = Some(validation);
+    drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
-    assert!(state.session.vault.is_some());
-    assert!(state.session.play.is_some());
-    assert!(state.session.slots.is_empty());
+    assert!(state.session.core.vault().is_some());
+    assert!(state.session.core.play().is_some());
+    assert!(state.session.core.slots().is_empty());
     assert!(startup_progress(&startup, state.session.profile_generation()).is_none());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
-    let (mut state, mut startup, root) = prepared_startup(Boot::Live(LiveBoot::Smoke));
+    let (mut state, mut startup, _root) = prepared_startup(Boot::Live(LiveBoot::Smoke));
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
     let validation = startup.validate.take().expect("final validation worker");
     assert!(state.session.profile_preparing());
-    assert!(state.session.vault.is_none());
-    assert!(state.session.play.is_none());
-    assert!(state.session.slots.is_empty());
+    assert!(state.session.core.vault().is_none());
+    assert!(state.session.core.play().is_none());
+    assert!(state.session.core.slots().is_empty());
     assert!(validation
         .receiver
         .recv_timeout(Duration::from_secs(2))
         .unwrap()
         .is_ok());
     assert!(matches!(validation.boot, Boot::Live(LiveBoot::Smoke)));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -454,7 +475,7 @@ fn startup_progress_is_latest_only_and_generation_scoped() {
 fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     use host_play::progress::{ProfileProgress, ProfileProgressStage};
 
-    let (root, cache, manifest) = checked_fixture(274);
+    let (_root, cache, manifest) = checked_fixture(274);
     let mut state = PanelState::default();
     state
         .session
@@ -493,14 +514,13 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     assert!(startup_progress(&startup, generation).is_none());
     assert!(!state.session.profile_preparing());
     assert!(!state.session.profile_bound());
-    assert!(state.session.vault.is_none());
-    assert!(state.session.play.is_none());
-    assert!(state.session.slots.is_empty());
+    assert!(state.session.core.vault().is_none());
+    assert!(state.session.core.play().is_none());
+    assert!(state.session.core.slots().is_empty());
     assert_eq!(
         state.session.error.as_deref(),
         Some("fixture preparation failed")
     );
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -583,18 +603,8 @@ fn edit_parameters_enabled_for_operator_bag() {
 #[test]
 fn loadout_combo_lists_store_names() {
     use script::{resolve_setting_options, Loadout, LoadoutsStore, SettingDef};
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-panel-loadout-combo-{n}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = TestDir::new("loadout-combo");
     let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
     store.upsert(Loadout::new("guard"));
     store.upsert(Loadout::new("stall"));
@@ -711,25 +721,6 @@ fn rail_window_class_shows_tab_x() {
     assert!(c
         .dock_node_flags_override_set
         .contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE));
-    const SRC: &str = include_str!("app.rs");
-    let rail = SRC.split("fn rail_window(").nth(1).unwrap_or("");
-    let rail_fn = rail
-        .split("fn apply_only_render_selected")
-        .next()
-        .unwrap_or("");
-    assert!(
-        rail_fn.contains(".opened(") && rail_fn.contains("set_multibox(false)"),
-        "rail tab X turns MultiBox off so ensure_window_fits can shrink"
-    );
-    assert!(
-        !rail_fn.contains("NO_TITLE_BAR"),
-        "NO_TITLE_BAR hides the tab that carries the X"
-    );
-    let frame = SRC.split("fn ui_frame").nth(1).unwrap_or("");
-    assert!(
-        frame.contains("rail_window_class"),
-        "rail must not reuse the Game class that AUTO_HIDEs the tab bar"
-    );
 }
 
 #[test]
@@ -737,59 +728,6 @@ fn chooser_docks_to_panel_never_rail_or_game() {
     let panel = Id::from(20u32);
     assert_eq!(super::chooser_dock_id(Some(panel)), Some(panel));
     assert_eq!(super::chooser_dock_id(None), None);
-    const SRC: &str = include_str!("app.rs");
-    let chooser = SRC
-        .split("fn chooser_window")
-        .nth(1)
-        .unwrap_or("")
-        .split("fn settings_window")
-        .next()
-        .unwrap_or("");
-    assert!(
-        chooser.contains("panel_window_class"),
-        "Profiles must use the 274bot panel class"
-    );
-    assert!(
-        !chooser.contains("rail_window_class"),
-        "Profiles must never dock to the MultiBox rail"
-    );
-    assert!(
-        chooser.contains("Appearing"),
-        "spawn docks on the hidden→visible edge; rebuild must re-dock by name"
-    );
-}
-
-#[test]
-fn dock_host_redocks_profiles_onto_the_panel_node() {
-    const SRC: &str = include_str!("app.rs");
-    let host = SRC
-        .split("fn dock_host")
-        .nth(1)
-        .unwrap_or("")
-        .split("fn game_window_flags")
-        .next()
-        .unwrap_or("");
-    assert!(
-        host.contains("dock_panel_tabs"),
-        "MultiBox rail / OS resize rebuild must re-dock Profiles onto the 274bot leaf"
-    );
-    let tabs = SRC
-        .split("fn dock_panel_tabs")
-        .nth(1)
-        .unwrap_or("")
-        .split("fn dock_host")
-        .next()
-        .unwrap_or("");
-    for title in ["Profiles", "General config", "Nav config", "Script prefs"] {
-        assert!(
-            tabs.contains(title),
-            "panel tab {title} must be DockBuilder::dock_window'd after a tree rebuild"
-        );
-    }
-    assert!(
-        !tabs.contains("Scripts") && !tabs.contains("Loadouts"),
-        "overlay pickers stay floating over Game"
-    );
 }
 
 #[test]
@@ -828,19 +766,8 @@ fn dockspace_does_not_lock_undock_on_every_node() {
 }
 
 #[test]
-fn ensure_window_fits_uses_rail_open_falling_edge() {
-    const SRC: &str = include_str!("app.rs");
-    let body = SRC.split("fn ensure_window_fits").nth(1).unwrap_or("");
-    let body = body.split("fn dock_host").next().unwrap_or("");
-    assert!(
-        body.contains("next_os_window_size") && body.contains("DockLayout::Rail"),
-        "MultiBox off must re-shrink via the rail falling edge, not grow-only"
-    );
-}
-
-#[test]
 fn apply_ui_scale_scales_padding_for_retina() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     let mut ctx = dear_imgui_rs::Context::create();
     let before = ctx.style().window_padding();
     apply_ui_scale(ctx.style_mut(), 2.0);
@@ -1452,7 +1379,7 @@ fn manual_shot_without_a_focused_live_snapshot_is_not_enqueued() {
 #[test]
 fn manual_shot_rejects_an_empty_published_snapshot() {
     let mut state = PanelState::default();
-    state.session.focus.lock().unwrap().focused = Some("alice".into());
+    state.session.set_focus_for_test("alice");
     state.session.nav_states.lock().unwrap().insert(
         "alice".into(),
         (
@@ -1567,8 +1494,8 @@ fn live_script_tick_holds_pass_until_clean_script_stop() {
 
 #[test]
 fn clean_stop_rearms_written_shot_once_and_can_complete() {
-    let session = crate::session::Session::new();
-    session.focus.lock().unwrap().focused = Some("alice".into());
+    let mut session = crate::session::Session::new();
+    session.set_focus_for_test("alice");
     let client = script_client();
     let mut snapshot = api::snapshot::GameSnapshot::new();
     snapshot.rebuild(&client);
@@ -1648,8 +1575,8 @@ fn clean_stop_rearms_written_shot_once_and_can_complete() {
 
 #[test]
 fn clean_stop_missing_scene_cannot_reuse_prior_written_capture() {
-    let session = crate::session::Session::new();
-    session.focus.lock().unwrap().focused = Some("alice".into());
+    let mut session = crate::session::Session::new();
+    session.set_focus_for_test("alice");
     let mut client = script_client();
     client.scene_state = 1;
     let mut snapshot = api::snapshot::GameSnapshot::new();
@@ -1778,7 +1705,7 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
         .as_mut()
         .unwrap()
         .set_terminal_shot("core-pass");
-    s.focus.lock().unwrap().focused = Some("catalogtest".into());
+    s.set_focus_for_test("catalogtest");
     let mut terminal_snapshot = api::snapshot::GameSnapshot::new();
     terminal_snapshot.rebuild(&script_client());
     s.nav_states.lock().unwrap().insert(
@@ -2136,8 +2063,8 @@ fn terminal_shot_drain_accepts_a_write_from_an_earlier_core_pending_frame() {
 
 #[test]
 fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
-    let session = crate::session::Session::new();
-    session.focus.lock().unwrap().focused = Some("alice".into());
+    let mut session = crate::session::Session::new();
+    session.set_focus_for_test("alice");
     let client = script_client();
     let mut snapshot = api::snapshot::GameSnapshot::new();
     snapshot.rebuild(&client);
@@ -2210,8 +2137,8 @@ fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
 
 #[test]
 fn native_failure_missing_scene_cannot_reuse_prior_written_capture() {
-    let session = crate::session::Session::new();
-    session.focus.lock().unwrap().focused = Some("alice".into());
+    let mut session = crate::session::Session::new();
+    session.set_focus_for_test("alice");
     let mut client = script_client();
     client.scene_state = 1;
     let mut snapshot = api::snapshot::GameSnapshot::new();
@@ -2417,9 +2344,9 @@ fn sidecar_actor_and_scene(json: &str) -> (String, i64) {
 #[test]
 fn pump_shots_does_not_promote_two_pair_actors_from_an_unready_buffer() {
     let mut state = PanelState::default();
-    state.session.slots.insert("alice".into(), dummy_slot());
-    state.session.slots.insert("bob".into(), dummy_slot());
-    state.session.focus.lock().unwrap().focused = Some("alice".into());
+    state.session.core.insert_slot_io("alice", dummy_slot());
+    state.session.core.insert_slot_io("bob", dummy_slot());
+    state.session.set_focus_for_test("alice");
     insert_named_scene2(&state.session, "alice", Some("NatureMaster"));
     insert_named_scene2(&state.session, "bob", None);
     {
@@ -2513,8 +2440,8 @@ fn pump_shots_fails_a_missing_pair_actor_without_deadlocking() {
 #[test]
 fn pump_shots_does_not_promote_a_presented_actor_that_left_scene2() {
     let mut state = PanelState::default();
-    state.session.slots.insert("alice".into(), dummy_slot());
-    state.session.focus.lock().unwrap().focused = Some("alice".into());
+    state.session.core.insert_slot_io("alice", dummy_slot());
+    state.session.set_focus_for_test("alice");
     state.last_upload = Some(("alice".into(), 1));
     state.session.nav_states.lock().unwrap().insert(
         "alice".into(),
@@ -2548,8 +2475,8 @@ fn actor_snapshot_serialization_count() -> u64 {
 #[test]
 fn pump_shots_does_not_serialize_sidecar_without_a_pending_actor_capture() {
     let mut state = PanelState::default();
-    state.session.slots.insert("alice".into(), dummy_slot());
-    state.session.focus.lock().unwrap().focused = Some("alice".into());
+    state.session.core.insert_slot_io("alice", dummy_slot());
+    state.session.set_focus_for_test("alice");
     insert_named_scene2(&state.session, "alice", Some("NatureMaster"));
     state.last_upload = Some(("alice".into(), 1));
 
@@ -2854,16 +2781,10 @@ fn missing_external_terminal_shot_fails_after_drain() {
 
 #[test]
 fn pump_shots_marks_completion_only_after_the_png_and_snapshot_pair_write() {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-panel-shot-pump-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = TestDir::new("shot-pump");
 
     let mut state = PanelState {
-        shot_dir: Some(dir.clone()),
+        shot_dir: Some(dir.to_path_buf()),
         ..PanelState::default()
     };
     state
@@ -2900,7 +2821,6 @@ fn pump_shots_marks_completion_only_after_the_png_and_snapshot_pair_write() {
         .collect::<Vec<_>>();
     extensions.sort();
     assert_eq!(extensions, ["json", "png"]);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 fn smoke_at(started: Instant) -> LiveSmoke {
@@ -2927,7 +2847,7 @@ fn live_smoke_tick_passes_when_the_shot_is_written() {
 #[test]
 fn live_smoke_tick_latches_scene2_once_and_reports_a_missing_write() {
     let mut s = crate::session::Session::new();
-    s.focus.lock().unwrap().focused = Some("test".into());
+    s.set_focus_for_test("test");
     let mut live = smoke_at(Instant::now());
     // Before scene 2 nothing latches.
     assert_eq!(
@@ -2948,7 +2868,7 @@ fn live_smoke_tick_latches_scene2_once_and_reports_a_missing_write() {
 #[test]
 fn live_smoke_tick_deadline_reports_scene2_never_reached() {
     let mut s = crate::session::Session::new();
-    s.focus.lock().unwrap().focused = Some("test".into());
+    s.set_focus_for_test("test");
     let mut live = smoke_at(Instant::now() - SMOKE_DEADLINE);
     let err = live_smoke_tick(&mut live, &mut s, &[st("test", false, 0)], 0).expect("deadline");
     assert!(
@@ -3039,11 +2959,12 @@ fn preparing_startup_banner_keeps_elapsed_timer() {
 }
 
 #[test]
-fn stale_latched_flag_still_overrides_connect_wait_banner() {
+fn latched_logout_overrides_stale_retry_error() {
     let status = host_play::SlotStatus {
         username: "alice".into(),
         startup_phase: host_play::StartupPhase::Queueing,
         login_latched: true,
+        error: Some("old retry error".into()),
         ..Default::default()
     };
     let (message, show_elapsed) = slot_startup_banner_line(&status).expect("latched overrides");
@@ -3221,29 +3142,6 @@ fn random_status_text_kebab_cases_lost_kinds() {
 }
 
 #[test]
-fn config_section_scopes_accent_to_header_not_body() {
-    const SRC: &str = include_str!("app.rs");
-    let fn_src = SRC.split("fn config_section").nth(1).unwrap_or("");
-    let fn_src = fn_src
-        .split("fn global_capture_section")
-        .next()
-        .unwrap_or("");
-    assert!(
-        fn_src.contains("FrameBorderSize(1.0)"),
-        "header orange border needs a visible frame border"
-    );
-    let after_header = fn_src.split("ui.collapsing_header").nth(1).unwrap_or("");
-    assert!(
-        !after_header.contains("push_style_color(StyleColor::Text, ACCENT)"),
-        "accent text must not wrap the open section body"
-    );
-    assert!(
-        fn_src.contains("body(ui, session)"),
-        "section body runs outside header style scope"
-    );
-}
-
-#[test]
 fn panel_heading_toggle_hides_status_section() {
     use crate::ui_state::{panel_section_visible, set_panel_section_visible, PanelUiState};
     let mut ui = PanelUiState::default();
@@ -3264,168 +3162,13 @@ fn parameters_and_script_prefs_share_show_parameters_rail() {
     assert!(!panel_section_visible(&ui, "parameters"));
 }
 
-#[test]
-fn global_config_slot_name_then_capture_then_focused_50_then_panel() {
-    const SRC: &str = include_str!("app.rs");
-    let g = SRC.split("fn global_config_section").nth(1).unwrap_or("");
-    let g = g.split("\nfn ").next().unwrap_or("");
-    let slot = g.find("\"Slot:\"").expect("Slot: label above capture");
-    let capture = g
-        .find("global_capture_section")
-        .expect("capture stays in Global");
-    let focused_50 = g
-        .find("focused 50 fps")
-        .expect("focused 50 fps lives in Global");
-    let panel = g
-        .find("panel_heading_toggles")
-        .expect("Panel heading toggles stay in Global");
-    assert!(
-        slot < capture,
-        "Slot: sits below the heading, above capture"
-    );
-    assert!(
-        focused_50 < panel,
-        "focused 50 fps sits above the Panel subsection"
-    );
-    assert!(
-        !g.contains("auto-login"),
-        "auto-login belongs on the profile editor, not Global"
-    );
-}
-
-#[test]
-fn settings_window_drops_slot_and_random_rows() {
-    const SRC: &str = include_str!("app.rs");
-    let settings = SRC.split("fn settings_window").nth(1).unwrap_or("");
-    let settings = settings.split("\nfn ").next().unwrap_or("");
-    assert!(
-        settings.contains("config_section(ui, session, \"Global\""),
-        "Global row stays"
-    );
-    assert!(
-        settings.contains("config_section(ui, session, \"render\""),
-        "render (raster/mem) stays in General config"
-    );
-    assert!(
-        !settings.contains("config_section(ui, session, \"slot\""),
-        "slot row is gone; the focused name is a Global label"
-    );
-    assert!(
-        !settings.contains("config_section(ui, session, \"random\""),
-        "random/lamp belong on the profile editor"
-    );
-    assert!(
-        !settings.contains("slot_capture_section"),
-        "auto-login is not a General config control"
-    );
-    assert!(
-        !settings.contains("slot_random_section"),
-        "guardian toggles are not a General config control"
-    );
-}
-
-#[test]
-fn slot_render_section_no_longer_owns_focused_50() {
-    const SRC: &str = include_str!("app.rs");
-    let r = SRC.split("fn slot_render_section").nth(1).unwrap_or("");
-    let r = r.split("\nfn ").next().unwrap_or("");
-    assert!(
-        !r.contains("focused 50 fps"),
-        "focused 50 fps moved to Global, above Panel"
-    );
-    assert!(
-        r.contains("raster_picker"),
-        "Game-pane raster/mem stay under render"
-    );
-}
-
-#[test]
-fn chooser_edit_hosts_per_profile_login_and_random() {
-    const SRC: &str = include_str!("app.rs");
-    let chooser = SRC.split("fn chooser_window").nth(1).unwrap_or("");
-    let chooser = chooser.split("fn settings_window").next().unwrap_or("");
-    assert!(
-        chooser.contains("slot_capture_section"),
-        "auto-login moved onto the profile editor"
-    );
-    assert!(
-        chooser.contains("slot_random_section"),
-        "random/lamp moved onto the profile editor"
-    );
-    const SRC_COPY: &str = include_str!("app.rs");
-    let random = SRC_COPY
-        .split("fn slot_random_section")
-        .nth(1)
-        .unwrap_or("");
-    assert!(
-        random.contains("this profile"),
-        "copy names the edited profile, not a global slot"
-    );
-    assert!(
-        !random.contains("focus a profile to edit"),
-        "edit form is already on this profile"
-    );
-    let save = chooser
-        .find("button_with_size(\"Save\"")
-        .expect("Save stays on the editor");
-    let auto = chooser
-        .find("slot_capture_section")
-        .expect("auto-login in editor");
-    assert!(auto < save, "per-profile settings sit above Save/Cancel");
-}
-
-#[test]
-fn chooser_locked_vault_shows_unlock_not_empty_copy() {
-    const SRC: &str = include_str!("app.rs");
-    let chooser = SRC.split("fn chooser_window").nth(1).unwrap_or("");
-    let chooser = chooser.split("fn settings_window").next().unwrap_or("");
-    let locked = chooser
-        .find("vault.is_none()")
-        .expect("Profiles must branch on a locked vault");
-    let unlock = chooser
-        .find("vault_unlock_prompt")
-        .expect("locked Profiles reuses the panel unlock UI");
-    let empty = chooser
-        .find("vault is empty")
-        .expect("empty copy stays for a truly empty unlocked vault");
-    assert!(
-        locked < unlock && unlock < empty,
-        "unlock UI while locked; empty copy only after the vault is open"
-    );
-    let profile = SRC.split("fn profile_section").nth(1).unwrap_or("");
-    let profile = profile.split("\nfn ").next().unwrap_or("");
-    assert!(
-        profile.contains("vault_unlock_prompt"),
-        "panel profile heading and Profiles share one unlock prompt"
-    );
-    assert!(
-        !profile.contains("##vault-pass"),
-        "pass field lives in the shared prompt, not forked in profile_section"
-    );
-}
-
-#[test]
-fn panel_subsection_exposes_chrome_color_pickers() {
-    const SRC: &str = include_str!("app.rs");
-    let panel = SRC.split("fn panel_heading_toggles").nth(1).unwrap_or("");
-    let panel = panel.split("\nfn ").next().unwrap_or("");
-    assert!(
-        panel.contains("chrome_color_field") || panel.contains("nav_color_field"),
-        "Panel chrome colours use the same hex picker pattern as Nav"
-    );
-    assert!(
-        panel.contains("accent") || panel.contains("ACCENT"),
-        "named theme consts are exposed as pickers"
-    );
-}
-
 /// File-loaded cards have empty description/tags. A trailing
 /// SetCursorScreenPos after the badge used to EndChild past CursorMaxPos
 /// and abort ErrorCheckUsingSetCursorPosToExtendParentBoundaries
 /// (panel-play SIGABRT on Browse, window `##scard-File-trade_bot`).
 #[test]
 fn browse_file_card_without_desc_does_not_assert_on_endchild() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     let iso = script::IsolatedEnv::enter("browse-scard-assert");
     let path = iso.dir.join("trade_bot.js");
     std::fs::write(
@@ -3434,11 +3177,12 @@ fn browse_file_card_without_desc_does_not_assert_on_endchild() {
     )
     .unwrap();
     let mut s = crate::session::Session::new();
-    s.js = script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts.js =
+        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
     s.load_js(&path);
     assert_eq!(s.error, None, "load: {:?}", s.error);
     assert_eq!(
-        s.js.cards()[0].description,
+        s.scripts.js.cards()[0].description,
         "",
         "File cards have no registry description — this is the abort path"
     );

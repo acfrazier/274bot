@@ -252,7 +252,7 @@ fn auto_srgb_roundtrip_palette_and_gold() {
         adapter.name, adapter.backend, adapter.device_type
     );
 
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
 
     let auto_srgb = render_swatches(
         &device,

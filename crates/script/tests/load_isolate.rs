@@ -494,7 +494,13 @@ fn isolate_spawn_compat_fixture_ticks_and_joins() {
 fn isolate_pause_ignores_ticks_and_resume_continues() {
     let iso = spawn_ready(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![]);
     iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__rs_n").unwrap(),
+        1,
+        "the pre-Pause tick settles before the Pause boundary"
+    );
     iso.pause();
+    iso.probe("true").unwrap();
     iso.on_game_tick(2);
     iso.on_game_tick(3);
     let n = iso.probe("__rs_n").unwrap();
@@ -503,6 +509,962 @@ fn isolate_pause_ignores_ticks_and_resume_continues() {
     iso.on_game_tick(4);
     let n = iso.probe("__rs_n").unwrap();
     assert_eq!(n, 2, "resume re-arms tick dispatch");
+    iso.join();
+}
+
+fn pause_after_execution_entry(iso: &LoadIsolate) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(Instant::now() < deadline, "tick never entered execution");
+        thread::yield_now();
+    }
+    thread::sleep(Duration::from_millis(15));
+    iso.pause();
+    iso.probe("true")
+        .expect("Pause settles the active execution");
+}
+
+#[test]
+fn pause_allows_an_in_budget_sync_tick_to_finish() {
+    let iso = spawn_ready(
+        "export function tick() {
+            globalThis.__entered = (globalThis.__entered || 0) + 1;
+            const start = Date.now();
+            while (Date.now() - start < 300) {}
+            globalThis.__finished = (globalThis.__finished || 0) + 1;
+        }"
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    pause_after_execution_entry(&iso);
+    assert_eq!(iso.probe("__finished || 0").unwrap(), 1);
+    iso.resume();
+    iso.probe("true").unwrap();
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__finished || 0").unwrap(), 2);
+    iso.join();
+}
+
+#[test]
+fn pause_allows_an_in_budget_async_compat_loop_to_resume() {
+    let iso = spawn_ready(
+        "export default class T extends LoopingBot {
+            async loop() {
+                globalThis.__loops = (globalThis.__loops || 0) + 1;
+                await Promise.resolve();
+                globalThis.__continued = (globalThis.__continued || 0) + 1;
+                const start = Date.now();
+                while (Date.now() - start < 300) {}
+                globalThis.__done = (globalThis.__done || 0) + 1;
+            }
+        }"
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    pause_after_execution_entry(&iso);
+    assert_eq!(iso.probe("__done || 0").unwrap(), 1);
+    iso.resume();
+    iso.probe("true").unwrap();
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__done || 0").unwrap(), 2);
+    iso.join();
+}
+
+#[test]
+fn pause_allows_an_in_budget_async_native_tick_to_resume() {
+    let iso = spawn_ready(
+        "export async function tick() {
+            globalThis.__ticks = (globalThis.__ticks || 0) + 1;
+            await Promise.resolve();
+            globalThis.__continued = (globalThis.__continued || 0) + 1;
+            const start = Date.now();
+            while (Date.now() - start < 300) {}
+            globalThis.__done = (globalThis.__done || 0) + 1;
+        }"
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    pause_after_execution_entry(&iso);
+    assert_eq!(iso.probe("__done || 0").unwrap(), 1);
+    iso.resume();
+    iso.probe("true").unwrap();
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__done || 0").unwrap(), 2);
+    iso.join();
+}
+
+const CUT_TRACKING: &str = r#"
+function __spin() { const start = Date.now(); while (Date.now() - start < 5000) {} }
+function __enter() {
+    const entry = (globalThis.__entries = (globalThis.__entries || 0) + 1);
+    globalThis.__active = (globalThis.__active || 0) + 1;
+    globalThis.__maxActive = Math.max(globalThis.__maxActive || 0, globalThis.__active);
+    return entry;
+}
+function __leave() {
+    globalThis.__active -= 1;
+    globalThis.__done = (globalThis.__done || 0) + 1;
+}
+"#;
+
+fn h_probe_source(case: &str, v2: bool) -> String {
+    let imports = "import { BotHost } from '../../runtime/BotHost.js'; \
+                   import { Execution } from '../../api/execution/Execution.js';";
+    let body = match (case, v2) {
+        ("H1", false) => {
+            r#"
+let __wake;
+const __gate = new Promise((resolve) => { __wake = resolve; });
+(async () => { await __gate; __spin(); globalThis.__sideDone = true; })();
+export default class T extends LoopingBot {
+    async loop() {
+        const entry = __enter();
+        if (entry === 1) {
+            await Execution.delayTicks(2);
+            __wake();
+            await Execution.delayTicks(4);
+        } else {
+            await Execution.delayTicks(10);
+        }
+        __leave();
+    }
+}"#
+        }
+        ("H1", true) => {
+            r#"
+export const apiVersion = 2;
+let __wake;
+const __gate = new Promise((resolve) => { __wake = resolve; });
+(async () => { await __gate; __spin(); globalThis.__sideDone = true; })();
+export async function tick() {
+    const entry = __enter();
+    if (entry === 1) {
+        await Execution.delayTicks(2);
+        __wake();
+        await Execution.delayTicks(4);
+    } else {
+        await Execution.delayTicks(10);
+    }
+    __leave();
+}"#
+        }
+        ("H1b", false) => {
+            r#"
+async function __helper() { await null; __spin(); globalThis.__helperDone = true; }
+export default class T extends LoopingBot {
+    async loop() {
+        const entry = __enter();
+        if (entry === 1) await Execution.delayTicks(1);
+        else if (entry === 2) { __helper(); await Execution.delayTicks(4); }
+        else await Execution.delayTicks(10);
+        __leave();
+    }
+}"#
+        }
+        ("H1b", true) => {
+            r#"
+export const apiVersion = 2;
+async function __helper() { await null; __spin(); globalThis.__helperDone = true; }
+export async function tick() {
+    const entry = __enter();
+    if (entry === 1) await Execution.delayTicks(2);
+    else if (entry === 2) { __helper(); await Execution.delayTicks(4); }
+    else await Execution.delayTicks(10);
+    __leave();
+}"#
+        }
+        ("H3", false) => {
+            r#"
+let __release = null;
+export default class T extends LoopingBot {
+    onStart() {
+        BotHost.addTickListener(() => {
+            if (globalThis.__rs2b0t_host.tick === 8 && __release) {
+                const release = __release;
+                __release = null;
+                release();
+            }
+        });
+    }
+    async loop() {
+        const entry = __enter();
+        if (entry === 1) {
+            (async () => {
+                await Execution.delayTicks(2);
+                __spin();
+                globalThis.__sideDone = true;
+            })();
+            await new Promise((resolve) => { __release = resolve; });
+        } else {
+            await Execution.delayTicks(10);
+        }
+        __leave();
+    }
+}"#
+        }
+        ("H3", true) => {
+            r#"
+export const apiVersion = 2;
+let __release = null;
+BotHost.addTickListener(() => {
+    if (globalThis.__rs2b0t_host.tick === 8 && __release) {
+        const release = __release;
+        __release = null;
+        release();
+    }
+});
+export async function tick() {
+    const entry = __enter();
+    if (entry === 1) {
+        (async () => {
+            await Execution.delayTicks(2);
+            __spin();
+            globalThis.__sideDone = true;
+        })();
+        await new Promise((resolve) => { __release = resolve; });
+    } else {
+        await Execution.delayTicks(10);
+    }
+    __leave();
+}"#
+        }
+        _ => unreachable!("unknown H probe"),
+    };
+    [imports, CUT_TRACKING, body].concat()
+}
+
+fn h2_probe_source(v2: bool, background_delay: u64) -> String {
+    let imports = "import { Execution } from '../../api/execution/Execution.js';";
+    let body = if v2 {
+        format!(
+            r#"
+export const apiVersion = 2;
+export async function tick() {{
+    const entry = __enter();
+    if (entry === 1) {{
+        (async () => {{
+            for (;;) {{
+                await Execution.delayTicks({background_delay});
+                globalThis.__bg = (globalThis.__bg || 0) + 1;
+            }}
+        }})();
+    }}
+    await Execution.delayTicks(2);
+    if (entry === 1) {{
+        globalThis.__active -= 1;
+        __spin();
+        globalThis.__active += 1;
+    }}
+    __leave();
+}}"#
+        )
+    } else {
+        format!(
+            r#"
+export default class T extends LoopingBot {{
+    onStart() {{
+        (async () => {{
+            for (;;) {{
+                await Execution.delayTicks({background_delay});
+                globalThis.__bg = (globalThis.__bg || 0) + 1;
+            }}
+        }})();
+    }}
+    async loop() {{
+        const entry = __enter();
+        await Execution.delayTicks(2);
+        if (entry === 1) {{
+            globalThis.__active -= 1;
+            __spin();
+            globalThis.__active += 1;
+        }}
+        __leave();
+    }}
+}}"#
+        )
+    };
+    [imports, CUT_TRACKING, &body].concat()
+}
+
+fn dispatch_slot_tick(slot: &mut SlotScript, driver: &mut NullDriver, tick: u64) {
+    slot.on_game_tick(&mut ScriptCtx {
+        driver,
+        tick,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: None,
+        obj_names: None,
+        compiled: script::CompiledTick::default(),
+    });
+}
+
+fn drive_until_runaway(slot: &mut SlotScript, driver: &mut NullDriver, next_tick: &mut u64) -> u64 {
+    for _ in 0..12 {
+        let tick = *next_tick;
+        *next_tick += 1;
+        let (before, _) = slot.load_execution_sequence();
+        dispatch_slot_tick(slot, driver, tick);
+        let entry_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let (execution, active) = slot.load_execution_sequence();
+            if execution != before {
+                if !active {
+                    break;
+                }
+                let runaway_deadline = Instant::now() + Duration::from_millis(400);
+                while slot.load_execution_active() && Instant::now() < runaway_deadline {
+                    thread::yield_now();
+                }
+                if slot.load_execution_active() {
+                    return tick;
+                }
+                break;
+            }
+            assert!(
+                Instant::now() < entry_deadline,
+                "tick {tick} never entered the isolate"
+            );
+            thread::yield_now();
+        }
+    }
+    panic!("probe never entered its runaway execution");
+}
+
+fn wait_for_cut_restart(
+    slot: &mut SlotScript,
+    previous_generation: u64,
+    expected: script::RunState,
+) -> Vec<String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut logs = Vec::new();
+    while Instant::now() < deadline {
+        slot.observe_lifecycle();
+        logs.extend(slot.take_pending_logs());
+        if slot.runtime_generation() > previous_generation && slot.state() == expected {
+            return logs;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    panic!(
+        "cut did not recreate the script: state={:?}, generation={}, error={:?}, logs={logs:?}",
+        slot.state(),
+        slot.runtime_generation(),
+        slot.last_error()
+    );
+}
+
+fn assert_cut_restarts(source: String, shape: LoadShape, pause: bool, label: &str) {
+    let mut slot = SlotScript::new();
+    slot.start_load(source, shape, vec![]).unwrap();
+    wait_slot_state(&mut slot, script::RunState::Running);
+    let generation = slot.runtime_generation();
+    let mut driver = NullDriver::default();
+    let mut next_tick = 1;
+    drive_until_runaway(&mut slot, &mut driver, &mut next_tick);
+
+    let expected = if pause {
+        slot.pause();
+        script::RunState::Paused
+    } else {
+        thread::sleep(Duration::from_millis(560));
+        dispatch_slot_tick(&mut slot, &mut driver, next_tick);
+        next_tick += 1;
+        script::RunState::Running
+    };
+    let logs = wait_for_cut_restart(&mut slot, generation, expected);
+    let owner = if pause { "Pause deadline" } else { "watchdog" };
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("runaway execution interrupted by") && line.contains(owner)),
+        "{label}: missing cut log: {logs:?}"
+    );
+    assert_eq!(
+        slot.runtime_generation(),
+        generation + 1,
+        "{label}: exactly one recreate"
+    );
+    if pause {
+        assert_eq!(slot.state(), script::RunState::Paused, "{label}");
+        slot.resume();
+        assert_eq!(slot.state(), script::RunState::Running, "{label}");
+    }
+
+    dispatch_slot_tick(&mut slot, &mut driver, next_tick);
+    slot.probe("true").expect("fresh runtime must answer");
+    assert_eq!(
+        slot.probe("globalThis.__entries || 0").unwrap(),
+        1,
+        "{label}: entries must advance in the fresh runtime"
+    );
+    assert_eq!(
+        slot.probe("globalThis.__maxActive || 0").unwrap(),
+        1,
+        "{label}: fresh runtime must keep one lifecycle flight"
+    );
+    slot.stop();
+    wait_slot_state(&mut slot, script::RunState::Idle);
+}
+
+#[test]
+fn lifecycle_side_continuation_cuts_restart_the_script_single_flight() {
+    for case in ["H1", "H1b", "H3"] {
+        for v2 in [false, true] {
+            for pause in [false, true] {
+                let label = format!(
+                    "{case}-{}-{}",
+                    if v2 { "v2" } else { "compat" },
+                    if pause { "pause" } else { "watchdog" }
+                );
+                assert_cut_restarts(
+                    h_probe_source(case, v2),
+                    if v2 {
+                        LoadShape::NativeTick
+                    } else {
+                        LoadShape::CompatClass
+                    },
+                    pause,
+                    &label,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn background_waiters_do_not_wedge_cut_restart() {
+    for (name, delay) in [("H2-bg", 1), ("H2s", 5)] {
+        for v2 in [false, true] {
+            for pause in [false, true] {
+                let label = format!(
+                    "{name}-{}-{}",
+                    if v2 { "v2" } else { "compat" },
+                    if pause { "pause" } else { "watchdog" }
+                );
+                assert_cut_restarts(
+                    h2_probe_source(v2, delay),
+                    if v2 {
+                        LoadShape::NativeTick
+                    } else {
+                        LoadShape::CompatClass
+                    },
+                    pause,
+                    &label,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn dispatch_watchdog_uses_active_execution_start_and_tick() {
+    let source = [
+        CUT_TRACKING,
+        "export function tick() { if (globalThis.__rs2b0t_host.tick === 3) __spin(); }",
+    ]
+    .concat();
+    let mut slot = SlotScript::new();
+    slot.start_load(source, LoadShape::NativeTick, vec![])
+        .unwrap();
+    wait_slot_state(&mut slot, script::RunState::Running);
+    let generation = slot.runtime_generation();
+    let mut driver = NullDriver::default();
+    for tick in 1..=3 {
+        dispatch_slot_tick(&mut slot, &mut driver, tick);
+        if tick < 3 {
+            slot.probe("true").unwrap();
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !slot.load_execution_active() {
+        assert!(Instant::now() < deadline, "runaway tick 3 never entered");
+        thread::yield_now();
+    }
+    let observed = Instant::now();
+    thread::sleep(Duration::from_millis(560));
+    dispatch_slot_tick(&mut slot, &mut driver, 4);
+    // Watchdog must fire on the active execution horizon (~600ms from tick 3
+    // start), not on a later cadence dispatch. Poll for the cut log before
+    // waiting on generation bump so parallel load on cut-restart does not
+    // inflate this timing budget.
+    let log_deadline = observed + Duration::from_millis(1000);
+    let mut logs = Vec::new();
+    while Instant::now() < log_deadline {
+        slot.observe_lifecycle();
+        logs.extend(slot.take_pending_logs());
+        if logs
+            .iter()
+            .any(|line| line.contains("tick 3: runaway execution interrupted by watchdog"))
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        logs.iter()
+            .any(|line| { line.contains("tick 3: runaway execution interrupted by watchdog") }),
+        "watchdog blamed the wrong dispatch within {:?}: {logs:?}",
+        observed.elapsed()
+    );
+    assert!(
+        observed.elapsed() < Duration::from_millis(1000),
+        "watchdog was cadence-delayed: {:?}",
+        observed.elapsed()
+    );
+    logs.extend(wait_for_cut_restart(
+        &mut slot,
+        generation,
+        script::RunState::Running,
+    ));
+    slot.stop();
+    wait_slot_state(&mut slot, script::RunState::Idle);
+}
+
+#[test]
+fn repeated_cut_restarts_are_bounded() {
+    let source = [
+        CUT_TRACKING,
+        "export function tick() { __enter(); __spin(); }",
+    ]
+    .concat();
+    let mut slot = SlotScript::new();
+    slot.start_load(source, LoadShape::NativeTick, vec![])
+        .unwrap();
+    wait_slot_state(&mut slot, script::RunState::Running);
+    let mut driver = NullDriver::default();
+    let mut next_tick = 1;
+
+    for cut in 1..=3 {
+        let generation = slot.runtime_generation();
+        drive_until_runaway(&mut slot, &mut driver, &mut next_tick);
+        thread::sleep(Duration::from_millis(560));
+        dispatch_slot_tick(&mut slot, &mut driver, next_tick);
+        next_tick += 1;
+        if cut < 3 {
+            let logs = wait_for_cut_restart(&mut slot, generation, script::RunState::Running);
+            assert!(
+                logs.iter()
+                    .any(|line| line.contains("runaway execution interrupted by watchdog")),
+                "cut {cut}: {logs:?}"
+            );
+        } else {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut logs = Vec::new();
+            while slot.state() != script::RunState::Error && Instant::now() < deadline {
+                slot.observe_lifecycle();
+                logs.extend(slot.take_pending_logs());
+                thread::sleep(Duration::from_millis(2));
+            }
+            logs.extend(slot.take_pending_logs());
+            assert_eq!(slot.state(), script::RunState::Error, "{logs:?}");
+            assert!(
+                slot.last_error()
+                    .is_some_and(|error| error.contains("3 runaway JavaScript cuts")),
+                "visible bounded-restart error missing: {:?}, {logs:?}",
+                slot.last_error()
+            );
+            assert!(
+                logs.iter()
+                    .any(|line| line.contains("3 runaway JavaScript cuts")),
+                "bounded-restart error missing from logs: {logs:?}"
+            );
+        }
+    }
+}
+
+// P17/P17b: when an unrelated host wait resumes and is interrupted while a
+// lifecycle future is still parked, the cut is ambiguous. It must be reported,
+// but must not reset the parked lifecycle runner and admit a second flight.
+fn assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
+    source: &str,
+    shape: LoadShape,
+    pause: bool,
+) {
+    let iso = spawn_ready(source.to_string(), shape, vec![]);
+    iso.on_game_tick(1);
+    iso.probe("true")
+        .expect("first lifecycle call parks on its long wait");
+    assert_eq!(iso.probe("__entries").unwrap(), 1);
+
+    // Tick 2 settles only the side wait. Its continuation runs long enough
+    // for either Pause's shared runaway bound or the dispatch watchdog.
+    iso.on_game_tick(2);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(
+            Instant::now() < deadline,
+            "side continuation never entered execution"
+        );
+        thread::yield_now();
+    }
+    thread::sleep(Duration::from_millis(20));
+    if pause {
+        iso.pause();
+        iso.probe("true")
+            .expect("Pause must settle the ambiguous interruption");
+        iso.resume();
+        iso.probe("true").expect("Resume must be observed");
+    } else {
+        thread::sleep(Duration::from_millis(650));
+        iso.on_game_tick(3);
+        iso.probe("true")
+            .expect("watchdog must settle the ambiguous interruption");
+    }
+
+    let first = if pause { 3 } else { 4 };
+    for tick in first..=7 {
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    }
+    assert_eq!(
+        iso.probe("__maxActive").unwrap(),
+        1,
+        "an ambiguous cut must not reset the parked lifecycle flight"
+    );
+    assert_eq!(
+        iso.probe("__entries").unwrap(),
+        2,
+        "the next lifecycle call starts only after the original settles"
+    );
+    assert_eq!(iso.probe("__done").unwrap(), 1);
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("runaway execution interrupted")),
+        "{logs:?}"
+    );
+    assert!(
+        logs.iter().all(|line| {
+            !line.contains("runaway loop interrupted") && !line.contains("runaway tick interrupted")
+        }),
+        "the side continuation must not inherit lifecycle ownership: {logs:?}"
+    );
+    iso.join();
+}
+
+fn side_continuation_compat_source() -> &'static str {
+    r#"
+import { BotHost } from '../../runtime/BotHost.js';
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    onStart() {
+        BotHost.addTickListener(() => {
+            if (globalThis.__rs2b0t_host.tick !== 2 || globalThis.__sideStarted) return;
+            globalThis.__sideStarted = true;
+            (async () => {
+                await Execution.delayTicks(0);
+                const start = Date.now();
+                while (Date.now() - start < 900) {}
+                globalThis.__sideDone = true;
+            })();
+        });
+    }
+    async loop() {
+        const entry = (globalThis.__entries = (globalThis.__entries || 0) + 1);
+        globalThis.__active = (globalThis.__active || 0) + 1;
+        globalThis.__maxActive = Math.max(globalThis.__maxActive || 0, globalThis.__active);
+        if (entry === 1) await Execution.delayTicks(5);
+        else await Execution.delayTicks(10);
+        globalThis.__active -= 1;
+        globalThis.__done = (globalThis.__done || 0) + 1;
+    }
+}
+"#
+}
+
+fn side_continuation_v2_source() -> &'static str {
+    r#"
+import { Execution } from '../../api/execution/Execution.js';
+export const apiVersion = 2;
+export async function tick() {
+    const entry = (globalThis.__entries = (globalThis.__entries || 0) + 1);
+    globalThis.__active = (globalThis.__active || 0) + 1;
+    globalThis.__maxActive = Math.max(globalThis.__maxActive || 0, globalThis.__active);
+    if (entry === 1) {
+        (async () => {
+            await Execution.delayTicks(1);
+            const start = Date.now();
+            while (Date.now() - start < 900) {}
+            globalThis.__sideDone = true;
+        })();
+        await Execution.delayTicks(5);
+    } else {
+        await Execution.delayTicks(10);
+    }
+    globalThis.__active -= 1;
+    globalThis.__done = (globalThis.__done || 0) + 1;
+}
+"#
+}
+
+#[test]
+fn pause_interrupt_in_side_wait_keeps_compat_loop_single_flight() {
+    assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
+        side_continuation_compat_source(),
+        LoadShape::CompatClass,
+        true,
+    );
+}
+
+#[test]
+fn watchdog_interrupt_in_side_wait_keeps_compat_loop_single_flight() {
+    assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
+        side_continuation_compat_source(),
+        LoadShape::CompatClass,
+        false,
+    );
+}
+
+#[test]
+fn pause_interrupt_in_side_wait_keeps_v2_tick_single_flight() {
+    assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
+        side_continuation_v2_source(),
+        LoadShape::NativeTick,
+        true,
+    );
+}
+
+#[test]
+fn watchdog_interrupt_in_side_wait_keeps_v2_tick_single_flight() {
+    assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
+        side_continuation_v2_source(),
+        LoadShape::NativeTick,
+        false,
+    );
+}
+
+fn assert_interrupt_in_paint_keeps_native_single_flight(pause: bool) {
+    let iso = spawn_ready(
+        r#"
+import { Execution } from '../../api/execution/Execution.js';
+const paint = globalThis.__rs2b0t_call_on_paint;
+globalThis.__rs2b0t_call_on_paint = (...args) => {
+    if (globalThis.__rs2b0t_host.tick === 2) {
+        const start = Date.now();
+        while (Date.now() - start < 900) {}
+    }
+    return paint(...args);
+};
+export async function tick() {
+    const entry = (globalThis.__entries = (globalThis.__entries || 0) + 1);
+    globalThis.__active = (globalThis.__active || 0) + 1;
+    globalThis.__maxActive = Math.max(globalThis.__maxActive || 0, globalThis.__active);
+    if (entry === 1) await Execution.delayTicks(3);
+    globalThis.__done = (globalThis.__done || 0) + 1;
+    globalThis.__active -= 1;
+}
+"#
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    iso.probe("true").expect("first native tick parks");
+    assert_eq!(iso.probe("__entries").unwrap(), 1);
+
+    iso.on_game_tick(2);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(Instant::now() < deadline, "paint tick never entered");
+        thread::yield_now();
+    }
+    if pause {
+        iso.pause();
+        iso.probe("true")
+            .expect("Pause must settle the interrupted paint");
+        iso.resume();
+        iso.probe("true").expect("Resume must be observed");
+        iso.on_game_tick(3);
+        iso.probe("true").unwrap();
+    } else {
+        thread::sleep(Duration::from_millis(650));
+        iso.on_game_tick(3);
+        iso.probe("true")
+            .expect("watchdog must settle the interrupted paint");
+    }
+    for tick in 4..=5 {
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    }
+
+    assert_eq!(
+        iso.probe("__entries").unwrap(),
+        2,
+        "paint interruption must not reset the parked tick"
+    );
+    assert_eq!(iso.probe("__done").unwrap(), 2);
+    assert_eq!(
+        iso.probe("__maxActive").unwrap(),
+        1,
+        "the parked tick must remain single-flight"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("runaway execution interrupted")),
+        "{logs:?}"
+    );
+    assert!(
+        logs.iter()
+            .all(|line| !line.contains("runaway tick interrupted")),
+        "paint must not be attributed to the parked tick: {logs:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn pause_interrupt_in_paint_keeps_native_tick_single_flight() {
+    assert_interrupt_in_paint_keeps_native_single_flight(true);
+}
+
+#[test]
+fn watchdog_interrupt_in_paint_keeps_native_tick_single_flight() {
+    assert_interrupt_in_paint_keeps_native_single_flight(false);
+}
+
+#[test]
+fn pause_interrupt_in_tick_listener_does_not_restart_pending_on_start() {
+    let iso = spawn_ready(
+        r#"
+import { BotHost } from '../../runtime/BotHost.js';
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async onStart() {
+        globalThis.__startBegan = (globalThis.__startBegan || 0) + 1;
+        BotHost.addTickListener(() => {
+            if (globalThis.__rs2b0t_host.tick === 2) {
+                const start = Date.now();
+                while (Date.now() - start < 900) {}
+            }
+        });
+        await Execution.delayTicks(3);
+        globalThis.__started = (globalThis.__started || 0) + 1;
+    }
+    loop() { globalThis.__loops = (globalThis.__loops || 0) + 1; }
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    iso.probe("true").expect("onStart parks on its host wait");
+    assert_eq!(iso.probe("__startBegan").unwrap(), 1);
+
+    iso.on_game_tick(2);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(Instant::now() < deadline, "listener tick never entered");
+        thread::yield_now();
+    }
+    iso.pause();
+    iso.probe("true")
+        .expect("Pause must settle the interrupted listener");
+    iso.resume();
+    iso.probe("true").expect("Resume must be observed");
+    for tick in 3..=5 {
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    }
+
+    assert_eq!(
+        iso.probe("__startBegan").unwrap(),
+        1,
+        "listener interruption must not invoke onStart twice"
+    );
+    assert_eq!(iso.probe("__started").unwrap(), 1);
+    assert!(
+        iso.probe("__loops || 0").unwrap().as_u64().unwrap_or(0) >= 1,
+        "loop must run after the original onStart settles"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("runaway execution interrupted")),
+        "{logs:?}"
+    );
+    assert!(
+        logs.iter()
+            .all(|line| !line.contains("runaway onStart interrupted")),
+        "listener must not be attributed to onStart: {logs:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn queued_pause_resume_tick_pause_keeps_final_pause_intent() {
+    let iso = spawn_ready(
+        "export function tick() {
+            globalThis.__entries = (globalThis.__entries || 0) + 1;
+            if (globalThis.__entries === 1) {
+                const start = Date.now();
+                while (Date.now() - start < 35) {}
+            } else {
+                for (;;) {}
+            }
+        }"
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(Instant::now() < deadline, "first tick never entered");
+        thread::yield_now();
+    }
+    iso.pause();
+    iso.resume();
+    iso.on_game_tick(2);
+    iso.pause();
+    assert!(
+        iso.execution_active(),
+        "fixture tick ended before the command interleaving was queued"
+    );
+
+    // The probe is a FIFO barrier behind the final Pause command. Unlike a
+    // fixed sleep or sampling the gap between executions, its reply proves
+    // the isolate consumed the final intent before the test resumes it.
+    assert_eq!(
+        iso.probe("__entries").unwrap(),
+        1,
+        "the runaway second tick must have been refused"
+    );
+    iso.resume();
+    iso.join();
+}
+
+#[test]
+fn pause_does_not_cut_off_an_in_budget_on_start() {
+    let iso = spawn_ready(
+        "export default class T extends LoopingBot {
+            onStart() {
+                globalThis.__startEntered = (globalThis.__startEntered || 0) + 1;
+                const start = Date.now();
+                while (Date.now() - start < 300) {}
+                globalThis.__startDone = (globalThis.__startDone || 0) + 1;
+            }
+            loop() { globalThis.__loops = (globalThis.__loops || 0) + 1; }
+        }"
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    pause_after_execution_entry(&iso);
+    assert_eq!(iso.probe("__startDone || 0").unwrap(), 1);
+    iso.resume();
+    iso.probe("true").unwrap();
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__startDone || 0").unwrap(), 1);
+    assert!(iso.probe("__loops || 0").unwrap().as_u64().unwrap_or(0) >= 1);
     iso.join();
 }
 
@@ -676,27 +1638,116 @@ fn isolate_logs_tick_errors() {
 // cancelled from the host), and the isolate stays usable afterwards.
 #[test]
 fn slow_tick_is_interrupted_and_isolate_survives() {
-    // The first tick spins forever; later ticks count.
-    let src = "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n||0)+1; if (globalThis.__rs_n === 1) { while(true){} } }";
+    // The first tick publishes a start handshake. The runaway body records
+    // entry before spinning forever, so scheduler order cannot make the
+    // post-interrupt probe ambiguous.
+    let src = "export function tick(api) { \
+        if (!globalThis.__started) { globalThis.__started = true; return; } \
+        globalThis.__entered = (globalThis.__entered|0) + 1; \
+        globalThis.__rs_n = (globalThis.__rs_n||0)+1; \
+        if (globalThis.__entered === 1) { for(;;){} } \
+    }";
     let iso = spawn_ready(src.to_string(), LoadShape::NativeTick, vec![]);
     iso.on_game_tick(1);
-    // Let the thread enter the spin; pause then arms a terminate for the
-    // over-budget tick (no immediate cancel), and resume re-arms dispatch.
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    iso.pause();
+    assert_eq!(
+        iso.probe("globalThis.__started").unwrap(),
+        true,
+        "first tick must publish the slow-tick start handshake"
+    );
+    let mut logs = Vec::new();
     iso.resume();
-    // The interrupted tick unwinds on the thread; this tick and the probe
-    // round-trip only when the terminate was cleared after the tick's
-    // frames unwound (a host-side cancel would race and never interrupt).
     iso.on_game_tick(2);
+    let trigger_at = Instant::now() + Duration::from_millis(60);
+    while Instant::now() < trigger_at {
+        std::thread::yield_now();
+    }
+    iso.pause();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        logs.extend(iso.drain_logs());
+        if logs.iter().any(|line| line.contains("slow tick")) {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(
+        logs.iter().any(|line| line.contains("slow tick")),
+        "the slow tick must be interrupted after its entry: {logs:?}"
+    );
+    iso.resume();
+    assert_eq!(
+        iso.probe("__entered").unwrap(),
+        1,
+        "the proving tick entered exactly once before interruption"
+    );
+    iso.on_game_tick(3);
     let n = iso
         .probe("__rs_n")
-        .expect("isolate must stay usable after an interrupted tick");
-    assert_eq!(n, 2, "the post-interrupt tick reached the JS");
+        .expect("isolate must stay usable after an interrupted tick")
+        .as_i64()
+        .unwrap_or(0);
+    assert_eq!(
+        n, 2,
+        "the post-interrupt tick runs exactly once after the proving attempt: n={n}"
+    );
+    iso.join();
+}
+
+// A disconnect removes `in_flight` and no further PLAYER_INFO ticks arrive.
+// The connection boundary must therefore carry the active execution's
+// original runaway horizon instead of relying on a later dispatch watchdog.
+#[test]
+fn session_reset_keeps_the_active_runaway_deadline() {
+    let iso = spawn_ready(
+        "export function tick() {
+            if (!globalThis.__started) {
+                globalThis.__started = true;
+                return;
+            }
+            globalThis.__entered = true;
+            for (;;) {}
+        }"
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__started").unwrap(), true);
+    iso.on_game_tick(2);
+    let entry_deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(
+            Instant::now() < entry_deadline,
+            "runaway tick never entered execution"
+        );
+        thread::yield_now();
+    }
+    thread::sleep(Duration::from_millis(20));
+
+    let reset_at = Instant::now();
+    iso.reset_session_work();
+    let deadline = reset_at + Duration::from_secs(2);
+    while iso.execution_active() && Instant::now() < deadline {
+        thread::yield_now();
+    }
+    if iso.execution_active() {
+        iso.join();
+        panic!("session reset dropped the active execution's runaway deadline");
+    }
+    assert!(
+        reset_at.elapsed() < Duration::from_secs(2),
+        "session-reset deadline exceeded its generous test guard"
+    );
+    assert_eq!(
+        iso.probe("__entered").unwrap(),
+        true,
+        "the reset cut the runaway that was active at the boundary"
+    );
     let logs = iso.drain_logs();
     assert!(
-        logs.iter().any(|l| l.contains("interrupted slow tick")),
-        "the budget interrupt must be logged: {logs:?}"
+        logs.iter()
+            .any(|line| line.contains("session-reset deadline")),
+        "{logs:?}"
     );
     iso.join();
 }
@@ -714,7 +1765,7 @@ fn slow_first_tick(ms: u32) -> String {
 // and skip every queued tick, not stop at the first non-Tick command.
 #[test]
 fn slow_tick_skips_queued_ticks_past_their_snapshots() {
-    let iso = spawn_ready(slow_first_tick(150), LoadShape::NativeTick, vec![]);
+    let iso = spawn_ready(slow_first_tick(700), LoadShape::NativeTick, vec![]);
     let mut snap = base_snapshot();
     for tick in 1..=3 {
         snap.tick = tick;
@@ -740,6 +1791,59 @@ fn slow_tick_skips_queued_ticks_past_their_snapshots() {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(4);
     assert_eq!(iso.probe("__rs_n").unwrap(), 2, "the next fresh tick runs");
+    iso.join();
+}
+
+#[test]
+fn slow_tick_diagnostics_keep_the_executed_tick_identity() {
+    let source = r#"
+export function tick() {
+    globalThis.__runs = (globalThis.__runs || 0) + 1;
+    if (globalThis.__runs === 1) {
+        const started = Date.now();
+        while (Date.now() - started < 700) {}
+        throw new Error('slow-one');
+    }
+}
+"#;
+    let iso = spawn_ready(source.to_string(), LoadShape::NativeTick, vec![]);
+    let mut snapshot = base_snapshot();
+    for tick in 1..=3 {
+        snapshot.tick = tick;
+        post_snapshot_input(&iso, &snapshot);
+        iso.on_game_tick(tick);
+    }
+    assert_eq!(
+        iso.probe("globalThis.__runs").unwrap(),
+        1,
+        "queued ticks 2 and 3 are stale"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.starts_with("tick 1:") && line.contains("slow-one")),
+        "the error belongs to the tick that actually ran: {logs:?}"
+    );
+    assert!(
+        logs.iter()
+            .all(|line| !(line.starts_with("tick 3:") && line.contains("slow-one"))),
+        "the newest skipped tick must not steal tick 1's diagnostic: {logs:?}"
+    );
+    assert_eq!(
+        iso.pending_tick_error_count(),
+        0,
+        "the executed tick's completion must consume its diagnostic key"
+    );
+    snapshot.tick = 4;
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(4);
+    assert_eq!(iso.probe("globalThis.__runs").unwrap(), 2);
+    assert!(
+        iso.drain_logs()
+            .iter()
+            .all(|line| !line.contains("slow-one")),
+        "the completed diagnostic must not leak into a later tick"
+    );
     iso.join();
 }
 
@@ -791,7 +1895,7 @@ fn tick_after_a_refused_snapshot_is_refused_and_not_left_in_flight() {
         "the tick paired with the refused snapshot never ran"
     );
     // A refused tick left in flight would now be past the budget.
-    thread::sleep(Duration::from_millis(80));
+    thread::sleep(Duration::from_millis(650));
     assert!(iso.post_snapshot(bytes));
     iso.on_game_tick(3);
     assert_eq!(iso.probe("__rs_n").unwrap(), 2, "the next paired tick runs");
@@ -815,7 +1919,7 @@ fn stale_window_ends_at_operator_commands() {
         ("recovery anchor", |iso| iso.request_recovery_anchor()),
     ];
     for (name, close) in closers {
-        let iso = spawn_ready(slow_first_tick(150), LoadShape::NativeTick, vec![]);
+        let iso = spawn_ready(slow_first_tick(700), LoadShape::NativeTick, vec![]);
         let mut snap = base_snapshot();
         iso.on_game_tick(1);
         thread::sleep(Duration::from_millis(20));
@@ -909,20 +2013,58 @@ fn malformed_interact_rows_are_logged_not_dropped_silently() {
 // and returns even if the interrupt were somehow not delivered.
 #[test]
 fn join_bounds_a_runaway_tick() {
-    let iso = LoadIsolate::spawn(
-        "export function tick(api) { while(true){} }".to_string(),
+    let iso = spawn_ready(
+        "export function tick(api) { \
+            if (!globalThis.__started) { globalThis.__started = true; return; } \
+            if (!globalThis.__entered) { globalThis.__entered = true; while(true){} } \
+        }"
+        .to_string(),
         LoadShape::NativeTick,
         vec![],
-    )
-    .expect("spawn runaway isolate");
-    iso.on_game_tick(1);
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    let t0 = std::time::Instant::now();
-    iso.join();
-    assert!(
-        t0.elapsed() < std::time::Duration::from_secs(10),
-        "join must be bounded on a runaway tick"
     );
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("globalThis.__started").unwrap(),
+        true,
+        "first tick must publish the runaway start handshake"
+    );
+    iso.on_game_tick(2);
+    let trigger_at = Instant::now() + Duration::from_millis(60);
+    while Instant::now() < trigger_at {
+        std::thread::yield_now();
+    }
+    iso.pause();
+    iso.probe("true")
+        .expect("Pause must settle the runaway tick before Resume");
+    iso.resume();
+    iso.on_game_tick(3);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut logs = Vec::new();
+    while Instant::now() < deadline {
+        logs.extend(iso.drain_logs());
+        if logs.iter().any(|line| line.contains("slow tick")) {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(
+        logs.iter().any(|line| line.contains("slow tick")),
+        "runaway tick must enter and be interrupted before joining: {logs:?}"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__entered").unwrap(),
+        true,
+        "the interrupted tick must have entered before joining"
+    );
+    let (done_tx, done_rx) = mpsc::channel();
+    let joiner = thread::spawn(move || {
+        iso.join();
+        done_tx.send(()).unwrap();
+    });
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("runaway join exceeded the generous hang guard");
+    joiner.join().unwrap();
 }
 
 // (6) SlotScript: the isolate is spawned only by the Start helper
@@ -1046,9 +2188,8 @@ fn slot_start_load_reserved_name_via_compiled_ids_is_checked_at_load() {
 // Persist uses the default store path naming for the operator file.
 #[test]
 fn default_js_store_is_dot_274bot_json() {
-    let p = script::load::default_js_store();
-    let s = p.to_string_lossy().to_string();
-    assert!(s.ends_with(".274bot/js-scripts.json"), "{s}");
+    let path = script::load::default_js_store();
+    assert!(path.ends_with(std::path::Path::new(".274bot").join("js-scripts.json")));
 }
 
 // (8) The catalog shape loads: a TS file with a typed default-export
@@ -1498,6 +2639,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.locs = &first_locs;
@@ -1532,6 +2675,10 @@ fn isolate_script_runner_stop_stops_the_isolate() {
 import { ScriptRunner } from '../../runtime/ScriptRunner.js';
 export default class T extends LoopingBot {
     loop() {
+        if (!globalThis.__started) {
+            globalThis.__started = true;
+            return;
+        }
         globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
         ScriptRunner.stop('done');
     }
@@ -1539,44 +2686,51 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
-    // The flag is read inside the tick; the thread logs and breaks. Poll
-    // for the log (a probe round-trip would race the thread exit).
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let logs = loop {
-        let logs = iso.drain_logs();
-        if logs.iter().any(|l| l.contains("stop")) || std::time::Instant::now() > deadline {
-            break logs;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    };
+    assert_eq!(
+        iso.probe("globalThis.__started").unwrap(),
+        true,
+        "first tick must publish the stop fixture handshake"
+    );
+    iso.on_game_tick(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while iso.script_stop_receipt().is_none() && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        iso.script_stop_receipt().map(|receipt| receipt.reason),
+        Some("done".to_string()),
+        "stop receipt must arrive before joining"
+    );
+    let stopped_deadline = Instant::now() + Duration::from_secs(5);
+    let mut logs = Vec::new();
+    while !iso.stopped() && Instant::now() < stopped_deadline {
+        logs.extend(iso.drain_logs());
+        std::thread::yield_now();
+    }
     assert!(
-        logs.iter().any(|l| l.contains("stop")),
+        iso.stopped(),
+        "ScriptRunner.stop must end the isolate before joining"
+    );
+    assert!(
+        iso.probe("1 + 1").is_err(),
+        "a stopped isolate must not answer probes while its handle is held"
+    );
+    logs.extend(iso.drain_logs());
+    let (done_tx, done_rx) = mpsc::channel();
+    iso.join_detached(done_tx);
+    logs.extend(
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("ScriptRunner.stop join exceeded the generous hang guard"),
+    );
+    assert!(
+        logs.iter().any(|l| l.contains("script requested stop")),
         "the stop hook must be logged: {logs:?}"
     );
-    // The isolate stopped itself: it no longer answers probes (the thread
-    // exited, so the channel is closed). A live Runtime would keep
-    // answering — this is the regression the fix guards.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        if iso.probe("1 + 1").is_err() {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the isolate must stop answering probes after ScriptRunner.stop"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    iso.drain_logs();
-    assert!(iso.stopped());
-    iso.on_game_tick(2);
-    std::thread::sleep(std::time::Duration::from_millis(650));
-    iso.on_game_tick(3);
     assert!(
-        iso.drain_logs().is_empty(),
-        "a stopped isolate has no slow ticks"
+        logs.iter().all(|l| !l.contains("slow tick")),
+        "a stopped isolate has no slow ticks: {logs:?}"
     );
-    iso.join();
 }
 
 // Task 3 — TaskBot.loop runs the first task whose validate() passes (the
@@ -2023,7 +3177,13 @@ export default class T extends LoopingBot {
             iso.on_game_tick(n);
             assert_eq!(iso.probe("globalThis.__loops || 0").unwrap(), 0);
         }
-        assert_eq!(iso.drain_logs(), vec![format!("tick {fails}: startboom")]);
+        let expected = format!("tick {fails}: startboom");
+        let logs = iso.drain_logs();
+        assert_eq!(
+            logs,
+            vec![expected],
+            "failed onStart must be logged exactly once: {logs:?}"
+        );
         iso.on_game_tick(fails + 1);
         assert_eq!(iso.probe("__loops").unwrap(), 1, "loop on the next tick");
         iso.join();
@@ -2494,7 +3654,8 @@ fn malformed_paint_record_keeps_the_ticks_logs() {
     let logs = iso.drain_logs();
     assert!(logs.iter().any(|l| l == "still logged"), "{logs:?}");
     assert!(
-        logs.iter().any(|l| l.starts_with("paint eval: ")),
+        logs.iter()
+            .any(|line| line.starts_with("tick 1: paint eval: ")),
         "{logs:?}"
     );
     iso.join();
@@ -3042,133 +4203,6 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// The live BoneBurier gold probe: when `$RS2B0T` points at a real rs2b0t
-// checkout, load the actual BoneBurier card and drive it against a
-// seeded snapshot (Bones in the inv, inv tab bound, Prayer stats). The
-// script's onStart must settle and its loop must queue a held Bury —
-// the exact shim path the live `script_bone_burier` scenario runs.
-#[test]
-fn real_bone_burier_queues_bury_when_seeded() {
-    let Some(root) = script::rs2b0t_root() else {
-        eprintln!("skip: $RS2B0T not set");
-        return;
-    };
-    let path = root.join("src/bot/scripts/BoneBurier/BoneBurier.ts");
-    let Ok(source) = std::fs::read_to_string(&path) else {
-        eprintln!("skip: no BoneBurier.ts at {path:?}");
-        return;
-    };
-    if !source.contains("Bury") {
-        eprintln!("skip: BoneBurier.ts is not a burier implementation");
-        return;
-    }
-    let shape = script::detect_shape(&source);
-    assert_eq!(
-        shape,
-        script::LoadShape::CompatClass,
-        "BoneBurier is a class card"
-    );
-    let js = script::transpile_ts(&source).expect("transpile BoneBurier.ts");
-    let iso = LoadIsolate::spawn(js, shape, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.ingame = true;
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 3220,
-        z: 3220,
-        level: 0,
-    });
-    let inv = [nc(Some("Bones"), 5)];
-    snap.inv = &inv;
-    snap.inv_size = 28;
-    let stats = [script::isolate_fb::StatInput {
-        index: 5,
-        name: "Prayer",
-        xp: 31,
-        base: 1,
-        effective: 1,
-    }];
-    snap.stats = &stats;
-    post_snapshot_input(&iso, &snap);
-    for n in 1..=8 {
-        iso.on_game_tick(n);
-    }
-    // Sync barrier: the tick commands are fire-and-forget; the probe
-    // round-trips so the thread has processed them before the drains.
-    let _ = iso.probe("1 + 1");
-    let logs = iso.drain_logs();
-    assert!(
-        logs.iter().all(|l| !is_throw_shaped_log(l)),
-        "the real BoneBurier must not throw on a seeded snapshot: {logs:?}"
-    );
-    let reqs = iso.drain_interacts();
-    assert!(
-        reqs.iter().any(|r| matches!(
-            r,
-            script::shim::InteractReq::Held { name, action }
-                if name == "Bones" && action == "Bury"
-        )),
-        "the script must queue a held Bury, got {reqs:?}"
-    );
-    iso.join();
-}
-
-#[test]
-fn real_bone_burier_without_bones_queues_host_bank_route() {
-    let Some(root) = script::rs2b0t_root() else {
-        eprintln!("skip: $RS2B0T not set");
-        return;
-    };
-    let path = root.join("src/bot/scripts/BoneBurier/BoneBurier.ts");
-    let source = std::fs::read_to_string(&path).expect("read captured BoneBurier.ts");
-    let shape = script::detect_shape(&source);
-    let js = script::transpile_ts(&source).expect("transpile captured BoneBurier.ts");
-    let iso = LoadIsolate::spawn(js, shape, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.ingame = true;
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 3200,
-        z: 3200,
-        level: 0,
-    });
-    let banks = [script::isolate_fb::BankStandInput {
-        name: "Bank booth",
-        x: 3210,
-        z: 3210,
-        level: 0,
-        kind: "booth",
-        op: 2,
-        choose: None,
-    }];
-    snap.banks = &banks;
-    let inv = [nc(Some("Coins"), 1)];
-    snap.inv = &inv;
-    snap.inv_size = 28;
-    let stats = [script::isolate_fb::StatInput {
-        index: 5,
-        name: "Prayer",
-        xp: 31,
-        base: 1,
-        effective: 1,
-    }];
-    snap.stats = &stats;
-    post_snapshot_input(&iso, &snap);
-    for tick in 1..=8 {
-        iso.on_game_tick(tick);
-    }
-    let _ = iso.probe("true");
-    let logs = iso.drain_logs();
-    assert!(
-        logs.iter().all(|line| !is_throw_shaped_log(line)),
-        "captured BoneBurier bank trip must not throw: {logs:?}"
-    );
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WalkNearestBank],
-        "captured BoneBurier must request host-owned nearest-bank routing; logs: {logs:?}"
-    );
-    iso.join();
-}
-
 // Task 3 — the native tick `api` is a Proxy: `api.tick` is set by the
 // host and readable; every other member read or set throws `not impl`.
 #[test]
@@ -3320,6 +4354,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     snap.locs = &locs;
     post_operable_bank_snapshot(&iso, &snap, 2213, 101, 100);
@@ -3351,7 +4387,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_banking_open_forwards_stand_and_exact_named_access() {
+fn isolate_banking_open_reaches_the_preset_access_and_waits_for_loaded_stock() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -3389,6 +4425,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
@@ -3400,19 +4438,17 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WalkNear {
-            x: 150,
-            z: 150,
-            level: 0,
-            radius: 1,
-            allow_teleports: false,
-            allow_wilderness: true,
-            allow_bank_fetch: true,
-            request_id: 0,
-        }],
-        "the supplied stand is walked near instead of being dropped"
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [script::shim::InteractReq::WalkNear {
+                x: 150,
+                z: 150,
+                radius: 2,
+                ..
+            }]
+        ),
+        "the preset uses the frozen radius-two approach"
     );
 
     snap.tick = 2;
@@ -3436,11 +4472,24 @@ export default class T extends LoopingBot {
         }],
         "the exact requested name and op survive isolate IPC"
     );
+    assert!(iso.probe("globalThis.__ok").unwrap().is_null());
+    snap.bank_open = true;
+    snap.bank_generation = 1;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    assert!(
+        iso.probe("globalThis.__ok").unwrap().is_null(),
+        "open without stock is not ready"
+    );
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(4);
+    assert_eq!(iso.probe("globalThis.__ok").unwrap(), true);
     iso.join();
 }
 
 #[test]
-fn isolate_banking_bank_nearest_routes_to_an_off_scene_packed_booth() {
+fn isolate_banking_bank_nearest_selects_an_off_scene_bank_before_opening_its_booth() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -3451,7 +4500,24 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn_with_content(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        None,
+        std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+            api::named_banks::NamedBank::new(
+                "Selected bank",
+                api::snapshot::WorldTile {
+                    x: 299,
+                    z: 400,
+                    level: 0,
+                },
+            ),
+        ])),
+        std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
+    )
+    .unwrap();
     let stands = [script::isolate_fb::BankStandInput {
         name: "Falador east bank",
         x: 300,
@@ -3471,10 +4537,33 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("true");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WalkNearestBank]
-    );
+    let requests = iso.drain_interacts();
+    let [script::shim::InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
+        panic!("bankNearest must await selection, got {requests:?}");
+    };
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        &snap,
+        script::isolate_fb::NativeFactsInput {
+            bank_selection: script::isolate_fb::BankSelectionInput {
+                request_id: *request_id,
+                generation: 1,
+                bank_index: 0,
+                kind: 2,
+            },
+            ..Default::default()
+        },
+    ));
+    iso.on_game_tick(2);
+    iso.probe("true").unwrap();
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [script::shim::InteractReq::WalkNear {
+            x: 299,
+            z: 400,
+            radius: 4,
+            ..
+        }]
+    ));
 
     snap.tick = 2;
     snap.here = Some(script::isolate_fb::TileInput {
@@ -3490,20 +4579,47 @@ export default class T extends LoopingBot {
         name: "Bank booth",
         op: "Use-quickly",
     });
+    let actions = ["Use-quickly".to_string()];
+    let locs = [script::isolate_fb::SceneEntityInput {
+        index: 0,
+        id: 2213,
+        name: Some("Bank booth"),
+        x: 300,
+        z: 400,
+        level: 0,
+        distance: 1,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: 300,
+        nz: 400,
+        shape: 0,
+        angle: 0,
+    }];
+    snap.locs = &locs;
     post_operable_bank_snapshot(&iso, &snap, 2213, 300, 400);
-    iso.on_game_tick(2);
+    iso.on_game_tick(3);
     let _ = iso.probe("true");
-    // The run opens the booth the host picked, by its posted name and op.
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::OpenBooth {
-            x: 300,
-            z: 400,
-            level: 0,
-            id: 2213,
-            name: Some("Bank booth".into()),
-            action: Some("Use-quickly".into()),
-        }]
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [script::shim::InteractReq::OpenBooth {
+                x: 300,
+                z: 400,
+                level: 0,
+                id: 2213,
+                ..
+            }]
+        ),
+        "the run must open the live selected booth identity"
     );
 
     snap.tick = 3;
@@ -3511,17 +4627,17 @@ export default class T extends LoopingBot {
     snap.bank_loaded = true;
     snap.bank_generation = 1;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
+    iso.on_game_tick(4);
     let _ = iso.probe("true");
     snap.tick = 4;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(4);
+    iso.on_game_tick(5);
     assert_eq!(iso.probe("__banked").unwrap(), true);
     iso.join();
 }
 
 #[test]
-fn isolate_banking_bank_nearest_fails_closed_without_a_packed_booth() {
+fn isolate_banking_bank_nearest_fails_closed_when_selection_has_no_candidate() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -3542,50 +4658,51 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("true");
+    let requests = iso.drain_interacts();
+    let [script::shim::InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
+        panic!("bankNearest must await selection, got {requests:?}");
+    };
+    assert!(iso.probe("globalThis.__bank_result").unwrap().is_null());
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        &snap,
+        script::isolate_fb::NativeFactsInput {
+            bank_selection: script::isolate_fb::BankSelectionInput {
+                request_id: *request_id,
+                generation: 1,
+                bank_index: -1,
+                kind: 4,
+            },
+            ..Default::default()
+        },
+    ));
+    iso.on_game_tick(2);
+    iso.probe("true").unwrap();
     assert!(iso.drain_interacts().is_empty());
     assert_eq!(iso.probe("globalThis.__bank_result").unwrap(), false);
     iso.join();
 }
 
 #[test]
-fn isolate_banking_open_rejects_each_unsupported_option_by_name() {
+fn isolate_banking_open_refuses_unsupported_obstacle_work_without_acting() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
-    loop() {
+    async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        globalThis.__errors = [];
-        const values = {
-            obstacles: [],
-            destination: { name: 'Elsewhere' },
-            preferNearby: false,
-            nearbyRadius: 14,
-        };
-        Promise.all(Object.entries(values).map(async ([name, value]) => {
-            try {
-                await Banking.open({ [name]: value });
-            } catch (error) {
-                globalThis.__errors.push(String(error && error.message));
-            }
-        })).then(() => { globalThis.__done = true; });
+        try {
+            await Banking.open({ stand: {x:150,z:150,level:0}, obstacles: ['Door'] });
+            globalThis.__refused = false;
+        } catch (_) {
+            globalThis.__refused = true;
+        }
     }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     post_snapshot_input(&iso, &base_snapshot());
     iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(iso.probe("__done").unwrap(), true);
-    let errors = iso.probe("__errors").unwrap();
-    for name in ["obstacles", "destination", "preferNearby", "nearbyRadius"] {
-        assert!(
-            errors.as_array().unwrap().iter().any(|error| error
-                .as_str()
-                .is_some_and(|error| { error.contains("not impl") && error.contains(name) })),
-            "unsupported {name} must be named in its refusal: {errors}"
-        );
-    }
+    assert_eq!(iso.probe("globalThis.__refused").unwrap(), true);
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
@@ -4438,6 +5555,8 @@ export default class T extends LoopingBot {
             size: 0,
             nx: 0,
             nz: 0,
+            shape: 0,
+            angle: 0,
         },
         script::isolate_fb::SceneEntityInput {
             index: 2,
@@ -4460,6 +5579,8 @@ export default class T extends LoopingBot {
             size: 0,
             nx: 0,
             nz: 0,
+            shape: 0,
+            angle: 0,
         },
     ];
     let mut snap = base_snapshot();
@@ -4633,6 +5754,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     let inv = [script::isolate_fb::ItemRowInput {
@@ -4778,185 +5901,78 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Hop 3 — nearestBank reads the host-posted nearest_booth row, never scans locs.
-#[test]
-fn isolate_nearest_bank_is_posted_booth_not_player_tile() {
-    let src = r#"
+fn nearest_bank_isolate() -> LoadIsolate {
+    use api::named_banks::{NamedBank, NamedBankFacts};
+    use api::snapshot::WorldTile;
+    LoadIsolate::spawn_with_content(
+        r#"
 import { nearestBank } from '../../api/bank/BankLocations.js';
-export default class T extends LoopingBot {
-    loop() {
-        const b = nearestBank();
-        globalThis.__probe = b ? { x: b.tile.x, z: b.tile.z, level: b.tile.level, name: b.name, op: b.op } : null;
-    }
+globalThis.pick = origin => nearestBank(origin)?.name ?? null;
+export default class T extends LoopingBot { loop() {} }
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        None,
+        std::sync::Arc::new(NamedBankFacts::from_banks(vec![
+            NamedBank::new(
+                "West",
+                WorldTile {
+                    x: 100,
+                    z: 100,
+                    level: 0,
+                },
+            ),
+            NamedBank::new(
+                "East",
+                WorldTile {
+                    x: 120,
+                    z: 100,
+                    level: 0,
+                },
+            ),
+        ])),
+        std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
+    )
+    .unwrap()
 }
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let use_quickly = ["Use-quickly".to_string()];
-    let locs = [script::isolate_fb::SceneEntityInput {
-        index: 0,
-        id: 2213,
-        name: Some("Bank booth"),
-        x: 3180,
-        z: 3436,
-        level: 0,
-        distance: 20,
-        health: -1,
-        max_health: -1,
-        in_combat: false,
-        animating: false,
-        actions: &use_quickly,
-        reachable: false,
-        reachable_adj: false,
-        combat_level: 0,
-        target_kind: 0,
-        target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
-    }];
+
+#[test]
+fn isolate_nearest_bank_uses_the_supplied_origin_not_the_player_or_scene_booth() {
+    let iso = nearest_bank_isolate();
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
-        x: 3185,
-        z: 3440,
+        x: 100,
+        z: 100,
         level: 0,
     });
-    snap.locs = &locs;
-    snap.nearest_booth = Some(nearest_booth_input(3180, 3436, 0, "Bank booth"));
+    snap.nearest_booth = Some(nearest_booth_input(101, 100, 0, "Bank booth"));
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    assert_eq!(
-        value["x"], 3180,
-        "nearestBank tile is the posted booth, not here"
-    );
-    assert_eq!(value["z"], 3436);
-    assert_eq!(value["level"], 0);
-    assert_ne!(
-        (value["x"].as_i64(), value["z"].as_i64()),
-        (Some(3185), Some(3440)),
-        "nearestBank must not fake a booth at the player tile"
-    );
+    assert_eq!(iso.probe("pick({x:119,z:100,level:0})").unwrap(), "East");
+    assert_eq!(iso.probe("pick({x:101,z:100,level:0})").unwrap(), "West");
     iso.join();
 }
 
 #[test]
-fn isolate_nearest_bank_picks_rust_nearest_of_two_booths() {
-    let src = r#"
-import { nearestBank } from '../../api/bank/BankLocations.js';
-export default class T extends LoopingBot {
-    loop() {
-        const b = nearestBank();
-        globalThis.__probe = b ? { x: b.tile.x, z: b.tile.z, level: b.tile.level } : null;
-    }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let use_quickly = ["Use-quickly".to_string()];
-    let near = script::isolate_fb::SceneEntityInput {
-        index: 0,
-        id: 2213,
-        name: Some("Bank booth"),
-        x: 3180,
-        z: 3436,
-        level: 0,
-        distance: 5,
-        health: -1,
-        max_health: -1,
-        in_combat: false,
-        animating: false,
-        actions: &use_quickly,
-        reachable: false,
-        reachable_adj: false,
-        combat_level: 0,
-        target_kind: 0,
-        target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
-    };
-    let far = script::isolate_fb::SceneEntityInput {
-        index: 1,
-        id: 2214,
-        name: Some("Bank booth"),
-        x: 3195,
-        z: 3455,
-        level: 0,
-        distance: 20,
-        health: -1,
-        max_health: -1,
-        in_combat: false,
-        animating: false,
-        actions: &use_quickly,
-        reachable: false,
-        reachable_adj: false,
-        combat_level: 0,
-        target_kind: 0,
-        target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
-    };
-    let locs = [near, far];
-    let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 3185,
-        z: 3440,
-        level: 0,
-    });
-    snap.locs = &locs;
-    snap.nearest_booth = Some(nearest_booth_input(3180, 3436, 0, "Bank booth"));
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    assert_eq!(
-        (value["x"].as_i64(), value["z"].as_i64()),
-        (Some(3180), Some(3436)),
-        "two booths posted: nearestBank is Rust-nearest, not player tile"
-    );
-    assert_ne!(
-        (value["x"].as_i64(), value["z"].as_i64()),
-        (Some(3185), Some(3440)),
-        "must not return player tile when two booths exist"
-    );
+fn isolate_nearest_bank_air_order_ignores_plane_and_keeps_catalog_ties_without_scene_booths() {
+    let iso = nearest_bank_isolate();
+    post_snapshot_input(&iso, &base_snapshot());
+    assert_eq!(iso.probe("pick({x:110,z:100,level:3})").unwrap(), "West");
+    assert_eq!(iso.probe("pick({x:111,z:100,level:3})").unwrap(), "East");
     iso.join();
 }
 
 #[test]
-fn isolate_nearest_bank_null_when_no_booth() {
-    let src = r#"
-import { nearestBank } from '../../api/bank/BankLocations.js';
-export default class T extends LoopingBot {
-    loop() {
-        try {
-            globalThis.__probe = nearestBank();
-        } catch (e) {
-            globalThis.__probe = String(e.message || e);
-        }
-    }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+fn isolate_nearest_bank_requires_an_origin_even_when_player_and_booth_are_known() {
+    let iso = nearest_bank_isolate();
     let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 3222,
-        z: 3222,
-        level: 0,
-    });
+    snap.nearest_booth = Some(nearest_booth_input(100, 100, 0, "Bank booth"));
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    let is_null = value.is_null();
-    let not_impl = value.as_str().is_some_and(|s| s.contains("not impl"));
-    assert!(
-        is_null || not_impl,
-        "no booth → null or not impl, not a fake at here: {value:?}"
+    assert_eq!(
+        iso.probe("(() => { try { pick(); return false; } catch (_) { return true; } })()")
+            .unwrap(),
+        true
     );
-    if let Some(obj) = value.as_object() {
-        assert!(
-            obj.get("tile").is_none(),
-            "must not invent a booth object: {value:?}"
-        );
-    }
     iso.join();
 }
 
@@ -5281,6 +6297,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let walkable = reach_words(&[0, 32]);
     let reachable = reach_words(&[0, 32]);
@@ -5576,6 +6594,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let ground = [script::isolate_fb::SceneEntityInput {
         index: 2,
@@ -5598,6 +6618,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let walkable = reach_words(&[0, 32]);
     let reachable = reach_words(&[0, 32]);
@@ -5758,9 +6780,9 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Task 12b — walkOpening maps onto Traversal.walkResilient(tile, opts).
+// walkOpening starts its dedicated Rust machine instead of reducing to a JS walk helper.
 #[test]
-fn isolate_walk_opening_queues_walk_resilient_not_walk_to() {
+fn isolate_walk_opening_starts_native_machine() {
     let src = r#"
 import { walkOpening } from '../../event/webwalk/walkOpening.js';
 export default class T extends LoopingBot {
@@ -5787,9 +6809,9 @@ export default class T extends LoopingBot {
     let msg = value.as_str().unwrap_or("");
     assert!(
         !msg.contains("walkTo") && !msg.contains("Traversal.walkTo"),
-        "walkOpening must not call missing Traversal.walkTo: {value:?}"
+        "walkOpening must not call a missing JS walk helper: {value:?}"
     );
-    assert_eq!(value, "go", "walkOpening parks on walkResilient, not throw");
+    assert_eq!(value, "go", "walkOpening parks on its native machine");
     let drained = iso.drain_interacts();
     match &drained[..] {
         [script::shim::InteractReq::Walk {
@@ -5802,9 +6824,9 @@ export default class T extends LoopingBot {
             request_id,
         }] => assert_ne!(
             *request_id, 0,
-            "walkOpening queues Traversal.walkResilient walk"
+            "walkOpening starts its first native segment"
         ),
-        other => panic!("walkOpening queues Traversal.walkResilient walk, got {other:?}"),
+        other => panic!("walkOpening starts a native walk segment, got {other:?}"),
     }
     iso.join();
 }
@@ -6194,7 +7216,6 @@ export default class T extends LoopingBot {
 #[test]
 fn isolate_silent_fakes_throw_and_rust_policy_tables_are_published() {
     let src = r#"
-import { parseCombatStyle } from '../../api/combat/CombatStyle.js';
 import { SettingsStore } from '../../runtime/Settings.js';
 import { foodOf } from '../../api/loadout/loadoutPlan.js';
 import { matchesCommonBankLoot, COMMON_BANK_LOOT } from '../../api/bank/Banking.js';
@@ -6209,7 +7230,6 @@ export default class T extends LoopingBot {
         const tryHit = async (fn) => {
             try { await fn(); hits.push('ok'); } catch (e) { hits.push(String(e.message || e)); }
         };
-        await tryHit(() => parseCombatStyle('no-such-style'));
         await tryHit(() => SettingsStore.globalBag());
         await tryHit(() => foodOf({ carry: ['Shark'] }, 'Shark'));
         await tryHit(() => matchesCommonBankLoot('uncut sapphire'));
@@ -6241,12 +7261,12 @@ export default class T extends LoopingBot {
     let hits = parsed["hits"].as_array().expect("hits");
     assert_eq!(
         hits.len(),
-        7,
+        6,
         "every silent fake must be probed: {parsed:?}"
     );
     for (i, hit) in hits.iter().enumerate() {
         let s = hit.as_str().unwrap_or("");
-        if i == 3 {
+        if i == 2 {
             assert_eq!(s, "ok", "the Rust common-loot predicate is supported");
             continue;
         }
@@ -6453,6 +7473,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
@@ -6532,6 +7554,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.self_slot = 0;
@@ -6582,6 +7606,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.self_slot = 0;
@@ -6685,6 +7711,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let spells = [script::isolate_fb::CombatStyleInput {
         mode: 0,
@@ -6928,7 +7956,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn direct_navigator_walk_queues_scene_walk_to() {
+fn direct_navigator_walk_without_a_player_tile_is_false_and_sends_nothing() {
     let src = r#"
 import { DirectNavigator } from '@rs2b0t/api';
 export default class T extends LoopingBot {
@@ -6939,15 +7967,14 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
-    let _ = iso.probe("__probe");
     assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WalkTo {
-            x: 3222,
-            z: 3218,
-            level: 0
-        }],
-        "DirectNavigator.walk is the scene walk-to packet, not Traveller"
+        iso.probe("__probe").unwrap(),
+        false,
+        "frozen DirectNavigator.walk returns false without reader.worldTile()"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no scene click without a player tile"
     );
     iso.join();
 }
@@ -7047,6 +8074,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.players = &players;
@@ -7585,6 +8614,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
@@ -7642,6 +8673,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
@@ -7757,16 +8790,11 @@ export default class T extends LoopingBot {
 fn eat_predicates() {
     let src = r#"
 import { shouldEat } from '../../api/inventory/packRules.js';
-import { shouldEatFood, shouldEatToUseFood, foodForms, eatAtHpThreshold } from '../../api/combat/food.js';
+import { shouldEatFood, shouldEatToUseFood, foodForms } from '../../api/combat/food.js';
 export default class T extends LoopingBot {
     loop() {
-        let unknownErr = null;
         let formsErr = null;
-        let threshErr = null;
-        try { shouldEatFood('NotARealFood', { hp: 3, maxHp: 10, foodCount: 1 }); }
-        catch (e) { unknownErr = String(e && e.message ? e.message : e); }
         try { globalThis.__forms = foodForms('Shark'); } catch (e) { formsErr = String(e && e.message ? e.message : e); }
-        try { eatAtHpThreshold(10, 20, 5); } catch (e) { threshErr = String(e && e.message ? e.message : e); }
         const opts = { hp: 3, maxHp: 10, heal: 20, foodCount: 1 };
         globalThis.__probe = JSON.stringify({
             shouldEat: shouldEat(3, 10, 20, 1),
@@ -7774,10 +8802,8 @@ export default class T extends LoopingBot {
             shouldEatToUseFood: shouldEatToUseFood(opts),
             typeofShouldEat: typeof shouldEat(3, 10, 20, 1),
             typeofShouldEatFood: typeof shouldEatFood('Shark', { hp: 3, maxHp: 10, foodCount: 1 }),
-            unknownErr,
             formsErr,
             forms: globalThis.__forms || null,
-            threshErr,
         });
     }
 }
@@ -7832,11 +8858,6 @@ export default class T extends LoopingBot {
         serde_json::json!(true),
         "shouldEatToUseFood at floor: {parsed:?}"
     );
-    let unknown = parsed["unknownErr"].as_str().unwrap_or("");
-    assert!(
-        unknown.contains("not impl") && unknown.contains("foodHealAmount"),
-        "unknown food still not impl foodHealAmount, got {unknown:?}"
-    );
     assert_eq!(
         parsed["forms"],
         serde_json::json!(["shark"]),
@@ -7846,11 +8867,6 @@ export default class T extends LoopingBot {
         parsed["formsErr"],
         serde_json::Value::Null,
         "foodForms does not throw: {parsed:?}"
-    );
-    let thresh = parsed["threshErr"].as_str().unwrap_or("");
-    assert!(
-        thresh.contains("not impl") && thresh.contains("eatAtHpThreshold"),
-        "eatAtHpThreshold stays not impl, got {thresh:?}"
     );
     iso.join();
 }
@@ -7933,33 +8949,6 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_bury_one_in_fight_queues_held_bury_when_idle() {
-    let src = r#"
-import { buryOneInFight } from '../../api/combat/fightUpkeep.js';
-export default class T extends LoopingBot {
-    loop() { globalThis.__probe = buryOneInFight('Bones'); }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.animating = false;
-    let inv = [nc(Some("Bones"), 2)];
-    snap.inv = &inv;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    assert_eq!(value, true, "buryOneInFight queues when not animating");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::Held {
-            name: "Bones".into(),
-            action: "Bury".into(),
-        }],
-    );
-    iso.join();
-}
-
-#[test]
 fn isolate_hash_bot_shop_import_resolves_at_start() {
     let src = r#"
 import { Shop } from '#/bot/api/shop/Shop.js';
@@ -8008,44 +8997,6 @@ export default class T extends LoopingBot {
             action: "Use".into(),
         }],
         "heldOp must not treat slot as a packed-array index"
-    );
-    iso.join();
-}
-
-#[test]
-fn isolate_swing_started_this_tick_is_a_rising_edge() {
-    let src = r#"
-import { swingStartedThisTick } from '../../api/combat/fightUpkeep.js';
-export default class T extends LoopingBot {
-    loop() { globalThis.__probe = swingStartedThisTick(); }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.tick = 10;
-    snap.animating = false;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    assert_eq!(iso.probe("__probe").unwrap(), false);
-
-    snap.tick = 11;
-    snap.animating = true;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(2);
-    assert_eq!(
-        iso.probe("__probe").unwrap(),
-        true,
-        "first animating tick is the swing start"
-    );
-
-    snap.tick = 12;
-    snap.animating = true;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
-    assert_eq!(
-        iso.probe("__probe").unwrap(),
-        false,
-        "still animating is not swingStartedThisTick"
     );
     iso.join();
 }
@@ -8165,7 +9116,6 @@ export default class T extends LoopingBot {
             alBank: { x: AL_KHARID_BANK.x, z: AL_KHARID_BANK.z },
             air: { bank: RUNES['Air rune']?.bank, x: RUNES['Air rune']?.ruins.x, z: RUNES['Air rune']?.ruins.z },
             fires: (c.fire_plots || []).map((p) => p.name),
-            cooks: (c.cook_stands || []).map((s) => s.name),
             rocks: c.rock_type_names || [],
             hasItems: Object.prototype.hasOwnProperty.call(c, 'items'),
             ve_x: ((c.fire_plots || []).find((p) => p.name === 'Varrock East') || {}).bank?.x,
@@ -8179,10 +9129,6 @@ export default class T extends LoopingBot {
     let probe = iso.probe("__probe").unwrap();
     let cow_names: Vec<&str> = script::content::COW_FIELDS.iter().map(|f| f.name).collect();
     let fire_names: Vec<&str> = script::content::FIRE_PLOTS.iter().map(|p| p.name).collect();
-    let cook_names: Vec<&str> = script::content::COOK_STANDS
-        .iter()
-        .map(|s| s.name)
-        .collect();
     assert_eq!(
         probe
             .get("cows")
@@ -8210,14 +9156,6 @@ export default class T extends LoopingBot {
             .map(|a| { a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>() }),
         Some(fire_names),
         "handle.content.fire_plots must be the Rust table: {probe:?}"
-    );
-    assert_eq!(
-        probe
-            .get("cooks")
-            .and_then(|v| v.as_array())
-            .map(|a| { a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>() }),
-        Some(cook_names),
-        "handle.content.cook_stands must be the Rust table: {probe:?}"
     );
     assert_eq!(
         probe

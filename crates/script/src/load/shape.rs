@@ -756,6 +756,11 @@ pub(super) fn catalog_unloadable(
                 "dim: BankSorter is unavailable until native bank sorting is implemented".into(),
             );
         }
+        if name == "EssMiner" {
+            return Some(
+                "dim: EssMiner is unavailable until the native Gatherer replaces it".into(),
+            );
+        }
         if is_catalog_dim(name) {
             return Some(format!("dim: {name}"));
         }

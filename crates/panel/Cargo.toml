@@ -11,6 +11,7 @@ client = { workspace = true, features = ["audio"] }
 dear-imgui-rs = "0.15"
 dear-imgui-wgpu = "0.15"
 dear-imgui-winit = "0.15"
+frontend-core = { path = "../frontend-core" }
 host = { path = "../host" }
 host-play = { path = "../host-play" }
 nav = { path = "../nav" }
@@ -23,6 +24,10 @@ vault = { path = "../vault" }
 wgpu = "29"
 winit = "0.30"
 pollster = "0.4"
+png = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
 
 [[bin]]
 name = "panel-play"
@@ -31,6 +36,9 @@ path = "src/main.rs"
 [features]
 render-diagnostics = ["client/render-diagnostics", "host/render-diagnostics"]
 memory-profile = ["host-play/memory-profile"]
-
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
 memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"]
+
+[dev-dependencies]
+frontend-core = { path = "../frontend-core", features = ["test-support"] }
+parking_lot = "0.12"

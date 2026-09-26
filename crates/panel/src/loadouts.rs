@@ -498,22 +498,12 @@ fn search_popup(ui: &Ui, session: &mut Session) {
 mod tests {
     use super::*;
     use crate::session::Session;
+    use crate::test_support::TestDir;
     use script::LoadoutsStore;
     use std::collections::HashSet;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    fn session_with_store() -> Session {
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-loadouts-{n}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+    fn session_with_store() -> (Session, TestDir) {
+        let dir = TestDir::new("loadouts");
         let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
         store.upsert(Loadout::new("melee").with_carry("Lobster", 8));
         store.save().unwrap();
@@ -521,12 +511,12 @@ mod tests {
         session.loadouts = store;
         session.loadouts_sel = 0;
         sync_draft(&mut session);
-        session
+        (session, dir)
     }
 
     #[test]
     fn save_renames_in_place_without_dropping_supplies() {
-        let mut session = session_with_store();
+        let (mut session, _dir) = session_with_store();
         session.loadouts_draft.as_mut().unwrap().name = "melee2".into();
         assert!(save_draft(&mut session));
         assert_eq!(session.loadouts.loadouts().len(), 1);
@@ -540,7 +530,7 @@ mod tests {
 
     #[test]
     fn invalid_empty_name_preserves_store() {
-        let mut session = session_with_store();
+        let (mut session, _dir) = session_with_store();
         session.loadouts_draft.as_mut().unwrap().name = "  ".into();
         assert!(!save_draft(&mut session));
         assert_eq!(session.loadouts.loadouts()[0].name, "melee");
@@ -549,42 +539,29 @@ mod tests {
 
     #[test]
     fn failed_save_restores_store_and_does_not_report_saved() {
-        let mut session = session_with_store();
-        let path = session.loadouts.loadouts();
-        let _ = path;
+        let (mut session, _dir) = session_with_store();
         session.loadouts_draft.as_mut().unwrap().name = "changed".into();
-        let path = {
-            // Recreate the store path as a directory so the write fails.
-            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "274bot-panel-loadouts-fail-{n}-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
-            std::fs::create_dir_all(&dir).unwrap();
-            let file = dir.join("loadouts.json");
-            let mut store = LoadoutsStore::at(file.clone());
-            store.upsert(Loadout::new("melee").with_carry("Lobster", 8));
-            store.save().unwrap();
-            std::fs::remove_file(&file).unwrap();
-            std::fs::create_dir_all(&file).unwrap();
-            session.loadouts = store;
-            sync_draft(&mut session);
-            session.loadouts_draft.as_mut().unwrap().name = "changed".into();
-            file
-        };
+        // Recreate the store path as a directory so the write fails.
+        let fail_dir = TestDir::new("loadouts-fail");
+        let file = fail_dir.join("loadouts.json");
+        let mut store = LoadoutsStore::at(file.clone());
+        store.upsert(Loadout::new("melee").with_carry("Lobster", 8));
+        store.save().unwrap();
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir_all(&file).unwrap();
+        session.loadouts = store;
+        sync_draft(&mut session);
+        session.loadouts_draft.as_mut().unwrap().name = "changed".into();
         assert!(!save_draft(&mut session));
         assert_eq!(session.loadouts.loadouts()[0].name, "melee");
         assert!(session.loadouts_status.starts_with("Save failed:"));
         assert!(!session.loadouts_status.contains("Saved."));
-        let _ = path;
+        drop(fail_dir);
     }
 
     #[test]
     fn copy_equipment_helper_keeps_supplies() {
-        let mut session = session_with_store();
+        let (mut session, _dir) = session_with_store();
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         copy_equipment_preserving_supplies(
             session.loadouts_draft.as_mut().unwrap(),
@@ -623,7 +600,7 @@ mod tests {
 
     #[test]
     fn qty_bufs_survive_empty_intermediate_edit() {
-        let mut session = session_with_store();
+        let (mut session, _dir) = session_with_store();
         assert_eq!(session.loadouts_qty_bufs, vec!["8".to_string()]);
         session.loadouts_qty_bufs[0] = String::new();
         let current = session.loadouts_draft.as_ref().unwrap().carry[0].qty;
@@ -639,7 +616,7 @@ mod tests {
 
     #[test]
     fn manual_item_name_assigns_slot_and_supply_without_catalog() {
-        let mut session = session_with_store();
+        let (mut session, _dir) = session_with_store();
         session.loadouts_search_slot = Some("hat".into());
         assert!(apply_manual_item_name(&mut session, "Rune full helm"));
         assert_eq!(
@@ -664,7 +641,7 @@ mod tests {
 
     #[test]
     fn duplicate_preserves_source_and_selects_copy() {
-        let mut session = session_with_store();
+        let (mut session, _dir) = session_with_store();
         duplicate_loadout(&mut session);
         assert_eq!(session.loadouts.loadouts().len(), 2);
         assert_eq!(session.loadouts.loadouts()[0].name, "melee");

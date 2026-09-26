@@ -8,11 +8,12 @@ impl Session {
     /// Save the credentials fields as a vault profile: the username field
     /// is the key, the password field the secret, and an existing profile's
     /// uid/settings are kept. Does not require a focused profile (first-run
-    /// empty vault). After a successful upsert, spawns the slot via the
+    /// empty vault). After the write is queued, spawns the slot via the
     /// existing FIFO if it is not running, then selects it. Returns whether
-    /// the write landed; failures set [`Session::error`].
+    /// the write was accepted; a failed durable write is reported on a later
+    /// frame and restores the saved profile.
     pub fn save_credentials(&mut self) -> bool {
-        if self.vault.is_none() {
+        if self.core.vault().is_none() {
             self.error = Some("credentials: vault locked".into());
             return false;
         }
@@ -26,7 +27,7 @@ impl Session {
             .as_deref()
             .filter(|old| !old.is_empty() && old.trim() != username);
         let profile = {
-            let vault = self.vault.as_mut().expect("vault checked");
+            let vault = self.core.vault().expect("vault checked");
             let existing = if let Some(old) = rename_from {
                 vault.get(old).cloned()
             } else {
@@ -50,36 +51,54 @@ impl Session {
                     .unwrap_or_else(|| self.cred_settings.clone()),
             }
         };
-        match self
-            .vault
-            .as_mut()
-            .expect("vault checked")
-            .upsert(profile.clone())
-        {
-            Ok(()) => {}
+        // Staged now and written off this thread (a rename as one
+        // transaction); a running slot learns the next-handshake settings
+        // once the write is durable.
+        let mirror = frontend_core::ArmMirror::Remember;
+        let saved = match rename_from {
+            Some(old) => {
+                let old = old.to_string();
+                self.core
+                    .rename_profile(&old, profile, mirror, "credentials")
+            }
+            None => self.core.save_profile(profile, mirror, "credentials"),
+        };
+        let op = match saved {
+            Ok(op) => op,
             Err(e) => {
-                self.error = Some(format!("credentials: {e}"));
+                self.error = Some(e);
                 return false;
             }
-        }
-        if let Some(old) = rename_from {
-            match self.vault.as_mut().expect("vault checked").remove(old) {
-                Ok(_) => {}
-                Err(e) => {
-                    self.error = Some(format!("credentials: {e}"));
-                    return false;
-                }
-            }
-        }
-        if let Some(play) = self.play.as_mut() {
-            play.remember_profile(profile);
-        }
+        };
         self.chooser_edit = None;
-        // `select` builds the arm from the vault auto-login setting; a
-        // running slot already received its next-handshake settings above.
         self.error = None;
-        self.select(&username);
+        // Select (and so spawn) only once the credentials are durable: a
+        // failed write must not leave a worker logging in with them.
+        self.saving_profile = Some((op, username));
         true
+    }
+
+    /// Select the profile a credentials Save wrote once that write settled
+    /// successfully. A failed write selects nothing (its error is shown).
+    pub(crate) fn settle_profile_save(&mut self) {
+        let Some((op, name)) = self.saving_profile.as_ref() else {
+            return;
+        };
+        let outcome = self
+            .core
+            .operation(*op)
+            .and_then(|r| r.outcome(name))
+            .cloned();
+        match outcome {
+            Some(frontend_core::Outcome::Pending) => {}
+            Some(frontend_core::Outcome::Completed) => {
+                let name = name.clone();
+                self.saving_profile = None;
+                // `select` builds the arm from the durable auto-login.
+                self.select(&name);
+            }
+            _ => self.saving_profile = None,
+        }
     }
 
     /// Empty the credentials-section fields. The vault entry is untouched.
@@ -92,7 +111,7 @@ impl Session {
     pub fn begin_edit_profile(&mut self, name: Option<&str>) {
         match name {
             Some(n) => {
-                if let Some(p) = self.vault.as_ref().and_then(|v| v.get(n)) {
+                if let Some(p) = self.core.vault().and_then(|v| v.get(n)) {
                     self.cred_user = p.username.clone();
                     self.cred_pass = p.password.clone();
                     self.cred_settings = p.settings.clone();

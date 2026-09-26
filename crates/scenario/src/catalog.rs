@@ -58,6 +58,7 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("nav_full", scenarios::nav_full_scenario),
     Entry::new("nav_door", scenarios::nav_door_scenario),
+    Entry::new("nav_diagonal_door", scenarios::nav_diagonal_door_scenario),
     Entry::new("nav_cart", scenarios::nav_cart_scenario),
     Entry::new("nav_essence", scenarios::nav_essence_scenario),
     Entry::new("nav_elkoy", scenarios::nav_elkoy_scenario),
@@ -104,8 +105,16 @@ const REGISTRY: &[Entry] = &[
         scenarios::chicken_killer_bank_scenario,
     ),
     Entry::new("thiever", scenarios::thiever_scenario),
+    Entry::new(
+        "thiever_diagonal_door_trap",
+        scenarios::thiever_diagonal_door_trap_scenario,
+    ),
     Entry::new("alcher", scenarios::alcher_scenario),
     Entry::new("alcher_defaults", scenarios::alcher_defaults_scenario),
+    Entry::new(
+        "alcher_dwarven_mine",
+        scenarios::alcher_dwarven_mine_scenario,
+    ),
     Entry::new("alcher_custom", scenarios::alcher_custom_scenario),
     Entry::new(
         "alcher_custom_alias",
@@ -274,7 +283,15 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("chaos_druid_bank", scenarios::chaos_druid_bank_scenario),
     Entry::new("ardy_fighter_bank", scenarios::ardy_fighter_bank_scenario),
+    Entry::new(
+        "ardy_fighter_bank_seeded",
+        scenarios::ardy_fighter_bank_seeded_scenario,
+    ),
     Entry::new("rock_crab_bank", scenarios::rock_crab_bank_scenario),
+    Entry::new(
+        "rock_crab_bank_seeded",
+        scenarios::rock_crab_bank_seeded_scenario,
+    ),
     Entry::new("green_dragon_bank", scenarios::green_dragon_bank_scenario),
     Entry::new(
         "green_dragon_bank_prepared",

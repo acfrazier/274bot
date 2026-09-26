@@ -325,10 +325,40 @@ is a live toggle), dim **build line** (`alpha 3 ·` git short SHA,
 commit + built time), banner, profile, **debug** (loopback), and status
 key/value rows (including **mem**: highmem/lowmem) fill out the strip.
 
-**WalkTo** (title row) fills the Game pane: north-up collision dots,
-click-to-pick uses the canvas rect (`is_mouse_hovering_rect`), footer
-**Recentre** / **Walk**, and **Teleport** (local-engine cheat to the
-highlighted tile). Status `walk` mirrors the armed dest.
+**WalkTo** (title row) fills the Game pane: north-up terrain from the
+process-wide map-cache images demand (catalogue first; real bake progress
+in the footer) or a grid and `map imagery unavailable — cache not bound`
+until that cache is ready. Opening WalkTo starts the demand against
+`~/.274bot/map-cache` for the bound profile; closing it releases the
+demand and GPU/CPU pixels. When the terrain for the bound client cache's
+image identity is not ready (and would be baked locally), the map first
+shows the bake warning from `frontend_core` (CPU for about 15 s, up to
+~15 MiB once) with **Bake now**, **Always bake** and **Not now**; it
+stays catalogue-only until the operator bakes (**Bake terrain** after Not
+now). A ready cache, baked earlier or installed, opens without asking.
+**Always bake** and Nav config's **ask before baking terrain** set the
+shared `map_bake` key of `panel-ui.json` (`ask` when absent). POIs come from `Catalogue::from_ready` (client
+records, authenticated `navpois`, game-data names) plus live
+`observed_services` for the focused bot. Search uses that catalogue.
+Optional map-owned overlay toggles (not per-tile quads), vector route
+and destination (pending selection vs armed dest are distinct), wheel-zoom toward
+the cursor, click-to-pick uses the canvas rect (`is_mouse_hovering_rect`),
+header plane/zoom/search/layer controls that wrap at the default Game pane
+and narrower widths, footer **Recentre** / **Walk** / **Send**, and
+**Teleport** (Local target on a loopback host, guarded by
+`host_play::walk_map`). Walk needs a snapped walkable target. The map
+selection is a destination (tile/POI, plane, nav identity), not a bot.
+**Send** chooses **Focused bot** (default) or **Group** — a checklist of
+wall bots with **All eligible / None**. Ineligible bots stay listed,
+greyed, with a host reason (not logged in, no position yet, running a
+script). Group confirm reads **Walk N bots**; each eligible bot gets its
+own command and a Start-all-style summary. Debug **Teleport** uses the
+clicked tile even when blocked, stays focused-only, and is enabled
+whenever there is a selection and Teleport is authorized. Confirmations
+consume the pending `MapModel` selection once and act on the bot focused
+at confirm; missing origin or a running script refuse instead of storing
+a later login dest. A different nav pack invalidates the destination.
+Status `walk` mirrors the armed dest.
 
 ## Headless proof
 

@@ -15,25 +15,25 @@
 //! [`find`] and [`find_with_model`] never see teleports; the any-tile
 //! teleport layer ([`TransportGraph::teleports`]) only joins the search
 //! through [`find_allow_teleports`]/[`find_allow_teleports_with_model`].
-//! Wilderness tiles ([`crate::wilderness::in_wilderness`]) are refused
-//! unless the search's [`FindOptions::allow_wilderness`] is set; every
-//! option'd entry point is [`find_with`]. Every transport edge — walked
-//! or teleported — is additionally gated by the search's [`WorldState`]:
-//! an edge whose requirements the state cannot prove is never relaxed
-//! (missing facts fail closed).
+//! Wilderness tiles ([`TransportGraph::wilderness`]) are refused unless
+//! the search's [`FindOptions::allow_wilderness`] is set; every option'd
+//! entry point is [`find_with`]. A graph with no packed zones (a legacy
+//! 274N grid) gates nothing. Every transport edge — walked or teleported
+//! — is additionally gated by the search's [`WorldState`]: an edge whose
+//! requirements the state cannot prove is never relaxed (missing facts
+//! fail closed).
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::time::Instant;
 
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
-use crate::grid::{DoorEdge, StepGrid};
-use crate::tile::{chebyshev, Tile};
 use crate::transport::{TransportEdge, TransportGraph};
-use crate::wilderness::in_wilderness;
+
 use crate::world_state::WorldState;
 
 /// One leg of a route: a walk run or one transport crossing. Consecutive
@@ -85,8 +85,9 @@ impl CostModel {
 
 /// Per-search opt-ins, all default off so [`find`] keeps the safe
 /// defaults. `allow_teleports` unions the any-tile teleport layer in;
-/// `allow_wilderness` lets the search step into (or land in) the
-/// wilderness zone ([`crate::wilderness::in_wilderness`]).
+/// `allow_wilderness` lets the search step into (or land in) packed
+/// [`TransportGraph::wilderness`] zones. A graph with no packed zones
+/// gates nothing.
 /// `allow_bank_fetch` is the BankBudget opt-in: on its own it never
 /// inserts a bank leg or relaxes an item req — an edge stays unusable
 /// unless the search's [`WorldState`] already proves it. The
@@ -144,10 +145,28 @@ pub enum RouteError {
     BudgetExhausted,
 }
 
+/// Per-target failure of a shared search. Unlike single-target
+/// [`RouteError`], a caller deadline can leave a target unsettled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetError {
+    NoPath,
+    BudgetExhausted,
+    NotSettled,
+}
+
+impl From<RouteError> for TargetError {
+    fn from(error: RouteError) -> Self {
+        match error {
+            RouteError::NoPath => Self::NoPath,
+            RouteError::BudgetExhausted => Self::BudgetExhausted,
+        }
+    }
+}
+
 /// Node-expansion budget bounding a [`find`] search — the m8aq route-cutoff
 /// concept. The whole 2004 world is ~16M tiles, so any real route stays far
 /// under this; it only stops pathological floods.
-const NODE_BUDGET: usize = 4_000_000;
+pub const NODE_BUDGET: usize = 4_000_000;
 
 /// The interact radius (chebyshev) a transport edge is usable from: any
 /// standable tile within this distance of the edge's `at` is a valid
@@ -266,15 +285,489 @@ pub fn find_with_avoid_bounded(
         opts.allow_wilderness,
         state,
         opts.essence.as_ref(),
-        false,
         avoid,
     )
+}
+
+/// Native bank-search cap: 500,000 non-goal expansions precede an accepted
+/// goal, which has 1-based settle ordinal 500,001.
+pub const BANK_TARGET_BUDGET: usize = 500_001;
+/// Settles a first-goal search's goal set keeps the search going while the
+/// set's backward proof has not shown any of its goals reachable. A proof of
+/// reachability lifts the set to [`find_with`]'s full budget; a proof of
+/// unreachability stops it at once.
+/// Only a goal set unreachable from a large region whose own backward region
+/// is also large spends all of it: on the 289 bake, stands fed through
+/// ladders by the unstamped upper planes. Measured reachable in-scene stands
+/// need at most ~347,000 settles (a 598-tick Wilderness detour; ~279,000
+/// with every teleport usable), and 2^19 settles hold about 90 MB of search
+/// tables.
+pub const FIRST_TARGET_BUDGET: usize = 1 << 19;
+/// Tiles the backward proof may admit before it leaves the answer to the
+/// forward search alone. It takes one step per settled node, so this only
+/// caps its own set (a 12-byte tile each, plus hash-table overhead) when
+/// the forward budget is larger.
+const REVERSE_PROOF_BUDGET: usize = 1 << 18;
+
+/// A target's exact shortest-path cost and 1-based shared settle ordinal.
+/// An origin shortcut has ordinal zero.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TargetCost {
+    pub ticks: f64,
+    pub settled_at: usize,
+}
+
+/// Allocated entry capacities for this request's search scratch at stop.
+/// HashMap/heap capacities never shrink during the flood; these are their
+/// peak allocated entry capacities, not retained per worker or pack bytes.
+/// `reverse` and `reverse_queue` are the larger of the goal sets' backward
+/// proof sets and queues (zero when no proof ran); each proof's scratch is
+/// dropped as soon as it decides or its set stops.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SearchCapacities {
+    pub distances: usize,
+    pub predecessors: usize,
+    pub settled: usize,
+    pub heap: usize,
+    pub reverse: usize,
+    pub reverse_queue: usize,
+}
+
+/// How the backward proof beside a goal search ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReverseProof {
+    /// No proof ran: an empty goal set, an origin shortcut, or a search
+    /// kind that does not carry one.
+    #[default]
+    NotRun,
+    /// Undecided when the forward search settled a goal or hit its budget.
+    Open,
+    /// The backward region met the origin, or the landing of a teleport the
+    /// origin can take: a goal is reachable, and the forward search keeps
+    /// its full budget to find the cheapest.
+    Reachable,
+    /// A teleport usable elsewhere lands in the backward region (every tile
+    /// may then precede it), or the region outgrew the proof's cap; the
+    /// forward search decides within its budget.
+    Abandoned,
+    /// The backward region closed without the origin: no goal is reachable.
+    Unreachable,
+}
+
+/// What a first-goal search established about its fallback goal set.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FallbackRoute {
+    /// The cheapest fallback goal, settled on the way.
+    Routed(Route),
+    /// No fallback goal can settle: the set's own proof shows it
+    /// unreachable, or everything reachable settled
+    /// ([`RouteError::NoPath`]); or a settle past its own budget exists
+    /// without its proof showing a goal reachable
+    /// ([`RouteError::BudgetExhausted`]).
+    Failed(RouteError),
+    /// Only more settles could decide it: its proof shows a goal reachable,
+    /// or the preferred proof stopped the search within the fallback's
+    /// budget. A search over the fallback set alone decides it.
+    Undecided,
+}
+
+/// One first-settled-target search. Dijkstra settles nodes in increasing
+/// route cost, so the route is the cheapest reachable input target without
+/// paying to prove whether every other target is reachable. A search with a
+/// fallback goal set ([`find_first_with_fallback`]) also reports what it
+/// established about that set when no preferred goal routes.
+pub struct FirstRouteSearch {
+    route: Result<Route, RouteError>,
+    fallback: Option<FallbackRoute>,
+    settled: usize,
+    capacities: SearchCapacities,
+    proof: ReverseProof,
+}
+
+impl FirstRouteSearch {
+    pub fn route(&self) -> Result<&Route, RouteError> {
+        self.route.as_ref().map_err(|error| *error)
+    }
+
+    /// The fallback set's answer, when no preferred goal routed and the
+    /// search had a fallback set; `None` otherwise.
+    pub fn fallback(&self) -> Option<&FallbackRoute> {
+        self.fallback.as_ref()
+    }
+
+    pub fn into_route(self) -> Result<Route, RouteError> {
+        self.route
+    }
+
+    /// The preferred route and, as for [`Self::fallback`], the fallback's.
+    pub fn into_routes(self) -> (Result<Route, RouteError>, Option<FallbackRoute>) {
+        (self.route, self.fallback)
+    }
+
+    /// Forward nodes settled (the backward proof's tiles are not counted).
+    pub fn settled(&self) -> usize {
+        self.settled
+    }
+
+    /// Peak scratch entry capacities at the point the search stopped.
+    pub fn scratch_capacities(&self) -> SearchCapacities {
+        self.capacities
+    }
+
+    /// The preferred goals' backward proof.
+    pub fn proof(&self) -> ReverseProof {
+        self.proof
+    }
+}
+
+/// Search until the cheapest reachable target settles, under the same
+/// native gates as [`find_with`]. Dijkstra alone reports an unreachable goal
+/// set only after flooding everything reachable from `from`, so a backward
+/// closure from the targets ([`ReverseProof`]) runs one step per settled
+/// node: a goal set sealed in a small region (a dead-end pocket, a gated
+/// room) is proven unreachable after about twice that region's size. The
+/// search spends at most [`FIRST_TARGET_BUDGET`] settles unless the closure
+/// proves a goal reachable, and then keeps [`find_with`]'s full budget.
+/// Small goal sets are scanned inline without allocation; larger fallback
+/// sets build one membership map instead of scanning every target for every
+/// settled node.
+pub fn find_first_with(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+) -> FirstRouteSearch {
+    find_first_with_fallback(collision, graph, from, targets, &[], opts, state)
+}
+
+/// [`find_first_with`] over preferred `targets` with a `fallback` goal set,
+/// sharing one search: the cheapest reachable preferred goal wins even over
+/// a cheaper fallback goal, and the search records the first fallback goal
+/// it settles on the way ([`FallbackRoute`]). The search stops as it would
+/// over the preferred goals alone; the fallback set keeps its own budget
+/// and backward proof, and whatever it reports is what a search over the
+/// fallback alone reports, as far as the shared settles decide it. Its
+/// proof starts only when one of its goals settles past its unproven budget
+/// or the preferred set stops without a goal, caught up to one step per
+/// settle spent (so a fallback goal within that budget, or a preferred goal,
+/// costs it nothing, and only one proof's scratch is live at a time). A
+/// goal settling past the budget counts only if the proof showed a goal
+/// reachable within it; proven unreachable, or past its budget without
+/// proving a goal reachable, the set has failed; otherwise it is
+/// [`FallbackRoute::Undecided`] for the caller to search alone. Of the two
+/// searches, at most one then stops at the unproven budget.
+pub fn find_first_with_fallback(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    fallback: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+) -> FirstRouteSearch {
+    first_search(
+        collision,
+        graph,
+        from,
+        targets,
+        fallback,
+        opts,
+        state,
+        false,
+        &[],
+        FIRST_TARGET_BUDGET,
+        NODE_BUDGET,
+    )
+}
+
+/// The proof-carrying goal search behind [`find_first_with_fallback`]
+/// (strict gates) and the single-target BankBudget diagnosis
+/// (`relax_carry_worn`). The backward closures honor the same gates as the
+/// forward search, so a strict proof never hides a relaxed route. Each goal
+/// set's `budget` holds until its own proof shows it reachable, then
+/// `reachable_budget` applies ([`FirstGoals`]).
+#[allow(clippy::too_many_arguments)] // search surface plus relaxation/avoid/budgets
+fn first_search(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    fallback: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    relax_carry_worn: bool,
+    avoid: &[AvoidRect],
+    budget: usize,
+    reachable_budget: usize,
+) -> FirstRouteSearch {
+    if targets.is_empty() {
+        return FirstRouteSearch {
+            route: Err(RouteError::NoPath),
+            fallback: (!fallback.is_empty()).then_some(FallbackRoute::Undecided),
+            settled: 0,
+            capacities: SearchCapacities::default(),
+            proof: ReverseProof::NotRun,
+        };
+    }
+    if targets.contains(&from) {
+        return FirstRouteSearch {
+            route: Ok(Route {
+                legs: vec![Leg::Walk { tiles: vec![from] }],
+                dest: from,
+                ticks: 0.0,
+            }),
+            fallback: None,
+            settled: 0,
+            capacities: SearchCapacities::default(),
+            proof: ReverseProof::NotRun,
+        };
+    }
+
+    let gates = ProofGates {
+        collision,
+        graph,
+        state,
+        essence: opts.essence.as_ref(),
+        from,
+        use_teleports: opts.allow_teleports,
+        allow_wilderness: opts.allow_wilderness,
+        relax_carry_worn,
+    };
+    let mut goals = Goals::First(Box::new(FirstGoals::new(
+        gates,
+        targets,
+        fallback,
+        budget,
+        reachable_budget,
+    )));
+    // The goal sets hold the budgets.
+    let search = search_kernel(
+        collision,
+        graph,
+        from,
+        CostModel::running(),
+        usize::MAX,
+        opts.allow_teleports,
+        opts.allow_wilderness,
+        state,
+        opts.essence.as_ref(),
+        relax_carry_worn,
+        avoid,
+        &mut goals,
+        None,
+    );
+    let Goals::First(first) = goals else {
+        unreachable!("a first-goal search keeps its goals");
+    };
+    let route_to = |(dest, cost): (WorldTile, TargetCost)| {
+        let (legs, ticks) = reconstruct(
+            dest,
+            &search.came_from,
+            graph,
+            CostModel::running(),
+            opts.essence.as_ref(),
+        );
+        debug_assert_eq!(ticks, cost.ticks);
+        Route { legs, dest, ticks }
+    };
+    let route = match first.preferred.found {
+        Some(goal) => Ok(route_to(goal)),
+        None => Err(first.preferred.closed.unwrap_or(RouteError::NoPath)),
+    };
+    let fallback_route = if route.is_ok() || fallback.is_empty() {
+        None
+    } else {
+        Some(match (first.fallback.found, first.fallback.closed) {
+            (Some(goal), _) => FallbackRoute::Routed(route_to(goal)),
+            (None, Some(error)) => FallbackRoute::Failed(error),
+            (None, None) => FallbackRoute::Undecided,
+        })
+    };
+    FirstRouteSearch {
+        route,
+        fallback: fallback_route,
+        settled: search.settled,
+        capacities: search.capacities,
+        proof: search.proof,
+    }
+}
+
+/// Per-input results in caller order, with one predecessor tree for lazy
+/// reconstruction. The graph is borrowed, not copied, and the heap/dist/done
+/// scratch is dropped when the search returns.
+pub struct RoutesToTargets<'a> {
+    targets: &'a [WorldTile],
+    results: Vec<Result<TargetCost, TargetError>>,
+    came_from: HashMap<WorldTile, Back>,
+    graph: &'a TransportGraph,
+    essence: Option<EssenceSession>,
+    settled: usize,
+    complete: bool,
+    capacities: SearchCapacities,
+}
+
+impl RoutesToTargets<'_> {
+    pub fn results(&self) -> &[Result<TargetCost, TargetError>] {
+        &self.results
+    }
+
+    pub fn settled(&self) -> usize {
+        self.settled
+    }
+
+    /// False only if the caller's deadline interrupted the all-target flood.
+    pub fn complete(&self) -> bool {
+        self.complete
+    }
+
+    /// Per-request peak scratch entry capacities (the scratch is already
+    /// dropped except for the predecessor tree needed by [`Self::route`]).
+    pub fn scratch_capacities(&self) -> SearchCapacities {
+        self.capacities
+    }
+
+    /// Reconstruct only the chosen target, without cloning paths for the rest.
+    pub fn route(&self, target_index: usize) -> Result<Route, TargetError> {
+        let cost = self.results[target_index]?;
+        let dest = self.targets[target_index];
+        let (legs, ticks) = reconstruct(
+            dest,
+            &self.came_from,
+            self.graph,
+            CostModel::running(),
+            self.essence.as_ref(),
+        );
+        debug_assert_eq!(ticks, cost.ticks);
+        Ok(Route { legs, dest, ticks })
+    }
+}
+
+/// Search all targets with the same native options and 4M cap as [`find_with`].
+pub fn find_many_with<'a>(
+    collision: &WorldCollision,
+    graph: &'a TransportGraph,
+    from: WorldTile,
+    targets: &'a [WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+) -> RoutesToTargets<'a> {
+    find_many_with_avoid_bounded(
+        collision,
+        graph,
+        from,
+        targets,
+        opts,
+        state,
+        &[],
+        NODE_BUDGET,
+    )
+}
+
+/// Shared bounded search. Duplicate targets retain separate input rows.
+#[allow(clippy::too_many_arguments)]
+pub fn find_many_with_avoid_bounded<'a>(
+    collision: &WorldCollision,
+    graph: &'a TransportGraph,
+    from: WorldTile,
+    targets: &'a [WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+) -> RoutesToTargets<'a> {
+    find_many_with_avoid_bounded_until(
+        collision, graph, from, targets, opts, state, avoid, budget, None,
+    )
+}
+
+/// As above, with a caller-supplied completion deadline. The wall-clock
+/// bound is caller policy; the search checks it every 256 heap pops and at
+/// exit, reports unsettled targets, and leaves fallback choice to the caller.
+#[allow(clippy::too_many_arguments)]
+pub fn find_many_with_avoid_bounded_until<'a>(
+    collision: &WorldCollision,
+    graph: &'a TransportGraph,
+    from: WorldTile,
+    targets: &'a [WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+    deadline: Option<Instant>,
+) -> RoutesToTargets<'a> {
+    let mut unique = HashMap::with_capacity(targets.len());
+    let mut input_indices = Vec::with_capacity(targets.len());
+    let mut costs = Vec::new();
+    for &target in targets {
+        let index = *unique.entry(target).or_insert_with(|| {
+            costs.push(if target == from {
+                Ok(TargetCost {
+                    ticks: 0.0,
+                    settled_at: 0,
+                })
+            } else {
+                Err(TargetError::NotSettled)
+            });
+            costs.len() - 1
+        });
+        input_indices.push(index);
+    }
+    let remaining = costs.iter().filter(|result| result.is_err()).count();
+    let mut goals = Goals::Many {
+        unique: &unique,
+        costs: &mut costs,
+        remaining,
+    };
+    let search = if remaining == 0 {
+        SearchOutcome::empty()
+    } else {
+        search_kernel(
+            collision,
+            graph,
+            from,
+            CostModel::running(),
+            budget,
+            opts.allow_teleports,
+            opts.allow_wilderness,
+            state,
+            opts.essence.as_ref(),
+            false,
+            avoid,
+            &mut goals,
+            deadline,
+        )
+    };
+    let error = match search.stop {
+        SearchStop::Exhausted => TargetError::NoPath,
+        SearchStop::Budget => TargetError::BudgetExhausted,
+        SearchStop::Deadline | SearchStop::Completed => TargetError::NotSettled,
+    };
+    for result in &mut costs {
+        if result.is_err() {
+            *result = Err(error);
+        }
+    }
+    RoutesToTargets {
+        targets,
+        results: input_indices
+            .into_iter()
+            .map(|index| costs[index])
+            .collect(),
+        came_from: search.came_from,
+        graph,
+        essence: opts.essence,
+        settled: search.settled,
+        capacities: search.capacities,
+        complete: search.stop != SearchStop::Deadline,
+    }
 }
 
 /// A missing `item_req`/`worn_req` fact the BankBudget session must
 /// supply before a strict [`find_with`] can route: an `item_req` stack
 /// count the state cannot prove, or a `worn_req` list (any-of) with no
-/// worn alternative. [`find_missing_item_reqs`] is the only producer —
+/// worn alternative. [`missing_item_reqs`] names them for a route;
 /// [`find`]/[`find_with`] never relax an edge.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MissingReq {
@@ -293,7 +786,10 @@ pub enum MissingReq {
 /// can help. This is the BankBudget session's diagnosis arm
 /// ([`crate::bank_fetch::plan_bank_fetch`]); [`find`] and [`find_with`]
 /// themselves never ignore an item gate — missing facts still fail
-/// closed.
+/// closed. The relaxed search carries the backward [`ReverseProof`], so an
+/// unreachable diagnosis target (a solid tile no transport lands on, a
+/// sealed pocket) costs about its own backward region instead of a relaxed
+/// flood of everything reachable from `from`.
 pub fn find_missing_item_reqs(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -341,21 +837,28 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
     avoid: &[AvoidRect],
     budget: usize,
 ) -> Option<Vec<MissingReq>> {
-    let route = find_bounded_impl(
+    let route = first_search(
         collision,
         graph,
         from,
-        to,
-        CostModel::running(),
-        budget,
-        opts.allow_teleports,
-        opts.allow_wilderness,
+        std::slice::from_ref(&to),
+        &[],
+        opts,
         state,
-        opts.essence.as_ref(),
         true,
         avoid,
+        budget,
+        budget,
     )
+    .into_route()
     .ok()?;
+    Some(missing_item_reqs(&route, state))
+}
+
+/// Every `item_req`/`worn_req` fact on `route` that `state` cannot prove,
+/// sorted and deduplicated: what a BankBudget session must supply before
+/// `state` allows the route ([`crate::bank_fetch::plan_bank_fetch`]).
+pub fn missing_item_reqs(route: &Route, state: &WorldState) -> Vec<MissingReq> {
     let mut missing = Vec::new();
     for leg in &route.legs {
         let Leg::Transport { edge } = leg else {
@@ -380,7 +883,7 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
         MissingReq::WearAny { ids } => (ids.first().copied().unwrap_or(0), 1),
     });
     missing.dedup();
-    Some(missing)
+    missing
 }
 
 /// [`find`] with an explicit per-search cost model (the run-vs-walk rate).
@@ -402,7 +905,6 @@ pub fn find_with_model(
         false,
         &WorldState::empty(),
         None,
-        false,
         &[],
     )
 }
@@ -455,7 +957,6 @@ pub fn find_allow_teleports_with_model(
         false,
         state,
         None,
-        false,
         &[],
     )
 }
@@ -485,7 +986,6 @@ fn find_bounded(
         false,
         &WorldState::empty(),
         None,
-        false,
         &[],
     )
 }
@@ -495,17 +995,603 @@ fn tile_in_any_avoid(tile: WorldTile, avoid: &[AvoidRect]) -> bool {
     avoid.iter().any(|r| r.contains(tile))
 }
 
-/// The shared Dijkstra; `use_teleports` unions the any-tile teleport layer
-/// into the relaxation from every settled node. Transport edges are relaxed
-/// from any standable tile within [`INTERACT_RADIUS`] of their `at` (never
-/// from `at` itself when it is blocked); walk steps are the strict
-/// directional [`step_ok`] test throughout. `allow_wilderness` gates
-/// stepping into (or landing in) the wilderness zone; `state` gates every
-/// transport edge (walked or teleported) on its requirements — an edge
-/// the state cannot prove is not relaxed. `relax_carry_worn` is the
-/// BankBudget diagnosis arm only: it drops the `item_req`/`worn_req`
-/// gates so the session can tell a missing-item failure from a
-/// skill/quest/varp gate. Every production entry point passes `false`.
+enum FirstTargets<'a> {
+    Inline(&'a [WorldTile]),
+    Indexed(HashSet<WorldTile>),
+}
+
+impl<'a> FirstTargets<'a> {
+    fn new(targets: &'a [WorldTile]) -> Self {
+        if targets.len() <= 8 {
+            Self::Inline(targets)
+        } else {
+            Self::Indexed(targets.iter().copied().collect())
+        }
+    }
+
+    fn contains(&self, tile: &WorldTile) -> bool {
+        match self {
+            Self::Inline(targets) => targets.contains(tile),
+            Self::Indexed(targets) => targets.contains(tile),
+        }
+    }
+}
+
+enum Goals<'a> {
+    Single {
+        to: WorldTile,
+        cost: Option<TargetCost>,
+    },
+    /// A preferred and a fallback goal set, each with its own budget and
+    /// backward proof ([`FirstGoals`]); boxed, as its two proofs' inline
+    /// state dwarfs the other shapes.
+    First(Box<FirstGoals<'a>>),
+    Many {
+        unique: &'a HashMap<WorldTile, usize>,
+        costs: &'a mut [Result<TargetCost, TargetError>],
+        remaining: usize,
+    },
+}
+
+/// What one settled node decided for the search.
+enum Settle {
+    Continue,
+    /// Stop with the node counted: it decided the goals.
+    Stop,
+    /// Stop without counting the node: no goal set may spend it.
+    Spent,
+}
+
+impl Goals<'_> {
+    fn settle(&mut self, tile: WorldTile, ticks: f64, settled_at: usize) -> Settle {
+        let cost = TargetCost { ticks, settled_at };
+        let done = match self {
+            Goals::Single { to, cost: found } => {
+                if *to == tile {
+                    *found = Some(cost);
+                    true
+                } else {
+                    false
+                }
+            }
+            Goals::First(first) => return first.settle(tile, cost),
+            Goals::Many {
+                unique,
+                costs,
+                remaining,
+            } => {
+                if let Some(&index) = unique.get(&tile) {
+                    if costs[index].is_err() {
+                        costs[index] = Ok(cost);
+                        *remaining -= 1;
+                    }
+                }
+                *remaining == 0
+            }
+        };
+        if done {
+            Settle::Stop
+        } else {
+            Settle::Continue
+        }
+    }
+
+    /// Everything reachable has settled, `settled` nodes in all.
+    fn exhausted(&mut self, settled: usize) {
+        if let Goals::First(first) = self {
+            first.exhausted(settled);
+        }
+    }
+
+    /// The backward proofs' final report, dropping their scratch.
+    fn finish_proofs(&mut self) -> ReverseReport {
+        match self {
+            Goals::First(first) => first.finish_proofs(),
+            Goals::Single { .. } | Goals::Many { .. } => ReverseReport::default(),
+        }
+    }
+}
+
+/// One goal set of a first-goal search: its first goal to settle, the
+/// settles it may spend, and its backward proof.
+struct GoalSet<'a> {
+    targets: FirstTargets<'a>,
+    seeds: &'a [WorldTile],
+    found: Option<(WorldTile, TargetCost)>,
+    /// The unproven budget until the proof shows a goal reachable, then the
+    /// reachable budget.
+    budget: usize,
+    proof: ReverseRun<'a>,
+    /// Why no goal of the set can settle within its budget.
+    closed: Option<RouteError>,
+}
+
+impl<'a> GoalSet<'a> {
+    /// An empty set is closed from the start.
+    fn new(targets: &'a [WorldTile], budget: usize) -> Self {
+        Self {
+            targets: FirstTargets::new(targets),
+            seeds: targets,
+            found: None,
+            budget,
+            proof: ReverseRun::default(),
+            closed: targets.is_empty().then_some(RouteError::NoPath),
+        }
+    }
+
+    fn live(&self) -> bool {
+        self.found.is_none() && self.closed.is_none()
+    }
+
+    fn close(&mut self, error: RouteError) {
+        self.closed = Some(error);
+        self.proof.finish();
+    }
+
+    /// Records the set's first goal to settle, while it is still searching.
+    fn accept(&mut self, tile: WorldTile, cost: TargetCost) -> bool {
+        if !self.live() || !self.targets.contains(&tile) {
+            return false;
+        }
+        self.found = Some((tile, cost));
+        self.proof.finish();
+        true
+    }
+
+    /// Runs the proof to one backward step per settle so far: reachability
+    /// lifts the budget, unreachability closes the set.
+    fn prove_to(&mut self, gates: ProofGates<'a>, steps: usize, reachable_budget: usize) {
+        match self.proof.run_to(gates, self.seeds, steps) {
+            Some(ReverseProof::Reachable) => self.budget = self.budget.max(reachable_budget),
+            Some(ReverseProof::Unreachable) => self.close(RouteError::NoPath),
+            _ => {}
+        }
+    }
+}
+
+/// A first-goal search's preferred and fallback goal sets. The preferred
+/// set runs the search: its proof steps once per settle and lifts or ends
+/// it, and its first goal to settle ends it. The fallback set records its
+/// first goal on the way, decided at every point exactly as a search over
+/// the fallback alone would decide it (Dijkstra's settle order does not
+/// depend on the goals). Within its unproven budget that needs no proof;
+/// when one of its goals settles past that budget, or the preferred set
+/// stops without a goal, its proof starts, caught up to one step per settle
+/// spent. The preferred proof has decided by then, so only one proof's
+/// scratch is live at a time.
+struct FirstGoals<'a> {
+    gates: ProofGates<'a>,
+    reachable_budget: usize,
+    preferred: GoalSet<'a>,
+    fallback: GoalSet<'a>,
+}
+
+impl<'a> FirstGoals<'a> {
+    fn new(
+        gates: ProofGates<'a>,
+        targets: &'a [WorldTile],
+        fallback: &'a [WorldTile],
+        budget: usize,
+        reachable_budget: usize,
+    ) -> Self {
+        let mut preferred = GoalSet::new(targets, budget);
+        preferred.prove_to(gates, 0, reachable_budget);
+        Self {
+            gates,
+            reachable_budget,
+            preferred,
+            fallback: GoalSet::new(fallback, budget),
+        }
+    }
+
+    fn settle(&mut self, tile: WorldTile, cost: TargetCost) -> Settle {
+        let settled = cost.settled_at;
+        if settled > self.preferred.budget {
+            self.preferred.close(RouteError::BudgetExhausted);
+            self.decide_fallback(settled - 1, settled);
+            return Settle::Spent;
+        }
+        if self.preferred.accept(tile, cost) {
+            return Settle::Stop;
+        }
+        self.settle_fallback(tile, cost);
+        self.preferred
+            .prove_to(self.gates, settled, self.reachable_budget);
+        if self.preferred.live() {
+            return Settle::Continue;
+        }
+        self.decide_fallback(settled, settled);
+        Settle::Stop
+    }
+
+    /// A fallback goal settling past the set's unproven budget counts only
+    /// if the set's proof showed a goal reachable within that budget;
+    /// otherwise a search over the fallback alone stopped at the budget, and
+    /// so does the set. (Settling past the preferred set's lifted budget
+    /// implies the preferred proof decided, dropping its scratch.)
+    fn settle_fallback(&mut self, tile: WorldTile, cost: TargetCost) {
+        if !self.fallback.live() || !self.fallback.targets.contains(&tile) {
+            return;
+        }
+        let settled = cost.settled_at;
+        if settled > self.fallback.budget {
+            self.decide_fallback(settled - 1, settled);
+        }
+        self.fallback.accept(tile, cost);
+    }
+
+    /// Decides the fallback set, where that needs no further settle, after
+    /// `spent` settles with settle ordinal `known` known to exist. Its proof
+    /// is caught up to one step per settle spent, up to its budget, as a
+    /// search over it alone would have stepped it: shown unreachable, the
+    /// set has failed; not shown reachable while a settle past its budget
+    /// exists, that search stopped at the budget. Otherwise it stays
+    /// undecided.
+    fn decide_fallback(&mut self, spent: usize, known: usize) {
+        if !self.fallback.live() {
+            return;
+        }
+        let steps = spent.min(self.fallback.budget);
+        self.fallback
+            .prove_to(self.gates, steps, self.reachable_budget);
+        if self.fallback.live() && known > self.fallback.budget {
+            self.fallback.close(RouteError::BudgetExhausted);
+        }
+    }
+
+    /// Everything reachable settled, `settled` nodes, without a preferred
+    /// goal; a fallback set not stopped earlier has no goal to settle.
+    fn exhausted(&mut self, settled: usize) {
+        self.preferred.close(RouteError::NoPath);
+        self.decide_fallback(settled, settled);
+        if self.fallback.live() {
+            self.fallback.close(RouteError::NoPath);
+        }
+    }
+
+    /// The preferred proof's outcome, and the larger scratch of the two
+    /// proofs (the fallback's starts only after the preferred one's is
+    /// dropped).
+    fn finish_proofs(&mut self) -> ReverseReport {
+        let preferred = self.preferred.proof.finish();
+        let fallback = self.fallback.proof.finish();
+        ReverseReport {
+            proof: preferred.proof,
+            seen: preferred.seen.max(fallback.seen),
+            queue: preferred.queue.max(fallback.queue),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchStop {
+    Completed,
+    Exhausted,
+    Budget,
+    Deadline,
+}
+
+struct SearchOutcome {
+    came_from: HashMap<WorldTile, Back>,
+    settled: usize,
+    stop: SearchStop,
+    capacities: SearchCapacities,
+    proof: ReverseProof,
+}
+
+impl SearchOutcome {
+    fn empty() -> Self {
+        Self {
+            came_from: HashMap::new(),
+            settled: 0,
+            stop: SearchStop::Completed,
+            capacities: SearchCapacities::default(),
+            proof: ReverseProof::NotRun,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)] // the kernel's scratch tables plus its stop facts
+    fn finish(
+        came_from: HashMap<WorldTile, Back>,
+        dist: &HashMap<WorldTile, f64>,
+        done: &HashSet<WorldTile>,
+        heap: &BinaryHeap<HeapNode>,
+        settled: usize,
+        stop: SearchStop,
+        record_capacities: bool,
+        reverse: ReverseReport,
+    ) -> Self {
+        let capacities = if record_capacities {
+            SearchCapacities {
+                distances: dist.capacity(),
+                predecessors: came_from.capacity(),
+                settled: done.capacity(),
+                heap: heap.capacity(),
+                reverse: reverse.seen,
+                reverse_queue: reverse.queue,
+            }
+        } else {
+            SearchCapacities::default()
+        };
+        Self {
+            came_from,
+            settled,
+            stop,
+            capacities,
+            proof: reverse.proof,
+        }
+    }
+}
+
+/// Whether `state` proves `edge`'s requirements; the BankBudget diagnosis
+/// (`relax_carry_worn`) ignores only its `item_req`/`worn_req` gates.
+fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax_carry_worn: bool) -> bool {
+    if relax_carry_worn {
+        state.allows_without_carry_worn(edge)
+    } else {
+        state.allows(edge)
+    }
+}
+
+/// The outcome and peak scratch of one search's backward proof.
+#[derive(Clone, Copy, Default)]
+struct ReverseReport {
+    proof: ReverseProof,
+    seen: usize,
+    queue: usize,
+}
+
+/// The forward search's gates, as its backward proofs borrow them.
+#[derive(Clone, Copy)]
+struct ProofGates<'a> {
+    collision: &'a WorldCollision,
+    graph: &'a TransportGraph,
+    state: &'a WorldState,
+    essence: Option<&'a EssenceSession>,
+    from: WorldTile,
+    use_teleports: bool,
+    allow_wilderness: bool,
+    relax_carry_worn: bool,
+}
+
+/// One goal set's backward proof: not yet started, then live closure
+/// scratch until the proof decides, then only its report.
+#[derive(Default)]
+struct ReverseRun<'a> {
+    started: bool,
+    /// Backward steps taken since the proof started.
+    steps: usize,
+    closure: Option<ReverseClosure<'a>>,
+    report: ReverseReport,
+}
+
+impl<'a> ReverseRun<'a> {
+    /// Starts the proof from `seeds` if it has not started, then steps it
+    /// until it has taken `steps` backward steps. A decision drops the
+    /// closure's scratch and is returned once.
+    fn run_to(
+        &mut self,
+        gates: ProofGates<'a>,
+        seeds: &[WorldTile],
+        steps: usize,
+    ) -> Option<ReverseProof> {
+        if !self.started {
+            self.started = true;
+            let mut closure = ReverseClosure::new(gates);
+            for &seed in seeds {
+                if let Some(proof) = closure.admit(seed) {
+                    self.report = closure.report(proof);
+                    return Some(proof);
+                }
+            }
+            self.closure = Some(closure);
+        }
+        while self.steps < steps {
+            let closure = self.closure.as_mut()?;
+            self.steps += 1;
+            if let Some(proof) = closure.step() {
+                self.report = closure.report(proof);
+                self.closure = None;
+                return Some(proof);
+            }
+        }
+        None
+    }
+
+    /// The final report, dropping live scratch: a closure still running
+    /// when its set or the search stops is [`ReverseProof::Open`].
+    fn finish(&mut self) -> ReverseReport {
+        if let Some(closure) = self.closure.take() {
+            self.report = closure.report(ReverseProof::Open);
+        }
+        self.report
+    }
+}
+
+/// Backward closure of a goal set over a superset of the forward search's
+/// moves. Walk predecessors are exact: `p` precedes `q` when the forward
+/// [`step_ok`] and wilderness entry gate admit the step `p -> q`. Transport
+/// and essence-return predecessors (the standable take-offs within
+/// [`INTERACT_RADIUS`] of each usable edge landing in the closure) are added
+/// whenever the walk frontier empties, by one scan of the packed edge list (a
+/// few thousand edges) rather than a per-search index. Avoidance rectangles
+/// only remove forward moves and are ignored.
+///
+/// Admitting the origin, or the landing of a teleport the forward search can
+/// take from the origin, proves a goal reachable. Any other usable teleport
+/// landing in the closure makes every tile a potential predecessor, so a
+/// closure holding one cannot prove anything unreachable. Otherwise a closure
+/// that empties without meeting the origin is closed under every forward
+/// predecessor, so no forward path reaches the goal set.
+struct ReverseClosure<'a> {
+    collision: &'a WorldCollision,
+    graph: &'a TransportGraph,
+    state: &'a WorldState,
+    essence: Option<&'a EssenceSession>,
+    from: WorldTile,
+    use_teleports: bool,
+    allow_wilderness: bool,
+    relax_carry_worn: bool,
+    /// Landings of the gated teleports usable from `from` itself.
+    landings: HashSet<WorldTile>,
+    seen: HashSet<WorldTile>,
+    queue: VecDeque<WorldTile>,
+}
+
+impl<'a> ReverseClosure<'a> {
+    fn new(gates: ProofGates<'a>) -> Self {
+        let ProofGates {
+            collision,
+            graph,
+            state,
+            essence,
+            from,
+            use_teleports,
+            allow_wilderness,
+            relax_carry_worn,
+        } = gates;
+        let landings = if use_teleports {
+            let level = graph.wilderness.level(from);
+            graph
+                .teleports
+                .iter()
+                .filter(|edge| {
+                    edge_allowed(state, edge, relax_carry_worn)
+                        && TransportGraph::teleport_legal_at_level(level, edge)
+                        && wildy_step_ok(graph, from, edge.to, allow_wilderness)
+                })
+                .map(|edge| edge.to)
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        Self {
+            collision,
+            graph,
+            state,
+            essence,
+            from,
+            use_teleports,
+            allow_wilderness,
+            relax_carry_worn,
+            landings,
+            seen: HashSet::new(),
+            queue: VecDeque::new(),
+        }
+    }
+
+    fn report(&self, proof: ReverseProof) -> ReverseReport {
+        ReverseReport {
+            proof,
+            seen: self.seen.capacity(),
+            queue: self.queue.capacity(),
+        }
+    }
+
+    /// Admit a predecessor. `Some` ends the proof: the origin (or a teleport
+    /// landing it can reach directly) precedes the goals, or the closure
+    /// outgrew [`REVERSE_PROOF_BUDGET`].
+    fn admit(&mut self, tile: WorldTile) -> Option<ReverseProof> {
+        if !self.seen.insert(tile) {
+            return None;
+        }
+        if tile == self.from || (!self.landings.is_empty() && self.landings.contains(&tile)) {
+            return Some(ReverseProof::Reachable);
+        }
+        if self.seen.len() > REVERSE_PROOF_BUDGET {
+            return Some(ReverseProof::Abandoned);
+        }
+        self.queue.push_back(tile);
+        None
+    }
+
+    /// Expand the oldest frontier tile's walk predecessors, or cross
+    /// transports once the walk frontier is empty.
+    fn step(&mut self) -> Option<ReverseProof> {
+        let Some(tile) = self.queue.pop_front() else {
+            return self.cross_transports();
+        };
+        for d in STEPS {
+            let before = WorldTile {
+                x: tile.x - d.0,
+                z: tile.z - d.1,
+                level: tile.level,
+            };
+            if step_ok(self.collision, before, d)
+                && wildy_step_ok(self.graph, before, tile, self.allow_wilderness)
+            {
+                if let Some(proof) = self.admit(before) {
+                    return Some(proof);
+                }
+            }
+        }
+        None
+    }
+
+    /// Admit every transport and essence-return take-off whose landing is in
+    /// the closure. Nothing new means the closure is complete.
+    fn cross_transports(&mut self) -> Option<ReverseProof> {
+        let graph = self.graph;
+        let state = self.state;
+        if self.use_teleports
+            && graph.teleports.iter().any(|edge| {
+                self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax_carry_worn)
+            })
+        {
+            return Some(ReverseProof::Abandoned);
+        }
+        let admitted = self.seen.len();
+        for edge in &graph.edges {
+            if self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax_carry_worn) {
+                if let Some(proof) = self.admit_takeoffs(edge.at, edge.to) {
+                    return Some(proof);
+                }
+            }
+        }
+        if let Some(session) = self.essence {
+            if self.seen.contains(&session.return_tile) {
+                for &portal in ESSENCE_MINE_PORTALS {
+                    if let Some(proof) = self.admit_takeoffs(portal, session.return_tile) {
+                        return Some(proof);
+                    }
+                }
+            }
+        }
+        (self.seen.len() == admitted).then_some(ReverseProof::Unreachable)
+    }
+
+    /// The forward search takes an edge at `at` from any standable tile
+    /// within [`INTERACT_RADIUS`] on `at`'s level.
+    fn admit_takeoffs(&mut self, at: WorldTile, to: WorldTile) -> Option<ReverseProof> {
+        for dx in -INTERACT_RADIUS..=INTERACT_RADIUS {
+            for dz in -INTERACT_RADIUS..=INTERACT_RADIUS {
+                let takeoff = WorldTile {
+                    x: at.x + dx,
+                    z: at.z + dz,
+                    level: at.level,
+                };
+                if self.collision.standable(takeoff)
+                    && wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
+                {
+                    if let Some(proof) = self.admit(takeoff) {
+                        return Some(proof);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// The shared single-target Dijkstra behind [`find`]/[`find_with`]:
+/// `use_teleports` unions the any-tile teleport layer into the relaxation
+/// from every settled node. Transport edges are relaxed from any standable
+/// tile within [`INTERACT_RADIUS`] of their `at` (never from `at` itself
+/// when it is blocked); walk steps are the strict directional [`step_ok`]
+/// test throughout. `allow_wilderness` gates stepping into (or landing in)
+/// the wilderness zone; `state` gates every transport edge (walked or
+/// teleported) on its requirements — an edge the state cannot prove is not
+/// relaxed.
 #[allow(clippy::too_many_arguments)]
 fn find_bounded_impl(
     collision: &WorldCollision,
@@ -518,7 +1604,6 @@ fn find_bounded_impl(
     allow_wilderness: bool,
     state: &WorldState,
     essence: Option<&EssenceSession>,
-    relax_carry_worn: bool,
     avoid: &[AvoidRect],
 ) -> Result<Route, RouteError> {
     if from == to {
@@ -529,6 +1614,62 @@ fn find_bounded_impl(
         });
     }
 
+    let mut goals = Goals::Single { to, cost: None };
+    let search = search_kernel(
+        collision,
+        graph,
+        from,
+        model,
+        budget,
+        use_teleports,
+        allow_wilderness,
+        state,
+        essence,
+        false,
+        avoid,
+        &mut goals,
+        None,
+    );
+    match goals {
+        Goals::Single {
+            cost: Some(cost), ..
+        } => {
+            let (legs, ticks) = reconstruct(to, &search.came_from, graph, model, essence);
+            debug_assert_eq!(ticks, cost.ticks);
+            Ok(Route {
+                legs,
+                dest: to,
+                ticks,
+            })
+        }
+        _ if search.stop == SearchStop::Budget => Err(RouteError::BudgetExhausted),
+        _ => Err(RouteError::NoPath),
+    }
+}
+
+/// The Dijkstra kernel shared by every search shape. `relax_carry_worn` is
+/// the BankBudget diagnosis arm only: it drops the `item_req`/`worn_req`
+/// gates so the session can tell a missing-item failure from a
+/// skill/quest/varp gate. `budget` caps every search; within it, `goals`
+/// decide at each settled node whether the search goes on (a first-goal
+/// search's sets run their own budgets and backward proofs).
+#[allow(clippy::too_many_arguments)]
+fn search_kernel(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    model: CostModel,
+    budget: usize,
+    use_teleports: bool,
+    allow_wilderness: bool,
+    state: &WorldState,
+    essence: Option<&EssenceSession>,
+    relax_carry_worn: bool,
+    avoid: &[AvoidRect],
+    goals: &mut Goals<'_>,
+    deadline: Option<Instant>,
+) -> SearchOutcome {
+    let record_capacities = matches!(goals, Goals::First(_) | Goals::Many { .. });
     let mut dist: HashMap<WorldTile, f64> = HashMap::new();
     let mut came_from: HashMap<WorldTile, Back> = HashMap::new();
     let mut heap: BinaryHeap<HeapNode> = BinaryHeap::new();
@@ -541,7 +1682,23 @@ fn find_bounded_impl(
     });
 
     let mut expanded = 0usize;
-    while let Some(n) = heap.pop() {
+    let mut heap_pops = 0usize;
+    let expired = || deadline.is_some_and(|end| Instant::now() >= end);
+    while !heap.is_empty() {
+        if heap_pops & 255 == 0 && expired() {
+            return SearchOutcome::finish(
+                came_from,
+                &dist,
+                &done,
+                &heap,
+                expanded,
+                SearchStop::Deadline,
+                record_capacities,
+                goals.finish_proofs(),
+            );
+        }
+        heap_pops += 1;
+        let n = heap.pop().expect("nonempty heap");
         let cur = n.tile;
         // A stale heap entry (a cheaper path was found after the push) is
         // skipped; the first pop at the settled distance settles the tile.
@@ -552,16 +1709,30 @@ fn find_bounded_impl(
             continue;
         }
         expanded += 1;
-        if expanded > budget {
-            return Err(RouteError::BudgetExhausted);
-        }
-        if cur == to {
-            let (legs, ticks) = reconstruct(to, &came_from, graph, model, essence);
-            return Ok(Route {
-                legs,
-                dest: to,
-                ticks,
-            });
+        let stop = if expanded > budget {
+            Some((budget, SearchStop::Budget))
+        } else {
+            match goals.settle(cur, n.cost, expanded) {
+                Settle::Continue => None,
+                Settle::Stop => Some((expanded, SearchStop::Completed)),
+                Settle::Spent => Some((expanded - 1, SearchStop::Budget)),
+            }
+        };
+        if let Some((settled, stop)) = stop {
+            return SearchOutcome::finish(
+                came_from,
+                &dist,
+                &done,
+                &heap,
+                settled,
+                if expired() {
+                    SearchStop::Deadline
+                } else {
+                    stop
+                },
+                record_capacities,
+                goals.finish_proofs(),
+            );
         }
 
         let escaping = !avoid.is_empty() && tile_in_any_avoid(cur, avoid);
@@ -576,7 +1747,7 @@ fn find_bounded_impl(
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(nb, avoid) {
                     continue;
                 }
-                if !wildy_step_ok(cur, nb, allow_wilderness) {
+                if !wildy_step_ok(graph, cur, nb, allow_wilderness) {
                     continue;
                 }
                 let nd = n.cost + model.run_per_step;
@@ -607,18 +1778,13 @@ fn find_bounded_impl(
                     };
                     for &ei in idxs {
                         let edge = &graph.edges[ei];
-                        let gate_ok = if relax_carry_worn {
-                            state.allows_without_carry_worn(edge)
-                        } else {
-                            state.allows(edge)
-                        };
-                        if !gate_ok {
+                        if !edge_allowed(state, edge, relax_carry_worn) {
                             continue;
                         }
                         if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
                             continue;
                         }
-                        if !wildy_step_ok(cur, edge.to, allow_wilderness) {
+                        if !wildy_step_ok(graph, cur, edge.to, allow_wilderness) {
                             continue;
                         }
                         let nd = n.cost + edge.ticks as f64;
@@ -653,7 +1819,7 @@ fn find_bounded_impl(
                     {
                         continue;
                     }
-                    if !wildy_step_ok(cur, session.return_tile, allow_wilderness) {
+                    if !wildy_step_ok(graph, cur, session.return_tile, allow_wilderness) {
                         continue;
                     }
                     let nd = n.cost + ESSENCE_MINE_EXIT_TICKS as f64;
@@ -678,19 +1844,18 @@ fn find_bounded_impl(
         // other transport `to` (no walkability filter — the content
         // declares it).
         if use_teleports {
+            let wildy_level = graph.wilderness.level(cur);
             for (ti, edge) in graph.teleports.iter().enumerate() {
-                let gate_ok = if relax_carry_worn {
-                    state.allows_without_carry_worn(edge)
-                } else {
-                    state.allows(edge)
-                };
-                if !gate_ok {
+                if !edge_allowed(state, edge, relax_carry_worn) {
                     continue;
                 }
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
                     continue;
                 }
-                if !wildy_step_ok(cur, edge.to, allow_wilderness) {
+                if !wildy_step_ok(graph, cur, edge.to, allow_wilderness) {
+                    continue;
+                }
+                if !TransportGraph::teleport_legal_at_level(wildy_level, edge) {
                     continue;
                 }
                 let nd = n.cost + edge.ticks as f64;
@@ -711,15 +1876,37 @@ fn find_bounded_impl(
             }
         }
     }
-    Err(RouteError::NoPath)
+    let stop = if expired() {
+        SearchStop::Deadline
+    } else {
+        goals.exhausted(expanded);
+        SearchStop::Exhausted
+    };
+    SearchOutcome::finish(
+        came_from,
+        &dist,
+        &done,
+        &heap,
+        expanded,
+        stop,
+        record_capacities,
+        goals.finish_proofs(),
+    )
 }
 
 /// Whether the search may move from `cur` onto `next`: without
 /// `allow_wilderness` a non-wilderness node may not relax into a
 /// wilderness tile (a walk step or a transport landing). Once inside the
-/// wilderness the search walks freely — only the entry is gated.
-fn wildy_step_ok(cur: WorldTile, next: WorldTile, allow_wilderness: bool) -> bool {
-    allow_wilderness || in_wilderness(cur) || !in_wilderness(next)
+/// wilderness the search walks freely — only the entry is gated. Membership
+/// is the packed [`TransportGraph::wilderness`] table; empty zones gate
+/// nothing.
+fn wildy_step_ok(
+    graph: &TransportGraph,
+    cur: WorldTile,
+    next: WorldTile,
+    allow_wilderness: bool,
+) -> bool {
+    allow_wilderness || graph.wilderness.contains(cur) || !graph.wilderness.contains(next)
 }
 
 /// Whether a one-tile step from `cur` by `d` is allowed — the client's
@@ -747,12 +1934,11 @@ pub(crate) fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32))
         return false;
     }
     let f = |x: i32, z: i32| collision.walkable_word(x, z, nb.level);
-    match (d.0, d.1) {
+    if let Some(mask) = cardinal_entry_mask(d) {
         // Cardinal: the destination's face toward `cur`.
-        (0, 1) => f(nb.x, nb.z) & MASK_S == 0,
-        (0, -1) => f(nb.x, nb.z) & MASK_N == 0,
-        (1, 0) => f(nb.x, nb.z) & MASK_W == 0,
-        (-1, 0) => f(nb.x, nb.z) & MASK_E == 0,
+        return f(nb.x, nb.z) & mask == 0;
+    }
+    match (d.0, d.1) {
         // Diagonal: the destination's corner mask plus both orthogonals.
         (-1, -1) => {
             f(nb.x, nb.z) & MASK_NE == 0
@@ -775,6 +1961,18 @@ pub(crate) fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32))
                 && f(cur.x, cur.z + 1) & MASK_S == 0
         }
         _ => false,
+    }
+}
+
+/// The `PL_WALK_*` mask a cardinal step by `d` tests on the tile it enters
+/// (the face toward the tile it leaves); `None` for any other delta.
+pub(crate) fn cardinal_entry_mask(d: (i32, i32)) -> Option<u32> {
+    match d {
+        (0, 1) => Some(MASK_S),
+        (0, -1) => Some(MASK_N),
+        (1, 0) => Some(MASK_W),
+        (-1, 0) => Some(MASK_E),
+        _ => None,
     }
 }
 
@@ -943,2070 +2141,9 @@ impl Ord for HeapNode {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Legacy step-grid A* (the pre-Task-13 router), kept under `find_on_grid`
-// for the traveller and the live harnesses until they move to the
-// collision+transport router.
-// ---------------------------------------------------------------------------
-
-/// One leg of a step-grid route: a walk segment or a door crossing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GridLeg {
-    Walk {
-        tiles: Vec<Tile>,
-    },
-    Door {
-        loc: Tile,
-        loc_id: i32,
-        from: Tile,
-        to: Tile,
-    },
-}
-
-/// A step-grid route from an origin to `dest`, split into legs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GridRoute {
-    pub legs: Vec<GridLeg>,
-    pub dest: Tile,
-}
-
-/// Returned by [`find_on_grid`] when no walkable path connects the two
-/// tiles.
-#[derive(Debug)]
-pub struct NoPath;
-
-/// A* over the 4-neighbour grid (N/E/S/W, cost 1, heuristic chebyshev),
-/// extended by directed door edges: from a tile `d.from`, a door lets the
-/// route jump to `d.to` at cost 2. Same level only. `from` is assumed to sit
-/// on a walkable tile; every tile moved onto must be walkable. Legs split
-/// around door crossings: a walk leg up to the door's `from`, the Door leg,
-/// then a walk leg onward from its `to`. Each result leg is non-empty; the
-/// first walk leg starts at `from` and the last ends at `to`.
-pub fn find_on_grid(grid: &StepGrid, from: Tile, to: Tile) -> Result<GridRoute, NoPath> {
-    if from.level != to.level {
-        return Err(NoPath);
-    }
-    if from == to {
-        return Ok(GridRoute {
-            legs: vec![GridLeg::Walk { tiles: vec![from] }],
-            dest: to,
-        });
-    }
-
-    let mut open = BinaryHeap::new();
-    let mut best_g: HashMap<Tile, i32> = HashMap::new();
-    let mut came_from: HashMap<Tile, GridBack> = HashMap::new();
-
-    best_g.insert(from, 0);
-    open.push(GridNode {
-        tile: from,
-        f: chebyshev(from, to),
-    });
-
-    while let Some(GridNode { tile: cur, .. }) = open.pop() {
-        if cur == to {
-            let legs = reconstruct_on_grid(cur, &came_from);
-            return Ok(GridRoute { legs, dest: to });
-        }
-
-        let cur_g = best_g[&cur];
-        let mut relax = |nb: Tile, cost: i32, back: GridBack| {
-            let tentative_g = cur_g + cost;
-            if tentative_g < *best_g.get(&nb).unwrap_or(&i32::MAX) {
-                came_from.insert(nb, back);
-                best_g.insert(nb, tentative_g);
-                open.push(GridNode {
-                    tile: nb,
-                    f: tentative_g + chebyshev(nb, to),
-                });
-            }
-        };
-        for nb in [north(cur), east(cur), south(cur), west(cur)] {
-            if grid.walkable(nb) {
-                relax(nb, 1, GridBack::Walk(cur));
-            }
-        }
-        for d in &grid.doors {
-            if d.from == cur && grid.walkable(d.to) {
-                relax(d.to, 2, GridBack::Door(*d));
-            }
-        }
-    }
-
-    Err(NoPath)
-}
-
-/// Split the A* backtrack from `cur` back to `from` into legs at door
-/// crossings. `from` is implicit: backtracking stops when the entry-less
-/// start tile is reached, and that tile is already the last element of the
-/// final walk segment.
-fn reconstruct_on_grid(cur: Tile, came_from: &HashMap<Tile, GridBack>) -> Vec<GridLeg> {
-    // Walk tiles accumulated in reverse order (cur-side first).
-    let mut walk_rev = vec![cur];
-    let mut t = cur;
-    let mut legs_rev: Vec<GridLeg> = Vec::new();
-    while let Some(prev) = came_from.get(&t) {
-        match prev {
-            GridBack::Walk(pt) => {
-                walk_rev.push(*pt);
-                t = *pt;
-            }
-            GridBack::Door(d) => {
-                walk_rev.reverse();
-                legs_rev.push(GridLeg::Walk { tiles: walk_rev });
-                legs_rev.push(GridLeg::Door {
-                    loc: d.loc,
-                    loc_id: d.loc_id,
-                    from: d.from,
-                    to: d.to,
-                });
-                // The next walk segment runs up to this door's `from`.
-                walk_rev = vec![d.from];
-                t = d.from;
-            }
-        }
-    }
-    walk_rev.reverse();
-    legs_rev.push(GridLeg::Walk { tiles: walk_rev });
-    legs_rev.reverse();
-    legs_rev
-}
-
-/// How `came_from`'s key was reached: by a walk step from `Walk`'s tile or
-/// by a door crossing recorded in `Door`.
-#[derive(Clone, Copy)]
-enum GridBack {
-    Walk(Tile),
-    Door(DoorEdge),
-}
-
-fn north(t: Tile) -> Tile {
-    Tile {
-        x: t.x,
-        z: t.z + 1,
-        level: t.level,
-    }
-}
-fn east(t: Tile) -> Tile {
-    Tile {
-        x: t.x + 1,
-        z: t.z,
-        level: t.level,
-    }
-}
-fn south(t: Tile) -> Tile {
-    Tile {
-        x: t.x,
-        z: t.z - 1,
-        level: t.level,
-    }
-}
-fn west(t: Tile) -> Tile {
-    Tile {
-        x: t.x - 1,
-        z: t.z,
-        level: t.level,
-    }
-}
-
-/// Heap entry; `Ord` is reversed so the smallest f pops first, with tile
-/// coordinates as tie-breakers to keep the ordering total.
-struct GridNode {
-    tile: Tile,
-    f: i32,
-}
-
-impl PartialEq for GridNode {
-    fn eq(&self, other: &Self) -> bool {
-        self.f == other.f && self.tile == other.tile
-    }
-}
-impl Eq for GridNode {}
-
-impl PartialOrd for GridNode {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for GridNode {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other
-            .f
-            .cmp(&self.f)
-            .then_with(|| self.tile.x.cmp(&other.tile.x))
-            .then_with(|| self.tile.z.cmp(&other.tile.z))
-            .then_with(|| self.tile.level.cmp(&other.tile.level))
-    }
-}
+mod grid;
+pub use grid::{find_on_grid, GridLeg, GridRoute, NoPath};
 
 #[cfg(test)]
-mod tests {
-    use api::obj_names::LocDefs;
-    use api::snapshot::WorldTile;
-    use client::config::{Cache, LocType};
-    use client::dash3d::CollisionFlag;
-    use client::io::JagFile;
-    use std::collections::{HashMap, HashSet};
-    use std::fs;
-    use std::path::PathBuf;
-
-    use crate::collision::{bake_from_maps, WorldCollision};
-    use crate::grid::StepGrid;
-    use crate::router::{
-        find, find_allow_teleports, find_bounded, find_missing_item_reqs,
-        find_missing_item_reqs_with_avoid, find_on_grid, find_with, find_with_avoid,
-        find_with_model, local_step_component, step_ok, AvoidRect, CostModel, FindOptions, GridLeg,
-        Leg, MissingReq, RouteError, PER_STEP_WALK,
-    };
-    use crate::tile::Tile;
-    use crate::transport::{derive_transports, TransportEdge, TransportGraph, TransportKind};
-    use crate::world_state::WorldState;
-
-    #[test]
-    fn local_component_rejects_invalid_origins_and_clamps_radius() {
-        let collision = WorldCollision {
-            origin: WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            width: 3,
-            height: 3,
-            walk: vec![0; 36],
-            blocked: vec![0],
-            flags: None,
-        };
-        assert!(local_step_component(
-            &collision,
-            WorldTile {
-                x: -1,
-                z: 0,
-                level: 0,
-            },
-            1,
-        )
-        .is_empty());
-        assert!(local_step_component(
-            &collision,
-            WorldTile {
-                x: 0,
-                z: 0,
-                level: 4,
-            },
-            1,
-        )
-        .is_empty());
-        assert_eq!(
-            local_step_component(&collision, collision.origin, 999).len(),
-            9
-        );
-    }
-
-    #[test]
-    fn find_on_grid_across_open_3x3_is_a_walk_leg() {
-        let g = StepGrid::fixture_open_3x3();
-        let r = find_on_grid(
-            &g,
-            Tile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            Tile {
-                x: 2,
-                z: 2,
-                level: 0,
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            r.dest,
-            Tile {
-                x: 2,
-                z: 2,
-                level: 0
-            }
-        );
-        let GridLeg::Walk { tiles } = &r.legs[0] else {
-            panic!()
-        };
-        assert_eq!(tiles.first().unwrap().x, 0);
-        assert_eq!(tiles.last(), Some(&r.dest));
-    }
-
-    #[test]
-    fn find_on_grid_through_wall_is_no_path() {
-        let mut g = StepGrid::fixture_open_3x3();
-        g.set_walkable(
-            Tile {
-                x: 1,
-                z: 0,
-                level: 0,
-            },
-            false,
-        );
-        g.set_walkable(
-            Tile {
-                x: 1,
-                z: 1,
-                level: 0,
-            },
-            false,
-        );
-        g.set_walkable(
-            Tile {
-                x: 1,
-                z: 2,
-                level: 0,
-            },
-            false,
-        );
-        assert!(find_on_grid(
-            &g,
-            Tile {
-                x: 0,
-                z: 1,
-                level: 0
-            },
-            Tile {
-                x: 2,
-                z: 1,
-                level: 0
-            }
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn find_on_grid_uses_door_edge_across_a_wall() {
-        let g = StepGrid::fixture_door_corridor();
-        let r = find_on_grid(
-            &g,
-            Tile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            Tile {
-                x: 4,
-                z: 0,
-                level: 0,
-            },
-        )
-        .unwrap();
-        assert!(r
-            .legs
-            .iter()
-            .any(|l| matches!(l, GridLeg::Door { loc_id: 1530, .. })));
-    }
-
-    #[test]
-    fn door_route_splits_into_walk_door_walk_legs_on_grid() {
-        let g = StepGrid::fixture_door_corridor();
-        let r = find_on_grid(
-            &g,
-            Tile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            Tile {
-                x: 4,
-                z: 0,
-                level: 0,
-            },
-        )
-        .unwrap();
-        assert_eq!(r.legs.len(), 3);
-        let (
-            GridLeg::Walk { tiles: w0 },
-            GridLeg::Door {
-                loc,
-                loc_id,
-                from,
-                to,
-            },
-            GridLeg::Walk { tiles: w1 },
-        ) = (&r.legs[0], &r.legs[1], &r.legs[2])
-        else {
-            panic!("expected Walk, Door, Walk legs");
-        };
-        assert_eq!(
-            w0.first(),
-            Some(&Tile {
-                x: 0,
-                z: 0,
-                level: 0
-            })
-        );
-        assert_eq!(w0.last(), Some(from));
-        assert_eq!(w1.first(), Some(to));
-        assert_eq!(
-            w1.last(),
-            Some(&Tile {
-                x: 4,
-                z: 0,
-                level: 0
-            })
-        );
-        assert_eq!(loc_id, &1530);
-        assert_eq!(
-            loc,
-            &Tile {
-                x: 2,
-                z: 0,
-                level: 0
-            }
-        );
-    }
-
-    // --- Dijkstra router over collision + transport graph ---
-
-    fn tile(x: i32, z: i32, level: i32) -> WorldTile {
-        WorldTile { x, z, level }
-    }
-
-    /// A `width × height` level-0 bake at (0,0) with the given per-tile
-    /// flags OR'd in. Planes 1..=3 stay empty (the per-level bake shape).
-    fn bake(width: usize, height: usize, extras: &[(i32, i32, u32)]) -> WorldCollision {
-        bake_at(0, 0, width, height, extras)
-    }
-
-    /// A `width × height` level-0 bake at (`ox`, `oz`): the origin-offset
-    /// variant of [`bake`] for fixtures pinned to real world tiles (the
-    /// essence-mine mapsquare).
-    fn bake_at(
-        ox: i32,
-        oz: i32,
-        width: usize,
-        height: usize,
-        extras: &[(i32, i32, u32)],
-    ) -> WorldCollision {
-        let mut plane = vec![0u32; width * height];
-        for &(x, z, f) in extras {
-            plane[(z - oz) as usize * width + (x - ox) as usize] |= f;
-        }
-        let mut flags = vec![0u32; 4 * plane.len()];
-        flags[..plane.len()].copy_from_slice(&plane);
-        let (walk, blocked) = crate::collision::pack_walk(&flags);
-        WorldCollision {
-            origin: tile(ox, oz, 0),
-            width,
-            height,
-            walk,
-            blocked,
-            flags: None,
-        }
-    }
-
-    /// A scratch mapsquare directory for one fixture, removed on drop.
-    struct FixDir(PathBuf);
-
-    impl FixDir {
-        fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir()
-                .join(format!("274bot-nav-router-{name}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            FixDir(dir)
-        }
-    }
-
-    impl Drop for FixDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    /// A one-loc `LocDefs` table.
-    fn defs(locs: &[LocType]) -> LocDefs {
-        LocDefs::from_locs(locs)
-    }
-
-    /// A 5×5 grid split by a wall between x=1 and x=2: the client's `W_E` on
-    /// column 1 and `W_W` on column 2, so no step (or diagonal) crosses.
-    fn walled_5x5() -> WorldCollision {
-        let mut extras = Vec::new();
-        for z in 0..5 {
-            extras.push((1, z, CollisionFlag::W_E as u32));
-            extras.push((2, z, CollisionFlag::W_W as u32));
-        }
-        bake(5, 5, &extras)
-    }
-
-    /// The same wall with a door gap at `gap_z`: column 1 carries no `W_E`
-    /// there, so the door's `from` tile stays open while column 2's `W_W`
-    /// still seals the crossing.
-    fn walled_5x5_gap(gap_z: i32) -> WorldCollision {
-        let mut extras = Vec::new();
-        for z in 0..5 {
-            if z != gap_z {
-                extras.push((1, z, CollisionFlag::W_E as u32));
-            }
-            extras.push((2, z, CollisionFlag::W_W as u32));
-        }
-        bake(5, 5, &extras)
-    }
-
-    /// A 5×6 bake (x=0..4, z=0..5) walled between the west and east sides:
-    /// column 2 carries `W_W` for every row, column 1 carries `W_E` for
-    /// rows 1..=5, and the door's own `at=(2,0)` tile carries
-    /// `W_W | WR_GRND` — blocked, sealing the row-0 gap. The only crossing
-    /// is the door edge, and `at` itself is never standable. Row 4 (`W_N`
-    /// on every column) seals the north strip (z=5) away from the door's
-    /// radius-3 neighborhood.
-    fn blocked_door_fixture() -> WorldCollision {
-        let mut extras = Vec::new();
-        for z in 1..=5 {
-            extras.push((1, z, CollisionFlag::W_E as u32));
-            extras.push((2, z, CollisionFlag::W_W as u32));
-        }
-        for x in 0..5 {
-            extras.push((x, 4, CollisionFlag::W_N as u32));
-        }
-        extras.push((2, 0, (CollisionFlag::W_W | CollisionFlag::WR_GRND) as u32));
-        bake(5, 6, &extras)
-    }
-
-    /// One directed door edge `at -> to` (loc 1530, `Open` op 1).
-    fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
-        let edge = TransportEdge {
-            kind: TransportKind::Door,
-            at,
-            to,
-            loc_id: 1530,
-            option: 1,
-            ticks,
-            dir: None,
-            open_loc_id: None,
-            skill_req: vec![],
-            item_req: vec![],
-            quest_req: vec![],
-            varp_req: vec![],
-            worn_req: vec![],
-            members_req: false,
-        };
-        let mut graph = TransportGraph::default();
-        graph.at.entry(at).or_default().push(0);
-        graph.edges.push(edge);
-        graph
-    }
-
-    /// One any-tile teleport edge in `graph.teleports` (never in `at`).
-    fn teleport(
-        to: WorldTile,
-        ticks: i32,
-        skill_req: Vec<(i32, i32)>,
-        item_req: Vec<(i32, i32)>,
-    ) -> TransportGraph {
-        let mut graph = TransportGraph::default();
-        graph.teleports.push(TransportEdge {
-            kind: TransportKind::Teleport,
-            at: tile(0, 0, 0),
-            to,
-            loc_id: 0,
-            option: 0,
-            ticks,
-            dir: None,
-            open_loc_id: None,
-            skill_req,
-            item_req,
-            quest_req: vec![],
-            varp_req: vec![],
-            worn_req: vec![],
-            members_req: false,
-        });
-        graph
-    }
-
-    #[test]
-    fn find_across_open_room_is_a_single_walk_leg() {
-        let wc = bake(5, 5, &[]);
-        let g = TransportGraph::default();
-        let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
-        assert_eq!(r.dest, tile(4, 4, 0));
-        assert_eq!(r.ticks, 2.0); // 4 run steps at 0.5 ticks each
-        assert_eq!(r.legs.len(), 1);
-        let Leg::Walk { tiles } = &r.legs[0] else {
-            panic!("walk-only route");
-        };
-        assert_eq!(tiles.first(), Some(&tile(0, 0, 0)));
-        assert_eq!(tiles.last(), Some(&tile(4, 4, 0)));
-    }
-
-    #[test]
-    fn find_from_equals_to_is_a_single_tile_walk() {
-        let wc = bake(3, 3, &[]);
-        let g = TransportGraph::default();
-        let r = find(&wc, &g, tile(1, 1, 0), tile(1, 1, 0)).unwrap();
-        assert_eq!(r.ticks, 0.0); // no steps walked
-        assert_eq!(
-            r.legs,
-            vec![Leg::Walk {
-                tiles: vec![tile(1, 1, 0)]
-            }]
-        );
-    }
-
-    #[test]
-    fn find_through_an_unbroken_wall_is_no_path() {
-        let wc = walled_5x5();
-        let g = TransportGraph::default();
-        assert!(matches!(
-            find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)),
-            Err(RouteError::NoPath)
-        ));
-    }
-
-    #[test]
-    fn router_uses_transport_across_a_wall() {
-        // The wall has a door gap at z=2: the door's from tile stays open,
-        // but the wall's own stamps otherwise seal the crossing.
-        let wc = walled_5x5_gap(2);
-        let g = door(tile(1, 2, 0), tile(2, 2, 0), 2);
-        let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
-        assert_eq!(r.dest, tile(4, 4, 0));
-        // Origin (0,0) is chebyshev 2 from at=(1,2), so the search walks
-        // one step to an adjacent take-off (0.5) then the 2-tick door plus
-        // two run steps from the far side (1.0).
-        assert_eq!(r.ticks, 3.5);
-        assert_eq!(r.legs.len(), 3);
-        let (Leg::Walk { tiles: w0 }, Leg::Transport { edge }, Leg::Walk { tiles: w1 }) =
-            (&r.legs[0], &r.legs[1], &r.legs[2])
-        else {
-            panic!("expected Walk, Transport, Walk legs");
-        };
-        assert_eq!(w0.first(), Some(&tile(0, 0, 0)));
-        assert_eq!(
-            w0.len(),
-            2,
-            "walk up to an adjacent take-off, not from (0,0)"
-        );
-        assert_eq!(edge.loc_id, 1530);
-        assert_eq!(edge.ticks, 2);
-        assert_eq!(edge.at, tile(1, 2, 0));
-        assert_eq!(edge.to, tile(2, 2, 0));
-        assert_eq!(w1.first(), Some(&tile(2, 2, 0)));
-        assert_eq!(w1.last(), Some(&tile(4, 4, 0)));
-    }
-
-    #[test]
-    fn find_prefers_a_cheap_walk_over_a_costly_transport() {
-        let wc = bake(5, 5, &[]);
-        let g = door(tile(0, 0, 0), tile(4, 4, 0), 1000);
-        let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
-        // The 1000-tick door loses to the 2.0-tick walk (4 run steps).
-        assert_eq!(r.ticks, 2.0);
-        assert_eq!(r.legs.len(), 1);
-        assert!(matches!(&r.legs[0], Leg::Walk { .. }));
-    }
-
-    /// The blocked interact target: the door's `at=(2,0)` tile carries a
-    /// footprint/ground block, so it is neither standable nor walkable and
-    /// the old `at`-only expansion could never settle a node on it. The
-    /// neighborhood expansion must take the door from a *neighbouring*
-    /// standable tile instead.
-    #[test]
-    fn router_takes_a_transport_from_a_standable_tile_within_the_interact_radius() {
-        let wc = blocked_door_fixture();
-        let g = door(tile(2, 0, 0), tile(2, 2, 0), 2);
-        let r = find(&wc, &g, tile(1, 0, 0), tile(4, 2, 0)).unwrap();
-        assert_eq!(r.dest, tile(4, 2, 0));
-        // The 2-tick door taken from (1,0) + 2 run steps from (2,2) (1.0).
-        assert_eq!(r.ticks, 3.0);
-        let (Leg::Walk { tiles: w0 }, Leg::Transport { edge }, Leg::Walk { tiles: w1 }) =
-            (&r.legs[0], &r.legs[1], &r.legs[2])
-        else {
-            panic!("expected Walk, Transport, Walk legs");
-        };
-        // The walk leg before the door ends at the take-off tile (1,0) —
-        // a standable tile within the interact radius of `at`, not `at`
-        // itself.
-        assert_eq!(w0, &vec![tile(1, 0, 0)]);
-        assert_eq!(edge.loc_id, 1530);
-        assert_eq!(edge.ticks, 2);
-        assert_eq!(edge.at, tile(2, 0, 0));
-        assert_eq!(edge.to, tile(2, 2, 0));
-        assert_eq!(w1.first(), Some(&tile(2, 2, 0)));
-        assert_eq!(w1.last(), Some(&tile(4, 2, 0)));
-        // Never steps onto the blocked `at` tile.
-        let stepped: Vec<WorldTile> = r
-            .legs
-            .iter()
-            .flat_map(|l| match l {
-                Leg::Walk { tiles } => tiles.clone(),
-                Leg::Transport { .. } => vec![],
-            })
-            .collect();
-        assert!(!stepped.contains(&tile(2, 0, 0)));
-    }
-
-    #[test]
-    fn router_does_not_use_a_transport_from_beyond_the_interact_radius() {
-        let wc = blocked_door_fixture();
-        let g = door(tile(2, 0, 0), tile(2, 2, 0), 2);
-        // (1,5) sits at chebyshev 5 from `at=(2,0)` and is sealed away from
-        // every within-radius tile by the row-4 wall, so the door stays
-        // unusable: no path reaches the east side.
-        assert!(matches!(
-            find(&wc, &g, tile(1, 5, 0), tile(4, 2, 0)),
-            Err(RouteError::NoPath)
-        ));
-        // A same-strip destination routes by walking, never via the door.
-        let r = find(&wc, &g, tile(1, 5, 0), tile(0, 5, 0)).unwrap();
-        assert_eq!(r.ticks, 0.5);
-        assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
-    }
-
-    /// A south face flag on the middle tile blocks entering it from the
-    /// south, not from the north — a 1-wide corridor stays a corridor.
-    #[test]
-    fn find_face_flags_block_only_the_matching_direction() {
-        let wc = bake(1, 3, &[(0, 1, CollisionFlag::W_S as u32)]);
-        let g = TransportGraph::default();
-        assert!(
-            matches!(
-                find(&wc, &g, tile(0, 0, 0), tile(0, 2, 0)),
-                Err(RouteError::NoPath)
-            ),
-            "cannot enter the W_S tile from the south"
-        );
-        let r = find(&wc, &g, tile(0, 2, 0), tile(0, 0, 0)).expect("north-to-south still walks");
-        assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
-    }
-
-    /// The wall-tile fixture from the live `nav_door` trace: wall 980
-    /// (WALL_STRAIGHT, south) at (2816,3437) and door 1530 (WALL_STRAIGHT,
-    /// north) at (2816,3438) — m44_53 `0 0 45: 980 0 3` and
-    /// `0 0 46: 1530 0 1`. `step_ok` must reject every step into the wall
-    /// tile (the east step the live walker took) and the closed door, while
-    /// genuinely open neighbours still pass, and the router never routes
-    /// onto the wall tile.
-    #[test]
-    fn wall_tile_blocks_through_wall_steps_and_the_router_avoids_it() {
-        let fix = FixDir::new("wall-980-door-1530");
-        fs::write(
-            fix.0.join("m43_53.jm2"),
-            "==== MAP ====\n0 63 44: h1 u50\n0 63 45: h1 u50\n0 63 46: h1 u50\n==== LOC ====\n",
-        )
-        .unwrap();
-        fs::write(
-            fix.0.join("m44_53.jm2"),
-            "==== MAP ====\n0 0 43: h1 u50\n0 0 44: h10 u50\n0 0 45: h19 o10 u48\n0 0 46: h30 o10 u48\n0 0 47: h30 o5 f4 u50\n==== LOC ====\n0 0 45: 980 0 3\n0 0 46: 1530 0 1\n",
-        )
-        .unwrap();
-        let locs = defs(&[
-            LocType {
-                id: 980,
-                blockwalk: true,
-                ..LocType::default()
-            },
-            LocType {
-                id: 1530,
-                blockwalk: true,
-                ..LocType::default()
-            },
-        ]);
-        let mut door_ids = HashSet::new();
-        door_ids.insert(1530);
-        let wc = bake_from_maps(&fix.0, &locs, &door_ids).unwrap();
-        let g = TransportGraph::default();
-
-        // South face of wall 980: cannot enter that tile from the south.
-        // Entering it from the west is a walk along the wall, not through it.
-        assert!(!step_ok(&wc, tile(2816, 3436, 0), (0, 1)));
-        assert!(step_ok(&wc, tile(2815, 3437, 0), (1, 0)));
-        assert!(!step_ok(&wc, tile(2816, 3438, 0), (0, 1)));
-        // A genuinely open neighbour still passes.
-        assert!(step_ok(&wc, tile(2815, 3437, 0), (0, 1)));
-        assert!(step_ok(&wc, tile(2815, 3437, 0), (-1, 0)));
-
-        let r = find(&wc, &g, tile(2813, 3436, 0), tile(2815, 3438, 0)).unwrap();
-        let Leg::Walk { tiles } = &r.legs[0] else {
-            panic!("walk-only route");
-        };
-        // Crossing the wall's south face is still rejected; the path stays
-        // on the open side.
-        assert!(!tiles.contains(&tile(2816, 3436, 0)));
-    }
-
-    #[test]
-    fn find_transport_changes_level_and_walks_upstairs() {
-        let wc = bake(4, 4, &[]);
-        let ladder = TransportEdge {
-            kind: TransportKind::Ladder,
-            at: tile(0, 0, 0),
-            to: tile(1, 1, 1),
-            loc_id: 1747,
-            option: 1,
-            ticks: 3,
-            dir: None,
-            open_loc_id: None,
-            skill_req: vec![],
-            item_req: vec![],
-            quest_req: vec![],
-            varp_req: vec![],
-            worn_req: vec![],
-            members_req: false,
-        };
-        let mut g = TransportGraph::default();
-        g.at.entry(ladder.at).or_default().push(0);
-        g.edges.push(ladder.clone());
-        let r = find(&wc, &g, tile(0, 0, 0), tile(3, 1, 1)).unwrap();
-        assert_eq!(r.dest, tile(3, 1, 1));
-        // The 3-tick ladder plus 2 run steps on level 1 (1.0).
-        assert_eq!(r.ticks, 4.0);
-        let (Leg::Walk { tiles: w0 }, Leg::Transport { edge }, Leg::Walk { tiles: w1 }) =
-            (&r.legs[0], &r.legs[1], &r.legs[2])
-        else {
-            panic!("expected Walk, Transport, Walk legs");
-        };
-        assert_eq!(w0, &vec![tile(0, 0, 0)]);
-        assert_eq!(edge, &ladder);
-        assert_eq!(w1.first(), Some(&tile(1, 1, 1)));
-        assert_eq!(w1.last(), Some(&tile(3, 1, 1)));
-    }
-
-    #[test]
-    fn find_exhausts_the_node_budget_before_giving_up() {
-        let wc = bake(10, 10, &[]);
-        let g = TransportGraph::default();
-        assert!(matches!(
-            find_bounded(
-                &wc,
-                &g,
-                tile(0, 0, 0),
-                tile(9, 9, 0),
-                CostModel::running(),
-                8,
-            ),
-            Err(RouteError::BudgetExhausted)
-        ));
-        let r = find_bounded(
-            &wc,
-            &g,
-            tile(0, 0, 0),
-            tile(9, 9, 0),
-            CostModel::running(),
-            4096,
-        )
-        .unwrap();
-        assert_eq!(r.dest, tile(9, 9, 0));
-    }
-
-    #[test]
-    fn find_prefers_a_cheap_door_over_a_long_walk_around() {
-        // A 5×20 bake walled between x=1 and x=2 for z=1..=18 with a door
-        // gap at z=10: crossing on foot means walking 20 tiles around the
-        // wall ends (~10 ticks at the run rate), so the 1-tick door at
-        // mid-wall is the cheaper total-tick route.
-        let mut extras = Vec::new();
-        for z in 1..=18 {
-            if z != 10 {
-                extras.push((1, z, CollisionFlag::W_E as u32));
-            }
-            extras.push((2, z, CollisionFlag::W_W as u32));
-        }
-        let wc = bake(5, 20, &extras);
-        let g = door(tile(1, 10, 0), tile(2, 10, 0), 1);
-        let r = find(&wc, &g, tile(0, 10, 0), tile(4, 10, 0)).unwrap();
-        assert_eq!(r.dest, tile(4, 10, 0));
-        // The origin sits within the door's interact radius of at=(1,10),
-        // so the 1-tick door is taken from it (1.0) plus 2 walk tiles from
-        // its far side (1.0).
-        assert_eq!(r.ticks, 2.0);
-        assert!(r.legs.iter().any(|l| matches!(l, Leg::Transport { .. })));
-    }
-
-    #[test]
-    fn find_prefers_walking_around_over_a_cheap_door() {
-        // A single west-face flag at (2,2): walking around is 3 run steps
-        // (1.5 ticks), cheaper than the 2-tick door, so the router walks.
-        let wc = bake(5, 5, &[(2, 2, CollisionFlag::W_W as u32)]);
-        let g = door(tile(1, 2, 0), tile(2, 2, 0), 2);
-        let r = find(&wc, &g, tile(0, 2, 0), tile(3, 2, 0)).unwrap();
-        assert_eq!(r.ticks, 1.5);
-        assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
-    }
-
-    // --- WorldState gating (Task 1: find fails closed on unpaid edges) ---
-
-    /// An Al Kharid toll shape: the 5×5 wall is unbroken except for one
-    /// door crossing, and that door costs 10 coins (`item_req`, the same
-    /// requirement `toll_edges` derives for the border gates).
-    fn toll_graph() -> TransportGraph {
-        let mut g = door(tile(1, 2, 0), tile(2, 2, 0), 2);
-        g.edges[0].item_req = vec![(995, 10)]; // the 10-coin toll
-        g
-    }
-
-    /// A toll edge with an empty WorldState is not in the route — the
-    /// search cannot prove the player can pay, so it fails closed
-    /// (`NoPath`). The same edge with 10 coins in the inventory routes.
-    #[test]
-    fn find_gates_toll_edge_on_inventory_coins() {
-        let wc = walled_5x5();
-        let g = toll_graph();
-        let from = tile(0, 0, 0);
-        let to = tile(4, 4, 0);
-        assert!(
-            matches!(
-                find_with(
-                    &wc,
-                    &g,
-                    from,
-                    to,
-                    FindOptions::default(),
-                    &WorldState::empty()
-                ),
-                Err(RouteError::NoPath)
-            ),
-            "empty WorldState must not relax the unpaid toll"
-        );
-        // The same search with 10 coins in the inventory crosses.
-        let rich = WorldState {
-            inv: HashMap::from([(995, 10)]),
-            ..WorldState::default()
-        };
-        let r = find_with(&wc, &g, from, to, FindOptions::default(), &rich).unwrap();
-        assert_eq!(r.dest, to);
-        assert!(
-            r.legs.iter().any(|l| matches!(
-                l,
-                Leg::Transport { edge } if edge.item_req == vec![(995, 10)]
-            )),
-            "the toll crossing is the transport leg"
-        );
-    }
-
-    /// The `allow_bank_fetch` opt-in must not insert a bank leg or relax
-    /// an item req: with the flag on and no coins, the toll edge stays
-    /// unusable and the search is still `NoPath`. The BankBudget session
-    /// lives OUTSIDE the router — a bare `find_with` (flag on, no
-    /// session planned) never fetches.
-    #[test]
-    fn allow_bank_fetch_does_not_relax_item_reqs() {
-        let wc = walled_5x5();
-        let g = toll_graph();
-        assert!(
-            matches!(
-                find_with(
-                    &wc,
-                    &g,
-                    tile(0, 0, 0),
-                    tile(4, 4, 0),
-                    FindOptions {
-                        allow_bank_fetch: true,
-                        ..FindOptions::default()
-                    },
-                    &WorldState::empty(),
-                ),
-                Err(RouteError::NoPath)
-            ),
-            "allow_bank_fetch alone must not fetch: no coins still means no route"
-        );
-        // The flag must not BLOCK a state-proven edge either — it only
-        // opts the caller into the session, and this state proves the
-        // toll on its own.
-        let rich = WorldState {
-            inv: HashMap::from([(995, 10)]),
-            ..WorldState::default()
-        };
-        assert!(
-            find_with(
-                &wc,
-                &g,
-                tile(0, 0, 0),
-                tile(4, 4, 0),
-                FindOptions {
-                    allow_bank_fetch: true,
-                    ..FindOptions::default()
-                },
-                &rich,
-            )
-            .is_ok(),
-            "the flag never blocks a state-proven edge"
-        );
-    }
-
-    /// The BankBudget diagnosis: `find_missing_item_reqs` re-runs the
-    /// search with only the carry/wear gates ignored and reports exactly
-    /// the facts the strict search could not prove. `find_with` itself
-    /// never relaxes — this arm is the session's.
-    #[test]
-    fn find_missing_item_reqs_reports_only_unproven_carry_and_wear() {
-        let wc = walled_5x5();
-        let g = toll_graph();
-        let from = tile(0, 0, 0);
-        let to = tile(4, 4, 0);
-        assert_eq!(
-            find_missing_item_reqs(
-                &wc,
-                &g,
-                from,
-                to,
-                FindOptions::default(),
-                &WorldState::empty(),
-            ),
-            Some(vec![MissingReq::Carry { id: 995, count: 10 }]),
-            "the empty state misses the 10-coin toll"
-        );
-        // A short stack is still missing: the relaxed route crosses but
-        // the strict gate needs the full count.
-        let poor = WorldState {
-            inv: HashMap::from([(995, 5)]),
-            ..WorldState::default()
-        };
-        assert_eq!(
-            find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &poor),
-            Some(vec![MissingReq::Carry { id: 995, count: 10 }])
-        );
-        // A state-proven edge needs no fetch.
-        let rich = WorldState {
-            inv: HashMap::from([(995, 10)]),
-            ..WorldState::default()
-        };
-        assert_eq!(
-            find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &rich),
-            Some(vec![]),
-            "a state-proven edge needs no fetch"
-        );
-    }
-
-    /// `worn_req` is any-of: while any listed id is worn nothing is
-    /// missing (the edge already passes); with none worn the diagnosis
-    /// is one [`MissingReq::WearAny`] carrying the whole alternative
-    /// list, so the session can fetch whichever one the player can get.
-    #[test]
-    fn find_missing_item_reqs_treats_worn_req_as_any_of() {
-        let wc = walled_5x5();
-        let mut g = toll_graph();
-        g.edges[0].item_req = vec![];
-        g.edges[0].worn_req = vec![1277, 1321]; // bronze sword, bronze scimitar
-        let from = tile(0, 0, 0);
-        let to = tile(4, 4, 0);
-        // One listed blade worn: the worn gate passes, nothing to fetch.
-        let wearing = WorldState {
-            worn: HashSet::from([1321]),
-            ..WorldState::default()
-        };
-        assert_eq!(
-            find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &wearing),
-            Some(vec![]),
-            "any-of means a worn alternative leaves nothing missing"
-        );
-        // None worn: one WearAny listing both alternatives.
-        assert_eq!(
-            find_missing_item_reqs(
-                &wc,
-                &g,
-                from,
-                to,
-                FindOptions::default(),
-                &WorldState::empty()
-            ),
-            Some(vec![MissingReq::WearAny {
-                ids: vec![1277, 1321],
-            }]),
-            "no worn alternative: the session may fetch either blade"
-        );
-    }
-
-    /// A route blocked by a skill gate is not a banking problem: the
-    /// relaxed search still fails, so the diagnosis is `None` and no
-    /// session can help.
-    #[test]
-    fn find_missing_item_reqs_is_none_when_a_non_item_gate_blocks() {
-        let wc = walled_5x5();
-        let mut g = toll_graph();
-        g.edges[0].skill_req = vec![(6, 25)]; // Magic 25
-        let from = tile(0, 0, 0);
-        let to = tile(4, 4, 0);
-        assert_eq!(
-            find_missing_item_reqs(
-                &wc,
-                &g,
-                from,
-                to,
-                FindOptions::default(),
-                &WorldState::empty(),
-            ),
-            None,
-            "a Magic 25 gate is not an item/worn gap: no session"
-        );
-    }
-
-    // --- EssenceSession (Task 3): the mine exit returns only to the entry wizard ---
-
-    /// A 64×64 level-0 bake at (2880, 4800) — the whole Rune Essence mine
-    /// mapsquare (m45_75): the pad (2912,4833), the four exit portal
-    /// placements (2885,4850), (2889,4813), (2932,4854), (2933,4815), and
-    /// the walkable mine floor. Everything outside the bake is
-    /// unwalkable, so without the session return edge the mine is a
-    /// sealed dead end.
-    fn mine_bake() -> WorldCollision {
-        bake_at(2880, 4800, 64, 64, &[])
-    }
-
-    #[test]
-    fn find_from_the_mine_requires_a_session_to_return() {
-        let wc = mine_bake();
-        let g = TransportGraph::default();
-        let pad = tile(2912, 4833, 0);
-        let aubury = tile(3253, 3401, 0); // ^essence_mine_to_aubury
-                                          // No session: the mine is sealed — the pack carries no return
-                                          // edges, so `find` (and `find_with` with no latch) is NoPath.
-        assert!(matches!(
-            find(&wc, &g, pad, aubury),
-            Err(RouteError::NoPath)
-        ));
-        assert!(matches!(
-            find_with(
-                &wc,
-                &g,
-                pad,
-                aubury,
-                FindOptions::default(),
-                &WorldState::empty(),
-            ),
-            Err(RouteError::NoPath)
-        ));
-        // With the session the exit portal returns to the entry wizard's
-        // overworld anchor.
-        let session = crate::essence::essence_session_for_wizard(553).unwrap();
-        let r = find_with(
-            &wc,
-            &g,
-            pad,
-            aubury,
-            FindOptions {
-                essence: Some(session),
-                ..FindOptions::default()
-            },
-            &WorldState::empty(),
-        )
-        .unwrap();
-        assert_eq!(r.dest, aubury);
-        let edge = r
-            .legs
-            .iter()
-            .find_map(|l| match l {
-                Leg::Transport { edge } => Some(edge),
-                _ => None,
-            })
-            .expect("the route's only transport leg is the return hop");
-        assert_eq!(edge.kind, TransportKind::EssenceExit);
-        assert_eq!(
-            edge.to, aubury,
-            "the return lands on the entry wizard's anchor"
-        );
-        assert_eq!(edge.loc_id, crate::essence::ESSENCE_MINE_PORTAL_LOC_ID);
-    }
-
-    #[test]
-    fn the_session_return_reaches_only_the_entry_wizards_tile() {
-        let wc = mine_bake();
-        let g = TransportGraph::default();
-        let pad = tile(2912, 4833, 0);
-        let sedridor = tile(3106, 9572, 0); // ^essence_mine_to_sedridor
-                                            // The exit returns only to Aubury; from his Varrock anchor the
-                                            // fixture world reaches nothing else, so Sedridor's cellar anchor
-                                            // is NoPath.
-        let aubury = crate::essence::essence_session_for_wizard(553).unwrap();
-        assert!(matches!(
-            find_with(
-                &wc,
-                &g,
-                pad,
-                sedridor,
-                FindOptions {
-                    essence: Some(aubury),
-                    ..FindOptions::default()
-                },
-                &WorldState::empty(),
-            ),
-            Err(RouteError::NoPath)
-        ));
-        // A session for the other wizard returns to the other anchor.
-        let sed_session = crate::essence::essence_session_for_wizard(300).unwrap();
-        let r = find_with(
-            &wc,
-            &g,
-            pad,
-            sedridor,
-            FindOptions {
-                essence: Some(sed_session),
-                ..FindOptions::default()
-            },
-            &WorldState::empty(),
-        )
-        .unwrap();
-        assert_eq!(r.dest, sedridor);
-    }
-
-    #[test]
-    fn walk_only_route_ticks_are_the_walk_tick_cost() {
-        // Walking is no longer free: a walk-only route's `ticks` is the
-        // walk cost (0.5 per tile at the run rate), not 0.
-        let wc = bake(5, 5, &[]);
-        let g = TransportGraph::default();
-        let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
-        assert_eq!(r.ticks, 2.0);
-        assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
-    }
-
-    #[test]
-    fn find_cost_model_sets_the_walk_rate_per_search() {
-        // The run-vs-walk rate is a per-search input: the same 4-tile walk
-        // costs 2 ticks at the running pace (0.5/tile) and 4 at the walking
-        // pace (1/tile).
-        let wc = bake(5, 5, &[]);
-        let g = TransportGraph::default();
-        let run =
-            find_with_model(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), CostModel::running()).unwrap();
-        assert_eq!(run.ticks, 2.0);
-        let walk = CostModel {
-            run_per_step: PER_STEP_WALK,
-            walk_per_step: PER_STEP_WALK,
-        };
-        let r = find_with_model(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), walk).unwrap();
-        assert_eq!(r.ticks, 4.0);
-    }
-
-    // --- allow_teleports: the any-tile teleport layer ---
-
-    /// A WorldState that proves the Varrock spell (Magic 25 + fire/air/law
-    /// runes) and a charged glory, so the teleport-layer tests can route.
-    fn spell_state() -> WorldState {
-        WorldState {
-            stats: HashMap::from([(6, 25)]),
-            inv: HashMap::from([(554, 1), (556, 3), (563, 1), (1712, 1)]),
-            ..WorldState::default()
-        }
-    }
-
-    #[test]
-    fn find_never_uses_a_spell_teleport_but_find_allow_teleports_does() {
-        // The wall splits the 5×5 bake; only the any-tile spell teleport can
-        // cross it, and only when allow_teleports is on (and the state
-        // proves the cast).
-        let wc = walled_5x5();
-        let dest = tile(4, 4, 0);
-        let g = teleport(
-            dest,
-            3,                                  // OP_BASE 1 + the cast p_delay(2)
-            vec![(6, 25)],                      // Magic level 25 (Varrock)
-            vec![(554, 1), (556, 3), (563, 1)], // fire + air + law runes
-        );
-        assert!(matches!(
-            find(&wc, &g, tile(0, 0, 0), dest),
-            Err(RouteError::NoPath)
-        ));
-        // The empty state cannot prove the cast: the edge stays refused.
-        assert!(
-            matches!(
-                find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &WorldState::empty()),
-                Err(RouteError::NoPath)
-            ),
-            "allow_teleports still gates the spell on the WorldState"
-        );
-        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &spell_state()).unwrap();
-        assert_eq!(r.dest, dest);
-        // Teleported from the origin — no walk, just the cast.
-        assert_eq!(r.ticks, 3.0);
-        let leg = r
-            .legs
-            .iter()
-            .find(|l| matches!(l, Leg::Transport { .. }))
-            .expect("a teleport leg");
-        let Leg::Transport { edge } = leg else {
-            unreachable!()
-        };
-        assert_eq!(edge.kind, TransportKind::Teleport);
-        assert_eq!(edge.skill_req, vec![(6, 25)]);
-        assert_eq!(edge.item_req, vec![(554, 1), (556, 3), (563, 1)]);
-        assert_eq!(edge.to, dest);
-        assert_eq!(edge.ticks, 3);
-    }
-
-    #[test]
-    fn find_never_uses_a_jewellery_teleport_by_default() {
-        let wc = walled_5x5();
-        let dest = tile(4, 4, 0);
-        let g = teleport(dest, 2, vec![], vec![(1712, 1)]); // charged glory
-        assert!(matches!(
-            find(&wc, &g, tile(0, 0, 0), dest),
-            Err(RouteError::NoPath)
-        ));
-        // The charged item is on the player: the rub routes.
-        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &spell_state()).unwrap();
-        assert_eq!(r.ticks, 2.0); // OP_BASE 1 + the rub p_delay(1)
-        let Leg::Transport { edge } = r
-            .legs
-            .iter()
-            .find(|l| matches!(l, Leg::Transport { .. }))
-            .unwrap()
-        else {
-            unreachable!()
-        };
-        assert_eq!(edge.item_req, vec![(1712, 1)]); // the charged item
-        assert!(edge.skill_req.is_empty());
-    }
-
-    #[test]
-    fn find_allow_teleports_is_usable_from_any_tile() {
-        let wc = walled_5x5();
-        let dest = tile(4, 4, 0);
-        let g = teleport(dest, 2, vec![], vec![(1712, 1)]);
-        for origin in [tile(0, 0, 0), tile(1, 3, 0)] {
-            let r = find_allow_teleports(&wc, &g, origin, dest, &spell_state()).unwrap();
-            assert_eq!(r.dest, dest);
-            assert_eq!(r.ticks, 2.0, "teleport from {origin:?} costs the rub only");
-            assert!(r.legs.iter().any(|l| matches!(l, Leg::Transport { .. })));
-        }
-    }
-
-    #[test]
-    fn find_allow_teleports_still_prefers_walking_when_cheaper() {
-        // Total-tick cost still governs: on an open 5×5 the 4 run steps
-        // (2.0) beat the 3-tick teleport, so the route walks.
-        let wc = bake(5, 5, &[]);
-        let dest = tile(4, 4, 0);
-        let g = teleport(dest, 3, vec![(6, 25)], vec![]);
-        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &spell_state()).unwrap();
-        assert_eq!(r.ticks, 2.0);
-        assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
-    }
-
-    // --- wilderness opt-in (FindOptions.allow_wilderness) ---
-
-    /// A `width × height` all-open level-0 bake at `origin` (flags all 0,
-    /// walkable derived).
-    fn open_world(origin: WorldTile, width: usize, height: usize) -> WorldCollision {
-        let flags = vec![0u32; width * height];
-        let (walk, blocked) = crate::collision::pack_walk(&flags);
-        WorldCollision {
-            origin,
-            width,
-            height,
-            walk,
-            blocked,
-            flags: None,
-        }
-    }
-
-    #[test]
-    fn find_does_not_enter_wilderness_without_the_flag() {
-        let wc = open_world(
-            WorldTile {
-                x: 3099,
-                z: 3518,
-                level: 0,
-            },
-            5,
-            12,
-        );
-        let g = TransportGraph::default();
-        let from = WorldTile {
-            x: 3100,
-            z: 3519,
-            level: 0,
-        }; // z 3519 < 3520
-        let to = WorldTile {
-            x: 3100,
-            z: 3525,
-            level: 0,
-        }; // in zone
-        assert!(matches!(find(&wc, &g, from, to), Err(RouteError::NoPath)));
-        let ok = find_with(
-            &wc,
-            &g,
-            from,
-            to,
-            FindOptions {
-                allow_teleports: false,
-                allow_wilderness: true,
-                allow_bank_fetch: false,
-                ..FindOptions::default()
-            },
-            &WorldState::empty(),
-        );
-        assert!(ok.is_ok());
-    }
-
-    #[test]
-    fn already_in_wilderness_can_walk_out_without_the_flag() {
-        let wc = open_world(
-            WorldTile {
-                x: 3099,
-                z: 3518,
-                level: 0,
-            },
-            5,
-            12,
-        );
-        let g = TransportGraph::default();
-        let from = WorldTile {
-            x: 3100,
-            z: 3525,
-            level: 0,
-        };
-        let to = WorldTile {
-            x: 3100,
-            z: 3519,
-            level: 0,
-        };
-        assert!(find(&wc, &g, from, to).is_ok());
-    }
-
-    #[test]
-    fn find_allow_teleports_still_refuses_a_wilderness_landing() {
-        // A walled 5×12 bake at (3099,3518): only the any-tile teleport
-        // crosses the wall, but its landing (3102,3525) is inside the
-        // zone. Default find refuses (wall), allow_teleports alone still
-        // refuses (the wildy landing), and both flags together route.
-        let mut flags = vec![0u32; 5 * 12];
-        for z in 0..12 {
-            flags[z * 5 + 1] |= CollisionFlag::W_E as u32;
-            flags[z * 5 + 2] |= CollisionFlag::W_W as u32;
-        }
-        let (walk, blocked) = crate::collision::pack_walk(&flags);
-        let wc = WorldCollision {
-            origin: WorldTile {
-                x: 3099,
-                z: 3518,
-                level: 0,
-            },
-            width: 5,
-            height: 12,
-            walk,
-            blocked,
-            flags: None,
-        };
-        let dest = tile(3102, 3525, 0);
-        let g = teleport(dest, 3, vec![(6, 25)], vec![(554, 1), (556, 3), (563, 1)]);
-        let from = tile(3100, 3519, 0);
-        assert!(matches!(find(&wc, &g, from, dest), Err(RouteError::NoPath)));
-        // The state proves the cast (Magic 25 + runes), so only the wildy
-        // landing refuses it.
-        assert!(
-            matches!(
-                find_allow_teleports(&wc, &g, from, dest, &spell_state()),
-                Err(RouteError::NoPath)
-            ),
-            "a teleport landing inside the wilderness must stay refused"
-        );
-        let ok = find_with(
-            &wc,
-            &g,
-            from,
-            dest,
-            FindOptions {
-                allow_teleports: true,
-                allow_wilderness: true,
-                allow_bank_fetch: false,
-                ..FindOptions::default()
-            },
-            &spell_state(),
-        );
-        assert!(ok.is_ok());
-    }
-
-    // --- AvoidRect / find_with_avoid (inspect slice 1) ---
-
-    fn avoid_box(min_x: i32, max_x: i32, min_z: i32, max_z: i32) -> AvoidRect {
-        AvoidRect {
-            min_x,
-            max_x,
-            min_z,
-            max_z,
-            level: None,
-        }
-    }
-
-    #[test]
-    fn avoid_rect_contains_uses_inclusive_bounds_and_optional_level() {
-        let all_levels = avoid_box(1, 3, 4, 6);
-        assert!(all_levels.contains(tile(1, 4, 0)));
-        assert!(all_levels.contains(tile(3, 6, 2)));
-        assert!(!all_levels.contains(tile(0, 4, 0)));
-        assert!(!all_levels.contains(tile(1, 7, 0)));
-        let lvl1 = AvoidRect {
-            min_x: 0,
-            max_x: 9,
-            min_z: 0,
-            max_z: 9,
-            level: Some(1),
-        };
-        assert!(!lvl1.contains(tile(5, 5, 0)));
-        assert!(lvl1.contains(tile(5, 5, 1)));
-    }
-
-    #[test]
-    fn find_with_avoid_walk_rules_outside_in_start_inside_and_destination() {
-        let wc = bake(5, 5, &[]);
-        let g = TransportGraph::default();
-        let patch = [avoid_box(1, 3, 1, 3)];
-        let opts = FindOptions::default();
-        let empty = WorldState::empty();
-        // Outside cannot step into the patch; the open grid still routes around it.
-        let r =
-            find_with_avoid(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), opts, &empty, &patch).unwrap();
-        let stepped: Vec<WorldTile> = r
-            .legs
-            .iter()
-            .flat_map(|l| match l {
-                Leg::Walk { tiles } => tiles.clone(),
-                Leg::Transport { .. } => vec![],
-            })
-            .collect();
-        assert!(
-            !stepped
-                .windows(2)
-                .any(|w| !patch[0].contains(w[0]) && patch[0].contains(w[1])),
-            "must not enter the avoid patch from outside"
-        );
-        // Destination inside + start outside cannot enter.
-        assert!(matches!(
-            find_with_avoid(&wc, &g, tile(0, 0, 0), tile(2, 2, 0), opts, &empty, &patch,),
-            Err(RouteError::NoPath)
-        ));
-        // Start already inside the union may leave: two overlapping rects, escape semantics.
-        let union = [avoid_box(1, 2, 1, 2), avoid_box(2, 3, 1, 2)];
-        let out =
-            find_with_avoid(&wc, &g, tile(2, 1, 0), tile(4, 4, 0), opts, &empty, &union).unwrap();
-        assert_eq!(out.dest, tile(4, 4, 0));
-        // Destination inside while start is inside is allowed.
-        assert!(
-            find_with_avoid(&wc, &g, tile(2, 2, 0), tile(1, 1, 0), opts, &empty, &patch,).is_ok()
-        );
-        // Level-scoped avoid applies only on the matching plane.
-        let level0_block = AvoidRect {
-            min_x: 2,
-            max_x: 2,
-            min_z: 2,
-            max_z: 2,
-            level: Some(0),
-        };
-        assert!(matches!(
-            find_with_avoid(
-                &wc,
-                &g,
-                tile(0, 0, 0),
-                tile(2, 2, 0),
-                opts,
-                &empty,
-                &[level0_block],
-            ),
-            Err(RouteError::NoPath)
-        ));
-        assert!(
-            find_with_avoid(
-                &wc,
-                &g,
-                tile(0, 0, 1),
-                tile(2, 2, 1),
-                opts,
-                &empty,
-                &[level0_block],
-            )
-            .is_ok(),
-            "level-0 avoid must not block the same x/z on another plane"
-        );
-    }
-
-    #[test]
-    fn find_with_avoid_transport_and_teleport_landings_follow_outside_in_rule() {
-        let wc_wall = walled_5x5();
-        let door_landing_inside = door(tile(1, 2, 0), tile(2, 2, 0), 2);
-        let landing_only = [avoid_box(2, 2, 2, 2)];
-        let opts = FindOptions::default();
-        let empty = WorldState::empty();
-        assert!(
-            find_with(
-                &wc_wall,
-                &door_landing_inside,
-                tile(0, 0, 0),
-                tile(4, 0, 0),
-                opts,
-                &empty
-            )
-            .is_ok(),
-            "sanity: without avoid the door route exists"
-        );
-        // Sealed wall: the only crossing lands on the avoided tile.
-        let door_blocked = find_with_avoid(
-            &wc_wall,
-            &door_landing_inside,
-            tile(0, 0, 0),
-            tile(4, 0, 0),
-            opts,
-            &empty,
-            &landing_only,
-        );
-        assert!(
-            matches!(door_blocked, Err(RouteError::NoPath)),
-            "door landing inside avoid is refused from outside, got {door_blocked:?}"
-        );
-        // Takeoff `at` may sit inside avoid when the landing is outside.
-        let wc_door = blocked_door_fixture();
-        let g_at_inside = door(tile(2, 0, 0), tile(2, 2, 0), 2);
-        let at_only = [avoid_box(2, 0, 2, 0)];
-        let via_door = find_with_avoid(
-            &wc_door,
-            &g_at_inside,
-            tile(1, 0, 0),
-            tile(4, 2, 0),
-            opts,
-            &empty,
-            &at_only,
-        )
-        .unwrap();
-        assert!(
-            via_door
-                .legs
-                .iter()
-                .any(|l| matches!(l, Leg::Transport { .. })),
-            "approach from outside may still use the door when the landing is outside avoid"
-        );
-        // Any-tile teleport landing uses the same rule (wall leaves teleport as the only hop).
-        let wc_tp = walled_5x5();
-        let dest = tile(4, 4, 0);
-        let g_tp = teleport(dest, 2, vec![], vec![(1712, 1)]);
-        let tp_patch = [avoid_box(4, 4, 4, 4)];
-        assert!(
-            matches!(
-                find_with_avoid(
-                    &wc_tp,
-                    &g_tp,
-                    tile(0, 0, 0),
-                    dest,
-                    FindOptions {
-                        allow_teleports: true,
-                        ..FindOptions::default()
-                    },
-                    &spell_state(),
-                    &tp_patch,
-                ),
-                Err(RouteError::NoPath)
-            ),
-            "teleport landing on an avoided tile is refused from outside"
-        );
-        // Nonempty avoid that misses the landing still permits the teleport hop (not a walk-around).
-        let tp_allowed = find_with_avoid(
-            &wc_tp,
-            &g_tp,
-            tile(0, 0, 0),
-            dest,
-            FindOptions {
-                allow_teleports: true,
-                ..FindOptions::default()
-            },
-            &spell_state(),
-            &[avoid_box(1, 1, 1, 1)],
-        )
-        .unwrap();
-        assert_eq!(tp_allowed.dest, dest);
-        let tp_leg = tp_allowed
-            .legs
-            .iter()
-            .find_map(|l| match l {
-                Leg::Transport { edge } => Some(edge),
-                _ => None,
-            })
-            .expect("walled bake requires the teleport leg, not a walk detour");
-        assert_eq!(tp_leg.kind, TransportKind::Teleport);
-        assert_eq!(tp_leg.to, dest);
-        // Essence return landing is gated the same way.
-        let wc_mine = mine_bake();
-        let session = crate::essence::essence_session_for_wizard(553).unwrap();
-        let aubury = session.return_tile;
-        let mine_patch = [avoid_box(aubury.x, aubury.x, aubury.z, aubury.z)];
-        assert!(matches!(
-            find_with_avoid(
-                &wc_mine,
-                &TransportGraph::default(),
-                tile(2912, 4833, 0),
-                aubury,
-                FindOptions {
-                    essence: Some(session),
-                    ..FindOptions::default()
-                },
-                &empty,
-                &mine_patch,
-            ),
-            Err(RouteError::NoPath)
-        ));
-        // Avoid the mine pad only; the return landing stays clear.
-        let pad = tile(2912, 4833, 0);
-        let essence_allowed = find_with_avoid(
-            &wc_mine,
-            &TransportGraph::default(),
-            pad,
-            aubury,
-            FindOptions {
-                essence: Some(session),
-                ..FindOptions::default()
-            },
-            &empty,
-            &[avoid_box(pad.x, pad.x, pad.z, pad.z)],
-        )
-        .unwrap();
-        assert_eq!(essence_allowed.dest, aubury);
-        let return_leg = essence_allowed
-            .legs
-            .iter()
-            .find_map(|l| match l {
-                Leg::Transport { edge } => Some(edge),
-                _ => None,
-            })
-            .expect("mine exit must use the essence return hop");
-        assert_eq!(return_leg.kind, TransportKind::EssenceExit);
-        assert_eq!(return_leg.to, aubury);
-    }
-
-    #[test]
-    fn find_with_avoid_empty_matches_find_with_and_does_not_bypass_gates() {
-        let wc = bake(5, 5, &[]);
-        let g = TransportGraph::default();
-        let from = tile(0, 0, 0);
-        let to = tile(4, 4, 0);
-        let opts = FindOptions::default();
-        let empty = WorldState::empty();
-        let plain = find_with(&wc, &g, from, to, opts, &empty).unwrap();
-        let no_avoid = find_with_avoid(&wc, &g, from, to, opts, &empty, &[]).unwrap();
-        assert_eq!(plain.ticks, no_avoid.ticks);
-        assert_eq!(plain.legs.len(), no_avoid.legs.len());
-        // Subsequent plain find is unchanged after an avoid search.
-        assert_eq!(
-            find_with(&wc, &g, from, to, opts, &empty).unwrap().ticks,
-            plain.ticks
-        );
-        // Wilderness / teleport gates stay fail-closed with avoid present.
-        let wc_w = open_world(
-            WorldTile {
-                x: 3099,
-                z: 3518,
-                level: 0,
-            },
-            5,
-            12,
-        );
-        let wild_to = tile(3100, 3525, 0);
-        assert!(matches!(
-            find_with_avoid(
-                &wc_w,
-                &TransportGraph::default(),
-                tile(3100, 3519, 0),
-                wild_to,
-                opts,
-                &empty,
-                &[avoid_box(0, 9999, 0, 9999)],
-            ),
-            Err(RouteError::NoPath)
-        ));
-        let wc_wall = walled_5x5();
-        let dest = tile(4, 4, 0);
-        let g_tp = teleport(dest, 2, vec![], vec![(1712, 1)]);
-        assert!(matches!(
-            find_with_avoid(
-                &wc_wall,
-                &g_tp,
-                tile(0, 0, 0),
-                dest,
-                FindOptions {
-                    allow_teleports: true,
-                    ..FindOptions::default()
-                },
-                &WorldState::empty(),
-                &[],
-            ),
-            Err(RouteError::NoPath)
-        ));
-    }
-
-    #[test]
-    fn find_missing_item_reqs_with_avoid_and_budget_errors_stay_distinct() {
-        let wc = walled_5x5();
-        let g = toll_graph();
-        let from = tile(0, 0, 0);
-        let to = tile(4, 4, 0);
-        // Block only the door landing tile, not the whole east side destination.
-        let landing_only = [avoid_box(2, 2, 2, 2)];
-        assert_eq!(
-            find_missing_item_reqs_with_avoid(
-                &wc,
-                &g,
-                from,
-                to,
-                FindOptions::default(),
-                &WorldState::empty(),
-                &landing_only,
-            ),
-            None,
-            "avoid blocking the only crossing is not an item gap"
-        );
-        assert_eq!(
-            find_missing_item_reqs_with_avoid(
-                &wc,
-                &g,
-                from,
-                to,
-                FindOptions::default(),
-                &WorldState::empty(),
-                &[],
-            ),
-            Some(vec![MissingReq::Carry { id: 995, count: 10 }])
-        );
-        let open = bake(10, 10, &[]);
-        assert!(matches!(
-            find_bounded(
-                &open,
-                &TransportGraph::default(),
-                tile(0, 0, 0),
-                tile(9, 9, 0),
-                CostModel::running(),
-                8,
-            ),
-            Err(RouteError::BudgetExhausted)
-        ));
-        assert!(
-            matches!(
-                find_with_avoid(
-                    &open,
-                    &TransportGraph::default(),
-                    tile(0, 0, 0),
-                    tile(5, 5, 0),
-                    FindOptions::default(),
-                    &WorldState::empty(),
-                    &[avoid_box(5, 5, 5, 5)],
-                ),
-                Err(RouteError::NoPath)
-            ),
-            "dest inside avoid from outside is NoPath, not budget exhaustion"
-        );
-    }
-
-    #[test]
-    fn lumbridge_cow_pen_to_varrock_uses_the_south_gate() {
-        // (3253,3282) is inside the cow pen. The south gate (loc 1551/1553
-        // at 3253,3266/3267) is adjacent from inside. The north-west road
-        // gate at (3241,3301) is three tiles through the north fence —
-        // INTERACT_RADIUS 3 lets find "use" it from inside and the walker
-        // then aims at the fence. GitHub has no pack — skip, do not panic.
-        let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
-            return;
-        };
-        let from = WorldTile {
-            x: 3253,
-            z: 3282,
-            level: 0,
-        };
-        let to = WorldTile {
-            x: 3213,
-            z: 3424,
-            level: 0,
-        };
-        let route = find(&world.collision, &world.graph, from, to)
-            .unwrap_or_else(|e| panic!("cow pen -> Varrock must route: {e:?}"));
-        let first_door = route.legs.iter().find_map(|l| match l {
-            Leg::Transport { edge } if edge.kind == TransportKind::Door => Some(edge),
-            _ => None,
-        });
-        let door = first_door.expect("must exit the pen through a door");
-        assert!(
-            (door.at.x == 3253 && (door.at.z == 3266 || door.at.z == 3267))
-                || (door.at.x == 3253 && (door.to.z == 3266 || door.to.z == 3267)),
-            "first door must be the south cow-pen gate (3253,3266/3267), got at=({}, {}) to=({}, {}) loc={}",
-            door.at.x,
-            door.at.z,
-            door.to.x,
-            door.to.z,
-            door.loc_id
-        );
-        assert_ne!(
-            (door.at.x, door.at.z),
-            (3241, 3301),
-            "must not clip through the north fence to the road gate"
-        );
-    }
-
-    #[test]
-    fn packed_edgeville_bank_return_to_eggs_uses_the_surface_trapdoor() {
-        // Live a5z328_0: WalkNear from 3094,3489 to 3120,9952 radius 3 after
-        // the Edgeville bank cycle produced no nav-follow. Stock maps place
-        // trapdoor 1568 at 3097,3468; derive_transports now emits that hop.
-        // GitHub has no pack — skip, do not panic. A pre-rebake pack still
-        // lacks the edge, so the test inserts the derived hop.
-        let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
-            return;
-        };
-        let from = WorldTile {
-            x: 3094,
-            z: 3489,
-            level: 0,
-        };
-        let eggs = WorldTile {
-            x: 3120,
-            z: 9952,
-            level: 0,
-        };
-        let trapdoor_at = WorldTile {
-            x: 3097,
-            z: 3468,
-            level: 0,
-        };
-        let ladder_at = WorldTile {
-            x: 3096,
-            z: 9867,
-            level: 0,
-        };
-        let trap_edges: Vec<_> = world
-            .graph
-            .at
-            .get(&trapdoor_at)
-            .into_iter()
-            .flatten()
-            .map(|&i| &world.graph.edges[i])
-            .collect();
-        let ladder_edges: Vec<_> = world
-            .graph
-            .at
-            .get(&ladder_at)
-            .into_iter()
-            .flatten()
-            .map(|&i| &world.graph.edges[i])
-            .collect();
-        assert!(
-            ladder_edges.iter().any(|e| e.loc_id == 1755),
-            "packed graph must keep the dungeon exit ladder 1755 at 3096,9867, got {:?}",
-            ladder_edges
-                .iter()
-                .map(|e| (e.loc_id, e.to, e.kind))
-                .collect::<Vec<_>>()
-        );
-        let opts = FindOptions {
-            allow_teleports: false,
-            allow_wilderness: true,
-            allow_bank_fetch: true,
-            ..FindOptions::default()
-        };
-        let mut graph = TransportGraph {
-            edges: world.graph.edges.clone(),
-            at: world.graph.at.clone(),
-            teleports: world.graph.teleports.clone(),
-        };
-        if !trap_edges
-            .iter()
-            .any(|e| e.loc_id == 1568 || e.loc_id == 1570)
-        {
-            let dest = WorldTile {
-                x: trapdoor_at.x,
-                z: trapdoor_at.z + crate::transport::CELLAR_SHIFT,
-                level: trapdoor_at.level,
-            };
-            let idx = graph.edges.len();
-            graph.edges.push(TransportEdge {
-                kind: TransportKind::Ladder,
-                at: trapdoor_at,
-                to: dest,
-                loc_id: 1568,
-                option: 1,
-                ticks: 3,
-                dir: None,
-                open_loc_id: Some(1570),
-                skill_req: vec![],
-                item_req: vec![],
-                quest_req: vec![],
-                varp_req: vec![],
-                worn_req: vec![],
-                members_req: false,
-            });
-            graph.at.entry(trapdoor_at).or_default().push(idx);
-        }
-        let route = find_with(
-            &world.collision,
-            &graph,
-            from,
-            eggs,
-            opts,
-            &WorldState::empty().with_map_members(true),
-        )
-        .unwrap_or_else(|e| panic!("Edgeville bank -> red spider eggs must route: {e:?}"));
-        let used_trap = route.legs.iter().any(|leg| match leg {
-            Leg::Transport { edge } => {
-                (edge.loc_id == 1568 || edge.loc_id == 1570)
-                    && edge.at.x == trapdoor_at.x
-                    && edge.at.z == trapdoor_at.z
-            }
-            _ => false,
-        });
-        assert!(
-            used_trap,
-            "return must use the surface trapdoor, legs={:?}",
-            route
-                .legs
-                .iter()
-                .filter_map(|leg| match leg {
-                    Leg::Transport { edge } => Some((edge.kind, edge.loc_id, edge.at, edge.to)),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn packed_wildy_wolf_pit_reaches_ridge_approach() {
-        let content = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
-        let jag = PathBuf::from("/Users/acfrazier/.274bot/unpack-289/config");
-        if !content.join("maps/m46_61.jm2").is_file() {
-            eprintln!("SKIP: no 289 wilderness mapsquare at {}", content.display());
-            return;
-        }
-        let Ok(bytes) = fs::read(&jag) else {
-            eprintln!("SKIP: no 289 config jag at {}", jag.display());
-            return;
-        };
-        let defs = LocDefs::from_locs(&Cache::unpack(&JagFile::new(bytes)).locs);
-        let tmp = std::env::temp_dir().join(format!("wildy-pit-maps-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
-        fs::copy(content.join("maps/m46_61.jm2"), tmp.join("m46_61.jm2")).unwrap();
-        let collision = bake_from_maps(&tmp, &defs, &HashSet::new()).expect("bake m46_61");
-        let _ = fs::remove_dir_all(&tmp);
-        let graph = derive_transports(&content, &defs, &collision);
-        let pit = WorldTile {
-            x: 3001,
-            z: 3923,
-            level: 0,
-        };
-        let ridge = WorldTile {
-            x: 2998,
-            z: 3924,
-            level: 0,
-        };
-        let approach = WorldTile {
-            x: 2998,
-            z: 3916,
-            level: 0,
-        };
-        let opts = FindOptions {
-            allow_teleports: false,
-            allow_wilderness: true,
-            allow_bank_fetch: true,
-            ..FindOptions::default()
-        };
-        let state = WorldState::empty().with_map_members(true);
-        find_with(&collision, &graph, pit, approach, opts, &state).unwrap_or_else(|e| {
-            panic!("wolf pit (3001,3923) -> ridge approach (2998,3916) must walk around the east railings: {e:?}")
-        });
-        assert!(
-            matches!(
-                find_with(&collision, &graph, ridge, approach, opts, &state),
-                Err(RouteError::NoPath)
-            ),
-            "the ridge corridor cannot walk south through loc_2309; recovery is from the pit after the fall"
-        );
-    }
-}
+#[path = "router_tests.rs"]
+mod tests;

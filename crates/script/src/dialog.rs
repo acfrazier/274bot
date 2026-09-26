@@ -168,7 +168,7 @@ impl Family for Dialog {
     /// A begin that settles with a log line writes it in the caller's tick.
     const KICK_ON_START: bool = true;
     /// Frozen `log(...)` is not awaited.
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[LOG];
     type Args = DialogArgs;
     type Output = bool;
 
@@ -438,7 +438,7 @@ fn talk_target(npcs: &[Npc], wanted: &str) -> Option<TalkTarget> {
         .map(|(_, target)| target)
 }
 
-fn talk_op(actions: &[Text]) -> Option<&str> {
+pub(crate) fn talk_op(actions: &[Text]) -> Option<&str> {
     actions.iter().find_map(|action| {
         action
             .get(..4)

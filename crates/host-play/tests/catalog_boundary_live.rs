@@ -861,6 +861,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn checked_in_frozen_core_sources_match_both_catalog_ledgers() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let matrix = support_matrix().unwrap();
@@ -8228,7 +8229,8 @@ export default class NativeStop extends LoopingBot {{
         );
         // One published frame: a real client with the local player on the
         // stand and the given `(slot, type, world tile, face target)` NPCs.
-        let frame = |npcs: &[(usize, usize, (i32, i32, i32), i32)]| {
+        type NpcRow = (usize, usize, (i32, i32, i32), i32);
+        let frame = |npcs: &[NpcRow]| {
             let mut client = Client::new(ClientConfig {
                 host: "127.0.0.1".into(),
                 port: 43594,
@@ -8265,7 +8267,7 @@ export default class NativeStop extends LoopingBot {{
             client.local_player = Some(ClientPlayer::at(stand.0, stand.1));
             for (row, (slot, type_id, tile, face)) in npcs.iter().enumerate() {
                 let mut npc = ClientNpc {
-                    r#type: Some(*type_id as usize),
+                    r#type: Some(*type_id),
                     ..Default::default()
                 };
                 // The actor tile is un-scaled from these pixel coords.
@@ -10374,6 +10376,7 @@ export default class NativeStop extends LoopingBot {{
     /// SETTINGS schema (or read via settings.* accessors). Matrix rows are not
     /// required for these four cells; matrix refresh is root-owned.
     #[test]
+    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn camp_and_fight_option_injects_match_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         for (name, card, path_tail) in [
@@ -10435,6 +10438,7 @@ export default class NativeStop extends LoopingBot {{
     /// `bankStrategy` and `solveClues`, which both frozen sources do declare).
     /// Matrix rows are used for the value checks they do carry.
     #[test]
+    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn option_branch_injects_match_both_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let matrix = support_matrix().unwrap();
@@ -11583,6 +11587,7 @@ export default class NativeStop extends LoopingBot {{
     /// Bank-cell inject keys and values must be declared by their own frozen
     /// card (schema key or `settings.*` accessor).
     #[test]
+    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn bank_cell_injects_match_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         for (name, card, path_tail) in [
@@ -13109,6 +13114,7 @@ export default class NativeStop extends LoopingBot {{
     }
 
     #[test]
+    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn noncombat_core_injects_match_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         for (name, card, path_tail) in [
@@ -13223,6 +13229,7 @@ export default class NativeStop extends LoopingBot {{
     /// against the 964 source only — never asserted into 100ad/8e7 — and the
     /// two cells must inject the opposite `useTeleport` branch.
     #[test]
+    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn climbing_boots_injects_match_the_frozen_reference_card_schema() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         for (name, use_teleport) in [("climbing_boots", false), ("climbing_boots_teleport", true)] {

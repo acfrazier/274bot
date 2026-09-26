@@ -26,7 +26,9 @@ use crate::pack::{
     sha256_hex, FORMAT_ID,
 };
 use crate::paint::bake_reach;
-use crate::transport::derive_transports;
+use crate::transport::{
+    assert_transmitted_varp_reqs, derive_transports_for_bake, require_wilderness_teleport_legality,
+};
 
 /// Door loc configs under `content/scripts/doors/configs`.
 pub const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doors.loc"];
@@ -35,6 +37,7 @@ pub const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doo
 /// [`FORMAT_ID`] does not already capture (a pack format bump changes the
 /// format identity instead).
 pub const GENERATOR_ID: &str = "nav-bake-1";
+pub use crate::map::services::{pois_generator_identity, POIS_GENERATOR_SOURCES};
 
 /// Baker sources whose bytes join the generator identity: a generated
 /// artifact is stale after any change to one of them. Paths are relative to
@@ -42,7 +45,7 @@ pub const GENERATOR_ID: &str = "nav-bake-1";
 /// bytes. Pack/flags come from bake/collision/pack/transport; reach bits also
 /// depend on `paint.rs` (`bake_reach`) and `router.rs` (`step_ok`). Traveller
 /// and grid-search changes do not decide those bytes.
-pub const GENERATOR_SOURCES: [&str; 8] = [
+pub const GENERATOR_SOURCES: [&str; 36] = [
     "src/bake.rs",
     "src/canlight.rs",
     "src/collision.rs",
@@ -51,6 +54,34 @@ pub const GENERATOR_SOURCES: [&str; 8] = [
     "src/router.rs",
     "src/transport.rs",
     "src/transport/condparse.rs",
+    "src/transport/index.rs",
+    "src/transport/script_text.rs",
+    "src/pack/config_parse.rs",
+    "src/pack/mapsquare.rs",
+    "src/pack/banks.rs",
+    "src/pack/sidecars.rs",
+    "src/transport/gates.rs",
+    "src/transport/quest_doors.rs",
+    "src/transport/doors.rs",
+    "src/transport/door_members.rs",
+    "src/transport/brass_key.rs",
+    "src/transport/membergate.rs",
+    "src/transport/webs.rs",
+    "src/transport/vertical.rs",
+    "src/transport/shortcuts.rs",
+    "src/transport/static_routes.rs",
+    "src/transport/npc_hops.rs",
+    "src/transport/observable.rs",
+    "src/transport/gliders.rs",
+    "src/transport/scripted_doors.rs",
+    "src/transport/spirit_trees.rs",
+    "src/transport/levers.rs",
+    "src/transport/toll.rs",
+    "src/transport/magic_guild.rs",
+    "src/transport/ranging_guild.rs",
+    "src/transport/zanaris.rs",
+    "src/transport/teleports.rs",
+    "src/transport/wilderness.rs",
 ];
 
 /// Digest of the bake generator: the manual id, the pack format identity and
@@ -168,6 +199,8 @@ pub struct BakeRequest<'a> {
     /// missing one would bake a world that silently disagrees with the
     /// server. The developer CLI keeps skipping unavailable configs.
     pub require_all_door_configs: bool,
+    /// Decoded cache identity bound into navpois; required for a sidecar.
+    pub content_id: Option<&'a str>,
 }
 
 /// What one bake produced, in the order the CLI summarises it.
@@ -187,6 +220,7 @@ pub struct BakedNav {
     pub flags: Vec<u8>,
     pub reach: Vec<u8>,
     pub canlight: Vec<u8>,
+    pub pois: Option<Vec<u8>>,
     /// Hex of the canlight policy digest (algorithm + revision + bank_zones).
     pub canlight_identity: String,
     pub manifest: Option<NavManifest>,
@@ -240,12 +274,13 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         ));
     }
 
-    // Loc definitions (blockwalk, width/length, active) from the client
-    // cache: the same table the game client builds its collision from.
-    let loc_defs = match std::fs::read(request.config_jag) {
+    // Loc/NPC definitions from the client cache: collision uses loc defs;
+    // navpois validates NPC/loc ids and operations against the same tables.
+    let (loc_defs, npc_types, loc_types) = match std::fs::read(request.config_jag) {
         Ok(bytes) => {
             let cache = Cache::unpack(&JagFile::new(bytes));
-            LocDefs::from_locs(&cache.locs)
+            let loc_defs = LocDefs::from_locs(&cache.locs);
+            (loc_defs, cache.npcs, cache.locs)
         }
         Err(e) => {
             return Err(format!(
@@ -264,7 +299,20 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     // all live under the maps dir's parent); door edge from/to snap to the
     // nearest walkable tile on the collision just baked.
     let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
-    let graph = derive_transports(content_root, &loc_defs, &collision);
+    let (graph, audit) = derive_transports_for_bake(content_root, &loc_defs, &collision);
+    assert_transmitted_varp_reqs(content_root, &graph);
+    require_wilderness_teleport_legality(content_root, &graph)?;
+    if audit.converted != 0 {
+        notes.push(format!(
+            "converted {} non-transmitted varp requirements to completed journal gates",
+            audit.converted
+        ));
+    }
+    if !audit.omitted.is_empty() {
+        let mut omitted: Vec<_> = audit.omitted.into_iter().collect();
+        omitted.sort_unstable_by_key(|(id, _)| *id);
+        notes.push(format!("omitted non-transmitted varp-gated edges without a unique completed journal proof: {omitted:?}"));
+    }
 
     // The bank stand table from the same content tree (every `bankbooth`
     // placement, Use-quickly op).
@@ -313,6 +361,36 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         &canlight_bits,
         &canlight_binding,
     );
+    let source_before = source_before?;
+    if source_before != crate::bundle::source_digest(content_root, &[request.config_jag])? {
+        return Err("baker inputs changed during preparation".into());
+    }
+    let pois = match (request.revision, request.cache, request.content_id) {
+        (Some(revision), Some(_), Some(content_id)) => {
+            let content = crate::map::identity::Digest::from_hex(content_id)
+                .map_err(|_| "decoded content identity is not SHA-256 hex".to_string())?;
+            let source = crate::map::identity::Digest::from_hex(&source_before)
+                .map_err(|_| "source digest is not SHA-256 hex".to_string())?;
+            let generator = crate::map::identity::Digest::from_hex(
+                &crate::map::services::pois_generator_identity_from_crate()?,
+            )
+            .map_err(|_| "navpois generator identity is not SHA-256 hex".to_string())?;
+            Some(
+                crate::map::services::produce_navpois(&crate::map::services::ProduceRequest {
+                    revision,
+                    content_root,
+                    npcs: &npc_types,
+                    locs: &loc_types,
+                    content_id: content,
+                    nav_sha256: crate::map::identity::Digest(pack_digest),
+                    source_sha256: source,
+                    generator_sha256: generator,
+                })?
+                .bytes,
+            )
+        }
+        _ => None,
+    };
     let mut manifest = match (request.revision, request.cache) {
         (Some(revision), Some(cache)) => Some(NavManifest::capture(
             revision,
@@ -321,14 +399,11 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
             Some(&flags_bytes),
             Some(&reach_bytes),
             Some(&canlight_bytes),
+            pois.as_deref(),
         )?),
         (None, None) => None,
         _ => return Err("a bound bake needs both a revision and its cache manifest".into()),
     };
-    let source_before = source_before?;
-    if source_before != crate::bundle::source_digest(content_root, &[request.config_jag])? {
-        return Err("baker inputs changed during preparation".into());
-    }
     if let Some(manifest) = &mut manifest {
         manifest.source_sha256 = Some(source_before);
     };
@@ -337,6 +412,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         flags: flags_bytes,
         reach: reach_bytes,
         canlight: canlight_bytes,
+        pois,
         canlight_identity,
         manifest,
         summary: BakeSummary {
@@ -378,153 +454,5 @@ fn walkable_tiles(c: &WorldCollision) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn content_inputs_follow_the_content_root() {
-        let inputs = content_inputs(Path::new("/content"));
-        assert_eq!(inputs.maps_dir, PathBuf::from("/content/maps"));
-        assert_eq!(
-            inputs.doors_dir,
-            PathBuf::from("/content/scripts/doors/configs")
-        );
-        assert_eq!(
-            inputs.gates,
-            PathBuf::from("/content/scripts/general_use/configs/gates.loc")
-        );
-    }
-
-    #[test]
-    fn the_289_config_jag_is_inside_the_cache_and_274_beside_it() {
-        assert_eq!(
-            config_jag_for(289, Path::new("/289/engine/data/pack/client")).unwrap(),
-            PathBuf::from("/289/engine/data/pack/client/config")
-        );
-        assert_eq!(
-            config_jag_for(274, Path::new("/274/engine/data/pack/client")).unwrap(),
-            PathBuf::from("/274/engine/data/pack/config")
-        );
-    }
-
-    #[test]
-    fn generator_identity_tracks_the_manual_id_format_and_sources() {
-        let base = generator_identity(&[("src/pack.rs", "fn a() {}")]);
-        assert_eq!(base.len(), 64);
-        assert!(base.chars().all(|c| c.is_ascii_hexdigit()));
-        assert_ne!(base, generator_identity(&[("src/pack.rs", "fn b() {}")]));
-        assert_ne!(
-            base,
-            generator_identity(&[("src/collision.rs", "fn a() {}")])
-        );
-        // Order and labels are part of the identity.
-        assert_ne!(
-            generator_identity(&[("a.rs", "x"), ("b.rs", "y")]),
-            generator_identity(&[("b.rs", "x"), ("a.rs", "y")])
-        );
-    }
-
-    #[test]
-    fn router_source_bytes_invalidate_a_warm_reach_stamp() {
-        // bake_reach floods with router::step_ok; a movement change must not
-        // keep a warm-stamped 274R sidecar while pack/flags stamps still match.
-        assert!(
-            GENERATOR_SOURCES.contains(&"src/router.rs"),
-            "GENERATOR_SOURCES must include the step_ok-owning source"
-        );
-        assert!(GENERATOR_SOURCES.contains(&"src/paint.rs"));
-        assert!(
-            GENERATOR_SOURCES.contains(&"src/canlight.rs"),
-            "GENERATOR_SOURCES must include the canlight-owning source"
-        );
-        assert!(
-            GENERATOR_SOURCES.contains(&"src/transport/condparse.rs"),
-            "GENERATOR_SOURCES must include the transport condparse-owning source"
-        );
-
-        let baseline: Vec<(&str, &str)> = GENERATOR_SOURCES
-            .iter()
-            .map(|path| (*path, "fn a() {}"))
-            .collect();
-        let mut router_only = baseline.clone();
-        for (label, text) in &mut router_only {
-            if *label == "src/router.rs" {
-                *text = "fn step_ok_changed() {}";
-            }
-        }
-        assert_eq!(
-            router_only
-                .iter()
-                .find(|(path, _)| *path == "src/paint.rs")
-                .map(|(_, text)| *text),
-            Some("fn a() {}"),
-            "paint.rs bytes stay the same; only router.rs changes"
-        );
-
-        let warm = generator_identity(&baseline);
-        let after_router = generator_identity(&router_only);
-        assert_ne!(
-            warm, after_router,
-            "router.rs bytes join generator_identity"
-        );
-
-        let inputs = [crate::bundle::InputFingerprint {
-            path: "/content/maps/m1.jm2".into(),
-            bytes: 10,
-            modified_nanos: 5,
-        }];
-        let baked = crate::bundle::BakeStamp {
-            content_id: None,
-            source_sha256: None,
-            generator: warm,
-            format: "274V8".into(),
-            revision: 289,
-            cache_id: "cache-1".into(),
-            cache_manifest: None,
-            nav_sha256: "ab".repeat(32),
-            flags_sha256: "cd".repeat(32),
-            reach_sha256: "ef".repeat(32),
-            canlight_sha256: "12".repeat(32),
-            canlight_identity: "34".repeat(32),
-            pack_bytes: 11,
-            flags_bytes: 7,
-            reach_bytes: 9,
-            canlight_bytes: 5,
-            relative_pack: "nav/289/274bot.navpack".into(),
-            relative_flags: "nav/289/274bot.navflags".into(),
-            relative_reach: "nav/289/274bot.navreach".into(),
-            relative_canlight: "nav/289/274bot.navcanlight".into(),
-            inputs: inputs.to_vec(),
-        };
-        let expected = crate::bundle::StampExpectation {
-            revision: 289,
-            format: "274V8",
-            generator: &after_router,
-            cache_id: "cache-1",
-            inputs: &inputs,
-            staged_pack_bytes: Some(11),
-            staged_flags_bytes: Some(7),
-            staged_reach_bytes: Some(9),
-            staged_canlight_bytes: Some(5),
-        };
-        let error = baked
-            .covers(&expected)
-            .expect_err("router source change must fail covers and force reach rebake");
-        assert!(error.contains("generator"), "{error}");
-    }
-
-    #[test]
-    fn a_missing_canonical_input_fails_the_bake() {
-        let request = BakeRequest {
-            revision: None,
-            maps_dir: Path::new("/nonexistent/content/maps"),
-            doors_dir: Path::new("/nonexistent/content/scripts/doors/configs"),
-            gates: Path::new("/nonexistent/content/scripts/general_use/configs/gates.loc"),
-            config_jag: Path::new("/nonexistent/engine/data/pack/config"),
-            cache: None,
-            require_all_door_configs: true,
-        };
-        let error = bake_world(&request).err().expect("a bake without inputs");
-        assert!(error.contains("doors.loc"), "{error}");
-    }
-}
+#[path = "bake_tests.rs"]
+mod tests;

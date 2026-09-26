@@ -8,21 +8,9 @@ export const FOOD_OPTIONS = [
 
 export const MIN_EAT_HP = 5;
 
-function foodHealNative() {
-    return globalThis.__rs2b0t_food_heal_amount;
-}
-
+/** Frozen resolution over the selected facts; throws only when game data is unavailable. */
 export function foodHealAmount(foodName) {
-    const fn = foodHealNative();
-    if (typeof fn === 'function') {
-        const key = String(foodName || '').trim();
-        const row = fn(key);
-        if (row && row.ok === true && typeof row.value === 'number') {
-            return row.value;
-        }
-        throw notImpl('foodHealAmount');
-    }
-    throw notImpl('foodHealAmount');
+    return globalThis.__rs2b0t_food_heal_amount(String(foodName || '').trim());
 }
 
 export function foodForms(foodName) {
@@ -43,27 +31,13 @@ export function foodCount(items, foodName) {
     return fn(items, foodName);
 }
 
-export function eatAtHpThreshold(_maxHp, _heal, _minHp) {
-    throw notImpl('eatAtHpThreshold');
+export function eatAtHpThreshold(maxHp, heal, minHp) {
+    return globalThis.__rs2b0t_eat_at_hp_threshold(maxHp, heal, minHp);
 }
 
-/** Eat when a full heal fits, or HP is at/below the safety floor. Posted opts only. */
+/** Eat when a full heal fits, or HP is at/below the safety floor. */
 export function shouldEatToUseFood(opts) {
-    const o = opts || {};
-    const hp = o.hp;
-    const maxHp = o.maxHp;
-    const heal = o.heal;
-    const foodCount = o.foodCount;
-    if (foodCount <= 0 || hp <= 0 || maxHp <= 0) {
-        return false;
-    }
-    const minHp = o.minHp != null ? o.minHp : MIN_EAT_HP;
-    if (hp <= minHp) {
-        return true;
-    }
-    const h = Math.max(0, heal);
-    // full heal fits (no overheal waste)
-    return hp + h <= maxHp;
+    return globalThis.__rs2b0t_should_eat_to_use_food(opts);
 }
 
 export function shouldEatFood(foodName, opts) {

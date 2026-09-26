@@ -17,6 +17,64 @@ use script::{JsCard, RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
 /// [`pause_button_label`]).
 pub const SCRIPT_BUTTONS: [&str; 5] = ["Browse", "Start", "Pause", "Stop", "Load"];
 
+/// The bulk row under the buttons (after `[Params]` when a schema
+/// exists). The first slot reads "Confirm" while a reload warning awaits
+/// confirmation, followed by a "Cancel" button.
+pub const SCRIPT_BULK_BUTTONS: [&str; 3] = ["Reload", "Start all", "Stop all"];
+
+/// Every script command's key (shown in its button as `[Label k]`): the
+/// same commands the buttons emit, reachable when the pane is clipped.
+/// Pause also toggles Resume; Reload also confirms a shown warning.
+pub const SCRIPT_KEYS: [(&str, char); 10] = [
+    ("Browse", 'b'),
+    ("Start", 't'),
+    ("Pause", 'P'),
+    ("Stop", 'e'),
+    ("Load", 'f'),
+    ("Params", 'v'),
+    ("Reload", 'R'),
+    ("Cancel", 'C'),
+    ("Start all", 'T'),
+    ("Stop all", 'E'),
+];
+
+/// The key of a button label (`Resume` shares Pause's, `Confirm` Reload's).
+pub fn script_key(label: &str) -> char {
+    let command = match label {
+        "Resume" => "Pause",
+        "Confirm" => "Reload",
+        other => other,
+    };
+    SCRIPT_KEYS
+        .iter()
+        .find(|(name, _)| *name == command)
+        .map_or(' ', |(_, key)| *key)
+}
+
+/// The script command a key names, if any.
+pub fn script_command_for_key(key: char) -> Option<&'static str> {
+    SCRIPT_KEYS
+        .iter()
+        .find(|(_, k)| *k == key)
+        .map(|(name, _)| *name)
+}
+
+/// Columns a `[Label k]` button takes, without the gap after it.
+fn button_width(label: &str) -> u16 {
+    label.len() as u16 + 4
+}
+
+fn push_button(row: &mut String, label: &str) {
+    if !row.is_empty() {
+        row.push(' ');
+    }
+    row.push('[');
+    row.push_str(label);
+    row.push(' ');
+    row.push(script_key(label));
+    row.push(']');
+}
+
 /// Pause/Resume label for the third button (matches panel `script_section`).
 pub fn pause_button_label(state: RunState) -> &'static str {
     if state == RunState::Paused {
@@ -267,6 +325,8 @@ pub struct ScriptPane<'a> {
     pub load_path: &'a str,
     pub params_available: bool,
     pub slot: Option<&'a SlotScript>,
+    /// A reload warning awaits confirmation.
+    pub reload_confirm: bool,
 }
 
 impl<'a> ScriptPane<'a> {
@@ -294,7 +354,45 @@ impl<'a> ScriptPane<'a> {
             load_path,
             params_available,
             slot,
+            reload_confirm: false,
         }
+    }
+
+    pub fn with_reload_confirm(mut self, confirm: bool) -> Self {
+        self.reload_confirm = confirm;
+        self
+    }
+
+    /// The main row's buttons, left to right (Pause reads Resume while
+    /// paused).
+    fn main_buttons(&self) -> impl Iterator<Item = &'static str> {
+        let state = self.state;
+        SCRIPT_BUTTONS.iter().map(move |b| {
+            if *b == "Pause" {
+                pause_button_label(state)
+            } else {
+                b
+            }
+        })
+    }
+
+    /// The bulk row's buttons, left to right.
+    fn bulk_buttons(&self) -> impl Iterator<Item = &'static str> {
+        let reload = if self.reload_confirm {
+            "Confirm"
+        } else {
+            "Reload"
+        };
+        let cancel = self.reload_confirm.then_some("Cancel");
+        std::iter::once(reload)
+            .chain(cancel)
+            .chain(SCRIPT_BULK_BUTTONS[1..].iter().copied())
+    }
+
+    /// Whether the bulk row (and `[Params]`) is shown: not while Browse or
+    /// Load owns the rows under the buttons.
+    fn bulk_row_shown(&self) -> bool {
+        !self.browse_open && !self.load_open
     }
 
     fn browse_lines(&self) -> Vec<BrowseLine> {
@@ -314,28 +412,29 @@ impl<'a> ScriptPane<'a> {
     /// picker is open.
     pub fn on_click(&self, area: Rect, col: u16, row: u16) -> ScriptClick {
         let inner = Block::default().borders(Borders::ALL).inner(area);
-        if row == inner.y + 1 {
+        let hit = |labels: &mut dyn Iterator<Item = &'static str>| {
             let mut cursor = inner.x;
-            for slot in SCRIPT_BUTTONS {
-                let label = if slot == "Pause" {
-                    pause_button_label(self.state)
-                } else {
-                    slot
-                };
-                if col >= cursor && col < cursor + label.len() as u16 + 3 {
-                    return ScriptClick::Button(label);
+            for label in labels {
+                let width = button_width(label);
+                if col >= cursor && col < cursor + width {
+                    return Some(label);
                 }
-                cursor += label.len() as u16 + 3;
+                cursor += width + 1;
+            }
+            None
+        };
+        if row == inner.y + 1 {
+            if let Some(label) = hit(&mut self.main_buttons()) {
+                return ScriptClick::Button(label);
             }
         }
-        if self.params_available
-            && !self.browse_open
-            && !self.load_open
-            && row == inner.y + 2
-            && col >= inner.x
-            && col < inner.x + 8
-        {
-            return ScriptClick::Params;
+        if self.bulk_row_shown() && row == inner.y + 2 && row < inner.bottom() {
+            let params = self.params_available.then_some("Params");
+            match hit(&mut params.into_iter().chain(self.bulk_buttons())) {
+                Some("Params") => return ScriptClick::Params,
+                Some(label) => return ScriptClick::Button(label),
+                None => {}
+            }
         }
         if self.browse_open {
             let list_top = inner.y + 2;
@@ -383,24 +482,23 @@ impl Widget for ScriptPane<'_> {
         block.render(area, buf);
         let state = run_state_text(self.state);
         let sel = self.sel.map(|s| s.label()).unwrap_or_else(|| "—".into());
-        let buttons = SCRIPT_BUTTONS
-            .iter()
-            .map(|b| {
-                let label = if *b == "Pause" {
-                    pause_button_label(self.state)
-                } else {
-                    b
-                };
-                format!("[{label}]")
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
+        let mut buttons = String::new();
+        for label in self.main_buttons() {
+            push_button(&mut buttons, label);
+        }
         let mut lines = vec![
             Line::from(format!("script: {state}   sel: {sel}")),
             Line::from(buttons),
         ];
-        if self.params_available && !self.browse_open && !self.load_open {
-            lines.push(Line::from("[Params]"));
+        if self.bulk_row_shown() {
+            let mut row = String::new();
+            if self.params_available {
+                push_button(&mut row, "Params");
+            }
+            for label in self.bulk_buttons() {
+                push_button(&mut row, label);
+            }
+            lines.push(Line::from(row));
         }
         if self.load_open {
             lines.push(Line::from("load: browse for .ts/.js file"));
@@ -493,7 +591,7 @@ mod tests {
         );
         for label in SCRIPT_BUTTONS {
             assert!(
-                text.contains(&format!("[{label}]")),
+                text.contains(&format!("[{label} {}]", super::script_key(label))),
                 "button {label} paints: {text:?}"
             );
         }
@@ -516,7 +614,7 @@ mod tests {
             false,
             Some(&slot),
         );
-        let start = pane.on_click(area, 10, 2);
+        let start = pane.on_click(area, 14, 2);
         assert_eq!(
             start,
             ScriptClick::Button("Start"),
@@ -525,6 +623,66 @@ mod tests {
         assert_eq!(slot.state(), script::RunState::Idle, "state unchanged");
         assert!(!slot.want_run, "want_run unchanged");
         assert_eq!(run_state_text(slot.state()), "idle");
+    }
+
+    /// The bulk row under the buttons: Reload / Start all / Stop all after
+    /// `[Params]`; a pending reload warning turns Reload into Confirm and
+    /// adds Cancel, shifting the rest.
+    #[test]
+    fn bulk_row_clicks_follow_the_painted_labels() {
+        let pane = |confirm: bool| {
+            ScriptPane::new(
+                script::RunState::Running,
+                None,
+                &[],
+                &[],
+                false,
+                false,
+                false,
+                "",
+                true,
+                None,
+            )
+            .with_reload_confirm(confirm)
+        };
+        let area = Rect::new(0, 0, 80, 6);
+        let row = 3;
+        let painted = render(pane(false), 80, 6);
+        assert!(
+            painted.contains("[Params v] [Reload R] [Start all T] [Stop all E]"),
+            "{painted}"
+        );
+        assert_eq!(pane(false).on_click(area, 1, row), ScriptClick::Params);
+        assert_eq!(pane(false).on_click(area, 11, row), ScriptClick::None);
+        assert_eq!(
+            pane(false).on_click(area, 12, row),
+            ScriptClick::Button("Reload")
+        );
+        assert_eq!(
+            pane(false).on_click(area, 23, row),
+            ScriptClick::Button("Start all")
+        );
+        assert_eq!(
+            pane(false).on_click(area, 48, row),
+            ScriptClick::Button("Stop all")
+        );
+        let painted = render(pane(true), 80, 6);
+        assert!(
+            painted.contains("[Params v] [Confirm R] [Cancel C] [Start all T] [Stop all E]"),
+            "{painted}"
+        );
+        assert_eq!(
+            pane(true).on_click(area, 22, row),
+            ScriptClick::Button("Confirm")
+        );
+        assert_eq!(
+            pane(true).on_click(area, 24, row),
+            ScriptClick::Button("Cancel")
+        );
+        assert_eq!(
+            pane(true).on_click(area, 35, row),
+            ScriptClick::Button("Start all")
+        );
     }
 
     #[test]
@@ -754,9 +912,12 @@ mod tests {
             60,
             4,
         );
-        assert!(text.contains("[Resume]"), "paused paints Resume: {text:?}");
         assert!(
-            !text.contains("[Pause]"),
+            text.contains("[Resume P]"),
+            "paused paints Resume: {text:?}"
+        );
+        assert!(
+            !text.contains("[Pause P]"),
             "paused must not paint Pause: {text:?}"
         );
     }
@@ -779,9 +940,9 @@ mod tests {
             60,
             4,
         );
-        assert!(text.contains("[Pause]"), "running paints Pause: {text:?}");
+        assert!(text.contains("[Pause P]"), "running paints Pause: {text:?}");
         assert!(
-            !text.contains("[Resume]"),
+            !text.contains("[Resume P]"),
             "running must not paint Resume: {text:?}"
         );
     }
@@ -802,7 +963,7 @@ mod tests {
             None,
         );
         assert_eq!(
-            pane.on_click(area, 18, 2),
+            pane.on_click(area, 23, 2),
             ScriptClick::Button("Resume"),
             "Resume is clickable when paused"
         );

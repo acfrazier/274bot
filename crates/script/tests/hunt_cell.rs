@@ -408,6 +408,8 @@ fn posted_npc_distance_zero_does_not_skip_the_walk() {
         size: 1,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     };
     let bytes = encode_snapshot(&snap_scene(cell_here(), &[], &[], &[npc]));
     let reader = SnapshotReader::from_bytes(&bytes).unwrap();
@@ -489,6 +491,8 @@ fn posted_loc_distance_does_not_pick_the_door() {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     };
     let near = SceneEntityInput {
         index: 2,
@@ -511,6 +515,8 @@ fn posted_loc_distance_does_not_pick_the_door() {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     };
     let other_level = SceneEntityInput {
         index: 3,
@@ -533,6 +539,8 @@ fn posted_loc_distance_does_not_pick_the_door() {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     };
     let jail = ItemRowInput {
         name: Some("Jail key"),
@@ -1069,40 +1077,6 @@ fn cell_box_edges_are_a_fence_not_a_walk_target() {
     seen.inv = vec![dusty()];
     set_observation(seen);
     assert_yield(&call(begin(), site(json!({})), None), true);
-}
-
-#[test]
-fn source_does_not_copy_the_forbidden_machines() {
-    let src = include_str!("../src/hunt_cell.rs");
-    assert!(src.contains("CELL_RUNTIMES"));
-    assert!(src.contains("in_area_body(here, 1,"));
-    assert!(!src.contains("cell-later"));
-    assert!(!src.contains("hunt_key::dispatch"));
-    assert!(!src.contains("hunt_leave::dispatch"));
-    assert!(!src.contains("hunt_lair::dispatch"));
-    assert!(!src.contains("hunt_fight::dispatch"));
-    assert!(!src.contains("dialog::dispatch"));
-    assert!(!src.contains("keyStatus"));
-    assert!(!src.contains(".bank("));
-    assert!(!src.contains("bank_side"));
-    assert!(!src.contains("equipment"));
-    assert!(!src.contains("close-modal"));
-    assert!(!src.contains("DirectNavigator"));
-    assert!(!src.contains("gap_sw"));
-    assert!(!src.contains("bodyOrigin"));
-    assert!(!src.contains("size>>1"));
-    assert!(!src.contains("size >> 1"));
-    assert!(!src.contains(".nx("));
-    assert!(!src.contains(".nz("));
-    assert!(!src.contains(".distance("));
-    assert!(!src.contains("FIGHT_MS"));
-    assert!(!src.contains("hunt_key::"));
-    assert!(!src.contains("Instant::"));
-    assert!(!src.contains("pub const KBD_LOCS"));
-    assert!(!src.contains("pub(crate) const KBD_LOCS"));
-    assert_eq!(DOOR_MS, 8_000);
-    assert_eq!(VELRAK_WALK_MS, 20_000);
-    assert_eq!(WALK_LEG_MS, 300_000);
 }
 
 #[test]

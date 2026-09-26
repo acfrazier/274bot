@@ -110,6 +110,8 @@ fn player_row<'a>(index: i32, name: &'a str, actions: &'a [String]) -> SceneEnti
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -240,6 +242,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
@@ -288,6 +292,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.locs = &locs;

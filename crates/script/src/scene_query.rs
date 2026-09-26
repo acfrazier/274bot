@@ -386,6 +386,8 @@ mod tests {
             actions: observed::ops_of(
                 &actions.iter().map(|s| (*s).to_string()).collect::<Vec<_>>(),
             ),
+            shape: 0,
+            angle: 0,
         }
     }
 

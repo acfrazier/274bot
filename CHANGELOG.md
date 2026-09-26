@@ -3,6 +3,519 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.1.8` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [0.1.9] — 2026-09-24
+
+### Memory
+
+- Raw collision/NSEW navflags load only when a drawing surface needs them, stream
+  into one resident `Arc<Vec<u32>>` (no full-file byte buffer retained beside the
+  decoded words; peak owned payload ≈ one copy of the sidecar), skip the 260 MB
+  content hash for trusted bundled flags, and release when the last drawer stops
+  or the only focused slot is removed. Bundled reach binding clears on
+  session/pack detach; flood cache keys use Weak/`Arc` world identity and empty
+  demand releases ownership (WalkTo close still uses `release_map_leases`).
+
+### Navigation
+
+- Radius walks to a solid in-scene target now route to one of its wall-valid
+  cardinal / interaction stands with one first-goal baked search, so doors
+  and transports remain usable. The same search serves the old radius goal
+  set as a fallback: a stand wins whenever one routes, and a radius tile it
+  passes on the way needs no second search. A backward search from the
+  stands runs beside it: stands sealed in a small region (a dead-end pocket,
+  a gated room) are proven unreachable after about twice that region's size.
+  A search that neither reaches a stand nor proves one reachable stops after
+  524,288 nodes instead of flooding the map; a proven-reachable stand keeps
+  the full 4,000,000-node search. The radius tiles keep that budget rule
+  for themselves inside the shared search, so it answers for them exactly
+  as a search over the tiles alone would; where the stands stop it before
+  that answer, the tiles get a search of their own. BankBudget then searches
+  once more with every obj the bank and backpack hold treated as carried and
+  wearable (their counts combined, capped at a full stack), so a stand
+  behind an obj the bank lacks no longer hides one the bank can open. A walk
+  spends at most two node-capped searches, plus one each time a planned bank
+  trip would deposit an item the route still needs.
+  A low-level nearest-route terminal still settles its owned wait, but
+  `walkResilient` continues its frozen scene-recovery ladder until the reach
+  probe confirms arrival. Every scene/direct `walk-to` request uses the
+  client's nearest-tile packet; resilient recovery also keeps the frozen
+  48-tile clamp and stalled/periodic re-click. After that scene step,
+  `walkResilient` now runs the frozen unstick (`tryNearbyDoor` within
+  Chebyshev 3, then one stalled/periodically re-clicked `pickUnstickStep`)
+  so a closed live door that the pack never encoded (shape-9 `loc_1530` at
+  2669,3316) can still be opened. The one-tile step always runs after the
+  door attempt, even when no door helps; it returns on arrival, and progress
+  resets the pass before rebaking. Desert Mining Camp's scripted doors stay
+  excluded as in frozen.
+  `walkOpening` is a Rust machine (eight segments, openable obstacle within
+  14, 4000 ms wait) instead of a `walkResilient` reduction. Unstick and
+  `walkOpening` clear each candidate's real wall edges on both tiles and open
+  only a door whose counterfactual makes the destination reachable under the
+  walk arrival rule (or strictly closer) on the posted collision flood. Ties
+  use route length, then proximity, rather than BFS enqueue order. Frozen
+  path-scoped hints apply only when a published route exists. The native wait
+  intentionally does not dismiss the
+  frozen quest-lock mesbox, so a locked door costs the full five-second bound.
+- The 289 nav bake now has an edge for every engine-openable generic door,
+  not only straight level-0 ones (274V10 unchanged). A closed diagonal
+  (shape-9) `door_closed` door crosses its own tile to the free cardinal on
+  each side, never onto the tile its opened leaf swings to; this is the
+  East Ardougne house door (2669,3316) that sealed the 0.1.8.1 Thiever in
+  (`NoPath` to the south bank before, a door crossing now). Doors on upper
+  floors cross on their plane, and every loc placement (ladders included)
+  now sits on the engine's bridge-corrected game plane. Closed doors of a
+  generic door category declared outside the door configs (West Ardougne
+  `loc_2997`, Rellekka, Troll Stronghold, games room), the Al Kharid
+  curtains and Rellekka fur doors (in-place `loc_change` to a non-blocking
+  loc), the Paterdomus members fence gate (`members_req`), the Cooking,
+  Crafting and Fishing guild doors (their own skill-level and worn
+  hat/apron checks on the way in, free on the way out), the West Ardougne
+  fence climb and the Miscellania castle stairs are now edges. 2,240 →
+  2,758 edges (+510 door, +8 stairs), pack +34,776 bytes; bakes stay
+  byte-identical. Quest-stage named doors, bespoke quest/area handlers and
+  player-relative or randomised landings are not edges yet.
+- Added shared native-map data contracts: independently keyed image/POI caches,
+  checked manifests and data-only service records, resumable partial-entry
+  validation, bounded map-record reads and 24-texture LOD selection. Raw visual
+  bridge-plane conversion now shares collision's implementation; server NPC
+  coordinates are not shifted. Frozen catalog-facing bank selection is unchanged.
+- Nav bake now emits a data-only `274bot.navpois` sidecar (`274P`/1) with
+  revision NPC placements, bounded `@openbank` / `loc_change` bank evidence,
+  and place labels. Missing navpois invalidates a warm stamp once. Frozen
+  `BANK_CATALOG` / named-bank APIs are unchanged; 274V10 routing bytes are
+  unchanged.
+- Replaced the WalkTo per-tile collision-dot mesh with an application-owned
+  native map renderer: at most 24 terrain textures (none until the local map
+  image cache is bound — the map shows a grid and `map imagery unavailable —
+  cache not bound`, with no POIs), one viewport overlay for optional map-owned
+  grid/collision/NSEW/reach/flood toggles, vector route and destination
+  markers in the default view, radius-16 snap, wheel-zoom toward the cursor,
+  and GPU/CPU pixel release on close. Reach uses a bound `.navreach` sidecar
+  or shows `reach unavailable`; the map never runs a whole-world BFS.
+  Basemap defaults on; grid dots default off. `BOT_CPU=1` uses the same map
+  path. Header plane/zoom/search and layer toggles wrap inside the Game pane
+  at the default window and at narrower widths; the footer reserves the one
+  status/action row that is drawn.
+- Added a shared host map catalogue and search API that merges revision-bound
+  client POIs, authenticated `navpois` service/place facts and borrowed navigation
+  transports. Access anchors, annotations, adjacent walk stands and teleport
+  **landings** remain different facts. Missing client data or `navpois` is
+  explicit; tellers and place labels are unavailable without the supplement.
+- The shared selection model provides a radius-16 query (at most 33×33 cells),
+  ordered by Chebyshev distance, Manhattan distance, x, then z. A miss has no
+  walk target; debug Teleport still uses the requested tile. Place-label
+  anchors remain view jumps unless they have a proven stand.
+- Shared map confirmations consume the selection once. The destination binds
+  tile/POI, plane and nav identity, not a bot. Walk options are taken at
+  confirmation. Panel adapters walk through `Play::map_walk`, refuse a missing
+  observed player, and send debug Teleport only through `Play::map_teleport`.
+  Walk needs the snapped target. Debug Teleport is a cheat: it uses the
+  requested tile and does not require walkability or radius-16 snap. It is
+  authorized only for a Local target on a loopback host; the panel and host
+  share that predicate, and an unsnapped selection is labelled teleport-only
+  only when Teleport is available. Walk and Teleport act on the bot focused
+  at confirm. A different nav pack still invalidates the pending destination.
+- WalkTo Send walks the focused bot (default) or a Group checklist of wall
+  bots (All eligible / None). Ineligible bots stay listed and greyed with a
+  host reason: not logged in, no position yet, or running a script (stop the
+  script to include it). Confirm reads Walk N bots; each eligible bot gets
+  its own command, origin and routing options, then a Start-all-style
+  summary (`4 walking, 1 no path: bot3`). Debug Teleport stays focused-only.
+- TUI Map (F4) uses that shared host model: destination-only selection,
+  radius-16 Walk snap, debug Teleport on any selected tile (Local+loopback
+  only), fleet group Walk with eligibility reasons and a Walk N bots
+  summary, and focused-bot observed NPC services in the POI list. Enter
+  confirms only while Map is focused; plane change and recenter clear the
+  pending destination. Catalogue demand is catalogue-only (no PNGs) and is
+  released on close.
+- The shared route projection borrows actual routes with driven-live, script,
+  then manual precedence, matching the in-game overlay. Its generation changes
+  across arm replacement, including a new path to the same destination.
+- Map catalogue entries expose **Map-discovered bank** provenance, distinct from
+  the **Frozen bank API roster**. Canifis can be discovered at normalized bridge
+  plane 0 while `nearestBank` still omits it; frozen bank APIs are unchanged.
+  A geometric, collision-valid adjacent stand proves a walking destination,
+  not banking eligibility or the permitted interaction side (v1 POIs omit
+  `forceapproach`). Live NPC service extraction borrows the focused snapshot,
+  validates slot/world/nav context and returns at most 128 observed records.
+- WalkTo now opens a process-wide images demand (catalogue first) against
+  the bound profile's map cache. Real bake progress is shown; ReadyImages
+  terrain and `Catalogue::from_ready` (navpois + game-data names) replace
+  the fixture-only map. Observed services follow the focused bot. Close
+  drops the demand and GPU/CPU pixels. A mid-bake close keeps the tiles already
+  written; reopen fully decodes each of them (chunk CRCs, zlib, size), adopts
+  the intact ones and bakes the rest, so a damaged tile is never published.
+  Route tiles are cached by `(source, generation)` and trimmed by a monotonic
+  start index (`remaining_path_tiles` leg semantics; an off-route `here` does
+  not re-show walked legs). Pending selection and the armed dest draw as
+  distinct markers; decode staging reports its real byte count; LOD selection
+  uses the bake/manifest `max_lod`.
+- A cold WalkTo terrain bake no longer writes and fsyncs every tile a second
+  time when it publishes: the finished tiles' receipts are checkpointed as
+  written, so the 289 cold bake takes about 15 s instead of about 24 s, and a
+  resumed bake no longer spends ~9 s re-publishing. The panel no longer
+  creates the map-cache manager at boot; the first WalkTo open does, and a
+  closed map's finished job is dropped on reap. The terrain bake policy
+  changed, so an existing terrain cache is baked again once.
+- WalkTo map-symbol places (anvils, furnaces, shops, water sources, …) are
+  named by their world map Key entry, as in rs2b0t's world map and picker,
+  instead of `Location ####`. Minigame symbols read "Minigames". A nameless
+  place that has no Key entry is left out: the 289 agility-training (4) and
+  vegetable-store (2) symbols, which rs2b0t's picker does not show either.
+  On 289 the catalogue drops from 745 to 739 places, and none is labelled
+  `Location`. The catalogue policy changed, so an existing catalogue is
+  baked again once.
+- Before a local WalkTo terrain bake starts (no ready terrain for the bound
+  client cache's image identity), the panel's WalkTo map warns what it costs
+  (CPU for about 15 s, up to ~15 MiB once) and offers **Bake now**, **Always
+  bake** or **Not now**. Not now keeps the map catalogue-only (POIs, search,
+  grid) with a **Bake terrain** control for later. A ready terrain cache,
+  whether baked earlier or installed, opens without asking (a missing or
+  stale catalogue is derived silently); catalogue-only
+  demand (the TUI map) never asks. The remembered choice is the `map_bake`
+  key of `panel-ui.json` (`ask` when absent, as in 0.1.8.1 files), edited in
+  the panel's Nav config (**ask before baking terrain**) and the TUI settings
+  popup (**map bake**). The decision is `frontend_core::MapBakeGate`, shared
+  by both front ends.
+
+### Rendering and client
+
+- Logged-out title-screen brazier flames animate again on CPU and GPU. Full-rate
+  views follow the 35 ms flame clock, 1 fps rail tiles catch up when painted,
+  and draw-off bot slots remain raster-free.
+- Region changes reuse one identity-checked local map store instead of fetching
+  every square over ondemand; completed maps are kept under that content
+  identity. The 289 ondemand worker no longer sends the legacy Java keepalive
+  (`00 00 00 0a`) that this engine family closes on; 274 still does. A closed
+  update socket reconnects and resends immediately after a network completion,
+  while accept-then-close reconnects back off instead of spinning. A closed
+  game socket is noticed on the next frame via EOF peek instead of waiting the
+  15 s silence watchdog.
+
+### Startup
+
+- Faster startup: fewer redundant cache and content re-checks. Local binds no
+  longer re-hash the whole content tree, login CRCs share the cache capture
+  pass, and Play construction does not recapture archives already checked at
+  template load.
+
+
+### Panel and TUI
+
+- **Shared structured log.** Panel and TUI read one log from `frontend-core`:
+  each line carries wall time (`HH:MM:SS.mmm`), game tick, slot, source
+  (script/login/nav/bank/watchdog/host) and level. Host code logs through one
+  `host_log!` facade: login phases, handshakes, script lifecycle, watchdog,
+  random events, route-level nav events and bank operations always reach the
+  slot log, also in release builds; per-frame and per-tick traces stay on
+  stderr under `BOT_DEBUG=1` / `--debug` as before. Each bot keeps its newest
+  500 lines plus a 500-line process ring (measured ≈ 61 KiB per bot for
+  typical lines, ≤ 282 KiB at the 512-byte line cap).
+  Every account password is redacted in the facade itself, before a line
+  reaches stderr, the log, Copy, Save or the session file. Lines recorded
+  off the slot thread (status transitions, script lines) carry the slot's
+  current game tick.
+  The panel log section fills the leftover side-panel height (or is a
+  resizable box when other sections follow it) with a timestamp column, level
+  colours, level/source/scope filters, search, follow, **Copy** and **Save
+  log…**; the TUI opens the same view with **F7** (80×24 included). Status
+  transitions, script lines, audio and vault/profile errors moved onto it, and
+  the TUI now drains script lines too instead of letting them pile up.
+- **Session log file** (off by default): the panel's General config
+  checkbox or `F` in the TUI log pane sets `session_log_file` in
+  `~/.274bot/panel-ui.json` (absent = off). While on, a background thread
+  writes the session to `~/.274bot/logs/session-<time>-<pid>.log`, rotating at
+  4 MiB (3 old segments) and keeping the newest 10 sessions.
+- The main panel shows a collapsible **resource** section whenever MultiBox is
+  off, using the same 1 Hz sampler as the rail card (bots N (M running), cpu,
+  ram peak, traffic) plus a background-bot count. The TUI status pane shows the
+  same rows.
+- Switching profile in single-bot mode, or turning MultiBox off, still leaves
+  other bots running. A one-time acknowledgement names how many live workers
+  remain and the live meter cost, points at the resource section, and **Got it,
+  don't show again** sets `background_bots_ack` in `~/.274bot/panel-ui.json`
+  (the TUI uses the same key). A failed write keeps the notice visible and
+  reports the error; a later successful write clears only that error. The TUI
+  shows the same sentence; Esc with no map selection dismisses it. Live/harness
+  boots do not show or persist the notice. The TUI pump reaps finished workers
+  before counting background bots, matching the panel.
+- Interactive panel-play and tui-play take an OS advisory lock on
+  `~/.274bot/instance.lock` before prefs load, vault unlock, or slot spawn.
+  The holder (`panel|tui` + pid) is published to `~/.274bot/instance.holder`
+  (tmp + fsync + rename) after the lock is taken so a second instance can
+  read it on Windows, where `LockFileEx` is mandatory, and is removed on a
+  clean lock drop. A second instance warns and offers Exit (default) or
+  Continue anyway, naming the real bot directory (the parent of
+  `instance.lock`) in the warning; it accepts only a complete
+  newline-terminated marker whose pid is still alive, otherwise retries
+  briefly and warns (`pid unknown`) instead of failing startup. `--live` / memory / stress /
+  harness boots skip the lock. `File::try_lock` is cfg-free
+  (POSIX `flock` / Windows `LockFileEx`).
+- Start (and Start all) after a fresh launch now runs the rs2b0t catalog script
+  saved on the profile. Before, Start failed with `unavailable: <name>` until
+  Browse or Load had filled the catalog, although the script section already
+  showed the saved name.
+- The panel and the TUI now share one operator session (`frontend-core`):
+  vault, fleet membership and the logout latch, the selected bot, Load, Log
+  in / Log out (single and all), removal, script Start/Pause/Stop and Start
+  settlement run through the same code in both front ends. In the TUI, `m`
+  loads every profile and logs every member in (a loaded, logged-out member
+  is logged back in and a crashed worker recreated), and new keys act on the
+  focused bot: `i` Log in, `u` Log out, `U` Log out all, `x` Remove (clean
+  logout, then the worker stops; the neighbour becomes focused).
+- Script coordination is shared too (`frontend-core` `Scripts`): per-profile
+  assignment and parameters, Start all / Stop all, Reload and catalog Refresh
+  run through the same code in the panel and the TUI. The TUI now edits the
+  focused profile's own parameters (not the global `script-settings.json`),
+  keeps a per-profile Browse selection, saves the assignment once a Start is
+  Ready, and has Reload (warning, then Confirm or Cancel), Start all and Stop
+  all buttons under the script buttons. Every script command also has a key,
+  shown in its button (`b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f`
+  Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start all, `E` Stop
+  all), and the script rows stay on screen at 80×24 (map, chat and status
+  shrink first). A parameter edit reaches the running
+  script only after it is saved; a failed save is never pushed.
+- Apply to all: from a profile's script parameters (panel Script prefs, TUI
+  parameters `a` then `y`), copy that card's parameters to every wall member
+  assigned the same card, after a confirmation naming the members. Each
+  member's profile is saved, and a member running that card receives the
+  parameters once the save succeeded (only the run seen at Apply; a restarted
+  run already started with them). Members on another card are skipped; the
+  report counts saved, failed and skipped separately from live delivery.
+- Profile edits (auto-login, random events and lamp, credentials, render
+  prefs, script assignment, tutorial flag, profile delete) no longer encrypt
+  and write the vault on the UI thread. The edit shows at once; one writer
+  thread saves it in order, and a running bot picks up the change only after
+  the save succeeded. A failed save is shown on the error line and the
+  profile goes back to its saved value. A new or renamed profile is selected
+  (and its bot started) only after its save succeeded, and a rename saves
+  the new name and removes the old one in one write.
+- A saved password change now applies to a bot that is already running
+  (for example parked on the login screen): its next login uses the new
+  password. Before (also in 0.1.8.1), a bot kept logging in with the
+  password it was started with until it was removed and loaded again.
+- Stop all now also stops a bot whose script is still shutting down for a
+  Reload; before, the reloaded script started again after Stop all.
+- In the TUI, `x` removes the bot from the strip at once and Tab no longer
+  reaches it while it logs out.
+- The TUI options popup now saves only the random-event and lamp fields it
+  edits, and updates a running bot only after the vault write succeeded.
+  Before, it replaced the whole profile settings from its draft, which could
+  reset the profile's world pin or auto-login.
+
+### Slot lifecycle
+
+- Forwarded local engine endpoints retain verified game data when their connect
+  ports differ from the engine's `world.json` ports; missing verified content
+  reports the profile/engine settings remedy.
+- Slot startup, stop and restart now have one owned lifetime: per-slot
+  registries are published before the worker starts, stopped and crashed
+  workers release their queue place, and Log in or Login all recreates a
+  terminal worker. Panel rail removal waits and reaps asynchronously instead
+  of joining a worker on the UI thread; re-adding, re-seeding or logging in
+  during that window cancels only the matching lifetime's removal and restores
+  its IO.
+- Login and logout commands are serialized by generation, so completion of an
+  old logout cannot erase a newer Login all while a successful compatible
+  handshake still consumes its one-shot intent. Retry notifications serialize
+  with the wait predicate, and Logout latches at the command boundary,
+  including while a slot is preparing or parked.
+- Connected session state is distinct from scene/player readiness. Connection
+  lights, loading labels, Logout and clean removal remain correct while a
+  scene loads, while game actions and routing still require a current player
+  and valid tile.
+- Disconnect clears session byte/run counters but retains paused script paint;
+  Stop and unload clear published paint even offline. Status-lock poison from
+  a panicked worker is recovered at every access, while poisoned script slots
+  fail UI reads, starts and controls closed until terminal retirement reaps
+  them.
+- Welcome dismissal keeps its spaced attempt bound and reports a visible
+  failure after 10 eligible seconds; the window restarts while the scene
+  cannot accept a close.
+
+### Random-event guardian
+
+- The strange box now solves "What colour is the Halfmoon?" on the public
+  server as well as the local engine's "Half Moon"; shape and colour names
+  compare ignoring case and spaces. Before, the guardian held the open cube
+  forever.
+
+### Script host
+- Catalog walking and recovery follow frozen rs2b0t more closely
+  (`docs/api/script.md`, "Catalog walking and recovery"): `walkResilient`
+  verifies with a route probe before giving up and honours `sceneRadius`,
+  the teleport toggles and `distanceBeforeTeleport`; `avoidZones` now fails
+  loudly instead of being ignored, and `maxBudget` is mapped to the host
+  search bound. `createReturnToAnchorTask` keys off the leash and walks the
+  frozen legs (long-range leg, `obstacles`, 90 s). `DirectNavigator` clamps
+  and re-clicks. `Reach.npcDialog` walks with the resilient ladder, clears
+  doors in front of the NPC over up to eight rounds, and stops its walk when
+  a random event interrupts it. `RecoveryHints.takeAnchor()` returns the
+  anchor across a watchdog restart.
+- The traveller ends a follow as `EndBlocked` when the route's last tile,
+  one step away, refuses every click, instead of waiting out the caller's
+  timeout; script walks treat it as arrival as frozen `'blocked'` does. A
+  transport approach refused right after a region rebuild is retried while
+  the scene settles instead of failing the walk.
+- The FlourCollector catalog card now loads its four Murder Mystery area facts
+  through the shim; EssMiner stays visibly dimmed until native Gatherer support
+  replaces its pickaxe-acquisition dependency.
+
+- Alcher and LeatherCrafter can load their reachable-bank selector again.
+  Selection runs one bounded native multi-target search off the slot pump,
+  keeps the same-plane radius-four shortcut, and falls back to air-nearest
+  on an unavailable route or a five-second completion timeout. A typed v2
+  `bankNearestReachable` helper exposes the same select-only capability.
+  The complete 20-bank catalog now preserves stable order, base-skill/quest
+  gates, default-off Mage Arena/Zanaris preferences, and object/NPC access.
+  Selected-world placements resolve safe walk stands; unavailable Canifis
+  content stays a gated air fallback rather than an invented reachable bank.
+  Stand resolution retains usable counter-side floor tiles with directional
+  wall faces (including Varrock West), while still excluding blocked footprints.
+  The selection waiter also bounds requests dropped before host admission;
+  explicit v2 opt-ins override settings for both routing and air fallback.
+  Native `walk-nearest-bank` reuses the winning route instead of flooding again;
+  Stop/reload invalidates pending picks without replacing an existing follow.
+  World bank facts now require explicit binding, so an early read cannot freeze
+  an empty placement roster.
+- Native `walk-nearest-bank` now follows a resolved bank stand to exact arrival, preserving the final booth-approach step before opening. An accepted `open-stand` now cancels the slot's armed scripted walk, as `open-booth` already did, so the bot is not walked off an open bank.
+- `Banking.open`, periodic banking and world bank opens now share a Rust-owned
+  select/walk/access continuation. Nearby banks still beat distant presets;
+  explicit destinations remain the no-scene fallback. NPC and object access
+  metadata survive selection, and deposit callbacks wait for loaded bank stock.
+  An NPC bank without a dialogue choice never selects an unrelated first option.
+  A focused `alcher_dwarven_mine` scenario observes dungeon exit, the selected
+  Falador East bank, real withdrawal and fresh High Alchemy XP.
+
+- Baker-stall carried-food counting matches frozen substring patterns, so
+  partial cakes (`2/3 cake`, `Slice of cake`) satisfy restock and eat gates
+  the same way whole `Cake` does.
+
+- Baker-stall restocking now awaits one Rust step machine; Rust owns selected
+  stall facts, callback polling, waits, steal verbs, stand swaps and lockout
+  sequencing while callbacks retain the options object as their receiver.
+- The v2 clue session is begin plus one awaited run; Rust owns its continuation
+  table, optional callbacks, waits and typed verb emission.
+- The v2 quest journal is begin plus one awaited run; Rust owns its row click,
+  modal acquisition, retry window, exact-pair close and timeout.
+- The obsolete clue-verb JSON adapter is removed; the clue machine emits typed
+  interact requests directly.
+- Script startup, tick interruption and `onStop` now share one serialized
+  lifetime: Stop cannot leak a tick interrupt into the hook, Pause blocks new
+  entries while legitimate slow work finishes, and Pause shares the watchdog's
+  one-game-tick (600 ms) runaway horizon instead of cutting work after 50 ms.
+  The horizon follows the active execution's own start rather than later tick
+  dispatches. When a watchdog, Pause deadline or session-reset terminate
+  actually cuts JavaScript, the host logs the runaway and recreates the script
+  runtime instead of guessing which continuation owned the cut; an
+  operator-paused script remains paused after recreation. Three cuts within
+  five minutes stop the script with a visible error. Disconnect carries an
+  active execution's same deadline across the session reset, even though no
+  logged-out ticks remain to drive the watchdog. A final queued Pause remains
+  authoritative over older Pause/Resume commands. Hostile startup/validation
+  is bounded and reclaimed.
+- Reload and catalog validation now run off the panel UI thread. A Pause that
+  wins the final host dispatch fence preserves the drained script actions for
+  Resume instead of silently losing them.
+- Active tick errors clear only after a completed successful loop; held frames
+  and cancelled ticks no longer manufacture recovery, while a clean loop after
+  reconnect and explicit Stop clear the active status and retain diagnostic
+  history.
+- `buryOneInFight` follows frozen `fightUpkeep`: it skips only the tick the
+  swing began instead of every animating tick, so bones are buried during
+  attack cooldowns, and it answers true only once the backpack drops a slot
+  within three ticks (a queued Bury is no longer a burial). One Rust
+  `fight-bury` machine owns the gate, the click and the confirmation.
+- `swingStartedThisTick`, `buryOneInFight` and `AttackClock` follow the
+  frozen clock: the snapshot now carries the local player's animation id,
+  and a swing starts on the first animation seen and on every change to
+  another non-idle animation. A script started or reconnected mid-swing no
+  longer buries or eats on that tick, and a new attack animation that
+  follows another without an idle tick counts as a new swing. Each
+  `new AttackClock()` keeps its own state and observes only when called.
+- `reader.selfAnim()` returns the local player's animation id and
+  `Game.animating()` is true only while an animation plays, as in frozen
+  rs2b0t; walking alone no longer counts as animating (it did through the
+  host's walking-or-animating flag). Catalog scripts that wait on
+  `Game.animating()` (GnomeMagicChopper, AgilityBot and others) and the
+  `lightFire` start check follow.
+- v1 `foodHealAmount` answers every name like frozen `food.ts`: the exact
+  selected heal, else the first selected food whose name contains the given
+  name or is contained in it, else 8; an empty name is 8. Unknown, partial
+  and ambiguous names (a configured `Cabbage`, `Swordf`) no longer throw
+  `not impl` mid-fight. Only missing game data still throws its explicit
+  "game data unavailable" error. `shouldEatToUseFood` now holds a heal of
+  zero or less above the eat floor, as frozen does, and runs in Rust.
+- `ChatDialog.continue()` resolves like frozen: true once the chat modal
+  changes or the next page offers Continue again, false with no Continue
+  posted or after 3 s. It waited on the inverted condition, so a multi-page
+  dialog reported false to callers that branch on it (GatheringBot's desert
+  camp route) and a vanished Continue on the same page reported true. The
+  press and wait now run in the Rust `chat-dialog` machine.
+- `resolveCookLocation(setting, from, unlocked?)` follows frozen
+  `CookLocations`: `Auto` takes the host cook location whose bank is
+  nearest `from` among those the account can open (it was always `null`,
+  so CookBot stopped with "no bank called 'Auto'"), a named location is
+  returned only when its bank is unlocked, and a caller's `unlocked`
+  predicate replaces the bank requirement.
+- `withdrawOp(ops, amount)` reads the label off the bank row's own ops for
+  all six frozen amounts (`all`, `10`, `5`, `x`, `1`, `any`) instead of
+  assuming `Withdraw All/10/1`; a row without the op answers `null`, so a
+  catalog fallback (`?? withdrawOp(ops, 'any')`) takes the op the row
+  actually has.
+- `describeCombatStyle` names the style the weapon actually trains, as
+  frozen does (`strength (training Strength)`, or `defence (training
+  Defence; controlled unavailable)` after a fallback), instead of echoing
+  the requested style.
+- `parseCombatStyle` and `parseRangeStyle` answer frozen's defaults for an
+  unknown setting (`strength`, rapid mode 1) instead of throwing `not impl`,
+  and `parseRangeStyle` accepts `long range` / `long-range`. The style tables
+  are Rust's.
+- `eatAtHpThreshold(maxHp, heal, minHp)` is implemented as frozen: the HP
+  at which a full heal fits, kept below max HP and at least the floor
+  (default 5); it threw `not impl`.
+- `foodForms` / `foodCount` / the combat keep list treat the frozen partial
+  forms as the whole food: a chocolate cake's `Chocolate slice`, a pizza's
+  `1/2 … pizza` and a pie's `Half a/an … pie` (read from the selected item
+  aliases; the cache spells the pineapple half `1/2pineapple pizza`).
+- CookBot's location list is frozen's: every bank in the roster, each paired
+  with its hand-walked camp surface (Catherby, Seers, Draynor) or the
+  nearest placed Range/Fireplace within 20 tiles of the bank, ovens first
+  (fire mode only when none is). The surfaces are selected content: the
+  game-data generator now publishes every cook surface in the 274 and 289
+  map packs (`cook_surfaces`, matching rs2b0t's generated table; 289 has one
+  more fireplace), and generation fails if a curated surface moves. Without
+  game data the list is empty and `resolveCookLocation` reports "game data
+  unavailable".
+- A dropped connection now pauses the whole Load script and resumes it after
+  the relog, as rs2b0t's AutoRelogin does. An offline slot logs in while
+  auto-login is on or a script is running or paused on it, as rs2b0t does,
+  and stops trying once neither holds. Every await, step machine and task
+  runtime in flight (a walk, a bank open, a death-recovery walk-back and the
+  walk inside it) stays as one chain; the slot re-sends the script walk it
+  was following and the walk requests the dropped connection never sent
+  (up to eight), under the same request ids, so the walk completes instead
+  of returning `false` and nothing else starts beside it. An operator or
+  idle logout, Stop and slot removal still end the work as before. While a
+  script is paused (operator Pause or a reconnect), `Execution.delay` and
+  `delayUntil` timeouts no longer run down: a wait resumes with the time it
+  had left.
+
+### Upgrade compatibility
+
+- Added a real encrypted 0.1.8.1 home fixture and a permanent behavioral
+  upgrade test covering complete vault profiles/settings/assignments, panel
+  preferences, loadouts and legacy script overrides through a 0.1.9
+  save/reopen. The release audit inventories every operator and derived
+  on-disk artifact, includes the in-flight frontend vault writer, and defines
+  the packaged macOS/Windows/Linux in-place upgrade gate.
+- An external navigation pack older than the current `274V10` format,
+  including retained `274V8` and `274V9` files, now leaves navigation
+  unavailable with a `rebuild it with nav-pack` diagnostic instead of aborting
+  panel/TUI startup; the old file is never deleted. Startup logs whether a
+  loaded pack came from the packaged `274V10` bundle or an external path so
+  release gates can prove package provenance.
+
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 
 A patch on 0.1.8: a public-289 crash, both public worlds, the login queue and
@@ -109,6 +622,9 @@ best-effort and untested in this release.
   v2 `api.tick` advances on every eligible tick, including while an async tick
   is pending. In the ResetSession window the v2 quest journal/status return
   `snapshot-unavailable`.
+- `RunManager.override({ runAuto?, energyMin? })` supplies the matching host
+  slot's per-session auto-run overlay. Missing fields fall through to host
+  defaults (`runAuto: true`, `energyMin: 20`); Start or Stop clears the overlay.
 
 ### Gameplay fixes (live 289)
 

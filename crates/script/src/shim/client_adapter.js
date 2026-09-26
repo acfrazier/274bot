@@ -159,7 +159,7 @@ export const reader = proxy('reader', {
         return snap().in_combat === true;
     },
     selfAnim() {
-        return snap().animating === true ? 1 : -1;
+        return snap().self_anim ?? -1;
     },
     selfTarget() {
         const kind = snap().self_target_kind;

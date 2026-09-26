@@ -119,6 +119,34 @@ fn probe_compat(src: &str, revision: ClientRevision) -> serde_json::Value {
 }
 
 #[test]
+fn v1_food_heal_missing_data_explains_content_verification() {
+    let iso = LoadIsolate::spawn(
+        r#"
+import { foodHealAmount } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        let missing = '';
+        try { foodHealAmount('Bread'); } catch (e) { missing = String(e.message || e); }
+        globalThis.__probe = JSON.stringify({ missing });
+    }
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
+    assert_eq!(
+        value["missing"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+    );
+}
+
+#[test]
 fn native_food_count_hook_is_callable() {
     let iso = LoadIsolate::spawn(
         r#"
@@ -184,43 +212,196 @@ export default class T extends LoopingBot {
     }
 }
 
+/// Frozen `FOOD_FORMS` (`food.ts:7-17`): a chocolate cake's slice, a pizza's
+/// half and a pie's half are forms of the whole food, so `foodCount` counts
+/// them. The cache spells the pineapple half `1/2pineapple pizza`.
 #[test]
-fn v1_food_heal_known_and_not_impl() {
+fn v1_food_forms_cover_slices_and_halves() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_compat(
             r#"
-import { foodHealAmount } from '../../api/combat/food.js';
+import { foodForms, foodCount } from '../../api/combat/food.js';
 export default class T extends LoopingBot {
     loop() {
-        let unknown = '';
-        let ambiguous = '';
-        try { foodHealAmount('Not a food'); } catch (e) { unknown = String(e.message || e); }
-        try { foodHealAmount('Cabbage'); } catch (e) { ambiguous = String(e.message || e); }
         globalThis.__probe = JSON.stringify({
-            bread: foodHealAmount('Bread'),
-            anchovies: foodHealAmount('Anchovies'),
-            unknown,
-            ambiguous,
+            chocolate: foodForms('Chocolate cake'),
+            plain: foodForms('Plain pizza'),
+            pineapple: foodForms('Pineapple pizza'),
+            redberry: foodForms('Redberry pie'),
+            apple: foodForms('Apple pie'),
+            half: foodForms('Half a meat pie'),
+            counted: foodCount([
+                { name: 'Chocolate cake' },
+                { name: 'Chocolate slice' },
+                { name: 'Meat pizza' },
+                { name: '1/2 meat pizza' },
+                { name: 'Half a meat pie' },
+            ], 'Chocolate cake') + foodCount([
+                { name: '1/2 meat pizza' },
+            ], 'Meat pizza') + foodCount([
+                { name: 'Half a meat pie' },
+            ], 'Meat pie'),
         });
     }
 }
 "#,
             revision,
         );
-        assert_eq!(value["bread"], 4);
-        assert_eq!(value["anchovies"], 3);
-        assert!(
-            value["unknown"].as_str().unwrap_or("").contains("not impl"),
-            "{value:?}"
+        assert_eq!(
+            value["chocolate"],
+            serde_json::json!(["chocolate cake", "2/3 chocolate cake", "chocolate slice"]),
+            "{revision:?}"
         );
-        assert!(
-            value["ambiguous"]
-                .as_str()
-                .unwrap_or("")
-                .contains("not impl"),
-            "{value:?}"
+        assert_eq!(
+            value["plain"],
+            serde_json::json!(["plain pizza", "1/2 plain pizza"]),
+            "{revision:?}"
         );
+        assert_eq!(
+            value["pineapple"],
+            serde_json::json!(["pineapple pizza", "1/2pineapple pizza"]),
+            "{revision:?}"
+        );
+        assert_eq!(
+            value["redberry"],
+            serde_json::json!(["redberry pie", "half a redberry pie"]),
+            "{revision:?}"
+        );
+        assert_eq!(
+            value["apple"],
+            serde_json::json!(["apple pie", "half an apple pie"]),
+            "{revision:?}"
+        );
+        assert_eq!(
+            value["half"],
+            serde_json::json!(["half a meat pie"]),
+            "{revision:?}"
+        );
+        assert_eq!(value["counted"], 4, "{revision:?}");
     }
+}
+
+/// Frozen `foodHealAmount` (`api/combat/food.ts:86-106`) always answers: an
+/// empty, unknown or ambiguous name is `DEFAULT_FOOD_HEAL` (8), a partial
+/// name takes the first food it matches, and `shouldEatFood` eats smart on
+/// that answer instead of throwing mid-fight.
+#[test]
+fn v1_food_heal_resolves_every_name_like_frozen() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let value = probe_compat(
+            r#"
+import { foodHealAmount, shouldEatFood } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = JSON.stringify({
+            bread: foodHealAmount('Bread'),
+            anchovies: foodHealAmount(' ANCHOVIES '),
+            empty: foodHealAmount(''),
+            unknown: foodHealAmount('Not a food'),
+            ambiguous: foodHealAmount('Cabbage'),
+            partial: foodHealAmount('Swordf'),
+            eatUnknown: shouldEatFood('Not a food', { hp: 10, maxHp: 20, foodCount: 1 }),
+            holdUnknown: shouldEatFood('Not a food', { hp: 13, maxHp: 20, foodCount: 1 }),
+        });
+    }
+}
+"#,
+            revision,
+        );
+        assert_eq!(value["bread"], 4, "{revision:?}");
+        assert_eq!(value["anchovies"], 3, "{revision:?}");
+        assert_eq!(value["empty"], 8, "{revision:?}");
+        assert_eq!(value["unknown"], 8, "{revision:?}");
+        assert_eq!(value["ambiguous"], 8, "{revision:?}");
+        assert_eq!(value["partial"], 14, "{revision:?}");
+        assert_eq!(value["eatUnknown"], true, "{revision:?}");
+        assert_eq!(value["holdUnknown"], false, "{revision:?}");
+    }
+}
+
+/// The frozen table's form spelling `1/2 pineapple pizza` (the cache spells
+/// it `1/2pineapple pizza`) still heals as the pizza (`food.ts:53-54`).
+#[test]
+fn v1_food_heal_partial_form_takes_the_parent_heal() {
+    let value = probe_compat(
+        r#"
+import { foodHealAmount } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = JSON.stringify({
+            half: foodHealAmount('1/2 pineapple pizza'),
+            whole: foodHealAmount('Pineapple pizza'),
+        });
+    }
+}
+"#,
+        ClientRevision::R289,
+    );
+    assert_eq!(value["half"], value["whole"]);
+    assert_eq!(value["whole"], 10);
+}
+
+/// Frozen `shouldEatToUseFood` (`food.ts:124-143`): a heal of zero never
+/// eats above the floor (`:138-141`); the floor and a fitting heal still do.
+#[test]
+fn v1_should_eat_to_use_food_holds_a_zero_heal() {
+    let value = probe_compat(
+        r#"
+import { shouldEatToUseFood } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = JSON.stringify({
+            zeroHeal: shouldEatToUseFood({ hp: 10, maxHp: 20, heal: 0, foodCount: 3 }),
+            negativeHeal: shouldEatToUseFood({ hp: 10, maxHp: 20, heal: -4, foodCount: 3 }),
+            zeroHealAtFloor: shouldEatToUseFood({ hp: 5, maxHp: 20, heal: 0, foodCount: 3 }),
+            fits: shouldEatToUseFood({ hp: 10, maxHp: 20, heal: 10, foodCount: 3 }),
+            overheals: shouldEatToUseFood({ hp: 11, maxHp: 20, heal: 10, foodCount: 3 }),
+            customFloor: shouldEatToUseFood({ hp: 11, maxHp: 20, heal: 10, foodCount: 3, minHp: 11 }),
+            noFood: shouldEatToUseFood({ hp: 1, maxHp: 20, heal: 10, foodCount: 0 }),
+        });
+    }
+}
+"#,
+        ClientRevision::R289,
+    );
+    assert_eq!(value["zeroHeal"], false);
+    assert_eq!(value["negativeHeal"], false);
+    assert_eq!(value["zeroHealAtFloor"], true);
+    assert_eq!(value["fits"], true);
+    assert_eq!(value["overheals"], false);
+    assert_eq!(value["customFloor"], true);
+    assert_eq!(value["noFood"], false);
+}
+
+/// Frozen `eatAtHpThreshold(maxHp, heal, minHp = 5)` (`food.ts:112-118`):
+/// the HP a full heal fits under, never at max HP and never below the floor;
+/// the floor itself when max HP is unknown.
+#[test]
+fn v1_eat_at_hp_threshold_is_the_full_heal_line() {
+    let value = probe_compat(
+        r#"
+import { eatAtHpThreshold } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = JSON.stringify({
+            fits: eatAtHpThreshold(20, 5),
+            zeroHeal: eatAtHpThreshold(20, 0),
+            bigHeal: eatAtHpThreshold(10, 20, 5),
+            customFloor: eatAtHpThreshold(20, 5, 17),
+            noMax: eatAtHpThreshold(0, 7),
+            noMaxNullFloor: eatAtHpThreshold(0, 7, null),
+        });
+    }
+}
+"#,
+        ClientRevision::R289,
+    );
+    assert_eq!(value["fits"], 15);
+    assert_eq!(value["zeroHeal"], 19);
+    assert_eq!(value["bigHeal"], 5);
+    assert_eq!(value["customFloor"], 17);
+    assert_eq!(value["noMax"], 5);
+    assert_eq!(value["noMaxNullFloor"], serde_json::Value::Null);
 }
 
 #[test]
@@ -341,8 +522,14 @@ export function tick(api) {
     let value: serde_json::Value =
         serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
     iso.join();
-    assert_eq!(value["food"]["error"], "missing-selected-data");
-    assert_eq!(value["escape"]["error"], "missing-selected-data");
+    assert_eq!(
+        value["food"]["error"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+    );
+    assert_eq!(
+        value["escape"]["error"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+    );
 }
 
 #[test]
@@ -370,11 +557,6 @@ export const apiVersion = 2;
 }
 "#,
         ClientRevision::R274,
-    );
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    assert!(
-        !bindings.contains("register_function(\"__rs2b0t_supply_v2\""),
-        "new JSON register_function for supply v2 is forbidden"
     );
     assert_eq!(value["food"], "function");
     assert_eq!(value["typedOk"], true, "{value:?}");

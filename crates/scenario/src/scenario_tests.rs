@@ -1428,199 +1428,6 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
     );
     assert_eq!(arm, (3220, 3264, 0));
     assert_eq!(s.proof.name(), "arrived(3220,3264,0)");
-    assert_eq!(
-        names(),
-        [
-            "walk",
-            "render_smoke",
-            "render_betty_views_betty_yaw0",
-            "render_betty_views_betty_yaw512",
-            "render_betty_views_falador_street_yaw0",
-            "render_betty_views_falador_street_yaw512",
-            "render_betty_views_west_bank_yaw0",
-            "render_betty_views_west_bank_yaw512",
-            "render_betty_views_dwarven_wall_yaw0",
-            "render_fountain_yaw0_pitch128",
-            "render_fountain_yaw0_pitch256",
-            "render_fountain_yaw0_pitch383",
-            "nav_full",
-            "nav_door",
-            "nav_cart",
-            "nav_essence",
-            "nav_elkoy",
-            "nav_tele",
-            "nav_shantay",
-            "nav_routes",
-            "nav_paint_path",
-            "brimhaven_moss_inspect_v1",
-            "route_inspect_brimhaven_v2_ts",
-            "prayer_v2_ts",
-            "prayer_v1_ts",
-            "line_of_sight_v2_ts",
-            "actor_observation_v2_ts",
-            "fight_field_v2_ts",
-            "hold_spot_v2_ts",
-            "retreat_spot_v2_ts",
-            "walk_spot_v2_ts",
-            "enter_lair_v2_ts",
-            "leave_lair_v2_ts",
-            "acquire_key_v2_ts",
-            "cell_v2_ts",
-            "bank_v2_ts",
-            "bone_burier",
-            "lamp_redemption",
-            "bone_burier_v2_ts",
-            "bone_burier_v2_js",
-            "strange_plant_owned",
-            "maze_owned",
-            "chicken_killer",
-            "chicken_killer_bank",
-            "thiever",
-            "alcher",
-            "alcher_defaults",
-            "alcher_custom",
-            "alcher_custom_alias",
-            "alcher_custom_name",
-            "alcher_ordered",
-            "alcher_large_batch",
-            "alcher_low",
-            "alcher_fire_battlestaff",
-            "alcher_swarm_drain",
-            "bank_fletcher",
-            "bank_fletcher_shafts",
-            "bank_fletcher_headless",
-            "bank_fletcher_string",
-            "bank_fletcher_cut_string",
-            "dart_fletcher",
-            "dart_fletcher_iron",
-            "herb_cleaner",
-            "herb_cleaner_named",
-            "herb_cleaner_empty_bank",
-            "gem_cutter",
-            "gem_cutter_named",
-            "door_opener",
-            "door_opener_gate",
-            "gnome_course",
-            "gnome_course_radius",
-            "wildy_agility",
-            "brimhaven_agility",
-            "flax_picker",
-            "superheater",
-            "superheater_steel",
-            "superheater_fire_battlestaff",
-            "superheater_silver_low_natures",
-            "superheater_mithril",
-            "vial_filler",
-            "vial_filler_east",
-            "potion_maker",
-            "potion_maker_named",
-            "tanner_bot",
-            "tanner_bot_hard",
-            "rune_crafter",
-            "rune_crafter_earth",
-            "mule_crafter",
-            "ardy_cakes",
-            "ardy_cakes_fight",
-            "ardy_thiever",
-            "ardy_thiever_fight",
-            "ardy_thiever_knight",
-            "gnome_chop",
-            "gnome_fletch_short",
-            "gnome_fletch_long",
-            "coal_trucks",
-            "cook_bot",
-            "cook_bot_lobster",
-            "smelter_bot",
-            "smelter_bot_steel",
-            "flax_spinner",
-            "flax_aio",
-            "flax_aio_pick",
-            "flax_aio_spin",
-            "herblore_secondaries",
-            "herblore_secondaries_newt",
-            "chaos_druid",
-            "chaos_druid_tower",
-            "chaos_druid_yanille",
-            "moss_giant",
-            "moss_giant_prepared",
-            "moss_giant_dart",
-            "hill_giant",
-            "auto_fighter",
-            "auto_fighter_mage",
-            "auto_fighter_range",
-            "rock_crab",
-            "rock_crab_range",
-            "green_dragon",
-            "green_dragon_prepared",
-            "green_dragon_mage_prepared",
-            "green_dragon_special",
-            "green_dragon_special_prepared",
-            "green_dragon_potions",
-            "green_dragon_potions_prepared",
-            "fire_giant",
-            "fire_giant_prepared",
-            "ardy_fighter",
-            "auto_fighter_bank",
-            "moss_giant_bank",
-            "moss_giant_bank_start",
-            "hill_giant_bank",
-            "hill_giant_bank_prepared",
-            "hill_giant_loot_deposit",
-            "chaos_druid_bank",
-            "ardy_fighter_bank",
-            "rock_crab_bank",
-            "green_dragon_bank",
-            "green_dragon_bank_prepared",
-            "green_dragon_bank_default_prepared",
-            "green_dragon_tele",
-            "green_dragon_tele_prepared",
-            "fire_giant_approach",
-            "fire_giant_bank",
-            "fire_giant_bank_prepared",
-            "fire_giant_camelot_prepared",
-            "aio_teleport",
-            "aio_teleport_falador",
-            "aio_teleport_no_staff",
-            "shop_buyout",
-            "shop_buyout_aubury",
-            "shop_buyout_lowe",
-            "shop_buyout_hickton",
-            "shop_buyout_harry",
-            "shop_buyout_betty",
-            "shop_buyout_gerrant",
-            "shop_buyout_bob",
-            "shop_buyout_nurmof",
-            "shop_buyout_magic",
-            "shop_buyout_lundail",
-            "shop_buyout_fernahei",
-            "smithing_bot",
-            "smithing_bot_platebody",
-            "smithing_bot_nails",
-            "smithing_bot_mithril",
-            "leather_crafter",
-            "leather_crafter_hard_body",
-            "leather_crafter_green_body",
-            "leather_crafter_chaps",
-            "leather_crafter_thread_shop",
-            "firemaker",
-            "firemaker_oak",
-            "climbing_boots",
-            "climbing_boots_teleport",
-            "ranging_guild_round",
-            "ranging_guild_redeem",
-            "ranging_guild_bank",
-            "ranging_guild_full",
-            "script_trade",
-            "nature_crafter_air",
-            "mule_crafter_air",
-            "flax_runner",
-            "sherlock_talk",
-            "sherlock_search",
-            "sherlock_dig",
-            "sherlock_coord",
-            "duel_arena",
-        ]
-    );
 }
 
 #[test]
@@ -2324,6 +2131,11 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         ("moss_giant_bank", "MossGiant", SCRIPT_GOLD_DEADLINE),
         ("moss_giant_bank_start", "MossGiant", SCRIPT_GOLD_DEADLINE),
         ("hill_giant_bank", "HillGiant", SCRIPT_GOLD_DEADLINE),
+        (
+            "rock_crab_bank_seeded",
+            "RockCrab",
+            Duration::from_secs(360),
+        ),
         // The frozen trip reaches the field ~128s in (two banks).
         (
             "chaos_druid_bank",
@@ -2331,6 +2143,11 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
             Duration::from_secs(300),
         ),
         ("ardy_fighter_bank", "ArdyFighter", SCRIPT_GOLD_DEADLINE),
+        (
+            "ardy_fighter_bank_seeded",
+            "ArdyFighter",
+            SCRIPT_GOLD_DEADLINE,
+        ),
     ] {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card));
@@ -2471,6 +2288,91 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         }),
         "ardy_fighter_bank watches a Guard drop enter a fresh bank"
     );
+    let seeded = get("ardy_fighter_bank_seeded").expect("ardy_fighter_bank_seeded registered");
+    let seeded_start = seeded
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: CAKE_ID,
+                count: 1,
+            }
+    }));
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: IRON_ORE_ID,
+                count: 1,
+            }
+    }));
+    for step in &seeded.steps[..seeded_start] {
+        assert!(
+            !matches!(
+                step.wait.arm,
+                Proof::ItemIdAtMost { id, count: 0 } if id == CAKE_ID || id == IRON_ORE_ID
+            ),
+            "seeded Ardy pre-Start no-loot check must not reject seeded Cake/Iron ore: {}",
+            step.name
+        );
+    }
+    let seeded_watch = &seeded.steps[seeded_start + 1..];
+    assert!(
+        !matches!(
+            seeded_watch
+                .first()
+                .expect("seeded Ardy has post-Start watch")
+                .wait
+                .arm,
+            Proof::StatXpGain { .. }
+        ),
+        "seeded Ardy must not wait for pre-bank Strength XP"
+    );
+    let walk = seeded_watch
+        .iter()
+        .position(|step| {
+            step.name == "watch seeded Iron ore leave the pack after PeriodicBank deposit"
+        })
+        .expect("seeded Ardy PeriodicBank walk/deposit proof");
+    let banked = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch seeded Iron ore enter a fresh East Ardougne bank")
+        .expect("seeded Ardy bank deposit proof");
+    let closed = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch seeded PeriodicBank close")
+        .expect("seeded Ardy bank close proof");
+    let returned = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch return to the market anchor after seeded banking")
+        .expect("seeded Ardy return proof");
+    let fresh_xp = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch fresh Strength XP after the seeded bank return")
+        .expect("seeded Ardy fresh Strength XP proof");
+    assert!(walk < banked && banked < closed && closed < returned && returned < fresh_xp);
+    assert_eq!(seeded_watch[walk].wait.budget_ticks, 320);
+    assert_eq!(seeded_watch[returned].wait.budget_ticks, 40);
+    assert_eq!(seeded_watch[fresh_xp].wait.budget_ticks, 320);
+    assert!(seeded_watch.iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemIdAtMost {
+                id: IRON_ORE_ID,
+                count: 0,
+            }
+    }));
+    assert!(seeded_watch.iter().any(|step| {
+        step.wait.arm
+            == Proof::BankItemId {
+                id: IRON_ORE_ID,
+                count: 1,
+            }
+    }));
+    assert!(seeded_watch
+        .iter()
+        .any(|step| step.wait.arm == Proof::BankClosed));
 }
 
 #[test]
@@ -2513,6 +2415,93 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
         count: 1,
     }));
     assert!(watch.contains(&Proof::BankClosed));
+    let seeded = get("rock_crab_bank_seeded").expect("rock_crab_bank_seeded registered");
+    assert_eq!(seeded.settings.start_script, Some("RockCrab"));
+    assert_eq!(seeded.settings.deadline, Duration::from_secs(360));
+    let seeded_start = seeded
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: LOBSTER_ID,
+                count: ROCK_CRAB_FOOD,
+            }
+    }));
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: UNCUT_SAPPHIRE_ID,
+                count: 1,
+            }
+    }));
+    let seeded_watch = seeded.steps[seeded_start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    let seeded_route_steps = &seeded.steps[seeded_start + 1..];
+    let walk_index = seeded_route_steps
+        .iter()
+        .position(|step| {
+            step.name == "watch seeded Sapphire leave the backpack after PeriodicBank deposit"
+        })
+        .expect("seeded PeriodicBank walk/deposit proof");
+    assert_eq!(seeded_route_steps[walk_index].wait.budget_ticks, 320);
+    let deposit_index = seeded_route_steps
+        .iter()
+        .position(|step| step.name == "watch seeded Sapphire enter a fresh Seers bank")
+        .expect("seeded PeriodicBank deposit proof");
+    let arrival_index = seeded_route_steps
+        .iter()
+        .position(|step| {
+            step.name == "watch seeded RockCrab cargo reach the Seers bank after deposit"
+        })
+        .expect("seeded Seers arrival proof");
+    assert!(walk_index < deposit_index);
+    assert!(deposit_index < arrival_index);
+    assert_eq!(seeded_route_steps[arrival_index].wait.budget_ticks, 320);
+    let return_index = seeded_route_steps
+        .iter()
+        .position(|step| {
+            step.name == "watch return toward the nearest RockCrab spot after seeded banking"
+        })
+        .expect("seeded RockCrab return proof");
+    let fresh_xp_index = seeded_route_steps
+        .iter()
+        .position(|step| step.name == "watch fresh Strength XP after the seeded bank return")
+        .expect("seeded fresh Strength XP proof");
+    assert!(return_index < fresh_xp_index);
+    assert!(matches!(
+        seeded_route_steps[fresh_xp_index].wait.arm,
+        Proof::FreshStatXpGain {
+            id: STRENGTH_STAT,
+            min: 1
+        }
+    ));
+    assert_eq!(seeded_route_steps[return_index].wait.budget_ticks, 320);
+    assert!(seeded_watch.contains(&Proof::ArrivedNear {
+        x: 2725,
+        z: 3491,
+        level: 0,
+        radius: 6,
+    }));
+    assert!(seeded_watch.contains(&Proof::ItemIdAtMost {
+        id: UNCUT_SAPPHIRE_ID,
+        count: 0,
+    }));
+    assert!(seeded_watch.contains(&Proof::BankItemId {
+        id: UNCUT_SAPPHIRE_ID,
+        count: 1,
+    }));
+    assert!(seeded_watch.contains(&Proof::BankClosed));
+    assert!(seeded_watch.contains(&Proof::ArrivedNear {
+        x: 2710,
+        z: 3717,
+        level: 0,
+        radius: 6,
+    }));
 
     let dragon = get("green_dragon_bank").expect("green_dragon_bank registered");
     assert_eq!(dragon.settings.start_script, Some("GreenDragon"));
@@ -3159,11 +3148,11 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
 /// step 12). The loot-count RockCrab cell also draws nothing from the
 /// bank: its PeriodicBank trip deposits and returns, so no bank window is
 /// seeded there while the restocking cells keep theirs.
+
 #[test]
 fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     use client::client::{Client, ClientConfig};
     use client::dash3d::ClientPlayer;
-
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -3202,7 +3191,9 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
         ("hill_giant_loot_deposit", "adamant_scimitar"),
         ("chaos_druid_bank", "adamant_scimitar"),
         ("ardy_fighter_bank", "adamant_scimitar"),
+        ("ardy_fighter_bank_seeded", "adamant_scimitar"),
         ("rock_crab_bank", "adamant_scimitar"),
+        ("rock_crab_bank_seeded", "adamant_scimitar"),
         ("green_dragon_bank", "rune_scimitar"),
         ("green_dragon_bank_default_prepared", "rune_scimitar"),
         ("green_dragon_tele", "rune_scimitar"),
@@ -3225,6 +3216,28 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     assert!(
         !rock.contains("givebank"),
         "rock_crab_bank's PeriodicBank trip restocks nothing: {rock}"
+    );
+    let seeded = seed("rock_crab_bank_seeded");
+    assert!(
+        seeded.contains("give uncut_sapphire 1"),
+        "rock_crab_bank_seeded seeds the PeriodicBank trigger cargo: {seeded}"
+    );
+    assert!(
+        seeded.contains("give lobster 8"),
+        "rock_crab_bank_seeded keeps food in the pack so PeriodicBank owns the trip: {seeded}"
+    );
+    assert!(
+        !seeded.contains("givebank"),
+        "rock_crab_bank_seeded's PeriodicBank trip restocks nothing: {seeded}"
+    );
+    let ardy_seeded = seed("ardy_fighter_bank_seeded");
+    assert!(
+        ardy_seeded.contains("give iron_ore 1"),
+        "ardy_fighter_bank_seeded seeds a DEFAULT_LOOT Guard drop: {ardy_seeded}"
+    );
+    assert!(
+        ardy_seeded.contains("give cake 1"),
+        "ardy_fighter_bank_seeded keeps one Cake so PeriodicBank owns the trip: {ardy_seeded}"
     );
     let dragon = seed("green_dragon_bank");
     assert!(

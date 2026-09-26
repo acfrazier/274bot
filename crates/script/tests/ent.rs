@@ -118,6 +118,8 @@ fn npc_at<'a>(id: i32, x: i32, z: i32, level: i32) -> SceneEntityInput<'a> {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -287,4 +289,33 @@ export default class T extends LoopingBot {
         assert_eq!(probe["armour"], false);
         iso.join();
     }
+}
+
+#[test]
+fn within_of_is_a_planar_chebyshev_disk() {
+    let src = r#"
+import EntityQuery from '../../api/query/Query.js';
+export default class T extends LoopingBot {
+    loop() {
+        const rows = [
+            { name: 'same-floor-edge', x: 101, z: 100, level: 1 },
+            { name: 'same-floor-far', x: 102, z: 100, level: 1 },
+            { name: 'other-floor', x: 100, z: 100, level: 2 },
+        ];
+        globalThis.__probe = EntityQuery
+            .fromSnapshots(() => rows, (row) => row)
+            .withinOf({ x: 100, z: 100, level: 1 }, 1)
+            .results()
+            .map((row) => row.name);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let probe = probe_loop(&iso, &base_snapshot());
+    assert_eq!(
+        probe,
+        serde_json::json!(["same-floor-edge", "other-floor"]),
+        "withinOf ignores level and filters only the x/z Chebyshev disk"
+    );
+    iso.join();
 }

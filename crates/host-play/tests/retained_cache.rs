@@ -55,6 +55,7 @@ fn rebuilt_artifacts_bind_decoded_inputs_and_actual_baker_sources() {
             reach_sha256: manifest.reach_sha256.clone(),
             canlight_sha256: manifest.canlight_sha256.clone(),
             canlight_identity: None,
+            pois_sha256: None,
             relative_path: format!("nav/{revision}/274bot.navpack"),
         };
         assert!(host_play::nav_identity::select_nav_origin(

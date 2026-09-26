@@ -8,7 +8,7 @@ use api::snapshot::WorldTile;
 #[cfg(feature = "load")]
 mod runtime;
 #[cfg(feature = "load")]
-pub(crate) use runtime::{dispatch, on_hold, on_pause, on_reset, on_resume};
+pub(crate) use runtime::{dispatch, on_hold, on_pause, on_reset, on_resume, CakeStall};
 
 /// Neighborhood around the selected stall tile used to reject the other stall.
 pub const TARGET_RADIUS: i32 = 3;
@@ -61,9 +61,23 @@ pub fn needs_cake_restock(carried: i32, target: Option<i32>, pack_full: bool) ->
     carried < target.unwrap_or(1)
 }
 
-/// Exact stall-food names; chocolate cake does not match chocolate slice.
+/// Frozen `countMatching` semantics: case-insensitive substring over the
+/// posted cake-food patterns. Partials (`2/3 cake`, `Slice of cake`) count,
+/// as do other names that merely contain a pattern (e.g. `Chocolate cake`).
 pub fn counts_as_stall_food(name: &str) -> bool {
-    CAKE_ITEM_NAMES
-        .iter()
-        .any(|want| name.trim().eq_ignore_ascii_case(want))
+    let name = name.trim();
+    if name.is_empty() {
+        return false;
+    }
+    CAKE_ITEM_NAMES.iter().any(|want| {
+        let want = want.trim();
+        !want.is_empty() && contains_ascii_ci(name, want)
+    })
+}
+
+/// `hay.to_ascii_lowercase().contains(needle)` for ASCII needles, without the copy.
+fn contains_ascii_ci(hay: &str, needle: &str) -> bool {
+    hay.as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }

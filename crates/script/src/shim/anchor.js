@@ -1,7 +1,7 @@
 import Tile from '../../geometry/Tile.js';
 import { Game } from '../game/Game.js';
-import { Traversal } from '../walking/Traversal.js';
-import { host, notImpl } from '../../shim/_kernel.js';
+import { Sustain } from '../sustain/Sustain.js';
+import { host, notImpl, runMachine } from '../../shim/_kernel.js';
 
 export const HOME_ARRIVE_RADIUS = 8;
 
@@ -53,27 +53,41 @@ export function resolveRunAnchor(here, locationSpot) {
 
 export function createReturnToAnchorTask(bot, opts = {}) {
     const slack = opts.slack ?? 6;
-    const arriveRadius = opts.arriveRadius ?? 8;
     const status = opts.status ?? 'returning to anchor';
     return {
+        // Frozen Anchor.ts:95-100: the bot's leash plus slack.
         validate() {
             if (opts.suppress?.()) {
                 return false;
             }
             try {
-                const d = distanceToAnchor(bot);
-                return d !== null && d > arriveRadius + slack;
+                return beyondLeash(bot, Game.tile(), slack);
             } catch (_) {
                 return false;
             }
         },
+        // Frozen Anchor.ts:101-127: Rust owns the legs (`return-to-anchor`).
         async execute() {
             bot.setStatus?.(status);
             const tile = campTile(bot);
-            return Traversal.walkResilient(tile, {
-                radius: arriveRadius,
-                timeoutMs: opts.timeoutMs ?? 60_000,
-            });
+            const out = await runMachine(
+                'return-to-anchor',
+                {
+                    anchor: { x: tile.x, z: tile.z, level: tile.level ?? 0 },
+                    ...(typeof opts.arriveRadius === 'number'
+                        ? { arriveRadius: Math.floor(opts.arriveRadius) }
+                        : {}),
+                    ...(typeof opts.timeoutMs === 'number'
+                        ? { timeoutMs: Math.floor(opts.timeoutMs) }
+                        : {}),
+                    obstacles: Array.isArray(opts.obstacles) ? opts.obstacles : [],
+                    ...(typeof opts.longRangeTiles === 'number'
+                        ? { longRangeTiles: Math.floor(opts.longRangeTiles) }
+                        : {}),
+                },
+                { log: (m) => bot.log?.(m), sustain: () => Sustain.run() },
+            );
+            if (out.kind === 'refused') throw notImpl('createReturnToAnchorTask', out.reason);
         },
     };
 }

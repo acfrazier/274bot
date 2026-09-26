@@ -44,15 +44,8 @@ fn interface_style(label: &str) -> Option<&'static str> {
 /// The frozen `tryParseCombatStyle` aliases: a known token resolves to its
 /// canonical style, anything else is itself (trimmed, lowercased).
 fn style_token(style: &str) -> String {
-    let key = style.trim().to_ascii_lowercase();
-    match key.as_str() {
-        "attack" | "accurate" => "attack",
-        "strength" | "aggressive" => "strength",
-        "controlled" | "shared" => "controlled",
-        "defence" | "defense" | "defensive" => "defence",
-        _ => key.as_str(),
-    }
-    .to_string()
+    super::combat_style_v8::melee_style(style)
+        .map_or_else(|| style.trim().to_ascii_lowercase(), str::to_string)
 }
 
 /// The frozen `resolveCombatStyle` over the posted combat-tab buttons
@@ -149,6 +142,7 @@ pub(super) fn wire_runtime(
     siblings: &[(String, String)],
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    run_policy_override_cell: std::sync::Arc<api::run_policy::RunPolicyOverrideCell>,
 ) -> Result<(), String> {
     if shape == LoadShape::Reject {
         return Err("not a bot shape".to_string());
@@ -171,6 +165,17 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("register now: {e}"))?;
     runtime
         .register_function(
+            "__rs2b0t_wait_now",
+            |_args: &[rustyscript::serde_json::Value]| {
+                let start = CLOCK_START.get_or_init(Instant::now);
+                Ok(rustyscript::serde_json::Value::from(
+                    super::wait_clock::now_ms(*start, Instant::now()),
+                ))
+            },
+        )
+        .map_err(|e| format!("register wait now: {e}"))?;
+    runtime
+        .register_function(
             "__rs2b0t_range_supply_empty",
             |args: &[serde_json::Value]| {
                 Ok(serde_json::Value::Bool(
@@ -191,26 +196,6 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register common bank loot: {e}"))?;
-    let bank_unlock_facts = std::sync::Arc::clone(&named_banks);
-    runtime
-        .register_function(
-            "__rs2b0t_bank_unlocked",
-            move |args: &[serde_json::Value]| {
-                let payload = args.first().unwrap_or(&serde_json::Value::Null);
-                let Some(name) = payload.get("name").and_then(|v| v.as_str()) else {
-                    return Ok(serde_json::Value::Bool(false));
-                };
-                let Some(tile) = json_tile(Some(payload)) else {
-                    return Ok(serde_json::Value::Bool(false));
-                };
-                Ok(serde_json::Value::Bool(api::named_banks::bank_unlocked(
-                    bank_unlock_facts.as_ref(),
-                    name,
-                    tile,
-                )))
-            },
-        )
-        .map_err(|e| format!("register bank unlocked: {e}"))?;
     runtime
         .register_function("__rs2b0t_walk", |args: &[serde_json::Value]| {
             Ok(crate::walk_wait::dispatch(
@@ -413,13 +398,6 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register clue: {e}"))?;
     runtime
-        .register_function("__rs2b0t_clue_verb", |args: &[serde_json::Value]| {
-            Ok(crate::clue::verb_json(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register clue verb: {e}"))?;
-    runtime
         .register_function("__rs2b0t_clue_paint", |_args: &[serde_json::Value]| {
             Ok(crate::clue::dispatch(
                 None,
@@ -588,6 +566,9 @@ pub(super) fn wire_runtime(
     runtime
         .eval::<()>(crate::shim::PRELUDE)
         .map_err(|e| format!("shim: {e}"))?;
+    super::run_policy_v8::install(runtime, run_policy_override_cell)
+        .map_err(|e| format!("run-policy v8: {e}"))?;
+    super::recovery_hints_v8::install(runtime).map_err(|e| format!("recovery hints v8: {e}"))?;
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
     super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
     super::selected_facts_v8::install(runtime).map_err(|e| format!("selected facts v8: {e}"))?;
@@ -613,12 +594,14 @@ pub(super) fn wire_runtime(
     super::fire_v8::install(runtime).map_err(|e| format!("fire v8: {e}"))?;
     super::combat_style_v8::install(runtime).map_err(|e| format!("combat style v8: {e}"))?;
     super::machine_v8::install(runtime).map_err(|e| format!("machine v8: {e}"))?;
+    crate::bank_select::install(std::sync::Arc::clone(&named_banks));
+    super::bank_locations_v8::install(runtime)?;
     super::bank_tasks_v8::install(runtime).map_err(|e| format!("bank tasks v8: {e}"))?;
     super::hunt_v8::install(runtime).map_err(|e| format!("hunt v8: {e}"))?;
     super::dialog_v8::install(runtime).map_err(|e| format!("dialog v8: {e}"))?;
     let content = format!(
         "globalThis.__rs2b0t_host.content = {};",
-        crate::shim::content_json(game_data.as_deref(), named_banks.as_ref())
+        crate::shim::content_json(game_data.as_deref())
     );
     runtime
         .eval::<()>(content.as_str())
@@ -898,11 +881,6 @@ function prayerCall(payload) {
 }
 function helperOk(value) { return { ok: true, value: value }; }
 function helperErr(error) { return { ok: false, error: String(error) }; }
-function enqueueIfButton(component_id) {
-  const h = host();
-  h.interact = h.interact || [];
-  h.interact.push({ op: 'if-button', component_id: component_id });
-}
 // One Rust step machine per Set/Clear: Rust owns the click, the wait, the
 // clock and the admission. This surface admits one prayer operation at a
 // time, so a second call settles `busy` from Rust before it begins or
@@ -918,6 +896,15 @@ async function prayerMachine(payload) {
   }
   return out.kind === 'refused' ? helperErr(out.reason) : helperErr('aborted');
 }
+api.bankNearestReachable = async function (input = {}) {
+  const out = await runMachine('bank_select', {
+    from: input.from ?? null,
+    allow_wilderness: !!input.allow_wilderness,
+    use_mage_bank: input.use_mage_bank == null ? null : !!input.use_mage_bank,
+    use_zanaris_bank: input.use_zanaris_bank == null ? null : !!input.use_zanaris_bank,
+  });
+  return out.kind === 'done' ? helperOk(out.value) : helperErr(out.reason || 'aborted');
+};
 api.prayerPoints = function () { return prayerCall({ op: 'points' }); };
 api.prayerMax = function () { return prayerCall({ op: 'max' }); };
 api.prayerFull = function () { return prayerCall({ op: 'full' }); };
@@ -1077,23 +1064,6 @@ function clueKeepV2(input) {
 function clueCall(payload) {
   return globalThis.rustyscript.functions.__rs2b0t_clue(payload);
 }
-// Continue envelope and begin/next error mapping. Scene pages are read in
-// Rust; verbs are mapped by `__rs2b0t_clue_verb` (never a loc fall-through).
-function clueStep(step) {
-  return { ok: true, status: 'continue', token: step.token, ...step };
-}
-function clueStepError(reason) {
-  if (reason === 'aborted' || reason === 'constrained') return reason;
-  if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
-      || reason === 'none-held') return reason;
-  return 'stale';
-}
-function clueBeginError(reason) {
-  if (reason === 'constrained' || reason === 'abandoned') return reason;
-  if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
-      || reason === 'none-held') return reason;
-  return 'stale';
-}
 api.clue = {
   row: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
@@ -1156,49 +1126,22 @@ api.clue = {
     });
     if (!step || typeof step !== 'object') return helperErr('stale');
     if (step.kind === 'token') return helperOk({ token: step.token });
-    if (step.kind === 'aborted') return helperErr(clueBeginError(step.reason));
-    return helperErr('stale');
-  },
-  // One step. `resume` is the callback return. Rust reads the isolate scene;
-  // this helper never echoes snapshot pages. A verb is enqueued by the Rust
-  // mapper (`__rs2b0t_clue_verb`); an unknown kind is not a loc.
-  next: function (input) {
-    if (arguments.length === 0) return helperErr('invalid-args');
-    if (input == null || typeof input !== 'object' || Array.isArray(input)) {
-      return helperErr('invalid-args');
-    }
-    if (!Number.isInteger(input.token)) return helperErr('invalid-args');
-    const hasResume = Object.prototype.hasOwnProperty.call(input, 'resume');
-    if (hasResume && typeof input.resume !== 'boolean') return helperErr('invalid-args');
-    const generation = lifecycleGeneration;
-    const payload = {
-      op: 'next',
-      token: input.token,
-      generation: generation,
-    };
-    if (hasResume) payload.resume = input.resume;
-    const step = clueCall(payload);
-    if (!step || typeof step !== 'object') return helperErr('stale');
-    if (step.kind === 'aborted') return helperErr(clueStepError(step.reason));
-    if (generation !== lifecycleGeneration) return helperErr('stale');
-    const req = globalThis.rustyscript.functions.__rs2b0t_clue_verb(step);
-    if (req && typeof req === 'object' && typeof req.op === 'string') {
-      const h = host();
-      h.interact = h.interact || [];
-      h.interact.push(req);
-    }
-    if (step.kind === 'wait' || step.kind === 'yield'
-        || step.kind === 'callback.enabled' || step.kind === 'callback.log'
-        || step.kind === 'callback.setStatus'
-        || step.kind === 'grind-ready' || step.kind === 'supplies-needed'
-        || step.kind === 'no-shop' || step.kind === 'done' || step.kind === 'dead'
-        || step.kind === 'abandon' || step.kind === 'guardian-lost'
-        || req && typeof req === 'object' && typeof req.op === 'string') {
-      return clueStep(step);
+    if (step.kind === 'aborted') {
+      return helperErr(typeof step.reason === 'string' ? step.reason : 'stale');
     }
     return helperErr('stale');
   },
-    retry: function () {
+  // One awaited Rust run owns callback replies, verb mapping, waits and
+  // terminal-kind dispatch. The shim passes only the token and frozen hooks.
+  run: function (input, hooks) {
+    if (arguments.length === 0 || input == null
+        || typeof input !== 'object' || Array.isArray(input)
+        || !Number.isSafeInteger(input.token) || input.token < 0) {
+      return Promise.resolve({ kind: 'refused', reason: 'invalid-args' });
+    }
+    return runMachine('clue', { token: input.token }, hooks || {});
+  },
+  retry: function () {
     const step = clueCall({ op: 'retry' });
     if (!step || typeof step !== 'object' || step.kind !== 'retry') {
       return helperErr('stale');
@@ -1215,24 +1158,10 @@ api.sceneNpcs = function (input) {
 api.questStatus = function (input) {
   return globalThis.__rs2b0t_quest_status(input);
 };
-// Owned-root quest journal. One token per isolate. The machine reads the
-// isolate scene; these three only coerce args, one native call, and enqueue.
+// Owned-root quest journal: sync begin plus one awaited Rust machine. The
+// wrapper only coerces arguments and passes the admitted token.
 function questJournalCall(payload) {
   return globalThis.rustyscript.functions.__rs2b0t_quest_journal(payload);
-}
-function enqueueCloseModal() {
-  const h = host();
-  h.interact = h.interact || [];
-  h.interact.push({ op: 'close-modal' });
-}
-function questJournalBeginError(reason) {
-  if (reason === 'busy' || reason === 'main-modal-occupied') return reason;
-  if (reason === 'snapshot-unavailable' || reason === 'quest-tab-unbound' || reason === 'unknown-quest') return reason;
-  return 'stale';
-}
-function questJournalStepError(reason) {
-  if (reason === 'snapshot-unavailable' || reason === 'modal-timeout') return reason;
-  return 'stale';
 }
 api.questJournalBegin = function (input) {
   if (arguments.length === 0) return helperErr('invalid-args');
@@ -1242,68 +1171,25 @@ api.questJournalBegin = function (input) {
   if (typeof input.name !== 'string') return helperErr('invalid-args');
   if (Object.prototype.hasOwnProperty.call(input, 'id')) return helperErr('invalid-args');
   if (input.name.trim() === '') return helperErr('invalid-args');
-  const generation = lifecycleGeneration;
   const step = questJournalCall({
     op: 'begin',
     name: input.name,
-    generation: generation,
-  });
-  if (!step || typeof step !== 'object') return helperErr('stale');
-  if (step.kind === 'if-button') {
-    if (generation !== lifecycleGeneration) return helperErr('stale');
-    enqueueIfButton(step.component_id);
-    return helperOk({ token: step.token });
-  }
-  if (step.kind === 'aborted') return helperErr(questJournalBeginError(step.reason));
-  return helperErr('stale');
-};
-api.questJournalNext = function (input) {
-  if (arguments.length === 0) return helperErr('invalid-args');
-  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
-    return helperErr('invalid-args');
-  }
-  if (!Number.isInteger(input.token)) return helperErr('invalid-args');
-  const step = questJournalCall({
-    op: 'next',
-    token: input.token,
     generation: lifecycleGeneration,
   });
   if (!step || typeof step !== 'object') return helperErr('stale');
-  if (step.kind === 'wait') return { pending: true };
-  if (step.kind === 'done') {
-    return helperOk({
-      lines: step.lines,
-      root: step.root,
-      as_of_sequence: step.as_of_sequence,
-    });
+  if (step.kind === 'token') return helperOk({ token: step.token });
+  if (step.kind === 'aborted') {
+    return helperErr(typeof step.reason === 'string' ? step.reason : 'stale');
   }
-  if (step.kind === 'aborted') return helperErr(questJournalStepError(step.reason));
   return helperErr('stale');
 };
-api.questJournalClose = function (input) {
-  if (arguments.length === 0) return helperErr('invalid-args');
-  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
-    return helperErr('invalid-args');
+api.questJournalRun = function (input) {
+  if (arguments.length === 0 || input == null
+      || typeof input !== 'object' || Array.isArray(input)
+      || !Number.isSafeInteger(input.token) || input.token < 0) {
+    return Promise.resolve({ kind: 'refused', reason: 'invalid-args' });
   }
-  if (!Number.isInteger(input.token)) return helperErr('invalid-args');
-  const generation = lifecycleGeneration;
-  const step = questJournalCall({
-    op: 'close',
-    token: input.token,
-    generation: generation,
-  });
-  if (!step || typeof step !== 'object') return helperErr('stale');
-  if (step.kind === 'close-modal') {
-    if (generation !== lifecycleGeneration) return helperErr('stale');
-    enqueueCloseModal();
-    return { pending: true };
-  }
-  if (step.kind === 'wait') return { pending: true };
-  if (step.kind === 'done') {
-    return helperOk({ closed: true, as_of_sequence: step.as_of_sequence });
-  }
-  if (step.kind === 'aborted') return helperErr(questJournalStepError(step.reason));
-  return helperErr('stale');
+  return runMachine('quest-journal', { token: input.token }, {});
 };
 function loadoutV2(op, input) {
   return globalThis.__rs2b0t_loadout_v2(op, input);

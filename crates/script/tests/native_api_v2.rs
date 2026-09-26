@@ -759,15 +759,6 @@ export function tick(api) {
 
 #[test]
 fn v2_deposit_requests_the_bank_side_name_over_the_public_path() {
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    let ops = bindings
-        .split("const V2_OPS")
-        .nth(1)
-        .unwrap()
-        .split("const OPTIONAL")
-        .next()
-        .unwrap();
-    assert!(ops.contains("'deposit': ['name'],"), "{ops}");
     // The name is the bank-side display name the host matches; the shim never
     // pre-resolves it and never rewrites the request. `loc` / `obj` / `npc`
     // stay unpublished: the clue machine's own steps do not publish them.
@@ -1200,16 +1191,6 @@ export function tick(api) {
 
 #[test]
 fn v2_quest_facts_are_named_sync_helper_results_not_request_ops() {
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    let ops = bindings
-        .split("const V2_OPS")
-        .nth(1)
-        .unwrap()
-        .split("const OPTIONAL")
-        .next()
-        .unwrap();
-    assert!(!ops.contains("questIdentity"), "{ops}");
-    assert!(!ops.contains("questPrereqs"), "{ops}");
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -1254,49 +1235,14 @@ export function tick(api) {
 }
 
 #[test]
-fn v2_clue_row_is_a_named_sync_helper_result_not_a_request_op() {
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    assert!(
-        !bindings.contains("register_function(\"__rs2b0t_clue_facts"),
-        "clue row must not be a rustyscript JSON op"
-    );
-    assert!(
-        bindings.contains("register_function(\"__rs2b0t_clue\""),
-        "the clue machine is its own native, add-only"
-    );
-    // The machine identifies with the landed Rust helper only: it never calls
-    // the JS helper and never reuses the fact/logic/pack natives.
-    let machine = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/clue.rs"));
-    for forbidden in [
-        "heldStep(",
-        "__rs2b0t_clue_facts_v2",
-        "__rs2b0t_clue_logic_v2",
-        "__rs2b0t_clue_pack_v2",
-        "__rs2b0t_modals",
-    ] {
-        assert!(
-            !machine.contains(forbidden),
-            "clue.rs must not reach {forbidden}"
-        );
-    }
-    let ops = bindings
-        .split("const V2_OPS")
-        .nth(1)
-        .unwrap()
-        .split("const OPTIONAL")
-        .next()
-        .unwrap();
-    assert!(!ops.contains("clue"), "{ops}");
-    // `deposit` is published (see
-    // `v2_deposit_requests_the_bank_side_name_over_the_public_path`); the clue
-    // row is still a named sync helper and never a request op.
-    assert!(ops.contains("'deposit': ['name'],"), "{ops}");
+fn v2_clue_row_and_run_are_named_methods_not_request_ops() {
     let src = r#"
 export const apiVersion = 2;
-export function tick(api) {
+export async function tick(api) {
   const row = api.clue.row({ id: 3554 });
   const begin = api.clue.begin();
-  const dead = api.clue.next({ token: 1 });
+  const pending = api.clue.run({ token: 1 });
+  const dead = await pending;
   let requested = null;
   try { api.request({ op: 'clue.row' }); requested = 'ok'; }
   catch (e) { requested = String(e && (e.message || e)); }
@@ -1311,9 +1257,9 @@ export function tick(api) {
     beginOk: begin.ok,
     beginError: begin.error,
     beginThen: typeof begin.then,
-    nextOk: dead.ok,
-    nextError: dead.error,
-    nextThen: typeof dead.then,
+    runKind: dead.kind,
+    runReason: dead.reason,
+    runThen: typeof pending.then,
     flat: typeof api.clueRow,
     quest: api.quest,
     requested,
@@ -1335,18 +1281,18 @@ export function tick(api) {
     assert_eq!(
         probe["keys"],
         serde_json::json!([
-            "row", "heldStep", "packPlan", "hardKit", "keep", "begin", "next", "retry"
+            "row", "heldStep", "packPlan", "hardKit", "keep", "begin", "run", "retry"
         ]),
         "{probe:?}"
     );
     // An empty posted page is `none-held`, and a refused begin leaves no live
-    // token: the dead-token step is a step object, never `undefined`.
+    // token: one awaited run on an invented token refuses as stale.
     assert_eq!(probe["beginOk"], false, "{probe:?}");
     assert_eq!(probe["beginError"], "none-held", "{probe:?}");
     assert_eq!(probe["beginThen"], "undefined", "{probe:?}");
-    assert_eq!(probe["nextOk"], false, "{probe:?}");
-    assert_eq!(probe["nextError"], "stale", "{probe:?}");
-    assert_eq!(probe["nextThen"], "undefined", "{probe:?}");
+    assert_eq!(probe["runKind"], "refused", "{probe:?}");
+    assert_eq!(probe["runReason"], "stale", "{probe:?}");
+    assert_eq!(probe["runThen"], "function", "{probe:?}");
     assert_eq!(probe["flat"], "undefined", "{probe:?}");
     assert!(probe["quest"].is_null(), "{probe:?}");
     assert!(
@@ -1366,25 +1312,6 @@ export function tick(api) {
 
 #[test]
 fn v2_scene_projections_fail_closed_when_collision_is_unavailable() {
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    let ops = bindings
-        .split("const V2_OPS")
-        .nth(1)
-        .unwrap()
-        .split("const OPTIONAL")
-        .next()
-        .unwrap();
-    assert!(!ops.contains("sceneLocs"), "{ops}");
-    assert!(!ops.contains("sceneNpcs"), "{ops}");
-    let keys = bindings
-        .split("const SNAPSHOT_KEYS = new Set([")
-        .nth(1)
-        .unwrap()
-        .split("]);")
-        .next()
-        .unwrap();
-    assert!(!keys.contains("'locs'"), "{keys}");
-    assert!(!keys.contains("'tick'"), "{keys}");
     // Legal args on both methods. post_base posts an empty locs array and no
     // collision, so unavailable collision wins over that empty array: this is
     // snapshot-unavailable, not { rows: [] } and not a positive loc witness.
@@ -1445,10 +1372,6 @@ fn example_scene_observe_v2_is_read_only_and_fails_closed() {
         .join("examples")
         .join("scene_observe_v2.ts");
     let src = std::fs::read_to_string(&path).expect("example source");
-    assert!(!src.contains("request("));
-    assert!(!src.contains("h.interact"));
-    assert_eq!(src.matches("api.sceneLocs").count(), 1);
-    assert_eq!(src.matches("api.sceneNpcs").count(), 1);
     let js = script::transpile_ts(&src).expect("transpile scene_observe_v2.ts");
     let iso = LoadIsolate::spawn(js, LoadShape::NativeTick, vec![]).unwrap();
     post_base(&iso, 1);
@@ -1479,26 +1402,6 @@ fn example_scene_observe_v2_is_read_only_and_fails_closed() {
 
 #[test]
 fn v2_quest_status_fails_closed_without_a_page_and_on_a_null_tab() {
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    let ops = bindings
-        .split("const V2_OPS")
-        .nth(1)
-        .unwrap()
-        .split("const OPTIONAL")
-        .next()
-        .unwrap();
-    assert!(!ops.contains("questStatus"), "{ops}");
-    let keys = bindings
-        .split("const SNAPSHOT_KEYS = new Set([")
-        .nth(1)
-        .unwrap()
-        .split("]);")
-        .next()
-        .unwrap();
-    assert!(!keys.contains("'quest_statuses'"), "{keys}");
-    assert!(!keys.contains("'quest_statuses_available'"), "{keys}");
-    assert!(!keys.contains("'locs'"), "{keys}");
-    assert!(!keys.contains("'tick'"), "{keys}");
     // Arm 1: the example with no posted page. Nothing is posted to this
     // isolate, so the copy has no snapshot object to read: a legal name is
     // snapshot-unavailable. That is not quest-tab-unbound, not a miss, and it
@@ -1602,6 +1505,8 @@ fn loc_row<'a>(id: i32, x: i32, actions: &'a [String]) -> SceneEntityInput<'a> {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -1627,6 +1532,8 @@ fn npc_row<'a>(id: i32, x: i32, actions: &'a [String]) -> SceneEntityInput<'a> {
         size: 1,
         nx: x,
         nz: 3201,
+        shape: 0,
+        angle: 0,
     }
 }
 

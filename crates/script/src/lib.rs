@@ -27,6 +27,7 @@ pub mod isolated_env;
 #[cfg(feature = "load")]
 pub mod js_cache;
 mod keep_list;
+#[cfg(feature = "load")]
 pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
@@ -53,6 +54,7 @@ pub use identity::{
 pub use isolated_env::{bot_file, bot_home, rs2b0t_env, IsolatedEnv};
 #[cfg(feature = "load")]
 pub use js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
+#[cfg(feature = "load")]
 pub use load::{
     default_js_store, detect_shape, first_unloadable_specifier, is_catalog_dim, is_reserved,
     live_example_path, live_file_fixture_path, live_file_fixture_stem, parse_declared_api_version,
@@ -93,6 +95,10 @@ pub use watchdog::{
 pub use load::{transpile_ts, LoadIsolate, Ready};
 
 #[cfg(feature = "load")]
+mod anchor_return;
+#[cfg(feature = "load")]
+mod attack_clock;
+#[cfg(feature = "load")]
 mod autocast;
 #[cfg(feature = "load")]
 mod bank_access;
@@ -103,16 +109,24 @@ mod bank_op;
 #[cfg(feature = "load")]
 mod bank_open;
 #[cfg(feature = "load")]
+mod bank_select;
+#[cfg(feature = "load")]
 mod bank_withdraw;
+#[cfg(feature = "load")]
+mod banking_open;
 pub mod cake_stall;
 #[cfg(feature = "load")]
 mod clue;
+#[cfg(feature = "load")]
+mod cook_locations;
 #[cfg(feature = "load")]
 mod death_recovery;
 #[cfg(feature = "load")]
 mod dialog;
 #[cfg(feature = "load")]
 mod drive_partner_trade;
+#[cfg(feature = "load")]
+mod fight_upkeep;
 #[cfg(feature = "load")]
 mod fire;
 /// The hunt step machines on the machine host (fence F09).

@@ -1,10 +1,9 @@
 //! JS Load: shape detection, the picker library of loaded JS cards, and the
 //! out-of-tree `LoadIsolate` (rustyscript V8 on its own thread).
 //!
-//! The classify surface (`detect_shape`, `LoadShape`, `is_reserved`,
-//! `is_catalog_dim`, import scans, fingerprints, `JsCard`) compiles without
-//! the `load` feature; the cache-backed `JsLibrary`, sibling resolve and the
-//! isolate need it.
+//! This module is feature-gated because its cache-backed `JsLibrary`, sibling
+//! resolution and V8 isolate need `load`. Static registry parsing and settings
+//! schemas live in `rs2b0t_registry` and compile without that feature.
 //!
 //! Loading (`JsLibrary::load`) only reads, classifies, validates the source
 //! in a throwaway Runtime (dropped before `load()` returns), registers the
@@ -12,6 +11,8 @@
 //! Start of a JS card (`LoadIsolate::spawn`); nothing here `include_str!`s
 //! a script tree. 0.1.5 listed TS is an operator `$RS2B0T` path.
 
+#[cfg(feature = "load")]
+mod bank_locations_v8;
 #[cfg(feature = "load")]
 mod bank_tasks_v8;
 #[cfg(feature = "load")]
@@ -58,6 +59,10 @@ mod quest_facts_v8;
 #[cfg(feature = "load")]
 pub(crate) mod reach_query;
 #[cfg(feature = "load")]
+mod recovery_hints_v8;
+#[cfg(feature = "load")]
+mod run_policy_v8;
+#[cfg(feature = "load")]
 mod scene_v8;
 mod selected_facts_v8;
 mod shape;
@@ -68,6 +73,8 @@ mod supply_v8;
 mod targets_v8;
 #[cfg(feature = "load")]
 mod tools_v8;
+#[cfg(feature = "load")]
+mod wait_clock;
 
 pub use shape::{
     collect_raw_sibling_hashes, detect_shape, first_unloadable_for_card,
@@ -88,4 +95,12 @@ pub use library::{
 };
 
 #[cfg(feature = "load")]
+pub(crate) use isolate::TickOutcome;
+#[cfg(feature = "load")]
 pub use isolate::{LoadIsolate, Ready, ScriptStopReceipt, TeardownProof};
+#[cfg(feature = "load")]
+pub(crate) use recovery_hints_v8::{
+    post as post_recovery_hints, startup_complete as recovery_startup_complete,
+};
+#[cfg(feature = "load")]
+pub use recovery_hints_v8::{HintTile, RecoveryHintsCell};

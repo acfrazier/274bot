@@ -1043,6 +1043,7 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         WireCommand::Close,
         WireCommand::Count { value: 16 },
         WireCommand::Walk { tile },
+        WireCommand::WalkNearest { tile },
         WireCommand::SideTab { tab: 17 },
         WireCommand::Login {
             username: "u".into(),

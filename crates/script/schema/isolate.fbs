@@ -63,6 +63,8 @@ table SceneEntity {
   size: int;
   nx: int; // path-head network SW x
   nz: int; // path-head network SW z
+  shape: int; // loc-only placed shape
+  angle: int; // loc-only placed rotation
 }
 
 // One chat modal BUTTON_OK choice.
@@ -428,6 +430,22 @@ table Snapshot {
   // short and is never packed here. Dest geometry is not a shopping list:
   // only this vector names one.
   walk_missing_carry: [Carry];
+  // Select-only result, distinct from walk/inspect. Index names the immutable
+  // selected-world bank catalog supplied to this isolate at Start.
+  bank_selection_request_id: ulong = 0;
+  bank_selection_generation: ulong = 0;
+  bank_selection_index: int = -1;
+  // 0 absent, 1 near shortcut, 2 reachable, 3 air fallback, 4 no candidate.
+  bank_selection_kind: ubyte = 0;
+  // The local player's primary animation id (slot 264; frozen
+  // `reader.selfAnim()`, -1 idle). Written on the keyframe and whenever it
+  // changes; an omitted slot keeps the last id. The frozen `AttackClock`
+  // keys a swing start on this id, not on the `animating` flag above.
+  self_anim: int = -1;
+  // Slot 266, walk_outcome family: the settled route end is frozen
+  // 'blocked' (the player stands next to a last tile the live scene
+  // refuses; WalkExecutor.ts:1039-1040, 1092-1094).
+  walk_outcome_blocked: bool = false;
 }
 
 table Collision {
@@ -473,7 +491,7 @@ table AvoidRect {
 // | "wear" | "unequip" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
 // | "note-progress" | "loop-settled" | "wait-enqueued" | "wait-settled"
 // | "recovery-anchor" | "recovery-anchor-none" | "key" | "mouse"
-// | "inspect-route".
+// | "inspect-route" | "select-bank".
 // "key": action=DOM key, kind=code (optional), index=1 down / 0 up.
 // "mouse": xf/yf=client coordinates as doubles, level=DOM button, index=1 down / 0 up.
 // input_identity is the native permit at production (0 when absent).
@@ -517,6 +535,8 @@ table Interact {
   // Inspect session generation from the applied snapshot. Required on
   // inspect-ack so a caller cannot free terminals from another session.
   inspect_ack_generation: ulong = 0;
+  use_mage_bank: bool = false;
+  use_zanaris_bank: bool = false;
 }
 
 // The tick's shim interact queue, forwarded to the host.

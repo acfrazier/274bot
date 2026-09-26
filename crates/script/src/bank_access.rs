@@ -270,18 +270,18 @@ fn bank_stand(loc: WorldTile) -> Option<WorldTile> {
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct Opener {
-    name: String,
-    op: String,
+    pub(crate) name: String,
+    pub(crate) op: String,
 }
 
 /// `BankObjectAccess`: the shim passes `open_first`, a bank destination
 /// row carries `openFirst`.
 #[derive(Clone, Deserialize)]
 pub(crate) struct AccessArgs {
-    name: String,
-    op: String,
+    pub(crate) name: String,
+    pub(crate) op: String,
     #[serde(default, alias = "openFirst")]
-    open_first: Option<Opener>,
+    pub(crate) open_first: Option<Opener>,
 }
 
 /// Where a failed object-dialogue continue leaves the `openNearest` loop.
@@ -683,7 +683,7 @@ impl Family for BankAccess {
     const EXCLUSIVE_GROUP: &'static str = BankOpen::NAME;
     const CALLBACKS: &'static [&'static str] = &["log"];
     /// Frozen calls `log?.()` without awaiting it.
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[LOG];
     /// The first verb joins the caller's tick, after any log line.
     const KICK_ON_START: bool = true;
     type Args = AccessArgs;
@@ -700,9 +700,10 @@ impl Family for BankAccess {
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct NpcAccessArgs {
-    name: String,
-    op: String,
-    choose: String,
+    pub(crate) name: String,
+    pub(crate) op: String,
+    #[serde(default)]
+    pub(crate) choose: String,
 }
 
 enum NpcPhase {
@@ -863,10 +864,9 @@ impl NpcAccess {
                 }
                 let chat = Chat::now();
                 let choose = self.choose.to_lowercase();
-                let option = chat
-                    .options
-                    .iter()
-                    .position(|option| option.to_lowercase().contains(&choose));
+                let option = chat.options.iter().position(|option| {
+                    !choose.is_empty() && option.to_lowercase().contains(&choose)
+                });
                 let press = match option {
                     Some(index) => Press::send(
                         InteractReq::Answer {
@@ -936,7 +936,7 @@ impl Family for NpcAccess {
     const EXCLUSIVE_GROUP: &'static str = BankOpen::NAME;
     const CALLBACKS: &'static [&'static str] = &["log"];
     /// Frozen calls `log?.()` without awaiting it.
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[LOG];
     /// The first verb joins the caller's tick, after any log line.
     const KICK_ON_START: bool = true;
     type Args = NpcAccessArgs;
@@ -994,6 +994,8 @@ mod tests {
             level: 0,
             distance,
             actions: ops(actions),
+            shape: 0,
+            angle: 0,
         }
     }
 

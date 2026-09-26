@@ -1,12 +1,22 @@
 //! LoadIsolate: rustyscript V8 on its own thread (feature `load` only).
 
+mod teardown;
+mod thread;
+
+pub use teardown::TeardownProof;
+use teardown::{TeardownPhase, TeardownState};
+use thread::isolate_main;
+#[cfg(test)]
+use thread::{stamp_mouse_gesture_identities, MouseGestureIdentities};
+
 use super::bindings::wire_runtime;
 use super::shape::LoadShape;
 use super::snapshot::{
     dispatch_native_events, key_string, materialize_settings_bag, materialize_snapshot,
 };
+use super::{loadout_v8, machine_v8, paint_chrome, paint_jive, reach_query, shape};
 use rustyscript::{json_args, Runtime, RuntimeOptions};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, Once, OnceLock};
@@ -14,6 +24,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 static NEXT_PAINT_GENERATION: AtomicU64 = AtomicU64::new(1);
+static LIVE_RUNTIMES: AtomicUsize = AtomicUsize::new(0);
 static ABANDONED_ISOLATES: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
 
 fn reap_finished_abandoned(list: &mut Vec<JoinHandle<()>>) {
@@ -43,19 +54,34 @@ pub fn abandoned_isolate_count() -> usize {
     list.len()
 }
 
-/// Per-tick budget: ticks taking longer than this are interrupted and
-/// logged, and stale ticks are skipped.
-const SLOW_TICK: Duration = Duration::from_millis(50);
+/// V8 runtimes currently owned by isolate threads. Tests use this to prove a
+/// cancelled non-yielding startup was destroyed rather than merely detached.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn live_runtime_count() -> usize {
+    LIVE_RUNTIMES.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Runaway bound shared by the dispatch watchdog and Pause's one-shot.
+/// One normal game tick lets legitimate slow work finish while still
+/// bounding a non-yielding execution when Pause stops future dispatch.
+const EXECUTION_WATCHDOG_HORIZON: Duration = Duration::from_millis(600);
+/// The exactly-once onStop getter/body/log drain keeps its independent,
+/// deliberately short teardown budget.
+const ON_STOP_DEADLINE: Duration = Duration::from_millis(50);
 /// `in_flight` tick id for a live `recoveryAnchor` eval (not a game tick).
 const RECOVERY_ANCHOR_TICK: u64 = u64::MAX;
 /// Hard stop for yielding JS (rustyscript `RuntimeOptions.timeout`).
 const RUNTIME_TIMEOUT: Duration = Duration::from_millis(50);
+/// How long setup waits for V8 creation and startup evaluation before the
+/// owning isolate handle interrupts it.
+const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Validation uses a shorter independent deadline because it is a
+/// throwaway candidate check, not a live Start.
+const VALIDATION_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long `join` waits for the isolate thread after Stop + terminate
 /// before abandoning it: a stuck isolate must never freeze the caller.
 const JOIN_TIMEOUT: Duration = Duration::from_secs(2);
-/// How long `poll_ready` waits for V8 creation, prelude, content eval
-/// and module load before reporting the same timeout spawn used to.
-const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Heap cap for the isolate (~64 MB, the brief's number).
 const MAX_HEAP: usize = 64 * 1024 * 1024;
 /// Bounded native pairing metadata for mouse gestures produced by one
@@ -70,44 +96,6 @@ const MAX_MOUSE_GESTURES: usize = 32;
 /// Operator commands (Pause, Stop, probes, paint input) are never dropped.
 const MAX_QUEUED_COMMANDS: usize = 64;
 
-#[derive(Default)]
-struct MouseGestureIdentities {
-    pairs: VecDeque<u64>,
-    /// Number of leading ups that cannot be paired after overflow. The
-    /// count is bounded storage and makes them fail closed at identity 0.
-    unpairable: u64,
-}
-
-fn stamp_mouse_gesture_identities(
-    reqs: &mut [crate::shim::InteractReq],
-    input_identity: u64,
-    gestures: &mut MouseGestureIdentities,
-) {
-    for req in reqs {
-        let crate::shim::InteractReq::Mouse { down, identity, .. } = req else {
-            continue;
-        };
-        if *down {
-            *identity = input_identity;
-            if gestures.unpairable != 0 {
-                gestures.unpairable = gestures.unpairable.saturating_add(1);
-            } else if gestures.pairs.len() >= MAX_MOUSE_GESTURES {
-                gestures.unpairable = (gestures.pairs.len() as u64).saturating_add(1);
-                gestures.pairs.clear();
-            } else {
-                gestures.pairs.push_back(input_identity);
-            }
-        } else if gestures.unpairable != 0 {
-            gestures.unpairable -= 1;
-            *identity = 0;
-        } else {
-            // FIFO is deliberate: if a second down precedes the first
-            // up, that old up must retain the oldest gesture identity.
-            *identity = gestures.pairs.pop_front().unwrap_or(0);
-        }
-    }
-}
-
 struct SnapshotMessage {
     bytes: Vec<u8>,
     #[cfg(feature = "memory-profile")]
@@ -120,7 +108,14 @@ enum IsolateCmd {
         generation: u64,
         input_identity: u64,
     },
-    ResetSession,
+    /// A session boundary. `keep_work`: the host relogs through it, so the
+    /// script's work is held for the next session instead of ended.
+    ResetSession {
+        keep_work: bool,
+        /// The work generation this reset opened: only the reset of the
+        /// current generation restates the parked waits.
+        generation: u64,
+    },
     /// The host's FlatBuffer snapshot blob (schema: `crates/script/
     /// schema/isolate.fbs`), decoded on the isolate thread into the
     /// JS object the Game/Inventory/Skills/EventSignal shims read
@@ -131,6 +126,8 @@ enum IsolateCmd {
     Settings(serde_json::Map<String, serde_json::Value>),
     /// Available loadouts. Rust keeps them for `selectedLoadout`.
     Loadouts(Vec<crate::loadouts_store::Loadout>),
+    /// The slot's recovery hints, which outlive this isolate.
+    RecoveryHints(std::sync::Arc<super::RecoveryHintsCell>),
     Pause,
     Resume,
     /// One-shot script-local paint button, tagged with the isolate
@@ -147,7 +144,8 @@ enum IsolateCmd {
         generation: u64,
     },
     /// Generation-bound recoveryAnchor sample. Evaluated on this
-    /// thread with the 50 ms budget; the reply is a FlatBuffer interact.
+    /// thread with the shared one-game-tick runaway bound; the reply is a
+    /// FlatBuffer interact.
     RecoveryAnchor {
         generation: u64,
     },
@@ -183,203 +181,24 @@ impl CmdQueue {
     }
 }
 
-/// Host/isolate coordination for Stop vs `onStop`. Transitions are
-/// taken under the mutex so join cannot terminate after the hook
-/// starts, and the hook's 50 ms one-shot cannot fire into Done.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum TeardownPhase {
-    Running,
-    UnwindingTick,
-    Hook,
-    Done,
-}
-
-/// Phase, Hook-entry deadline, and at-most-one interrupt. Finish and the
-/// one-shot worker decide under this same mutex.
-struct TeardownState {
-    phase: TeardownPhase,
-    deadline: Option<Instant>,
-    interrupt_issued: bool,
-    /// Dropped at Done so a sleeping one-shot worker exits without terminate.
-    cancel: Option<Sender<()>>,
-    /// Isolate-scoped test seam: sleep after the deadline owner is armed
-    /// and before getter/body, without a process-global switch.
-    hook_entry_delay: Option<Duration>,
-    /// Isolate-scoped test seam: pretend deadline-thread spawn failed.
-    fail_deadline_spawn: bool,
-    /// The slow-tick watchdog armed a terminate the isolate thread has not
-    /// cancelled yet. Set with the terminate, cleared with the cancel.
-    watchdog_fired: bool,
-}
-
-impl TeardownState {
-    fn new() -> Self {
-        Self {
-            phase: TeardownPhase::Running,
-            deadline: None,
-            interrupt_issued: false,
-            cancel: None,
-            hook_entry_delay: None,
-            fail_deadline_spawn: false,
-            watchdog_fired: false,
-        }
-    }
-}
-
-/// Per-isolate teardown evidence. Survives dropping the public handle so
-/// raw Drop can wait for the isolate thread to consume Stop before
-/// asserting no hook / no leftover deadline worker.
-#[doc(hidden)]
-#[derive(Clone)]
-pub struct TeardownProof {
-    inner: std::sync::Arc<TeardownProofInner>,
-}
-
-struct TeardownProofInner {
-    invoked: AtomicBool,
-    finished: AtomicBool,
-    worker_live: AtomicUsize,
-}
-
-impl TeardownProof {
-    fn new() -> Self {
-        Self {
-            inner: std::sync::Arc::new(TeardownProofInner {
-                invoked: AtomicBool::new(false),
-                finished: AtomicBool::new(false),
-                worker_live: AtomicUsize::new(0),
-            }),
-        }
-    }
-
-    pub fn invoked(&self) -> bool {
-        self.inner.invoked.load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    pub fn finished(&self) -> bool {
-        self.inner
-            .finished
-            .load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    pub fn deadline_workers(&self) -> usize {
-        self.inner
-            .worker_live
-            .load(std::sync::atomic::Ordering::SeqCst)
-    }
-}
-
-struct DeadlineWorkerGuard {
-    proof: std::sync::Arc<TeardownProofInner>,
-}
-impl Drop for DeadlineWorkerGuard {
-    fn drop(&mut self) {
-        self.proof
-            .worker_live
-            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
-struct TickLoopFinish(std::sync::Arc<TeardownProofInner>);
-impl Drop for TickLoopFinish {
-    fn drop(&mut self) {
-        self.0
-            .finished
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
-/// Join (or Drop) has claimed the isolate for Stop and armed a terminate
-/// for the running tick. A tick phase must not start after that point: an
-/// earlier call whose error is ignored may already have absorbed the
-/// terminate, and a spinning `loop()` would then never be interrupted.
-/// Join sets the phase before it fires the terminate, so a check made
-/// after any absorbing call sees it.
-fn tick_claimed(teardown: &Mutex<TeardownState>) -> bool {
-    teardown.lock().unwrap().phase != TeardownPhase::Running
-}
-
-/// A machine pass must stop driving: join claimed the tick, or the
-/// watchdog armed a terminate. A terminate that ends a callback's microtask
-/// continuation is consumed there and never reported to the caller, so the
-/// armed flag is the only trace of it.
-fn machines_halted(teardown: &Mutex<TeardownState>) -> bool {
-    let st = teardown.lock().unwrap();
-    st.phase != TeardownPhase::Running || st.watchdog_fired
-}
-
-/// Cancel an armed terminate and forget the watchdog's, as one step.
-fn cancel_terminate(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
-    let mut st = teardown.lock().unwrap();
-    st.watchdog_fired = false;
-    runtime
-        .deno_runtime()
-        .v8_isolate()
-        .cancel_terminate_execution();
-}
-
-/// A value Rust writes onto the host handle without running any JS.
-enum HostValue<'a> {
-    Number(f64),
-    Str(&'a str),
-    Null,
-}
-
-/// Set `__rs2b0t_host[key]` through V8 directly: typed, no script eval.
-/// `false` when the host handle is missing or the write failed.
-fn set_host_field(runtime: &mut Runtime, key: &str, value: HostValue<'_>) -> bool {
-    let scope = &mut runtime.deno_runtime().handle_scope();
-    let global = scope.get_current_context().global(scope);
-    let (Ok(host_key), Ok(field)) = (key_string(scope, "__rs2b0t_host"), key_string(scope, key))
-    else {
-        return false;
-    };
-    let Some(host) = global
-        .get(scope, host_key.into())
-        .and_then(|host| host.to_object(scope))
-    else {
-        return false;
-    };
-    let value: v8::Local<v8::Value> = match value {
-        HostValue::Number(n) => v8::Number::new(scope, n).into(),
-        HostValue::Str(s) => match v8::String::new(scope, s) {
-            Some(s) => s.into(),
-            None => return false,
-        },
-        HostValue::Null => v8::null(scope).into(),
-    };
-    host.set(scope, field.into(), value).is_some()
-}
-
-/// Record the eligible tick number on the host handle
-/// (`__rs2b0t_host.tick`) before any of the tick's JS runs.
-fn record_tick(runtime: &mut Runtime, n: u64) {
-    set_host_field(runtime, "tick", HostValue::Number(n as f64));
-}
-
-/// `!!globalThis[name]`, read through V8 without compiling a script.
-fn global_flag(runtime: &mut Runtime, name: &str) -> bool {
-    let scope = &mut runtime.deno_runtime().handle_scope();
-    let global = scope.get_current_context().global(scope);
-    let Ok(key) = key_string(scope, name) else {
-        return false;
-    };
-    global
-        .get(scope, key.into())
-        .is_some_and(|value| value.boolean_value(scope))
-}
-
-/// Drops every machine row when the tick loop ends (Stop, script stop).
-struct MachinesStop;
-impl Drop for MachinesStop {
-    fn drop(&mut self) {
-        crate::machine::on_stop();
-        crate::hunt::on_stop();
-    }
-}
-
 enum ThreadMsg {
     Log(String),
+    /// The isolate thread processed the session reset that opened
+    /// `generation`: every tick of the previous connection has finished.
+    SessionReset {
+        generation: u64,
+    },
+    /// A diagnostic emitted while processing one tick. The host keeps this
+    /// separate from user-authored log lines so a later user message cannot
+    /// clear or create the slot's active tick error.
+    TickError {
+        tick: u64,
+        generation: u64,
+        message: String,
+    },
+    /// A watchdog/Pause/session terminate cut script JS. The owning slot
+    /// must recreate the isolate; in-place single-flight recovery is unsafe.
+    ScriptCut,
     /// The tick's shim interact queue (`__rs2b0t_host.interact`), a
     /// FlatBuffer `InteractBatch` of [`crate::shim::InteractReq`]s
     /// forwarded after the tick's JS finished (parked or not).
@@ -391,10 +210,13 @@ enum ThreadMsg {
     /// thread each tick and sent only when it changed; the host caches it
     /// (no probe).
     IgnoredRandoms(Vec<String>),
-    /// The highest tick the thread has fully processed (ran or skipped).
+    /// The tick whose work has fully finished. `report_errors` is false for
+    /// operator Pause cancellation: termination is not a script diagnostic.
     Completed {
         tick: u64,
         generation: u64,
+        successful: bool,
+        report_errors: bool,
     },
     /// ScriptRunner.stop ended this isolate with its bounded script reason.
     ScriptStopped {
@@ -412,6 +234,19 @@ enum ThreadMsg {
     /// process, so the frame crosses as the typed value the recorder built:
     /// no FlatBuffer encode/verify/decode, and every reader shares one frame.
     Paint(std::sync::Arc<crate::shim::ScriptPaint>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TickOutcome {
+    Success {
+        tick: u64,
+        generation: u64,
+    },
+    Error {
+        tick: u64,
+        generation: u64,
+        message: String,
+    },
 }
 
 /// One JS bot running in its own rustyscript/V8 isolate. Spawned only
@@ -443,11 +278,33 @@ pub struct LoadIsolate {
     snapshot_refused: AtomicBool,
     rx: Mutex<Receiver<ThreadMsg>>,
     logs: Mutex<Vec<String>>,
+    /// Typed diagnostics collected while each tick runs. Kept separate from
+    /// user-authored `Log` messages so slot state cannot be driven by text.
+    tick_errors: Mutex<HashMap<(u64, u64), Vec<String>>>,
+    /// Completed tick outcomes waiting for the owning slot to consume them.
+    tick_outcomes: Mutex<Vec<TickOutcome>>,
+    /// Generation with a queued active-error outcome. Successful ticks are
+    /// reported only while this is set, avoiding an allocation per tick.
+    tick_outcome_error_generation: Mutex<Option<u64>>,
+    /// Set when the isolate confirms that a terminate cut script JS.
+    /// The owning slot consumes this once and recreates the runtime.
+    script_cut: AtomicBool,
     /// Interact requests forwarded by the tick thread (the shim
     /// `Bank`/`Banking` queue), drained by the host like logs.
     interacts: Mutex<Vec<crate::shim::InteractReq>>,
     /// Watchdog lifecycle facts from the same FlatBuffer batch.
     lifecycle: Mutex<Vec<crate::shim::InteractReq>>,
+    /// Script walk requests (walk, walk-near, abort-walk) a reconnect kept
+    /// from the dropped connection before any host dispatch, oldest first,
+    /// for the relogged session ([`LoadIsolate::take_held_walks`]).
+    held_walks: Mutex<Vec<crate::shim::InteractReq>>,
+    /// A reconnect is holding the script's work: walk requests of batches
+    /// from the dropped connection are kept, not discarded.
+    holding_walks: AtomicBool,
+    /// The work generation of a reconnect reset the isolate thread has not
+    /// processed yet: a tick of the dropped connection may still be running
+    /// and emit a walk, so the held walks are not handed out before then.
+    held_fence: Mutex<Option<u64>>,
     /// The latest paint frame the tick thread forwarded (the
     /// [`crate::shim::ScriptPaint`] the recorder built after each tick),
     /// shared with every reader instead of copied per read.
@@ -491,9 +348,17 @@ pub enum Ready {
     Failed(String),
 }
 
+enum SetupMessage {
+    /// Published immediately after Runtime creation, before any
+    /// user-influenced startup evaluation.
+    Interrupt(v8::IsolateHandle),
+    /// Final setup result after wiring the runtime and loading the module.
+    Ready(Result<(), String>),
+}
+
 enum SetupState {
     Pending {
-        rx: Receiver<Result<v8::IsolateHandle, String>>,
+        rx: Receiver<SetupMessage>,
         deadline: Instant,
     },
     Ready,
@@ -516,6 +381,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
         )
     }
 
@@ -533,19 +399,28 @@ impl LoadIsolate {
             siblings,
             Some(game_data),
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
         )
     }
 
-    /// Spawn with selected-revision facts and already-resolved named
-    /// bank aliases. Existing constructors post empty aliases.
+    /// Spawn with selected-revision facts, named aliases, and the script
+    /// slot's shared run-policy cell.
     pub fn spawn_with_content(
         js: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        run_policy_override: std::sync::Arc<api::run_policy::RunPolicyOverrideCell>,
     ) -> Result<Self, String> {
-        Self::spawn_inner(js, shape, siblings, game_data, named_banks)
+        Self::spawn_inner(
+            js,
+            shape,
+            siblings,
+            game_data,
+            named_banks,
+            run_policy_override,
+        )
     }
 
     /// Evaluate and instantiate the candidate in a throwaway Runtime
@@ -557,21 +432,15 @@ impl LoadIsolate {
         shape: LoadShape,
         siblings: &[(String, String)],
     ) -> Result<(), String> {
-        ensure_platform();
-        let mut runtime = Runtime::new(RuntimeOptions {
-            timeout: RUNTIME_TIMEOUT,
-            max_heap_size: Some(MAX_HEAP),
-            ..Default::default()
-        })
-        .map_err(|e| format!("js engine init: {e}"))?;
-        wire_runtime(
-            &mut runtime,
-            js,
-            shape,
-            siblings,
-            None,
-            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-        )
+        let isolate = Self::spawn(js.to_owned(), shape, siblings.to_vec())?;
+        let result = isolate.resolve_setup(Some(Instant::now() + VALIDATION_TIMEOUT));
+        let result = match result {
+            Ready::Ready => Ok(()),
+            Ready::Failed(error) => Err(error),
+            Ready::Pending => unreachable!("bounded setup wait cannot remain pending"),
+        };
+        let _ = isolate.join_without_hook();
+        result
     }
 
     fn spawn_inner(
@@ -580,11 +449,12 @@ impl LoadIsolate {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        run_policy_override: std::sync::Arc<api::run_policy::RunPolicyOverrideCell>,
     ) -> Result<Self, String> {
         ensure_platform();
         let (tx, rx) = mpsc::channel::<IsolateCmd>();
+        let (setup_tx, setup_rx) = mpsc::channel::<SetupMessage>();
         let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
-        let (setup_tx, setup_rx) = mpsc::channel::<Result<v8::IsolateHandle, String>>();
         #[cfg(feature = "memory-profile")]
         let counters = crate::memory_profile::registered();
         #[cfg(feature = "memory-profile")]
@@ -610,6 +480,7 @@ impl LoadIsolate {
                     siblings,
                     game_data,
                     named_banks,
+                    run_policy_override,
                     CmdQueue {
                         rx,
                         queued: thread_queued,
@@ -641,8 +512,15 @@ impl LoadIsolate {
             snapshot_refused: AtomicBool::new(false),
             rx: Mutex::new(msg_rx),
             logs: Mutex::new(Vec::new()),
+            tick_errors: Mutex::new(HashMap::new()),
+            tick_outcomes: Mutex::new(Vec::new()),
+            tick_outcome_error_generation: Mutex::new(None),
+            script_cut: AtomicBool::new(false),
             interacts: Mutex::new(Vec::new()),
             lifecycle: Mutex::new(Vec::new()),
+            held_walks: Mutex::new(Vec::new()),
+            holding_walks: AtomicBool::new(false),
+            held_fence: Mutex::new(None),
             paint: Mutex::new(None),
             ignored_randoms: Mutex::new(Vec::new()),
             handle: Some(handle),
@@ -714,6 +592,12 @@ impl LoadIsolate {
         self.send(IsolateCmd::Loadouts(loadouts.to_vec()));
     }
 
+    /// Use the slot's frozen `RecoveryHints` for this isolate, so a watchdog
+    /// restart finds what the previous run latched.
+    pub fn post_recovery_hints(&self, hints: std::sync::Arc<super::RecoveryHintsCell>) {
+        self.send(IsolateCmd::RecoveryHints(hints));
+    }
+
     /// Post the merged operator settings bag (schema defaults + panel/TUI
     /// overrides + optional scenario inject). The prelude's
     /// `this.settings.*` reads `__rs2b0t_host.settingsBag`.
@@ -722,9 +606,9 @@ impl LoadIsolate {
     }
 
     /// Dispatch one observed game tick to the isolate. The previous
-    /// tick is checked against the budget: still running past
-    /// [`SLOW_TICK`] is interrupted and logged, and its stale ticks are
-    /// skipped.
+    /// tick is checked against [`EXECUTION_WATCHDOG_HORIZON`]: an execution
+    /// still running past it is interrupted and logged, and its stale ticks
+    /// are skipped.
     pub fn on_game_tick(&self, snap_tick: u64) {
         self.on_game_tick_at(snap_tick, 0);
     }
@@ -751,32 +635,9 @@ impl LoadIsolate {
             .snapshot_refused
             .swap(false, std::sync::atomic::Ordering::AcqRel)
             || self.backlogged();
-        let interrupted = {
-            let mut in_flight = self.in_flight.lock().unwrap();
-            // The previous tick is still in flight (no `Completed`
-            // folded yet) past the budget: interrupt it.
-            let over = in_flight
-                .as_ref()
-                .filter(|(_, _, started)| ready && started.elapsed() > SLOW_TICK)
-                .map(|(_, tick, started)| (*tick, started.elapsed()));
-            if !backlogged {
-                *in_flight = Some((generation, snap_tick, Instant::now()));
-            }
-            over
-        };
-        if let Some((tick, elapsed)) = interrupted {
-            // Leave the terminate armed until the isolate thread has
-            // returned from the tick (it cancels there); an immediate
-            // cancel would race the interrupt and make this a no-op.
-            self.fire_watchdog();
-            // `in_flight` was released before this lock, so the lock
-            // order (never `in_flight` -> `logs`) holds everywhere.
-            let line = if tick == RECOVERY_ANCHOR_TICK {
-                format!("interrupted slow recoveryAnchor ({elapsed:?})")
-            } else {
-                format!("interrupted slow tick {tick} ({elapsed:?})")
-            };
-            self.logs.lock().unwrap().push(line);
+        self.interrupt_slow_execution(ready);
+        if !backlogged {
+            *self.in_flight.lock().unwrap() = Some((generation, snap_tick, Instant::now()));
         }
         if backlogged {
             return;
@@ -789,6 +650,121 @@ impl LoadIsolate {
             generation,
             input_identity,
         });
+    }
+
+    /// Interrupt the currently active execution against its own start time,
+    /// never the cadence of later host dispatches. If it is still inside its
+    /// horizon, arm one execution-scoped sleeper for the remaining time.
+    fn interrupt_slow_execution(&self, ready: bool) {
+        if !ready {
+            return;
+        }
+        let active = {
+            let st = self.teardown.lock().unwrap();
+            match (
+                st.phase,
+                st.execution_active,
+                st.execution_interrupt,
+                st.execution_started,
+            ) {
+                (TeardownPhase::Running, true, None, Some(started)) => {
+                    Some((st.execution_id, st.execution_tick, started.elapsed()))
+                }
+                _ => None,
+            }
+        };
+        let Some((execution_id, tick, elapsed)) = active else {
+            return;
+        };
+        if elapsed <= EXECUTION_WATCHDOG_HORIZON {
+            self.arm_active_execution_deadline(teardown::ExecutionInterrupt::Watchdog);
+            return;
+        }
+        if self.fire_execution_interrupt(execution_id, teardown::ExecutionInterrupt::Watchdog) {
+            let line = if tick == RECOVERY_ANCHOR_TICK {
+                format!("interrupted slow recoveryAnchor ({elapsed:?})")
+            } else {
+                format!("interrupted slow tick {tick} ({elapsed:?})")
+            };
+            self.logs.lock().unwrap().push(line);
+        }
+    }
+
+    /// Keep the active execution's original runaway horizon alive when the
+    /// next dispatch, Pause, or session reset observes it. At most one sleeper
+    /// is created for an execution; Pause/session reset can replace its owner.
+    fn arm_active_execution_deadline(&self, owner: teardown::ExecutionInterrupt) {
+        let deadline = {
+            let mut st = self.teardown.lock().unwrap();
+            let (Some(started), Some(handle)) = (st.execution_started, self.terminate.get()) else {
+                return;
+            };
+            if st.phase != TeardownPhase::Running
+                || !st.execution_active
+                || st.execution_interrupt.is_some()
+            {
+                return;
+            }
+            if owner != teardown::ExecutionInterrupt::Watchdog
+                || st.execution_deadline_owner.is_none()
+            {
+                st.execution_deadline_owner = Some(owner);
+            }
+            if st.execution_deadline_armed {
+                return;
+            }
+            st.execution_deadline_armed = true;
+            Some((
+                st.execution_id,
+                EXECUTION_WATCHDOG_HORIZON.saturating_sub(started.elapsed()),
+                handle.clone(),
+            ))
+        };
+        let Some((execution_id, delay, terminate)) = deadline else {
+            return;
+        };
+        let (thread_name, log_name) = match owner {
+            teardown::ExecutionInterrupt::Watchdog => ("script-watchdog-deadline", "watchdog"),
+            teardown::ExecutionInterrupt::Pause => ("script-pause-deadline", "pause"),
+            teardown::ExecutionInterrupt::SessionReset => {
+                ("script-session-deadline", "session reset")
+            }
+        };
+        let teardown = std::sync::Arc::clone(&self.teardown);
+        let worker_teardown = std::sync::Arc::clone(&teardown);
+        if let Err(error) = std::thread::Builder::new()
+            .name(thread_name.into())
+            .spawn(move || {
+                std::thread::sleep(delay);
+                let mut st = worker_teardown.lock().unwrap();
+                if st.execution_id != execution_id {
+                    return;
+                }
+                st.execution_deadline_armed = false;
+                let owner = st.execution_deadline_owner.take().unwrap_or(owner);
+                if st.phase == TeardownPhase::Running
+                    && (owner != teardown::ExecutionInterrupt::Pause || st.pause_requested)
+                    && st.execution_active
+                    && st.execution_interrupt.is_none()
+                {
+                    st.execution_interrupt = Some(teardown::InterruptedExecution {
+                        owner,
+                        consumed: false,
+                    });
+                    terminate.terminate_execution();
+                }
+            })
+        {
+            let mut st = teardown.lock().unwrap();
+            if st.execution_id == execution_id {
+                st.execution_deadline_armed = false;
+                st.execution_deadline_owner = None;
+            }
+            self.logs
+                .lock()
+                .unwrap()
+                .push(format!("{log_name} deadline worker: {error}"));
+        }
     }
 
     #[cfg(feature = "memory-profile")]
@@ -810,31 +786,27 @@ impl LoadIsolate {
             "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(_,tick,t)|(*tick,t.elapsed().as_millis()))})
     }
 
-    /// Park tick dispatch. A runaway tick is interrupted first so the
-    /// thread returns to the command loop.
+    /// Park future tick dispatch. Pause intent shares the execution lock with
+    /// entry, so a queued tick cannot enter after this call. Healthy work that
+    /// already owns execution is allowed to finish; a one-shot bound tied to
+    /// that exact execution terminates it only if it exceeds the tick budget.
     pub fn pause(&self) {
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
-        if self.teardown_blocks_dispatch() {
-            self.send(IsolateCmd::Pause);
-            return;
+        self.interrupt_slow_execution(ready);
+        {
+            let mut st = self.teardown.lock().unwrap();
+            if st.phase == TeardownPhase::Running {
+                st.pause_requested = true;
+            }
         }
-        let over = self
-            .in_flight
-            .lock()
-            .unwrap()
-            .map(|(_, _, started)| ready && started.elapsed() > SLOW_TICK)
-            .unwrap_or(false);
-        if over {
-            // No cancel here: the isolate thread clears the terminate
-            // itself once it has returned from the interrupted tick.
-            self.fire_watchdog();
-        }
+        self.arm_active_execution_deadline(teardown::ExecutionInterrupt::Pause);
         self.send(IsolateCmd::Pause);
     }
 
     /// Re-arm tick dispatch after [`LoadIsolate::pause`].
     pub fn resume(&self) {
+        self.teardown.lock().unwrap().pause_requested = false;
         self.send(IsolateCmd::Resume);
     }
 
@@ -884,24 +856,8 @@ impl LoadIsolate {
         let generation = self
             .work_generation
             .load(std::sync::atomic::Ordering::Acquire);
-        let interrupted = {
-            let mut in_flight = self.in_flight.lock().unwrap();
-            let over = in_flight
-                .as_ref()
-                .filter(|(_, _, started)| ready && started.elapsed() > SLOW_TICK)
-                .map(|(_, tick, started)| (*tick, started.elapsed()));
-            *in_flight = Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
-            over
-        };
-        if let Some((tick, elapsed)) = interrupted {
-            self.fire_watchdog();
-            let line = if tick == RECOVERY_ANCHOR_TICK {
-                format!("interrupted slow recoveryAnchor ({elapsed:?})")
-            } else {
-                format!("interrupted slow tick {tick} ({elapsed:?})")
-            };
-            self.logs.lock().unwrap().push(line);
-        }
+        self.interrupt_slow_execution(ready);
+        *self.in_flight.lock().unwrap() = Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
         self.send(IsolateCmd::RecoveryAnchor { generation });
     }
 
@@ -918,9 +874,9 @@ impl LoadIsolate {
 
     /// The bot instance's random-ignore list (`inst.ignoredRandoms?.()`
     /// on `__rs_bot`, default `[]`): read on the isolate thread each tick
-    /// and cached here when it changes (see [`ThreadMsg::IgnoredRandoms`]). A throwing /
-    /// non-array method and a native `tick`-shaped card (no instance)
-    /// fail closed to `[]`. No probe round-trip.
+    /// and cached here when it changes (see [`ThreadMsg::IgnoredRandoms`]).
+    /// A throwing / non-array method and a native `tick`-shaped card (no
+    /// instance) fail closed to `[]`. No probe round-trip.
     pub fn ignored_randoms(&self) -> Vec<String> {
         self.pump_logs();
         self.ignored_randoms.lock().unwrap().clone()
@@ -931,6 +887,20 @@ impl LoadIsolate {
     pub fn drain_logs(&self) -> Vec<String> {
         self.pump_logs();
         std::mem::take(&mut *self.logs.lock().unwrap())
+    }
+    /// Consume the isolate's one cut notification. Only the owning slot calls
+    /// this; a standalone isolate remains stopped at the cut continuation.
+    pub(crate) fn take_script_cut(&self) -> bool {
+        self.pump_logs();
+        self.script_cut
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+    }
+
+    /// Drain typed outcomes already folded by the caller's regular
+    /// [`Self::pump_logs`] pass. User-authored log lines never enter this
+    /// queue.
+    pub(crate) fn drain_tick_outcomes(&self) -> Vec<TickOutcome> {
+        std::mem::take(&mut *self.tick_outcomes.lock().unwrap())
     }
 
     /// Cached terminal state, refreshed by the regular log drain.
@@ -950,6 +920,29 @@ impl LoadIsolate {
         self.proof.clone()
     }
 
+    /// Whether the isolate thread owns the current interruptible tick phase.
+    #[doc(hidden)]
+    pub fn execution_active(&self) -> bool {
+        self.teardown.lock().unwrap().execution_active
+    }
+
+    /// Monotonic identity and activity of the latest interruptible execution.
+    /// The identity remains after completion so lifecycle tests can observe
+    /// executions too short to sample while active.
+    #[doc(hidden)]
+    pub fn execution_sequence(&self) -> (u64, bool) {
+        let st = self.teardown.lock().unwrap();
+        (st.execution_id, st.execution_active)
+    }
+
+    /// Number of per-tick diagnostics still awaiting their matching
+    /// completion. Lifecycle regression seam; steady state is zero.
+    #[doc(hidden)]
+    pub fn pending_tick_error_count(&self) -> usize {
+        self.pump_logs();
+        self.tick_errors.lock().unwrap().len()
+    }
+
     /// Isolate-scoped seam: delay after the deadline owner is armed and
     /// before getter/body. Proves a late cancel cannot drop the one-shot.
     #[doc(hidden)]
@@ -963,6 +956,13 @@ impl LoadIsolate {
         self.teardown.lock().unwrap().fail_deadline_spawn = true;
     }
 
+    /// Give a success-path unit test enough scheduling headroom while
+    /// retaining a bounded hook deadline.
+    #[cfg(test)]
+    pub(crate) fn set_onstop_timeout_for_test(&self, timeout: Duration) {
+        self.teardown.lock().unwrap().test_hook_timeout = Some(timeout);
+    }
+
     /// Drain the interact requests the tick's shim queued
     /// (`__rs2b0t_host.interact`), forwarded by the tick thread in
     /// tick order. The host dispatches them through the slot Driver;
@@ -970,6 +970,35 @@ impl LoadIsolate {
     pub fn drain_interacts(&self) -> Vec<crate::shim::InteractReq> {
         self.pump_logs();
         std::mem::take(&mut *self.interacts.lock().unwrap())
+    }
+
+    /// The script walk requests a reconnect kept from the dropped
+    /// connection (never dispatched there), once, oldest first: the relogged
+    /// session dispatches them ahead of the script's new requests, so a walk
+    /// the script emitted just before the drop still goes out and its held
+    /// wait settles on it (frozen resumes the walker itself,
+    /// `AutoRelogin.ts:159-163`).
+    ///
+    /// Empty (and still holding) until the isolate thread has processed the
+    /// reconnect's reset: a tick of the dropped connection that was running
+    /// then finishes first, and its walk requests join the held ones.
+    pub fn take_held_walks(&self) -> Vec<crate::shim::InteractReq> {
+        self.pump_logs();
+        if self.held_fence.lock().unwrap().is_some() {
+            return Vec::new();
+        }
+        self.holding_walks
+            .store(false, std::sync::atomic::Ordering::Release);
+        std::mem::take(&mut *self.held_walks.lock().unwrap())
+    }
+
+    /// Put a host-drained batch back in front of requests that arrived
+    /// afterward. Used when an operator Pause wins the host's final
+    /// dispatch fence: no verb is lost, and Resume observes original order.
+    pub(crate) fn restore_interacts(&self, mut drained: Vec<crate::shim::InteractReq>) {
+        let mut queued = self.interacts.lock().unwrap();
+        drained.append(&mut queued);
+        *queued = drained;
     }
 
     /// Drop queued canvas mouse rows so Pause/logout cannot replay them.
@@ -989,19 +1018,66 @@ impl LoadIsolate {
         std::mem::take(&mut *self.lifecycle.lock().unwrap())
     }
 
-    /// Discard work from the previous connection, including batches that
-    /// an already running tick has not forwarded yet. Script state and
-    /// parked waits survive; the next snapshot is posted before a new tick.
-    pub fn reset_session_work(&self) {
-        {
+    /// The session ended (operator logout, idle logout, no relog coming):
+    /// discard work from the previous connection, including batches that an
+    /// already running tick has not forwarded yet, and end the script's
+    /// in-flight machine rows and task runtimes (their awaits settle
+    /// `aborted`). Script state and parked Execution waits survive; the next
+    /// snapshot is posted before a new tick. Returns the new work
+    /// generation. An active error transfers to that generation so the
+    /// first completed clean loop can recover it.
+    pub fn reset_session_work(&self) -> u64 {
+        self.reset_session(false)
+    }
+
+    /// The connection dropped and the host relogs: discard the connection's
+    /// work like [`LoadIsolate::reset_session_work`], but hold the script's
+    /// own — every parked await, machine row and task runtime, their clocks
+    /// and the Execution wait clock stopped — until the relogged session's
+    /// first tick. Frozen AutoRelogin pauses the whole script across a
+    /// disconnect and resumes it on the new session's scene 2
+    /// (`AutoRelogin.ts:180-190`, `159-163`; `ScriptContext.ts:92-117`).
+    pub fn reconnect_session_work(&self) -> u64 {
+        self.reset_session(true)
+    }
+
+    fn reset_session(&self, keep_work: bool) -> u64 {
+        // No game ticks arrive while disconnected, so preserve the active
+        // execution's existing runaway horizon before clearing `in_flight`.
+        self.arm_active_execution_deadline(teardown::ExecutionInterrupt::SessionReset);
+        // Fold what the tick thread already sent under the ended generation,
+        // so a reconnect can keep its undispatched walk requests.
+        self.pump_logs();
+        let had_active_error = self.tick_outcome_error_generation.lock().unwrap().is_some();
+        let generation = {
             let mut interacts = self.interacts.lock().unwrap();
-            self.work_generation
-                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-            self.paint_generation
-                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            let generation = self
+                .work_generation
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+                .wrapping_add(1);
+            self.paint_generation.store(
+                NEXT_PAINT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                std::sync::atomic::Ordering::Release,
+            );
+            {
+                let mut held = self.held_walks.lock().unwrap();
+                if keep_work {
+                    hold_walk_requests(&mut held, interacts.drain(..));
+                } else {
+                    held.clear();
+                }
+            }
+            self.holding_walks
+                .store(keep_work, std::sync::atomic::Ordering::Release);
+            *self.held_fence.lock().unwrap() = keep_work.then_some(generation);
             interacts.clear();
             self.lifecycle.lock().unwrap().clear();
-        }
+            generation
+        };
+        self.tick_errors.lock().unwrap().clear();
+        *self.tick_outcome_error_generation.lock().unwrap() =
+            had_active_error.then_some(generation);
+        self.tick_outcomes.lock().unwrap().clear();
         {
             // Re-stamp the held frame with the new generation: an overlay that
             // captured the pre-reset generation no longer matches it, so a
@@ -1018,7 +1094,11 @@ impl LoadIsolate {
             }
         }
         *self.in_flight.lock().unwrap() = None;
-        self.send(IsolateCmd::ResetSession);
+        self.send(IsolateCmd::ResetSession {
+            keep_work,
+            generation,
+        });
+        generation
     }
 
     /// The latest recorded paint frame (the tick thread forwards the
@@ -1043,37 +1123,59 @@ impl LoadIsolate {
             SetupState::Failed(e) => return Ready::Failed(e.clone()),
             SetupState::Pending { rx, deadline } => (rx, *deadline),
         };
-        // `Err(true)` is a disconnected channel; `Err(false)` nothing yet.
-        let received = match block_until {
-            None => rx
-                .try_recv()
-                .map_err(|e| matches!(e, mpsc::TryRecvError::Disconnected)),
-            Some(until) => rx
-                .recv_timeout(
-                    until
-                        .min(deadline)
-                        .saturating_duration_since(Instant::now()),
-                )
-                .map_err(|e| matches!(e, mpsc::RecvTimeoutError::Disconnected)),
-        };
-        let outcome = match received {
-            Ok(Ok(handle)) => {
-                let _ = self.terminate.set(handle);
-                // A tick queued before setup finished starts running now:
-                // its slow-tick budget is measured from here, not its send.
-                if let Some(entry) = self.in_flight.lock().unwrap().as_mut() {
-                    entry.2 = Instant::now();
+        let outcome = loop {
+            let received = match block_until {
+                None => rx
+                    .try_recv()
+                    .map_err(|e| matches!(e, mpsc::TryRecvError::Disconnected)),
+                Some(until) => rx
+                    .recv_timeout(
+                        until
+                            .min(deadline)
+                            .saturating_duration_since(Instant::now()),
+                    )
+                    .map_err(|e| matches!(e, mpsc::RecvTimeoutError::Disconnected)),
+            };
+            match received {
+                Ok(SetupMessage::Interrupt(handle)) => {
+                    // Setup owns this handle independently of the final
+                    // Ready/Failed result. A startup eval can now be
+                    // interrupted even if it never returns to send Ready.
+                    let _ = self.terminate.set(handle);
+                    let st = self.teardown.lock().unwrap();
+                    if st.phase == TeardownPhase::UnwindingTick {
+                        // Serialized with Hook entry: join can never fire
+                        // this startup/tick interrupt after onStop begins.
+                        self.fire_terminate();
+                    }
                 }
-                Ready::Ready
-            }
-            Ok(Err(e)) => Ready::Failed(e),
-            Err(true) => Ready::Failed(format!(
-                "isolate init: {}",
-                mpsc::RecvTimeoutError::Disconnected
-            )),
-            Err(false) if Instant::now() < deadline => return Ready::Pending,
-            Err(false) => {
-                Ready::Failed(format!("isolate init: {}", mpsc::RecvTimeoutError::Timeout))
+                Ok(SetupMessage::Ready(Ok(()))) => {
+                    // A tick queued before setup finished starts running
+                    // now: measure its budget from actual V8 readiness, not
+                    // from the send time.
+                    if let Some(entry) = self.in_flight.lock().unwrap().as_mut() {
+                        entry.2 = Instant::now();
+                    }
+                    break Ready::Ready;
+                }
+                Ok(SetupMessage::Ready(Err(e))) => break Ready::Failed(e),
+                Err(true) => {
+                    break Ready::Failed(format!(
+                        "isolate init: {}",
+                        mpsc::RecvTimeoutError::Disconnected
+                    ));
+                }
+                Err(false) => {
+                    let timed_out = Instant::now() >= deadline
+                        || block_until.is_some_and(|until| Instant::now() >= until);
+                    if !timed_out {
+                        return Ready::Pending;
+                    }
+                    break Ready::Failed(format!(
+                        "isolate init: {}",
+                        mpsc::RecvTimeoutError::Timeout
+                    ));
+                }
             }
         };
         *setup = match &outcome {
@@ -1081,6 +1183,13 @@ impl LoadIsolate {
             Ready::Failed(e) => SetupState::Failed(e.clone()),
             Ready::Pending => unreachable!("pending returns above"),
         };
+        drop(setup);
+        if matches!(outcome, Ready::Failed(_)) {
+            // A setup deadline or wire failure is still an owned runtime.
+            // Serialize termination with Hook entry so a concurrent Stop
+            // cannot turn this into an onStop interrupt.
+            self.fire_before_hook();
+        }
         outcome
     }
 
@@ -1090,12 +1199,39 @@ impl LoadIsolate {
         }
     }
 
-    /// The slow-tick watchdog's terminate, marked under the teardown lock
-    /// so the thread's cancel clears both together.
-    fn fire_watchdog(&self) {
+    /// Fire an eval interrupt only for the exact execution the caller
+    /// inspected. The isolate-side finish/cancel uses this same lock, so a
+    /// delayed watchdog observation cannot terminate a later tick or onStop.
+    fn fire_execution_interrupt(
+        &self,
+        execution_id: u64,
+        owner: teardown::ExecutionInterrupt,
+    ) -> bool {
         let mut st = self.teardown.lock().unwrap();
-        st.watchdog_fired = true;
+        if st.phase != TeardownPhase::Running
+            || !st.execution_active
+            || st.execution_id != execution_id
+            || st.execution_interrupt.is_some()
+        {
+            return false;
+        }
+        st.execution_interrupt = Some(teardown::InterruptedExecution {
+            owner,
+            consumed: false,
+        });
         self.fire_terminate();
+        true
+    }
+
+    /// Terminate setup/tick failure while it is still before Hook.
+    fn fire_before_hook(&self) {
+        let st = self.teardown.lock().unwrap();
+        if matches!(
+            st.phase,
+            TeardownPhase::Running | TeardownPhase::UnwindingTick
+        ) {
+            self.fire_terminate();
+        }
     }
 
     /// Stop without blocking the caller. `join` (onStop hook plus the 2 s
@@ -1121,16 +1257,31 @@ impl LoadIsolate {
     /// A join during setup first waits (bounded by the setup deadline) for
     /// the terminate handle, so a tick queued before Ready can still be
     /// interrupted; the reaper, never the UI, owns that wait.
-    pub fn join(mut self) -> Vec<String> {
-        self.send(IsolateCmd::Stop { invoke_hook: true });
-        let _ = self.resolve_setup(Some(Instant::now() + SETUP_TIMEOUT));
+    pub fn join(self) -> Vec<String> {
+        self.join_inner(true)
+    }
+
+    /// Validation owns a throwaway isolate but must not invoke user
+    /// `onStop`; it only needs the runtime to finish and release.
+    fn join_without_hook(self) -> Vec<String> {
+        self.join_inner(false)
+    }
+
+    fn join_inner(mut self, invoke_hook: bool) -> Vec<String> {
+        self.send(IsolateCmd::Stop { invoke_hook });
         {
             let mut st = self.teardown.lock().unwrap();
             if st.phase == TeardownPhase::Running {
                 st.phase = TeardownPhase::UnwindingTick;
+            }
+            if st.phase == TeardownPhase::UnwindingTick {
+                // Fire immediately when poll_ready already consumed the
+                // startup handle. Otherwise resolve_setup fires as soon as
+                // that independently owned handle arrives.
                 self.fire_terminate();
             }
         }
+        let _ = self.resolve_setup(Some(Instant::now() + SETUP_TIMEOUT));
         if let Some(handle) = self.handle.take() {
             let deadline = Instant::now() + JOIN_TIMEOUT;
             while !handle.is_finished() && Instant::now() < deadline {
@@ -1160,18 +1311,40 @@ impl LoadIsolate {
     /// slow-tick interrupt deadlock against `on_game_tick`), so each
     /// message is folded under its own lock.
     fn pump_logs(&self) {
-        let mut msgs = Vec::new();
-        {
-            let rx = self.rx.lock().unwrap();
-            while let Ok(msg) = rx.try_recv() {
-                msgs.push(msg);
-            }
-        }
-        for msg in msgs {
+        loop {
+            let msg = {
+                let rx = self.rx.lock().unwrap();
+                rx.try_recv().ok()
+            };
+            let Some(msg) = msg else {
+                break;
+            };
             match msg {
                 ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
+                ThreadMsg::TickError {
+                    tick,
+                    generation,
+                    message,
+                } => {
+                    self.tick_errors
+                        .lock()
+                        .unwrap()
+                        .entry((tick, generation))
+                        .or_default()
+                        .push(message);
+                }
+                ThreadMsg::ScriptCut => {
+                    self.script_cut
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
                 ThreadMsg::ScriptStopped { tick, reason } => {
                     *self.script_stop.lock().unwrap() = Some(ScriptStopReceipt { tick, reason });
+                }
+                ThreadMsg::SessionReset { generation } => {
+                    let mut fence = self.held_fence.lock().unwrap();
+                    if *fence == Some(generation) {
+                        *fence = None;
+                    }
                 }
                 ThreadMsg::Stopped => {
                     self.stopped
@@ -1187,6 +1360,16 @@ impl LoadIsolate {
                             .work_generation
                             .load(std::sync::atomic::Ordering::Acquire)
                     {
+                        // A tick that ran across a reconnect's reset: its
+                        // walk requests never reached the host.
+                        if self
+                            .holding_walks
+                            .load(std::sync::atomic::Ordering::Acquire)
+                        {
+                            if let Ok(reqs) = crate::isolate_fb::decode_interact_batch(&bytes) {
+                                hold_walk_requests(&mut self.held_walks.lock().unwrap(), reqs);
+                            }
+                        }
                         continue;
                     }
                     match crate::isolate_fb::decode_interact_batch(&bytes) {
@@ -1223,15 +1406,52 @@ impl LoadIsolate {
                 ThreadMsg::IgnoredRandoms(list) => {
                     *self.ignored_randoms.lock().unwrap() = list;
                 }
-                ThreadMsg::Completed { tick, generation } => {
-                    let mut in_flight = self.in_flight.lock().unwrap();
-                    if generation
-                        != self
+                ThreadMsg::Completed {
+                    tick,
+                    generation,
+                    successful,
+                    report_errors,
+                } => {
+                    let error = self.tick_errors.lock().unwrap().remove(&(tick, generation));
+                    if report_errors {
+                        if let Some(messages) = error.as_ref() {
+                            let mut logs = self.logs.lock().unwrap();
+                            logs.extend(
+                                messages
+                                    .iter()
+                                    .map(|message| format!("tick {tick}: {message}")),
+                            );
+                        }
+                    }
+                    let current = generation
+                        == self
                             .work_generation
-                            .load(std::sync::atomic::Ordering::Acquire)
-                    {
+                            .load(std::sync::atomic::Ordering::Acquire);
+                    if current {
+                        let mut active = self.tick_outcome_error_generation.lock().unwrap();
+                        let outcome = match error {
+                            Some(messages) if report_errors => {
+                                *active = Some(generation);
+                                Some(TickOutcome::Error {
+                                    tick,
+                                    generation,
+                                    message: messages.join("; "),
+                                })
+                            }
+                            None if successful && *active == Some(generation) => {
+                                *active = None;
+                                Some(TickOutcome::Success { tick, generation })
+                            }
+                            _ => None,
+                        };
+                        if let Some(outcome) = outcome {
+                            self.tick_outcomes.lock().unwrap().push(outcome);
+                        }
+                    }
+                    if !current {
                         continue;
                     }
+                    let mut in_flight = self.in_flight.lock().unwrap();
                     #[cfg(feature = "memory-profile")]
                     self.last_completed
                         .fetch_max(tick, std::sync::atomic::Ordering::Relaxed);
@@ -1264,18 +1484,19 @@ impl Drop for LoadIsolate {
         // and no cancel — the thread clears the terminate once the tick
         // has returned). After a successful join the hook is Done: do
         // not re-interrupt a completed teardown.
-        let _ = self.poll_ready();
-        self.send(IsolateCmd::Stop { invoke_hook: false });
-        let mut st = self.teardown.lock().unwrap();
-        match st.phase {
-            TeardownPhase::Done => {}
-            TeardownPhase::Running | TeardownPhase::UnwindingTick | TeardownPhase::Hook => {
-                st.phase = TeardownPhase::Done;
-                st.cancel.take();
-                self.fire_terminate();
+        {
+            let mut st = self.teardown.lock().unwrap();
+            match st.phase {
+                TeardownPhase::Done => {}
+                TeardownPhase::Running | TeardownPhase::UnwindingTick | TeardownPhase::Hook => {
+                    st.phase = TeardownPhase::Done;
+                    st.cancel.take();
+                }
             }
         }
-        drop(st);
+        let _ = self.poll_ready();
+        self.send(IsolateCmd::Stop { invoke_hook: false });
+        self.fire_terminate();
         if let Some(handle) = self.handle.take() {
             if handle.is_finished() {
                 let _ = handle.join();
@@ -1295,2771 +1516,32 @@ fn ensure_platform() {
     });
 }
 
-/// The isolate thread: create the Runtime, wire the module, hand the
-/// thread-safe isolate handle back, then run the tick loop.
-#[allow(clippy::too_many_arguments)] // channel endpoints plus optional diagnostics
-fn isolate_main(
-    source: String,
-    shape: LoadShape,
-    siblings: Vec<(String, String)>,
-    game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
-    named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    cmds: CmdQueue,
-    out: Sender<ThreadMsg>,
-    setup: Sender<Result<v8::IsolateHandle, String>>,
-    work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    teardown: std::sync::Arc<Mutex<TeardownState>>,
-    proof: std::sync::Arc<TeardownProofInner>,
-    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
+/// Walk requests a reconnect keeps; `held` never grows past this.
+const HELD_WALKS: usize = 8;
+
+/// Keep the walk-control requests of `reqs` (walk, walk-near, abort-walk)
+/// in order, only the newest [`HELD_WALKS`]: the oldest row goes before a
+/// row is pushed at the cap.
+fn hold_walk_requests(
+    held: &mut Vec<crate::shim::InteractReq>,
+    reqs: impl IntoIterator<Item = crate::shim::InteractReq>,
 ) {
-    #[cfg(feature = "memory-profile")]
-    let _heap_lifetime = crate::memory_profile::HeapLifetime(counters.clone());
-    let mut runtime = match Runtime::new(RuntimeOptions {
-        timeout: RUNTIME_TIMEOUT,
-        max_heap_size: Some(MAX_HEAP),
-        ..Default::default()
-    }) {
-        Ok(runtime) => runtime,
-        Err(e) => {
-            let _ = setup.send(Err(format!("js engine init: {e}")));
-            return;
+    for req in reqs {
+        if !matches!(
+            req,
+            crate::shim::InteractReq::Walk { .. }
+                | crate::shim::InteractReq::WalkNear { .. }
+                | crate::shim::InteractReq::AbortWalk { .. }
+        ) {
+            continue;
         }
-    };
-    // Declared after `runtime`, so a failed wire (whose module code may
-    // have started a machine) drops the rows before the isolate.
-    let _machines = MachinesStop;
-    #[cfg(feature = "memory-profile")]
-    counters
-        .heap_live
-        .store(1, std::sync::atomic::Ordering::Relaxed);
-    if let Err(e) = wire_runtime(
-        &mut runtime,
-        &source,
-        shape,
-        &siblings,
-        game_data,
-        named_banks,
-    ) {
-        let _ = setup.send(Err(e));
-        return;
-    }
-    // The native-event consumer ships only with the compat runner
-    // (`COMPAT_RUNNER` defines `__rs2b0t_flush_native_events`), and
-    // `wire_runtime` has already evaluated the main module, so this read
-    // is final for the isolate's life. Native shapes (`tick(api)` and
-    // every v2 card) have no events API: building and staging a batch
-    // for them would grow a queue nothing drains. A future v2
-    // `api.on(...)` only has to define the flush global; delivery turns
-    // back on here with no other change.
-    let events_consumed = runtime
-        .eval::<bool>("typeof globalThis.__rs2b0t_flush_native_events === 'function'")
-        .unwrap_or(false);
-    let v2_native = shape == LoadShape::NativeTick
-        && matches!(
-            super::shape::parse_declared_api_version(&source),
-            Ok(Some(2))
-        );
-    let _ = runtime.eval::<serde_json::Value>(INSTALL_HOST_HOOKS);
-    let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
-    let _ = setup.send(Ok(terminate));
-    tick_loop(
-        runtime,
-        cmds,
-        out,
-        work_generation,
-        paint_generation,
-        teardown,
-        proof,
-        v2_native,
-        events_consumed,
-        matches!(shape, LoadShape::CompatDefineBot | LoadShape::CompatClass),
-        #[cfg(feature = "memory-profile")]
-        counters,
-    );
-}
-
-fn deliver_native_events(
-    runtime: &mut Runtime,
-    events: &[crate::events::NativeEvent],
-    out: &Sender<ThreadMsg>,
-) {
-    if events.is_empty() {
-        return;
-    }
-    if let Err(e) = dispatch_native_events(runtime, events) {
-        let _ = out.send(ThreadMsg::Log(format!("native events: {e}")));
-    }
-}
-
-/// rs2b0t `ScriptRunner.paintBot` (`runtime/ScriptRunner.ts:141-151`): a
-/// compat bot's `onPaint` runs only after `onStart` completed
-/// (`startupComplete`, set at `:220`) and while `loopReadyOrDetached()`
-/// holds (`:38-59`): in game, scene state 2, a local tile, and stats
-/// loaded — or detached, which here is an isolate that was never posted a
-/// session (`ingame` absent), as rs2b0t treats an unattached reader.
-/// rs2b0t's `statsReady` also requires each stat to arrive in this login.
-/// The host empties posted stats at logout and on every session change
-/// (`GameSnapshot::reset_session`), so the gate closes until the new
-/// session's first `UPDATE_STAT`; this uses the `activeStatsReady` rule
-/// (every used stat's base level above 0). The only gap left is a mix of
-/// old and new values inside the same account's login stat burst: exact
-/// per-slot parity would need a per-slot seen generation in the client.
-/// The script-state term (running or paused) is implicit: the isolate
-/// paints only on ticks it runs.
-fn compat_may_paint(runner: &Runner) -> bool {
-    runner.start_ok
-        && crate::observed::with(|scene| {
-            let scene = scene.latest();
-            match scene.ingame() {
-                None => true,
-                Some(ingame) => {
-                    ingame
-                        && scene.scene_state() == Some(2)
-                        && scene.here().is_some()
-                        && scene.stats().is_some_and(|stats| stats.ready)
-                }
-            }
-        })
-}
-
-/// Forward the recorder's frame when it differs from the last one sent,
-/// stamped with the session it belongs to. The frame is built here, so it
-/// crosses as the typed value the host reads — no codec round trip, and no
-/// copy per reader.
-fn forward_paint_if_changed(
-    out: &Sender<ThreadMsg>,
-    last: &mut Option<std::sync::Arc<crate::shim::ScriptPaint>>,
-    paint_generation: &std::sync::atomic::AtomicU64,
-    mut frame: crate::shim::ScriptPaint,
-) {
-    frame.generation = paint_generation.load(std::sync::atomic::Ordering::Acquire);
-    if last.as_deref() == Some(&frame) {
-        return;
-    }
-    let frame = std::sync::Arc::new(frame);
-    // Remembered even when it is capped, so an over-cap frame is logged once
-    // per change (the wire decoder used to drop it on the host side).
-    *last = Some(std::sync::Arc::clone(&frame));
-    if let Err(e) = crate::isolate_fb::cap_paint(&frame) {
-        let _ = out.send(ThreadMsg::Log(format!("paint: {e}")));
-        return;
-    }
-    let _ = out.send(ThreadMsg::Paint(frame));
-}
-
-/// Drop an unconsumed one-shot so a later paint cannot return a stale id.
-fn clear_unconsumed_paint_click(runtime: &mut Runtime) {
-    set_host_field(runtime, "paintClick", HostValue::Null);
-}
-
-/// What the tick's JS queued on the host handle, read and cleared by one
-/// call (`__rs2b0t_take_tick_output`, no user code runs in it).
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TickOutput {
-    /// Each row read on its own, so no row can cost its siblings or the
-    /// wait facts beside them.
-    interact: Vec<crate::shim::QueuedRow>,
-    /// `typeof` a non-array queue the script left in place of the array.
-    queue: Option<String>,
-    wait_enqueues: u32,
-    wait_settles: u32,
-}
-
-/// The tick's taken interact queue and wait facts.
-#[derive(Default)]
-struct TickRows {
-    rows: Vec<crate::shim::MaybeInteractReq>,
-    /// `typeof` a non-array queue the script left in place of the array.
-    queue: Option<String>,
-    enqueued: u32,
-    settled: u32,
-}
-
-impl TickRows {
-    /// Name, under the tick, every row that will not reach the host
-    /// because it is malformed — never dropped silently.
-    fn log_rejected(&self, out: &Sender<ThreadMsg>, n: u64) {
-        if let Some(kind) = &self.queue {
-            let _ = out.send(ThreadMsg::Log(format!(
-                "tick {n}: interact queue: dropped a {kind}, not an array"
-            )));
+        if held.len() == HELD_WALKS {
+            held.remove(0);
         }
-        for row in &self.rows {
-            if let crate::shim::MaybeInteractReq::Skip(rejected) = row {
-                let _ = out.send(ThreadMsg::Log(format!(
-                    "tick {n}: dropped malformed interact row: {}",
-                    rejected.0
-                )));
-            }
-        }
-    }
-}
-
-/// Take and clear this tick's shim interact queue, and with `facts` its
-/// Execution wait enqueue/settle counters (each increment is a real
-/// lifecycle fact, including settle+repark in the same pump). A queue that
-/// cannot be read at all is logged under the tick.
-fn take_tick_output(
-    runtime: &mut Runtime,
-    out: &Sender<ThreadMsg>,
-    n: u64,
-    facts: bool,
-) -> TickRows {
-    match runtime.call_function_immediate::<TickOutput>(
-        None,
-        "__rs2b0t_take_tick_output",
-        json_args!(facts),
-    ) {
-        Ok(output) => TickRows {
-            rows: output.interact.into_iter().map(|row| row.0).collect(),
-            queue: output.queue,
-            enqueued: output.wait_enqueues,
-            settled: output.wait_settles,
-        },
-        Err(e) => {
-            let _ = out.send(ThreadMsg::Log(format!("tick {n}: interact queue: {e}")));
-            TickRows::default()
-        }
-    }
-}
-
-fn append_wait_facts(reqs: &mut Vec<crate::shim::InteractReq>, enqueued: u32, settled: u32) {
-    for _ in 0..enqueued {
-        reqs.push(crate::shim::InteractReq::WaitEnqueued);
-    }
-    for _ in 0..settled {
-        reqs.push(crate::shim::InteractReq::WaitSettled);
-    }
-}
-
-/// Run this tick's event loop for up to 10 ms. An unhandled promise
-/// rejection — an un-awaited shim call that failed — surfaces here once
-/// as the drain's error; log it under the tick instead of dropping it.
-fn drain_event_loop(runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) {
-    if let Err(e) = runtime.block_on_event_loop(
-        rustyscript::deno_core::PollEventLoopOptions::default(),
-        Some(Duration::from_millis(10)),
-    ) {
-        let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
-    }
-}
-
-/// Run one pass of the event loop — the microtask checkpoint and ready ops
-/// every script eval used to run as it returned — so continuations and
-/// rejections queued by the call before it land in this tick. A rejection
-/// is logged under the tick.
-fn pump_event_loop(runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) {
-    if let Err(e) =
-        runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
-    {
-        let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
-    }
-}
-
-/// What the tick's JS left on the host handle, read by the tick's one
-/// after-tick call (`__rs2b0t_after_tick`).
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AfterTick {
-    /// The recorded error: a throwing onPaint or event callback, a rejected
-    /// v2 tick.
-    error: Option<String>,
-    /// `LoopingBot.log` / `this.log` lines.
-    log: Vec<String>,
-    paint: PaintRecord,
-    /// `None` when user code was not run (a claimed tick).
-    ignored_randoms: Option<Vec<String>>,
-}
-
-/// The user `Paint.end` record. Read on its own terms: a malformed record
-/// is logged without losing the rest of the after-tick read.
-struct PaintRecord(Result<Option<crate::shim::ScriptPaint>, String>);
-
-impl<'de> serde::Deserialize<'de> for PaintRecord {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        Ok(Self(
-            Option::<crate::shim::ScriptPaint>::deserialize(d).map_err(|e| e.to_string()),
-        ))
-    }
-}
-
-/// The tick's tail after its phases (R4), in the order the per-field evals
-/// ran it: onPaint when `run_paint`, then its microtasks; one call that
-/// reads and clears the recorded error, the `this.log` lines, the paint
-/// record and the paint click, then calls the bot's `ignoredRandoms()`
-/// unless `claimed`; that call's microtasks; the stop flag last. The error
-/// and log lines are logged under the tick (after the paint pass, so a
-/// throwing onPaint is logged on the tick it threw); the paint frame and
-/// the ignore list are forwarded only when they changed. Returns the
-/// bounded stop reason when the script called ScriptRunner.stop.
-#[allow(clippy::too_many_arguments)] // the tick loop's paint and ignore-list state
-fn finish_tick(
-    runtime: &mut Runtime,
-    out: &Sender<ThreadMsg>,
-    n: u64,
-    run_paint: bool,
-    script_paint: bool,
-    claimed: bool,
-    last_paint: &mut Option<std::sync::Arc<crate::shim::ScriptPaint>>,
-    paint_generation: &std::sync::atomic::AtomicU64,
-    last_ignored: &mut Vec<String>,
-) -> Option<String> {
-    if run_paint {
-        let _ = runtime.call_function_immediate::<()>(None, "__rs2b0t_call_on_paint", json_args!());
-        pump_event_loop(runtime, out, n);
-    }
-    let after: Result<AfterTick, rustyscript::Error> = runtime.call_function_immediate(
-        None,
-        "__rs2b0t_after_tick",
-        json_args!(script_paint, !claimed),
-    );
-    let mut paint = None;
-    match after {
-        Ok(after) => {
-            if let Some(e) = after.error {
-                let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
-            }
-            for line in after.log {
-                let _ = out.send(ThreadMsg::Log(line));
-            }
-            match after.paint.0 {
-                Ok(user) => paint = Some(user),
-                Err(e) if script_paint => {
-                    let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
-                }
-                Err(_) => {}
-            }
-            if let Some(list) = after.ignored_randoms.filter(|list| list != last_ignored) {
-                last_ignored.clone_from(&list);
-                let _ = out.send(ThreadMsg::IgnoredRandoms(list));
-            }
-        }
-        Err(e) => {
-            let _ = out.send(ThreadMsg::Log(format!("tick {n}: after tick: {e}")));
-        }
-    }
-    // A compat bot that may not paint yet forwards an empty frame instead —
-    // rs2b0t clears the script layer while `paintBot` is null
-    // (`panel/Overlay.ts:43-58`).
-    let frame = if script_paint {
-        paint.map(crate::canvas::compose_paint)
-    } else {
-        Some(crate::shim::ScriptPaint::default())
-    };
-    if let Some(frame) = frame {
-        forward_paint_if_changed(out, last_paint, paint_generation, frame);
-    }
-    if !claimed {
-        pump_event_loop(runtime, out, n);
-    }
-    requested_stop(runtime)
-}
-
-/// ScriptRunner.stop's flag and bounded reason, read off the host handle
-/// through V8 (no script).
-fn requested_stop(runtime: &mut Runtime) -> Option<String> {
-    let scope = &mut runtime.deno_runtime().handle_scope();
-    let global = scope.get_current_context().global(scope);
-    let host_key = key_string(scope, "__rs2b0t_host").ok()?;
-    let host = global.get(scope, host_key.into())?.to_object(scope)?;
-    let flag = key_string(scope, "stopRequested").ok()?;
-    if !host.get(scope, flag.into())?.boolean_value(scope) {
-        return None;
-    }
-    let reason = key_string(scope, "stopReason")
-        .ok()
-        .and_then(|key| host.get(scope, key.into()))
-        .filter(|reason| reason.is_string())
-        .map(|reason| reason.to_rust_string_lossy(scope))
-        .unwrap_or_default();
-    Some(bounded_stop_reason(reason))
-}
-
-/// The settle promise of a compat method invoker or a v1 native tick: it
-/// fulfils `null` on success or the error text, and never rejects.
-type Settle = rustyscript::js_value::Promise<Option<String>>;
-
-/// Rust-owned single-flight for every non-v2 shape. Compat `onStart`
-/// runs once and gates `loop()`; `loop()` (or a v1 native tick that
-/// returned a promise) is never re-entered while its promise is pending.
-/// Only the runner's own promise holds it: an Execution wait parked by a
-/// listener or an un-awaited helper does not.
-struct Runner {
-    phase: Phase,
-    /// `onStart` settled successfully — rs2b0t `ScriptRunner.startupComplete`
-    /// (`ScriptRunner.ts:220`). Native shapes have no onStart: always set.
-    start_ok: bool,
-}
-
-enum Phase {
-    /// Compat card whose `onStart` has not been invoked.
-    Unstarted,
-    /// Compat `onStart` in flight.
-    Starting(Settle),
-    /// `onStart` failed during this tick. The first `loop()` waits for
-    /// the next eligible tick, as the pre-F02 runner did.
-    StartFailed,
-    /// Nothing in flight: the next eligible tick invokes `loop()`/`tick`.
-    Idle,
-    /// `loop()` or the native tick in flight.
-    Running(Settle),
-}
-
-impl Runner {
-    fn new(compat: bool) -> Self {
-        Self {
-            phase: if compat {
-                Phase::Unstarted
-            } else {
-                Phase::Idle
-            },
-            start_ok: !compat,
-        }
-    }
-
-    /// `onStart` has settled, so its subscriptions exist.
-    fn started(&self) -> bool {
-        matches!(self.phase, Phase::Idle | Phase::Running(_))
-    }
-
-    /// Observe the in-flight promise; on settle log its error and go
-    /// idle (`StartFailed` for a failed `onStart`). `true` when a
-    /// `loop()`/tick fulfilled cleanly.
-    fn poll(&mut self, runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) -> bool {
-        let (state, is_loop) = match &self.phase {
-            Phase::Starting(p) => (p.poll_promise(runtime), false),
-            Phase::Running(p) => (p.poll_promise(runtime), true),
-            Phase::Unstarted | Phase::StartFailed | Phase::Idle => return false,
-        };
-        let err = match state {
-            std::task::Poll::Pending => return false,
-            std::task::Poll::Ready(Ok(err)) => err,
-            std::task::Poll::Ready(Err(e)) => Some(e.to_string()),
-        };
-        self.phase = if err.is_some() && !is_loop {
-            Phase::StartFailed
-        } else {
-            Phase::Idle
-        };
-        self.start_ok |= !is_loop && err.is_none();
-        match err {
-            Some(e) => {
-                let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
-                false
-            }
-            None => is_loop,
-        }
-    }
-}
-
-/// One eligible non-v2 tick, in the phase order the isolate owns (the
-/// tick is already recorded and machines stepped): tick listeners, wait
-/// settle, `onStart` once (compat), native events once started, then
-/// `loop()`/`tick` when nothing is in flight. Sets `loop_settled` when a
-/// compat `loop()` settle is observed here.
-///
-/// A running `loop()` is polled before any of these phases' JS runs: one
-/// whose wait settles in this tick's pump (continuations run as each
-/// call returns) finishes this tick, and the next `loop()` starts on the
-/// next one — at most one `loop()` start per tick. A settling `onStart`
-/// is re-polled after the pump so the first `loop()` follows a successful
-/// one at once; after a failed one it starts on the next tick.
-#[allow(clippy::too_many_arguments)] // tick phase needs runtime/runner/out/teardown knobs together
-fn run_tick_phases(
-    runtime: &mut Runtime,
-    runner: &mut Runner,
-    n: u64,
-    compat: bool,
-    events_consumed: bool,
-    out: &Sender<ThreadMsg>,
-    loop_settled: &mut bool,
-    teardown: &Mutex<TeardownState>,
-) -> Result<(), rustyscript::Error> {
-    *loop_settled |= runner.poll(runtime, out, n) && compat;
-    if let Phase::StartFailed = runner.phase {
-        runner.phase = Phase::Idle;
-    }
-    // BotHost tick listeners, before any wait settles this tick. Absent
-    // when the card never loaded BotHost.
-    if tick_claimed(teardown) {
-        return Ok(());
-    }
-    let _ =
-        runtime.call_function_immediate::<()>(None, "__rs2b0t_fire_tick_listeners", json_args!());
-    if tick_claimed(teardown) {
-        return Ok(());
-    }
-    runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))?;
-    if tick_claimed(teardown) {
-        return Ok(());
-    }
-    match runner.phase {
-        // An onStart a listener or a settled wait just finished lets the
-        // first `loop()` run on this tick.
-        Phase::Starting(_) => {
-            runner.poll(runtime, out, n);
-        }
-        Phase::Unstarted => {
-            // onStart is invoked exactly once: a failed call counts as a
-            // failed onStart.
-            runner.phase = Phase::StartFailed;
-            let start: Settle =
-                runtime.call_function_immediate(None, "__rs2b0t_compat_on_start", json_args!())?;
-            runner.phase = Phase::Starting(start);
-            // Microtasks run as the call returns, so a synchronous
-            // onStart has settled here.
-            runner.poll(runtime, out, n);
-        }
-        Phase::StartFailed | Phase::Idle | Phase::Running(_) => {}
-    }
-    if events_consumed && runner.started() && !tick_claimed(teardown) {
-        runtime.call_function_immediate::<()>(
-            None,
-            "__rs2b0t_flush_native_events",
-            json_args!(),
-        )?;
-    }
-    if tick_claimed(teardown) {
-        return Ok(());
-    }
-    if let Phase::Idle = runner.phase {
-        if compat {
-            let run: Settle =
-                runtime.call_function_immediate(None, "__rs2b0t_compat_loop", json_args!())?;
-            runner.phase = Phase::Running(run);
-        } else {
-            let run: Option<Settle> =
-                runtime.call_function_immediate(None, "__rs_tick", json_args!(n))?;
-            if let Some(run) = run {
-                runner.phase = Phase::Running(run);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Sample recoveryAnchor on the isolate thread. Invalid/missing/throw → none.
-fn eval_recovery_anchor(runtime: &mut Runtime) -> Option<(i32, i32, i32)> {
-    let value: Result<Option<Vec<i32>>, rustyscript::Error> = runtime.eval(
-        r#"(() => {
-            try {
-                const inst = globalThis.__rs_bot;
-                if (!inst || typeof inst.recoveryAnchor !== 'function') return null;
-                const a = inst.recoveryAnchor();
-                if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
-                const x = a.x, z = a.z, level = a.level;
-                if (!Number.isInteger(x) || !Number.isInteger(z) || !Number.isInteger(level)) return null;
-                return [x, z, level];
-            } catch (_) { return null; }
-        })()"#,
-    );
-    match value {
-        Ok(Some(coords)) if coords.len() >= 3 => Some((coords[0], coords[1], coords[2])),
-        _ => None,
-    }
-}
-
-/// Host-handle hooks the tick loop calls by name (no per-call script
-/// compile): the exactly-once `onStop` body and its log drain, and the two
-/// per-tick reads. `__rs2b0t_take_tick_output` runs no user code, so a
-/// slow onPaint can never cost the tick's interact batch.
-/// `__rs2b0t_after_tick` reads in the order the per-field evals did — the
-/// recorded error, `this.log`, the paint record, the paint-click clear —
-/// and only then calls the bot's `ignoredRandoms()`.
-const INSTALL_HOST_HOOKS: &str = r#"void (globalThis.__rs2b0t_invoke_on_stop = function () {
-  try {
-const inst = globalThis.__rs_bot;
-if (!inst || typeof inst.onStop !== 'function') return null;
-inst.onStop();
-return null;
-  } catch (e) {
-return String((e && (e.message || e.stack)) || e);
-  }
-}, globalThis.__rs2b0t_drain_log = function () {
-  const h = globalThis.__rs2b0t_host;
-  const rows = h && h.log;
-  if (!Array.isArray(rows) || rows.length === 0) return [];
-  h.log = [];
-  return rows.map(String);
-}, globalThis.__rs2b0t_take_tick_output = function (facts) {
-  const h = globalThis.__rs2b0t_host;
-  if (!h) return { interact: [], queue: null, waitEnqueues: 0, waitSettles: 0 };
-  const rows = h.interact;
-  h.interact = [];
-  let e = 0, s = 0;
-  if (facts) {
-    e = Math.max(0, h.waitEnqueues | 0);
-    s = Math.max(0, h.waitSettles | 0);
-    h.waitEnqueues = 0;
-    h.waitSettles = 0;
-  }
-  const ok = Array.isArray(rows);
-  return {
-    interact: ok ? rows : [],
-    queue: ok || rows == null ? null : typeof rows,
-    waitEnqueues: e,
-    waitSettles: s,
-  };
-}, globalThis.__rs2b0t_after_tick = function (readPaint, user) {
-  const h = globalThis.__rs2b0t_host;
-  let error = null, log = [], paint = null;
-  if (h) {
-    if (h.lastError) {
-      error = String(h.lastError);
-      h.lastError = null;
-    }
-    if (Array.isArray(h.log) && h.log.length > 0) {
-      log = h.log.map(String);
-      h.log = [];
-    }
-    if (readPaint) paint = h.paint || null;
-    if (h.paintClick != null) h.paintClick = null;
-  }
-  let ignored = null;
-  if (user) {
-    ignored = [];
-    try {
-      const b = globalThis.__rs_bot;
-      if (b && typeof b.ignoredRandoms === 'function') {
-        const l = b.ignoredRandoms();
-        if (Array.isArray(l)) ignored = l.filter((x) => typeof x === 'string');
-      }
-    } catch (_) {}
-  }
-  return { error, log, paint, ignoredRandoms: ignored };
-}, 0)"#;
-
-fn enter_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>>) -> bool {
-    let mut st = teardown.lock().unwrap();
-    match st.phase {
-        TeardownPhase::Hook | TeardownPhase::Done => false,
-        TeardownPhase::Running | TeardownPhase::UnwindingTick => {
-            st.phase = TeardownPhase::Hook;
-            st.deadline = Some(Instant::now() + SLOW_TICK);
-            st.interrupt_issued = false;
-            true
-        }
-    }
-}
-
-fn finish_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>>) {
-    let mut st = teardown.lock().unwrap();
-    st.phase = TeardownPhase::Done;
-    st.cancel.take();
-}
-
-fn drain_bot_log(runtime: &mut Runtime, out: &Sender<ThreadMsg>) {
-    let bot_log: Result<Vec<String>, rustyscript::Error> =
-        runtime.call_function_immediate(None, "__rs2b0t_drain_log", json_args!());
-    if let Ok(rows) = bot_log {
-        for line in rows {
-            let _ = out.send(ThreadMsg::Log(line));
-        }
-    }
-}
-
-fn take_hook_entry_delay(teardown: &std::sync::Arc<Mutex<TeardownState>>) -> Option<Duration> {
-    teardown.lock().unwrap().hook_entry_delay.take()
-}
-
-/// One-shot worker spawned only at Hook entry. Sleeps until the
-/// Hook-entry deadline, then issues at most one terminate while still
-/// Hook, under the same mutex as finish. Cancelled by dropping `cancel`.
-///
-/// The old tick interrupt is cleared under the Hook lock *before* spawn
-/// so a deschedule cannot let this worker fire and then be cancelled.
-fn arm_hook_deadline(
-    runtime: &mut Runtime,
-    teardown: &std::sync::Arc<Mutex<TeardownState>>,
-    proof: &std::sync::Arc<TeardownProofInner>,
-) -> Option<JoinHandle<()>> {
-    let handle = runtime.deno_runtime().v8_isolate().thread_safe_handle();
-    let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
-    let deadline = {
-        let mut st = teardown.lock().unwrap();
-        if st.phase != TeardownPhase::Hook {
-            return None;
-        }
-        runtime
-            .deno_runtime()
-            .v8_isolate()
-            .cancel_terminate_execution();
-        if st.fail_deadline_spawn {
-            return None;
-        }
-        st.cancel = Some(cancel_tx);
-        st.deadline.unwrap_or_else(|| Instant::now() + SLOW_TICK)
-    };
-    let wd_teardown = teardown.clone();
-    let wd_proof = proof.clone();
-    match std::thread::Builder::new()
-        .name("js-onstop-deadline".into())
-        .spawn(move || {
-            wd_proof
-                .worker_live
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let _guard = DeadlineWorkerGuard { proof: wd_proof };
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            match cancel_rx.recv_timeout(remaining) {
-                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            }
-            let mut st = wd_teardown.lock().unwrap();
-            if st.phase == TeardownPhase::Hook && !st.interrupt_issued {
-                st.interrupt_issued = true;
-                handle.terminate_execution();
-            }
-        }) {
-        Ok(h) => {
-            if let Some(delay) = take_hook_entry_delay(teardown) {
-                std::thread::sleep(delay);
-            }
-            Some(h)
-        }
-        Err(_) => {
-            teardown.lock().unwrap().cancel.take();
-            None
-        }
-    }
-}
-
-fn complete_teardown_without_hook(
-    runtime: &mut Runtime,
-    out: &Sender<ThreadMsg>,
-    teardown: &std::sync::Arc<Mutex<TeardownState>>,
-    diagnostic: Option<&str>,
-) {
-    if let Some(line) = diagnostic {
-        let _ = out.send(ThreadMsg::Log(line.to_string()));
-    }
-    finish_teardown_hook(teardown);
-    runtime
-        .deno_runtime()
-        .v8_isolate()
-        .cancel_terminate_execution();
-    let _ = out.send(ThreadMsg::Stopped);
-}
-
-/// Exactly-once isolate-thread teardown. The 50 ms deadline is the
-/// Instant captured at Hook entry; a one-shot worker (not a parked
-/// per-bot thread) issues at most one interrupt under the same mutex
-/// as finish. Getter, body, and log-drain share that budget.
-///
-/// Fail closed: if no deadline owner can be created, skip user
-/// getter/body/drain, emit a native diagnostic, and finish cleanup.
-fn teardown_once(
-    runtime: &mut Runtime,
-    out: &Sender<ThreadMsg>,
-    invoke_hook: bool,
-    teardown: &std::sync::Arc<Mutex<TeardownState>>,
-    proof: &std::sync::Arc<TeardownProofInner>,
-) {
-    if !enter_teardown_hook(teardown) {
-        return;
-    }
-    if !invoke_hook {
-        complete_teardown_without_hook(runtime, out, teardown, None);
-        return;
-    }
-    let Some(worker) = arm_hook_deadline(runtime, teardown, proof) else {
-        complete_teardown_without_hook(
-            runtime,
-            out,
-            teardown,
-            Some("onStop skipped: no deadline owner"),
-        );
-        return;
-    };
-    proof
-        .invoked
-        .store(true, std::sync::atomic::Ordering::SeqCst);
-    let threw: Result<Option<String>, rustyscript::Error> =
-        runtime.call_function_immediate(None, "__rs2b0t_invoke_on_stop", json_args!());
-    match threw {
-        Ok(Some(msg)) => {
-            let _ = out.send(ThreadMsg::Log(format!("onStop threw: {msg}")));
-        }
-        Ok(None) => {}
-        Err(e) => {
-            let _ = out.send(ThreadMsg::Log(format!("onStop threw: {e}")));
-        }
-    }
-    drain_bot_log(runtime, out);
-    let _ = runtime.deno_runtime().execute_script(
-        "<onStop-clear-interact>",
-        "if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []",
-    );
-    finish_teardown_hook(teardown);
-    runtime
-        .deno_runtime()
-        .v8_isolate()
-        .cancel_terminate_execution();
-    let _ = worker.join();
-    let _ = out.send(ThreadMsg::Stopped);
-}
-
-const STOP_REASON_MAX_BYTES: usize = 256;
-
-/// ScriptRunner.stop's reason, cut to [`STOP_REASON_MAX_BYTES`] on a char
-/// boundary.
-fn bounded_stop_reason(mut reason: String) -> String {
-    if reason.len() > STOP_REASON_MAX_BYTES {
-        let mut end = STOP_REASON_MAX_BYTES;
-        while !reason.is_char_boundary(end) {
-            end -= 1;
-        }
-        reason.truncate(end);
-    }
-    reason
-}
-
-/// ScriptRunner.stop from the tick's JS: fold the completed tick, log the
-/// stop, and run the exactly-once `onStop` teardown. The caller breaks.
-fn stop_on_script_request(
-    runtime: &mut Runtime,
-    out: &Sender<ThreadMsg>,
-    n: u64,
-    generation: u64,
-    reason: String,
-    teardown: &std::sync::Arc<Mutex<TeardownState>>,
-    proof: &std::sync::Arc<TeardownProofInner>,
-) {
-    let _ = out.send(ThreadMsg::ScriptStopped { tick: n, reason });
-    let _ = out.send(ThreadMsg::Completed {
-        tick: n,
-        generation,
-    });
-    let _ = out.send(ThreadMsg::Log(format!(
-        "script requested stop on tick {n}; isolate stopping"
-    )));
-    teardown_once(runtime, out, true, teardown, proof);
-}
-
-/// One queued command seen by a slow tick's stale-skip. The per-tick posts
-/// (snapshot deltas, settings, loadouts and the ticks themselves) keep the
-/// window open, and a queued tick of `generation` raises `latest`. Any other
-/// command — Pause/Resume, a session reset, paint input, a probe, Stop —
-/// ends it: a tick queued after one is a fresh dispatch, not backlog.
-fn extends_stale_window(cmd: &IsolateCmd, generation: u64, latest: &mut u64) -> bool {
-    match cmd {
-        IsolateCmd::Tick {
-            tick,
-            generation: g,
-            ..
-        } => {
-            if *g == generation {
-                *latest = (*latest).max(*tick);
-            }
-            true
-        }
-        IsolateCmd::Snapshot(_) | IsolateCmd::Settings(_) | IsolateCmd::Loadouts(_) => true,
-        _ => false,
-    }
-}
-
-/// The tick loop: commands are serialized on this thread; ticks run
-/// with a time budget, slow ticks are logged and stale queued ticks are
-/// skipped, and errors never kill the isolate.
-///
-/// `events_consumed` is false for every native shape: the event producer
-/// is then never observed and no batch is built, so the isolate pays
-/// nothing for events nothing can receive.
-///
-/// After a slow tick the stale-skip drains the queued commands, in order,
-/// into `pending` up to the end of the stale window
-/// ([`extends_stale_window`]) and drops the window's ticks of that
-/// generation. The window runs past snapshots: the host posts one before
-/// every tick, so stopping at the first non-Tick would skip nothing. Every
-/// other drained command then runs in its queued order.
-#[allow(clippy::too_many_arguments)] // isolate loop owns queues, gens, teardown, and mode flags
-fn tick_loop(
-    mut runtime: Runtime,
-    cmds: CmdQueue,
-    out: Sender<ThreadMsg>,
-    work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    teardown: std::sync::Arc<Mutex<TeardownState>>,
-    proof: std::sync::Arc<TeardownProofInner>,
-    v2_native: bool,
-    events_consumed: bool,
-    compat: bool,
-    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
-) {
-    let _finish = TickLoopFinish(proof.clone());
-    // Locals drop before the `runtime` parameter: machine rows (and any
-    // V8 handles they hold) never outlive the isolate.
-    let _machines = MachinesStop;
-    #[cfg(feature = "memory-profile")]
-    let mut last_heap_sample = None::<Instant>;
-    let mut paused = false;
-    let mut pending: VecDeque<IsolateCmd> = VecDeque::new();
-    // Host-owned hold gate (SEC-004): set from the posted FlatBuffer
-    // snapshot, never from a JS-writable `__rs2b0t_host.hold`.
-    let mut host_hold = false;
-    let mut event_producer = crate::events::NativeEventProducer::new();
-    // One reusable encode buffer for this V8 isolate's interact batches
-    // (`reset` between messages). Paint frames cross typed, not encoded.
-    let mut ipc = crate::isolate_fb::IsolateBuf::new();
-    let mut last_forwarded_paint: Option<std::sync::Arc<crate::shim::ScriptPaint>> = None;
-    // The ignore list last forwarded; the host starts from the same empty
-    // list, so a bot without one never sends it.
-    let mut last_ignored_randoms: Vec<String> = Vec::new();
-    let mut mouse_gestures = MouseGestureIdentities::default();
-    let mut runner = Runner::new(compat);
-    loop {
-        #[cfg(feature = "memory-profile")]
-        if last_heap_sample.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
-            use std::sync::atomic::Ordering::Relaxed;
-            let heap = runtime.deno_runtime().v8_isolate().get_heap_statistics();
-            counters
-                .heap_used
-                .store(heap.used_heap_size() as u64, Relaxed);
-            counters
-                .heap_total
-                .store(heap.total_heap_size() as u64, Relaxed);
-            counters.heap_updated_ms.store(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64,
-                Relaxed,
-            );
-            counters.heap_samples.fetch_add(1, Relaxed);
-            last_heap_sample = Some(Instant::now());
-        }
-        let Some(cmd) = pending.pop_front().or_else(|| cmds.recv()) else {
-            break;
-        };
-        match cmd {
-            IsolateCmd::Snapshot(bytes) => {
-                // Decode the posted FlatBuffer once into the isolate
-                // scene the step machines read, then materialise the JS
-                // object the shim reads on the host handle. A malformed
-                // blob is logged, never fatal.
-                match crate::isolate_fb::SnapshotReader::from_bytes(&bytes.bytes) {
-                    Ok(snap) => {
-                        // Step machines read the scene at call time; the
-                        // hooks below are the edge-triggered waits.
-                        crate::observed::apply(&snap);
-                        super::reach_query::apply(&snap);
-                        crate::walk_wait::on_snapshot(&snap);
-                        crate::inspect_wait::on_snapshot(&snap);
-                        if let Some((seq, inspect_generation)) =
-                            crate::inspect_wait::take_pending_ack()
-                        {
-                            let generation =
-                                work_generation.load(std::sync::atomic::Ordering::Acquire);
-                            let req = crate::shim::InteractReq::InspectAck {
-                                seq,
-                                generation: inspect_generation,
-                            };
-                            let _ = out.send(ThreadMsg::Interact {
-                                bytes: ipc.encode_interact_batch(&[req]),
-                                generation,
-                            });
-                        }
-                        crate::reach::on_snapshot(&snap);
-                        if snap.has_hold() {
-                            host_hold = snap.hold();
-                            crate::periodic_bank::on_hold(host_hold);
-                            crate::cake_stall::on_hold(host_hold);
-                            crate::walk_wait::on_hold(host_hold);
-                            crate::inspect_wait::on_hold(host_hold);
-                            crate::machine::on_hold(host_hold);
-                            crate::hunt_fight::on_hold(host_hold);
-                            crate::hunt_lair::on_hold(host_hold);
-                            crate::hunt_leave::on_hold(host_hold);
-                            crate::hunt_key::on_hold(host_hold);
-                            crate::hunt_cell::on_hold(host_hold);
-                            crate::hunt_bank::on_hold(host_hold);
-                            crate::quest_journal::on_hold(host_hold);
-                            crate::clue::on_hold(host_hold);
-                        }
-                        if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
-                            let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
-                        } else if events_consumed {
-                            let observed = event_producer.observe(&snap);
-                            if let Some(diag) = observed.diagnostic {
-                                let _ = out.send(ThreadMsg::Log(diag));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
-                    }
-                }
-            }
-            IsolateCmd::Loadouts(rows) => super::loadout_v8::post(rows),
-            IsolateCmd::Settings(bag) => {
-                if let Err(e) = materialize_settings_bag(&mut runtime, &bag) {
-                    let _ = out.send(ThreadMsg::Log(format!("settings: {e}")));
-                }
-            }
-            IsolateCmd::Tick {
-                tick: n,
-                generation,
-                input_identity,
-            } => {
-                if paused
-                    || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
-                {
-                    continue;
-                }
-                // Stop is queued behind this tick and join has armed its
-                // terminate for it: run no script, so that terminate
-                // reaches the hook's cancel instead of an ignored call.
-                if tick_claimed(&teardown) {
-                    continue;
-                }
-                let start = Instant::now();
-                // Every shape records the tick first, so machine callbacks,
-                // listeners and waits all see this tick's number.
-                record_tick(&mut runtime, n);
-                // Step machines read the scene the Snapshot command just
-                // applied; they run before the tick's other JS, and a
-                // completion settles in this tick's pump. Join's claim is
-                // re-checked between callbacks: one may absorb its terminate.
-                super::machine_v8::step(&mut runtime, &|| machines_halted(&teardown));
-                if events_consumed {
-                    let observed = event_producer.take_eligible();
-                    if let Some(diag) = observed.diagnostic {
-                        let _ = out.send(ThreadMsg::Log(diag));
-                    }
-                    // A machine callback may have absorbed join's terminate.
-                    if !tick_claimed(&teardown) {
-                        deliver_native_events(&mut runtime, &observed.events, &out);
-                    }
-                }
-                // Guardian hold: skip `loop()` AND skip resolving
-                // parked conds (time waits too) — the wait stays parked
-                // until the hold lifts. Still call `onPaint` so status
-                // rows keep updating. Pause already freezes above.
-                if host_hold {
-                    // Paint-only tick: no loop, no pump. The single paint
-                    // pass of a held tick. Use `__rs_bot` (global);
-                    // module-local `inst` is not visible here.
-                    // Join may have claimed the tick through a machine
-                    // callback that absorbed its terminate: run no more JS.
-                    let claimed = tick_claimed(&teardown);
-                    let script_paint = !compat || compat_may_paint(&runner);
-                    if !v2_native && script_paint && !claimed {
-                        let _ = runtime.call_function_immediate::<()>(
-                            None,
-                            "__rs2b0t_call_on_paint",
-                            json_args!(),
-                        );
-                        pump_event_loop(&mut runtime, &out, n);
-                    }
-                    if events_consumed && runner.started() && !claimed {
-                        let _ = runtime.call_function_immediate::<()>(
-                            None,
-                            "__rs2b0t_flush_native_events",
-                            json_args!(),
-                        );
-                    }
-                    if !claimed {
-                        drain_event_loop(&mut runtime, &out, n);
-                    }
-                    // Ownership boundary after callback eval + microtasks:
-                    // cancel a terminate armed by a runaway listener so the
-                    // next eligible tick recovers, then drop public actions.
-                    // The cancel comes before the tick's reads because the
-                    // reads are now one call with the interact clear and
-                    // `ignoredRandoms()`, which always ran after it. Wait
-                    // facts stay counted until an eligible tick forwards
-                    // them; held game rows are dropped without a
-                    // malformed-row log, as before.
-                    cancel_terminate(&mut runtime, &teardown);
-                    let output = take_tick_output(&mut runtime, &out, n, false);
-                    crate::machine::drop_ops();
-                    let stop = finish_tick(
-                        &mut runtime,
-                        &out,
-                        n,
-                        false,
-                        script_paint,
-                        tick_claimed(&teardown),
-                        &mut last_forwarded_paint,
-                        &paint_generation,
-                        &mut last_ignored_randoms,
-                    );
-                    // Work that fulfils under hold is still scheduler
-                    // progress; its gameplay is dropped above. Polled after
-                    // the log read, so a failed loop logs after the tick's
-                    // own lines, as it did.
-                    let mut lifecycle: Vec<crate::shim::InteractReq> = if v2_native {
-                        output
-                            .rows
-                            .into_iter()
-                            .filter_map(|row| match row {
-                                crate::shim::MaybeInteractReq::Req(
-                                    req @ crate::shim::InteractReq::LoopSettled,
-                                ) => Some(req),
-                                _ => None,
-                            })
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-                    if !v2_native && runner.poll(&mut runtime, &out, n) && compat {
-                        lifecycle.push(crate::shim::InteractReq::LoopSettled);
-                    }
-                    if !lifecycle.is_empty() {
-                        let _ = out.send(ThreadMsg::Interact {
-                            bytes: ipc.encode_interact_batch(&lifecycle),
-                            generation,
-                        });
-                    }
-                    if let Some(reason) = stop {
-                        stop_on_script_request(
-                            &mut runtime,
-                            &out,
-                            n,
-                            generation,
-                            reason,
-                            &teardown,
-                            &proof,
-                        );
-                        break;
-                    }
-                    let _ = out.send(ThreadMsg::Completed {
-                        tick: n,
-                        generation,
-                    });
-                    continue;
-                }
-                // Rust owns the tick phases and the single-flight. Every
-                // shape settles its due Execution waits (the pump); v2
-                // keeps its JS-flagged single-flight, every other shape
-                // runs through the Rust `Runner`. Onward work lands in
-                // the drain below.
-                let mut loop_settled = false;
-                let result: Result<(), rustyscript::Error> = if tick_claimed(&teardown) {
-                    // A machine callback or native event absorbed join's
-                    // terminate: the loop must not start after it.
-                    Ok(())
-                } else if v2_native {
-                    let pumped =
-                        runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n));
-                    // Do not re-enter tick while a previous returned
-                    // Promise is pending. Snapshot posts still merge;
-                    // this only skips tick.
-                    let v2_pending = global_flag(&mut runtime, "__rs_v2_tick_pending");
-                    let ticked = if v2_pending || tick_claimed(&teardown) {
-                        Ok(())
-                    } else {
-                        runtime.call_function_immediate(None, "__rs_tick", json_args!(n))
-                    };
-                    pumped.and(ticked)
-                } else {
-                    run_tick_phases(
-                        &mut runtime,
-                        &mut runner,
-                        n,
-                        compat,
-                        events_consumed,
-                        &out,
-                        &mut loop_settled,
-                        &teardown,
-                    )
-                };
-                // Eligible NativeTick only: pause, generation mismatch,
-                // and guardian hold already `continue` above. The step
-                // machines were stepped before this tick's JS; their
-                // awaits settle in the pump below with every other wait.
-                // A claimed tick runs no more JS (a phase above may have
-                // absorbed join's terminate).
-                if !tick_claimed(&teardown) {
-                    drain_event_loop(&mut runtime, &out, n);
-                }
-                // The host may have armed `terminate_execution` to
-                // interrupt a slow tick; clear it now that the tick's
-                // JS frames have fully unwound. This is the only cancel
-                // point — canceling from the host would race the
-                // interrupt and make it a no-op.
-                cancel_terminate(&mut runtime, &teardown);
-                // A machine callback whose promise the pump (or the drain)
-                // settled resumes its row in this tick, and a row that ends
-                // here settles its await in this tick too.
-                if !tick_claimed(&teardown) {
-                    if let Err(e) =
-                        super::machine_v8::resume(&mut runtime, &|| machines_halted(&teardown))
-                    {
-                        let _ = out.send(ThreadMsg::Log(format!("tick {n}: machines: {e}")));
-                    }
-                }
-                if !v2_native {
-                    // A loop that finished in the drain frees the
-                    // single-flight for the next tick.
-                    loop_settled |= runner.poll(&mut runtime, &out, n) && compat;
-                }
-                let elapsed = start.elapsed();
-                #[cfg(feature = "memory-profile")]
-                counters.tick(elapsed);
-                if let Err(e) = result {
-                    let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
-                }
-                // Forward the tick's shim interact queue (Bank/Banking
-                // requests written to `__rs2b0t_host.interact`) to the
-                // host, cleared in the same call. The queue is taken only
-                // now, after the tick's JS (and any parked continuation)
-                // has fully run, so a request reaches the host exactly
-                // once. The queue is read through the runtime's value
-                // bridge (v8 object walk, not `JSON.parse`) and forwarded
-                // as a FlatBuffer batch, not a stringified JSON document.
-                // Each row is accepted or rejected locally so a malformed
-                // mouse object cannot drop a sibling key.
-                // Machine-emitted ops join the batch in Rust at the JS
-                // queue position where they were emitted.
-                let taken = take_tick_output(&mut runtime, &out, n, true);
-                taken.log_rejected(&out, n);
-                let mut reqs = crate::machine::merge_ops(taken.rows);
-                stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
-                crate::inspect_wait::filter_public_inspect_wire(&mut reqs);
-                if loop_settled {
-                    reqs.push(crate::shim::InteractReq::LoopSettled);
-                }
-                append_wait_facts(&mut reqs, taken.enqueued, taken.settled);
-                if !reqs.is_empty() {
-                    let _ = out.send(ThreadMsg::Interact {
-                        bytes: ipc.encode_interact_batch(&reqs),
-                        generation,
-                    });
-                }
-                // The tick's one onPaint pass and everything else it left
-                // on the host handle (`finish_tick`). onPaint is sync and
-                // never waits for `loop()`. A compat bot paints once its
-                // onStart completed and the scene and stats are ready
-                // (`compat_may_paint`), even while `loop()` is parked;
-                // native shapes paint every tick.
-                let script_paint = !compat || compat_may_paint(&runner);
-                // The terminate was just cancelled: once join has claimed
-                // the tick, onPaint must not run past it.
-                let claimed = tick_claimed(&teardown);
-                let stop = finish_tick(
-                    &mut runtime,
-                    &out,
-                    n,
-                    !v2_native && script_paint && !claimed,
-                    script_paint,
-                    claimed,
-                    &mut last_forwarded_paint,
-                    &paint_generation,
-                    &mut last_ignored_randoms,
-                );
-                // ScriptRunner.stop signal: the script flags the host
-                // handle. Fold the completed tick, log the stop, run
-                // exactly-once onStop under the isolate-owned 50 ms
-                // deadline, then break so the Runtime is dropped.
-                if let Some(reason) = stop {
-                    stop_on_script_request(
-                        &mut runtime,
-                        &out,
-                        n,
-                        generation,
-                        reason,
-                        &teardown,
-                        &proof,
-                    );
-                    break;
-                }
-                if elapsed > SLOW_TICK {
-                    let _ = out.send(ThreadMsg::Log(format!("slow tick {n}: {elapsed:?}")));
-                    // Skip stale queued ticks: a slow tick means the
-                    // pump backed up, so only the newest matters. The
-                    // window runs past the per-tick posts and ends at the
-                    // first other command; everything drained but the
-                    // window's ticks still runs, in order.
-                    let mut latest = n;
-                    let mut window = pending
-                        .iter()
-                        .take_while(|cmd| extends_stale_window(cmd, generation, &mut latest))
-                        .count();
-                    if window == pending.len() {
-                        while let Some(cmd) = cmds.try_recv() {
-                            let open = extends_stale_window(&cmd, generation, &mut latest);
-                            pending.push_back(cmd);
-                            if !open {
-                                break;
-                            }
-                            window += 1;
-                        }
-                    }
-                    if latest != n {
-                        let mut at = 0;
-                        pending.retain(|cmd| {
-                            at += 1;
-                            at > window
-                                || !matches!(cmd, IsolateCmd::Tick { generation: g, .. } if *g == generation)
-                        });
-                        let _ =
-                            out.send(ThreadMsg::Log(format!("skipped stale ticks -> {latest}")));
-                    }
-                    let _ = out.send(ThreadMsg::Completed {
-                        tick: latest,
-                        generation,
-                    });
-                } else {
-                    let _ = out.send(ThreadMsg::Completed {
-                        tick: n,
-                        generation,
-                    });
-                }
-            }
-            IsolateCmd::ResetSession => {
-                crate::observed::on_reset();
-                super::snapshot::on_reset();
-                super::reach_query::on_reset();
-                crate::cake_stall::on_reset();
-                crate::walk_wait::on_reset();
-                crate::inspect_wait::on_reset();
-                crate::death_recovery::on_reset();
-                crate::machine::on_reset();
-                crate::hunt_fight::on_reset();
-                crate::hunt_lair::on_reset();
-                crate::hunt_leave::on_reset();
-                crate::hunt_key::on_reset();
-                crate::hunt_cell::on_reset();
-                crate::hunt_bank::on_reset();
-                crate::quest_journal::on_reset();
-                crate::clue::on_reset();
-                event_producer.reset();
-                if events_consumed {
-                    // The compat runner's queue is the only holder of
-                    // events that were staged but not yet flushed. A
-                    // reconnect must not replay them into the new
-                    // session, and must not leave the trim window full.
-                    let _ =
-                        runtime.eval::<()>("globalThis.__rs2b0t_pending_native_event_batch = null");
-                }
-                if v2_native {
-                    let _ = runtime.eval::<()>(
-                        "if (typeof globalThis.__rs_v2_reset_session === 'function') globalThis.__rs_v2_reset_session()",
-                    );
-                    // Machine rows are gone: settle their awaits now, so a
-                    // stale promise cannot take a later snapshot's facts.
-                    if crate::machine::any_settled() {
-                        let _ = runtime.call_function_immediate::<()>(
-                            None,
-                            "__rs2b0t_settle_machines",
-                            json_args!(),
-                        );
-                    }
-                    if let Err(e) = runtime.block_on_event_loop(
-                        rustyscript::deno_core::PollEventLoopOptions::default(),
-                        Some(Duration::from_millis(10)),
-                    ) {
-                        let _ = out.send(ThreadMsg::Log(format!("session reset: {e}")));
-                    }
-                }
-                // Rows queued during the reset drain go, machine ops with
-                // them.
-                let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
-                crate::machine::drop_ops();
-                clear_unconsumed_paint_click(&mut runtime);
-                super::paint_chrome::reset();
-                super::paint_jive::reset();
-            }
-            IsolateCmd::Pause => {
-                paused = true;
-                let _ = event_producer.set_paused(true);
-                crate::periodic_bank::on_pause();
-                crate::cake_stall::on_pause();
-                crate::walk_wait::on_pause();
-                crate::inspect_wait::on_pause();
-                crate::machine::on_pause();
-                crate::hunt_fight::on_pause();
-                crate::hunt_lair::on_pause();
-                crate::hunt_leave::on_pause();
-                crate::hunt_key::on_pause();
-                crate::hunt_cell::on_pause();
-                crate::hunt_bank::on_pause();
-                crate::quest_journal::on_pause();
-                crate::clue::on_pause();
-                clear_unconsumed_paint_click(&mut runtime);
-            }
-            IsolateCmd::Resume => {
-                paused = false;
-                let _ = event_producer.set_paused(false);
-                crate::periodic_bank::on_resume();
-                crate::cake_stall::on_resume();
-                crate::walk_wait::on_resume();
-                crate::inspect_wait::on_resume();
-                crate::machine::on_resume();
-                crate::hunt_fight::on_resume();
-                crate::hunt_lair::on_resume();
-                crate::hunt_leave::on_resume();
-                crate::hunt_key::on_resume();
-                crate::hunt_cell::on_resume();
-                crate::hunt_bank::on_resume();
-                crate::quest_journal::on_resume();
-                crate::clue::on_resume();
-            }
-            IsolateCmd::PaintClick { id, generation } => {
-                if paused
-                    || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
-                {
-                    continue;
-                }
-                if !set_host_field(&mut runtime, "paintClick", HostValue::Str(&id)) {
-                    let _ = out.send(ThreadMsg::Log("paintClick: no host handle".into()));
-                }
-            }
-            IsolateCmd::PaintSelect {
-                key,
-                name,
-                generation,
-            } => {
-                if paused
-                    || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
-                {
-                    continue;
-                }
-                super::paint_chrome::store_select(&key, &name);
-            }
-            IsolateCmd::RecoveryAnchor { generation } => {
-                // Pause / generation still reject. host_hold freezes
-                // loop/pump (guardian or recovery) but must not skip
-                // the async recoveryAnchor sample: OR-ing recovery into
-                // snapshot.hold would otherwise stick SamplingAnchor.
-                // Guardian freeze aborts sampling on the host before a
-                // new request is posted.
-                if paused
-                    || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
-                {
-                    let _ = out.send(ThreadMsg::InFlightDone {
-                        generation,
-                        tick: RECOVERY_ANCHOR_TICK,
-                    });
-                    continue;
-                }
-                let start = Instant::now();
-                let req = match eval_recovery_anchor(&mut runtime) {
-                    Some((x, z, level)) => crate::shim::InteractReq::RecoveryAnchor { x, z, level },
-                    None => crate::shim::InteractReq::RecoveryAnchorNone,
-                };
-                // Also clears a watchdog mark fired at this slow eval, so
-                // the next tick's machine pass is not halted by it.
-                cancel_terminate(&mut runtime, &teardown);
-                if start.elapsed() > SLOW_TICK {
-                    let _ = out.send(ThreadMsg::Log(format!(
-                        "slow recoveryAnchor: {:?}",
-                        start.elapsed()
-                    )));
-                }
-                if generation == work_generation.load(std::sync::atomic::Ordering::Acquire) {
-                    let _ = out.send(ThreadMsg::Interact {
-                        bytes: ipc.encode_interact_batch(&[req]),
-                        generation,
-                    });
-                }
-                let _ = out.send(ThreadMsg::InFlightDone {
-                    generation,
-                    tick: RECOVERY_ANCHOR_TICK,
-                });
-            }
-            IsolateCmd::Probe(expr, reply) => {
-                let value: Result<serde_json::Value, String> =
-                    runtime.eval(expr).map_err(|e| e.to_string());
-                let _ = reply.send(value);
-            }
-            IsolateCmd::Stop { invoke_hook } => {
-                teardown_once(&mut runtime, &out, invoke_hook, &teardown, &proof);
-                break;
-            }
-        }
+        held.push(req);
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
-        let iso = LoadIsolate::spawn(
-            "export function tick(api) { globalThis.n = (globalThis.n || 0) + 1; }".into(),
-            LoadShape::NativeTick,
-            vec![],
-        )
-        .unwrap();
-        iso.reset_session_work();
-        // A sender captured this tick before reset but enqueued it late.
-        assert!(iso.send(IsolateCmd::Tick {
-            tick: 1,
-            generation: 0,
-            input_identity: 0,
-        }));
-        assert_eq!(
-            iso.probe("globalThis.n || 0").unwrap(),
-            serde_json::json!(0)
-        );
-        iso.on_game_tick(2);
-        assert_eq!(iso.probe("globalThis.n").unwrap(), serde_json::json!(1));
-        iso.join();
-    }
-
-    #[test]
-    fn shim_prelude_defines_globals_for_compat_fixture() {
-        ensure_platform();
-        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-        runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
-        let t: bool = runtime.eval("typeof defineBot === 'function'").unwrap();
-        assert!(t);
-        let t: bool = runtime.eval("typeof TaskBot === 'function'").unwrap();
-        assert!(t);
-        let t: bool = runtime.eval("typeof TreeBot === 'function'").unwrap();
-        assert!(t);
-        let t: bool = runtime.eval("typeof LoopingBot === 'function'").unwrap();
-        assert!(t);
-        let t: bool = runtime.eval("typeof __rs2b0t_host === 'object'").unwrap();
-        assert!(t);
-        // defineBot validates { name, create } instead of no-op'ing.
-        let err: bool = runtime
-            .eval("(() => { try { defineBot({}); return false; } catch { return true; } })()")
-            .unwrap();
-        assert!(err, "defineBot throws without a name/create pair");
-    }
-
-    #[test]
-    fn prelude_canvas_keyboard_queues_key_rows_and_blocks_mouse_layout() {
-        ensure_platform();
-        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-        runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
-        let report: serde_json::Value = runtime
-            .eval(
-                r#"
-(() => {
-const canvas = document.getElementById('canvas');
-const other = document.getElementById('other');
-canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
-canvas.dispatchEvent(new KeyboardEvent('keyup', {key: '2', code: '2'}));
-let mouseCtor = true;
-try { new MouseEvent('mousedown'); } catch { mouseCtor = false; }
-let mouseDispatch = '';
-try { canvas.dispatchEvent(new MouseEvent('mousedown')); }
-catch (e) { mouseDispatch = String((e && e.message) || e); }
-let layout = '';
-try { canvas.getBoundingClientRect(); }
-catch (e) { layout = String((e && e.message) || e); }
-const frozen = new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5});
-canvas.dispatchEvent(frozen);
-let unknown = '';
-try { canvas.dispatchEvent(new MouseEvent('mousemove')); }
-catch (e) { unknown = String((e && e.message) || e); }
-return {
-    canvas: canvas !== null && typeof canvas === 'object',
-    other: other,
-    interact: globalThis.__rs2b0t_host.interact,
-    mouseCtor,
-    mouseDispatch,
-    layout,
-    frozen: {x: frozen.clientX, y: frozen.clientY, button: frozen.button},
-    unknown,
-};
-})()
-"#,
-            )
-            .unwrap();
-        assert_eq!(report["canvas"], true);
-        assert!(report["other"].is_null());
-        assert_eq!(
-            report["interact"],
-            serde_json::json!([
-                {"op": "key", "down": true, "key": "2", "code": "2"},
-                {"op": "key", "down": false, "key": "2", "code": "2"},
-                {"op": "mouse", "down": true, "x": 0, "y": 0, "button": 0},
-                {"op": "mouse", "down": true, "x": 382.5, "y": 251.5, "button": 0},
-            ])
-        );
-        assert_eq!(report["mouseCtor"], true);
-        assert_eq!(report["mouseDispatch"], "");
-        assert!(
-            report["layout"]
-                .as_str()
-                .is_some_and(|s| s.contains("BLOCKED: missing getBoundingClientRect")),
-            "{report:?}"
-        );
-        assert_eq!(report["frozen"]["x"], 382.5);
-        assert_eq!(report["frozen"]["y"], 251.5);
-        assert_eq!(report["frozen"]["button"], 0);
-        assert!(
-            report["unknown"]
-                .as_str()
-                .is_some_and(|s| s.contains("BLOCKED: missing mouse")),
-            "{report:?}"
-        );
-    }
-
-    #[test]
-    fn canvas_keyboard_producer_round_trips_fb_and_drops_stale_generation() {
-        let iso = LoadIsolate::spawn(
-            r#"
-export default class T extends LoopingBot {
-loop() {
-    const canvas = document.getElementById('canvas');
-    canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
-    canvas.dispatchEvent(new KeyboardEvent('keyup', {key: '2', code: '2'}));
-}
-}
-"#
-            .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-        iso.on_game_tick(1);
-        iso.probe("true").unwrap();
-        let reqs = iso.drain_interacts();
-        assert!(
-            reqs.iter().any(|req| matches!(
-                req,
-                crate::shim::InteractReq::Key {
-                    down: true,
-                    key,
-                    ..
-                } if key == "2"
-            )),
-            "{reqs:?}"
-        );
-        assert!(
-            reqs.iter().any(|req| matches!(
-                req,
-                crate::shim::InteractReq::Key {
-                    down: false,
-                    key,
-                    ..
-                } if key == "2"
-            )),
-            "{reqs:?}"
-        );
-
-        iso.on_game_tick(2);
-        iso.probe("true").unwrap();
-        iso.reset_session_work();
-        let stale = iso.drain_interacts();
-        assert!(
-            stale
-                .iter()
-                .all(|req| !matches!(req, crate::shim::InteractReq::Key { .. })),
-            "stale generation must not deliver keys: {stale:?}"
-        );
-        iso.join();
-    }
-
-    #[test]
-    fn canvas_mouse_producer_round_trips_fb_and_drops_stale_generation() {
-        let iso = LoadIsolate::spawn(
-            r#"
-export default class T extends LoopingBot {
-loop() {
-    const canvas = document.getElementById('canvas');
-    canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5}));
-    canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 382.5, clientY: 251.5}));
-    canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
-}
-}
-"#
-            .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-        iso.on_game_tick(1);
-        iso.probe("true").unwrap();
-        let reqs = iso.drain_interacts();
-        assert!(
-            reqs.iter().any(|req| matches!(
-                req,
-                crate::shim::InteractReq::Mouse {
-                    down: true,
-                    x,
-                    y,
-                    button: 0,
-                    ..
-                } if (*x - 382.5).abs() < 1e-9 && (*y - 251.5).abs() < 1e-9
-            )),
-            "{reqs:?}"
-        );
-        assert!(
-            reqs.iter()
-                .any(|req| matches!(req, crate::shim::InteractReq::Mouse { down: false, .. })),
-            "{reqs:?}"
-        );
-        assert!(
-            reqs.iter().any(|req| matches!(
-                req,
-                crate::shim::InteractReq::Key { down: true, key, .. } if key == "2"
-            )),
-            "{reqs:?}"
-        );
-
-        iso.on_game_tick(2);
-        iso.probe("true").unwrap();
-        iso.reset_session_work();
-        let stale = iso.drain_interacts();
-        assert!(
-            stale
-                .iter()
-                .all(|req| !matches!(req, crate::shim::InteractReq::Mouse { .. })),
-            "stale generation must not deliver mouse: {stale:?}"
-        );
-        iso.join();
-    }
-
-    #[test]
-    fn canvas_mouse_production_stamps_input_identity() {
-        let iso = LoadIsolate::spawn(
-            r#"
-export default class T extends LoopingBot {
-loop() {
-    const canvas = document.getElementById('canvas');
-    canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5}));
-}
-}
-"#
-            .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-        iso.on_game_tick_at(1, 42);
-        iso.probe("true").unwrap();
-        let reqs = iso.drain_interacts();
-        assert!(
-            reqs.iter().any(|req| matches!(
-                req,
-                crate::shim::InteractReq::Mouse {
-                    down: true,
-                    identity: 42,
-                    ..
-                }
-            )),
-            "{reqs:?}"
-        );
-        iso.join();
-    }
-
-    #[test]
-    fn root_mouse_parked_up_keeps_revoked_gesture_identity() {
-        let iso = LoadIsolate::spawn(
-            r#"
-export default class T extends LoopingBot {
-async loop() {
-    if (globalThis.__started) return;
-    globalThis.__started = true;
-    const canvas = document.getElementById('canvas');
-    canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
-    await new Promise((resolve) => {
-        globalThis.__release = resolve;
-    });
-    canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 100, clientY: 100}));
-}
-}
-"#
-            .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-
-        iso.on_game_tick_at(1, 42);
-        iso.probe("true").unwrap();
-        let first = iso.drain_interacts();
-        assert!(
-            first.iter().any(|req| matches!(
-                req,
-                crate::shim::InteractReq::Mouse {
-                    down: true,
-                    identity: 42,
-                    ..
-                }
-            )),
-            "{first:?}"
-        );
-
-        iso.pause();
-        iso.resume();
-        iso.probe("globalThis.__release(); true").unwrap();
-        iso.on_game_tick_at(2, 43);
-        iso.probe("true").unwrap();
-        let second = iso.drain_interacts();
-        assert!(
-            second.iter().any(|req| matches!(
-                req,
-                crate::shim::InteractReq::Mouse {
-                    down: false,
-                    identity: 42,
-                    ..
-                }
-            )),
-            "parked old up was restamped: {second:?}"
-        );
-        iso.join();
-    }
-
-    #[test]
-    fn execution_delay_ticks_mouse_up_keeps_down_identity() {
-        let iso = LoadIsolate::spawn(
-            r#"
-import { Execution } from '../../api/execution/Execution.js';
-export default class T extends LoopingBot {
-async loop() {
-    if (globalThis.__started) return;
-    globalThis.__started = true;
-    const canvas = document.getElementById('canvas');
-    canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
-    await Execution.delayTicks(1);
-    canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 100, clientY: 100}));
-}
-}
-"#
-            .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-
-        iso.on_game_tick_at(1, 42);
-        iso.probe("true").unwrap();
-        let first = iso.drain_interacts();
-        assert!(first.iter().any(|req| matches!(
-            req,
-            crate::shim::InteractReq::Mouse {
-                down: true,
-                identity: 42,
-                ..
-            }
-        )));
-
-        iso.pause();
-        iso.resume();
-        iso.on_game_tick_at(2, 43);
-        iso.probe("true").unwrap();
-        let second = iso.drain_interacts();
-        assert!(
-            second.iter().any(|req| matches!(
-                req,
-                crate::shim::InteractReq::Mouse {
-                    down: false,
-                    identity: 42,
-                    ..
-                }
-            )),
-            "{second:?}"
-        );
-        iso.join();
-    }
-
-    #[test]
-    fn mouse_gesture_identity_overflow_fails_closed() {
-        let mouse = |down| crate::shim::InteractReq::Mouse {
-            down,
-            x: 10.0,
-            y: 10.0,
-            button: 0,
-            identity: 99,
-        };
-        let mut gestures = MouseGestureIdentities::default();
-        let mut downs: Vec<_> = (0..=MAX_MOUSE_GESTURES).map(|_| mouse(true)).collect();
-        stamp_mouse_gesture_identities(&mut downs, 7, &mut gestures);
-        assert!(downs
-            .iter()
-            .all(|req| matches!(req, crate::shim::InteractReq::Mouse { identity: 7, .. })));
-        assert!(gestures.pairs.is_empty());
-        assert_eq!(gestures.unpairable, 33);
-
-        let mut ups: Vec<_> = (0..=MAX_MOUSE_GESTURES).map(|_| mouse(false)).collect();
-        stamp_mouse_gesture_identities(&mut ups, 7, &mut gestures);
-        assert!(ups
-            .iter()
-            .all(|req| matches!(req, crate::shim::InteractReq::Mouse { identity: 0, .. })));
-        assert_eq!(gestures.unpairable, 0);
-    }
-
-    #[test]
-    fn canvas_mouse_malformed_rows_keep_sibling_key_and_center() {
-        let iso = LoadIsolate::spawn(
-            r#"
-export default class T extends LoopingBot {
-loop() {
-    const canvas = document.getElementById('canvas');
-    const h = globalThis.__rs2b0t_host;
-    h.interact = h.interact || [];
-    h.interact.push({op:'mouse', down:true, x:{}, y:10, button:0});
-    h.interact.push({op:'mouse', down:true, x:[1], y:10, button:0});
-    h.interact.push({op:'mouse', down:true, x: Number.NaN, y:10, button:0});
-    h.interact.push({op:'mouse', down:true, x:100, y:100, button: 4294967296});
-    h.interact.push({op:'mouse', down:true, x:100, y:100, button: 1.5});
-    h.interact.push({op:'mouse', down:true, x:100, y:100, button: null});
-    h.interact.push([1, 2, 3]);
-    canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
-    canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5}));
-    canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 382.5, clientY: 251.5}));
-}
-}
-"#
-            .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-        iso.on_game_tick(1);
-        iso.probe("true").unwrap();
-        let reqs = iso.drain_interacts();
-        assert!(
-            reqs.iter().any(|req| matches!(
-                req,
-                crate::shim::InteractReq::Key { down: true, key, .. } if key == "2"
-            )),
-            "sibling key dropped: {reqs:?}"
-        );
-        assert!(
-            reqs.iter().any(|req| matches!(
-                req,
-                crate::shim::InteractReq::Mouse {
-                    down: true,
-                    x,
-                    y,
-                    button: 0,
-                    ..
-                } if (*x - 382.5).abs() < 1e-9 && (*y - 251.5).abs() < 1e-9
-            )),
-            "valid center down dropped: {reqs:?}"
-        );
-        assert!(
-            reqs.iter()
-                .any(|req| matches!(req, crate::shim::InteractReq::Mouse { down: false, .. })),
-            "valid center up dropped: {reqs:?}"
-        );
-        iso.join();
-    }
-
-    /// One posted tick whose only event-relevant fact is a prayer xp table:
-    /// an `xp` above the previous tick's value is one `SkillXp` event.
-    fn xp_input(tick: u64, inv_size: i32, xp: i32) -> Vec<u8> {
-        let stats = [crate::isolate_fb::StatInput {
-            index: 5,
-            name: "prayer",
-            xp,
-            base: 2,
-            effective: 2,
-        }];
-        let mut input = crate::isolate_fb::tests::empty_input(tick);
-        input.inv_size = inv_size;
-        input.stats = &stats;
-        crate::isolate_fb::encode_snapshot(&input)
-    }
-
-    fn xp_event(skill: i32) -> crate::events::NativeEvent {
-        crate::events::NativeEvent::SkillXp {
-            skill,
-            name: format!("skill{skill}"),
-            xp: skill,
-            delta: 1,
-        }
-    }
-
-    fn staged_writes(iso: &LoadIsolate) -> serde_json::Value {
-        iso.probe(
-            "({ticks: globalThis.__ticks || 0, invSize: globalThis.__rs2b0t_host.snapshot.inv_size, \
-             staged: typeof globalThis.__staged_writes, \
-             pending: typeof globalThis.__rs2b0t_pending_native_event_batch})",
-        )
-        .unwrap()
-    }
-
-    /// Undelivered events in the compat runner's queue (0 when it is unset).
-    fn queue_length(iso: &LoadIsolate) -> Option<i64> {
-        iso.probe(
-            "(() => { const q = globalThis.__rs2b0t_pending_native_event_batch; return q ? q.length : 0; })()",
-        )
-        .unwrap()
-        .as_i64()
-    }
-
-    /// A shape without an events API must not pay for events: the producer
-    /// never diffs a posted table (no diagnostic either), and the dispatcher
-    /// never builds or stages a batch. `__staged_writes` counts every write
-    /// the dispatcher would make to its staging global — the hand-off, plus
-    /// its own clear.
-    #[test]
-    fn native_tick_shape_builds_and_stages_no_native_events() {
-        let iso = LoadIsolate::spawn(
-            r#"
-let staged = null;
-Object.defineProperty(globalThis, '__rs2b0t_native_event_batch', {
-    configurable: true,
-    get() { return staged; },
-    set(v) {
-        globalThis.__staged_writes = (globalThis.__staged_writes || 0) + 1;
-        staged = v;
-    },
-});
-export function tick(api) { globalThis.__ticks = (globalThis.__ticks || 0) + 1; }
-"#
-            .into(),
-            LoadShape::NativeTick,
-            vec![],
-        )
-        .unwrap();
-        // An invalid inv_size is a producer diagnostic for a consumer; this
-        // shape has none, so not even the diff may run.
-        iso.post_snapshot(xp_input(1, 28, 0));
-        iso.on_game_tick(1);
-        iso.post_snapshot(xp_input(2, 99, 1));
-        iso.on_game_tick(2);
-        let report = staged_writes(&iso);
-        assert_eq!(report["ticks"], 2, "both ticks reached the module");
-        assert_eq!(report["invSize"], 99, "the snapshot materialised");
-        assert_eq!(
-            report["staged"], "undefined",
-            "no event batch may be built for a shape without an events API"
-        );
-        assert_eq!(
-            report["pending"], "undefined",
-            "no event queue may be created for a shape without an events API"
-        );
-        let logs = iso.drain_logs();
-        assert!(
-            !logs.iter().any(|line| line.contains("inventory events")),
-            "an unconsumed shape must not diff posted tables: {logs:?}"
-        );
-        iso.join();
-    }
-
-    /// The compat queue is the only staging buffer between the dispatcher and
-    /// the runner's per-tick drain. It must stay bounded when that drain
-    /// stalls, and the bound must drop the oldest events — the drain delivers
-    /// in order, so the newest are the ones still worth running.
-    #[test]
-    fn compat_event_queue_is_capped_and_keeps_the_newest_events() {
-        ensure_platform();
-        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-        let first: Vec<_> = (0..300).map(xp_event).collect();
-        dispatch_native_events(&mut runtime, &first).unwrap();
-        let staged: Option<serde_json::Value> = runtime
-            .eval("globalThis.__rs2b0t_native_event_batch ?? null")
-            .unwrap();
-        assert!(staged.is_none(), "the append consumes the staged batch");
-        let capped: i64 = runtime
-            .eval("globalThis.__rs2b0t_pending_native_event_batch.length")
-            .unwrap();
-        assert_eq!(capped, 256, "one oversized batch is capped at 256");
-
-        let second: Vec<_> = (300..310).map(xp_event).collect();
-        dispatch_native_events(&mut runtime, &second).unwrap();
-        let report: Vec<i64> = runtime
-            .eval("(() => { const q = globalThis.__rs2b0t_pending_native_event_batch; return [q.length, q[0].payload.skill, q[q.length - 1].payload.skill]; })()")
-            .unwrap();
-        assert_eq!(report[0], 256, "a second batch stays capped: {report:?}");
-        assert_eq!(
-            report[1], 54,
-            "the oldest events are trimmed first: {report:?}"
-        );
-        assert_eq!(report[2], 309, "the newest event is retained: {report:?}");
-    }
-
-    /// ResetSession drops the batches the previous connection staged: the
-    /// compat runner must not replay them, and the next session must not
-    /// start with the trim window already full.
-    #[test]
-    fn reset_session_clears_the_pending_native_event_queue() {
-        let iso = LoadIsolate::spawn(
-            r#"
-export default class T extends LoopingBot {
-loop() {
-    // Stall the runner's drain so the queue keeps what Rust staged.
-    globalThis.__rs2b0t_flush_native_events = () => {};
-}
-}
-"#
-            .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-        iso.post_snapshot(xp_input(1, 28, 0));
-        iso.on_game_tick(1);
-        assert_eq!(
-            queue_length(&iso),
-            Some(0),
-            "the first table only seeds the producer"
-        );
-        iso.post_snapshot(xp_input(2, 28, 1));
-        iso.on_game_tick(2);
-        assert_eq!(
-            queue_length(&iso),
-            Some(1),
-            "the xp diff reached the compat queue"
-        );
-        iso.reset_session_work();
-        let cleared = iso
-            .probe("globalThis.__rs2b0t_pending_native_event_batch === null")
-            .unwrap();
-        assert_eq!(
-            cleared,
-            serde_json::json!(true),
-            "ResetSession must clear the undelivered queue"
-        );
-        iso.join();
-    }
-
-    fn wait_ready(iso: &LoadIsolate) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            match iso.poll_ready() {
-                Ready::Ready => return,
-                Ready::Failed(e) => panic!("setup failed: {e}"),
-                Ready::Pending if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Ready::Pending => panic!("setup timed out"),
-            }
-        }
-    }
-
-    #[test]
-    fn spawn_returns_before_setup_and_poll_ready_becomes_ready() {
-        let t0 = Instant::now();
-        let iso = LoadIsolate::spawn(
-            "export function tick(api) {}".into(),
-            LoadShape::NativeTick,
-            vec![],
-        )
-        .unwrap();
-        assert!(
-            t0.elapsed() < Duration::from_millis(500),
-            "spawn must not wait on V8: {:?}",
-            t0.elapsed()
-        );
-        wait_ready(&iso);
-        assert_eq!(iso.poll_ready(), Ready::Ready);
-        iso.join();
-    }
-
-    #[test]
-    fn poll_ready_surfaces_a_wire_failure() {
-        let iso = LoadIsolate::spawn(
-            "not valid javascript!!!!".into(),
-            LoadShape::NativeTick,
-            vec![],
-        )
-        .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let err = loop {
-            match iso.poll_ready() {
-                Ready::Failed(e) => break e,
-                Ready::Ready => panic!("invalid source must not become Ready"),
-                Ready::Pending if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Ready::Pending => panic!("setup neither failed nor finished"),
-            }
-        };
-        assert!(!err.is_empty(), "{err}");
-        iso.join();
-    }
-
-    #[test]
-    fn join_detached_returns_immediately_and_delivers_onstop_logs() {
-        let iso = LoadIsolate::spawn(
-            "export default class T extends LoopingBot {
-            loop() {}
-            onStop() { this.log('stopped-ok'); }
-        }"
-            .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
-        wait_ready(&iso);
-        iso.on_game_tick(1);
-        let _ = iso.probe("1");
-        let (tx, rx) = mpsc::channel();
-        let t0 = Instant::now();
-        iso.join_detached(tx);
-        assert!(
-            t0.elapsed() < Duration::from_millis(200),
-            "join_detached blocked: {:?}",
-            t0.elapsed()
-        );
-        let logs = rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("reaper logs");
-        assert!(
-            logs.iter().any(|l| l.contains("stopped-ok")),
-            "onStop log missing: {logs:?}"
-        );
-        let _ = abandoned_isolate_count();
-    }
-
-    fn machine_tick(iso: &LoadIsolate, n: u64) {
-        iso.on_game_tick(n);
-        let _ = iso.probe("true");
-    }
-
-    fn if_button(id: i32) -> crate::shim::InteractReq {
-        crate::shim::InteractReq::IfButton { component_id: id }
-    }
-
-    fn spawn_machine_card(body: &str) -> LoadIsolate {
-        let src = format!(
-            "import {{ runMachine, queue }} from '../../shim/_kernel.js';\n\
-             import {{ Execution }} from '../../api/execution/Execution.js';\n\
-             export default class T extends LoopingBot {{\n\
-             async loop() {{\n\
-             if (globalThis.__did) return;\n\
-             globalThis.__did = true;\n\
-             {body}\n\
-             }}\n}}\n"
-        );
-        LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap()
-    }
-
-    #[test]
-    fn machine_ops_join_the_batch_in_order_and_the_await_settles_once() {
-        let iso = spawn_machine_card(
-            "globalThis.__settles = 0;
-             queue({ op: 'if-button', component_id: 1 });
-             const run = runMachine('probe', { button: 10, steps: 2 });
-             queue({ op: 'if-button', component_id: 2 });
-             const out = await run;
-             globalThis.__settles += 1;
-             globalThis.__out = out;
-             globalThis.__at = globalThis.__rs2b0t_host.tick;",
-        );
-        machine_tick(&iso, 1);
-        assert_eq!(
-            iso.drain_interacts(),
-            vec![if_button(1), if_button(10), if_button(2)],
-            "begin ops sit where the caller started the machine"
-        );
-        machine_tick(&iso, 2);
-        assert_eq!(iso.drain_interacts(), vec![if_button(11)]);
-        machine_tick(&iso, 3);
-        assert_eq!(iso.drain_interacts(), vec![if_button(12)]);
-        assert_eq!(iso.probe("globalThis.__settles").unwrap(), 0);
-        for n in 4..=6 {
-            machine_tick(&iso, n);
-        }
-        assert_eq!(iso.probe("globalThis.__settles").unwrap(), 1);
-        assert_eq!(
-            iso.probe("globalThis.__out").unwrap(),
-            serde_json::json!({ "kind": "done", "value": 2 })
-        );
-        assert_eq!(
-            iso.probe("globalThis.__at").unwrap(),
-            4,
-            "the completing step settles in the same tick's pump"
-        );
-        assert!(
-            iso.drain_interacts().is_empty(),
-            "a finished row emits nothing"
-        );
-        iso.join();
-    }
-
-    #[test]
-    fn reset_session_aborts_a_running_machine_and_settles_its_await() {
-        let iso = spawn_machine_card(
-            "globalThis.__out = await runMachine('probe', { button: 10, steps: 5 });",
-        );
-        machine_tick(&iso, 1);
-        assert_eq!(iso.drain_interacts(), vec![if_button(10)]);
-        iso.reset_session_work();
-        machine_tick(&iso, 2);
-        assert_eq!(
-            iso.probe("globalThis.__out").unwrap(),
-            serde_json::json!({ "kind": "aborted", "reason": "reset" })
-        );
-        machine_tick(&iso, 3);
-        assert!(
-            iso.drain_interacts().is_empty(),
-            "an aborted row never steps"
-        );
-        iso.join();
-    }
-
-    #[test]
-    fn concurrent_machines_settle_independently() {
-        let iso = spawn_machine_card(
-            "const stamp = (p) => p.then((out) => ({ out, at: globalThis.__rs2b0t_host.tick }));
-             globalThis.__both = await Promise.all([
-                 stamp(runMachine('probe', { button: 100, steps: 1 })),
-                 stamp(runMachine('probe', { button: 200, steps: 3 })),
-             ]);",
-        );
-        for n in 1..=6 {
-            machine_tick(&iso, n);
-        }
-        assert_eq!(
-            iso.probe("globalThis.__both").unwrap(),
-            serde_json::json!([
-                { "out": { "kind": "done", "value": 1 }, "at": 3 },
-                { "out": { "kind": "done", "value": 3 }, "at": 5 },
-            ])
-        );
-        iso.join();
-    }
-
-    #[test]
-    fn refused_and_immediate_starts_resolve_without_a_wait() {
-        let iso = spawn_machine_card(
-            "globalThis.__outs = [
-                 await runMachine('probe', { button: 1, steps: 1, refuse: true }),
-                 await runMachine('probe', { button: 2, steps: 0 }),
-                 await runMachine('nowhere', {}),
-             ];",
-        );
-        machine_tick(&iso, 1);
-        let outs = iso.probe("globalThis.__outs").unwrap();
-        assert_eq!(
-            outs[0],
-            serde_json::json!({ "kind": "refused", "reason": "probe refused" })
-        );
-        assert_eq!(outs[1], serde_json::json!({ "kind": "done", "value": 0 }));
-        assert_eq!(outs[2]["kind"], "refused");
-        assert_eq!(iso.drain_interacts(), vec![if_button(2)]);
-        iso.join();
-    }
-
-    // Frozen timing: a callback sees the tick it runs in, `delayTicks(1)`
-    // from a tick-2 callback resumes in tick 3's pump, and the row resumes
-    // (and here ends, settling the await) in tick 3 as well.
-    #[test]
-    fn a_machine_calls_sync_and_async_script_callbacks_in_order() {
-        let iso = spawn_machine_card(
-            "globalThis.__calls = [];
-             const at = () => globalThis.__rs2b0t_host.tick;
-             const hooks = {
-                 tag: 'H',
-                 sync(n, s) {
-                     globalThis.__calls.push(['sync', n, s, this.tag, at()]);
-                     queue({ op: 'if-button', component_id: 900 });
-                     return n + 1;
-                 },
-                 async later(v) {
-                     globalThis.__calls.push(['later', v, at()]);
-                     await Execution.delayTicks(1);
-                     globalThis.__calls.push(['later-resumed', v, at()]);
-                     return v * 10;
-                 },
-                 mark() {
-                     globalThis.__calls.push(['mark', at()]);
-                     return 'm';
-                 },
-             };
-             globalThis.__out = await runMachine('hooked', { emit: 500 }, hooks);
-             globalThis.__at = at();",
-        );
-        machine_tick(&iso, 1);
-        assert!(iso.drain_interacts().is_empty());
-        machine_tick(&iso, 2);
-        assert_eq!(
-            iso.drain_interacts(),
-            vec![if_button(900), if_button(501)],
-            "a step's op follows the row its callback queued"
-        );
-        assert_eq!(
-            iso.probe("globalThis.__calls").unwrap(),
-            serde_json::json!([["sync", 1, "a", "H", 2], ["later", 2, 2]]),
-            "callbacks see the tick they run in; delayTicks(1) has not elapsed"
-        );
-        assert_eq!(
-            iso.probe("globalThis.__out ?? null").unwrap(),
-            serde_json::Value::Null
-        );
-        machine_tick(&iso, 3);
-        assert_eq!(
-            iso.probe("globalThis.__calls").unwrap(),
-            serde_json::json!([
-                ["sync", 1, "a", "H", 2],
-                ["later", 2, 2],
-                ["later-resumed", 2, 3],
-                ["mark", 3],
-            ]),
-            "the row resumes in the tick the wait settled"
-        );
-        assert_eq!(iso.drain_interacts(), vec![if_button(502), if_button(503)]);
-        assert_eq!(
-            iso.probe("globalThis.__out").unwrap(),
-            serde_json::json!({ "kind": "done", "value": [2, 20, "m"] })
-        );
-        assert_eq!(iso.probe("globalThis.__at").unwrap(), 3);
-        iso.join();
-    }
-
-    // N1(a): a callback that only awaits microtasks answers in the call's
-    // own checkpoint, so all of a burst's awaited calls run in one tick
-    // (up to the per-row budget), like a frozen `for` with `await`s.
-    #[test]
-    fn microtask_only_awaits_answer_in_the_same_step() {
-        const B: usize = crate::machine::CALLS_PER_TICK;
-        let iso = spawn_machine_card(&format!(
-            "globalThis.__ticks = [];
-             globalThis.__out = await runMachine('burst', {{ calls: {} }}, {{
-                 async each(i) {{
-                     await null;
-                     await Promise.resolve();
-                     globalThis.__ticks.push(globalThis.__rs2b0t_host.tick);
-                     return i;
-                 }},
-             }});
-             globalThis.__at = globalThis.__rs2b0t_host.tick;",
-            B + 8
-        ));
-        machine_tick(&iso, 1);
-        machine_tick(&iso, 2);
-        let ticks: Vec<u64> =
-            serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
-        assert_eq!(ticks.len(), B, "the budget bounds tick 2");
-        assert!(ticks.iter().all(|&t| t == 2), "{ticks:?}");
-        machine_tick(&iso, 3);
-        let ticks: Vec<u64> =
-            serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
-        assert_eq!(ticks.len(), B + 8);
-        assert!(ticks[B..].iter().all(|&t| t == 3), "{ticks:?}");
-        assert_eq!(iso.probe("globalThis.__out.value.length").unwrap(), B + 8);
-        assert_eq!(iso.probe("globalThis.__at").unwrap(), 3);
-        iso.join();
-    }
-
-    // N1(b): a callback promise the pump settles resumes its row after the
-    // pump in the same tick, and the budget spans both passes: 6 calls
-    // before the wait, the rest of the budget after it in tick 2, the last
-    // 8 in tick 3.
-    #[test]
-    fn a_pump_settled_callback_resumes_its_row_in_the_same_tick() {
-        const B: usize = crate::machine::CALLS_PER_TICK;
-        let iso = spawn_machine_card(&format!(
-            "globalThis.__ticks = [];
-             const each = (i) => {{
-                 globalThis.__ticks.push(globalThis.__rs2b0t_host.tick);
-                 return i === 5 ? Execution.delayTicks(0).then(() => i) : i;
-             }};
-             globalThis.__out = await runMachine('burst', {{ calls: {} }}, {{ each }});",
-            B + 8
-        ));
-        machine_tick(&iso, 1);
-        machine_tick(&iso, 2);
-        let ticks: Vec<u64> =
-            serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
-        assert_eq!(
-            ticks,
-            vec![2; B],
-            "6 calls, the pump, then the rest of the budget"
-        );
-        machine_tick(&iso, 3);
-        let ticks: Vec<u64> =
-            serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
-        assert_eq!(ticks[B..], [3; 8]);
-        assert_eq!(
-            iso.probe("globalThis.__out.value[5]").unwrap(),
-            5,
-            "the resumed row read the settled value"
-        );
-        iso.join();
-    }
-
-    // N2: presence is read once, at start; null/undefined are absent.
-    #[test]
-    fn hook_presence_is_read_once_at_start() {
-        let iso = spawn_machine_card(
-            "globalThis.__reads = 0;
-             const hooks = {
-                 a() {},
-                 b: null,
-                 get c() { globalThis.__reads += 1; return () => 1; },
-             };
-             globalThis.__out = await runMachine('present', {}, hooks);",
-        );
-        machine_tick(&iso, 1);
-        assert_eq!(
-            iso.probe("globalThis.__out").unwrap(),
-            serde_json::json!({ "kind": "done", "value": [true, false, true, false] })
-        );
-        assert_eq!(iso.probe("globalThis.__reads").unwrap(), 1);
-        iso.join();
-    }
-
-    // N3: rows script code queued between ticks (a probe here, the
-    // recovery anchor in production) stay ahead of the next step's ops.
-    #[test]
-    fn step_ops_follow_rows_queued_before_the_tick() {
-        let iso = spawn_machine_card(
-            "globalThis.__out = await runMachine('probe', { button: 10, steps: 1 });",
-        );
-        machine_tick(&iso, 1);
-        assert_eq!(iso.drain_interacts(), vec![if_button(10)]);
-        let _ = iso
-            .probe("globalThis.__rs2b0t_host.interact.push({ op: 'if-button', component_id: 7 })");
-        machine_tick(&iso, 2);
-        assert_eq!(iso.drain_interacts(), vec![if_button(7), if_button(11)]);
-        iso.join();
-    }
-
-    // N5: a row whose callback starts a newer row of its exclusive family
-    // stops driving at once: no further op, and it settles `superseded`.
-    #[test]
-    fn a_row_that_supersedes_itself_mid_step_stops_at_once() {
-        let iso = spawn_machine_card(
-            "globalThis.__out = await runMachine('solo-hooked', {}, {
-                 again() {
-                     globalThis.__next = runMachine('solo-hooked', { quiet: true }, {
-                         again: () => 0,
-                     });
-                     return 1;
-                 },
-             });",
-        );
-        machine_tick(&iso, 1);
-        machine_tick(&iso, 2);
-        assert!(
-            iso.drain_interacts().is_empty(),
-            "the superseded row emits nothing after its callback"
-        );
-        machine_tick(&iso, 3);
-        assert_eq!(
-            iso.probe("globalThis.__out").unwrap(),
-            serde_json::json!({ "kind": "aborted", "reason": "superseded" })
-        );
-        iso.join();
-    }
-
-    #[test]
-    fn a_throwing_or_rejecting_callback_fails_the_machine() {
-        let iso = spawn_machine_card(
-            "const boom = new Error('boom');
-             const late = { code: 7 };
-             const settle = (p) => p.then(
-                 (out) => ({ ok: out }),
-                 (e) => ({ err: String(e && e.message), same: e === boom || e === late }),
-             );
-             globalThis.__outs = await Promise.all([
-                 settle(runMachine('hooked', {}, { sync() { throw boom; } })),
-                 settle(runMachine('hooked', {}, {
-                     sync: (n) => n,
-                     async later() { throw late; },
-                 })),
-                 settle(runMachine('hooked', {}, { sync: 5 })),
-                 settle(runMachine('hooked', {})),
-             ]);",
-        );
-        machine_tick(&iso, 1);
-        machine_tick(&iso, 2);
-        let outs = iso.probe("globalThis.__outs").unwrap();
-        assert_eq!(
-            outs[0],
-            serde_json::json!({ "err": "boom", "same": true }),
-            "the await rejects with the very value the callback threw"
-        );
-        assert_eq!(
-            outs[1],
-            serde_json::json!({ "err": "undefined", "same": true }),
-            "and with the very value an async callback rejected with"
-        );
-        assert_eq!(
-            outs[2],
-            serde_json::json!({ "err": "sync is not a function", "same": false })
-        );
-        assert!(
-            outs[3]["err"]
-                .as_str()
-                .is_some_and(|e| e.contains("reading 'sync'")),
-            "a missing hooks object throws at start: {outs:?}"
-        );
-        let logs = iso.drain_logs();
-        assert!(
-            logs.iter().all(|l| !l.contains("Uncaught")),
-            "an observed rejection is not unhandled: {logs:?}"
-        );
-        iso.join();
-    }
-
-    #[test]
-    fn reset_and_stop_release_a_machine_waiting_on_a_callback_promise() {
-        let src = "globalThis.__out = await runMachine('hooked', {}, {
-                 sync: (n) => n,
-                 later: () => new Promise(() => {}),
-             });";
-        let iso = spawn_machine_card(src);
-        machine_tick(&iso, 1);
-        machine_tick(&iso, 2);
-        iso.reset_session_work();
-        machine_tick(&iso, 3);
-        assert_eq!(
-            iso.probe("globalThis.__out").unwrap(),
-            serde_json::json!({ "kind": "aborted", "reason": "reset" })
-        );
-        iso.join();
-
-        // Stop with the callback and its promise still held: the rows drop
-        // before the isolate (a V8 handle outliving it would abort here).
-        let iso = spawn_machine_card(src);
-        machine_tick(&iso, 1);
-        machine_tick(&iso, 2);
-        iso.join();
-    }
-
-    #[test]
-    fn join_stops_a_machine_before_a_later_spinning_callback() {
-        // The first callback spins until join's terminate ends it; the
-        // machine keeps going on a throw, so without the claim re-check its
-        // next callback would spin on past join.
-        let iso = spawn_machine_card(
-            "globalThis.__out = await runMachine('burst', { calls: 3, keep: true }, {
-                 each() { for (;;) {} },
-             });",
-        );
-        let proof = iso.teardown_proof();
-        machine_tick(&iso, 1);
-        iso.on_game_tick(2);
-        std::thread::sleep(Duration::from_millis(200));
-        let t0 = Instant::now();
-        iso.join();
-        assert!(
-            proof.finished() && t0.elapsed() < JOIN_TIMEOUT,
-            "join abandoned the isolate after {:?}",
-            t0.elapsed()
-        );
-    }
-
-    #[test]
-    fn join_runs_no_paint_after_a_machine_callback_absorbed_its_terminate() {
-        // The callback absorbs join's terminate; the tick then cancels the
-        // terminate. An ungated onPaint after that would spin past join.
-        let src = "import { runMachine } from '../../shim/_kernel.js';\n\
-             export default class T extends LoopingBot {\n\
-             onPaint() { if (globalThis.__spin) for (;;) {} }\n\
-             async loop() {\n\
-             if (globalThis.__did) return;\n\
-             globalThis.__did = true;\n\
-             await runMachine('burst', { calls: 3, keep: true }, {\n\
-                 each() { globalThis.__spin = true; for (;;) {} },\n\
-             });\n\
-             }\n}\n";
-        let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-        let proof = iso.teardown_proof();
-        machine_tick(&iso, 1);
-        iso.on_game_tick(2);
-        std::thread::sleep(Duration::from_millis(200));
-        let t0 = Instant::now();
-        iso.join();
-        assert!(
-            proof.finished() && t0.elapsed() < JOIN_TIMEOUT,
-            "join abandoned the isolate after {:?}",
-            t0.elapsed()
-        );
-    }
-
-    #[test]
-    fn machines_step_normally_again_after_a_watchdog_fire() {
-        // A callback spins on tick 2; dispatching tick 3 fires the
-        // watchdog. Once that tick's cancel clears the mark, a machine
-        // started afterwards must step every tick and complete.
-        let iso = spawn_machine_card(
-            "globalThis.__first = await runMachine('burst', { calls: 1, keep: true }, {
-                 each() { for (;;) {} },
-             });
-             globalThis.__startedAt = globalThis.__rs2b0t_host.tick;
-             globalThis.__out = await runMachine('probe', { button: 10, steps: 1 });
-             globalThis.__at = globalThis.__rs2b0t_host.tick;",
-        );
-        machine_tick(&iso, 1);
-        iso.on_game_tick(2);
-        std::thread::sleep(Duration::from_millis(200));
-        machine_tick(&iso, 3);
-        assert_eq!(
-            iso.probe("globalThis.__first").unwrap(),
-            serde_json::json!({ "kind": "aborted", "reason": "terminated" })
-        );
-        let started: u64 =
-            serde_json::from_value(iso.probe("globalThis.__startedAt").unwrap()).unwrap();
-        assert_eq!(iso.drain_interacts(), vec![if_button(10)]);
-        machine_tick(&iso, started + 1);
-        assert_eq!(
-            iso.drain_interacts(),
-            vec![if_button(11)],
-            "the first tick after the start steps the machine"
-        );
-        machine_tick(&iso, started + 2);
-        assert_eq!(
-            iso.probe("globalThis.__out").unwrap(),
-            serde_json::json!({ "kind": "done", "value": 1 })
-        );
-        assert_eq!(iso.probe("globalThis.__at").unwrap(), started + 2);
-        iso.join();
-    }
-
-    #[test]
-    fn a_watchdog_terminate_in_a_callbacks_microtasks_ends_the_row() {
-        // The continuation, not the callback, spins; the watchdog of the
-        // next dispatch terminates it inside the call's checkpoint. The row
-        // must end there, not call on as if the callback had returned.
-        let iso = spawn_machine_card(
-            "globalThis.__calls = 0;
-             globalThis.__out = await runMachine('burst', { calls: 3, keep: true }, {
-                 each(i) {
-                     globalThis.__calls++;
-                     if (i === 0) Promise.resolve().then(() => { for (;;) {} });
-                     return i;
-                 },
-             });",
-        );
-        machine_tick(&iso, 1);
-        iso.on_game_tick(2);
-        std::thread::sleep(Duration::from_millis(200));
-        machine_tick(&iso, 3);
-        machine_tick(&iso, 4);
-        assert_eq!(iso.probe("globalThis.__calls").unwrap(), 1);
-        assert_eq!(
-            iso.probe("globalThis.__out").unwrap(),
-            serde_json::json!({ "kind": "aborted", "reason": "terminated" })
-        );
-        iso.join();
-    }
-
-    #[test]
-    fn a_callback_may_start_another_machine_mid_step() {
-        let iso = spawn_machine_card(
-            "globalThis.__out = await runMachine('hooked', { emit: 500 }, {
-                 sync(n) {
-                     globalThis.__inner = runMachine('probe', { button: 700, steps: 1 });
-                     return n;
-                 },
-                 later: (v) => v,
-                 mark: () => null,
-             });
-             globalThis.__innerOut = await globalThis.__inner;",
-        );
-        machine_tick(&iso, 1);
-        machine_tick(&iso, 2);
-        assert_eq!(
-            iso.drain_interacts(),
-            vec![
-                if_button(700),
-                if_button(501),
-                if_button(502),
-                if_button(503)
-            ],
-            "the inner begin op lands where its callback ran"
-        );
-        for n in 3..=5 {
-            machine_tick(&iso, n);
-        }
-        assert_eq!(
-            iso.drain_interacts(),
-            vec![if_button(701)],
-            "the inner row is first stepped on the next tick"
-        );
-        assert_eq!(iso.probe("globalThis.__out.kind").unwrap(), "done");
-        assert_eq!(
-            iso.probe("globalThis.__innerOut").unwrap(),
-            serde_json::json!({ "kind": "done", "value": 1 })
-        );
-        iso.join();
-    }
-}
+#[path = "isolate_tests.rs"]
+mod tests;

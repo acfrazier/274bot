@@ -130,73 +130,11 @@ impl Default for PathOverlay {
 
 #[cfg(test)]
 mod tests {
-    use api::snapshot::WorldTile;
-    use nav::collision::WorldCollision;
-    use nav::tile::Tile;
-    use nav::transport::TransportGraph;
-    use nav::world::NavWorld;
-
     use super::{
         draw_queue_card, queue_card_lines, queue_card_metrics, PathOverlay, QUEUE_CARD_OUTER,
         QUEUE_CARD_PAD,
     };
     use crate::session::Session;
-
-    /// A `w`×`h` all-walkable level-0 world at (0,0).
-    fn open_world(w: usize, h: usize) -> NavWorld {
-        NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                width: w,
-                height: h,
-                walk: vec![0u8; w * h],
-                blocked: vec![0u64; (w * h).div_ceil(64)],
-                flags: None,
-            },
-            TransportGraph::default(),
-            Vec::new(),
-        )
-    }
-
-    #[test]
-    fn overlay_does_not_stroke_a_path_polyline() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        let mut ctx = dear_imgui_rs::Context::create();
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let ui = ctx.frame();
-        let mut s = Session::new();
-        s.focus.lock().unwrap().focused = Some("alice".into());
-        let world = open_world(3, 3);
-        s.arm_walk_on(
-            &world,
-            Tile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            Tile {
-                x: 2,
-                z: 2,
-                level: 0,
-            },
-        );
-        let mut overlay = PathOverlay::new();
-        ui.window("##overlay-test").build(|| {
-            overlay.frame(ui, None, [10.0, 10.0], [90.0, 90.0]);
-        });
-        ctx.render();
-        assert!(
-            overlay.points().is_empty(),
-            "polyline is gone; 3D paints the path"
-        );
-    }
 
     #[test]
     fn queue_card_lines_match_rs2b0t_copy() {
@@ -217,7 +155,7 @@ mod tests {
 
     #[test]
     fn each_bot_view_keeps_its_own_queue_place_when_focus_changes() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
@@ -237,7 +175,7 @@ mod tests {
             queue_total: 3,
             ..host_play::SlotStatus::default()
         });
-        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.set_focus_for_test("alice");
         let mut alice = PathOverlay::new();
         let mut bob = PathOverlay::new();
         ui.window("##overlay-alice").build(|| {
@@ -246,7 +184,7 @@ mod tests {
         ui.window("##overlay-bob").build(|| {
             bob.frame(ui, s.queue_for("bob"), [110.0, 10.0], [90.0, 90.0]);
         });
-        s.focus.lock().unwrap().focused = Some("bob".into());
+        s.set_focus_for_test("bob");
         ui.window("##overlay-alice-after-focus").build(|| {
             alice.frame(ui, s.queue_for("alice"), [10.0, 110.0], [90.0, 90.0]);
         });
@@ -260,7 +198,7 @@ mod tests {
 
     #[test]
     fn slot_without_queue_does_not_borrow_another_slots_card() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
@@ -268,7 +206,7 @@ mod tests {
         );
         let ui = ctx.frame();
         let mut s = Session::new();
-        s.focus.lock().unwrap().focused = Some("s00".into());
+        s.set_focus_for_test("s00");
         s.statuses.push(host_play::SlotStatus {
             username: "s00".into(),
             ..host_play::SlotStatus::default()
@@ -289,15 +227,15 @@ mod tests {
 
     #[test]
     fn overlay_skips_queue_card_when_not_queued() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
                 .renderer_has_textures(),
         );
         let ui = ctx.frame();
-        let s = Session::new();
-        s.focus.lock().unwrap().focused = Some("alice".into());
+        let mut s = Session::new();
+        s.set_focus_for_test("alice");
         let mut overlay = PathOverlay::new();
         ui.window("##overlay-queue-test").build(|| {
             overlay.frame(ui, None, [10.0, 10.0], [90.0, 90.0]);
@@ -308,7 +246,7 @@ mod tests {
 
     #[test]
     fn queue_card_metrics_use_measured_width_with_equal_padding() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
@@ -347,7 +285,7 @@ mod tests {
 
     #[test]
     fn queue_card_metrics_track_longer_k_of_n_counts() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)

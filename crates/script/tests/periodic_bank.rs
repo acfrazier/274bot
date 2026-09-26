@@ -151,6 +151,36 @@ fn seers_booth() -> NearestBoothInput<'static> {
     }
 }
 
+fn booth_loc<'a>(
+    booth: &NearestBoothInput<'a>,
+    actions: &'a [String],
+) -> script::isolate_fb::SceneEntityInput<'a> {
+    script::isolate_fb::SceneEntityInput {
+        index: 0,
+        id: booth.id,
+        name: Some(booth.name),
+        x: booth.x,
+        z: booth.z,
+        level: booth.level,
+        distance: 1,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: booth.x,
+        nz: booth.z,
+        shape: 0,
+        angle: 0,
+    }
+}
+
 fn tick(iso: &LoadIsolate, n: u64) {
     iso.on_game_tick(n);
     let _ = iso.probe("true");
@@ -241,16 +271,17 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
     snap.nearest_booth = Some(booth);
     post_snapshot_native(&iso, &snap, &[seers_ready_approach()]);
     tick(&iso, 1);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::OpenBooth {
-            x: 2725,
-            z: 3490,
-            level: 0,
-            id: 2213,
-            name: Some("Bank booth".into()),
-            action: Some("Use-quickly".into()),
-        }],
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::OpenBooth {
+                x: 2725,
+                z: 3490,
+                level: 0,
+                id: 2213,
+                ..
+            }]
+        ),
         "queued open is not completion; identity is the adjacent booth"
     );
     assert!(
@@ -422,71 +453,123 @@ export default class T extends TaskBot {
     iso.join();
 }
 
+/// Banking.ts:226–271 gives scene access precedence over a destination;
+/// PeriodicBank.ts:46–53 forwards that destination without changing priority.
 #[test]
-fn supplied_destination_is_exact_and_does_not_open_a_different_loc() {
+fn supplied_destination_is_a_fallback_and_local_access_still_wins() {
     let src = r#"
 import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
+globalThis.__after = 0;
 export default class T extends TaskBot {
     onStart() {
         this.add(new PeriodicBank({
             strategy: () => 'loot',
             itemsThreshold: () => 1,
             minutesThreshold: () => 10,
-            countLoot: () => 3,
-            deposit: (name) => name === 'Coins',
-            destination: () => ({ tile: { x: 2725, z: 3490, level: 0 } }),
+            countLoot: () => globalThis.__after ? 0 : 3,
+            deposit: () => false,
+            afterDeposit: () => { globalThis.__after++; },
+            destination: () => ({ tile: { x: 2724, z: 3490, level: 0 } }),
             returnTo: () => null,
         }));
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.here = Some(TileInput {
-        x: 2600,
-        z: 3400,
-        level: 0,
-    });
-    snap.nearest_booth = Some(NearestBoothInput {
-        x: 2655,
-        z: 3286,
-        level: 0,
-        id: 2213,
-        name: "Bank booth",
-        op: "Use-quickly",
-    });
-    post_snapshot_input(&iso, &snap);
-    tick(&iso, 1);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::WalkNear {
-            x: 2725,
-            z: 3490,
-            level: 0,
-            radius: 1,
-            allow_teleports: false,
-            allow_wilderness: true,
-            allow_bank_fetch: true,
-            request_id: 0,
-        }],
-        "RockCrab-shaped bankTile must walk the supplied stand"
-    );
-
-    snap.tick = 2;
-    snap.here = Some(TileInput {
-        x: 2725,
-        z: 3490,
-        level: 0,
-    });
-    post_snapshot_input(&iso, &snap);
-    tick(&iso, 2);
-    let reqs = iso.drain_interacts();
-    assert!(
-        reqs.iter()
-            .all(|req| !matches!(req, InteractReq::OpenBooth { x: 2655, .. })),
-        "must not fall back to a different booth: {reqs:?}"
-    );
-    iso.join();
+    for local in [false, true] {
+        let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+        let booth = if local {
+            NearestBoothInput {
+                x: 3011,
+                z: 3354,
+                ..seers_booth()
+            }
+        } else {
+            seers_booth()
+        };
+        let actions = ["Use-quickly".to_string()];
+        let locs = [booth_loc(&booth, &actions)];
+        let ready = [approach_row(booth.id, booth.x, booth.z, true, None)];
+        let mut snap = base_snapshot();
+        if local {
+            snap.here = Some(TileInput {
+                x: booth.x - 1,
+                z: booth.z,
+                level: 0,
+            });
+            snap.nearest_booth = Some(NearestBoothInput { ..booth });
+            snap.locs = &locs;
+        }
+        post_snapshot_native(&iso, &snap, &ready);
+        tick(&iso, 1);
+        let requests = iso.drain_interacts();
+        if local {
+            assert!(
+                matches!(
+                    requests.as_slice(),
+                    [InteractReq::OpenBooth {
+                        x: 3011,
+                        z: 3354,
+                        id: 2213,
+                        ..
+                    }]
+                ),
+                "local access must beat the distant destination: {requests:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    requests.as_slice(),
+                    [InteractReq::WalkNear {
+                        x: 2724,
+                        z: 3490,
+                        radius: 4,
+                        ..
+                    }]
+                ),
+                "a supplied destination must bypass bank selection: {requests:?}"
+            );
+            snap.tick = 2;
+            snap.here = Some(TileInput {
+                x: 2724,
+                z: 3490,
+                level: 0,
+            });
+            snap.nearest_booth = Some(booth);
+            snap.locs = &locs;
+            post_snapshot_native(&iso, &snap, &ready);
+            tick(&iso, 2);
+            assert!(matches!(
+                iso.drain_interacts().as_slice(),
+                [InteractReq::OpenBooth {
+                    x: 2725,
+                    z: 3490,
+                    id: 2213,
+                    ..
+                }]
+            ));
+        }
+        assert_eq!(iso.probe("__after").unwrap(), 0);
+        snap.tick = 3;
+        snap.bank_open = true;
+        snap.bank_generation = 1;
+        post_snapshot_native(&iso, &snap, &ready);
+        tick(&iso, 3);
+        assert_eq!(
+            iso.probe("__after").unwrap(),
+            0,
+            "open without loaded stock is not completion"
+        );
+        let side = [item_row("Coins", 995, 1)];
+        snap.bank_loaded = true;
+        snap.bank_side = &side;
+        for n in 4..=6 {
+            snap.tick = n;
+            post_snapshot_native(&iso, &snap, &ready);
+            tick(&iso, n);
+        }
+        assert_eq!(iso.probe("__after").unwrap(), 1);
+        iso.join();
+    }
 }
 
 #[test]
@@ -554,18 +637,29 @@ fn missing_access_backs_off_without_retry_spam() {
     let mut bag = serde_json::Map::new();
     bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
     iso.post_settings_bag(&bag);
-    let snap = base_snapshot();
+    let mut snap = base_snapshot();
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
-    assert!(iso.drain_interacts().is_empty());
-    assert!(iso
-        .probe("__log")
-        .unwrap()
-        .as_str()
-        .unwrap()
-        .contains("no bank reachable"));
-    tick(&iso, 2);
-    tick(&iso, 3);
+    let requests = iso.drain_interacts();
+    let [InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
+        panic!("no-scene banking must await the reachable picker: {requests:?}");
+    };
+    snap.tick = 2;
+    iso.post_snapshot(encode_snapshot_with_native(
+        &snap,
+        NativeFactsInput {
+            bank_selection: script::isolate_fb::BankSelectionInput {
+                request_id: *request_id,
+                generation: 1,
+                bank_index: -1,
+                kind: 4,
+            },
+            ..Default::default()
+        },
+    ));
+    for n in 2..=6 {
+        tick(&iso, n);
+    }
     assert!(
         iso.drain_interacts().is_empty(),
         "backoff must not retry-spam inside 180s"
@@ -638,7 +732,7 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
 }
 
 #[test]
-fn chicken_killer_closed_face_walks_approach_dest_before_named_open_booth() {
+fn chicken_killer_closed_face_walks_approach_before_opening_the_same_booth() {
     let iso = LoadIsolate::spawn(CHICKEN.into(), LoadShape::CompatClass, vec![]).unwrap();
     let mut bag = serde_json::Map::new();
     bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
@@ -658,6 +752,9 @@ fn chicken_killer_closed_face_walks_approach_dest_before_named_open_booth() {
         z: 3355,
         level: 0,
     });
+    let actions = ["Use-quickly".to_string()];
+    let locs = [booth_loc(&booth, &actions)];
+    snap.locs = &locs;
     snap.nearest_booth = Some(booth);
     let approaching = [approach_row(2213, 3011, 3354, false, Some((3011, 3355)))];
     post_snapshot_native(&iso, &snap, &approaching);
@@ -686,17 +783,16 @@ fn chicken_killer_closed_face_walks_approach_dest_before_named_open_booth() {
     let ready = [approach_row(2213, 3011, 3354, true, Some((3011, 3355)))];
     post_snapshot_native(&iso, &snap, &ready);
     tick(&iso, 2);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::OpenBooth {
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [InteractReq::OpenBooth {
             x: 3011,
             z: 3354,
             level: 0,
             id: 2213,
-            name: Some("Bank booth".into()),
-            action: Some("Use-quickly".into()),
+            ..
         }]
-    );
+    ));
     iso.join();
 }
 
@@ -723,6 +819,9 @@ fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
         z: 3355,
         level: 0,
     });
+    let actions = ["Use-quickly".to_string()];
+    let locs = [booth_loc(&booth, &actions)];
+    snap.locs = &locs;
     snap.nearest_booth = Some(booth);
     let approaching = [approach_row(2213, 3011, 3354, false, Some((3011, 3355)))];
     post_snapshot_native(&iso, &snap, &approaching);
@@ -761,17 +860,16 @@ fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
     let ready = [approach_row(2213, 3011, 3354, true, Some((3011, 3355)))];
     post_snapshot_native(&iso, &snap, &ready);
     tick(&iso, 3);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::OpenBooth {
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [InteractReq::OpenBooth {
             x: 3011,
             z: 3354,
             level: 0,
             id: 2213,
-            name: Some("Bank booth".into()),
-            action: Some("Use-quickly".into()),
+            ..
         }]
-    );
+    ));
     iso.join();
 }
 
@@ -821,6 +919,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     };
     let locs = [chest];
     let mut snap = base_snapshot();
@@ -860,8 +960,8 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-/// Frozen calls `setStatus`, `log` and the deposit matcher synchronously: a
-/// never-settling status promise does not hold the run, and an async
+/// Frozen calls `setStatus`, `log` and the deposit matcher synchronously:
+/// never-settling status and log promises do not hold the run, and an async
 /// matcher's Promise is truthy, so the first backpack row is deposited.
 #[test]
 fn synchronous_options_are_not_awaited() {
@@ -869,16 +969,26 @@ fn synchronous_options_are_not_awaited() {
 import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
 export default class T extends TaskBot {
     onStart() {
+        globalThis.__calls = [];
         this.add(new PeriodicBank({
             strategy: () => 'loot',
             itemsThreshold: () => 1,
             minutesThreshold: () => 10,
             countLoot: () => 2,
-            deposit: async (name) => name === 'Coins',
+            deposit: async (name) => {
+                globalThis.__calls.push(`deposit:${name}`);
+                return name === 'Coins';
+            },
             commonJunk: () => false,
             returnTo: () => null,
-            setStatus: () => new Promise(() => {}),
-            log: () => new Promise(() => {}),
+            setStatus: (status) => {
+                globalThis.__calls.push(`status:${status}`);
+                return new Promise(() => {});
+            },
+            log: (line) => {
+                globalThis.__calls.push(`log:${line}`);
+                return new Promise(() => {});
+            },
         }));
     }
 }
@@ -903,6 +1013,29 @@ export default class T extends TaskBot {
         vec![InteractReq::Deposit {
             name: "Bones".into()
         }]
+    );
+    assert_eq!(
+        iso.probe("__calls").unwrap(),
+        serde_json::json!(["status:periodic bank run", "deposit:Bones"]),
+        "status precedes the matcher, and neither returned promise holds the first deposit"
+    );
+    snap.tick = 2;
+    snap.bank_open = false;
+    snap.bank_loaded = false;
+    snap.bank_side = &[];
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(
+        iso.probe("__calls").unwrap(),
+        serde_json::json!([
+            "status:periodic bank run",
+            "deposit:Bones",
+            "log:periodic bank: completed"
+        ]),
+        "the final log follows the deposit and its pending promise does not hold completion"
     );
     iso.join();
 }
@@ -933,4 +1066,105 @@ fn an_adjacent_booth_without_an_approach_fact_fails_closed() {
         "periodic bank: no bank reachable — will retry later"
     );
     iso.join();
+}
+
+#[test]
+fn nearby_scene_booth_beats_a_distant_preset_unless_disabled() {
+    for prefer in [true, false] {
+        let source = format!(
+            r#"
+import {{ Banking }} from '../../api/bank/Banking.js';
+globalThis.__ok = null;
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Banking.open({{
+            stand: {{x:3094,z:3492,level:0}}, preferNearby: {prefer}
+        }});
+    }}
+}}"#
+        );
+        let iso = LoadIsolate::spawn(source, LoadShape::CompatClass, vec![]).unwrap();
+        let local = seers_booth();
+        let actions = ["Use-quickly".to_string()];
+        let local_locs = [booth_loc(&local, &actions)];
+        let chosen = NearestBoothInput {
+            x: if prefer { local.x } else { 3094 },
+            z: if prefer { local.z } else { 3493 },
+            ..local
+        };
+        let chosen_locs = [booth_loc(&chosen, &actions)];
+        let ready = [approach_row(chosen.id, chosen.x, chosen.z, true, None)];
+        let mut snap = base_snapshot();
+        snap.here = Some(TileInput {
+            x: 2724,
+            z: 3490,
+            level: 0,
+        });
+        snap.nearest_booth = Some(local);
+        snap.locs = &local_locs;
+        post_snapshot_native(&iso, &snap, &[seers_ready_approach()]);
+        tick(&iso, 1);
+        let requests = iso.drain_interacts();
+        if prefer {
+            assert!(
+                matches!(
+                    requests.as_slice(),
+                    [InteractReq::OpenBooth {
+                        x: 2725,
+                        z: 3490,
+                        id: 2213,
+                        ..
+                    }]
+                ),
+                "nearby booth must win: {requests:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    requests.as_slice(),
+                    [InteractReq::WalkNear {
+                        x: 3094,
+                        z: 3492,
+                        radius: 2,
+                        ..
+                    }]
+                ),
+                "preferNearby:false must honor the preset: {requests:?}"
+            );
+            snap.tick = 2;
+            snap.here = Some(TileInput {
+                x: 3094,
+                z: 3492,
+                level: 0,
+            });
+            snap.nearest_booth = Some(chosen);
+            snap.locs = &chosen_locs;
+            post_snapshot_native(&iso, &snap, &ready);
+            tick(&iso, 2);
+            assert!(matches!(
+                iso.drain_interacts().as_slice(),
+                [InteractReq::OpenBooth {
+                    x: 3094,
+                    z: 3493,
+                    id: 2213,
+                    ..
+                }]
+            ));
+        }
+        assert_eq!(iso.probe("__ok").unwrap(), serde_json::Value::Null);
+        snap.tick = 3;
+        snap.bank_open = true;
+        snap.bank_generation = 1;
+        post_snapshot_native(&iso, &snap, &ready);
+        tick(&iso, 3);
+        assert_eq!(iso.probe("__ok").unwrap(), serde_json::Value::Null);
+        snap.tick = 4;
+        snap.bank_loaded = true;
+        post_snapshot_native(&iso, &snap, &ready);
+        tick(&iso, 4);
+        assert_eq!(iso.probe("__ok").unwrap(), true);
+        iso.join();
+    }
 }

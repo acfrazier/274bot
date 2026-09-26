@@ -262,6 +262,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
     {
         let rows = statuses.lock().unwrap();
         assert_eq!(rows[0].startup_phase, StartupPhase::LoadingScene);
+        assert!(rows[0].connected, "authenticated session is connected");
         assert!(
             !rows[0].ingame,
             "producer gate stays closed until a current player"
@@ -282,6 +283,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
             "stale actor tables must not authorize Ready"
         );
         assert!(!rows[0].ingame);
+        assert!(rows[0].connected);
         assert!(snapshot.local_player().is_none());
     }
 
@@ -292,6 +294,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
         let rows = statuses.lock().unwrap();
         assert_eq!(rows[0].startup_phase, StartupPhase::Ready);
         assert!(rows[0].ingame);
+        assert!(rows[0].connected);
         assert!(snapshot.local_player().is_some());
         assert_eq!(rows[1].startup_phase, StartupPhase::Preparing);
     }
@@ -302,6 +305,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
         let rows = statuses.lock().unwrap();
         assert_eq!(rows[0].startup_phase, StartupPhase::Queueing);
         assert!(!rows[0].ingame);
+        assert!(!rows[0].connected);
         assert!(rows[0].login_started.is_none());
     }
 
@@ -316,6 +320,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
         let rows = statuses.lock().unwrap();
         assert_eq!(rows[0].startup_phase, StartupPhase::LoadingScene);
         assert!(!rows[0].ingame);
+        assert!(rows[0].connected);
         assert!(rows[0].login_started.is_some());
     }
 
@@ -337,6 +342,60 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
         assert!(rows[0].error.is_some());
         assert_eq!(rows[1].startup_phase, StartupPhase::Preparing);
     }
+}
+
+#[test]
+fn connected_session_boundary_keeps_the_connection_published() {
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        connected: true,
+        ingame: true,
+        bytes_in: 123,
+        ..SlotStatus::default()
+    }]));
+
+    assert!(publish_session_boundary_status(
+        &statuses, "alice", true, true, true
+    ));
+
+    let row = &statuses.lock().unwrap()[0];
+    assert!(
+        row.connected,
+        "a new authenticated session must not transiently publish disconnected"
+    );
+    assert!(
+        !row.ingame,
+        "the new session still closes the producer gate"
+    );
+    assert_eq!(row.bytes_in, 0);
+}
+
+#[test]
+fn disconnected_row_drops_session_counters_but_retains_script_paint() {
+    let paint = Arc::new(script::shim::ScriptPaint::default());
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        connected: true,
+        ingame: true,
+        bytes_in: 123,
+        bytes_out: 456,
+        run_sends: 7,
+        script_paint: Some(Arc::clone(&paint)),
+        ..SlotStatus::default()
+    }]));
+
+    crate::play_status::publish_slot_disconnected(&statuses, "alice");
+
+    let rows = statuses.lock().unwrap();
+    assert_eq!((rows[0].bytes_in, rows[0].bytes_out), (0, 0));
+    assert_eq!(rows[0].run_sends, 0);
+    assert!(
+        rows[0]
+            .script_paint
+            .as_ref()
+            .is_some_and(|retained| Arc::ptr_eq(retained, &paint)),
+        "disconnect retains the paused script's shared paint frame"
+    );
 }
 
 #[test]
@@ -664,6 +723,7 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         |_, _, _| {},
     );
     let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
 
     let (first_number, first_attempt, first_endpoint) =
@@ -771,6 +831,8 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
             rsa_exponent: client::PROD_LOGIN_RSAE.into(),
             expected_crc: Some([0; 9]),
             content_id: "world-edit-login-fixture".into(),
+            file_store_dir: None,
+            ondemand_persist_dir: None,
         })
         .unwrap(),
     );
@@ -1073,6 +1135,129 @@ fn stop_slot_sets_stop_and_forgets_name() {
 }
 
 #[test]
+fn stop_before_worker_start_retires_entries_and_respawn_has_one_row() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let profile = Profile {
+        username: "alice".into(),
+        password: "pw".into(),
+        uid: 7,
+        settings: ProfileSettings::default(),
+    };
+    let arm = SlotArm::new(7, true);
+    arm.bypass_asset_startup_for_test();
+    let (entered, release, published) = arm.hold_worker_start_for_test();
+    let cleaned = arm.hold_stop_cleanup_for_test();
+    play.spawn_slot(profile.clone(), None, None, Some(Arc::clone(&arm)));
+    entered
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker did not reach the startup gate");
+
+    let stopper = thread::spawn(move || {
+        play.stop_slot("alice");
+        play
+    });
+    cleaned
+        .recv_timeout(Duration::from_secs(2))
+        .expect("stop did not retire lifetime entries before joining");
+    release.send(()).unwrap();
+    published
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker did not pass lifetime-entry publication");
+    let mut play = stopper.join().unwrap();
+
+    assert!(!play.spawned.contains("alice"));
+    assert!(!play.arms.contains_key("alice"));
+    assert!(!play.handles.contains_key("alice"));
+    assert!(!play.scripts.lock().unwrap().contains_key("alice"));
+    assert!(!play.cheats.lock().unwrap().contains_key("alice"));
+    assert!(!play.wires.lock().unwrap().contains_key("alice"));
+    assert!(
+        play.statuses()
+            .iter()
+            .all(|status| status.username != "alice"),
+        "a stopped worker must not publish a ghost row after cleanup"
+    );
+
+    let replacement = SlotArm::new(8, false);
+    replacement.bypass_asset_startup_for_test();
+    let (entered, release, published) = replacement.hold_worker_start_for_test();
+    play.spawn_slot(profile, None, None, Some(Arc::clone(&replacement)));
+    entered
+        .recv_timeout(Duration::from_secs(2))
+        .expect("replacement worker did not reach the startup gate");
+    release.send(()).unwrap();
+    published
+        .recv_timeout(Duration::from_secs(2))
+        .expect("replacement did not publish its lifetime entries");
+    assert_eq!(
+        play.statuses()
+            .iter()
+            .filter(|status| status.username == "alice")
+            .count(),
+        1,
+        "a replacement lifetime owns exactly one status row"
+    );
+    play.stop_slot("alice");
+}
+
+#[test]
+fn begin_stop_slot_retires_without_joining_live_worker() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let arm = SlotArm::new(7, false);
+    play.arms.insert("alice".into(), Arc::clone(&arm));
+    play.spawned.insert("alice".into());
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    });
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    play.handles.insert(
+        "alice".into(),
+        thread::spawn(move || {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        }),
+    );
+    entered_rx.recv().unwrap();
+
+    play.begin_stop_slot("alice");
+
+    assert!(arm.stop.load(Ordering::Relaxed));
+    assert!(!play.handles.contains_key("alice"));
+    assert!(
+        play.retiring.contains_key("alice"),
+        "the live join is deferred for a finished-only reap"
+    );
+    assert!(play.statuses().is_empty());
+    release_tx.send(()).unwrap();
+    play.stop_slot("alice");
+    assert!(play.retiring.is_empty());
+}
+
+#[test]
 fn stop_slot_wakes_a_parked_thread_before_joining() {
     let mut play = run_with_io(
         &PlayOptions {
@@ -1159,6 +1344,38 @@ fn stop_slot_interrupts_login_backoff() {
     assert!(
         !done_rx.recv_timeout(Duration::from_millis(100)).unwrap(),
         "Stop cancels, rather than completes, the retry wait"
+    );
+}
+
+#[test]
+fn retry_notification_serializes_with_waiter_park() {
+    let arm = SlotArm::new(9, true);
+    let (waiter_entered, release_waiter) = arm.hold_retry_wait_before_park_for_test();
+    let (notify_entered, release_notify) = arm.hold_retry_notify_before_lock_for_test();
+
+    let waiting_arm = Arc::clone(&arm);
+    let waiter = thread::spawn(move || waiting_arm.wait_for_retry(Duration::from_millis(40)));
+    waiter_entered.recv().unwrap();
+
+    let notifying_arm = Arc::clone(&arm);
+    let (notify_returned, observe_notify_returned) = std::sync::mpsc::channel();
+    let notifier = thread::spawn(move || {
+        notifying_arm.stop.store(true, Ordering::Relaxed);
+        notifying_arm.notify_retry_wait();
+        notify_returned.send(()).unwrap();
+    });
+    notify_entered.recv().unwrap();
+    release_notify.send(()).unwrap();
+
+    let returned_while_waiter_held = observe_notify_returned
+        .recv_timeout(Duration::from_millis(100))
+        .is_ok();
+    release_waiter.send(()).unwrap();
+    assert!(!waiter.join().unwrap(), "Stop cancels the retry wait");
+    notifier.join().unwrap();
+    assert!(
+        !returned_while_waiter_held,
+        "the notifier must serialize with the predicate lock until the waiter parks"
     );
 }
 
@@ -1468,11 +1685,54 @@ fn publish_login_latched_projects_arm_latch_onto_slot_row() {
 #[test]
 fn explicit_login_rearm_clears_latch_and_allows_handshake() {
     let arm = SlotArm::new(0, true);
-    arm.latch.store(true, Ordering::Relaxed);
+    arm.request_logout();
+    let logout = arm.logout_command(true).unwrap();
+    arm.acknowledge_logout(logout);
     assert!(!should_handshake(&arm, false));
-    arm.latch.store(false, Ordering::Relaxed);
-    arm.want_login.store(true, Ordering::Relaxed);
+    arm.arm_explicit_login();
     assert!(should_handshake(&arm, false));
+}
+
+#[test]
+fn newer_login_survives_older_logout_completion() {
+    let arm = SlotArm::new(0, false);
+    arm.request_logout();
+
+    // Pause the worker after consuming Logout, then issue the newer command.
+    let worker_logout = arm.logout_command(true).unwrap();
+    arm.arm_explicit_login();
+
+    // Acknowledging the consumed generation must not overwrite newer intent.
+    arm.acknowledge_logout(worker_logout);
+
+    assert!(
+        should_handshake(&arm, false),
+        "the latest explicit Login must remain armed after an old Logout completes"
+    );
+    assert!(!arm.login_latched());
+    assert!(!arm.wants_logout());
+}
+
+#[test]
+fn logout_latches_before_worker_tick_and_clears_retry_activity() {
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        startup_phase: StartupPhase::Queueing,
+        error: Some("old retry error".into()),
+        ..Default::default()
+    }]));
+    let arm = SlotArm::new(0, false);
+
+    arm.request_logout();
+    publish_login_latched_from_arm(&statuses, "alice", &arm);
+
+    assert!(
+        arm.login_latched(),
+        "controller command owns the latch before any worker tick"
+    );
+    let rows = statuses.lock().unwrap();
+    assert!(rows[0].login_latched);
+    assert_eq!(rows[0].error, None, "latched park is current activity");
 }
 
 #[test]
@@ -1484,13 +1744,13 @@ fn title_handshake_boundary_publishes_cleared_latch_before_queue_wait() {
         ..Default::default()
     }]));
     let arm = SlotArm::new(0, false);
-    arm.latch.store(true, Ordering::Relaxed);
+    arm.request_logout();
+    let logout = arm.logout_command(true).unwrap();
+    arm.acknowledge_logout(logout);
     publish_login_latched_from_arm(&statuses, "alice", &arm);
     assert!(statuses.lock().unwrap()[0].login_latched);
 
-    // Explicit Log in / Login all: same arm flags, then production handoff.
-    arm.latch.store(false, Ordering::Relaxed);
-    arm.want_login.store(true, Ordering::Relaxed);
+    arm.arm_explicit_login();
     assert!(should_handshake(&arm, false));
     publish_login_latched_from_arm(&statuses, "alice", &arm);
 
@@ -1506,11 +1766,11 @@ fn title_handshake_boundary_publishes_cleared_latch_before_queue_wait() {
 fn spawn_without_auto_login_does_not_handshake() {
     let arm = SlotArm::new(0, false);
     assert!(!should_handshake(&arm, false));
-    arm.want_login.store(true, Ordering::Relaxed);
+    arm.arm_explicit_login();
     assert!(should_handshake(&arm, false));
-    arm.latch.store(true, Ordering::Relaxed);
+    arm.request_logout();
     assert!(!should_handshake(&arm, false));
-    arm.latch.store(false, Ordering::Relaxed);
+    arm.arm_explicit_login();
     assert!(should_handshake(&arm, false));
     assert!(!should_handshake(&arm, true));
 }
@@ -1520,20 +1780,44 @@ fn login_success_keeps_auto_login_armed_but_disarms_one_shot() {
     // CLI: `new(uid, true)` (auto_login true) stays armed so an unexpected
     // DC re-handshakes.
     let arm = SlotArm::new(0, true);
-    on_login_success(&arm);
+    let login = arm.login_command(false).unwrap();
+    on_login_success(&arm, login);
     assert!(should_handshake(&arm, false));
 
     // Panel Log in / Login all: armed explicitly, then disarmed after
     // the handshake — a DC sits on the title.
     let arm = SlotArm::new(0, false);
-    arm.want_login.store(true, Ordering::Relaxed);
-    on_login_success(&arm);
+    arm.arm_explicit_login();
+    let login = arm.login_command(false).unwrap();
+    on_login_success(&arm, login);
     assert!(!should_handshake(&arm, false));
 
-    // The intentional-logout latch blocks even an auto-login slot.
+    // A newer intentional logout wins over completion of an old login.
     let arm = SlotArm::new(0, true);
-    arm.latch.store(true, Ordering::Relaxed);
-    on_login_success(&arm);
+    let login = arm.login_command(false).unwrap();
+    arm.request_logout();
+    let logout = arm.logout_command(true).unwrap();
+    arm.acknowledge_logout(logout);
+    on_login_success(&arm, login);
+    assert!(!should_handshake(&arm, false));
+}
+
+#[test]
+fn successful_login_consumes_one_shot_after_non_conflicting_updates() {
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    let claimed = arm.login_command(false).unwrap();
+
+    // Repeated Log in / Login all and a profile auto-policy refresh agree
+    // with the claimed handshake; neither creates a second one-shot login.
+    arm.arm_explicit_login();
+    arm.set_auto_login(false);
+    on_login_success(&arm, claimed);
+
+    assert!(
+        !arm.wants_login(),
+        "the successful handshake must consume the explicit one-shot"
+    );
     assert!(!should_handshake(&arm, false));
 }
 
@@ -1575,14 +1859,14 @@ fn tick_flags_latches_an_observed_idle_logout_without_changing_saved_intent() {
     let mut client = client_after_observed_idle_logout();
     let arm = SlotArm::new(7, true);
     arm.reconnect.store(true, Ordering::Relaxed);
-    arm.want_logout.store(true, Ordering::Relaxed);
+    arm.request_logout();
 
     assert!(!tick_flags(&mut client, &[], &arm));
-    assert!(arm.latch.load(Ordering::Relaxed));
-    assert!(!arm.want_login.load(Ordering::Relaxed));
+    assert!(arm.login_latched());
+    assert!(!arm.wants_login());
     assert!(arm.auto_login.load(Ordering::Relaxed));
     assert!(arm.reconnect.load(Ordering::Relaxed));
-    assert!(arm.want_logout.load(Ordering::Relaxed));
+    assert!(arm.wants_logout());
     assert!(!should_handshake(&arm, false));
     assert_eq!(client.take_session_exit_observation(), None);
 }
@@ -1604,8 +1888,8 @@ fn unclassified_server_logout_leaves_auto_login_armed() {
     let arm = SlotArm::new(7, true);
 
     assert!(!tick_flags(&mut client, &[], &arm));
-    assert!(!arm.latch.load(Ordering::Relaxed));
-    assert!(arm.want_login.load(Ordering::Relaxed));
+    assert!(!arm.login_latched());
+    assert!(arm.wants_login());
     assert!(arm.auto_login.load(Ordering::Relaxed));
     assert!(should_handshake(&arm, false));
 }
@@ -1634,15 +1918,15 @@ fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
     );
     client.ingame = true;
     let arm = SlotArm::new(0, false);
-    arm.want_logout.store(true, Ordering::Relaxed);
+    arm.request_logout();
     // Even with stop already set, the logout probe must return false so
     // the body keeps running until !ingame (no dirty disconnect).
     arm.stop.store(true, Ordering::Relaxed);
 
     assert!(!tick_flags(&mut client, &ifaces, &arm));
-    assert!(!arm.want_logout.load(Ordering::Relaxed));
-    assert!(arm.latch.load(Ordering::Relaxed));
-    assert!(!arm.want_login.load(Ordering::Relaxed));
+    assert!(!arm.wants_logout());
+    assert!(arm.login_latched());
+    assert!(!arm.wants_login());
     assert_eq!(
         client.out.data()[0],
         client::io::ClientProt::IF_BUTTON.id as u8
@@ -1653,11 +1937,35 @@ fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
 
     // A title slot never presses; `stop` still reports.
     client.ingame = false;
-    arm.want_logout.store(true, Ordering::Relaxed);
+    arm.request_logout();
     assert!(tick_flags(&mut client, &ifaces, &arm));
     assert!(
-        arm.want_logout.load(Ordering::Relaxed),
+        arm.wants_logout(),
         "no CC_LOGOUT press on the title; the flag stays for the panel"
+    );
+}
+
+#[test]
+fn refused_logout_stays_pending_with_command_latch() {
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: true,
+    });
+    client.ingame = true;
+    let arm = SlotArm::new(0, false);
+    arm.request_logout();
+
+    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(
+        arm.wants_logout(),
+        "missing logout interface must leave the request pending"
+    );
+    assert!(
+        arm.login_latched(),
+        "the controller latch records intent before the packet succeeds"
     );
 }
 
@@ -1772,8 +2080,8 @@ fn cancellation_after_grant_before_login_abandons_the_unused_permit() {
         PermitWait::Granted
     );
 
-    arm.want_login.store(false, Ordering::Relaxed);
-    assert!(!granted_permit_may_start_login(&queue, 7, &arm, false));
+    arm.withdraw_login();
+    assert!(granted_permit_may_start_login(&queue, 7, &arm, false).is_none());
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
         Permit::Grant,
@@ -1796,7 +2104,7 @@ fn stop_after_grant_before_login_abandons_the_unused_permit() {
     );
 
     arm.stop.store(true, Ordering::Relaxed);
-    assert!(!granted_permit_may_start_login(&queue, 7, &arm, false));
+    assert!(granted_permit_may_start_login(&queue, 7, &arm, false).is_none());
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
         Permit::Grant,
@@ -1869,6 +2177,45 @@ fn login_queue_mutex_survives_panicking_owner() {
 }
 
 #[test]
+fn status_readers_recover_before_terminal_publication() {
+    let play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    });
+
+    let statuses = Arc::clone(&play.statuses);
+    let poisoner = thread::spawn(move || {
+        let _rows = statuses.lock().unwrap();
+        panic!("synthetic in-flight status panic");
+    });
+    assert!(poisoner.join().is_err());
+    assert!(play.statuses.is_poisoned());
+
+    let snapshot = play.statuses();
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot[0].username, "alice");
+    assert!(
+        !play.statuses.is_poisoned(),
+        "the first reader repairs poison before another worker can cascade"
+    );
+
+    set_startup_phase(&play.statuses, "alice", StartupPhase::Connecting);
+    assert_eq!(play.statuses()[0].startup_phase, StartupPhase::Connecting);
+}
+
+#[test]
 fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
     let mut play = run_with_io(
         &PlayOptions {
@@ -1884,16 +2231,27 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
     );
     let window_started = fill_address_window(&play.queue);
     let dead = SlotArm::new(7, true);
+    dead.bypass_asset_startup_for_test();
+    let (queued, panic_worker) = dead.hold_worker_queue_panic_for_test();
     let dead_owner = dead.queue_owner;
     play.spawn_slot(profile("dead", 7), None, None, Some(Arc::clone(&dead)));
-    assert!(
-        wait_until(5_000, || play
-            .queue
-            .lock()
-            .status_owner(dead_owner)
-            .is_some()),
-        "the spawned worker must reach its blocked FIFO wait"
-    );
+    queued
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the spawned worker must publish its blocked FIFO place");
+    assert!(play.queue.lock().status_owner(dead_owner).is_some());
+
+    let script = play
+        .scripts
+        .lock()
+        .unwrap()
+        .get("dead")
+        .cloned()
+        .expect("spawn registers its script slot");
+    let script_poisoner = thread::spawn(move || {
+        let _script = script.lock().unwrap();
+        panic!("synthetic script slot panic");
+    });
+    assert!(script_poisoner.join().is_err());
 
     let statuses = Arc::clone(&play.statuses);
     let poisoner = thread::spawn(move || {
@@ -1901,22 +2259,27 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
         panic!("synthetic status publisher panic");
     });
     assert!(poisoner.join().is_err());
-    assert!(
-        wait_until(2_000, || play
-            .handles
-            .get("dead")
-            .is_some_and(thread::JoinHandle::is_finished)),
-        "the real worker must unwind through its retirement guard"
-    );
-    assert!(play.handles.remove("dead").unwrap().join().is_err());
+    panic_worker.send(()).unwrap();
+    while !play
+        .handles
+        .get("dead")
+        .is_some_and(thread::JoinHandle::is_finished)
+    {
+        thread::yield_now();
+    }
     assert!(play.queue.lock().status_owner(dead_owner).is_none());
     {
-        let rows = play
-            .statuses
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let rows = play.statuses();
         let dead_row = rows.iter().find(|row| row.username == "dead").unwrap();
         assert_eq!((dead_row.queue_position, dead_row.queue_total), (-1, -1));
+        assert_eq!(dead_row.worker_terminal, Some(WorkerTerminal::Panicked));
+        assert!(
+            dead_row
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("slot worker panicked:")),
+            "caught unwind must leave a terminal operator message"
+        );
     }
     assert_eq!(
         request_shared(&play.queue, 8, window_started + Duration::from_secs(61)),
@@ -1927,10 +2290,74 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
         .lock()
         .acknowledge_login_return(8, window_started + Duration::from_secs(61)));
 
-    play.statuses.clear_poison();
+    assert_eq!(play.reap_finished_workers(), vec!["dead"]);
+    assert!(play.arm("dead").is_none());
+    assert!(!play.spawned.contains("dead"));
+    assert!(!play.handles.contains_key("dead"));
+    assert!(!play.scripts.lock().unwrap().contains_key("dead"));
+}
 
+#[test]
+fn finished_worker_is_reaped_before_explicit_respawn() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let stale = SlotArm::new(7, false);
+    play.arms.insert("dead".into(), Arc::clone(&stale));
+    play.spawned.insert("dead".into());
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "dead".into(),
+        startup_phase: StartupPhase::Error,
+        error: Some("bound preparation failed".into()),
+        ..SlotStatus::default()
+    });
+    let (exited, observe_exit) = std::sync::mpsc::channel();
+    play.handles.insert(
+        "dead".into(),
+        thread::spawn(move || {
+            // Last action in the worker: the receiver is the explicit
+            // lifecycle handshake, not a scheduler-yield budget.
+            exited.send(()).unwrap();
+        }),
+    );
+    observe_exit.recv().unwrap();
+    // The send is the worker's final action, but JoinHandle publishes
+    // `is_finished` only after the closure and captures are fully dropped.
+    // Wait without an arbitrary iteration/time budget: this worker has no
+    // remaining blocking operation after the explicit exit handshake.
+    while !play.handles["dead"].is_finished() {
+        thread::yield_now();
+    }
+
+    let replacement = SlotArm::new(8, false);
+    replacement.bypass_asset_startup_for_test();
+    let (entered, release, _) = replacement.hold_worker_start_for_test();
+    play.try_spawn_slot(
+        profile("dead", 8),
+        None,
+        None,
+        Some(Arc::clone(&replacement)),
+    )
+    .unwrap();
+
+    assert!(
+        Arc::ptr_eq(&play.arm("dead").unwrap(), &replacement),
+        "an explicit restart must replace the finished worker's stale arm"
+    );
+    entered
+        .recv_timeout(Duration::from_secs(2))
+        .expect("replacement worker did not start");
+    release.send(()).unwrap();
     play.stop_slot("dead");
-    assert!(play.queue.lock().status_owner(dead_owner).is_none());
 }
 
 #[test]
@@ -1938,14 +2365,14 @@ fn auto_off_before_first_wait_withdraws_auto_intent() {
     let arm = SlotArm::new(7, true);
     arm.set_auto_login(false);
     assert!(permit_wait_cancelled(&arm));
-    assert!(!arm.want_login.load(Ordering::Relaxed));
+    assert!(!arm.wants_login());
 }
 
 #[test]
 fn auto_on_arms_an_unlatched_parked_slot() {
     let arm = SlotArm::new(7, false);
     arm.set_auto_login(true);
-    assert!(arm.want_login.load(Ordering::Relaxed));
+    assert!(arm.wants_login());
     assert!(!permit_wait_cancelled(&arm));
 }
 
@@ -1970,12 +2397,12 @@ fn waiting_slot_withdraws_when_auto_login_is_cleared() {
         row_queue(&statuses, "alice")
     );
 
-    arm.auto_login.store(false, Ordering::Relaxed);
+    arm.set_auto_login(false);
 
     assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
     assert!(queue.lock().status_owner(arm.queue_owner).is_none());
     assert!(
-        !arm.want_login.load(Ordering::Relaxed),
+        !arm.wants_login(),
         "a withdrawn intent must not handshake on the next loop"
     );
     assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
@@ -1990,7 +2417,7 @@ fn explicit_login_intent_survives_auto_on_then_off() {
     arm.set_auto_login(true);
     arm.set_auto_login(false);
     assert!(
-        arm.want_login.load(Ordering::Relaxed),
+        arm.wants_login(),
         "auto toggles must not relabel and withdraw explicit intent"
     );
     assert_eq!(
@@ -2031,10 +2458,8 @@ fn waiting_slot_withdraws_on_intentional_logout_and_frees_the_head() {
         row_queue(&statuses, "alice")
     );
 
-    // Credentials Logout: latch, drop the intent, arm the IF logout.
-    alice.want_login.store(false, Ordering::Relaxed);
-    alice.latch.store(true, Ordering::Relaxed);
-    alice.want_logout.store(true, Ordering::Relaxed);
+    // Credentials Logout withdraws login and arms the IF logout atomically.
+    alice.request_logout();
 
     assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
     assert!(queue.lock().status_owner(alice.queue_owner).is_none());
@@ -2137,6 +2562,7 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
 
     // Alice owns a granted reservation and is between client.login and the
     // first ready observation when Login all lands.
+    let alice_login = alice.login_command(false).unwrap();
     assert_eq!(
         wait_for_permit(&play.queue, &play.statuses, "alice", 1, &alice),
         PermitWait::Granted
@@ -2145,7 +2571,7 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
         .queue
         .lock()
         .acknowledge_login_return(1, Instant::now()));
-    on_login_success(&alice);
+    on_login_success(&alice, alice_login);
     set_startup_phase(&play.statuses, "alice", StartupPhase::LoadingScene);
 
     play.prefer_login("alice");
@@ -2175,40 +2601,6 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
         .lock()
         .acknowledge_login_return(2, Instant::now()));
     assert!(play.login_queue_uids().is_empty());
-}
-
-#[test]
-fn wait_until_not_ingame_observes_status_flip() {
-    let play = run_with_io(
-        &PlayOptions {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    );
-    play.statuses.lock().unwrap().push(SlotStatus {
-        username: "alice".into(),
-        ingame: true,
-        ..SlotStatus::default()
-    });
-    let statuses = Arc::clone(&play.statuses);
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(30));
-        if let Some(s) = statuses
-            .lock()
-            .unwrap()
-            .iter_mut()
-            .find(|s| s.username == "alice")
-        {
-            s.ingame = false;
-        }
-    });
-    assert!(play.wait_until_not_ingame("alice", Duration::from_secs(1)));
 }
 
 #[test]
@@ -2334,96 +2726,6 @@ fn open_world(w: usize, h: usize) -> NavWorld {
         TransportGraph::default(),
         Vec::new(),
     )
-}
-
-#[test]
-fn nearest_bank_booth_is_selected_in_rust_from_packed_stands() {
-    let world = NavWorld::from_parts(
-        WorldCollision {
-            origin: WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            width: 8,
-            height: 8,
-            walk: vec![0; 64],
-            blocked: vec![0],
-            flags: None,
-        },
-        TransportGraph::default(),
-        vec![
-            nav::pack::BankStand {
-                tile: WorldTile {
-                    x: 1,
-                    z: 1,
-                    level: 0,
-                },
-                access: nav::pack::BankAccess::Npc {
-                    name: "Banker".into(),
-                    op: 2,
-                    choose: None,
-                },
-                name: "near npc".into(),
-            },
-            nav::pack::BankStand {
-                tile: WorldTile {
-                    x: 2,
-                    z: 2,
-                    level: 1,
-                },
-                access: nav::pack::BankAccess::Booth { op: 2 },
-                name: "different plane".into(),
-            },
-            nav::pack::BankStand {
-                tile: WorldTile {
-                    x: 6,
-                    z: 6,
-                    level: 0,
-                },
-                access: nav::pack::BankAccess::Booth { op: 2 },
-                name: "same plane".into(),
-            },
-        ],
-    );
-    let world = Arc::new(world);
-    assert_eq!(
-        nearest_bank_booth(&world, (0, 0, 0)),
-        Some(WorldTile {
-            x: 6,
-            z: 6,
-            level: 0,
-        })
-    );
-    assert_eq!(nearest_bank_booth(&open_world(2, 2), (0, 0, 0)), None);
-
-    let navs = Arc::new(Mutex::new(HashMap::new()));
-    let mut client = bank_client();
-    let mut snapshot = GameSnapshot::new();
-    snapshot.rebuild(&client);
-    assert!(dispatch_script_interact(
-        &mut client,
-        &snapshot,
-        None,
-        Some((0, 0, 0)),
-        &navs,
-        &Some(world),
-        None,
-        "nearest-bank",
-        vec![script::shim::InteractReq::WalkNearestBank],
-    ));
-    assert_eq!(
-        navs.lock().unwrap()["nearest-bank"].requested_route,
-        Some(native_requested(
-            WorldTile {
-                x: 6,
-                z: 6,
-                level: 0,
-            },
-            1,
-            false,
-        ))
-    );
 }
 
 #[test]
@@ -2813,6 +3115,82 @@ fn route_end_of_request_id_zero_publishes_nothing() {
     assert_eq!(bot.walk_outcome_seq, 0, "request id 0 publishes nothing");
 }
 
+/// Frozen `'blocked'` (`WalkExecutor.ts:1092-1094`): a follow that ends
+/// `EndBlocked` settles the armed walk as its route end, flagged blocked,
+/// where any other stall publishes a failure.
+#[test]
+fn end_blocked_follow_settles_the_armed_walk_as_a_blocked_route_end() {
+    let dest = WorldTile {
+        x: 4,
+        z: 4,
+        level: 0,
+    };
+    let mut bot = NavBot {
+        route_generation: 1,
+        requested_route: Some(native_requested(dest, 0, false)),
+        walk_request_id: 9,
+        ..Default::default()
+    };
+    bot.publish_route(
+        1,
+        9,
+        false,
+        RouteOutcome::Routed(Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        }),
+    );
+    apply_nav_follow_outcome(
+        &mut bot,
+        Some(nav::traveller::TravelOutcome::Stalled {
+            at: WorldTile {
+                x: 4,
+                z: 3,
+                level: 0,
+            },
+            aiming: dest,
+            why: nav::traveller::HopFailure::EndBlocked,
+            tries: 0,
+        }),
+        false,
+    );
+    assert!(bot.route.is_none(), "the follow ended");
+    assert_eq!(bot.walk_outcome_seq, 1);
+    assert_eq!(bot.walk_outcome_request_id, 9);
+    assert!(!bot.walk_outcome_failed, "blocked is a settled route end");
+    assert!(bot.walk_outcome_blocked);
+
+    // A plain stall of the next walk fails and clears the flag.
+    bot.walk_request_id = 10;
+    bot.publish_route(
+        1,
+        10,
+        false,
+        RouteOutcome::Routed(Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        }),
+    );
+    apply_nav_follow_outcome(
+        &mut bot,
+        Some(nav::traveller::TravelOutcome::Stalled {
+            at: WorldTile {
+                x: 4,
+                z: 3,
+                level: 0,
+            },
+            aiming: dest,
+            why: nav::traveller::HopFailure::Dropped,
+            tries: 1,
+        }),
+        false,
+    );
+    assert!(bot.walk_outcome_failed);
+    assert!(!bot.walk_outcome_blocked);
+}
+
 #[test]
 fn bank_fetch_session_refuses_exact_walk_near() {
     let dest = WorldTile {
@@ -2953,6 +3331,7 @@ fn posted_from_bot(bot: &NavBot) -> PostedWalkOutcome {
         level: bot.walk_outcome_level,
         radius: bot.walk_outcome_radius,
         allow_teleports: bot.walk_outcome_allow_teleports,
+        blocked: false,
     }
 }
 
@@ -3315,6 +3694,7 @@ fn two_same_target_requests_delayed_old_outcome_does_not_settle() {
             level: 0,
             radius: 1,
             allow_teleports: false,
+            blocked: false,
         },
     ));
     iso.on_game_tick(2);
@@ -3519,6 +3899,8 @@ fn same_key_pending_route_refuses_distinct_id() {
                 opts: FindOptions::default(),
                 state: None,
                 bank: vec![],
+                live_candidates: None,
+                completion: Default::default(),
             }),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
@@ -3841,6 +4223,7 @@ fn new_isolate_does_not_consume_prior_host_outcome() {
         level: 0,
         radius: 1,
         allow_teleports: false,
+        blocked: false,
     };
     let iso2 = script::LoadIsolate::spawn(
         walk_resilient_src(2820, 3556, 1),
@@ -3889,6 +4272,7 @@ fn bank_fetch_refusal_echoes_isolate_request_id() {
         level: 0,
         radius: 0,
         allow_teleports: false,
+        blocked: false,
     };
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "bank".to_string(),
@@ -4044,6 +4428,8 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("open floor should route");
@@ -4087,6 +4473,8 @@ fn radius_calculate_drops_wall_separated_candidate() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("same-room approach should route");
@@ -4135,6 +4523,8 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("occupied target should route to a neighbour");
@@ -4183,6 +4573,8 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let component = nav::router::local_step_component(&request.world.collision, target, 1);
     let same_side = WorldTile {
@@ -4234,6 +4626,8 @@ fn radius_calculate_drops_detour_outside_radius() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let component = nav::router::local_step_component(&request.world.collision, target, 1);
     assert!(!component.contains(&WorldTile {
@@ -4283,6 +4677,8 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("actual 289 route should exist");
@@ -4458,6 +4854,80 @@ fn grant_login(s: &mut std::net::TcpStream, log: &Mutex<Vec<u8>>, code: u8) {
 }
 
 // --- Task 5: per-uid compiled scripts ---
+
+#[test]
+fn script_stop_clears_offline_published_paint() {
+    let play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    script_slot_or_insert(&play.scripts, "alice");
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+        ..SlotStatus::default()
+    });
+
+    play.script_pause("alice");
+    assert!(
+        play.statuses.lock().unwrap()[0].script_paint.is_some(),
+        "Pause retains the offline paint frame"
+    );
+
+    play.script_stop("alice");
+
+    assert!(
+        play.statuses.lock().unwrap()[0].script_paint.is_none(),
+        "script lifecycle owner clears paint without an online observe"
+    );
+}
+
+#[test]
+fn fenced_script_stop_requires_same_identity_and_generation() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    play.script_start_load(
+        "alice",
+        "export function tick(api) {}".into(),
+        script::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .unwrap();
+    wait_script_state(&play, "alice", script::RunState::Running);
+    play.script_attach_identity("alice", "card:a");
+    let generation = play.script_runtime_generation("alice").unwrap();
+
+    assert!(!play.script_stop_if_identity_generation("alice", "card:b", generation));
+    assert!(!play.script_stop_if_identity_generation(
+        "alice",
+        "card:a",
+        generation.wrapping_add(1)
+    ));
+    assert_eq!(play.script_state("alice"), script::RunState::Running);
+
+    assert!(play.script_stop_if_identity_generation("alice", "card:a", generation));
+    wait_script_state(&play, "alice", script::RunState::Idle);
+}
 
 #[test]
 fn script_start_unknown_compiled_id_errors_without_v8() {
@@ -4847,6 +5317,104 @@ fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
 }
 
 #[test]
+fn poisoned_script_slot_reads_as_retiring_until_reaped() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.spawned.insert("alice".into());
+    let slot = script_slot_or_insert(&play.scripts, "alice");
+    let poisoner = {
+        let slot = Arc::clone(&slot);
+        thread::spawn(move || {
+            let _slot = slot.lock().unwrap();
+            panic!("synthetic script worker panic");
+        })
+    };
+    assert!(poisoner.join().is_err());
+    assert!(slot.is_poisoned());
+
+    assert_eq!(play.script_state("alice"), script::RunState::Idle);
+    assert_eq!(play.script_poll_start("alice"), script::StartPoll::NotOwed);
+    assert!(play.script_take_pending_logs("alice").is_empty());
+    assert_eq!(play.script_last_error("alice"), None);
+    assert_eq!(play.script_lifecycle_receipt("alice"), None);
+    assert!(
+        slot.is_poisoned(),
+        "readers must leave retirement and poison repair to the reaper"
+    );
+    assert_eq!(play.script_runtime_generation("alice"), None);
+    assert_eq!(play.script_source_identity("alice"), None);
+
+    let settings = serde_json::Map::new();
+    assert!(play
+        .script_start("alice", script::CompiledId("Sherlock"))
+        .is_err());
+    assert!(play
+        .script_start_load(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            None,
+            Vec::new(),
+        )
+        .is_err());
+    assert!(play
+        .script_start_load_typed(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            None,
+            Vec::new(),
+        )
+        .is_err());
+    let start = play.script_start_handle();
+    assert!(start
+        .start_load(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            None,
+            Vec::new(),
+        )
+        .is_err());
+    assert!(start
+        .start_load_with_loadouts(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            None,
+            Vec::new(),
+            &[],
+        )
+        .is_err());
+    assert!(start
+        .start_compiled("alice", script::CompiledId("Sherlock"))
+        .is_err());
+
+    play.script_pause("alice");
+    play.script_resume("alice");
+    play.script_stop("alice");
+    assert!(!play.script_stop_if_identity_generation("alice", "file:any", 0));
+    play.script_attach_identity("alice", "file:any");
+    assert!(!play.script_post_settings_fenced("alice", &settings, "file:any", 0));
+    play.script_paint_click("alice", "button", 1);
+    play.script_paint_select("alice", "tabs", "tab", 1);
+    assert!(
+        slot.is_poisoned(),
+        "refused readers and mutators leave poison repair to the reaper"
+    );
+}
+
+#[test]
 fn queue_wire_lands_on_the_named_slots_queue() {
     let mut play = run_with_io(
         &PlayOptions {
@@ -4968,7 +5536,7 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
         },
     )])));
 
-    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs);
+    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs, false);
 
     let script = script_slot(&scripts, "alice").unwrap();
     let script = script.lock().unwrap();
@@ -9191,8 +9759,10 @@ fn dispatch_inv_button_preserves_selected_trade_side_id() {
 }
 
 #[test]
-fn dispatch_script_interact_walk_to_is_the_scene_packet() {
+fn dispatch_script_interact_walk_to_uses_nearest_scene_packet_for_solid_target() {
     let mut c = bank_client();
+    c.collision[0].flags[5][7] |= client::dash3d::CollisionFlag::SQ_BLOCKED;
+    c.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     let (navs, world) = empty_nav();
@@ -9208,16 +9778,16 @@ fn dispatch_script_interact_walk_to_is_the_scene_packet() {
             None,
             "alice",
             vec![script::shim::InteractReq::WalkTo {
-                x: 3206,
-                z: 3205,
+                x: 3205,
+                z: 3207,
                 level: 0,
             }],
         ),
-        "walk-to must dispatch Interactions::walk"
+        "DirectNavigator walk-to must accept the client's nearest stand for a solid target"
     );
     assert!(
         c.out.pos > before,
-        "walk-to is the try_move packet, not a Traveller latch"
+        "solid-target walk-to must write the try_nearest packet, not idle"
     );
     assert!(
         navs.lock()
@@ -9260,6 +9830,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     });
     let (walk, blocked) = nav::collision::pack_walk(&flags);
     let world = Some(Arc::new(NavWorld::from_parts(
@@ -9333,9 +9904,28 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
     );
 }
 
+/// A 5×12 open strip straddling the surface wilderness edge (z 3520),
+/// with the content zone packed on the graph: routing gates wilderness
+/// entry on `graph.wilderness`, so a fixture without zones gates nothing.
 fn wilderness_entry_world() -> NavWorld {
     let flags = vec![0u32; 5 * 12];
     let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let graph = TransportGraph {
+        wilderness: nav::transport::WildernessRules {
+            zones: vec![nav::transport::WildernessZone {
+                x1: 2944,
+                z1: 3520,
+                x2: 3391,
+                z2: 6399,
+                level1: 0,
+                level2: 3,
+                origin_z: 3520,
+            }],
+            divisor: 8,
+            offset: 1,
+        },
+        ..TransportGraph::default()
+    };
     NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -9349,7 +9939,7 @@ fn wilderness_entry_world() -> NavWorld {
             blocked,
             flags: None,
         },
-        TransportGraph::default(),
+        graph,
         Vec::new(),
     )
 }
@@ -9894,8 +10484,11 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
 /// A 5×5 world walled between x=1 and x=2, crossed only by a door
 /// gated on wearing a knife (obj `knife_id`), with a bank booth
 /// stand at (0, 4).
-fn knife_nav_world(knife_id: i32) -> NavWorld {
+fn knife_nav_world_with_target(knife_id: i32, solid_target: bool) -> NavWorld {
     let mut flags = vec![0u32; 25];
+    if solid_target {
+        flags[4 * 5 + 4] |= client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
+    }
     for z in 0..5 {
         flags[z * 5 + 1] |= client::dash3d::CollisionFlag::W_E as u32;
         flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
@@ -9923,6 +10516,7 @@ fn knife_nav_world(knife_id: i32) -> NavWorld {
         varp_req: vec![],
         worn_req: vec![knife_id],
         members_req: false,
+        wildy_cap: None,
     };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
@@ -9952,6 +10546,10 @@ fn knife_nav_world(knife_id: i32) -> NavWorld {
             access: nav::pack::BankAccess::Booth { op: 2 },
         }],
     )
+}
+
+fn knife_nav_world(knife_id: i32) -> NavWorld {
+    knife_nav_world_with_target(knife_id, false)
 }
 
 /// Task 8 — the BankBudget session unit: the inventory is full of
@@ -10040,6 +10638,66 @@ fn bank_fetch_session_deposits_withdraws_wears_then_finds() {
     )
     .expect("the post-session strict re-find crosses");
     assert_eq!(r.dest, to);
+}
+
+#[test]
+fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
+    let mut client = bank_fetch_client();
+    client.map_build_base_x = 0;
+    client.map_build_base_z = 0;
+    client.local_player = Some(client::dash3d::ClientPlayer::at(0, 4));
+    client.collision[0].flags[4][4] |= client::dash3d::CollisionFlag::SQ_BLOCKED;
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let world = Arc::new(knife_nav_world_with_target(2, true));
+    let state = WorldState::from_snapshot(&snapshot);
+    let bank_rows: Vec<(i32, i32)> = snapshot
+        .bank()
+        .iter()
+        .map(|it| (it.def.id, it.count))
+        .collect();
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let arm = ScriptWalkArm {
+        here: Some((0, 4, 0)),
+        world: Some(Arc::clone(&world)),
+        navs: Arc::clone(&navs),
+        name: "alice".into(),
+        state: Some(state),
+        bank: bank_rows,
+    };
+    let worker_done = arm
+        .queue_route_in_snapshot_synced(
+            &snapshot,
+            4,
+            4,
+            0,
+            FindOptions {
+                allow_bank_fetch: true,
+                ..FindOptions::default()
+            },
+            1,
+            true,
+            71,
+        )
+        .expect("solid-target route accepted");
+    worker_done
+        .recv_timeout(Duration::from_secs(1))
+        .expect("route worker completes");
+
+    let navs = navs.lock().unwrap();
+    let fetch = navs
+        .get("alice")
+        .and_then(|bot| bot.bank_fetch.as_ref())
+        .expect("missing worn knife plans a bank session after the shared strict NoPath");
+    // (3,4) and (4,3) tie at 3.5 ticks through the door; the radius
+    // fallback's diagonal (3,3) is cheaper but cannot operate the target.
+    let cardinal = [(3, 4), (4, 3)].map(|(x, z)| WorldTile { x, z, level: 0 });
+    assert!(
+        cardinal.contains(&fetch.dest),
+        "the in-scene first-goal diagnosis must use a target-cardinal stand, got {:?}",
+        fetch.dest
+    );
+    assert_eq!(fetch.final_route.dest, fetch.dest);
 }
 
 /// Fix round — BankBudget execute on the live walk arm: `allow_bank_fetch`
@@ -10332,6 +10990,138 @@ fn script_observe_ticks_only_on_player_edge_while_up() {
         &world, false, false
     ));
     assert_eq!(*count.lock().unwrap(), 2);
+}
+
+#[test]
+fn script_run_policy_override_reaches_host_auto_run_and_stop_clears_it() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    cheats
+        .lock()
+        .unwrap()
+        .insert("alice".into(), VecDeque::new());
+    let (navs, world) = empty_nav();
+    let slot = script_slot_or_insert(&scripts, "alice");
+    let run_policy_override = slot.lock().unwrap().run_policy_override_cell();
+    {
+        let mut slot = slot.lock().unwrap();
+        slot.start_load_settled(
+            r#"
+import { RunManager } from '../../runtime/RunManager.js';
+export default class T extends LoopingBot {
+    loop() {
+        RunManager.override({ energyMin: 80 });
+    }
+}
+"#
+            .into(),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("run-policy script starts");
+    }
+
+    let mut client = prepare_client(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    client.ingame = true;
+    client.scene_state = 2;
+    client.local_player = Some(client::client::ClientPlayer::at(10, 10));
+    client.gens.player = 1;
+    client.gens.player_info = 1;
+    client.runenergy = 20;
+
+    script_observe(
+        &mut client,
+        "alice",
+        true,
+        true,
+        1,
+        Some((10, 10, 0)),
+        None,
+        None,
+        None,
+        None,
+        &scripts,
+        &cheats,
+        &navs,
+        &world,
+        false,
+        false,
+    );
+    slot.lock()
+        .unwrap()
+        .probe("true")
+        .expect("the script's policy override tick completes");
+    assert_eq!(
+        slot.lock().unwrap().run_policy_override(),
+        Some(api::run_policy::RunPolicyOverride {
+            run_auto: None,
+            energy_min: Some(api::run_policy::RunEnergyMin::Floor(80)),
+        })
+    );
+
+    let drive_one_host_frame = |client: &mut Client| {
+        let done = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&done);
+        Host::run_client(
+            client,
+            "alice",
+            vault::ProfileSettings::default(),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(Mutex::new("strength".to_string())),
+            None,
+            None,
+            None,
+            Arc::clone(&run_policy_override),
+            move |_, _, _, _| {
+                observed.store(true, Ordering::Relaxed);
+                false
+            },
+            move |_| done.load(Ordering::Relaxed),
+            |_| RandomClaim::Host,
+        );
+    };
+    let run_button_sent = |client: &Client| {
+        client.out.data()[..client.out.pos]
+            .windows(3)
+            .any(|packet| {
+                packet[0] == client::io::ClientProt::IF_BUTTON.id as u8
+                    && u16::from_be_bytes([packet[1], packet[2]])
+                        == api::interact::RUN_ORB_IFACE as u16
+            })
+    };
+
+    drive_one_host_frame(&mut client);
+    assert!(
+        !run_button_sent(&client),
+        "the script's energyMin override suppresses auto-run below 80 energy"
+    );
+
+    slot.lock().unwrap().stop();
+    assert_eq!(
+        run_policy_override.get(),
+        None,
+        "Stop clears the shared cell"
+    );
+    client.out.pos = 0;
+    drive_one_host_frame(&mut client);
+    assert!(
+        run_button_sent(&client),
+        "after Stop, host auto-run falls back to the host's 20-energy default"
+    );
 }
 
 #[test]
@@ -12821,6 +13611,7 @@ fn welcome_hold_skips_compiled_tick_until_observed_close() {
     let open = login_readiness::WelcomeObservation {
         session_epoch: welcome.session_epoch(),
         tick: 1,
+        now: Instant::now(),
         ingame: true,
         scene_state: 2,
         welcome_interface_id: 42,
@@ -13752,10 +14543,23 @@ fn session_reset_clears_live_recovery_walk() {
         "alice".into(),
         NavBot {
             route_worker: Some(Arc::new(())),
+            requested_route: Some((
+                WorldTile {
+                    x: 100,
+                    z: 100,
+                    level: 0,
+                },
+                3,
+                false,
+                true,
+                false,
+            )),
             ..NavBot::default()
         },
     );
-    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs);
+    // A reconnect: the script's work is held, but the watchdog's own
+    // recovery walk ends with the session and is not carried.
+    reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs, true);
     assert!(script_slot(&scripts, "alice")
         .unwrap()
         .lock()
@@ -13766,11 +14570,511 @@ fn session_reset_clears_live_recovery_walk() {
     let bot = navs.lock().unwrap();
     let bot = bot.get("alice").unwrap();
     assert!(bot.route_worker.is_none());
+    assert!(bot.carried_walk.is_none());
     script_slot(&scripts, "alice")
         .unwrap()
         .lock()
         .unwrap()
         .stop();
+}
+
+/// A Load script walking on a 64×64 open world, driven through
+/// `script_observe` frame by frame, for the reconnect lifecycle.
+struct ReconnectRig {
+    scripts: ScriptWall,
+    cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
+    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    world: Option<Arc<NavWorld>>,
+    client: Client,
+    snap: GameSnapshot,
+}
+
+type ArmedWalk = (u64, Option<(WorldTile, i32, bool, bool, bool)>);
+
+impl ReconnectRig {
+    fn new(x: i32, z: i32) -> Self {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        Self::start(&scripts, x, z);
+        let client = bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&client);
+        Self {
+            scripts,
+            cheats: Arc::new(Mutex::new(HashMap::new())),
+            wires: Arc::new(Mutex::new(HashMap::new())),
+            navs: Arc::new(Mutex::new(HashMap::new())),
+            world: Some(Arc::new(open_world(64, 64))),
+            client,
+            snap,
+        }
+    }
+
+    /// Start a script whose loop walks to `(x, z)` (radius 1).
+    fn start(scripts: &ScriptWall, x: i32, z: i32) {
+        script_slot_or_insert(scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load_settled(
+                walk_resilient_src(x, z, 1),
+                script::LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+    }
+
+    fn slot(&self) -> ScriptSlot {
+        script_slot(&self.scripts, "alice").unwrap()
+    }
+
+    /// One observed frame, then wait for the isolate to finish its work.
+    fn frame(&mut self, tick: u64, tick_edge: bool) {
+        script_observe(
+            &mut self.client,
+            "alice",
+            true,
+            tick_edge,
+            tick,
+            Some((3, 3, 0)),
+            None,
+            None,
+            Some(&self.snap),
+            None,
+            &self.scripts,
+            &self.cheats,
+            &self.navs,
+            &self.world,
+            false,
+            false,
+        );
+        self.slot().lock().unwrap().probe("true").unwrap();
+    }
+
+    /// A frame that posts and ticks, then one that dispatches what the
+    /// tick queued.
+    fn frames(&mut self, tick: u64) {
+        self.frame(tick, true);
+        self.frame(tick, false);
+    }
+
+    fn armed(&self) -> ArmedWalk {
+        let navs = self.navs.lock().unwrap();
+        navs.get("alice")
+            .map_or((0, None), |bot| (bot.walk_request_id, bot.requested_route))
+    }
+
+    /// Every script walk host-play dispatched: (request id, dest x, dest z).
+    fn walks(&self) -> Vec<(u64, i32, i32)> {
+        let navs = self.navs.lock().unwrap();
+        navs.get("alice")
+            .map(|bot| {
+                bot.acts
+                    .published()
+                    .rows
+                    .into_iter()
+                    .filter_map(|row| match row.act {
+                        crate::catalog_core::ScriptAct::Walk {
+                            dest, request_id, ..
+                        } => Some((request_id, dest.x, dest.z)),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn boundary(&self, reconnect: bool) {
+        reset_slot_session_work(
+            "alice",
+            &self.scripts,
+            &self.cheats,
+            &self.wires,
+            &self.navs,
+            reconnect,
+        );
+    }
+
+    fn wait_state(&self, want: script::RunState) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let state = {
+                let slot = self.slot();
+                let mut slot = slot.lock().unwrap();
+                slot.observe_lifecycle();
+                slot.state()
+            };
+            if state == want {
+                return;
+            }
+            assert!(Instant::now() < deadline, "slot stuck in {state:?}");
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+fn walk_dest(x: i32, z: i32) -> Option<(WorldTile, i32, bool, bool, bool)> {
+    Some((WorldTile { x, z, level: 0 }, 1, false, true, true))
+}
+
+/// A reconnect mid-walk: the relogged session's first dispatch re-arms the
+/// walk the held script is still waiting on, under its own request id (so
+/// the wait settles on it). An operator logout carries nothing.
+#[test]
+fn a_reconnect_re_arms_the_held_script_walk_on_the_relogged_session() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (request_id, requested) = rig.armed();
+    assert_ne!(request_id, 0, "the script walk is armed");
+    assert_eq!(requested, walk_dest(40, 40));
+
+    rig.boundary(true);
+    assert_eq!(rig.armed(), (0, None), "the old connection's follow ends");
+    rig.frames(2);
+    assert_eq!(
+        rig.armed(),
+        (request_id, requested),
+        "the relogged session re-arms the same walk"
+    );
+    assert_eq!(
+        rig.slot().lock().unwrap().probe("__rs_ok").unwrap(),
+        serde_json::Value::Null,
+        "and the script is still waiting on it"
+    );
+
+    rig.boundary(false);
+    rig.frames(3);
+    assert_eq!(rig.armed(), (0, None), "an operator logout carries nothing");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// The script emits its walk and the connection drops before host-play
+/// drains it: the request never reached the old session, so the relogged
+/// session dispatches it, once, under its own request id.
+#[test]
+fn a_walk_emitted_just_before_the_drop_goes_out_after_the_relog() {
+    let mut rig = ReconnectRig::new(40, 40);
+    // The posting frame only: the tick queues the walk, nothing drains it.
+    rig.frame(1, true);
+    assert_eq!(rig.armed(), (0, None));
+
+    rig.boundary(true);
+    rig.frames(2);
+    let (request_id, requested) = rig.armed();
+    assert_ne!(
+        request_id, 0,
+        "the undispatched walk goes out after the relog"
+    );
+    assert_eq!(requested, walk_dest(40, 40));
+    assert_eq!(rig.walks(), vec![(request_id, 40, 40)], "exactly once");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Frozen relogs a running or paused script whatever the auto-login
+/// checkbox says (`AutoRelogin.ts:175-190`): under the default profile
+/// (auto-login off) a drop still relogs and the script's work is held.
+#[test]
+fn an_active_script_relogs_a_dropped_connection_with_auto_login_off() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    assert!(!should_handshake(&arm, false), "auto-login is off");
+    rig.frames(1);
+    let armed = rig.armed();
+
+    end_slot_session(
+        "alice",
+        &arm,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+    );
+    assert!(should_handshake(&arm, false), "the active script relogs");
+    // The relogged session's own boundary is a reconnect too.
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    end_slot_session(
+        "alice",
+        &arm,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+    );
+    rig.frames(2);
+    assert_eq!(rig.armed(), armed, "and its walk carries on");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// A relog only the script wanted lapses when the script stops before it
+/// happens (frozen `clearReconnect`, `AutoRelogin.ts:196-198`).
+#[test]
+fn a_script_relog_lapses_when_the_script_stops_first() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.frames(1);
+    end_slot_session(
+        "alice",
+        &arm,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+    );
+    assert!(should_handshake(&arm, false));
+
+    rig.slot().lock().unwrap().stop();
+    rig.wait_state(script::RunState::Idle);
+    sync_script_login(&arm, &rig.scripts, "alice");
+    assert!(
+        !should_handshake(&arm, false),
+        "nothing wants the relog now"
+    );
+}
+
+/// An operator Logout latches the slot: the drop that follows neither
+/// relogs nor holds the script's work, so a later Log in starts no
+/// carried walk.
+#[test]
+fn an_operator_logout_ends_the_script_work_and_does_not_relog() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.frames(1);
+    let before = rig.walks().len();
+
+    arm.request_logout();
+    arm.acknowledge_logout(arm.logout_command(true).unwrap());
+    end_slot_session(
+        "alice",
+        &arm,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+    );
+    assert!(!should_handshake(&arm, false), "a Logout does not relog");
+
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    end_slot_session(
+        "alice",
+        &arm,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+    );
+    rig.frames(2);
+    assert_eq!(rig.armed(), (0, None), "the walk ended with the session");
+    assert_eq!(rig.walks().len(), before, "and nothing re-dispatched it");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Operator Pause while the reconnect holds the script: the relog does not
+/// resume it, and Resume sends the carried walk once, no other.
+#[test]
+fn pause_during_a_reconnect_hold_defers_the_carried_walk_to_resume() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (request_id, requested) = rig.armed();
+
+    rig.boundary(true);
+    assert!(!rig.slot().lock().unwrap().pause());
+    rig.frames(2);
+    assert_eq!(rig.armed(), (0, None), "paused: nothing goes out");
+
+    rig.slot().lock().unwrap().resume();
+    rig.frames(3);
+    assert_eq!(rig.armed(), (request_id, requested));
+    assert_eq!(
+        rig.walks(),
+        vec![(request_id, 40, 40), (request_id, 40, 40)],
+        "the original dispatch and its carried re-dispatch, nothing else"
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Stop then Start of another script before the relog: the old run's
+/// carried walk never arms for the new run, whose own walk is the only one.
+#[test]
+fn stop_and_start_before_the_relog_drop_the_old_runs_carried_walk() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (old_id, _) = rig.armed();
+
+    rig.boundary(true);
+    rig.slot().lock().unwrap().stop();
+    rig.wait_state(script::RunState::Idle);
+    ReconnectRig::start(&rig.scripts, 20, 20);
+    rig.frames(2);
+    let (new_id, requested) = rig.armed();
+    assert_ne!(new_id, old_id);
+    assert_eq!(requested, walk_dest(20, 20), "only the new run walks");
+    assert_eq!(rig.walks(), vec![(old_id, 40, 40), (new_id, 20, 20)]);
+    rig.slot().lock().unwrap().stop();
+}
+
+/// A runtime recreated during the hold (the watchdog restart; a runaway
+/// cut takes the same path): the old run's carried walk never arms, and
+/// the new run starts its own walk as the only chain.
+#[test]
+fn a_restart_during_a_reconnect_hold_drops_the_old_runs_carried_walk() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (old_id, _) = rig.armed();
+
+    rig.boundary(true);
+    {
+        let slot = rig.slot();
+        let mut slot = slot.lock().unwrap();
+        slot.on_is_up(true);
+        let now = Instant::now();
+        slot.feed_watchdog(now, Some((3, 3, 0)), &[], false, true, &[]);
+        slot.restart_load_from_identity(now).unwrap();
+    }
+    rig.wait_state(script::RunState::Running);
+    rig.frames(2);
+    let (new_id, requested) = rig.armed();
+    assert_ne!(new_id, old_id);
+    assert_eq!(requested, walk_dest(40, 40));
+    assert_eq!(rig.walks(), vec![(old_id, 40, 40), (new_id, 40, 40)]);
+    rig.slot().lock().unwrap().stop();
+}
+
+/// A fake login server: every connection that opens with the login
+/// preface (14) is counted and closed.
+fn counting_login_server() -> (std::net::SocketAddr, Arc<std::sync::atomic::AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&attempts);
+    thread::spawn(move || {
+        for socket in listener.incoming() {
+            let Ok(mut socket) = socket else { return };
+            let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut preface = [0; 2];
+            if socket.read_exact(&mut preface).is_ok() && preface[0] == 14 {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    });
+    (endpoint, attempts)
+}
+
+fn offline_play(endpoint: std::net::SocketAddr) -> Play {
+    run_with_io(
+        &PlayOptions {
+            host: endpoint.ip().to_string(),
+            port: endpoint.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+}
+
+fn start_offline_script(play: &Play) {
+    script_slot_or_insert(&play.scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_load_settled(
+            walk_resilient_src(40, 40, 1),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+}
+
+/// Frozen recomputes `autoLogin || scriptActive()` every frame
+/// (`AutoRelogin.ts:175-198`). A slot sitting offline with auto-login off
+/// and nothing to log in for stays on the title; a script started there
+/// (Stop→Start during an outage) logs it in on the title loop.
+#[test]
+fn a_script_started_on_an_offline_slot_logs_it_in() {
+    let (endpoint, attempts) = counting_login_server();
+    let mut play = offline_play(endpoint);
+    let arm = SlotArm::new(42, false);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(attempts.load(Ordering::SeqCst), 0, "nothing wants a login");
+
+    start_offline_script(&play);
+    assert!(
+        wait_until(5_000, || attempts.load(Ordering::SeqCst) > 0),
+        "the active script logs the slot in"
+    );
+    arm.stop.store(true, Ordering::Relaxed);
+    play.script_stop("alice");
+    play.stop_slot("alice");
+}
+
+/// Turning auto-login off while a script is active keeps the login the
+/// script wants (frozen `autoLogin || scriptActive()`).
+#[test]
+fn turning_auto_login_off_keeps_the_login_an_active_script_wants() {
+    let (endpoint, attempts) = counting_login_server();
+    let mut play = offline_play(endpoint);
+    start_offline_script(&play);
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    arm.set_auto_login(false);
+    play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
+    assert!(
+        wait_until(5_000, || attempts.load(Ordering::SeqCst) > 0),
+        "the active script still logs the slot in"
+    );
+    arm.stop.store(true, Ordering::Relaxed);
+    play.script_stop("alice");
+    play.stop_slot("alice");
+}
+
+/// The login want is the level of both reasons: auto-login turned on while
+/// a script wanted the login survives the script's Stop, and neither
+/// outlasts an operator Logout.
+#[test]
+fn the_login_want_follows_auto_login_or_an_active_script() {
+    let arm = SlotArm::new(0, false);
+    assert!(!should_handshake(&arm, false));
+    arm.set_script_active(true);
+    assert!(should_handshake(&arm, false), "the script wants it");
+    arm.set_auto_login(true);
+    arm.set_script_active(false);
+    assert!(should_handshake(&arm, false), "auto-login still wants it");
+    arm.set_auto_login(false);
+    assert!(!should_handshake(&arm, false), "nothing wants it");
+    arm.set_script_active(true);
+    arm.request_logout();
+    assert!(!should_handshake(&arm, false), "a Logout latches it off");
+}
+
+/// A world-preference error parks an auto-login slot with no script; the
+/// operator's corrected world (`remember_profile`) lets it log in again.
+#[test]
+fn a_corrected_world_lets_an_auto_login_slot_log_in_after_a_world_error() {
+    let (endpoint, _) = counting_login_server();
+    let mut play = offline_play(endpoint);
+    let arm = SlotArm::new(42, true);
+    play.arms.insert("alice".into(), Arc::clone(&arm));
+    assert!(should_handshake(&arm, false));
+
+    arm.hold_login_on_error();
+    assert!(!should_handshake(&arm, false), "the error parks the slot");
+
+    let mut corrected = profile("alice", 42);
+    corrected.settings.world = Some(2);
+    play.remember_profile(corrected);
+    assert!(
+        should_handshake(&arm, false),
+        "the corrected world restores the auto-login"
+    );
 }
 
 #[test]
@@ -14575,6 +15879,539 @@ fn nav_snapshot_at(c: &mut Client, snap: &mut GameSnapshot, x: i32, z: i32) {
 }
 
 #[test]
+fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
+    let mut c = bank_client();
+    c.map_build_base_x = 3250;
+    c.map_build_base_z = 3416;
+    c.main_modal_id = -1;
+    c.side_modal_id = -1;
+    c.world.set_wall(
+        0,
+        3,
+        3,
+        0,
+        0,
+        0,
+        0x4000_0000 + (2213 << 14) + 1 + (2 << 7),
+        10,
+        0,
+        0,
+        0,
+        0,
+    );
+    let start = WorldTile {
+        x: 3253,
+        z: 3421,
+        level: 0,
+    };
+    let stand = WorldTile {
+        x: 3253,
+        z: 3420,
+        level: 0,
+    };
+    let booth = WorldTile {
+        x: 3253,
+        z: 3419,
+        level: 0,
+    };
+    let mut snap = GameSnapshot::new();
+    nav_snapshot_at(&mut c, &mut snap, 3, 5);
+
+    let (walk, blocked) = nav::collision::pack_walk(&vec![0u32; 4 * 16 * 16]);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 3250,
+                z: 3416,
+                level: 0,
+            },
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        vec![nav::pack::BankStand {
+            name: "Bank booth".into(),
+            tile: booth,
+            access: nav::pack::BankAccess::Booth { op: 2 },
+        }],
+    ));
+    let game_data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    world.bind_named_bank_facts(&game_data).unwrap();
+    let bot = NavBot::default();
+    let navs = Arc::new(Mutex::new(HashMap::from([("test".to_string(), bot)])));
+    let statuses = Arc::new(Mutex::new(Vec::new()));
+    let world_opt = Some(Arc::clone(&world));
+
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../script/examples/bone_burier_v2.js"),
+    )
+    .unwrap();
+    let iso = script::LoadIsolate::spawn(source, script::LoadShape::NativeTick, vec![]).unwrap();
+    let filler = [(999, 1)];
+    let post = |tick: u64, here: (i32, i32, i32), snapshot: &GameSnapshot| {
+        with_script_snapshot_input(
+            tick,
+            Some(here),
+            true,
+            Some(&filler),
+            Some(snapshot),
+            None,
+            Some(world.as_ref()),
+            None,
+            false,
+            false,
+            false,
+            0,
+            false,
+            0,
+            false,
+            0,
+            false,
+            None,
+            Default::default(),
+            Default::default(),
+            |input, native| {
+                iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+                    input, native,
+                ));
+            },
+        );
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    };
+
+    post(1, (start.x, start.z, start.level), &snap);
+    let requests = iso.drain_interacts();
+    assert_eq!(
+        requests,
+        vec![script::shim::InteractReq::WalkNearestBank],
+        "native v2 must select the raw bank-walk path from the initial scene",
+    );
+    let out_before = c.out.pos;
+    assert!(
+        dispatch_script_interact_cached(
+            &mut c,
+            &snap,
+            None,
+            Some((start.x, start.z, start.level)),
+            &navs,
+            &world_opt,
+            Some(WorldState::empty()),
+            "test",
+            requests,
+            None,
+            None,
+        ),
+        "raw bank selection must be accepted without a movement packet",
+    );
+    assert_eq!(
+        c.out.pos, out_before,
+        "raw bank selection itself must not write a movement packet",
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while navs
+        .lock()
+        .unwrap()
+        .get("test")
+        .and_then(|bot| bot.route.as_ref())
+        .is_none()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "bank worker did not publish the selected stand route",
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let flood = api::query::SceneQuery::new(snap.scene(), Some(start)).flood_reach();
+    let reach = Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()));
+    let out_before = c.out.pos;
+    step_nav_bot(
+        &mut c,
+        "test",
+        Some((start.x, start.z, start.level)),
+        &snap,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&reach),
+    );
+    assert!(
+        c.out.pos > out_before,
+        "the first follow pump must dispatch movement toward the resolved stand",
+    );
+
+    nav_snapshot_at(&mut c, &mut snap, 3, 4);
+    let flood = api::query::SceneQuery::new(snap.scene(), Some(stand)).flood_reach();
+    let reach = Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()));
+    step_nav_bot(
+        &mut c,
+        "test",
+        Some((stand.x, stand.z, stand.level)),
+        &snap,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&reach),
+    );
+    assert!(
+        navs.lock().unwrap()["test"].route.is_none(),
+        "arrival on the resolved stand must settle the host route",
+    );
+
+    post(2, (stand.x, stand.z, stand.level), &snap);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "native v2 observes the operable stand before opening it",
+    );
+    post(3, (stand.x, stand.z, stand.level), &snap);
+    let requests = iso.drain_interacts();
+    assert!(
+        matches!(
+            requests.as_slice(),
+            [script::shim::InteractReq::OpenStand {
+                x,
+                z,
+                level,
+                kind,
+                name,
+                stand_op,
+                choose: None,
+            }] if *x == booth.x
+                && *z == booth.z
+                && *level == booth.level
+                && kind == "booth"
+                && name.as_deref() == Some("Bank booth")
+                && *stand_op == Some(2)
+        ),
+        "operable bank approach must produce OpenStand for the booth: {requests:?}",
+    );
+    let out_before = c.out.pos;
+    assert!(
+        dispatch_script_interact_cached(
+            &mut c,
+            &snap,
+            None,
+            Some((stand.x, stand.z, stand.level)),
+            &navs,
+            &world_opt,
+            Some(WorldState::empty()),
+            "test",
+            requests,
+            None,
+            None,
+        ),
+        "OpenStand must dispatch through the real interaction boundary",
+    );
+    assert!(
+        c.out.pos > out_before,
+        "OpenStand must write the booth interaction packet",
+    );
+    iso.join();
+}
+
+#[test]
+fn native_v2_open_stand_aborts_armed_walk_after_operable_neighbor() {
+    let mut c = bank_client();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    let start = WorldTile {
+        x: 3206,
+        z: 3204,
+        level: 0,
+    };
+    let neighbor = WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    let stand = WorldTile {
+        x: 3204,
+        z: 3205,
+        level: 0,
+    };
+    let booth = WorldTile {
+        x: 3205,
+        z: 3206,
+        level: 0,
+    };
+    let mut snap = GameSnapshot::new();
+    nav_snapshot_at(&mut c, &mut snap, 6, 4);
+
+    let (walk, blocked) = nav::collision::pack_walk(&vec![0u32; 4 * 16 * 16]);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        Vec::new(),
+    ));
+    let world_opt = Some(Arc::clone(&world));
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let statuses = Arc::new(Mutex::new(Vec::new()));
+    let iso = script::LoadIsolate::spawn(
+        r#"
+export const apiVersion = 2;
+let phase = 0;
+export function tick(api) {
+  if (phase === 0) {
+    phase = 1;
+    api.request({
+      op: 'walk',
+      x: 3204,
+      z: 3205,
+      level: 0,
+      allow_teleports: false,
+      allow_wilderness: false,
+      allow_bank_fetch: false,
+    });
+  } else if (phase === 1
+             && api.snapshot.here.x === 3205
+             && api.snapshot.here.z === 3205) {
+    phase = 2;
+    api.request({
+      op: 'open-stand',
+      x: 3205,
+      z: 3206,
+      level: 0,
+      kind: 'booth',
+      name: 'Bank booth',
+      stand_op: 2,
+    });
+  }
+}
+"#
+        .into(),
+        script::LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
+    let post = |tick: u64, here: WorldTile, snapshot: &GameSnapshot| {
+        with_script_snapshot_input(
+            tick,
+            Some((here.x, here.z, here.level)),
+            true,
+            Some(&[]),
+            Some(snapshot),
+            None,
+            Some(world.as_ref()),
+            None,
+            false,
+            false,
+            false,
+            0,
+            false,
+            0,
+            false,
+            0,
+            false,
+            None,
+            Default::default(),
+            Default::default(),
+            |input, native| {
+                iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+                    input, native,
+                ));
+            },
+        );
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    };
+
+    post(1, start, &snap);
+    let requests = iso.drain_interacts();
+    assert_eq!(
+        requests,
+        vec![script::shim::InteractReq::Walk {
+            x: stand.x,
+            z: stand.z,
+            level: stand.level,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "native v2 must arm the walk before the approach tile is reached",
+    );
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((start.x, start.z, start.level)),
+        &navs,
+        &world_opt,
+        Some(WorldState::empty()),
+        "native-v2",
+        requests,
+    ));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while navs
+        .lock()
+        .unwrap()
+        .get("native-v2")
+        .and_then(|bot| bot.route.as_ref())
+        .is_none()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "native v2 walk did not publish a route",
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let reach = {
+        let flood = api::query::SceneQuery::new(snap.scene(), Some(start)).flood_reach();
+        Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()))
+    };
+    let out_before = c.out.pos;
+    step_nav_bot(
+        &mut c,
+        "native-v2",
+        Some((start.x, start.z, start.level)),
+        &snap,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&reach),
+    );
+    assert!(
+        c.out.pos > out_before,
+        "the armed v2 walk must dispatch movement before the neighbor is reached",
+    );
+
+    nav_snapshot_at(&mut c, &mut snap, 5, 5);
+    let reach = {
+        let flood = api::query::SceneQuery::new(snap.scene(), Some(neighbor)).flood_reach();
+        Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()))
+    };
+    step_nav_bot(
+        &mut c,
+        "native-v2",
+        Some((neighbor.x, neighbor.z, neighbor.level)),
+        &snap,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&reach),
+    );
+
+    let out_before = c.out.pos;
+    assert!(!dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((neighbor.x, neighbor.z, neighbor.level)),
+        &navs,
+        &world_opt,
+        Some(WorldState::empty()),
+        "native-v2",
+        vec![script::shim::InteractReq::OpenStand {
+            x: booth.x,
+            z: booth.z,
+            level: booth.level,
+            kind: "booth".into(),
+            name: Some("Wrong booth".into()),
+            stand_op: Some(2),
+            choose: None,
+        }],
+    ));
+    assert_eq!(
+        c.out.pos, out_before,
+        "a refused OpenStand must not write a booth packet",
+    );
+    assert!(
+        navs.lock().unwrap()["native-v2"].route.is_some(),
+        "a refused OpenStand must keep the armed v2 walk",
+    );
+
+    post(2, neighbor, &snap);
+    let requests = iso.drain_interacts();
+    assert!(
+        matches!(
+            requests.as_slice(),
+            [script::shim::InteractReq::OpenStand {
+                x,
+                z,
+                level,
+                kind,
+                name,
+                stand_op: Some(2),
+                choose: None,
+            }] if *x == booth.x
+                && *z == booth.z
+                && *level == booth.level
+                && kind == "booth"
+                && name.as_deref() == Some("Bank booth")
+        ),
+        "v2 must open the booth from the operable neighboring tile: {requests:?}",
+    );
+    let out_before = c.out.pos;
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((neighbor.x, neighbor.z, neighbor.level)),
+        &navs,
+        &world_opt,
+        Some(WorldState::empty()),
+        "native-v2",
+        requests,
+    ));
+    assert!(
+        c.out.pos > out_before,
+        "the accepted OpenStand must dispatch the booth operation",
+    );
+
+    let out_after_open = c.out.pos;
+    let reach = {
+        let flood = api::query::SceneQuery::new(snap.scene(), Some(neighbor)).flood_reach();
+        Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()))
+    };
+    step_nav_bot(
+        &mut c,
+        "native-v2",
+        Some((neighbor.x, neighbor.z, neighbor.level)),
+        &snap,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&reach),
+    );
+    assert_eq!(
+        c.out.pos, out_after_open,
+        "accepted OpenStand must abort the armed v2 walk before a follow re-issues movement",
+    );
+    assert!(
+        navs.lock().unwrap()["native-v2"].route.is_none(),
+        "accepted OpenStand must clear the v2 route",
+    );
+    iso.join();
+}
+
+#[test]
 fn script_observe_walk_arms_route_and_pump_steps_follow() {
     let NavRig {
         scripts,
@@ -14615,7 +16452,7 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         "ctx.walk queued the route request"
     );
     assert!(
-        wait_until(100, || queued(&navs)
+        wait_until(5_000, || queued(&navs)
             == Some(WorldTile {
                 x: 4,
                 z: 0,
@@ -14867,6 +16704,939 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
     assert_eq!(queued(&navs), None, "reachable in-radius arrival clears");
 }
 
+#[test]
+fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
+    use client::dash3d::CollisionFlag;
+
+    const SIZE: usize = 64;
+    let mut flags = vec![0u32; SIZE * SIZE];
+    for z in 8..=55usize {
+        flags[z * SIZE + 31] |= CollisionFlag::W_E as u32;
+        flags[z * SIZE + 32] |= CollisionFlag::W_W as u32;
+    }
+    let dest = WorldTile {
+        x: 34,
+        z: 32,
+        level: 0,
+    };
+    let outside = WorldTile {
+        x: 31,
+        z: 32,
+        level: 0,
+    };
+    let inside = WorldTile {
+        x: 34,
+        z: 33,
+        level: 0,
+    };
+    flags[dest.z as usize * SIZE + dest.x as usize] |= CollisionFlag::SQ_BLOCKED as u32;
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: SIZE,
+            height: SIZE,
+            walk,
+            blocked,
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        Vec::new(),
+    ));
+
+    let mut client = nav_client();
+    for z in 8..=55usize {
+        client.collision[0].flags[31][z] |= CollisionFlag::W_E;
+        client.collision[0].flags[32][z] |= CollisionFlag::W_W;
+    }
+    client.collision[0].flags[dest.x as usize][dest.z as usize] |= CollisionFlag::SQ_BLOCKED;
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, outside.x, outside.z);
+
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    }]));
+    let arm = ScriptWalkArm {
+        here: Some((outside.x, outside.z, outside.level)),
+        world: Some(Arc::clone(&world)),
+        navs: Arc::clone(&navs),
+        name: "alice".into(),
+        state: None,
+        bank: Vec::new(),
+    };
+    let worker_done = arm
+        .queue_route_in_snapshot_synced(
+            &snapshot,
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            3,
+            true,
+            17,
+        )
+        .expect("route worker spawned");
+    worker_done
+        .recv_timeout(Duration::from_secs(2))
+        .expect("route worker completed");
+    let route = navs.lock().unwrap()["alice"].route.clone().expect("route");
+    assert_eq!(
+        route.dest, inside,
+        "the route crosses around the wall to the legal destination-side stand"
+    );
+    assert!(
+        route.ticks > 0.0,
+        "the route must not settle where it started"
+    );
+
+    let outside_flood = api::query::SceneQuery::new(snapshot.scene(), Some(outside))
+        .flood_reach()
+        .expect("fresh outside flood");
+    let outside_view = api::query::pack_reach_query(snapshot.scene(), Some(&outside_flood));
+    assert!(
+        !api::query::is_arrived(outside, dest, 3, || &outside_view),
+        "the premature in-radius stand is not arrival-capable"
+    );
+
+    nav_snapshot_at(&mut client, &mut snapshot, inside.x, inside.z);
+    let inside_flood = api::query::SceneQuery::new(snapshot.scene(), Some(inside))
+        .flood_reach()
+        .expect("fresh inside flood");
+    let inside_view = Arc::new(api::query::pack_reach_query(
+        snapshot.scene(),
+        Some(&inside_flood),
+    ));
+    assert!(api::query::is_arrived(inside, dest, 3, || {
+        Arc::clone(&inside_view)
+    }));
+
+    let mut driver = NavRec::default();
+    step_nav_bot(
+        &mut driver,
+        "alice",
+        Some((inside.x, inside.z, inside.level)),
+        &snapshot,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&inside_view),
+    );
+    let all = navs.lock().unwrap();
+    let bot = &all["alice"];
+    assert!(bot.route.is_none(), "fresh arrival clears the route");
+    assert_eq!(
+        bot.walk_outcome_seq, 0,
+        "arrival, not route-terminal settlement, completed this walk"
+    );
+}
+
+fn plant_nav_footprint_loc(client: &mut Client, x: i32, z: i32, width: i32, length: i32) {
+    use client::config::LocType;
+
+    let cache = Arc::get_mut(&mut client.cache).expect("nav test owns its cache");
+    let id = cache.locs.len() as i32;
+    cache.locs.push(LocType {
+        id,
+        name: "Bank booth".into(),
+        width,
+        length,
+        op: vec![
+            Some("Use".into()),
+            Some("Use-quickly".into()),
+            None,
+            None,
+            None,
+        ],
+        ..LocType::default()
+    });
+    let typecode = 0x4000_0000 + (id << 14) + x + (z << 7);
+    client
+        .world
+        .set_wall(0, x, z, 0, 0, 0, typecode, 10, 0, 0, 0, 0);
+}
+
+fn arm_snapshot_route(
+    world: Arc<NavWorld>,
+    snapshot: &GameSnapshot,
+    from: WorldTile,
+    to: WorldTile,
+    radius: i32,
+) -> nav::router::Route {
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let arm = ScriptWalkArm {
+        here: Some((from.x, from.z, from.level)),
+        world: Some(world),
+        navs: Arc::clone(&navs),
+        name: "alice".into(),
+        state: None,
+        bank: Vec::new(),
+    };
+    let worker_done = arm
+        .queue_route_in_snapshot_synced(
+            snapshot,
+            to.x,
+            to.z,
+            to.level,
+            FindOptions::default(),
+            radius,
+            true,
+            29,
+        )
+        .expect("route worker spawned");
+    worker_done
+        .recv_timeout(Duration::from_secs(2))
+        .expect("route worker completed");
+    let route = {
+        let all = navs.lock().unwrap();
+        all.get("alice").and_then(|bot| bot.route.clone())
+    };
+    route.expect("route")
+}
+
+#[test]
+fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
+    use client::dash3d::CollisionFlag;
+    use nav::transport::{TransportEdge, TransportKind};
+
+    const SIZE: usize = 64;
+    let booth = WorldTile {
+        x: 32,
+        z: 32,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 26,
+        z: 32,
+        level: 0,
+    };
+    let stand = WorldTile {
+        x: 31,
+        z: 32,
+        level: 0,
+    };
+    let mut flags = vec![0u32; SIZE * SIZE];
+    let mut client = nav_client();
+    {
+        let mut mark = |x: usize, z: usize, flag: i32| {
+            flags[z * SIZE + x] |= flag as u32;
+            client.collision[0].flags[x][z] |= flag;
+        };
+        for i in 30..=34 {
+            mark(29, i, CollisionFlag::W_E);
+            mark(30, i, CollisionFlag::W_W);
+            mark(34, i, CollisionFlag::W_E);
+            mark(35, i, CollisionFlag::W_W);
+            mark(i, 29, CollisionFlag::W_N);
+            mark(i, 30, CollisionFlag::W_S);
+            mark(i, 34, CollisionFlag::W_N);
+            mark(i, 35, CollisionFlag::W_S);
+        }
+        mark(
+            booth.x as usize,
+            booth.z as usize,
+            CollisionFlag::SQ_BLOCKED,
+        );
+    }
+    plant_nav_footprint_loc(&mut client, booth.x, booth.z, 1, 1);
+
+    let edge = TransportEdge {
+        kind: TransportKind::Door,
+        at: WorldTile {
+            x: 29,
+            z: 32,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 30,
+            z: 32,
+            level: 0,
+        },
+        loc_id: 1530,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+    };
+    let mut graph = TransportGraph::default();
+    graph.at.entry(edge.at).or_default().push(0);
+    graph.edges.push(edge);
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: SIZE,
+            height: SIZE,
+            walk,
+            blocked,
+            flags: None,
+        },
+        graph,
+        Vec::new(),
+    ));
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, from.x, from.z);
+
+    let query = api::query::SceneQuery::new(snapshot.scene(), Some(from));
+    let flood = query.flood_reach().expect("outside flood");
+    let loc = snapshot
+        .locs()
+        .iter()
+        .find(|loc| loc.tile == booth)
+        .expect("modeled booth");
+    assert_eq!(
+        query.booth_approach(loc, &flood).expect("modeled").dest,
+        None,
+        "the live flood cannot cross the shut door"
+    );
+
+    let route = arm_snapshot_route(world, &snapshot, from, booth, 1);
+    assert_eq!(route.dest, stand);
+    assert!(
+        route.legs.iter().any(
+            |leg| matches!(leg, nav::router::Leg::Transport { edge } if edge.kind == TransportKind::Door)
+        ),
+        "the baked multi-goal route must cross the closed door"
+    );
+    let stand_flood = api::query::SceneQuery::new(snapshot.scene(), Some(stand))
+        .flood_reach()
+        .expect("stand flood");
+    let stand_view = api::query::pack_reach_query(snapshot.scene(), Some(&stand_flood));
+    assert!(api::query::is_arrived(stand, booth, 1, || &stand_view));
+}
+
+#[test]
+fn modeled_two_by_two_loc_routes_to_a_target_cardinal_arrival_stand() {
+    use client::dash3d::CollisionFlag;
+
+    const SIZE: usize = 32;
+    let target = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 15,
+        z: 15,
+        level: 0,
+    };
+    let mut flags = vec![0u32; SIZE * SIZE];
+    let mut client = nav_client();
+    for x in 10..=11usize {
+        for z in 10..=11usize {
+            flags[z * SIZE + x] |= CollisionFlag::SQ_BLOCKED as u32;
+            client.collision[0].flags[x][z] |= CollisionFlag::SQ_BLOCKED;
+        }
+    }
+    plant_nav_footprint_loc(&mut client, target.x, target.z, 2, 2);
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: SIZE,
+            height: SIZE,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, from.x, from.z);
+
+    let route = arm_snapshot_route(world, &snapshot, from, target, 1);
+    assert!(
+        [
+            WorldTile {
+                x: 9,
+                z: 10,
+                level: 0,
+            },
+            WorldTile {
+                x: 10,
+                z: 9,
+                level: 0,
+            },
+        ]
+        .contains(&route.dest),
+        "the route must prefer the target tile's own cardinal sides, got {:?}",
+        route.dest
+    );
+    let flood = api::query::SceneQuery::new(snapshot.scene(), Some(route.dest))
+        .flood_reach()
+        .expect("route-end flood");
+    let view = api::query::pack_reach_query(snapshot.scene(), Some(&flood));
+    assert!(
+        api::query::is_arrived(route.dest, target, 1, || &view),
+        "the chosen endpoint must satisfy the walk's own arrival rule"
+    );
+}
+
+#[test]
+fn empty_or_unroutable_solid_target_goals_fall_back_to_radius_policy() {
+    use client::dash3d::CollisionFlag;
+
+    const SIZE: usize = 32;
+    let target = WorldTile {
+        x: 16,
+        z: 16,
+        level: 0,
+    };
+
+    // No target-cardinal stand: the target sits inside a 3x3 solid block.
+    let from = WorldTile {
+        x: 12,
+        z: 16,
+        level: 0,
+    };
+    let mut flags = vec![0u32; SIZE * SIZE];
+    let mut client = nav_client();
+    for x in 15..=17usize {
+        for z in 15..=17usize {
+            flags[z * SIZE + x] |= CollisionFlag::SQ_BLOCKED as u32;
+            client.collision[0].flags[x][z] |= CollisionFlag::SQ_BLOCKED;
+        }
+    }
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: SIZE,
+            height: SIZE,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, from.x, from.z);
+    let route = arm_snapshot_route(world, &snapshot, from, target, 4);
+    assert_eq!(
+        route.dest, from,
+        "empty corrected goals fall back to the old in-radius route"
+    );
+
+    // Legal target-cardinal stands exist, but a full-height wall makes all
+    // of them unroutable. The old radius policy can still settle on this side.
+    let from = WorldTile {
+        x: 13,
+        z: 16,
+        level: 0,
+    };
+    let mut flags = vec![0u32; SIZE * SIZE];
+    let mut client = nav_client();
+    for z in 0..SIZE {
+        flags[z * SIZE + 13] |= CollisionFlag::W_E as u32;
+        flags[z * SIZE + 14] |= CollisionFlag::W_W as u32;
+        client.collision[0].flags[13][z] |= CollisionFlag::W_E;
+        client.collision[0].flags[14][z] |= CollisionFlag::W_W;
+    }
+    flags[target.z as usize * SIZE + target.x as usize] |= CollisionFlag::SQ_BLOCKED as u32;
+    client.collision[0].flags[target.x as usize][target.z as usize] |= CollisionFlag::SQ_BLOCKED;
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: SIZE,
+            height: SIZE,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, from.x, from.z);
+    let route = arm_snapshot_route(world, &snapshot, from, target, 3);
+    assert_eq!(
+        route.dest, from,
+        "unroutable corrected goals fall back to the old in-radius route"
+    );
+}
+
+/// A level-0 world over raw client `flags` (row-major, `size` wide).
+fn raw_flags_world(
+    flags: &[u32],
+    size: usize,
+    graph: TransportGraph,
+    banks: Vec<nav::pack::BankStand>,
+) -> NavWorld {
+    let (walk, blocked) = nav::collision::pack_walk(flags);
+    NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: size,
+            height: size,
+            walk,
+            blocked,
+            flags: None,
+        },
+        graph,
+        banks,
+    )
+}
+
+/// The client scene over the same raw `flags`, 104x104 from `base`, with the
+/// player at `from`.
+fn raw_flags_scene(flags: &[u32], size: usize, base: (i32, i32), from: WorldTile) -> GameSnapshot {
+    let mut client = nav_client();
+    client.map_build_base_x = base.0;
+    client.map_build_base_z = base.1;
+    for lx in 0..104i32 {
+        for lz in 0..104i32 {
+            let (x, z) = (base.0 + lx, base.1 + lz);
+            if (0..size as i32).contains(&x) && (0..size as i32).contains(&z) {
+                client.collision[0].flags[lx as usize][lz as usize] |=
+                    flags[z as usize * size + x as usize] as i32;
+            }
+        }
+    }
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, from.x - base.0, from.z - base.1);
+    snapshot
+}
+
+/// Arm one radius walk and wait for its worker; returns the bot's route and
+/// latched BankBudget session.
+#[allow(clippy::too_many_arguments)] // world, scene, request and the state it gates on
+fn arm_route_outcome(
+    world: Arc<NavWorld>,
+    snapshot: &GameSnapshot,
+    from: WorldTile,
+    to: WorldTile,
+    radius: i32,
+    opts: FindOptions,
+    state: Option<WorldState>,
+    bank: Vec<(i32, i32)>,
+) -> (Option<nav::router::Route>, Option<PendingBankFetch>) {
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let arm = ScriptWalkArm {
+        here: Some((from.x, from.z, from.level)),
+        world: Some(world),
+        navs: Arc::clone(&navs),
+        name: "alice".into(),
+        state,
+        bank,
+    };
+    arm.queue_route_in_snapshot_synced(snapshot, to.x, to.z, to.level, opts, radius, true, 43)
+        .expect("route worker spawned")
+        .recv_timeout(Duration::from_secs(60))
+        .expect("route worker completed");
+    let all = navs.lock().unwrap();
+    let bot = &all["alice"];
+    (bot.route.clone(), bot.bank_fetch.clone())
+}
+
+/// Falador's west-wall bank in miniature: the booth's stands lie behind a
+/// wall that opens only at its far north end, so the cheapest stand needs
+/// more settles than the old 32,768-node first-goal cap. A nearest-bank walk
+/// (radius 1, default options) and a resilient radius-3 walk both route to a
+/// stand.
+#[test]
+fn solid_target_stands_past_a_long_detour_route_to_a_stand() {
+    use client::dash3d::CollisionFlag;
+
+    const SIZE: usize = 256;
+    let booth = WorldTile {
+        x: 138,
+        z: 128,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 118,
+        z: 128,
+        level: 0,
+    };
+    let mut flags = vec![0u32; SIZE * SIZE];
+    for z in 0..SIZE - 1 {
+        flags[z * SIZE + 127] |= CollisionFlag::W_E as u32;
+        flags[z * SIZE + 128] |= CollisionFlag::W_W as u32;
+    }
+    flags[booth.z as usize * SIZE + booth.x as usize] |= CollisionFlag::SQ_BLOCKED as u32;
+    let world = Arc::new(raw_flags_world(
+        &flags,
+        SIZE,
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let snapshot = raw_flags_scene(&flags, SIZE, (booth.x - 52, booth.z - 52), from);
+    let stands = [(-1, 0), (1, 0), (0, -1), (0, 1)].map(|(dx, dz)| WorldTile {
+        x: booth.x + dx,
+        z: booth.z + dz,
+        level: 0,
+    });
+
+    for (radius, opts) in [
+        (1, FindOptions::default()),
+        (
+            3,
+            FindOptions {
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                ..FindOptions::default()
+            },
+        ),
+    ] {
+        let (route, session) = arm_route_outcome(
+            Arc::clone(&world),
+            &snapshot,
+            from,
+            booth,
+            radius,
+            opts,
+            None,
+            Vec::new(),
+        );
+        let route = route.expect("the detour reaches a stand");
+        assert!(session.is_none());
+        assert!(
+            stands.contains(&route.dest),
+            "r={radius} must end on a booth stand, got {:?}",
+            route.dest
+        );
+    }
+}
+
+/// The Varrock-sewer web in miniature, in a 256x256 world larger than the
+/// old 32,768-node cap: a solid target inside a 5x5 room entered only by a
+/// door gated on wearing obj 2, with the obj in the bank. The strict stands
+/// are proven unreachable and the fetchable search plans the session to an
+/// in-room stand. At radius 3 the radius tiles outside the room route
+/// strictly, and the session to the stand still wins over them.
+#[test]
+fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
+    use client::dash3d::CollisionFlag;
+
+    const SIZE: usize = 256;
+    let target = WorldTile {
+        x: 62,
+        z: 50,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 40,
+        z: 50,
+        level: 0,
+    };
+    let mut flags = vec![0u32; SIZE * SIZE];
+    {
+        let mut mark = |x: usize, z: usize, flag: i32| flags[z * SIZE + x] |= flag as u32;
+        for z in 48..=52 {
+            mark(59, z, CollisionFlag::W_E);
+            mark(60, z, CollisionFlag::W_W);
+            mark(64, z, CollisionFlag::W_E);
+            mark(65, z, CollisionFlag::W_W);
+        }
+        for x in 60..=64 {
+            mark(x, 47, CollisionFlag::W_N);
+            mark(x, 48, CollisionFlag::W_S);
+            mark(x, 52, CollisionFlag::W_N);
+            mark(x, 53, CollisionFlag::W_S);
+        }
+        mark(62, 50, CollisionFlag::SQ_BLOCKED);
+    }
+    let door = TransportEdge {
+        kind: TransportKind::Door,
+        at: WorldTile {
+            x: 59,
+            z: 50,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 60,
+            z: 50,
+            level: 0,
+        },
+        loc_id: 2882,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![2],
+        members_req: false,
+        wildy_cap: None,
+    };
+    let mut graph = TransportGraph::default();
+    graph.at.entry(door.at).or_default().push(0);
+    graph.edges.push(door);
+    let world = Arc::new(raw_flags_world(
+        &flags,
+        SIZE,
+        graph,
+        vec![nav::pack::BankStand {
+            name: "Bank booth".into(),
+            tile: WorldTile {
+                x: 30,
+                z: 50,
+                level: 0,
+            },
+            access: nav::pack::BankAccess::Booth { op: 2 },
+        }],
+    ));
+    let snapshot = raw_flags_scene(&flags, SIZE, (0, 0), from);
+    // Knife in the open bank, junk in the backpack, nothing worn.
+    let mut bank_snapshot = GameSnapshot::new();
+    bank_snapshot.rebuild(&bank_fetch_client());
+    let state = WorldState::from_snapshot(&bank_snapshot);
+    let bank: Vec<(i32, i32)> = bank_snapshot
+        .bank()
+        .iter()
+        .map(|item| (item.def.id, item.count))
+        .collect();
+    let stand = WorldTile {
+        x: 61,
+        z: 50,
+        level: 0,
+    };
+
+    for radius in [1, 2, 3] {
+        let (route, session) = arm_route_outcome(
+            Arc::clone(&world),
+            &snapshot,
+            from,
+            target,
+            radius,
+            FindOptions {
+                allow_bank_fetch: true,
+                ..FindOptions::default()
+            },
+            Some(state.clone()),
+            bank.clone(),
+        );
+        let session = session.expect("the banked worn obj plans a session");
+        assert_eq!(session.dest, stand, "r={radius}");
+        assert_eq!(session.final_route.dest, stand);
+        assert!(route.is_some());
+    }
+}
+
+/// A stand behind an obj the session cannot get must not hide one it can.
+/// Only the start and the target's three stands are walkable; a door from
+/// the start reaches each. The two cheaper stands need worn obj 2, held
+/// nowhere; the third needs worn obj 3, carried (worn in place) or banked
+/// (a trip to the stand). Either way the arm plans that stand's session.
+#[test]
+fn unfetchable_stands_do_not_hide_a_fetchable_one() {
+    use client::dash3d::CollisionFlag;
+    use nav::bank_fetch::BankStep;
+
+    const SIZE: usize = 32;
+    let from = WorldTile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let target = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    let stands = [(9, 10), (10, 9), (11, 10)].map(|(x, z)| WorldTile { x, z, level: 0 });
+    let mut flags = vec![CollisionFlag::SQ_BLOCKED as u32; SIZE * SIZE];
+    for tile in std::iter::once(from).chain(stands) {
+        flags[tile.z as usize * SIZE + tile.x as usize] = 0;
+    }
+    let graph = || {
+        let mut graph = TransportGraph::default();
+        for (index, (stand, worn)) in stands.into_iter().zip([2, 2, 3]).enumerate() {
+            graph.at.entry(from).or_default().push(index);
+            graph.edges.push(TransportEdge {
+                kind: TransportKind::Door,
+                at: from,
+                to: stand,
+                loc_id: 1,
+                option: 1,
+                ticks: 2 + index as i32,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![worn],
+                members_req: false,
+                wildy_cap: None,
+            });
+        }
+        graph
+    };
+    let snapshot = raw_flags_scene(&flags, SIZE, (0, 0), from);
+    let booth = nav::pack::BankStand {
+        name: "Bank booth".into(),
+        tile: from,
+        access: nav::pack::BankAccess::Booth { op: 2 },
+    };
+    let carried = WorldState {
+        inv: HashMap::from([(3, 1)]),
+        ..WorldState::empty()
+    };
+    let cases = [
+        (
+            carried,
+            Vec::new(),
+            Vec::new(),
+            vec![BankStep::Wear { id: 3 }],
+        ),
+        (
+            WorldState::empty(),
+            vec![(3, 1)],
+            vec![booth],
+            vec![
+                BankStep::Walk {
+                    x: from.x,
+                    z: from.z,
+                    level: from.level,
+                },
+                BankStep::Open,
+                BankStep::DepositAll,
+                BankStep::Withdraw { id: 3, count: 1 },
+                BankStep::Wear { id: 3 },
+                BankStep::Close,
+            ],
+        ),
+    ];
+    for (state, bank, banks, steps) in cases {
+        let world = Arc::new(raw_flags_world(&flags, SIZE, graph(), banks));
+        let (route, session) = arm_route_outcome(
+            world,
+            &snapshot,
+            from,
+            target,
+            1,
+            FindOptions {
+                allow_bank_fetch: true,
+                ..FindOptions::default()
+            },
+            Some(state),
+            bank,
+        );
+        let session = session.expect("obj 3 opens the third stand");
+        assert_eq!(session.dest, stands[2]);
+        assert_eq!(session.final_route.dest, stands[2]);
+        assert_eq!(Vec::from(session.steps), steps);
+        assert!(route.is_some());
+    }
+}
+
+/// A full bank stack must not take a carried fact away. The door to the
+/// target's one stand needs a coin carried (one is) and obj 3 worn (it is
+/// carried); the bank's coin row is a full stack. Wearing obj 3 in place is
+/// the whole session, with no bank trip.
+#[test]
+fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
+    use client::dash3d::CollisionFlag;
+    use nav::bank_fetch::BankStep;
+
+    const SIZE: usize = 32;
+    let from = WorldTile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let target = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    let stand = WorldTile {
+        x: 9,
+        z: 10,
+        level: 0,
+    };
+    let mut flags = vec![CollisionFlag::SQ_BLOCKED as u32; SIZE * SIZE];
+    for tile in [from, stand] {
+        flags[tile.z as usize * SIZE + tile.x as usize] = 0;
+    }
+    let mut graph = TransportGraph::default();
+    graph.at.entry(from).or_default().push(0);
+    graph.edges.push(TransportEdge {
+        kind: TransportKind::Door,
+        at: from,
+        to: stand,
+        loc_id: 1,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![(995, 1)],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![3],
+        members_req: false,
+        wildy_cap: None,
+    });
+    let booth = nav::pack::BankStand {
+        name: "Bank booth".into(),
+        tile: from,
+        access: nav::pack::BankAccess::Booth { op: 2 },
+    };
+    let world = Arc::new(raw_flags_world(&flags, SIZE, graph, vec![booth]));
+    let snapshot = raw_flags_scene(&flags, SIZE, (0, 0), from);
+    let (route, session) = arm_route_outcome(
+        world,
+        &snapshot,
+        from,
+        target,
+        1,
+        FindOptions {
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        },
+        Some(WorldState {
+            inv: HashMap::from([(3, 1), (995, 1)]),
+            ..WorldState::empty()
+        }),
+        vec![(995, i32::MAX)],
+    );
+    let session = session.expect("wearing the carried obj 3 opens the door");
+    assert_eq!(session.dest, stand);
+    assert_eq!(Vec::from(session.steps), vec![BankStep::Wear { id: 3 }]);
+    assert_eq!(route.map(|route| route.dest), Some(stand));
+}
+
 /// AR-1 / frozen `'closest'` (`WalkExecutor.ts:316-325`): an r=12 WalkNear
 /// in open terrain routes to an approach tile 12 tiles from the dest, where
 /// the BFS rank of the dest is past the 512 arrival budget, so `is_arrived`
@@ -15008,6 +17778,7 @@ fn glory_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -15247,6 +18018,7 @@ fn toll_nav_world() -> NavWorld {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
