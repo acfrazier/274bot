@@ -701,6 +701,11 @@ p_teleport(movecoord(coord, 0, 0, 5));
         ("def_proc $p = nudge_int;\ngosub($p);", false),
         ("p_opnpct(1);", false),
         ("p_opplayert(1);", false),
+        // Commands that dispatch engine scripts (review round 4).
+        ("if_close;", false),
+        ("npc_add(coord, man, 100);", false),
+        ("npc_del;", false),
+        ("npc_setmode(opplayer2);", false),
         // Controls.
         (
             "mes(\"<p,neutral>Hello <text_gender(\"Sir\", \"Madam\")>, <tostring(1)>.\");",

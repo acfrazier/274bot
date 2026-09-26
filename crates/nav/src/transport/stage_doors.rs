@@ -134,7 +134,7 @@ const PURE_OPAQUE: [&str; 14] = [
 
 /// Statements an opener may run before the crossing without changing
 /// where the player ends up or waiting on input.
-const INERT_CALLS: [&str; 10] = [
+const INERT_CALLS: [&str; 9] = [
     "mes",
     "obj_add",
     "sound_synth",
@@ -144,7 +144,6 @@ const INERT_CALLS: [&str; 10] = [
     "facesquare",
     "anim",
     "spotanim_pl",
-    "if_close",
 ];
 
 /// Engine commands certified never to move the player, start another
@@ -162,7 +161,6 @@ const NON_MOVING_COMMANDS: &[&str] = &[
     "facesquare",
     "anim",
     "spotanim_pl",
-    "if_close",
     "obj_add",
     // Pure values.
     "lowercase",
@@ -196,19 +194,17 @@ const NON_MOVING_COMMANDS: &[&str] = &[
     "clearbit",
     "clearbit_range",
     "inzone",
-    // Active-NPC lookups, speech and spawns; NPC modes (an NPC may face or
-    // attack the player, which does not move them).
+    // Active-NPC lookups and speech. Spawning, deleting or re-moding an
+    // NPC (npc_add/npc_del/npc_setmode) queues AI scripts and is excluded,
+    // as is if_close (it runs the closed interface's close trigger).
     "npc_find",
     "npc_findexact",
     "npc_huntall",
     "npc_findallany",
     "npc_findnext",
     "npc_say",
-    "npc_add",
-    "npc_del",
     "npc_anim",
     "npc_getmode",
-    "npc_setmode",
     // Dialog text paging, pause and interface text/tabs.
     "split_init",
     "split_pagecount",
