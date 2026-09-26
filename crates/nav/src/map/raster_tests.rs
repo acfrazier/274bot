@@ -319,7 +319,7 @@ fn resume_adopts_only_disk_tiles_that_fully_decode() {
     adopt_existing_tiles(
         &root,
         [valid, truncated, crc, garbage, missing],
-        |_| false,
+        |_| None,
         &mut completed,
         &mut completed_keys,
         &mut completed_bytes,
@@ -338,20 +338,25 @@ fn resume_adopts_only_disk_tiles_that_fully_decode() {
     );
     assert_eq!(completed_bytes, png.len() as u64);
 
-    // A tile the checkpoint does list must still verify on disk.
-    for damaged in [truncated, crc] {
-        let mut completed = Vec::new();
-        let mut completed_keys = BTreeSet::new();
-        let mut completed_bytes = 0;
-        assert!(adopt_existing_tiles(
+    // A checkpoint-listed tile is adopted only if it still matches the
+    // receipt the checkpoint recorded, even when it decodes fine.
+    let recorded = |tile| (tile == valid).then_some(completed[0].payload);
+    let other = encode_png(&vec![7u8; TILE_RGBA_BYTES]).unwrap();
+    for (bytes, adopted) in [(png.as_slice(), true), (other.as_slice(), false)] {
+        std::fs::write(root.join(valid.relative_path().unwrap()), bytes).unwrap();
+        let mut listed = Vec::new();
+        let mut listed_keys = BTreeSet::new();
+        let mut listed_bytes = 0;
+        adopt_existing_tiles(
             &root,
-            [damaged],
-            |tile| tile == damaged,
-            &mut completed,
-            &mut completed_keys,
-            &mut completed_bytes,
+            [valid],
+            recorded,
+            &mut listed,
+            &mut listed_keys,
+            &mut listed_bytes,
         )
-        .is_err());
+        .unwrap();
+        assert_eq!(listed_keys.contains(&valid), adopted);
     }
     std::fs::remove_dir_all(&root).unwrap();
 }

@@ -960,13 +960,18 @@ impl BakeWriter {
     }
 
     pub fn should_skip(&self, key: UnitKey) -> bool {
+        self.completed_receipt(key).is_some()
+    }
+
+    /// Receipt the checkpoint recorded for `key`, if it is complete.
+    pub fn completed_receipt(&self, key: UnitKey) -> Option<PayloadReceipt> {
         // Completed units are strictly increasing: `admit_unit` rejects any
         // key at or below the last one.
-        self.checkpoint
-            .completed
-            .as_slice()
+        let completed = self.checkpoint.completed.as_slice();
+        completed
             .binary_search_by(|unit| unit.key.cmp(&key))
-            .is_ok()
+            .ok()
+            .map(|index| completed[index].payload)
     }
 
     pub fn set_stage(
@@ -2839,6 +2844,7 @@ mod tests {
         jag: &Path,
         snapshot: &Path,
         pause_at_zoom: bool,
+        before_run: impl FnOnce(&mut BakeWriter),
     ) -> Result<PathBuf, MapCacheError> {
         let content = Digest([9; 32]);
         let input = nav::map::producer::ClientMapInput::new(289, content, jag, snapshot)?;
@@ -2868,6 +2874,7 @@ mod tests {
             progress,
             BTreeSet::new(),
         )?;
+        before_run(&mut writer);
         let output = crate::map_producer::run_images(input, &mut writer)?;
         writer.finish(output)
     }
@@ -2877,7 +2884,7 @@ mod tests {
         let root = temp_root("native-resume");
         let (jag, snapshot) = synthetic_client_snapshot(&root.path().join("client"));
         assert!(matches!(
-            native_image_bake(&root, &jag, &snapshot, true),
+            native_image_bake(&root, &jag, &snapshot, true, |_| {}),
             Err(MapCacheError::Cancelled)
         ));
         let partial = fs::read_dir(root.path().join("289/images"))
@@ -2907,17 +2914,61 @@ mod tests {
         bytes[middle] ^= 0x5a;
         fs::write(base(52), &bytes).unwrap();
 
-        let resumed = native_image_bake(&root, &jag, &snapshot, false).unwrap();
+        let resumed = native_image_bake(&root, &jag, &snapshot, false, |_| {}).unwrap();
         assert_eq!(
             file_id(&resumed.join(base(50).strip_prefix(&partial).unwrap())),
             intact
         );
         let cold_root = temp_root("native-cold");
-        let cold = native_image_bake(&cold_root, &jag, &snapshot, false).unwrap();
+        let cold = native_image_bake(&cold_root, &jag, &snapshot, false, |_| {}).unwrap();
         assert_eq!(
             fs::read(resumed.join("manifest.json")).unwrap(),
             fs::read(cold.join("manifest.json")).unwrap(),
             "a resumed bake must publish the same tiles as a cold one"
+        );
+        let _ = fs::remove_dir_all(root.path());
+        let _ = fs::remove_dir_all(cold_root.path());
+    }
+
+    #[test]
+    fn native_image_resume_rebakes_a_checkpointed_tile_whose_bytes_changed() {
+        let root = temp_root("native-receipt");
+        let (jag, snapshot) = synthetic_client_snapshot(&root.path().join("client"));
+        assert!(matches!(
+            native_image_bake(&root, &jag, &snapshot, true, |_| {}),
+            Err(MapCacheError::Cancelled)
+        ));
+        let first = TileKey {
+            plane: 0,
+            lod: 0,
+            x: 50,
+            z: 50,
+        };
+        // The checkpoint records the raster's receipt for the tile; the file
+        // is then replaced by a different, fully valid PNG.
+        let resumed = native_image_bake(&root, &jag, &snapshot, false, |writer| {
+            let path = writer.directory().join(first.relative_path().unwrap());
+            let bytes = fs::read(&path).unwrap();
+            let receipt = PayloadReceipt {
+                bytes: bytes.len() as u32,
+                sha256: Digest::of(&bytes),
+            };
+            assert!(writer
+                .record_unit(UnitKey::Terrain { tile: first }, receipt)
+                .unwrap());
+            fs::write(&path, FixtureProducer::fixture_png(9)).unwrap();
+        })
+        .unwrap();
+        let cold_root = temp_root("native-receipt-cold");
+        let cold = native_image_bake(&cold_root, &jag, &snapshot, false, |_| {}).unwrap();
+        assert_eq!(
+            fs::read(resumed.join(first.relative_path().unwrap())).unwrap(),
+            fs::read(cold.join(first.relative_path().unwrap())).unwrap(),
+            "a tile that no longer matches its checkpoint receipt must be rebaked"
+        );
+        assert_eq!(
+            fs::read(resumed.join("manifest.json")).unwrap(),
+            fs::read(cold.join("manifest.json")).unwrap()
         );
         let _ = fs::remove_dir_all(root.path());
         let _ = fs::remove_dir_all(cold_root.path());

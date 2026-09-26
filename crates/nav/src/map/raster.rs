@@ -455,7 +455,7 @@ pub fn bake_images_to_partial(
 pub fn bake_images_into(
     input: ClientMapInput<'_>,
     tile_dir: &Path,
-    mut skip: impl FnMut(TileKey) -> bool,
+    mut checkpointed: impl FnMut(TileKey) -> Option<PayloadReceipt>,
     mut keep_running: impl FnMut(RasterProgress) -> bool,
 ) -> Result<ImageBakeOutcome, MapError> {
     let started = Instant::now();
@@ -482,7 +482,7 @@ pub fn bake_images_into(
     adopt_existing_tiles(
         tile_dir,
         plan.tiles.iter().copied(),
-        &mut skip,
+        &mut checkpointed,
         &mut completed,
         &mut completed_keys,
         &mut completed_bytes,
@@ -640,13 +640,13 @@ pub fn bake_images_into(
 }
 
 /// Adopt tiles a previous, interrupted bake already wrote into `directory`.
-/// A tile the checkpoint lists (`skip`) must verify; any other file is
-/// adopted only if it fully decodes as one of this bake's tiles and is
-/// otherwise rendered again.
+/// A file is adopted only if it fully decodes as one of this bake's tiles
+/// and, when the checkpoint recorded a receipt for it (`checkpointed`), its
+/// bytes still match that receipt. Anything else is rendered again.
 fn adopt_existing_tiles(
     directory: &Path,
     keys: impl IntoIterator<Item = TileKey>,
-    mut skip: impl FnMut(TileKey) -> bool,
+    mut checkpointed: impl FnMut(TileKey) -> Option<PayloadReceipt>,
     completed: &mut Vec<CompletedUnit>,
     completed_keys: &mut BTreeSet<TileKey>,
     completed_bytes: &mut u64,
@@ -654,9 +654,9 @@ fn adopt_existing_tiles(
     let mut compressed = Vec::new();
     let mut pixels = Vec::new();
     for key in keys {
-        let required = skip(key);
+        let recorded = checkpointed(key);
         match completed_from_disk(directory, key, &mut compressed, &mut pixels) {
-            Ok(unit) => {
+            Ok(unit) if recorded.is_none_or(|receipt| receipt == unit.payload) => {
                 *completed_bytes = completed_bytes
                     .checked_add(u64::from(unit.payload.bytes))
                     .ok_or(MapError::Limit("image bytes"))?;
@@ -666,8 +666,7 @@ fn adopt_existing_tiles(
                 completed.push(unit);
                 completed_keys.insert(key);
             }
-            Err(error) if required => return Err(error),
-            Err(_) => {}
+            _ => {}
         }
     }
     Ok(())

@@ -92,20 +92,10 @@ pub(crate) fn run_images(
     writer: &mut BakeWriter,
 ) -> Result<BakeOutput, MapCacheError> {
     let dir = writer.directory().to_path_buf();
-    let skip: std::collections::BTreeSet<_> = writer
-        .checkpoint()
-        .completed
-        .as_slice()
-        .iter()
-        .filter_map(|unit| match unit.key {
-            UnitKey::Terrain { tile } => Some(tile),
-            UnitKey::ClientPois => None,
-        })
-        .collect();
     let outcome = bake_images_into(
         input,
         &dir,
-        |key| skip.contains(&key),
+        |tile| writer.completed_receipt(UnitKey::Terrain { tile }),
         |progress| {
             if writer.is_cancelled() {
                 return false;
