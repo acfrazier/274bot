@@ -247,6 +247,10 @@ pub struct SceneRow {
     pub level: i32,
     pub distance: i32,
     pub actions: Ops,
+    /// Placed loc wall shape; zero for rows that are not locs.
+    pub shape: u8,
+    /// Placed loc wall angle; zero for rows that are not locs.
+    pub angle: u8,
 }
 
 impl SceneRow {
@@ -259,6 +263,8 @@ impl SceneRow {
             level: row.level(),
             distance: row.distance(),
             actions: strings.ops(&row.actions()),
+            shape: u8::try_from(row.shape()).unwrap_or_default(),
+            angle: u8::try_from(row.angle()).unwrap_or_default(),
         }
     }
 
@@ -1220,6 +1226,8 @@ mod tests {
             size: 1,
             nx: 10,
             nz: 20,
+            shape: 0,
+            angle: 0,
         }
     }
 

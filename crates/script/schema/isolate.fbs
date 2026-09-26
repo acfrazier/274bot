@@ -63,6 +63,8 @@ table SceneEntity {
   size: int;
   nx: int; // path-head network SW x
   nz: int; // path-head network SW z
+  shape: int; // loc-only placed shape
+  angle: int; // loc-only placed rotation
 }
 
 // One chat modal BUTTON_OK choice.

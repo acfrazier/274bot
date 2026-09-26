@@ -1505,6 +1505,8 @@ fn loc_row<'a>(id: i32, x: i32, actions: &'a [String]) -> SceneEntityInput<'a> {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -1530,6 +1532,8 @@ fn npc_row<'a>(id: i32, x: i32, actions: &'a [String]) -> SceneEntityInput<'a> {
         size: 1,
         nx: x,
         nz: 3201,
+        shape: 0,
+        angle: 0,
     }
 }
 

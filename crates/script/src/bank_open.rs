@@ -602,6 +602,8 @@ mod tests {
             level: 0,
             distance,
             actions: actions.iter().map(|action| Rc::from(*action)).collect(),
+            shape: 0,
+            angle: 0,
         }
     }
 

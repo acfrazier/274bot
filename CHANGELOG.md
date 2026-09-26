@@ -39,7 +39,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   `walkResilient` continues its frozen scene-recovery ladder until the reach
   probe confirms arrival. Every scene/direct `walk-to` request uses the
   client's nearest-tile packet; resilient recovery also keeps the frozen
-  48-tile clamp and stalled/periodic re-click.
+  48-tile clamp and stalled/periodic re-click. After that scene step,
+  `walkResilient` now runs the frozen unstick (`tryNearbyDoor` within
+  Chebyshev 3, then one stalled/periodically re-clicked `pickUnstickStep`)
+  so a closed live door that the pack never encoded (shape-9 `loc_1530` at
+  2669,3316) can still be opened. The one-tile step always runs after the
+  door attempt, even when no door helps; it returns on arrival, and progress
+  resets the pass before rebaking. Desert Mining Camp's scripted doors stay
+  excluded as in frozen.
+  `walkOpening` is a Rust machine (eight segments, openable obstacle within
+  14, 4000 ms wait) instead of a `walkResilient` reduction. Unstick and
+  `walkOpening` clear each candidate's real wall edges on both tiles and open
+  only a door whose counterfactual makes the destination reachable under the
+  walk arrival rule (or strictly closer) on the posted collision flood. Ties
+  use route length, then proximity, rather than BFS enqueue order. Frozen
+  path-scoped hints apply only when a published route exists. The native wait
+  intentionally does not dismiss the
+  frozen quest-lock mesbox, so a locked door costs the full five-second bound.
 - Added shared native-map data contracts: independently keyed image/POI caches,
   checked manifests and data-only service records, resumable partial-entry
   validation, bounded map-record reads and 24-texture LOD selection. Raw visual

@@ -176,6 +176,8 @@ fn booth_loc<'a>(
         size: 1,
         nx: booth.x,
         nz: booth.z,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -917,6 +919,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     };
     let locs = [chest];
     let mut snap = base_snapshot();

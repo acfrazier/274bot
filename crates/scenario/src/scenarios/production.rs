@@ -3,6 +3,7 @@ use crate::*;
 mod chickens;
 pub(crate) use chickens::*;
 mod thiever;
+pub(crate) use thiever::thiever_diagonal_door_trap_scenario;
 pub(crate) use thiever::thiever_scenario;
 pub use thiever::thiever_sustained_scenario;
 mod alcher;

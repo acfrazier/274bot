@@ -359,6 +359,8 @@ export default class T extends LoopingBot {{
             size: 1,
             nx: stand.x + 1,
             nz: stand.z,
+            shape: 0,
+            angle: 0,
         }];
         snapshot.npcs = &npcs;
         tick(&snapshot, native);

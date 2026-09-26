@@ -550,6 +550,8 @@ mod tests {
             size: 0,
             nx: 0,
             nz: 0,
+            shape: 0,
+            angle: 0,
         }
     }
 

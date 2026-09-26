@@ -114,6 +114,8 @@ fn npc_row<'a>(
         size,
         nx,
         nz,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -393,6 +395,8 @@ export function tick(api) {
         size: 4,
         nx: 3205,
         nz: 3201,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = empty_input(1);
     snap.npcs = &npcs;
@@ -495,6 +499,8 @@ fn scene_npc<'a>(actions: &'a [String]) -> SceneEntityInput<'a> {
         size: 4,
         nx: 3205,
         nz: 3201,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -608,6 +614,8 @@ fn example_picks_nearest_size_ge_1_not_array_first() {
             size: 0,
             nx: 3201,
             nz: 3201,
+            shape: 0,
+            angle: 0,
         },
         SceneEntityInput {
             index: 3,
@@ -630,6 +638,8 @@ fn example_picks_nearest_size_ge_1_not_array_first() {
             size: 1,
             nx: 3208,
             nz: 3208,
+            shape: 0,
+            angle: 0,
         },
         SceneEntityInput {
             index: 11,
@@ -652,6 +662,8 @@ fn example_picks_nearest_size_ge_1_not_array_first() {
             size: 2,
             nx: 3203,
             nz: 3201,
+            shape: 0,
+            angle: 0,
         },
     ];
     let mut snap = empty_input(1);

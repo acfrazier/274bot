@@ -2639,6 +2639,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.locs = &first_locs;
@@ -4352,6 +4354,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     snap.locs = &locs;
     post_operable_bank_snapshot(&iso, &snap, 2213, 101, 100);
@@ -4421,6 +4425,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
@@ -4595,6 +4601,8 @@ export default class T extends LoopingBot {
         size: 1,
         nx: 300,
         nz: 400,
+        shape: 0,
+        angle: 0,
     }];
     snap.locs = &locs;
     post_operable_bank_snapshot(&iso, &snap, 2213, 300, 400);
@@ -5547,6 +5555,8 @@ export default class T extends LoopingBot {
             size: 0,
             nx: 0,
             nz: 0,
+            shape: 0,
+            angle: 0,
         },
         script::isolate_fb::SceneEntityInput {
             index: 2,
@@ -5569,6 +5579,8 @@ export default class T extends LoopingBot {
             size: 0,
             nx: 0,
             nz: 0,
+            shape: 0,
+            angle: 0,
         },
     ];
     let mut snap = base_snapshot();
@@ -5742,6 +5754,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     let inv = [script::isolate_fb::ItemRowInput {
@@ -6283,6 +6297,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let walkable = reach_words(&[0, 32]);
     let reachable = reach_words(&[0, 32]);
@@ -6578,6 +6594,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let ground = [script::isolate_fb::SceneEntityInput {
         index: 2,
@@ -6600,6 +6618,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let walkable = reach_words(&[0, 32]);
     let reachable = reach_words(&[0, 32]);
@@ -6760,9 +6780,9 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Task 12b — walkOpening maps onto Traversal.walkResilient(tile, opts).
+// walkOpening starts its dedicated Rust machine instead of reducing to a JS walk helper.
 #[test]
-fn isolate_walk_opening_queues_walk_resilient_not_walk_to() {
+fn isolate_walk_opening_starts_native_machine() {
     let src = r#"
 import { walkOpening } from '../../event/webwalk/walkOpening.js';
 export default class T extends LoopingBot {
@@ -6789,9 +6809,9 @@ export default class T extends LoopingBot {
     let msg = value.as_str().unwrap_or("");
     assert!(
         !msg.contains("walkTo") && !msg.contains("Traversal.walkTo"),
-        "walkOpening must not call missing Traversal.walkTo: {value:?}"
+        "walkOpening must not call a missing JS walk helper: {value:?}"
     );
-    assert_eq!(value, "go", "walkOpening parks on walkResilient, not throw");
+    assert_eq!(value, "go", "walkOpening parks on its native machine");
     let drained = iso.drain_interacts();
     match &drained[..] {
         [script::shim::InteractReq::Walk {
@@ -6804,9 +6824,9 @@ export default class T extends LoopingBot {
             request_id,
         }] => assert_ne!(
             *request_id, 0,
-            "walkOpening queues Traversal.walkResilient walk"
+            "walkOpening starts its first native segment"
         ),
-        other => panic!("walkOpening queues Traversal.walkResilient walk, got {other:?}"),
+        other => panic!("walkOpening starts a native walk segment, got {other:?}"),
     }
     iso.join();
 }
@@ -7455,6 +7475,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
@@ -7534,6 +7556,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.self_slot = 0;
@@ -7584,6 +7608,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.self_slot = 0;
@@ -7687,6 +7713,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let spells = [script::isolate_fb::CombatStyleInput {
         mode: 0,
@@ -8049,6 +8077,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.players = &players;
@@ -8587,6 +8617,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
@@ -8644,6 +8676,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;

@@ -561,6 +561,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                     size: npc.size,
                     nx: npc.network.x,
                     nz: npc.network.z,
+                    shape: 0,
+                    angle: 0,
                 }
             })
             .collect()
@@ -606,6 +608,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                     size: 0,
                     nx: 0,
                     nz: 0,
+                    shape: loc.shape,
+                    angle: loc.angle,
                 }
             })
             .collect()
@@ -662,6 +666,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                     size: 0,
                     nx: 0,
                     nz: 0,
+                    shape: 0,
+                    angle: 0,
                 }
             })
             .collect()
@@ -707,6 +713,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                     size: 0,
                     nx: 0,
                     nz: 0,
+                    shape: 0,
+                    angle: 0,
                 }
             })
             .collect()

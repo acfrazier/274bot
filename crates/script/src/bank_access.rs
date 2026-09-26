@@ -994,6 +994,8 @@ mod tests {
             level: 0,
             distance,
             actions: ops(actions),
+            shape: 0,
+            angle: 0,
         }
     }
 

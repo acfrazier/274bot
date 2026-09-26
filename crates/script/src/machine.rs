@@ -514,6 +514,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::reach_entity::EntityOp>(),
     entry::<crate::reach_entity::WalkHops>(),
     entry::<crate::walk::WalkResilient>(),
+    entry::<crate::walk::WalkOpening>(),
     entry::<crate::bank_op::BankOp>(),
     entry::<crate::bank_deposit::BankDeposit>(),
     entry::<crate::bank_withdraw::WithdrawTo>(),

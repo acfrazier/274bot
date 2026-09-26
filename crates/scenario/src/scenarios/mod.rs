@@ -89,8 +89,8 @@ pub(crate) use production::{
     smithing_bot_nails_scenario, smithing_bot_platebody_scenario, smithing_bot_scenario,
     superheater_fire_battlestaff_scenario, superheater_mithril_scenario, superheater_scenario,
     superheater_silver_low_natures_scenario, superheater_steel_scenario, tanner_bot_hard_scenario,
-    tanner_bot_scenario, thiever_scenario, vial_filler_east_scenario, vial_filler_scenario,
-    wildy_agility_scenario,
+    tanner_bot_scenario, thiever_diagonal_door_trap_scenario, thiever_scenario,
+    vial_filler_east_scenario, vial_filler_scenario, wildy_agility_scenario,
 };
 pub(crate) use ranging_guild::{
     ranging_guild_bank_scenario, ranging_guild_full_scenario, ranging_guild_redeem_scenario,

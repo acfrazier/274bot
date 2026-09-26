@@ -290,6 +290,8 @@ fn scene_loc<'a>(
         size: 1,
         nx: x,
         nz: z,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -1342,6 +1344,8 @@ fn scene_npc<'a>(
         size: 1,
         nx: tile.x,
         nz: tile.z,
+        shape: 0,
+        angle: 0,
     }
 }
 

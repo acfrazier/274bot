@@ -104,6 +104,10 @@ const REGISTRY: &[Entry] = &[
         scenarios::chicken_killer_bank_scenario,
     ),
     Entry::new("thiever", scenarios::thiever_scenario),
+    Entry::new(
+        "thiever_diagonal_door_trap",
+        scenarios::thiever_diagonal_door_trap_scenario,
+    ),
     Entry::new("alcher", scenarios::alcher_scenario),
     Entry::new("alcher_defaults", scenarios::alcher_defaults_scenario),
     Entry::new(

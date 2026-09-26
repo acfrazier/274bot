@@ -327,7 +327,9 @@ const VT_CL_TYPE: VOffsetT = 8;
 const VT_CL_USERNAME: VOffsetT = 10;
 
 // SceneEntity: { index, id, name, x, z, level, distance, health,
-//               max_health, in_combat, animating, actions }
+//               max_health, in_combat, animating, actions, reachable,
+//               reachable_adj, combat_level, target_kind, target_index,
+//               size, nx, nz, shape, angle }
 const VT_ENT_INDEX: VOffsetT = 4;
 const VT_ENT_ID: VOffsetT = 6;
 const VT_ENT_NAME: VOffsetT = 8;
@@ -348,6 +350,8 @@ const VT_ENT_TARGET_INDEX: VOffsetT = 36;
 const VT_ENT_SIZE: VOffsetT = 38;
 const VT_ENT_NX: VOffsetT = 40;
 const VT_ENT_NZ: VOffsetT = 42;
+const VT_ENT_SHAPE: VOffsetT = 44;
+const VT_ENT_ANGLE: VOffsetT = 46;
 
 // ChatOption: { text }
 const VT_CHAT_OPT_TEXT: VOffsetT = 4;
@@ -521,6 +525,10 @@ pub struct SceneEntityInput<'a> {
     pub nx: i32,
     /// Path-head network SW z. Packed only with `size >= 1`.
     pub nz: i32,
+    /// Placed loc shape; `0` for non-loc rows and omitted from their wire table.
+    pub shape: i32,
+    /// Placed loc angle; `0` for non-loc rows and omitted from their wire table.
+    pub angle: i32,
 }
 
 /// One chat modal BUTTON_OK choice.
@@ -2946,6 +2954,8 @@ pub struct SceneEntityFp {
     pub size: i32,
     pub nx: i32,
     pub nz: i32,
+    pub shape: i32,
+    pub angle: i32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -3299,6 +3309,8 @@ impl SnapshotFingerprint {
                 size: e.size,
                 nx: e.nx,
                 nz: e.nz,
+                shape: e.shape,
+                angle: e.angle,
             }
         }
         SnapshotFingerprint {
@@ -4935,6 +4947,8 @@ fn scene_entity_off<'b>(
         b.push_slot_always(VT_ENT_NX, e.nx);
         b.push_slot_always(VT_ENT_NZ, e.nz);
     }
+    b.push_slot(VT_ENT_SHAPE, e.shape, 0);
+    b.push_slot(VT_ENT_ANGLE, e.angle, 0);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -5238,6 +5252,12 @@ impl SceneEntityReader<'_> {
     pub fn nz(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_ENT_NZ, None) }.unwrap_or(0)
     }
+    pub fn shape(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_SHAPE, None) }.unwrap_or(0)
+    }
+    pub fn angle(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_ANGLE, None) }.unwrap_or(0)
+    }
 }
 
 impl Verifiable for SceneEntityReader<'_> {
@@ -5267,6 +5287,8 @@ impl Verifiable for SceneEntityReader<'_> {
             .visit_field::<i32>("size", VT_ENT_SIZE, false)?
             .visit_field::<i32>("nx", VT_ENT_NX, false)?
             .visit_field::<i32>("nz", VT_ENT_NZ, false)?
+            .visit_field::<i32>("shape", VT_ENT_SHAPE, false)?
+            .visit_field::<i32>("angle", VT_ENT_ANGLE, false)?
             .finish();
         Ok(())
     }
@@ -7118,6 +7140,8 @@ pub(crate) mod tests {
             size: 4,
             nx: 2832,
             nz: 9825,
+            shape: 0,
+            angle: 0,
         };
         let mut input = empty_input(9);
         let npcs = [npc];
@@ -7133,6 +7157,14 @@ pub(crate) mod tests {
         assert_eq!((got[0].x(), got[0].z(), got[0].level()), (3222, 3295, 0));
         assert_eq!((got[0].size(), got[0].nx(), got[0].nz()), (4, 2832, 9825));
         assert_eq!(got[0].actions(), vec!["Attack", "Pick-up"]);
+        assert!(
+            unsafe { got[0].tab.get::<i32>(VT_ENT_SHAPE, None) }.is_none(),
+            "non-loc rows omit zero-valued loc geometry slots"
+        );
+        assert!(
+            unsafe { got[0].tab.get::<i32>(VT_ENT_ANGLE, None) }.is_none(),
+            "non-loc rows omit zero-valued loc geometry slots"
+        );
     }
 
     /// Task 8 — an omitted npc table is absent, not an empty vector.
@@ -7160,6 +7192,8 @@ pub(crate) mod tests {
             size: 0,
             nx: 0,
             nz: 0,
+            shape: 0,
+            angle: 0,
         };
         let mut input = empty_input(1);
         let npcs = [npc];
@@ -7236,6 +7270,8 @@ pub(crate) mod tests {
             size: 1,
             nx: 0,
             nz: 0,
+            shape: 0,
+            angle: 0,
         };
         let mut input = empty_input(2);
         let npcs = [npc];
@@ -7270,6 +7306,8 @@ pub(crate) mod tests {
             size: 0,
             nx: 0,
             nz: 0,
+            shape: 9,
+            angle: 1,
         };
         let mut input = empty_input(3);
         let locs = [loc];
@@ -7278,6 +7316,7 @@ pub(crate) mod tests {
         let view = decode_snapshot(&bytes).expect("snapshot");
         assert_eq!(view.locs()[0].size(), 0);
         assert_eq!((view.locs()[0].nx(), view.locs()[0].nz()), (0, 0));
+        assert_eq!((view.locs()[0].shape(), view.locs()[0].angle()), (9, 1));
     }
 
     #[test]
@@ -7304,6 +7343,8 @@ pub(crate) mod tests {
             size: 1,
             nx: 10,
             nz: 10,
+            shape: 0,
+            angle: 0,
         };
         let mut input = empty_input(4);
         let npcs = [npc];
@@ -7374,6 +7415,8 @@ pub(crate) mod tests {
             size: 1,
             nx: 100,
             nz: 100,
+            shape: 0,
+            angle: 0,
         };
         let mut input = empty_input(6);
         let npcs = [npc];

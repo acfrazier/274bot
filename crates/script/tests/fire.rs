@@ -59,6 +59,8 @@ fn loc<'a>(name: &'a str, x: i32, z: i32) -> SceneEntityInput<'a> {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 

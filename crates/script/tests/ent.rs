@@ -118,6 +118,8 @@ fn npc_at<'a>(id: i32, x: i32, z: i32, level: i32) -> SceneEntityInput<'a> {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 

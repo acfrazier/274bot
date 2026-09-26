@@ -408,6 +408,8 @@ fn posted_npc_distance_zero_does_not_skip_the_walk() {
         size: 1,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     };
     let bytes = encode_snapshot(&snap_scene(cell_here(), &[], &[], &[npc]));
     let reader = SnapshotReader::from_bytes(&bytes).unwrap();
@@ -489,6 +491,8 @@ fn posted_loc_distance_does_not_pick_the_door() {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     };
     let near = SceneEntityInput {
         index: 2,
@@ -511,6 +515,8 @@ fn posted_loc_distance_does_not_pick_the_door() {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     };
     let other_level = SceneEntityInput {
         index: 3,
@@ -533,6 +539,8 @@ fn posted_loc_distance_does_not_pick_the_door() {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     };
     let jail = ItemRowInput {
         name: Some("Jail key"),
