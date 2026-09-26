@@ -7,6 +7,7 @@
 //! value never becomes the durable one on its own.
 
 use std::sync::mpsc::{self, Receiver, Sender};
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
@@ -38,15 +39,19 @@ pub(crate) struct ProfileWriter {
 }
 
 impl ProfileWriter {
-    /// `gate` is held by the writer while it gathers and commits a batch;
-    /// tests hold it to queue several jobs into one batch.
-    pub(crate) fn spawn(mut store: VaultStore, gate: Arc<Mutex<()>>) -> Self {
+    /// Test builds pass a gate the writer holds while it gathers and
+    /// commits a batch; tests hold it to queue several jobs into one batch.
+    pub(crate) fn spawn(
+        mut store: VaultStore,
+        #[cfg(any(test, feature = "test-support"))] gate: Arc<Mutex<()>>,
+    ) -> Self {
         let (jobs, inbox) = mpsc::channel::<Job>();
         let (report, done) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("profile-writer".into())
             .spawn(move || {
                 while let Ok(first) = inbox.recv() {
+                    #[cfg(any(test, feature = "test-support"))]
                     let _batch = gate.lock().unwrap_or_else(PoisonError::into_inner);
                     let mut batch = vec![first];
                     batch.extend(inbox.try_iter());

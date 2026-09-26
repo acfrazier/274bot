@@ -4074,7 +4074,15 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                             } else {
                                 focused.as_deref() == Some(name.as_str())
                             };
+                            // A profile whose first save is still being
+                            // written is not selectable, editable or
+                            // deletable until the write settles.
+                            let saving = session.core.profile_saving(name);
+                            let _saving = saving.then(|| ui.begin_disabled());
                             let (p, r, e) = chooser_row(ui, name, selected);
+                            if saving {
+                                continue;
+                            }
                             if e {
                                 edit = Some(name.clone());
                             } else if r {

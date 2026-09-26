@@ -6540,3 +6540,61 @@ fn background_count_ignores_terminal_status_rows() {
     assert_eq!(s.background_bot_count(), 0);
     let _iso = iso;
 }
+
+#[test]
+fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser() {
+    let path = tmp_vault("saving-gate.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = Vault::create(&path, "bot").unwrap();
+    vault.upsert(profile("alice", "pw", 42)).unwrap();
+    s.core.set_vault(Some(vault));
+    s.set_multibox(true);
+    let gate = s.core.write_gate();
+    let held = gate.lock().unwrap();
+    s.cred_user = "bob".into();
+    s.cred_pass = "pw".into();
+    s.chooser_edit = Some(String::new());
+    assert!(s.save_credentials());
+    // The writer may already hold bob's job, but it cannot commit it yet.
+
+    s.select("bob");
+    assert_ne!(s.focused_name().as_deref(), Some("bob"));
+    assert!(!s.load("bob"), "chooser row Load is refused");
+    s.load_all();
+    assert_ne!(
+        s.focus.lock().unwrap().focused.as_deref(),
+        Some("bob"),
+        "Load all never focuses a profile still saving"
+    );
+    let report = s.core.last_operation().unwrap();
+    assert!(
+        matches!(
+            report.outcome("bob"),
+            Some(frontend_core::Outcome::Skipped(_))
+        ),
+        "{report:?}"
+    );
+    assert_eq!(
+        report.outcome("alice"),
+        Some(&frontend_core::Outcome::Completed)
+    );
+    assert!(!s.vault_remove("bob"), "chooser Delete is refused");
+    assert!(
+        s.core.play().unwrap().arm("bob").is_none(),
+        "no slot from staged credentials"
+    );
+    assert!(!s.core.members().iter().any(|m| m == "bob"));
+
+    drop(held);
+    s.core.flush_writes();
+    s.pump_status();
+    assert!(!s.core.profile_saving("bob"));
+    assert_eq!(
+        s.focused_name().as_deref(),
+        Some("bob"),
+        "selected once durable"
+    );
+    assert!(s.core.play().unwrap().arm("bob").is_some());
+}

@@ -10,7 +10,7 @@
 //! logout bounded by [`SLOT_REMOVE_TIMEOUT`], and workers are joined only
 //! once finished.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,6 +25,8 @@ use crate::surface::SlotSurface;
 
 /// Clean-logout window a connected member gets on removal before its worker
 /// is stopped regardless.
+const SAVING: &str = "profile is still saving";
+
 pub const SLOT_REMOVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A removal is owned by the exact arm that received its clean-logout
@@ -130,6 +132,10 @@ pub struct OperatorSession<Io> {
     /// Durable vault writes, created with the first write.
     writer: Option<ProfileWriter>,
     writes: HashMap<OperationId, PendingWrite>,
+    /// Profiles whose first save (new or renamed name) is not durable yet:
+    /// no slot may start from their staged credentials.
+    unsaved: HashSet<String>,
+    #[cfg(any(test, feature = "test-support"))]
     write_gate: Arc<std::sync::Mutex<()>>,
     /// The newest write per profile: only its failure restores the durable
     /// value, so an older failure cannot undo a newer staged edit.
@@ -158,6 +164,8 @@ impl<Io> OperatorSession<Io> {
             operations: OperationBook::default(),
             writer: None,
             writes: HashMap::new(),
+            unsaved: HashSet::new(),
+            #[cfg(any(test, feature = "test-support"))]
             write_gate: Arc::default(),
             latest_write: HashMap::new(),
             write_failures: Vec::new(),
@@ -291,7 +299,7 @@ impl<Io> OperatorSession<Io> {
     /// the outgoing and incoming slots are woken so a parked worker re-reads
     /// its draw state within a frame.
     pub fn select(&mut self, name: &str) -> Selection {
-        if self.selected.as_deref() == Some(name) {
+        if self.selected.as_deref() == Some(name) || self.unsaved.contains(name) {
             return Selection::Unchanged;
         }
         let previous = self.selected.replace(name.to_string());
@@ -332,6 +340,9 @@ impl<Io> OperatorSession<Io> {
         restart_terminal: bool,
         surface: &mut S,
     ) -> Result<(), String> {
+        if self.unsaved.contains(name) {
+            return Err(format!("{name}: {SAVING}"));
+        }
         if self
             .play
             .as_ref()
@@ -432,6 +443,11 @@ impl<Io> OperatorSession<Io> {
         name: &str,
         surface: &mut S,
     ) -> bool {
+        if self.unsaved.contains(name) {
+            self.operations
+                .set(op, name, Outcome::Skipped(SAVING.into()));
+            return false;
+        }
         let cancelled_removal = self.cancel_removal(name);
         let added = self.fleet.add(name);
         let auto_login = self
@@ -606,6 +622,15 @@ impl<Io> OperatorSession<Io> {
         surface: &mut S,
     ) -> Removal {
         let op = self.operations.open(ActionKind::Remove);
+        if self.unsaved.contains(name) {
+            self.operations
+                .set(op, name, Outcome::Failed(SAVING.into()));
+            return Removal {
+                op,
+                reselected: None,
+                selection_cleared: false,
+            };
+        }
         let selected = self.selected.clone();
         let neighbour = self.fleet.focus_neighbour(name, selected.as_deref());
         self.fleet.remove(name);
@@ -980,6 +1005,9 @@ impl<Io> OperatorSession<Io> {
             .vault
             .as_mut()
             .ok_or_else(|| format!("{label}: vault locked"))?;
+        if vault.get(&profile.username).is_none() {
+            self.unsaved.insert(profile.username.clone());
+        }
         vault.stage_upsert(profile.clone());
         Ok(self.submit_write(
             ActionKind::SaveProfile,
@@ -1004,6 +1032,9 @@ impl<Io> OperatorSession<Io> {
             .vault
             .as_mut()
             .ok_or_else(|| format!("{label}: vault locked"))?;
+        if vault.get(&profile.username).is_none() {
+            self.unsaved.insert(profile.username.clone());
+        }
         vault.stage_upsert(profile.clone());
         vault.stage_remove(old);
         Ok(self.submit_write(
@@ -1020,6 +1051,9 @@ impl<Io> OperatorSession<Io> {
     /// Delete a vault profile only; a live member is not logged out or
     /// dropped. Returns `None` when there was no such profile.
     pub fn vault_remove(&mut self, name: &str) -> Result<Option<OperationId>, String> {
+        if self.unsaved.contains(name) {
+            return Err(format!("chooser: {name}: {SAVING}"));
+        }
         self.ensure_writer();
         let vault = self
             .vault
@@ -1043,6 +1077,7 @@ impl<Io> OperatorSession<Io> {
             if let Some(vault) = self.vault.as_ref() {
                 self.writer = Some(ProfileWriter::spawn(
                     vault.store(),
+                    #[cfg(any(test, feature = "test-support"))]
                     Arc::clone(&self.write_gate),
                 ));
             }
@@ -1120,6 +1155,13 @@ impl<Io> OperatorSession<Io> {
         self.save_profile(profile, mirror, "random")
     }
 
+    /// Whether `name`'s first save (new or renamed profile) is still being
+    /// written. Such a profile cannot be selected, loaded, removed or
+    /// deleted until the write settles.
+    pub fn profile_saving(&self, name: &str) -> bool {
+        self.unsaved.contains(name)
+    }
+
     /// Failed profile writes since the last take, as `label: error` lines.
     pub fn take_write_failures(&mut self) -> Vec<String> {
         std::mem::take(&mut self.write_failures)
@@ -1150,6 +1192,7 @@ impl<Io> OperatorSession<Io> {
         for (name, durable) in written.durable {
             if self.latest_write.get(&name) == Some(&written.op) {
                 self.latest_write.remove(&name);
+                self.unsaved.remove(&name);
                 newest.push((name, durable));
             }
         }
@@ -1157,7 +1200,9 @@ impl<Io> OperatorSession<Io> {
         match written.result {
             // A later write in the same commit replaced this value before it
             // was ever durable on its own: its live mirror must not run.
-            Ok(()) if written.superseded => {
+            // A superseded job is Cancelled whatever the commit did: only the
+            // job that owns the committed value succeeds or fails.
+            _ if written.superseded => {
                 self.operations.set(written.op, &member, Outcome::Cancelled);
             }
             Ok(()) => {
@@ -1229,6 +1274,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Held by the writer while it gathers and commits a batch; holding it
     /// queues several writes into one batch.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn write_gate(&self) -> Arc<std::sync::Mutex<()>> {
         Arc::clone(&self.write_gate)
     }

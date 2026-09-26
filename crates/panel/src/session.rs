@@ -3472,6 +3472,9 @@ impl Session {
     /// that slot's `FrameBuf`. No socket is swapped (the channel-head baton
     /// is gone); every slot keeps running.
     pub fn select(&mut self, name: &str) {
+        if self.refuse_saving(name) {
+            return;
+        }
         let (core, mut surface) = self.core_and_surface();
         if let Err(error) = core.open_slot(name, &mut surface) {
             self.error = Some(error);
@@ -3727,6 +3730,16 @@ impl Session {
         self.focus.lock().unwrap().focused = Some(name.to_string());
     }
 
+    /// A profile whose first save is still being written cannot be focused
+    /// or started yet; say so instead of acting on staged credentials.
+    fn refuse_saving(&mut self, name: &str) -> bool {
+        let saving = self.core.profile_saving(name);
+        if saving {
+            self.error = Some(format!("{name}: profile is still saving"));
+        }
+        saving
+    }
+
     /// Split borrow: the core plus the panel adapter over the other fields.
     fn core_and_surface(&mut self) -> (&mut OperatorSession<SlotIo>, PanelSurface<'_>) {
         (
@@ -3928,6 +3941,9 @@ impl Session {
     /// spawned holding the title screen until [`Session::login_all`].
     /// Returns whether the name was newly added to the wall.
     pub fn load(&mut self, name: &str) -> bool {
+        if self.refuse_saving(name) {
+            return false;
+        }
         let (core, mut surface) = self.core_and_surface();
         let (op, added) = core.load(name, &mut surface);
         self.report_failure(op);
@@ -3945,7 +3961,9 @@ impl Session {
         let (core, mut surface) = self.core_and_surface();
         let (op, added) = core.load_all(&mut surface);
         self.report_failure(op);
-        if let Some(last) = self.core.profile_names().last() {
+        // Each load used to focus its member; the last loaded one keeps it
+        // (a profile still saving is skipped, never focused).
+        if let Some(last) = self.core.members().last() {
             let last = last.clone();
             self.apply_focus(&last);
         }

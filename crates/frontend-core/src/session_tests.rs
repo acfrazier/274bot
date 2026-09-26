@@ -746,3 +746,32 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
     let disk = Vault::unlock(&vault_path("rename-fail"), "bot").unwrap();
     assert!(disk.get("alice").is_none() && disk.get("alicia").is_some());
 }
+
+#[test]
+fn on_a_failed_commit_a_superseded_write_is_cancelled_and_only_the_final_one_fails() {
+    let mut s = session("write-coalesce-fail", &[("alice", 1, false)]);
+    let blocker = vault_path("write-coalesce-fail").with_extension("tmp");
+    std::fs::create_dir_all(&blocker).unwrap();
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    let on = s.set_auto_login("alice", true).unwrap();
+    let off = s
+        .set_random_settings("alice", false, "Magic", false)
+        .unwrap();
+    drop(held);
+    s.flush_writes();
+    std::fs::remove_dir_all(&blocker).unwrap();
+
+    assert_eq!(
+        s.operation(on).unwrap().outcome("alice"),
+        Some(&Outcome::Cancelled)
+    );
+    assert!(matches!(
+        s.operation(off).unwrap().outcome("alice"),
+        Some(Outcome::Failed(_))
+    ));
+    assert_eq!(s.take_write_failures().len(), 1, "one failure reported");
+    let saved = s.vault().unwrap().get("alice").unwrap();
+    assert!(!saved.settings.auto_login, "both staged edits roll back");
+    assert!(saved.settings.random_events);
+}
