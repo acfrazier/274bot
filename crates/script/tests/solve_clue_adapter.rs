@@ -312,6 +312,7 @@ fn walk_to(x: i32, z: i32, level: i32) -> InteractReq {
         allow_wilderness: false,
         allow_bank_fetch: false,
         request_id: 0,
+        avoid: Vec::new(),
     }
 }
 
@@ -468,6 +469,7 @@ export default class T extends LoopingBot {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id,
+            avoid: _,
         }] => assert_ne!(*request_id, 0),
         other => panic!("walkToBank must queue one trail walk: {other:?}"),
     }

@@ -339,6 +339,7 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: 0,
+            avoid: Vec::new(),
         }],
         "frozen bankNearest never closes the bank: the walk back starts next"
     );
@@ -770,6 +771,7 @@ fn chicken_killer_closed_face_walks_approach_before_opening_the_same_booth() {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: 0,
+            avoid: Vec::new(),
         }],
         "Chebyshev 1 with can_operate false must not OpenBooth across a closed-face row"
     );
@@ -837,6 +839,7 @@ fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: 0,
+            avoid: Vec::new(),
         }]
     );
 

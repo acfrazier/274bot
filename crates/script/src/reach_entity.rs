@@ -198,7 +198,7 @@ struct Clear {
 enum ClearPhase {
     Start,
     LeafWait,
-    DoorWalk { door: Tile, walk: Resilient },
+    DoorWalk { door: Tile, walk: Box<Resilient> },
     DoorOpen { door: Tile },
     DoorWait { door: Tile },
 }
@@ -354,7 +354,10 @@ impl Clear {
                 false,
             );
             if let Ok(walk) = walk.start(cx) {
-                self.phase = ClearPhase::DoorWalk { door, walk };
+                self.phase = ClearPhase::DoorWalk {
+                    door,
+                    walk: Box::new(walk),
+                };
                 return Some(None);
             }
         }

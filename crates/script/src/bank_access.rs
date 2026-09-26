@@ -242,6 +242,7 @@ fn walk_near(tile: WorldTile, radius: i32) -> InteractReq {
         allow_wilderness: true,
         allow_bank_fetch: true,
         request_id: 0,
+        avoid: Vec::new(),
     }
 }
 
@@ -1166,6 +1167,7 @@ mod tests {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: 0,
+                avoid: Vec::new(),
             }]
         );
         let beside = loc(2693, "Shantay chest", 3303, 3120, 1, &["Open"]);

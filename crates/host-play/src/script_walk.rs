@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav::bank_fetch::BankStep;
-use nav::router::{find_with, FindOptions};
+use nav::router::{find_with_avoid, FindOptions};
 use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
@@ -369,7 +369,15 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
                     allow_bank_fetch: false,
                     ..pending.opts
                 };
-                match find_with(&w.collision, &w.graph, from, to, opts, &state) {
+                match find_with_avoid(
+                    &w.collision,
+                    &w.graph,
+                    from,
+                    to,
+                    opts,
+                    &state,
+                    &pending.avoid,
+                ) {
                     Ok(route) => {
                         log_walk_arm_bot(|| format!("bank_fetch Walk armed sub-route dest={to:?}"));
                         bot.route = Some(route);

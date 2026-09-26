@@ -1130,6 +1130,7 @@ export default class T extends LoopingBot {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 request_id,
+                avoid: _,
             } if *request_id != 0
         )),
         "{drained:?}"

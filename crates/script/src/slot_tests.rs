@@ -1254,6 +1254,7 @@ impl Script for Walker {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 request_id: 0,
+                avoid: Vec::new(),
             });
         }
     }
@@ -1270,6 +1271,7 @@ fn walker_walk() -> crate::shim::InteractReq {
         allow_wilderness: false,
         allow_bank_fetch: false,
         request_id: 0,
+        avoid: Vec::new(),
     }
 }
 

@@ -315,3 +315,37 @@ export default class T extends LoopingBot {
         "the failed walk stops its host follow: {ops:?}"
     );
 }
+
+#[test]
+fn walk_to_avoid_zone_rectangles_ride_the_walk_request() {
+    // Frozen Death Plateau walkSecretPath (deathplateau/nav.ts:153-163).
+    let (ops, _, err, _, _) = walk_to_with(
+        "{ radius: 0, timeoutMs: 180000, useTeleportCatalog: false, \
+         avoidZones: [{ minX: 2848, maxX: 2880, minZ: 3590, maxZ: 3608, level: 0 }] }",
+        2,
+    );
+    assert_eq!(err, "", "a rectangle routes; it is not refused");
+    match world_walks(&ops).as_slice() {
+        [InteractReq::Walk { avoid, .. }] => assert_eq!(
+            avoid,
+            &vec![script::shim::InspectAvoidWire::Rect {
+                min_x: 2848,
+                max_x: 2880,
+                min_z: 3590,
+                max_z: 3608,
+                level: Some(0),
+            }],
+            "the rectangle crosses the FlatBuffer wire on the walk"
+        ),
+        other => panic!("one exact walk, got {other:?}"),
+    }
+    let (ops, _, err, _, _) = walk_to_with(
+        "{ avoidZones: [{ minX: 5, maxX: 1, minZ: 0, maxZ: 0 }] }",
+        2,
+    );
+    assert!(
+        err.contains("avoidZones"),
+        "an inverted rectangle is refused: {err}"
+    );
+    assert!(world_walks(&ops).is_empty());
+}

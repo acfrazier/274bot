@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use api::snapshot::WorldTile;
 use nav::bank_fetch::{fetchable_state, plan_bank_fetch, BankFetch, BankStep};
 use nav::router::{
-    find_first_with, find_first_with_fallback, find_missing_item_reqs, find_with,
-    missing_item_reqs, FallbackRoute, FindOptions, Route,
+    find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
+    find_with_avoid, missing_item_reqs, AvoidRect, FallbackRoute, FindOptions, Route,
 };
 use nav::transport::TransportEdge;
 use nav::world::NavWorld;
@@ -23,6 +23,9 @@ pub struct PendingBankFetch {
     pub dest: WorldTile,
     pub opts: FindOptions,
     pub final_route: Route,
+    /// The walk's avoidance rectangles: the stand sub-route keeps out of
+    /// them as the walk does.
+    pub avoid: Vec<AvoidRect>,
 }
 
 /// Outcome of a walk-arm route attempt: a direct route, a BankBudget
@@ -39,7 +42,7 @@ pub(super) enum RouteOutcome {
 /// Strict `find_with`, then — only when `allow_bank_fetch` is on and the
 /// failure is solely missing item/worn reqs — plan a BankBudget session
 /// and re-find against the session's post state. Never inserts a virtual
-/// bank edge into Dijkstra.
+/// bank edge into Dijkstra. Every search keeps out of `avoid`.
 pub(super) fn route_or_bank_fetch(
     world: &NavWorld,
     from: WorldTile,
@@ -47,15 +50,22 @@ pub(super) fn route_or_bank_fetch(
     opts: FindOptions,
     state: &WorldState,
     bank: &[(i32, i32)],
+    avoid: &[AvoidRect],
 ) -> RouteOutcome {
-    match find_with(&world.collision, &world.graph, from, to, opts, state) {
+    match find_with_avoid(&world.collision, &world.graph, from, to, opts, state, avoid) {
         Ok(route) => RouteOutcome::Routed(route),
-        Err(_) if opts.allow_bank_fetch => {
-            find_missing_item_reqs(&world.collision, &world.graph, from, to, opts, state)
-                .and_then(|missing| plan_bank_fetch(&missing, state, bank, world.banks(), from))
-                .and_then(|fetch| session_route(world, from, to, fetch, opts))
-                .unwrap_or(RouteOutcome::NoPath)
-        }
+        Err(_) if opts.allow_bank_fetch => find_missing_item_reqs_with_avoid(
+            &world.collision,
+            &world.graph,
+            from,
+            to,
+            opts,
+            state,
+            avoid,
+        )
+        .and_then(|missing| plan_bank_fetch(&missing, state, bank, world.banks(), from))
+        .and_then(|fetch| session_route(world, from, to, fetch, opts, avoid))
+        .unwrap_or(RouteOutcome::NoPath),
         Err(_) => RouteOutcome::NoPath,
     }
 }
@@ -105,10 +115,11 @@ pub(super) fn fetch_stand(
     state: &WorldState,
     fetchable: &WorldState,
     bank: &[(i32, i32)],
+    avoid: &[AvoidRect],
 ) -> StandFetch {
     let mut stands = stands.to_vec();
     loop {
-        let search = find_first_with_fallback(
+        let search = find_first_with_fallback_avoid(
             &world.collision,
             &world.graph,
             from,
@@ -116,13 +127,14 @@ pub(super) fn fetch_stand(
             tiles,
             opts,
             fetchable,
+            avoid,
         );
         let route = match search.into_routes() {
             (Ok(route), _) => route,
             (Err(_), tile) => return StandFetch::Tiles(tile),
         };
         let target = route.dest;
-        if let Some(outcome) = session_for(world, from, route, opts, state, bank) {
+        if let Some(outcome) = session_for(world, from, route, opts, state, bank, avoid) {
             return StandFetch::Outcome(outcome);
         }
         stands.retain(|&tile| tile != target);
@@ -146,19 +158,21 @@ pub(super) fn fetch_tile(
     state: &WorldState,
     fetchable: &WorldState,
     bank: &[(i32, i32)],
+    avoid: &[AvoidRect],
 ) -> RouteOutcome {
     let mut tiles = tiles.to_vec();
     let mut known = known;
     loop {
         let route = match known.take() {
             Some(FallbackRoute::Routed(route)) => route,
-            Some(FallbackRoute::Undecided) => match find_first_with(
+            Some(FallbackRoute::Undecided) => match find_first_with_avoid(
                 &world.collision,
                 &world.graph,
                 from,
                 &tiles,
                 opts,
                 fetchable,
+                avoid,
             )
             .into_route()
             {
@@ -168,7 +182,7 @@ pub(super) fn fetch_tile(
             Some(FallbackRoute::Failed(_)) | None => return RouteOutcome::NoPath,
         };
         let target = route.dest;
-        if let Some(outcome) = session_for(world, from, route, opts, state, bank) {
+        if let Some(outcome) = session_for(world, from, route, opts, state, bank, avoid) {
             return outcome;
         }
         tiles.retain(|&tile| tile != target);
@@ -182,6 +196,7 @@ pub(super) fn fetch_tile(
 /// A route found under the fetchable facts: taken as found when it needs no
 /// missing fact (the strict search only ran out of budget), else the
 /// planned session to its goal, if the post-state re-find allows it.
+#[allow(clippy::too_many_arguments)] // search surface plus the session's facts
 fn session_for(
     world: &NavWorld,
     from: WorldTile,
@@ -189,13 +204,14 @@ fn session_for(
     opts: FindOptions,
     state: &WorldState,
     bank: &[(i32, i32)],
+    avoid: &[AvoidRect],
 ) -> Option<RouteOutcome> {
     let missing = missing_item_reqs(&route, state);
     if missing.is_empty() {
         return Some(RouteOutcome::Routed(route));
     }
     let fetch = plan_bank_fetch(&missing, state, bank, world.banks(), from)?;
-    session_route(world, from, route.dest, fetch, opts)
+    session_route(world, from, route.dest, fetch, opts, avoid)
 }
 
 /// Re-find `to` against a planned session's post state (ADR 0005: find
@@ -206,18 +222,29 @@ fn session_route(
     to: WorldTile,
     fetch: BankFetch,
     opts: FindOptions,
+    avoid: &[AvoidRect],
 ) -> Option<RouteOutcome> {
     let opts = FindOptions {
         allow_bank_fetch: false,
         ..opts
     };
-    let route = find_with(&world.collision, &world.graph, from, to, opts, &fetch.state).ok()?;
+    let route = find_with_avoid(
+        &world.collision,
+        &world.graph,
+        from,
+        to,
+        opts,
+        &fetch.state,
+        avoid,
+    )
+    .ok()?;
     Some(RouteOutcome::BankSession {
         pending: PendingBankFetch {
             steps: fetch.steps.into(),
             dest: to,
             opts,
             final_route: route.clone(),
+            avoid: avoid.to_vec(),
         },
         route,
     })

@@ -29,7 +29,7 @@ async function walkWorld(tile, opts = {}) {
                 ...(typeof policy.useShips === 'boolean' ? { useShips: policy.useShips } : {}),
                 ...(typeof policy.useShortcuts === 'boolean' ? { useShortcuts: policy.useShortcuts } : {}),
             },
-            avoidZones: count(opts.avoidZones),
+            avoidZones: Array.isArray(opts.avoidZones) ? opts.avoidZones : [],
             pathFollow: opts.pathFollow !== undefined && opts.pathFollow !== null,
             forceRepath: opts.forceRepath === true,
         },
@@ -72,7 +72,7 @@ export const Traversal = proxy('Traversal', {
                             ? { distanceBeforeTeleport: Math.floor(policy.distanceBeforeTeleport) }
                             : {}),
                     },
-                    avoidZones: Array.isArray(opts.avoidZones) ? opts.avoidZones.length : 0,
+                    avoidZones: Array.isArray(opts.avoidZones) ? opts.avoidZones : [],
                 },
             },
             { log: typeof opts.log === 'function' ? opts.log : undefined, sustain: () => Sustain.run() },

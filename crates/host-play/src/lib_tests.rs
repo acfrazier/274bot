@@ -3210,6 +3210,7 @@ fn bank_fetch_session_refuses_exact_walk_near() {
                     dest,
                     ticks: 0.0,
                 },
+                avoid: Vec::new(),
             }),
             route_generation: 1,
             ..Default::default()
@@ -3425,6 +3426,7 @@ fn park_walk_isolate(
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id,
+            avoid: _,
         }] if *dx == x && *dz == z && *dr == radius => *request_id,
         other => panic!("unexpected interacts: {other:?}"),
     };
@@ -3452,6 +3454,7 @@ fn park_two_walks(iso: &script::LoadIsolate, x: i32, z: i32, radius: i32) -> (u6
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: first,
+            avoid: _,
         }, script::shim::InteractReq::WalkNear {
             x: dx1,
             z: dz1,
@@ -3461,6 +3464,7 @@ fn park_two_walks(iso: &script::LoadIsolate, x: i32, z: i32, radius: i32) -> (u6
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: second,
+            avoid: _,
         }] if *dx0 == x
             && *dz0 == z
             && *dr0 == radius
@@ -3496,6 +3500,7 @@ fn bank_fetch_refuse_echoes_request_id_without_bumping_route() {
                     dest,
                     ticks: 0.0,
                 },
+                avoid: Vec::new(),
             }),
             route_generation: 1,
             walk_outcome_seq: 3,
@@ -3590,6 +3595,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
             dest,
             opts: FindOptions::default(),
             final_route: route.clone(),
+            avoid: Vec::new(),
         }),
         ..Default::default()
     };
@@ -3901,6 +3907,7 @@ fn same_key_pending_route_refuses_distinct_id() {
                 bank: vec![],
                 live_candidates: None,
                 completion: Default::default(),
+                avoid: Vec::new(),
             }),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
@@ -4286,6 +4293,7 @@ fn bank_fetch_refusal_echoes_isolate_request_id() {
                     dest,
                     ticks: 0.0,
                 },
+                avoid: Vec::new(),
             }),
             route_generation: 1,
             walk_outcome_seq: prior.seq,
@@ -4407,6 +4415,88 @@ fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
     assert!(approach_tiles(&world, target, target, 0).is_empty());
 }
 
+/// Frozen `WalkOptions.avoidZones` (Death Plateau `walkSecretPath` passes
+/// `THROWER_APPROACH`): the script walk routes around the rectangle, and a
+/// rectangle that seals the only way leaves no route.
+#[test]
+fn a_script_walk_routes_around_its_avoid_rectangle() {
+    let request = |avoid: Vec<nav::router::AvoidRect>| ScriptRouteRequest {
+        generation: 0,
+        request_id: 0,
+        world: Arc::new(open_world(12, 8)),
+        from: WorldTile {
+            x: 0,
+            z: 1,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 11,
+            z: 1,
+            level: 0,
+        },
+        radius: 0,
+        opts: FindOptions::default(),
+        state: None,
+        bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
+        avoid,
+    };
+    let thrower = nav::router::AvoidRect {
+        min_x: 2,
+        max_x: 9,
+        min_z: 0,
+        max_z: 3,
+        level: Some(0),
+    };
+    let RouteOutcome::Routed(straight) = request(Vec::new()).calculate() else {
+        panic!("open floor routes");
+    };
+    // Every tile stepped, the waypoints' straight/diagonal runs expanded.
+    let walked = |route: &Route| -> Vec<WorldTile> {
+        let points: Vec<WorldTile> = route
+            .legs
+            .iter()
+            .flat_map(|leg| match leg {
+                Leg::Walk { tiles } => tiles.clone(),
+                _ => Vec::new(),
+            })
+            .collect();
+        let mut out = points[..1].to_vec();
+        for pair in points.windows(2) {
+            let mut at = pair[0];
+            while at != pair[1] {
+                at.x += (pair[1].x - at.x).signum();
+                at.z += (pair[1].z - at.z).signum();
+                out.push(at);
+            }
+        }
+        out
+    };
+    assert!(
+        walked(&straight).iter().any(|t| thrower.contains(*t)),
+        "without the rectangle the cheapest route crosses it: {:?}",
+        straight
+    );
+    let RouteOutcome::Routed(around) = request(vec![thrower]).calculate() else {
+        panic!("a detour exists north of the rectangle");
+    };
+    assert_eq!(around.dest.x, 11);
+    assert!(
+        !walked(&around).iter().any(|t| thrower.contains(*t)),
+        "the route keeps out of the avoid rectangle: {:?}",
+        walked(&around)
+    );
+    let sealed = nav::router::AvoidRect {
+        max_z: 7,
+        ..thrower
+    };
+    assert!(matches!(
+        request(vec![sealed]).calculate(),
+        RouteOutcome::NoPath
+    ));
+}
+
 #[test]
 fn radius_calculate_keeps_first_connected_open_floor_approach() {
     let world = Arc::new(open_world(7, 7));
@@ -4430,6 +4520,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
+        avoid: Vec::new(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("open floor should route");
@@ -4475,6 +4566,7 @@ fn radius_calculate_drops_wall_separated_candidate() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
+        avoid: Vec::new(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("same-room approach should route");
@@ -4525,6 +4617,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
+        avoid: Vec::new(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("occupied target should route to a neighbour");
@@ -4575,6 +4668,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
+        avoid: Vec::new(),
     };
     let component = nav::router::local_step_component(&request.world.collision, target, 1);
     let same_side = WorldTile {
@@ -4628,6 +4722,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
+        avoid: Vec::new(),
     };
     let component = nav::router::local_step_component(&request.world.collision, target, 1);
     assert!(!component.contains(&WorldTile {
@@ -4679,6 +4774,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
+        avoid: Vec::new(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("actual 289 route should exist");
@@ -9871,6 +9967,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
             allow_wilderness: false,
             allow_bank_fetch: false,
             request_id: 0,
+            avoid: Vec::new(),
         }],
     ));
     assert!(
@@ -9896,6 +9993,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
             allow_wilderness: false,
             allow_bank_fetch: false,
             request_id: 0,
+            avoid: Vec::new(),
         }],
     ));
     assert!(
@@ -9974,6 +10072,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
             allow_wilderness: false,
             allow_bank_fetch: false,
             request_id: 1,
+            avoid: Vec::new(),
         }],
     ));
     assert!(
@@ -9999,6 +10098,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: 2,
+            avoid: Vec::new(),
         }],
     ));
     assert!(
@@ -10132,6 +10232,7 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
             allow_wilderness: false,
             allow_bank_fetch: false,
             request_id: 77,
+            avoid: Vec::new(),
         }],
     ));
     let bot = &navs.lock().unwrap()["alice"];
@@ -10447,6 +10548,7 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
             },
             opts: FindOptions::default(),
             final_route: final_route.clone(),
+            avoid: Vec::new(),
         }),
         ..Default::default()
     };
@@ -10472,6 +10574,7 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
         },
         opts: FindOptions::default(),
         final_route: final_route.clone(),
+        avoid: Vec::new(),
     });
     bot.route = None;
     step_bank_fetch_on_bot(&mut driver, &snap, &mut bot, None, Some((10, 20, 0)), false);
@@ -16410,6 +16513,7 @@ export function tick(api) {
             allow_wilderness: false,
             allow_bank_fetch: false,
             request_id: 0,
+            avoid: Vec::new(),
         }],
         "native v2 must arm the walk before the approach tile is reached",
     );

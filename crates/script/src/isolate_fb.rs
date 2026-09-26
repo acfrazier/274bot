@@ -6129,6 +6129,20 @@ pub fn cap_paint(paint: &crate::shim::ScriptPaint) -> Result<(), String> {
 /// a missing/unknown `op` (or a request missing a required field) fails
 /// the whole batch — the host logs it and drops the batch, never fatal,
 /// exactly like the old JSON parse.
+/// A row's typed avoid rectangles (inspect route and world walks).
+fn decoded_avoid(row: &InteractReader<'_>) -> Vec<crate::shim::InspectAvoidWire> {
+    row.avoid()
+        .into_iter()
+        .map(|rect| crate::shim::InspectAvoidWire::Rect {
+            min_x: rect.min_x(),
+            max_x: rect.max_x(),
+            min_z: rect.min_z(),
+            max_z: rect.max_z(),
+            level: (rect.level() >= 0).then(|| rect.level()),
+        })
+        .collect()
+}
+
 pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>, String> {
     let batch = InteractBatchReader::from_bytes(buf)?;
     let rows = batch.reqs()?;
@@ -6171,6 +6185,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
+                avoid: decoded_avoid(&row),
             }),
             "walk-near" => out.push(crate::shim::InteractReq::WalkNear {
                 x: row.x(),
@@ -6181,6 +6196,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
+                avoid: decoded_avoid(&row),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
             "select-bank" => out.push(crate::shim::InteractReq::SelectBank {
@@ -6205,21 +6221,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_teleports: row.allow_teleports_explicit(),
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
-                avoid: row
-                    .avoid()
-                    .into_iter()
-                    .map(|rect| crate::shim::InspectAvoidWire::Rect {
-                        min_x: rect.min_x(),
-                        max_x: rect.max_x(),
-                        min_z: rect.min_z(),
-                        max_z: rect.max_z(),
-                        level: if rect.level() < 0 {
-                            None
-                        } else {
-                            Some(rect.level())
-                        },
-                    })
-                    .collect(),
+                avoid: decoded_avoid(&row),
                 request_id: row.request_id(),
             }),
             "inspect-ack" => out.push(crate::shim::InteractReq::InspectAck {
@@ -6603,7 +6605,11 @@ fn interact_off<'b>(
         _ => None,
     };
     let avoid_off = match req {
-        InteractReq::InspectRoute { avoid, .. } => {
+        InteractReq::InspectRoute { avoid, .. }
+        | InteractReq::Walk { avoid, .. }
+        | InteractReq::WalkNear { avoid, .. }
+            if !avoid.is_empty() || matches!(req, InteractReq::InspectRoute { .. }) =>
+        {
             let offs: Vec<_> = avoid
                 .iter()
                 .map(|entry| match entry {
@@ -6754,9 +6760,6 @@ fn interact_off<'b>(
             }
             if *request_id != 0 {
                 b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
-            }
-            if let Some(off) = avoid_off {
-                b.push_slot_always(VT_IN_AVOID, off);
             }
         }
         InteractReq::InspectAck { seq, generation } => {
@@ -7003,6 +7006,10 @@ fn interact_off<'b>(
                 b.push_slot_always(VT_IN_INPUT_IDENTITY, *identity);
             }
         }
+    }
+    // Inspect routes and world walks carry their avoid rectangles.
+    if let Some(off) = avoid_off {
+        b.push_slot_always(VT_IN_AVOID, off);
     }
     WIPOffset::new(b.end_table(tab).value())
 }
@@ -7722,6 +7729,7 @@ pub(crate) mod tests {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 request_id: 9,
+                avoid: Vec::new(),
             },
             InteractReq::WalkNear {
                 x: 2656,
@@ -7732,6 +7740,7 @@ pub(crate) mod tests {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 request_id: 0,
+                avoid: Vec::new(),
             },
             InteractReq::WalkTo {
                 x: 3,
@@ -7765,6 +7774,7 @@ pub(crate) mod tests {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: 11,
+                avoid: Vec::new(),
             },
             InteractReq::WalkNear {
                 x: 3222,
@@ -7775,6 +7785,7 @@ pub(crate) mod tests {
                 allow_wilderness: false,
                 allow_bank_fetch: true,
                 request_id: 12,
+                avoid: Vec::new(),
             },
         ];
         let bytes = encode_interact_batch(&reqs);
@@ -7818,6 +7829,7 @@ pub(crate) mod tests {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 request_id: 7,
+                avoid: Vec::new(),
             }]
         );
     }

@@ -18,6 +18,39 @@ fn act_tile(x: i32, z: i32, level: i32) -> crate::catalog_core::LineOfSightTile 
     crate::catalog_core::LineOfSightTile { x, z, level }
 }
 
+/// A request's avoid entries as router rectangles, or `None` when one cannot
+/// route: a catalog zone id, inverted bounds, a level off 0–3, or more
+/// than the inspect bound ([`route_inspect::validate_request`]'s rules).
+fn avoid_rects(avoid: Vec<script::shim::InspectAvoidWire>) -> Option<Vec<nav::router::AvoidRect>> {
+    let rects = avoid
+        .into_iter()
+        .map(|zone| match zone {
+            script::shim::InspectAvoidWire::Rect {
+                min_x,
+                max_x,
+                min_z,
+                max_z,
+                level,
+            } => Some(nav::router::AvoidRect {
+                min_x,
+                max_x,
+                min_z,
+                max_z,
+                level,
+            }),
+            script::shim::InspectAvoidWire::Unsupported => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let here = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    route_inspect::validate_request(here, here, &rects)
+        .is_ok()
+        .then_some(rects)
+}
+
 /// Note one game request host-play dispatched for `slot`'s script. The
 /// catalog hunt watch reads this record; the isolate never sees it.
 fn record_script_act(navs: &Arc<Mutex<HashMap<String, NavBot>>>, slot: &str, act: ScriptAct) {
@@ -198,6 +231,7 @@ pub(crate) fn dispatch_script_interact_cached(
                 allow_wilderness,
                 allow_bank_fetch,
                 request_id,
+                avoid,
             } => {
                 let bank_rows: Vec<(i32, i32)> = snapshot
                     .bank()
@@ -212,20 +246,30 @@ pub(crate) fn dispatch_script_interact_cached(
                     state: state.clone(),
                     bank: bank_rows,
                 };
-                let queued = arm.queue_route(
-                    x,
-                    z,
-                    level,
-                    FindOptions {
-                        allow_teleports,
-                        allow_wilderness,
-                        allow_bank_fetch,
-                        ..FindOptions::default()
-                    },
-                    0,
-                    false,
-                    request_id,
-                );
+                let queued = match avoid_rects(avoid) {
+                    Some(avoid) => arm.queue_route_avoiding(
+                        x,
+                        z,
+                        level,
+                        FindOptions {
+                            allow_teleports,
+                            allow_wilderness,
+                            allow_bank_fetch,
+                            ..FindOptions::default()
+                        },
+                        request_id,
+                        avoid,
+                    ),
+                    None => {
+                        arm.publish_refusal(
+                            WorldTile { x, z, level },
+                            0,
+                            allow_teleports,
+                            request_id,
+                        );
+                        false
+                    }
+                };
                 if queued {
                     record_script_act(
                         navs,
@@ -252,6 +296,7 @@ pub(crate) fn dispatch_script_interact_cached(
                 allow_wilderness,
                 allow_bank_fetch,
                 request_id,
+                avoid,
             } => {
                 let arm = ScriptWalkArm {
                     here,
@@ -265,21 +310,32 @@ pub(crate) fn dispatch_script_interact_cached(
                         .map(|it| (it.def.id, it.count))
                         .collect(),
                 };
-                let queued = arm.queue_route_in_snapshot(
-                    snapshot,
-                    x,
-                    z,
-                    level,
-                    FindOptions {
-                        allow_teleports,
-                        allow_wilderness,
-                        allow_bank_fetch,
-                        ..FindOptions::default()
-                    },
-                    radius,
-                    true,
-                    request_id,
-                );
+                let queued = match avoid_rects(avoid) {
+                    Some(avoid) => arm.queue_route_in_snapshot_avoiding(
+                        snapshot,
+                        x,
+                        z,
+                        level,
+                        FindOptions {
+                            allow_teleports,
+                            allow_wilderness,
+                            allow_bank_fetch,
+                            ..FindOptions::default()
+                        },
+                        radius,
+                        request_id,
+                        avoid,
+                    ),
+                    None => {
+                        arm.publish_refusal(
+                            WorldTile { x, z, level },
+                            radius,
+                            allow_teleports,
+                            request_id,
+                        );
+                        false
+                    }
+                };
                 if queued {
                     record_script_act(
                         navs,
@@ -384,31 +440,10 @@ pub(crate) fn dispatch_script_interact_cached(
                 avoid,
                 request_id,
             } => {
-                let mut invalid_args = false;
-                let mut rects = Vec::new();
-                for zone in avoid {
-                    match zone {
-                        script::shim::InspectAvoidWire::Rect {
-                            min_x,
-                            max_x,
-                            min_z,
-                            max_z,
-                            level: zone_level,
-                        } => {
-                            if min_x > max_x || min_z > max_z {
-                                invalid_args = true;
-                            }
-                            rects.push(nav::router::AvoidRect {
-                                min_x,
-                                max_x,
-                                min_z,
-                                max_z,
-                                level: zone_level,
-                            });
-                        }
-                        script::shim::InspectAvoidWire::Unsupported => invalid_args = true,
-                    }
-                }
+                let (rects, invalid_args) = match avoid_rects(avoid) {
+                    Some(rects) => (rects, false),
+                    None => (Vec::new(), true),
+                };
                 let bank_rows: Vec<(i32, i32)> = snapshot
                     .bank()
                     .iter()

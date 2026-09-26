@@ -49,6 +49,10 @@ pub enum InteractReq {
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,
+        /// Frozen `WalkOptions.avoidZones` rectangles the route keeps out
+        /// of. Empty on old callers and buffers.
+        #[serde(default)]
+        avoid: Vec<InspectAvoidWire>,
     },
     /// Packed navigation to a reachable tile within the requested radius.
     #[serde(rename = "walk-near")]
@@ -66,6 +70,10 @@ pub enum InteractReq {
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,
+        /// Frozen `WalkOptions.avoidZones` rectangles the route keeps out
+        /// of. Empty on old callers and buffers.
+        #[serde(default)]
+        avoid: Vec<InspectAvoidWire>,
     },
     /// Read-only, bounded native bank selection; never arms movement.
     #[serde(rename = "select-bank")]
@@ -343,9 +351,9 @@ pub enum InteractReq {
     },
 }
 
-/// One inspect avoid entry. Typed rects keep their bounds; anything else
-/// is `Unsupported` so Rust can refuse `invalid-args` instead of dropping
-/// the request.
+/// One avoid entry of an inspect route or a walk. Typed rects keep their
+/// bounds; anything else (a catalog zone id) is `Unsupported` so Rust can
+/// refuse `invalid-args` instead of dropping the request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InspectAvoidWire {
     Rect {

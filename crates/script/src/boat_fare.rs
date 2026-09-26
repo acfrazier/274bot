@@ -13,8 +13,10 @@
 //! `maxExpansions` is accepted: it bounds the frozen PathFinder, and the host
 //! router searches to its own bound (4,000,000 expansions), never less;
 //! `bankItemCounts` is not a host input (the BankBudget fetch reads the live
-//! bank). `avoidZones`, teleport id lists, `useShips`/`useShortcuts` false,
-//! `pathFollow` and `forceRepath` have no host wire and are refused loud.
+//! bank). `avoidZones` rectangles ride the walk request and every host
+//! search of the walk keeps out of them; a catalog zone id is refused.
+//! Teleport id lists, `useShips`/`useShortcuts` false, `pathFollow` and
+//! `forceRepath` have no host wire and are refused loud.
 //! The caller's `Sustain.run()` runs once a tick while walking, as frozen
 //! runs it every follow pass (`WalkExecutor.ts:844–853`).
 //!
@@ -48,8 +50,10 @@ use crate::observed;
 use crate::reach_entity::{
     chat_mark, chat_state, npc_talkable, NpcReach, NpcReachOpts, TalkExpect,
 };
-use crate::shim::InteractReq;
-use crate::walk::{here, interrupted, resolve_teleports, teleport_span_allows, Resilient, Walk};
+use crate::shim::{InspectAvoidWire, InteractReq};
+use crate::walk::{
+    avoid_refusal, here, interrupted, resolve_teleports, teleport_span_allows, Resilient, Walk,
+};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
 use serde_json::json;
@@ -1075,9 +1079,10 @@ pub(crate) struct WalkToArgs {
     use_teleport_catalog: Option<bool>,
     #[serde(default)]
     policy: WalkToPolicy,
-    /// How many `avoidZones` the caller passed.
+    /// Frozen `avoidZones`: rectangles route around; a catalog zone id is
+    /// refused ([`avoid_refusal`]).
     #[serde(default)]
-    avoid_zones: usize,
+    avoid_zones: Vec<InspectAvoidWire>,
     /// Whether the caller passed `pathFollow` overrides.
     #[serde(default)]
     path_follow: bool,
@@ -1093,8 +1098,8 @@ const WALK_TO_MS: u64 = 300_000;
 impl WalkToArgs {
     /// Options the host walk has no wire for, refused loud (never dropped).
     fn refusal(&self) -> Option<&'static str> {
-        if self.avoid_zones > 0 {
-            return Some("avoidZones: the host walk has no avoid-zone wire");
+        if let Some(reason) = avoid_refusal(&self.avoid_zones) {
+            return Some(reason);
         }
         if self.policy.allow_teleport_ids > 0 || self.policy.deny_teleport_ids > 0 {
             return Some("policy.allowTeleportIds/denyTeleportIds: the host router has no teleport id filter");
@@ -1133,6 +1138,7 @@ pub(crate) struct WalkTo {
     radius: i32,
     timeout_ms: u64,
     allow_teleports: bool,
+    avoid: Vec<InspectAvoidWire>,
     phase: WalkToPhase,
     logs: VecDeque<String>,
     result: Option<bool>,
@@ -1163,12 +1169,14 @@ impl Family for WalkTo {
         let radius = args.radius.unwrap_or(WALK_TO_RADIUS);
         let timeout_ms = args.timeout_ms.unwrap_or(WALK_TO_MS);
         let allow_teleports = args.allow_teleports(dest);
-        match Walk::begin(dest, radius, timeout_ms, allow_teleports, cx) {
+        let avoid = args.avoid_zones;
+        match Walk::begin_avoiding(dest, radius, timeout_ms, allow_teleports, avoid.clone(), cx) {
             Ok(walk) => Begin::Run(Self {
                 dest,
                 radius,
                 timeout_ms,
                 allow_teleports,
+                avoid,
                 phase: WalkToPhase::Walking {
                     walk,
                     retried: false,
@@ -1271,11 +1279,12 @@ impl WalkTo {
             WalkToPhase::Recover(recover) => match recover.step(cx, &mut self.logs) {
                 None => {}
                 Some(false) => self.result = Some(false),
-                Some(true) => match Walk::begin(
+                Some(true) => match Walk::begin_avoiding(
                     self.dest,
                     self.radius,
                     self.timeout_ms,
                     self.allow_teleports,
+                    self.avoid.clone(),
                     cx,
                 ) {
                     Ok(walk) => {

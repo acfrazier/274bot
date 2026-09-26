@@ -442,6 +442,19 @@ pub fn find_first_with(
     find_first_with_fallback(collision, graph, from, targets, &[], opts, state)
 }
 
+/// [`find_first_with`] with avoidance rectangles ([`find_with_avoid`]).
+pub fn find_first_with_avoid(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+) -> FirstRouteSearch {
+    find_first_with_fallback_avoid(collision, graph, from, targets, &[], opts, state, avoid)
+}
+
 /// [`find_first_with`] over preferred `targets` with a `fallback` goal set,
 /// sharing one search: the cheapest reachable preferred goal wins even over
 /// a cheaper fallback goal, and the search records the first fallback goal
@@ -467,6 +480,24 @@ pub fn find_first_with_fallback(
     opts: FindOptions,
     state: &WorldState,
 ) -> FirstRouteSearch {
+    find_first_with_fallback_avoid(collision, graph, from, targets, fallback, opts, state, &[])
+}
+
+/// [`find_first_with_fallback`] with avoidance rectangles
+/// ([`find_with_avoid`]). The backward proofs ignore the rectangles: they
+/// over-approximate reachability, so a goal they prove unreachable stays
+/// unreachable with the rectangles too.
+#[allow(clippy::too_many_arguments)] // search surface plus avoid rects
+pub fn find_first_with_fallback_avoid(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    fallback: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+) -> FirstRouteSearch {
     first_search(
         collision,
         graph,
@@ -476,7 +507,7 @@ pub fn find_first_with_fallback(
         opts,
         state,
         false,
-        &[],
+        avoid,
         FIRST_TARGET_BUDGET,
         NODE_BUDGET,
     )

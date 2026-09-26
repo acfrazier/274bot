@@ -107,7 +107,7 @@ pub fn arm_walk_on(
             .get(name)
             .and_then(|arm| arm.lock().unwrap().traveller.essence())
     });
-    let outcome = route_or_bank_fetch(world, from_w, dest_w, options, state, bank);
+    let outcome = route_or_bank_fetch(world, from_w, dest_w, options, state, bank, &[]);
     match outcome {
         RouteOutcome::Routed(route) => {
             if let Some(name) = focused {

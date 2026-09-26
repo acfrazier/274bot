@@ -254,6 +254,7 @@ fn walk_near_dest() -> InteractReq {
         allow_wilderness: true,
         allow_bank_fetch: true,
         request_id: 0,
+        avoid: Vec::new(),
     }
 }
 
@@ -579,6 +580,7 @@ fn supplied_stand_walks_then_delivers_fresh_bank_result() {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: 0,
+            avoid: Vec::new(),
         }]
     );
 
@@ -879,6 +881,7 @@ export default class T extends LoopingBot {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: 0,
+            avoid: Vec::new(),
         }],
         "Chebyshev 1 across a wall is not arrived"
     );

@@ -5,8 +5,8 @@ use std::time::Instant;
 
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav::router::{
-    find_first_with, find_first_with_fallback, find_missing_item_reqs, FallbackRoute, FindOptions,
-    MissingReq, Route,
+    find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
+    AvoidRect, FallbackRoute, FindOptions, MissingReq, Route,
 };
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
@@ -213,7 +213,13 @@ impl ScriptWalkArm {
     ) -> bool {
         self.queue_route(x, z, level, opts, radius, true, 0)
     }
-    fn publish_refusal(&self, to: WorldTile, radius: i32, allow_teleports: bool, request_id: u64) {
+    pub(crate) fn publish_refusal(
+        &self,
+        to: WorldTile,
+        radius: i32,
+        allow_teleports: bool,
+        request_id: u64,
+    ) {
         let mut navs = self.navs.lock().unwrap();
         let bot = navs.entry(self.name.clone()).or_default();
         // Do not bump route_generation or clear a retained route / bank-fetch.
@@ -247,6 +253,7 @@ impl ScriptWalkArm {
             request_id,
             None,
             RouteCompletion::default(),
+            Vec::new(),
         )
     }
 
@@ -272,6 +279,60 @@ impl ScriptWalkArm {
             request_id,
             Some(snapshot),
             RouteCompletion::default(),
+            Vec::new(),
+        )
+    }
+
+    /// [`Self::queue_route`] for a walk that keeps out of `avoid`
+    /// (frozen `WalkOptions.avoidZones`).
+    #[allow(clippy::too_many_arguments)] // route queue plus the walk's avoid rects
+    pub(crate) fn queue_route_avoiding(
+        &self,
+        x: i32,
+        z: i32,
+        level: i32,
+        opts: FindOptions,
+        request_id: u64,
+        avoid: Vec<AvoidRect>,
+    ) -> bool {
+        self.queue_route_impl(
+            x,
+            z,
+            level,
+            opts,
+            0,
+            false,
+            request_id,
+            None,
+            RouteCompletion::default(),
+            avoid,
+        )
+    }
+
+    /// [`Self::queue_route_in_snapshot`] for a walk that keeps out of `avoid`.
+    #[allow(clippy::too_many_arguments)] // plus the borrowed arm-time scene and avoid rects
+    pub(crate) fn queue_route_in_snapshot_avoiding(
+        &self,
+        snapshot: &GameSnapshot,
+        x: i32,
+        z: i32,
+        level: i32,
+        opts: FindOptions,
+        radius: i32,
+        request_id: u64,
+        avoid: Vec<AvoidRect>,
+    ) -> bool {
+        self.queue_route_impl(
+            x,
+            z,
+            level,
+            opts,
+            radius,
+            true,
+            request_id,
+            Some(snapshot),
+            RouteCompletion::default(),
+            avoid,
         )
     }
 
@@ -299,6 +360,7 @@ impl ScriptWalkArm {
             request_id,
             Some(snapshot),
             completion,
+            Vec::new(),
         )
         .then_some(receiver)
     }
@@ -369,6 +431,7 @@ impl ScriptWalkArm {
         request_id: u64,
         snapshot: Option<&GameSnapshot>,
         completion: RouteCompletion,
+        avoid: Vec<AvoidRect>,
     ) -> bool {
         let to = WorldTile { x, z, level };
         let Some((hx, hz, hl)) = self.here else {
@@ -439,6 +502,7 @@ impl ScriptWalkArm {
                 state: self.state.clone(),
                 bank: self.bank.clone(),
                 live_candidates,
+                avoid,
                 completion,
             });
             if bot.route_worker.is_some() {
@@ -702,6 +766,9 @@ pub(crate) struct ScriptRouteRequest {
     /// `None` keeps the sequential radius policy; with `Some`, the radius
     /// goal set is the fallback when no stand routes.
     pub(crate) live_candidates: Option<LiveCandidates>,
+    /// Frozen `WalkOptions.avoidZones` rectangles: every search of this
+    /// walk keeps out of them.
+    pub(crate) avoid: Vec<AvoidRect>,
     pub(crate) completion: RouteCompletion,
 }
 impl ScriptRouteRequest {
@@ -718,13 +785,14 @@ impl ScriptRouteRequest {
         }
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
-        let Some(missing) = find_missing_item_reqs(
+        let Some(missing) = find_missing_item_reqs_with_avoid(
             &self.world.collision,
             &self.world.graph,
             self.from,
             self.to,
             self.opts,
             state,
+            &self.avoid,
         ) else {
             return Vec::new();
         };
@@ -759,7 +827,7 @@ impl ScriptRouteRequest {
         let debug = debug_enabled();
         let slot = walk_arm_worker_slot();
         let started = debug.then(Instant::now);
-        let search = find_first_with_fallback(
+        let search = find_first_with_fallback_avoid(
             &self.world.collision,
             &self.world.graph,
             self.from,
@@ -767,6 +835,7 @@ impl ScriptRouteRequest {
             tiles,
             self.opts,
             state,
+            &self.avoid,
         );
         if debug {
             let elapsed_ms = started.unwrap().elapsed().as_millis();
@@ -819,6 +888,7 @@ impl ScriptRouteRequest {
                 state,
                 fetchable,
                 &self.bank,
+                &self.avoid,
             ) {
                 StandFetch::Outcome(outcome) => return outcome,
                 StandFetch::Tiles(known) => fetch_tiles = known,
@@ -827,13 +897,14 @@ impl ScriptRouteRequest {
 
         let strict_tile = match strict_tile {
             Some(FallbackRoute::Routed(route)) => Some(route),
-            Some(FallbackRoute::Undecided) => find_first_with(
+            Some(FallbackRoute::Undecided) => find_first_with_avoid(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
                 tiles,
                 self.opts,
                 state,
+                &self.avoid,
             )
             .into_route()
             .ok(),
@@ -853,6 +924,7 @@ impl ScriptRouteRequest {
                 state,
                 fetchable,
                 &self.bank,
+                &self.avoid,
             ),
             None => RouteOutcome::NoPath,
         };
@@ -887,8 +959,15 @@ impl ScriptRouteRequest {
                 });
             }
             let started = debug.then(Instant::now);
-            let outcome =
-                route_or_bank_fetch(&self.world, self.from, target, self.opts, state, &self.bank);
+            let outcome = route_or_bank_fetch(
+                &self.world,
+                self.from,
+                target,
+                self.opts,
+                state,
+                &self.bank,
+                &self.avoid,
+            );
             if debug {
                 let elapsed_ms = started.unwrap().elapsed().as_millis();
                 log_walk_arm(&slot, || {
@@ -916,6 +995,7 @@ impl ScriptRouteRequest {
                 self.opts,
                 state,
                 &self.bank,
+                &self.avoid,
             );
         }
 

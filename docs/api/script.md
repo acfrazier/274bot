@@ -158,11 +158,23 @@ arguments and awaits one completion.
   follow `useTeleportCatalog` / `policy.useTeleports` (an explicit false
   wins; unset is off) and `policy.distanceBeforeTeleport` (the route span
   must reach it). A settled blocked route end returns true. `maxBudget` is
-  received: the host searches every walk and the probe to its fixed
-  4,000,000-node bound, and logs a request above it. A non-empty
-  `avoidZones` fails with `not impl` (the host walk has no avoid-zone
-  field); `bankItemCounts` is not an input (the host bank fetch reads the
-  bank).
+  accepted: it bounds frozen's PathFinder, and the host router searches
+  every walk and the probe to its own 4,000,000-node bound, never less.
+  `avoidZones` rectangles ride the walk and the probe, and every host search
+  of the walk keeps out of them; a catalog zone id (not a host table), an
+  inverted rectangle or more than 16 fail with `not impl`.
+  `bankItemCounts` is not an input (the host bank fetch reads the bank).
+- **`Traversal.walkTo`** is one Rust walk: radius 2 and 300 s by default,
+  the same teleport rules and `avoidZones` as `walkResilient`,
+  `maxExpansions` accepted as `maxBudget` is, and the card's `Sustain` hook
+  once a tick while it walks. A random event ends it false and stops its
+  route. Walking off Karamja without the 30-coin fare (the navigator names
+  only the fare as missing), it earns the fare at Luthas's plantation and
+  walks once more. Teleport id lists, ship or shortcut exclusion,
+  `pathFollow` and `forceRepath` fail with `not impl`.
+- Operator Pause stops a script's walk and Resume sends it again if it had
+  not finished; Stop, or a script stopping itself, stops it for good. A
+  walk machine that fails (a throwing `Sustain` or `log`) stops its route.
 - **`createReturnToAnchorTask`:** `validate` is beyond the bot's leash plus
   slack. `execute` does nothing inside the arrive disk, walks a resilient leg
   first when farther than `longRangeTiles`, opens `obstacles` on the way

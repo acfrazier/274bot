@@ -812,6 +812,7 @@ export default class T extends LoopingBot {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id,
+                avoid: _,
             } if *request_id != 0
         )),
         "{walks:?}"

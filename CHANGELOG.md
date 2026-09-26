@@ -391,9 +391,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - Catalog walking and recovery follow frozen rs2b0t more closely
   (`docs/api/script.md`, "Catalog walking and recovery"): `walkResilient`
   verifies with a route probe before giving up and honours `sceneRadius`,
-  the teleport toggles and `distanceBeforeTeleport`; `avoidZones` now fails
-  loudly instead of being ignored, and `maxBudget` is mapped to the host
-  search bound. `createReturnToAnchorTask` keys off the leash and walks the
+  the teleport toggles and `distanceBeforeTeleport`; `avoidZones`
+  rectangles are routed around (catalog zone ids fail loudly), and
+  `maxBudget` is accepted (the host router never searches less). `createReturnToAnchorTask` keys off the leash and walks the
   frozen legs (long-range leg, `obstacles`, 90 s). `DirectNavigator` clamps
   and re-clicks. `Reach.npcDialog` walks with the resilient ladder, clears
   doors in front of the NPC over up to eight rounds, and stops its walk when
@@ -556,10 +556,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   `script_boat_fare_v1_ts`.
 - `Traversal.walkTo` keeps frozen `WalkOptions`: radius 2 and a 300 s bound
   by default, an explicit teleport opt-out wins, `distanceBeforeTeleport`
-  gates teleports, and the card's Sustain hook runs every tick of the walk.
-  Options the host cannot honour (`avoidZones`, teleport id lists, ship or
-  shortcut exclusion, `pathFollow`, `forceRepath`) now fail loudly instead
-  of being dropped.
+  gates teleports, `avoidZones` rectangles are routed around (Death
+  Plateau's secret path), and the card's Sustain hook runs every tick of the
+  walk. Options the host cannot honour (catalog zone ids, teleport id lists,
+  ship or shortcut exclusion, `pathFollow`, `forceRepath`) now fail loudly
+  instead of being dropped.
 - Stopping or pausing a script, or a script stopping itself, now stops its
   walk; Resume sends a paused walk that had not finished again instead of
   waiting out its timeout. A walk interrupted by a random event, or whose

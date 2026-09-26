@@ -996,6 +996,7 @@ export async function tick(api) {
             allow_wilderness: false,
             allow_bank_fetch: false,
             request_id: 0,
+            avoid: Vec::new(),
         }],
         "an absent enabled hook defaults true and advances into the search arm"
     );
@@ -1110,6 +1111,7 @@ export async function tick(api) {
             allow_wilderness: false,
             allow_bank_fetch: false,
             request_id: 0,
+            avoid: Vec::new(),
         }]
     );
     assert!(iso.probe("globalThis.__out").unwrap().is_null());
@@ -1237,6 +1239,7 @@ fn clue_walk(x: i32, z: i32, level: i32) -> InteractReq {
         allow_wilderness: false,
         allow_bank_fetch: false,
         request_id: 0,
+        avoid: Vec::new(),
     }
 }
 

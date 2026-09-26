@@ -1503,6 +1503,7 @@ fn player_at_plane_one_follow_uses_level() {
         dest: final_route.dest,
         opts: FindOptions::default(),
         final_route: final_route.clone(),
+        avoid: Vec::new(),
     };
 
     let mut arm = WalkArm {
@@ -1575,6 +1576,7 @@ fn follow_tick_pumps_bank_budget_step() {
             },
             opts: FindOptions::default(),
             final_route: final_route.clone(),
+            avoid: Vec::new(),
         }),
         route: Some(Route {
             dest: WorldTile {

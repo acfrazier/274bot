@@ -474,7 +474,8 @@ table InspectHop {
   ticks: int;
 }
 
-// Inspect-only avoid rectangle. level -1 = every plane.
+// Avoid rectangle of an inspect route or a world walk (walk / walk-near).
+// level -1 = every plane.
 table AvoidRect {
   min_x: int;
   max_x: int;
