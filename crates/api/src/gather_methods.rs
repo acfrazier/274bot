@@ -45,6 +45,30 @@ pub fn gather_methods(
     }))
 }
 
+/// Frozen gas-event rock loc ids, derived from the selected mining rows rather
+/// than copied from the JavaScript catalog. Gas variants use `macro_` aliases;
+/// the frozen set covers the selectable ore ladder plus quest-only blurite,
+/// but not the separate gem-rock resource.
+pub fn gas_rock_ids(
+    facts: Option<&GatherMethodsFacts>,
+) -> Result<impl Iterator<Item = i32> + '_, &'static str> {
+    let Some(facts) = facts else {
+        return Err(FAMILY_UNAVAILABLE);
+    };
+    Ok(facts
+        .mining
+        .iter()
+        .filter(|row| {
+            row.resource_key.eq_ignore_ascii_case("blurite")
+                || crate::content::ROCK_TYPE_NAMES
+                    .iter()
+                    .any(|name| row.resource_key.eq_ignore_ascii_case(name))
+        })
+        .flat_map(|row| row.loc_ids.iter())
+        .filter(|loc| loc.alias.starts_with("macro_"))
+        .map(|loc| loc.id))
+}
+
 /// `{ rows }` of loc-resource hits. Zero matches is `unknown-resource`, not an empty list.
 pub fn gather_resource(
     facts: Option<&GatherMethodsFacts>,

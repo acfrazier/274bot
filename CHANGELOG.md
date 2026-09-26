@@ -451,6 +451,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - The FlourCollector catalog card now loads its four Murder Mystery area facts
   through the shim; EssMiner stays visibly dimmed until native Gatherer support
   replaces its pickaxe-acquisition dependency.
+- Refrozen mining cards receive `GAS_ROCK_IDS` as a real JavaScript `Set`
+  derived from the selected cache's mining rows. CoalTrucks now ignores
+  gas-event coal variants instead of failing on `.has` every tick.
 
 - Alcher and LeatherCrafter can load their reachable-bank selector again.
   Selection runs one bounded native multi-target search off the slot pump,

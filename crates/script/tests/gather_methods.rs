@@ -44,6 +44,21 @@ fn missing_family_is_unavailable_before_skill_or_name() {
         api::gather_methods::gather_methods(None, None),
         Ok(serde_json::json!({ "rows": [], "coverage": [] }))
     );
+    assert!(api::gather_methods::gas_rock_ids(None).is_err());
+}
+
+#[test]
+fn gas_rock_ids_are_derived_from_each_selected_cache() {
+    let expected = (2119..=2139).collect::<Vec<_>>();
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let facts = facts(revision);
+        let mut ids = api::gather_methods::gas_rock_ids(Some(&facts))
+            .expect("gas rock ids")
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        assert_eq!(ids, expected, "{revision:?}");
+        assert!(!ids.contains(&2140), "gem rock is not a frozen gas rock");
+    }
 }
 
 #[test]
@@ -1271,4 +1286,42 @@ fn example_gather_placements_v2_is_one_read_only_fact_call() {
         serde_json::json!([{ "alias": "oaktree", "id": 1281 }]),
         "{row:?}"
     );
+}
+
+#[test]
+fn frozen_gas_rock_set_skips_gas_variants_on_the_coal_query_path() {
+    let src = r#"
+import { GAS_ROCK_IDS as apiGas } from '@rs2b0t/api';
+import { GAS_ROCK_IDS } from '../../data/miningRocks.js';
+export default class T extends LoopingBot {
+    loop() {
+        const coalCandidates = [2125, 2096, 2126, 2097];
+        globalThis.__probe = JSON.stringify({
+            isSet: GAS_ROCK_IDS instanceof Set && apiGas instanceof Set,
+            gasCoal: GAS_ROCK_IDS.has(2125) && apiGas.has(2126),
+            realCoal: GAS_ROCK_IDS.has(2096) || apiGas.has(2097),
+            mineable: coalCandidates.filter(id => !GAS_ROCK_IDS.has(id)),
+        });
+    }
+}
+"#;
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = api::game_data::for_revision(revision).unwrap();
+        let iso =
+            LoadIsolate::spawn_with_game_data(src.into(), LoadShape::CompatClass, vec![], data)
+                .unwrap();
+        post_base(&iso, 1);
+        iso.on_game_tick(1);
+        let value = iso.probe("globalThis.__probe").unwrap();
+        iso.join();
+        let value: serde_json::Value = serde_json::from_str(value.as_str().unwrap()).unwrap();
+        assert_eq!(value["isSet"], true, "{revision:?}: {value:?}");
+        assert_eq!(value["gasCoal"], true, "{revision:?}: {value:?}");
+        assert_eq!(value["realCoal"], false, "{revision:?}: {value:?}");
+        assert_eq!(
+            value["mineable"],
+            serde_json::json!([2096, 2097]),
+            "{revision:?}: {value:?}"
+        );
+    }
 }

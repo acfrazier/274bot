@@ -52,6 +52,7 @@ fn run_selected_facts<'s>(
         "cow-nearest" => cow_nearest(scope, args.get(1)),
         "pickpocket-spot" => pickpocket_spot(scope, args.get(1)),
         "required-thieving" => required_thieving(scope, args.get(1)),
+        "gas-rock-ids" => gas_rock_ids(scope),
         _ => Err("invalid selected facts op".into()),
     }
 }
@@ -364,6 +365,26 @@ fn required_thieving<'s>(
     };
     let level = data.required_thieving(&target).unwrap_or(1);
     Ok(v8::Integer::new(scope, level).into())
+}
+
+/// Frozen `GAS_ROCK_IDS`, sourced from the selected cache's mining rows.
+/// `undefined` keeps imports loadable without selected data while the shim's
+/// fail-closed value still throws if a card tries to use `.has`.
+fn gas_rock_ids<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(data) = supply_v2::selected_data() else {
+        return Ok(v8::undefined(scope).into());
+    };
+    let Ok(ids) = api::gather_methods::gas_rock_ids(data.gather_methods()) else {
+        return Ok(v8::undefined(scope).into());
+    };
+    let array = v8::Array::new(scope, 0);
+    for (index, id) in ids.enumerate() {
+        let id = v8::Integer::new(scope, id);
+        array
+            .set_index(scope, index as u32, id.into())
+            .ok_or_else(|| "selected facts gas rock array".to_string())?;
+    }
+    Ok(array.into())
 }
 
 fn string_array<'s>(
