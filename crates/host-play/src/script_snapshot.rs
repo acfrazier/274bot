@@ -1492,6 +1492,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         },
         collision,
         bank_selection: Default::default(),
+        self_anim: Some(local.map_or(-1, |lp| lp.player.actor.animation)),
     };
     f(&input, native)
 }

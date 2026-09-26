@@ -9003,44 +9003,6 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_swing_started_this_tick_is_a_rising_edge() {
-    let src = r#"
-import { swingStartedThisTick } from '../../api/combat/fightUpkeep.js';
-export default class T extends LoopingBot {
-    loop() { globalThis.__probe = swingStartedThisTick(); }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.tick = 10;
-    snap.animating = false;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    assert_eq!(iso.probe("__probe").unwrap(), false);
-
-    snap.tick = 11;
-    snap.animating = true;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(2);
-    assert_eq!(
-        iso.probe("__probe").unwrap(),
-        true,
-        "first animating tick is the swing start"
-    );
-
-    snap.tick = 12;
-    snap.animating = true;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
-    assert_eq!(
-        iso.probe("__probe").unwrap(),
-        false,
-        "still animating is not swingStartedThisTick"
-    );
-    iso.join();
-}
-
-#[test]
 fn isolate_special_energy_throws_without_posted_varp() {
     let src = r#"
 import { Special } from '../../api/combat/Special.js';

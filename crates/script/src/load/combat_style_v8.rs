@@ -3,7 +3,8 @@
 //! `__rs2b0t_combat_style(op, spellName, wielded, heldOrCasts)`; and the
 //! frozen `CombatStyle` tables: `__rs2b0t_describe_combat_style(resolution)`,
 //! `__rs2b0t_parse_combat_style` / `__rs2b0t_try_parse_combat_style(name)`
-//! and `__rs2b0t_parse_range_style(name)`.
+//! and `__rs2b0t_parse_range_style(name)`; and the frozen `AttackClock`
+//! ([`crate::attack_clock`]): `__rs2b0t_attack_clock(op, slot, tick)`.
 //!
 //! The remaining per-cast costs are `SelectedGameData::runes_per_cast`; the
 //! shim passes the spell name and wielded names already coerced to strings.
@@ -30,7 +31,62 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         "__rs2b0t_try_parse_combat_style",
         try_parse_combat_style,
     )?;
-    cb::install(runtime, "__rs2b0t_parse_range_style", parse_range_style)
+    cb::install(runtime, "__rs2b0t_parse_range_style", parse_range_style)?;
+    cb::install(runtime, "__rs2b0t_attack_clock", attack_clock)
+}
+
+/// `swingStartedThisTick` (`fightUpkeep.ts:16-19`) and the `AttackClock`
+/// instance methods (`eatTiming.ts:27-51`) by `op`: `fight`, `new`,
+/// `observe`, `attacked`, `reset`. A tick is compared with `===`, so a
+/// non-number never matches.
+fn attack_clock<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    use crate::attack_clock as clock;
+    let result = (|| {
+        let op = args.get(0).to_rust_string_lossy(scope);
+        let tick = args.get(2);
+        let tick = if tick.is_number() {
+            tick.number_value(scope).unwrap_or(f64::NAN)
+        } else {
+            f64::NAN
+        };
+        let slot = |scope: &mut v8::HandleScope<'s>| {
+            let slot = number(scope, args.get(1))?;
+            if slot.is_finite() && slot >= 0.0 && slot.fract() == 0.0 {
+                Ok(slot as usize)
+            } else {
+                Err(not_impl(scope, "AttackClock"))
+            }
+        };
+        let known = |scope: &mut v8::HandleScope<'s>, found: Option<()>| {
+            found.ok_or_else(|| not_impl(scope, "AttackClock"))
+        };
+        Ok(match op.as_str() {
+            "fight" => v8::Boolean::new(scope, clock::swing_started_this_tick()).into(),
+            "new" => cb::num(scope, clock::clock_new() as f64),
+            "observe" => {
+                let slot = slot(scope)?;
+                known(scope, clock::clock_observe(slot, tick))?;
+                v8::undefined(scope).into()
+            }
+            "attacked" => {
+                let slot = slot(scope)?;
+                let attacked = clock::clock_attacked(slot, tick);
+                known(scope, attacked.map(|_| ()))?;
+                v8::Boolean::new(scope, attacked == Some(true)).into()
+            }
+            "reset" => {
+                let slot = slot(scope)?;
+                known(scope, clock::clock_reset(slot))?;
+                v8::undefined(scope).into()
+            }
+            _ => return Err(not_impl(scope, "AttackClock")),
+        })
+    })();
+    cb::finish(scope, rv, result);
 }
 
 /// Frozen `COMBAT_STYLE` (`api/combat/CombatStyle.ts:3-13`): the melee style a

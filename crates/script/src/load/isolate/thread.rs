@@ -1506,7 +1506,6 @@ fn tick_loop(
             }
             IsolateCmd::ResetSession => {
                 crate::observed::on_reset();
-                super::snapshot::on_reset();
                 super::reach_query::on_reset();
                 crate::cake_stall::on_reset();
                 crate::walk_wait::on_reset();

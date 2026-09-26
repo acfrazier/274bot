@@ -228,6 +228,7 @@ const VT_SNAP_BANK_SELECTION_REQUEST_ID: VOffsetT = 256;
 const VT_SNAP_BANK_SELECTION_GENERATION: VOffsetT = 258;
 const VT_SNAP_BANK_SELECTION_INDEX: VOffsetT = 260;
 const VT_SNAP_BANK_SELECTION_KIND: VOffsetT = 262;
+const VT_SNAP_SELF_ANIM: VOffsetT = 264;
 
 // Carry: { id, count, name }
 const VT_CARRY_ID: VOffsetT = 4;
@@ -784,6 +785,10 @@ pub struct NativeFactsInput<'a> {
     /// post without Collision). `Some(UNAVAILABLE)` posts a clear.
     pub collision: Option<CollisionViewInput<'a>>,
     pub bank_selection: BankSelectionInput,
+    /// The local player's primary animation id (frozen `reader.selfAnim()`,
+    /// `-1` idle or no local player). `None` omits the slot (callers that
+    /// do not observe it); the isolate keeps its last value.
+    pub self_anim: Option<i32>,
 }
 
 /// A terminal select-only result. Its ordinal is resolved against Start's
@@ -1929,6 +1934,7 @@ impl Verifiable for SnapshotReader<'_> {
             )?
             .visit_field::<i32>("bank_selection_index", VT_SNAP_BANK_SELECTION_INDEX, false)?
             .visit_field::<u8>("bank_selection_kind", VT_SNAP_BANK_SELECTION_KIND, false)?
+            .visit_field::<i32>("self_anim", VT_SNAP_SELF_ANIM, false)?
             .finish();
         Ok(())
     }
@@ -1960,6 +1966,15 @@ impl SnapshotReader<'_> {
                     .unwrap_or(0),
             })
         }
+    }
+
+    /// Whether the buffer carries the local player's animation id.
+    pub fn has_self_anim(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_ANIM, None) }.is_some()
+    }
+    /// The local player's primary animation id, `-1` when absent.
+    pub fn self_anim(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_ANIM, None) }.unwrap_or(-1)
     }
 
     pub fn tick(&self) -> u64 {
@@ -3220,6 +3235,7 @@ pub struct SnapshotFingerprint {
     pub route_inspect: RouteInspectFp,
     pub collision: CollisionViewFp,
     pub bank_selection: BankSelectionInput,
+    pub self_anim: Option<i32>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -3503,6 +3519,7 @@ impl SnapshotFingerprint {
             route_inspect: route_inspect_fp(&native.route_inspect),
             collision: collision_fp(None, native.collision),
             bank_selection: native.bank_selection,
+            self_anim: native.self_anim,
         }
     }
 }
@@ -3651,6 +3668,8 @@ pub struct DeltaMask {
     /// a field of its own.
     pub puzzle_board: bool,
     pub bank_selection: bool,
+    /// The local player's animation id; written only when supplied.
+    pub self_anim: bool,
 }
 
 impl DeltaMask {
@@ -3740,6 +3759,7 @@ impl DeltaMask {
             main_modal_texts: true,
             puzzle_board: true,
             bank_selection: true,
+            self_anim: true,
         }
     }
 
@@ -3851,6 +3871,7 @@ impl DeltaMask {
             // covers both slots.
             puzzle_board: next.puzzle_board != last.puzzle_board,
             bank_selection: next.bank_selection != last.bank_selection,
+            self_anim: next.self_anim != last.self_anim,
         }
     }
 }
@@ -4647,6 +4668,9 @@ fn encode_snapshot_masked_into(
             native.bank_selection.bank_index,
         );
         b.push_slot_always(VT_SNAP_BANK_SELECTION_KIND, native.bank_selection.kind);
+    }
+    if let (true, Some(anim)) = (mask.self_anim, native.self_anim) {
+        b.push_slot_always(VT_SNAP_SELF_ANIM, anim);
     }
     if mask.self_chat {
         b.push_slot_always(VT_SNAP_SELF_CHAT, self_chat_off.expect("mask checked"));
@@ -7389,6 +7413,32 @@ pub(crate) mod tests {
         assert!(d2.has_self_target_kind());
         assert_eq!(d2.self_target_kind(), 2);
         assert_eq!(d2.self_target_index(), 7);
+    }
+
+    /// The local player's animation id rides the keyframe, is omitted while
+    /// unchanged, posts on a change (idle `-1` included), and an old or
+    /// unsupplied buffer reads as absent `-1`.
+    #[test]
+    fn self_anim_delta_omits_when_unchanged_and_posts_on_change() {
+        let input = empty_input(5);
+        let native = |anim| NativeFactsInput {
+            self_anim: Some(anim),
+            ..NativeFactsInput::default()
+        };
+        let (kf, fp) = encode_snapshot_delta_with_native(None, &input, native(390), false);
+        let kf_view = decode_snapshot(&kf).expect("kf");
+        assert!(kf_view.has_self_anim());
+        assert_eq!(kf_view.self_anim(), 390);
+        let (same, _) = encode_snapshot_delta_with_native(Some(&fp), &input, native(390), false);
+        assert!(!decode_snapshot(&same).expect("same").has_self_anim());
+        let (idle, _) = encode_snapshot_delta_with_native(Some(&fp), &input, native(-1), false);
+        let idle = decode_snapshot(&idle).expect("idle");
+        assert!(idle.has_self_anim());
+        assert_eq!(idle.self_anim(), -1);
+        let (old, _) = encode_snapshot_delta(None, &input, false);
+        let old = decode_snapshot(&old).expect("old");
+        assert!(!old.has_self_anim());
+        assert_eq!(old.self_anim(), -1);
     }
 
     #[test]

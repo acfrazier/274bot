@@ -311,6 +311,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   attack cooldowns, and it answers true only once the backpack drops a slot
   within three ticks (a queued Bury is no longer a burial). One Rust
   `fight-bury` machine owns the gate, the click and the confirmation.
+- `swingStartedThisTick`, `buryOneInFight` and `AttackClock` follow the
+  frozen clock: the snapshot now carries the local player's animation id,
+  and a swing starts on the first animation seen and on every change to
+  another non-idle animation. A script started or reconnected mid-swing no
+  longer buries or eats on that tick, and a new attack animation that
+  follows another without an idle tick counts as a new swing. Each
+  `new AttackClock()` keeps its own state and observes only when called.
 - v1 `foodHealAmount` answers every name like frozen `food.ts`: the exact
   selected heal, else the first selected food whose name contains the given
   name or is contained in it, else 8; an empty name is 8. Unknown, partial

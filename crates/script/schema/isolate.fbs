@@ -437,6 +437,11 @@ table Snapshot {
   bank_selection_index: int = -1;
   // 0 absent, 1 near shortcut, 2 reachable, 3 air fallback, 4 no candidate.
   bank_selection_kind: ubyte = 0;
+  // The local player's primary animation id (slot 264; frozen
+  // `reader.selfAnim()`, -1 idle). Written on the keyframe and whenever it
+  // changes; an omitted slot keeps the last id. The frozen `AttackClock`
+  // keys a swing start on this id, not on the `animating` flag above.
+  self_anim: int = -1;
 }
 
 table Collision {

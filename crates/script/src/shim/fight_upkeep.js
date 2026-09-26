@@ -1,13 +1,10 @@
-// Fight-loop bury/swing onto the posted inv and anim. No AttackClock and no
-// cross-tick JS state.
-import { runMachine, snap } from '../../shim/_kernel.js';
+// Fight-loop bury/swing: the frozen module `AttackClock` lives in Rust
+// (`attack_clock.rs`), keyed on the posted local-player animation id.
+import { runMachine } from '../../shim/_kernel.js';
 
-/**
- * True on the tick our swing animation began. Rust posts `swing_started` from
- * the local player's primary animation, so no clock is kept here.
- */
+/** True on the tick our swing animation began (frozen `swingStartedThisTick`). */
 export function swingStartedThisTick() {
-    return snap().swing_started === true;
+    return globalThis.__rs2b0t_attack_clock('fight');
 }
 
 /** One `fight-bury` machine: Rust gates, buries and confirms the burial. */

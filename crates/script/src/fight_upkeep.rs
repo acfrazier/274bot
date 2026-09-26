@@ -1,7 +1,8 @@
 //! Rust-owned `buryOneInFight`, the `fight-bury` [`crate::machine`] family.
 //!
 //! Frozen `api/combat/fightUpkeep.ts:24-37`: skip the tick our swing began
-//! (`:25`, the tick-costing bury would stall the attack), take the first
+//! (`:25`, the module `AttackClock` of [`crate::attack_clock`]: the
+//! tick-costing bury would stall the attack), take the first
 //! backpack row named `boneName` (`:28`), press its `Bury` op (`:33`, the
 //! `InvItem.interact` op-list match of `api/inventory/Inventory.ts:45-56`),
 //! then report only a burial the backpack confirms: `Inventory.used()` below
@@ -29,13 +30,12 @@ fn used(scene: &Scene) -> usize {
 }
 
 /// Frozen `Inventory.first(name)`: the first backpack row whose name matches
-/// case-insensitively.
+/// case-insensitively (ASCII: item names are ASCII).
 fn first<'a>(scene: &'a Scene, name: &str) -> Option<&'a ItemRow> {
-    let wanted = name.to_lowercase();
     scene.since_login().inv()?.iter().find(|row| {
         row.name
             .as_deref()
-            .is_some_and(|got| got.to_lowercase() == wanted)
+            .is_some_and(|got| got.eq_ignore_ascii_case(name))
     })
 }
 
@@ -59,14 +59,14 @@ impl Family for BuryInFight {
     type Output = bool;
 
     fn begin(args: BuryArgs, cx: &mut Cx<'_>) -> Begin<Self> {
-        if crate::load::swing_started() {
+        if crate::attack_clock::swing_started_this_tick() {
             return Begin::Done(false);
         }
         observed::with(|scene| {
             let Some(bones) = first(scene, &args.bone_name) else {
                 return Begin::Done(false);
             };
-            let Some(op) = bones.ops.iter().find(|op| op.to_lowercase() == BURY) else {
+            let Some(op) = bones.ops.iter().find(|op| op.eq_ignore_ascii_case(BURY)) else {
                 return Begin::Done(false);
             };
             let before = used(scene);

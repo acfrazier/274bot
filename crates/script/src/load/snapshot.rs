@@ -6,30 +6,6 @@
 //! the tick loop. Lifecycle/teardown stays in `isolate`.
 
 use rustyscript::Runtime;
-use std::cell::Cell;
-
-thread_local! {
-    /// The previous post's `animating` flag and tick, the only cross-post
-    /// state the swing-start edge needs (`fight_upkeep.swingStartedThisTick`,
-    /// `eat_timing.AttackClock`: true only on the tick the local player's
-    /// primary animation began). Cleared on `ResetSession` and whenever the JS
-    /// snapshot object is rebuilt.
-    static LAST_ANIMATING: Cell<Option<(bool, u64)>> = const { Cell::new(None) };
-    /// The edge of the last post, as the JS snapshot's `swing_started` holds
-    /// it, for step machines that gate on it (`fight_upkeep`).
-    static SWING_STARTED: Cell<bool> = const { Cell::new(false) };
-}
-
-/// `ResetSession`: the swing edge starts over with the new session.
-pub(super) fn on_reset() {
-    LAST_ANIMATING.with(|cell| cell.set(None));
-    SWING_STARTED.with(|cell| cell.set(false));
-}
-
-/// Frozen `swingStartedThisTick()`: the last post began our swing animation.
-pub(crate) fn swing_started() -> bool {
-    SWING_STARTED.with(Cell::get)
-}
 
 /// Materialise the decoded FlatBuffer snapshot as the JS object the
 /// shim reads (`__rs2b0t_host.snapshot`), merging it onto the last
@@ -72,10 +48,6 @@ pub(super) fn materialize_snapshot(
     // to (the same values the shim's `snap()` reads with no snapshot).
     let empty_rows: v8::Local<v8::Value> = v8::Array::new(&mut scope, 0).into();
     let none: v8::Local<v8::Value> = v8::null(&mut scope).into();
-    if !had {
-        // A new snapshot object: no previous post to compare against.
-        LAST_ANIMATING.with(|cell| cell.set(None));
-    }
 
     // `tick` is always carried. A field the buffer carries overwrites
     // the object; a field a delta omits keeps its last value. On the
@@ -804,30 +776,12 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "in_combat", falsy)?;
     }
-    let animating_now = if snap.has_animating() {
+    if snap.has_animating() {
         let animating = v8::Boolean::new(&mut scope, snap.animating());
         set(&mut scope, obj, "animating", animating.into())?;
-        snap.animating()
-    } else if had {
-        LAST_ANIMATING.with(|cell| cell.get().is_some_and(|(anim, _)| anim))
-    } else {
+    } else if !had {
         set(&mut scope, obj, "animating", falsy)?;
-        false
-    };
-    // The one fact `fight_upkeep` / `eat_timing` read: true only on the tick
-    // the local player's primary animation began. The posted flag is a
-    // boolean, so an animation change that keeps it true is invisible here:
-    // the edge is a false->true flip on a new tick, and a second post in the
-    // same tick does not re-arm it (the frozen `AttackClock` answers true only
-    // for the tick it recorded).
-    let tick_number = snap.tick();
-    let swing_started = LAST_ANIMATING.with(|cell| {
-        let previous = cell.replace(Some((animating_now, tick_number)));
-        previous.is_some_and(|(anim, tick)| animating_now && !anim && tick != tick_number)
-    });
-    SWING_STARTED.with(|cell| cell.set(swing_started));
-    let swing = v8::Boolean::new(&mut scope, swing_started);
-    set(&mut scope, obj, "swing_started", swing.into())?;
+    }
     if snap.has_main_modal_id() {
         let main_modal_id = num(&mut scope, snap.main_modal_id() as f64);
         set(&mut scope, obj, "main_modal_id", main_modal_id)?;

@@ -4,7 +4,9 @@
 
 mod common;
 
-use script::isolate_fb::{ItemRowInput, SnapshotInput};
+use script::isolate_fb::{
+    encode_snapshot_with_native, ItemRowInput, NativeFactsInput, SnapshotInput,
+};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 use serde_json::Value;
@@ -90,19 +92,85 @@ fn an_unconfirmed_bury_is_false_after_three_ticks() {
     iso.join();
 }
 
+/// Calls `swingStartedThisTick()` every loop (recorded in `__swings`) and
+/// `buryOneInFight` instead on the loop after the test sets `__bury`.
+const CLOCK_SRC: &str = r#"
+import { buryOneInFight, swingStartedThisTick } from '../../api/combat/fightUpkeep.js';
+globalThis.__swings = [];
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__bury) {
+            globalThis.__bury = false;
+            globalThis.__buried = null;
+            globalThis.__buried = await buryOneInFight('Bones');
+            return;
+        }
+        globalThis.__swings.push(swingStartedThisTick());
+    }
+}
+"#;
+
+/// One post carrying the local player's animation id (`-1` idle).
+fn post_anim(iso: &LoadIsolate, snap: &mut SnapshotInput<'_>, tick: u64, anim: i32) {
+    snap.tick = tick;
+    snap.animating = anim != -1;
+    let native = NativeFactsInput {
+        self_anim: Some(anim),
+        ..NativeFactsInput::default()
+    };
+    iso.post_snapshot(encode_snapshot_with_native(snap, native));
+    iso.on_game_tick(tick);
+    let _ = iso.probe("true");
+}
+
+/// Frozen `AttackClock.observe` (`eatTiming.ts:31-39`): the first animation
+/// id seen is a swing start, so a script started mid-swing does not bury on
+/// that tick.
+#[test]
+fn a_script_started_mid_swing_skips_that_tick() {
+    let ops = vec!["Bury".to_string()];
+    let two = [bones(&ops, 0), bones(&ops, 1)];
+    let iso = LoadIsolate::spawn(CLOCK_SRC.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let _ = iso.probe("globalThis.__bury = true");
+    let mut snap = common::ingame_snapshot();
+    snap.inv = &two;
+    post_anim(&iso, &mut snap, 1, 390);
+    assert_eq!(iso.probe("__buried").unwrap(), false);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the swing tick costs no bury"
+    );
+    iso.join();
+}
+
+/// A changed non-idle animation is a new swing even though the player never
+/// stopped animating; the same id held, or a return to idle, is not.
+#[test]
+fn a_new_animation_while_animating_is_a_new_swing() {
+    let iso = LoadIsolate::spawn(CLOCK_SRC.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = common::ingame_snapshot();
+    for (tick, anim) in [(1, -1), (2, 390), (3, 390), (4, 391), (5, -1)] {
+        post_anim(&iso, &mut snap, tick, anim);
+    }
+    assert_eq!(
+        iso.probe("__swings").unwrap(),
+        serde_json::json!([false, true, false, true, false])
+    );
+    iso.join();
+}
+
 #[test]
 fn only_the_swing_start_tick_is_skipped() {
     let ops = vec!["Bury".to_string()];
     let two = [bones(&ops, 0), bones(&ops, 1)];
 
     // The tick our swing began: no click, false.
-    let iso = LoadIsolate::spawn(SRC.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(CLOCK_SRC.into(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = common::ingame_snapshot();
     snap.inv = &two;
-    snap.animating = false;
-    common::post_snapshot_input(&iso, &snap);
-    snap.animating = true;
-    post_tick(&iso, &mut snap, 2);
+    post_anim(&iso, &mut snap, 1, -1);
+    let _ = iso.probe("globalThis.__bury = true");
+    post_anim(&iso, &mut snap, 2, 390);
     assert_eq!(iso.probe("__buried").unwrap(), false);
     assert!(
         iso.drain_interacts().is_empty(),
@@ -110,18 +178,49 @@ fn only_the_swing_start_tick_is_skipped() {
     );
     iso.join();
 
-    // Still animating after the swing began (the cooldown): bury.
-    let iso = LoadIsolate::spawn(SRC.into(), LoadShape::CompatClass, vec![]).unwrap();
+    // Still in that swing's animation (the cooldown): bury.
+    let iso = LoadIsolate::spawn(CLOCK_SRC.into(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = common::ingame_snapshot();
     snap.inv = &two;
-    snap.animating = true;
-    snap.tick = 1;
-    common::post_snapshot_input(&iso, &snap);
-    post_tick(&iso, &mut snap, 2);
+    post_anim(&iso, &mut snap, 1, 390);
+    let _ = iso.probe("globalThis.__bury = true");
+    post_anim(&iso, &mut snap, 2, 390);
     assert_eq!(
         iso.drain_interacts(),
         vec![bury()],
         "the cooldown ticks bury"
+    );
+    iso.join();
+}
+
+/// A script's own `new AttackClock()` (GreenDragon) keeps its own state:
+/// it observes only when the script calls it.
+#[test]
+fn an_attack_clock_instance_observes_when_called() {
+    let src = r#"
+import { AttackClock } from '../../api/combat/eatTiming.js';
+import { BotHost } from '../../runtime/BotHost.js';
+const clock = new AttackClock();
+globalThis.__seen = [];
+export default class T extends LoopingBot {
+    loop() {
+        const tick = BotHost.tickCount;
+        if (tick !== 2) clock.observe(-1, tick);
+        globalThis.__seen.push(clock.attackedThisTick(tick));
+        if (tick === 4) clock.reset();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = common::ingame_snapshot();
+    for (tick, anim) in [(1, -1), (2, 390), (3, 390), (4, 390), (5, 390)] {
+        post_anim(&iso, &mut snap, tick, anim);
+    }
+    // Tick 2 is not observed, so tick 3 is the first sight of 390; after
+    // `reset` the held 390 is new again.
+    assert_eq!(
+        iso.probe("__seen").unwrap(),
+        serde_json::json!([false, false, true, false, true])
     );
     iso.join();
 }

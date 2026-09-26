@@ -95,6 +95,8 @@ pub use watchdog::{
 pub use load::{transpile_ts, LoadIsolate, Ready};
 
 #[cfg(feature = "load")]
+mod attack_clock;
+#[cfg(feature = "load")]
 mod autocast;
 #[cfg(feature = "load")]
 mod bank_access;

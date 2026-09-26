@@ -1,5 +1,3 @@
-import { snap } from '../../shim/_kernel.js';
-
 export const URGENT_HP_FRACTION = 0.35;
 
 /** Whether to hold this tick and eat on the next one instead. */
@@ -14,16 +12,22 @@ export function shouldHoldEat(input) {
 
 /**
  * Frozen `AttackClock`: the tick our attack animation began, keyed on
- * animation changes. Rust owns the change and posts it as `swing_started`, so
- * the clock keeps no state of its own: `observe` takes the frozen arguments
- * and reads nothing, and `reset` has nothing to clear.
+ * animation-id changes. Rust holds each instance's clock by slot; `observe`
+ * reads the posted local-player animation (every frozen caller passes
+ * `reader.selfAnim()`).
  */
 export class AttackClock {
-    observe(_anim, _tick) {}
+    #slot = globalThis.__rs2b0t_attack_clock('new');
 
-    attackedThisTick(tick) {
-        return snap().swing_started === true && snap().tick === tick;
+    observe(_anim, tick) {
+        globalThis.__rs2b0t_attack_clock('observe', this.#slot, tick);
     }
 
-    reset() {}
+    attackedThisTick(tick) {
+        return globalThis.__rs2b0t_attack_clock('attacked', this.#slot, tick);
+    }
+
+    reset() {
+        globalThis.__rs2b0t_attack_clock('reset', this.#slot);
+    }
 }

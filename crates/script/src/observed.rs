@@ -567,6 +567,8 @@ scene_pages! {
         ours: bool,
         scene_state: i32,
         animating: bool,
+        /// The local player's primary animation id (`-1` idle).
+        self_anim: i32,
         in_combat: bool,
         self_slot: i32,
         self_target_kind: i32,
@@ -790,6 +792,9 @@ impl Scene {
         }
         if snap.has_animating() {
             p.animating(snap.animating());
+        }
+        if snap.has_self_anim() {
+            p.self_anim(snap.self_anim());
         }
         if snap.has_in_combat() {
             p.in_combat(snap.in_combat());

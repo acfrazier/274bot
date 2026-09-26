@@ -14,7 +14,7 @@ use super::shape::LoadShape;
 use super::snapshot::{
     dispatch_native_events, key_string, materialize_settings_bag, materialize_snapshot,
 };
-use super::{loadout_v8, machine_v8, paint_chrome, paint_jive, reach_query, shape, snapshot};
+use super::{loadout_v8, machine_v8, paint_chrome, paint_jive, reach_query, shape};
 use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
