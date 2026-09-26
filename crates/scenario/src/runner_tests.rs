@@ -291,6 +291,254 @@ fn observing_cards_pass_only_on_their_own_painted_receipt() {
     }
 }
 
+/// The selected cache's items: every named item by its real id, and the
+/// seeding cheats' own aliases (`give jail_key 1`), so a seeded "Jail key"
+/// is object 1591 and seeded "Bones" are 526, exactly as the engine gives
+/// them, not merely the lowest id that shares the name.
+struct GameItems {
+    data: Arc<api::game_data::SelectedGameData>,
+    names: Arc<ObjNames>,
+}
+
+impl GameItems {
+    fn load() -> Self {
+        let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let objs = data
+            .items()
+            .iter()
+            .filter_map(|item| {
+                item.name.as_ref().map(|name| client::config::ObjType {
+                    id: item.id,
+                    name: name.clone(),
+                    ..Default::default()
+                })
+            })
+            .collect::<Vec<_>>();
+        let names = Arc::new(ObjNames::from_objs(&objs));
+        Self { data, names }
+    }
+
+    fn seeded_id(&self, name: &str) -> Option<i32> {
+        let alias = name.to_lowercase().replace(' ', "_");
+        self.data
+            .item_by_alias(&alias)
+            .map(|item| item.id)
+            .or_else(|| self.names.by_name(name))
+    }
+}
+
+/// The state a scenario's own seed has certified at Start: a fresh account
+/// (level 1, Hitpoints 10, full run energy), on the mainland landing when it
+/// seeds there, then its fixture prerequisites — the pre-Start arms prepare
+/// and run-prepared acknowledge — applied in order. A position arm keeps
+/// every tile it admits as a candidate, so a radius cannot hide a proof the
+/// seed already stands in.
+struct SeededState {
+    client: Client,
+    tiles: Vec<WorldTile>,
+}
+
+impl SeededState {
+    fn of(scenario: &Scenario, items: &GameItems) -> Self {
+        let mut client = seeded_client();
+        for skill in 0..client.stat_base_level.len() {
+            let (level, xp) = if skill == 3 { (10, 1154) } else { (1, 0) };
+            client.stat_base_level[skill] = level;
+            client.stat_effective_level[skill] = level;
+            client.stat_xp[skill] = xp;
+        }
+        client.runenergy = 100;
+        client.bump_gens(ServerProt::UPDATE_STAT);
+        client.bump_gens(ServerProt::UPDATE_RUNENERGY);
+        let mut tiles = vec![crate::MAINLAND_LANDING];
+        let mut stacks: Vec<(i32, i32)> = Vec::new();
+        let mut varps: Vec<(i32, i32)> = Vec::new();
+        let mut side_tabs = Vec::new();
+        let around = |x: i32, z: i32, level: i32, radius: i32| {
+            (-radius..=radius)
+                .flat_map(|dx| {
+                    (-radius..=radius).map(move |dz| WorldTile {
+                        x: x + dx,
+                        z: z + dz,
+                        level,
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut stack = |id: i32, count: i32| {
+            stacks.retain(|(held, _)| *held != id);
+            stacks.push((id, count));
+        };
+        for arm in crate::fixture_prereqs_of(scenario) {
+            match arm {
+                // `arrived` also admits a stand next to a solid destination.
+                Proof::Arrived { x, z, level } => tiles = around(x, z, level, 1),
+                Proof::ArrivedNear {
+                    x,
+                    z,
+                    level,
+                    radius,
+                } => tiles = around(x, z, level, radius),
+                Proof::Stat { id: 16, min } => client.runenergy = min,
+                Proof::Stat { id, min } => {
+                    client.stat_base_level[id as usize] = min;
+                    client.stat_effective_level[id as usize] = min;
+                }
+                Proof::Item { name, count } => stack(
+                    items
+                        .seeded_id(name)
+                        .unwrap_or_else(|| panic!("{}: no item named {name}", scenario.name)),
+                    count,
+                ),
+                Proof::ItemId { id, count } => stack(id, count),
+                Proof::SideTabAvailable { index } => side_tabs.push(index as usize),
+                Proof::Varp { id, min: value } | Proof::VarpExact { id, value } => {
+                    varps.retain(|(held, _)| *held != id);
+                    varps.push((id, value));
+                }
+                other => panic!(
+                    "{}: model the pre-Start arm {other:?} in SeededState before trusting \
+                     its terminal proof",
+                    scenario.name
+                ),
+            }
+        }
+        set_inv(&mut client, &stacks);
+        let inv = client
+            .iface_id(|f| f.r#type == ComponentType::TYPE_INV)
+            .expect("synthetic inventory component");
+        for index in side_tabs {
+            client.side_icon[index] = inv as i32;
+        }
+        client.bump_gens(ServerProt::IF_SETICON);
+        if let Some(max) = varps.iter().map(|(id, _)| *id).max() {
+            client.cache = Arc::new(client::config::Cache {
+                varps: (0..=max)
+                    .map(|_| client::config::VarpType::default())
+                    .collect(),
+                ..Default::default()
+            });
+            client.var = vec![0; max as usize + 1];
+            for (id, value) in &varps {
+                client.var[*id as usize] = *value;
+            }
+            client.bump_gens(ServerProt::VARP_SYNC);
+        }
+        set_world_tile(&mut client, tiles[0]);
+        Self { client, tiles }
+    }
+
+    /// A seeded tile on which `proof` already holds, XP gains measured from
+    /// the seeded XP exactly as StartScript anchors them.
+    fn satisfies(&mut self, proof: Proof, names: &ObjNames) -> Option<WorldTile> {
+        let baselines = (0..self.client.stat_xp.len() as i32)
+            .map(|skill| (skill, self.client.stat_xp[skill as usize]))
+            .collect::<Vec<_>>();
+        let fresh = match proof {
+            Proof::FreshStatXpGain { id, .. } => Some((id, self.client.stat_xp[id as usize])),
+            _ => None,
+        };
+        for &tile in &self.tiles.clone() {
+            set_world_tile(&mut self.client, tile);
+            let mut snapshot = GameSnapshot::new();
+            snapshot.rebuild(&self.client);
+            if proof.check_with_xp_context(&snapshot, Some(names), Some(&baselines), fresh) {
+                return Some(tile);
+            }
+        }
+        set_world_tile(&mut self.client, self.tiles[0]);
+        None
+    }
+}
+
+/// Catalog-wide: a card the host waits on for a clean stop must also be
+/// waited on for its own work. Every scenario with `wait_script_stop` needs
+/// a post-Start watch and a terminal proof its own pre-Start seed cannot
+/// already satisfy, or it passes on the Start snapshot and the clean-stop
+/// grace becomes the only check. The seeded state is evaluated, not pattern
+/// matched: seeded levels (prayer 43), carried keys and seeded positions
+/// count.
+#[test]
+fn clean_stop_scenarios_are_not_satisfied_by_their_own_seed() {
+    let items = GameItems::load();
+    let names = Arc::clone(&items.names);
+    let mut checked = Vec::new();
+    let mut vacuous = Vec::new();
+    for name in crate::names() {
+        let scenario = crate::get(name).unwrap();
+        if scenario.settings.wait_script_stop.is_none() {
+            continue;
+        }
+        checked.push(name);
+        let Some(start) = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+        else {
+            vacuous.push(format!("{name}: a clean stop without a StartScript step"));
+            continue;
+        };
+        if start + 1 == scenario.steps.len() {
+            vacuous.push(format!("{name}: no post-Start watch"));
+        }
+        let mut seeded = SeededState::of(&scenario, &items);
+        if let Some(tile) = seeded.satisfies(scenario.proof, &names) {
+            vacuous.push(format!(
+                "{name}: terminal proof {} holds on its pre-Start seed at {tile:?}",
+                scenario.proof.name()
+            ));
+        }
+        if scenario.steps[start + 1..]
+            .iter()
+            .all(|step| seeded.satisfies(step.wait.arm, &names).is_some())
+        {
+            vacuous.push(format!(
+                "{name}: every post-Start watch holds on its pre-Start seed"
+            ));
+        }
+
+        // The runner itself, from Start with the seeded state frozen (the
+        // card doing nothing), must never report PASS.
+        let mut from_start = crate::get(name).unwrap();
+        from_start.steps.drain(..start);
+        from_start.seed.mainland = false;
+        from_start.settings.require_mainland_base = false;
+        let mut runner = ScenarioRunner::with_world(from_start, None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.set_obj_names(Arc::clone(&names));
+        for _ in 0..300 {
+            seeded.client.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick(&mut seeded.client);
+            match runner.status() {
+                RunnerStatus::Passed => {
+                    vacuous.push(format!("{name}: the runner passed on the seed alone"));
+                    break;
+                }
+                RunnerStatus::Failed(_) => break,
+                RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+            }
+        }
+    }
+    assert!(vacuous.is_empty(), "{vacuous:#?}");
+    for name in [
+        "line_of_sight_v2_ts",
+        "actor_observation_v2_ts",
+        "fight_field_v2_ts",
+        "hold_spot_v2_ts",
+        "retreat_spot_v2_ts",
+        "walk_spot_v2_ts",
+        "enter_lair_v2_ts",
+        "leave_lair_v2_ts",
+        "bank_v2_ts",
+        "prayer_v1_ts",
+        "prayer_v2_ts",
+        "acquire_key_v2_ts",
+        "cell_v2_ts",
+    ] {
+        assert!(checked.contains(&name), "{name} lost its clean-stop wait");
+    }
+}
+
 #[test]
 fn terminal_snapshot_is_released_after_shot_and_evidence() {
     for failed in [false, true] {

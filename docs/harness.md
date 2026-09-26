@@ -62,6 +62,17 @@ observable even if another skill or an item is watched first.
 step begins, so an earlier trip cannot qualify a later bank-return phase.
 Scenarios without `StartScript` retain first-watch cumulative baselines.
 
+A scenario that waits for a card's clean stop (`wait_script_stop`) must
+also watch the card's own work. Its post-Start watch and terminal proof must
+be an outcome its pre-Start seed cannot already satisfy, or the run passes
+on its Start snapshot and the 45-second stop grace becomes the only check.
+The catalog test `clean_stop_scenarios_are_not_satisfied_by_their_own_seed`
+builds each such scenario's seeded state (mainland landing, then its fixture
+prerequisites) and fails any proof that already holds there. Cards that
+only observe prove themselves with the receipt row they paint
+(`script_receipt(prefix)`); cards that walk use `arrived_ring` around the
+tile they start on.
+
 The `ardy_cakes_fight` fixture waits, within its ordinary bounded scenario
 step, for a nearby unengaged Guard with native scene line of sight before
 starting the catalog script. It prepares Attack, Strength and Hitpoints 70
