@@ -11,6 +11,12 @@ pub(crate) const MUSA_DOCK: WorldTile = WorldTile {
     z: 3146,
     level: 0,
 };
+/// Luthas's stand (frozen `LUTHAS.anchor`).
+const LUTHAS_ANCHOR: WorldTile = WorldTile {
+    x: 2939,
+    z: 3154,
+    level: 0,
+};
 /// Port Sarim dock: the `karamjashipplank_off` landing the example walks to.
 pub(crate) const PORT_SARIM_DOCK: WorldTile = WorldTile {
     x: 3029,
@@ -34,6 +40,17 @@ const BOAT_FARE_V1_WATCH: u32 = 3600;
 /// customs officer; the example stops with its named reason once
 /// `Traversal.walkTo` returns true on the Port Sarim dock.
 pub(crate) fn boat_fare_v1_scenario() -> Scenario {
+    boat_fare_scenario("boat_fare_v1_ts", false)
+}
+
+/// [`boat_fare_v1_scenario`] with the connection dropped (`::serverdrop`)
+/// while the recovery walks to Luthas: the reconnect holds the script, the
+/// relogged session carries the walk, and the fare is still earned.
+pub(crate) fn boat_fare_reconnect_v1_scenario() -> Scenario {
+    boat_fare_scenario("boat_fare_reconnect_v1_ts", true)
+}
+
+fn boat_fare_scenario(name: &'static str, drop_mid_walk: bool) -> Scenario {
     let mainland = Proof::ArrivedNear {
         x: PORT_SARIM_DOCK.x,
         z: PORT_SARIM_DOCK.z,
@@ -95,6 +112,41 @@ pub(crate) fn boat_fare_v1_scenario() -> Scenario {
         },
     });
     steps.push(start_catalog_step());
+    if drop_mid_walk {
+        steps.push(Step {
+            name: "watch the recovery walk head for Luthas",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm: Proof::ArrivedNear {
+                    x: LUTHAS_ANCHOR.x,
+                    z: LUTHAS_ANCHOR.z,
+                    level: LUTHAS_ANCHOR.level,
+                    radius: 12,
+                },
+                budget_ticks: 600,
+            },
+        });
+        steps.push(Step {
+            name: "drop the connection mid-walk",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    cheat(c, "serverdrop");
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::ArrivedNear {
+                    x: LUTHAS_ANCHOR.x,
+                    z: LUTHAS_ANCHOR.z,
+                    level: LUTHAS_ANCHOR.level,
+                    radius: 16,
+                },
+                budget_ticks: 600,
+            },
+        });
+    }
     steps.push(Step {
         name: "watch the fare earned at the plantation and the boat to Port Sarim",
         kind: StepKind::Perform {
@@ -106,7 +158,7 @@ pub(crate) fn boat_fare_v1_scenario() -> Scenario {
         },
     });
     Scenario {
-        name: "boat_fare_v1_ts",
+        name,
         seed: Seed {
             profiles: vec![("test", "test")],
             mainland: true,
@@ -121,7 +173,7 @@ pub(crate) fn boat_fare_v1_scenario() -> Scenario {
             start_script: None,
             start_file: Some("boat_fare_v1.ts"),
             wait_script_stop: Some(BOAT_FARE_V1_STOP),
-            terminal_shot: Some("boat_fare_v1_ts"),
+            terminal_shot: Some(name),
             nav: gold_script_nav(),
             ..Default::default()
         },

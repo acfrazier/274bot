@@ -78,6 +78,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new("prayer_v2_ts", scenarios::prayer_v2_scenario),
     Entry::new("prayer_v1_ts", scenarios::prayer_v1_scenario),
     Entry::new("boat_fare_v1_ts", scenarios::boat_fare_v1_scenario),
+    Entry::new(
+        "boat_fare_reconnect_v1_ts",
+        scenarios::boat_fare_reconnect_v1_scenario,
+    ),
     Entry::new("line_of_sight_v2_ts", scenarios::line_of_sight_v2_scenario),
     Entry::new(
         "actor_observation_v2_ts",

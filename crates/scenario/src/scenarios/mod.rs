@@ -32,7 +32,7 @@ pub(crate) use clue::{
     sherlock_talk_scenario,
 };
 
-pub(crate) use boat_fare::boat_fare_v1_scenario;
+pub(crate) use boat_fare::{boat_fare_reconnect_v1_scenario, boat_fare_v1_scenario};
 pub(crate) use combat::{
     ardy_fighter_bank_scenario, ardy_fighter_bank_seeded_scenario, ardy_fighter_scenario,
     auto_fighter_bank_scenario, auto_fighter_mage_scenario, auto_fighter_range_scenario,
