@@ -985,10 +985,8 @@ fn format_reload_failures(restarted: usize, stopped_paused: usize, errors: &[Str
 
 /// The confirmation text for a warning: exactly which runs are replaced.
 fn reload_warning_text(w: &ReloadWarning) -> String {
-    let mut parts = vec![format!(
-        "reload {} will replace running bots",
-        w.identity_key
-    )];
+    // The affected runs first: a one-row front end may cut the card path.
+    let mut parts = vec!["reload will replace running bots".to_string()];
     if !w.running.is_empty() {
         parts.push(format!("running: {}", w.running.join(", ")));
     }
@@ -1004,5 +1002,6 @@ fn reload_warning_text(w: &ReloadWarning) -> String {
             w.paused_during_prep.join(", ")
         ));
     }
+    parts.push(format!("card {}", w.identity_key));
     parts.join(" — ")
 }

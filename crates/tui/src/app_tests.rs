@@ -1471,3 +1471,22 @@ fn esc_acks_background_notice_when_map_has_no_selection() {
         "Esc still clears a map selection first"
     );
 }
+
+/// The strip is one row: a script report or warning comes before the title
+/// and key help, so an 80-column terminal still shows it.
+#[test]
+fn strip_message_is_visible_at_80_columns() {
+    let mut app = TuiApp::new("289bot headless · local-289 · 127.0.0.1:44594 · revision 289");
+    app.names = vec!["alice".into(), "bob".into()];
+    app.focused = Some(0);
+    app.error = Some("Start all: started 2, skipped 0".into());
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let strip: String = (0..80)
+        .map(|x| terminal.backend().buffer()[(x, 0)].symbol().to_string())
+        .collect();
+    assert!(
+        strip.contains("!! Start all: started 2, skipped 0"),
+        "{strip}"
+    );
+}

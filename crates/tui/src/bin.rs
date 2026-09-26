@@ -1613,6 +1613,17 @@ impl TuiSession {
         self.scripts.take_start_failures();
         self.apply_script_notice(app);
         app.reload_confirm = self.scripts.reload_awaiting_confirm();
+        // Follow an Apply-to-all report shown in the popup as its writes
+        // settle (rewritten in place; nothing allocates while unchanged).
+        if let (Some(shown), Some(report)) = (
+            app.params_state.report.as_mut(),
+            self.scripts.last_settings_sync(),
+        ) {
+            if shown != report.summary() {
+                shown.clear();
+                shown.push_str(report.summary());
+            }
+        }
     }
 
     fn script_start_all(&mut self, app: &mut TuiApp) {
@@ -1721,7 +1732,12 @@ impl TuiSession {
         let scope =
             self.scripts
                 .prepare_settings_sync(&mut self.core, &profile, source, &name, &path);
-        app.params_state.sync_prompt = Some(scope.prompt().to_string());
+        // One popup line: the frozen scope and the keys.
+        app.params_state.sync_prompt = Some(format!(
+            "apply to {} same-card member(s), skip {} · y apply · n cancel",
+            scope.targets.len(),
+            scope.skipped.len()
+        ));
         self.apply_script_notice(app);
     }
 
@@ -1730,6 +1746,11 @@ impl TuiSession {
         if let Err(error) = self.scripts.apply_settings_sync(&mut self.core) {
             app.error = Some(error);
         }
+        // The popup repeats the report: the strip may be too narrow for it.
+        app.params_state.report = self
+            .scripts
+            .last_settings_sync()
+            .map(|report| report.summary().to_string());
         self.apply_script_notice(app);
     }
 

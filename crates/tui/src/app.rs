@@ -1601,11 +1601,9 @@ impl TuiApp {
             + catalog_h
             + load_h
             + u16::from(self.script_load_open && load_h == 0)
+            // The `[Params]` / Reload / Start all / Stop all row.
             + u16::from(
-                !self.params_schema.is_empty()
-                    && !self.script_browse_open
-                    && !self.rs2b0t_catalog_open
-                    && !self.script_load_open,
+                !self.script_browse_open && !self.rs2b0t_catalog_open && !self.script_load_open,
             );
         let chat_h = self.chat_data.view().preferred_height();
         let chunks = Layout::vertical([
@@ -1717,13 +1715,16 @@ impl TuiApp {
                 members.push_str(&format!("(w{number})"));
             }
         }
-        let mut text = format!(
-            "[{members}]  focused: {focused}   {}   F4 map · F7 log · q quit · o options · l loadouts · Tab focus · m load+login all · i login · u logout · U logout all · x remove",
-            self.title
-        );
+        // The message comes before the title and key help: the strip is one
+        // row, and a report or warning past its width would be invisible.
+        let mut text = format!("[{members}]  focused: {focused}   ");
         if let Some(err) = &self.error {
-            text.push_str(&format!("   !! {err}"));
+            text.push_str(&format!("!! {err}   "));
         }
+        text.push_str(&format!(
+            "{}   F4 map · F7 log · q quit · o options · l loadouts · Tab focus · m load+login all · i login · u logout · U logout all · x remove",
+            self.title
+        ));
         let p = Paragraph::new(text).wrap(Wrap { trim: false });
         frame.render_widget(p, area);
     }

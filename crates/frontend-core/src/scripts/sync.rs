@@ -81,23 +81,34 @@ impl SyncReport {
     }
 
     fn refresh(&mut self) {
-        let mut text = format!(
-            "Apply to all {}: saved {}, failed {}, skipped {} (other card)",
-            self.card_name,
-            self.saved,
-            self.failed.len(),
-            self.skipped.len()
-        );
-        if self.superseded > 0 {
-            text.push_str(&format!(", superseded {}", self.superseded));
+        let mut text = format!("Apply to all {}: saved {}", self.card_name, self.saved);
+        let counts = [
+            (self.failed.len(), "failed"),
+            (self.superseded, "superseded"),
+            (self.pending.len(), "saving"),
+        ];
+        for (n, label) in counts {
+            if n > 0 {
+                text.push_str(&format!(", {label} {n}"));
+            }
         }
-        if !self.pending.is_empty() {
-            text.push_str(&format!(", saving {}", self.pending.len()));
+        if !self.skipped.is_empty() {
+            text.push_str(&format!(", skipped {} (other card)", self.skipped.len()));
         }
-        text.push_str(&format!(
-            "; live delivered {}, unchanged {}, stale {}, not running {}",
-            self.delivered, self.unchanged, self.stale, self.not_running
-        ));
+        let live = [
+            (self.delivered, "delivered"),
+            (self.unchanged, "unchanged"),
+            (self.stale, "stale (restarted)"),
+            (self.not_running, "not running"),
+        ];
+        let mut first = true;
+        for (n, label) in live {
+            if n > 0 {
+                text.push_str(if first { "; live: " } else { ", " });
+                text.push_str(&format!("{label} {n}"));
+                first = false;
+            }
+        }
         for (member, error) in self.failed.iter().take(4) {
             text.push_str(&format!("; {member}: {error} (not pushed)"));
         }

@@ -22,8 +22,11 @@ pub struct ParamsState {
     pub choice_cursor: usize,
     pub choice_selected: Vec<String>,
     pub error: Option<String>,
-    /// Apply-to-all confirmation line while one is prepared.
+    /// Apply-to-all confirmation line (scope and the y/n keys) while one
+    /// is prepared.
     pub sync_prompt: Option<String>,
+    /// The last Apply-to-all result, shown until the next key.
+    pub report: Option<String>,
 }
 
 /// Outcome of a params key.
@@ -86,6 +89,7 @@ impl<'a> ParamsPane<'a> {
     }
 
     pub fn on_key(&mut self, code: crossterm::event::KeyCode) -> ParamsKey {
+        self.state.report = None;
         self.clamp_cursor();
         let rows = self.visible_rows();
         if rows.is_empty() {
@@ -348,7 +352,10 @@ impl<'a> ParamsPane<'a> {
             return err.to_string();
         }
         if let Some(prompt) = self.state.sync_prompt.as_deref() {
-            return format!("{prompt} y apply · n cancel");
+            return prompt.to_string();
+        }
+        if let Some(report) = self.state.report.as_deref() {
+            return report.to_string();
         }
         if self.state.editing {
             if self.state.multi_select {
@@ -512,7 +519,12 @@ impl Widget for ParamsPane<'_> {
         }
 
         let hint = self.hint();
-        let reserve = 1u16;
+        // A report or prompt wider than the popup wraps onto a second row.
+        let reserve = if hint.chars().count() > inner.width as usize {
+            2u16
+        } else {
+            1u16
+        };
         let content_h = inner.height.saturating_sub(reserve) as usize;
         if cursor_line < self.state.scroll {
             self.state.scroll = cursor_line;
@@ -531,9 +543,19 @@ impl Widget for ParamsPane<'_> {
                 .take(content_h)
                 .collect()
         };
-        let mut painted = window;
-        painted.push(Line::from(hint));
-        Paragraph::new(painted).render(inner, buf);
+        let list = Rect {
+            height: inner.height.saturating_sub(reserve),
+            ..inner
+        };
+        Paragraph::new(window).render(list, buf);
+        let hint_area = Rect {
+            y: list.y + list.height,
+            height: inner.height - list.height,
+            ..inner
+        };
+        Paragraph::new(hint)
+            .wrap(ratatui::widgets::Wrap { trim: true })
+            .render(hint_area, buf);
     }
 }
 
