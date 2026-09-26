@@ -639,12 +639,12 @@ fn unreachable_line(what: &str, toward: Option<Tile>) -> String {
     )
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
 /// What an [`NpcReach`] waits for after its Talk click.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TalkExpect {
     /// Frozen `ChatDialog.isOpen() || ChatDialog.canContinue()`
     /// (`primitives.ts:228`, `Reach.ts:295`).
+    #[cfg_attr(not(test), allow(dead_code))] // boat fare's openDialogue
     DialogReady,
     /// A dialogue the click produced: ready, and the chat modal differs from
     /// the one posted at the click, or opened from none, or Continue
@@ -652,7 +652,6 @@ pub(crate) enum TalkExpect {
     FreshDialog,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
 /// Frozen `reachThroughDoors` parameters (`Reach.ts:156–166`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct NpcReachOpts {
@@ -669,7 +668,6 @@ pub(crate) struct NpcReachOpts {
     pub(crate) skip_click_when_expected: bool,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
 enum NpcReachPhase {
     Top,
     Watch,
@@ -683,7 +681,6 @@ enum NpcReachPhase {
     RetryTick,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
 /// One NPC's Talk op through frozen `reachThroughDoors` (`Reach.ts:156–211`):
 /// up to [`DOOR_ATTEMPTS`] rounds of the optional scene probe (a target
 /// within [`PROBE_RADIUS`] the scene cannot reach clears a blocking door
@@ -702,7 +699,6 @@ pub(crate) struct NpcReach {
     logs: VecDeque<String>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
 /// The nearest posted `npc` row with a talk op (frozen
 /// `Npcs.query().name(n).where(talkOp !== null).nearest()`).
 struct TalkRow {
@@ -712,7 +708,6 @@ struct TalkRow {
     tile: Tile,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
 fn talk_row(npc: &str) -> Option<TalkRow> {
     let want = npc.trim();
     if want.is_empty() {
@@ -741,7 +736,6 @@ fn talk_row(npc: &str) -> Option<TalkRow> {
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
 /// The posted chat modal id and Continue flag.
 fn chat_state() -> (i32, bool) {
     observed::with(|scene| {
@@ -753,7 +747,6 @@ fn chat_state() -> (i32, bool) {
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
 impl NpcReach {
     pub(crate) fn new(npc: &str, opts: NpcReachOpts) -> Self {
         Self {
