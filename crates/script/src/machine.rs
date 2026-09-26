@@ -569,6 +569,8 @@ const FAMILIES: &[Entry] = &[
     entry::<tests::Inline>(),
     #[cfg(test)]
     entry::<tests::SoloAsker>(),
+    #[cfg(test)]
+    entry::<tests::Walker>(),
 ];
 
 /// The callback names `family` holds at start, or `None` if unregistered.
@@ -686,6 +688,9 @@ thread_local! {
     static HOST: RefCell<Host> = const { RefCell::new(Host::new()) };
     /// A family `begin` is running: a nested start is refused.
     static IN_BEGIN: Cell<bool> = const { Cell::new(false) };
+    /// A reconnect holds the session's work (`ResetSession { keep_work }`):
+    /// the host carries the held walk, so no row sends a release op.
+    static SESSION_HELD: Cell<bool> = const { Cell::new(false) };
     /// A callback was terminated in this pass or kick: drive no further.
     static TERMINATED: Cell<bool> = const { Cell::new(false) };
 }
@@ -736,7 +741,7 @@ impl Host {
         while i < self.rows.len() {
             if self.superseded(&self.rows[i]) {
                 let mut row = self.rows.remove(i);
-                if let Some(op) = row.machine.release() {
+                if let Some(op) = release_op(&*row.machine) {
                     self.ops.push((at, op));
                 }
                 row.machine.abort(AbortReason::Superseded);
@@ -943,7 +948,7 @@ fn pass(js: &mut impl Js, pass: Pass) {
             return true;
         }
         if HOST.with(|host| host.borrow().superseded(row)) {
-            if let Some(op) = row.machine.release() {
+            if let Some(op) = release_op(&*row.machine) {
                 HOST.with(|host| host.borrow_mut().place(at, vec![op]));
             }
             row.machine.abort(AbortReason::Superseded);
@@ -1004,14 +1009,14 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
         // Every ending stops the host work the row armed.
         match cx.ending.take() {
             Some(Ending::Stopped) => {
-                if let Some(op) = row.machine.release() {
+                if let Some(op) = release_op(&*row.machine) {
                     HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
                 }
                 row.machine.abort(AbortReason::Terminated);
                 return Some(Outcome::Aborted(AbortReason::Terminated));
             }
             Some(Ending::Failed(thrown)) => {
-                if let Some(op) = row.machine.release() {
+                if let Some(op) = release_op(&*row.machine) {
                     HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
                 }
                 return Some(Outcome::Failed(thrown));
@@ -1021,7 +1026,7 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
         // An ask started a newer row of this exclusive family: that row
         // owns the tick, so this step's decision and ops are dropped.
         if asked && HOST.with(|host| host.borrow().superseded(row)) {
-            if let Some(op) = row.machine.release() {
+            if let Some(op) = release_op(&*row.machine) {
                 HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
             }
             row.machine.abort(AbortReason::Superseded);
@@ -1032,7 +1037,7 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
             Step::Wait => return None,
             Step::Done(value) => return Some(Outcome::Done(value)),
             Step::Fail(thrown) => {
-                if let Some(op) = row.machine.release() {
+                if let Some(op) = release_op(&*row.machine) {
                     HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
                 }
                 return Some(Outcome::Failed(thrown));
@@ -1124,10 +1129,27 @@ pub(crate) fn on_hold(held: bool) {
 }
 
 pub(crate) fn on_reset() {
+    SESSION_HELD.with(|flag| flag.set(false));
     HOST.with(|host| host.borrow_mut().reset());
 }
 
+/// A reconnect began (`true`) or the relogged session's first tick ended
+/// it (`false`). While held, the connection's queue was reset and the host
+/// carry owns the held walk: [`Family::release`] ops are not sent.
+pub(crate) fn on_session_hold(held: bool) {
+    SESSION_HELD.with(|flag| flag.set(held));
+}
+
+/// The row's [`Family::release`] op, unless a reconnect holds the session.
+fn release_op(machine: &dyn Machine) -> Option<InteractReq> {
+    if SESSION_HELD.with(Cell::get) {
+        return None;
+    }
+    machine.release()
+}
+
 pub(crate) fn on_stop() {
+    SESSION_HELD.with(|flag| flag.set(false));
     HOST.with(|host| host.borrow_mut().stop());
 }
 
@@ -1233,6 +1255,34 @@ pub(crate) mod tests {
 
         fn abort(&mut self, why: AbortReason) {
             SOLO_ABORTS.with(|cell| cell.set(Some(why)));
+        }
+    }
+
+    /// An exclusive probe whose host work is a walk: its release is the
+    /// walk's AbortWalk, request id = its button.
+    pub(crate) struct Walker(Probe, u64);
+
+    impl Family for Walker {
+        const NAME: &'static str = "walker";
+        const EXCLUSIVE: bool = true;
+        type Args = ProbeArgs;
+        type Output = Value;
+
+        fn begin(args: ProbeArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+            let id = u64::try_from(args.button).unwrap_or(0);
+            match Probe::begin(args, cx) {
+                Begin::Run(probe) => Begin::Run(Self(probe, id)),
+                Begin::Done(out) => Begin::Done(out),
+                Begin::Refuse(reason) => Begin::Refuse(reason),
+            }
+        }
+
+        fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+            Family::step(&mut self.0, cx)
+        }
+
+        fn release(&self) -> Option<InteractReq> {
+            Some(InteractReq::AbortWalk { request_id: self.1 })
         }
     }
 
@@ -1801,6 +1851,31 @@ pub(crate) mod tests {
         assert_eq!(SOLO_ABORTS.with(|c| c.get()), Some(AbortReason::Superseded));
         assert_eq!(take(new), Take::Pending);
         assert_eq!(take(other), Take::Pending);
+    }
+
+    #[test]
+    fn a_reconnect_hold_sends_no_release_op() {
+        on_reset();
+        let aborts = |ops: Vec<InteractReq>| -> Vec<u64> {
+            ops.into_iter()
+                .filter_map(|op| match op {
+                    InteractReq::AbortWalk { request_id } => Some(request_id),
+                    _ => None,
+                })
+                .collect()
+        };
+        running(begin("walker", json!({ "button": 7, "steps": 5 })));
+        drain();
+        running(begin("walker", json!({ "button": 8, "steps": 5 })));
+        assert_eq!(aborts(drain()), vec![7], "a superseded row stops its walk");
+        on_session_hold(true);
+        running(begin("walker", json!({ "button": 9, "steps": 5 })));
+        assert!(
+            aborts(drain()).is_empty(),
+            "the reconnect's host carry owns the held walk"
+        );
+        on_session_hold(false);
+        on_reset();
     }
 
     /// Answers each call with its argument; call `throw_at` throws, call

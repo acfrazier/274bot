@@ -14949,6 +14949,12 @@ impl ReconnectRig {
             .unwrap_or_default()
     }
 
+    /// `Play::script_pause`: the slot pauses and its route stops.
+    fn operator_pause(&self) {
+        self.slot().lock().unwrap().pause();
+        abort_script_walk(&self.navs, "alice");
+    }
+
     fn boundary(&self, reconnect: bool) {
         reset_slot_session_work(
             "alice",
@@ -15140,6 +15146,30 @@ fn an_operator_logout_ends_the_script_work_and_does_not_relog() {
     rig.slot().lock().unwrap().stop();
 }
 
+/// Operator Pause before the drop: Pause ended the host route, so the
+/// reconnect carries nothing, and Resume sends the paused walk once from the
+/// walk wait.
+#[test]
+fn pause_before_a_reconnect_resends_the_paused_walk_once_on_resume() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (request_id, requested) = rig.armed();
+    rig.operator_pause();
+    rig.boundary(true);
+    rig.frames(2);
+    assert_eq!(rig.armed(), (0, None), "paused: nothing goes out");
+    rig.slot().lock().unwrap().resume();
+    rig.frames(3);
+    rig.frames(4);
+    assert_eq!(rig.armed(), (request_id, requested));
+    assert_eq!(
+        rig.walks(),
+        vec![(request_id, 40, 40), (request_id, 40, 40)],
+        "the original dispatch and one re-issue after Resume, nothing else"
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
 /// Operator Pause while the reconnect holds the script: the relog does not
 /// resume it, and Resume sends the carried walk once, no other.
 #[test]
@@ -15149,7 +15179,7 @@ fn pause_during_a_reconnect_hold_defers_the_carried_walk_to_resume() {
     let (request_id, requested) = rig.armed();
 
     rig.boundary(true);
-    assert!(!rig.slot().lock().unwrap().pause());
+    rig.operator_pause();
     rig.frames(2);
     assert_eq!(rig.armed(), (0, None), "paused: nothing goes out");
 

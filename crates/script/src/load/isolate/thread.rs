@@ -1174,6 +1174,7 @@ fn tick_loop(
                     // (`AutoRelogin.ts:159-163`), which is what lets the
                     // host tick again.
                     session_held = false;
+                    crate::machine::on_session_hold(false);
                     sync_work_freeze(&mut work_frozen, paused);
                 }
                 if paused
@@ -1604,9 +1605,6 @@ fn tick_loop(
                         runtime.eval::<()>("globalThis.__rs2b0t_pending_native_event_batch = null");
                 }
                 if keep_work {
-                    // The host carry re-dispatches the held walk on the
-                    // relogged session; a Pause before the drop owes nothing.
-                    crate::walk_wait::clear_resume_debt();
                     // Frozen AutoRelogin pauses the whole script on a
                     // disconnect and resumes it after the relog
                     // (`AutoRelogin.ts:180-190`, `159-163`): every parked
@@ -1614,6 +1612,7 @@ fn tick_loop(
                     // its clocks stopped (`ScriptContext.ts:92-117`), and no
                     // JS runs until the new session's first tick.
                     session_held = true;
+                    crate::machine::on_session_hold(true);
                     sync_work_freeze(&mut work_frozen, true);
                 } else if v2_native {
                     let _ = runtime.eval::<()>(

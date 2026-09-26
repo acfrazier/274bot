@@ -82,6 +82,9 @@ pub(crate) struct NavBot {
     pub(crate) pending_route: Option<ScriptRouteRequest>,
     /// Dest, radius, allow_teleports, allow_wilderness, allow_bank_fetch.
     pub(crate) requested_route: Option<(WorldTile, i32, bool, bool, bool)>,
+    /// The avoid rectangles `requested_route` was queued with, so a
+    /// reconnect carries the same walk ([`hold_script_nav`]).
+    pub(crate) requested_avoid: Vec<AvoidRect>,
     pub(crate) traveller: Traveller,
     pub(crate) route: Option<Route>,
     /// The walk request id `publish_route` installed `route` for. A retarget
@@ -491,6 +494,7 @@ impl ScriptWalkArm {
             bot.route_generation = bot.route_generation.wrapping_add(1);
             bot.walk_request_id = request_id;
             bot.requested_route = Some(key);
+            bot.requested_avoid.clone_from(&avoid);
             bot.pending_route = Some(ScriptRouteRequest {
                 generation: bot.route_generation,
                 request_id,
@@ -1261,6 +1265,20 @@ pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name:
     }
 }
 
+/// The walk request's avoid entries for a carried re-dispatch.
+fn carried_avoid(avoid: &[AvoidRect]) -> Vec<script::shim::InspectAvoidWire> {
+    avoid
+        .iter()
+        .map(|rect| script::shim::InspectAvoidWire::Rect {
+            min_x: rect.min_x,
+            max_x: rect.max_x,
+            min_z: rect.min_z,
+            max_z: rect.max_z,
+            level: rect.level,
+        })
+        .collect()
+}
+
 /// A reconnect the slot relogs through with its Load script's work held
 /// (`SlotScript::reconnect_session_work`). The connection's route follow
 /// ends as in [`reset_script_nav`]; what the held script still waits on
@@ -1299,6 +1317,7 @@ pub(crate) fn hold_script_nav(
                     allow_wilderness,
                     allow_bank_fetch,
                     request_id,
+                    avoid: carried_avoid(&nav.requested_avoid),
                 }
             } else {
                 script::shim::InteractReq::Walk {
@@ -1309,6 +1328,7 @@ pub(crate) fn hold_script_nav(
                     allow_wilderness,
                     allow_bank_fetch,
                     request_id,
+                    avoid: carried_avoid(&nav.requested_avoid),
                 }
             };
             nav.carried_walk = Some(CarriedWalk {

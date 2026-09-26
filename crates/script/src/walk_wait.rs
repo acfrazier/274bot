@@ -266,22 +266,15 @@ pub(crate) fn on_resume() {}
 
 /// Operator Pause: the host drops the live walk's route
 /// (`abort_script_walk`), so an unsettled wait is owed one re-issue by its
-/// owner when its row steps again after Resume ([`take_resume`]). Not a
-/// session hold: the host keeps (or carries) that route itself.
+/// owner when its row steps again after Resume ([`take_resume`]). The
+/// isolate calls it only outside a reconnect hold: during one, the host
+/// carries the held walk and re-dispatches it itself. A debt recorded
+/// before a drop survives the reconnect: that Pause already ended the host
+/// route, so the host has no walk to carry.
 pub(crate) fn on_operator_pause() {
     SLOT.with(|slot| {
         if let Some(wait) = slot.borrow_mut().wait.as_mut() {
             wait.resume_owed = wait.open();
-        }
-    });
-}
-
-/// A reconnect that keeps the script's work: the host carry owns the
-/// re-dispatch of the held walk, so no re-issue is owed.
-pub(crate) fn clear_resume_debt() {
-    SLOT.with(|slot| {
-        if let Some(wait) = slot.borrow_mut().wait.as_mut() {
-            wait.resume_owed = false;
         }
     });
 }
