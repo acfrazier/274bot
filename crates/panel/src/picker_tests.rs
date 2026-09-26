@@ -8,21 +8,21 @@ use nav::world::NavWorld;
 use std::sync::Arc;
 
 use super::{
-    available_levels, cached_remaining_path, click_to_tile, decode_sidecar_file, dest_marker_tile,
+    available_levels, cached_remaining_path, click_to_tile, decode_sidecar_file,
     drop_flags_sidecar, ensure_flags_sidecar, flags_content_hash_count, flags_load_count,
     flags_sidecar_for, flags_sidecar_state, flood_cache_occupied, format_walkto_status,
-    last_picker_layout, map_reach_bitset, pack, pan_by, pending_highlight, picker_map_window,
-    picker_nested_in_game, reach_binding_occupied, reach_bitset, reset_flags_content_hash_count,
-    reset_flags_load_count, reset_route_cache, right_align_x, route_flatten_count,
-    set_navflags_binding, set_pack, set_reach_binding, sidecar_for_grid, snap,
-    walkto_actions_enabled, walkto_canvas_flags, walkto_footer_labels, walkto_selection_caption,
-    walkto_window_flags, zoom_toward, FlagSidecar, FlagsSidecarState, WalktoCaption,
+    last_picker_layout, map_reach_bitset, pack, pan_by, picker_map_window, picker_nested_in_game,
+    reach_binding_occupied, reach_bitset, reset_flags_content_hash_count, reset_flags_load_count,
+    reset_route_cache, right_align_x, route_flatten_count, set_navflags_binding, set_pack,
+    set_reach_binding, sidecar_for_grid, snap, walkto_actions_enabled, walkto_canvas_flags,
+    walkto_footer_labels, walkto_selection_caption, walkto_window_flags, zoom_toward, FlagSidecar,
+    FlagsSidecarState, WalktoCaption,
 };
 use crate::rail::{BASE_WINDOW_H, BASE_WINDOW_W};
 use crate::session::Session;
 use crate::test_support::TestDir;
 use crate::theme::PANEL_WIDTH;
-use crate::walk_map::WalkMapRenderer;
+use crate::walk_map::{overlay_colors, WalkMapRenderer};
 use dear_imgui_rs::WindowFlags;
 use host_play::walk_map::{MapModel, RouteSource};
 
@@ -1070,20 +1070,52 @@ fn route_cache_skips_completed_legs_and_stays_allocation_free_on_hit() {
     assert_eq!(route_flatten_count(), 1);
 }
 
+/// One full WalkTo window frame; returns every vertex colour it drew.
+fn picker_frame_colours(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut Session,
+    world: &NavWorld,
+) -> Vec<u32> {
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        let mut open = true;
+        let mut map = WalkMapRenderer::new();
+        picker_map_window(ui, session, world, &mut open, None, &mut map);
+    }
+    ctx.render()
+        .draw_lists()
+        .flat_map(|list| list.vtx_buffer().iter().map(|vertex| vertex.col))
+        .collect()
+}
+
 #[test]
-fn pending_selection_is_not_drawn_as_armed_dest() {
-    let world = open_world(3, 3);
-    let mut session = Session::new();
+fn pending_selection_draws_no_dest_marker_until_a_walk_is_armed() {
+    let _guard = crate::test_support::imgui_context_guard();
+    super::note_closed();
+    let mut ctx = dear_imgui_rs::Context::create();
+    let world = open_world_at((3219, 3219), 3, 3);
+    let mut s = Session::new();
+    s.walkto_open = true;
+    // The dest cross is the only geometry in the route colour while no
+    // route is drawn (ImGui packs RGBA little-endian).
+    let dest_colour = u32::from_le_bytes(overlay_colors(&s.effective_nav()).path);
+    picker_frame_colours(&mut ctx, &mut s, &world);
     let hit = Tile {
-        x: 1,
-        z: 1,
+        x: 3220,
+        z: 3220,
         level: 0,
     };
-    assert_eq!(session.map_model.select_tile(&world, hit), Some(hit));
-    assert_eq!(pending_highlight(&session), Some(hit));
-    assert_eq!(
-        dest_marker_tile(&session),
-        None,
-        "pending selection must not become the armed dest marker"
+    assert_eq!(s.map_model.select_tile(&world, hit), Some(hit));
+    assert!(
+        !picker_frame_colours(&mut ctx, &mut s, &world).contains(&dest_colour),
+        "a pending selection must not draw the armed dest marker"
+    );
+    s.walk_dest = Some(hit);
+    assert!(
+        picker_frame_colours(&mut ctx, &mut s, &world).contains(&dest_colour),
+        "the armed walk destination draws its marker"
     );
 }

@@ -956,14 +956,34 @@ fn decode_staging_bytes_is_unclamped_sum() {
 }
 
 #[test]
-fn max_lod_follows_fixture_keys_not_global_max() {
+fn terrain_lod_stops_at_the_bound_bake_max_lod() {
+    // At 0.25 px/tile the density rule would coarsen to LOD 3, but this bake
+    // only has LOD 0. The 3×3 LOD-0 cover fits the slot cap, so the map must
+    // load those tiles instead of asking for levels the bake never wrote.
+    let world = open_world(3, 3);
+    let keys: Vec<_> = (0..3)
+        .flat_map(|x| (0..3).map(move |z| lod0(x, z)))
+        .collect();
     let mut map = WalkMapRenderer::new();
-    map.bind_fixtures(FixtureStore::with_keys([lod0(0, 0)]).expect("fixtures"));
-    assert_eq!(
-        map.max_lod(),
-        0,
-        "lod-0 fixtures must not force spatial::MAX_LOD"
+    map.bind_fixtures(FixtureStore::with_keys(keys).expect("fixtures"));
+    map.note_open();
+    let view = tile_view(1, 1, 0.25, 40.0, map.max_lod());
+    for _ in 0..24 {
+        map.test_sync(
+            None,
+            view,
+            &world,
+            layers_none(),
+            OverlayColors::default(),
+            &[],
+            &[],
+            None,
+        );
+    }
+    let slots = map.slot_keys();
+    assert!(!slots.is_empty(), "LOD-0 terrain must load");
+    assert!(
+        slots.iter().all(|key| key.lod == 0),
+        "terrain asked for a LOD the bake does not have: {slots:?}"
     );
-    let view = tile_view(0, 0, 0.25, 200.0, map.max_lod());
-    assert_eq!(view.max_lod, 0);
 }

@@ -602,10 +602,6 @@ pub(crate) fn pending_highlight(session: &Session) -> Option<Tile> {
         .map(|sel| sel.target.unwrap_or(sel.requested))
 }
 
-pub(crate) fn dest_marker_tile(session: &Session) -> Option<Tile> {
-    session.walk_dest
-}
-
 fn poi_anchor(poi: &nav::map::poi::PoiRecord) -> Tile {
     Tile {
         x: poi.display.x.floor() as i32,
@@ -1738,7 +1734,9 @@ fn draw_canvas(
                 z: t.z,
                 level: t.level,
             });
-            let dest_tile = dest_marker_tile(session);
+            // Only an armed walk draws the dest cross; a pending selection
+            // keeps its own outline (`pending_highlight`).
+            let dest_tile = session.walk_dest;
             let dest = dest_tile.map(|t| WorldTile {
                 x: t.x,
                 z: t.z,
