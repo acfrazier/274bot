@@ -1,0 +1,22 @@
+[package]
+name = "frontend-core"
+version.workspace = true
+edition = "2021"
+publish = false
+
+# Operator lifecycle shared by the native panel and the TUI. It depends on
+# neither front end nor on any window/terminal library.
+[dependencies]
+host = { path = "../host" }
+host-play = { path = "../host-play" }
+script = { path = "../script" }
+serde_json = "=1.0.140"
+vault = { path = "../vault" }
+
+[dev-dependencies]
+host-play = { path = "../host-play", features = ["test-support"] }
+
+[features]
+# Test-only lifecycle fixtures (arm-only spawns). Enabled from front-end
+# dev-dependencies, never production builds.
+test-support = []

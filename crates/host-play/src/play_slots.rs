@@ -190,6 +190,14 @@ impl Play {
         }
     }
 
+    /// Whether `name`'s stopped worker ([`Play::begin_stop_slot`]) has not
+    /// exited yet. A respawn of the same name is refused until it has.
+    pub fn slot_stopping(&self, name: &str) -> bool {
+        self.retiring
+            .get(name)
+            .is_some_and(|handle| !handle.is_finished())
+    }
+
     /// Synchronous stop for CLI/tests and final teardown. UI removal uses
     /// [`Play::begin_stop_slot`] instead.
     pub fn stop_slot(&mut self, name: &str) {
