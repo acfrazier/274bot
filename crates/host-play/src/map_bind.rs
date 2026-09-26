@@ -46,30 +46,23 @@ pub fn map_profile_descriptor(
     MapProfileDescriptor::from_profile(profile, image, catalogue)
 }
 
-pub fn open_map_catalogue(profile: &ServerProfile) -> Result<MapDemandHandle, MapCacheError> {
-    let manager = map_demand_manager()?;
-    let descriptor = map_profile_descriptor(profile)?;
-    let handle = manager.request_catalogue(descriptor.clone())?;
-    match handle.status() {
-        MapJobStatus::Failed(_) | MapJobStatus::Paused => {
-            manager.retry(descriptor, MapDemand::CatalogueOnly)
-        }
-        _ => Ok(handle),
-    }
-}
-
-/// Images demand always runs catalogue first (D's worker).
+/// Request `demand` for `descriptor`, starting or joining the local worker
+/// when it is not ready. Images demand always runs catalogue first (D's
+/// worker).
 ///
 /// Reopening a failed/paused identity is an explicit retry, not an automatic
 /// loop: ordinary `request` keeps the terminal status.
-pub fn open_map_images(profile: &ServerProfile) -> Result<MapDemandHandle, MapCacheError> {
-    let manager = map_demand_manager()?;
-    let descriptor = map_profile_descriptor(profile)?;
-    let handle = manager.request_images(descriptor.clone())?;
+///
+/// Front ends open through `frontend_core::MapBakeGate`, which asks the
+/// operator before this starts a local terrain bake.
+pub fn open_map_demand(
+    manager: &MapDemandManager,
+    descriptor: MapProfileDescriptor,
+    demand: MapDemand,
+) -> Result<MapDemandHandle, MapCacheError> {
+    let handle = manager.request(descriptor.clone(), demand)?;
     match handle.status() {
-        MapJobStatus::Failed(_) | MapJobStatus::Paused => {
-            manager.retry(descriptor, MapDemand::Images)
-        }
+        MapJobStatus::Failed(_) | MapJobStatus::Paused => manager.retry(descriptor, demand),
         _ => Ok(handle),
     }
 }

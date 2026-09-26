@@ -69,8 +69,7 @@ mod walk_arm;
 mod walk_plan;
 pub use map_bind::{
     load_navpois, map_demand_manager, map_profile_descriptor, map_ready, map_ready_catalogue,
-    map_ready_images, open_map_catalogue, open_map_images, peek_map_catalogue, poll_map_status,
-    reap_map_demand,
+    map_ready_images, open_map_demand, peek_map_catalogue, poll_map_status, reap_map_demand,
 };
 pub use map_cache::{
     MapCacheError, MapDemandHandle, MapJobStatus, MapProgress, MapStage, ReadyCatalogue,
@@ -147,8 +146,9 @@ pub use play_wires::WireCmd;
 pub use resource_view::{
     background_ack_text, background_bot_count, background_bots_ack_error, background_bots_acked,
     clear_background_bots_ack_error, cpu_from_delta, format_background, format_bots, format_rss,
-    format_rss_caption, metric_text, panel_ui_path, persist_background_bots_ack,
-    traffic_from_delta, traffic_from_samples, LiveSlot, Metric, ResourceSampler, ResourceView,
+    format_rss_caption, metric_text, panel_ui_path, panel_ui_value, persist_background_bots_ack,
+    persist_panel_ui_value, traffic_from_delta, traffic_from_samples, LiveSlot, Metric,
+    ResourceSampler, ResourceView,
 };
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};

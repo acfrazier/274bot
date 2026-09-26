@@ -14,6 +14,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
+use frontend_core::MapBakeChoice;
 use host_play::walk_map::{Catalogue, MapModel, ObservedService, Search, WalkSlotStatus};
 use host_play::{ResourceView, SlotStatus};
 use nav::map::poi::{PoiKind, PoiRecord};
@@ -342,6 +343,10 @@ pub struct TuiApp {
     pub nav: NavFindSettings,
     pub settings_state: SettingsState,
     pub settings_dirty: bool,
+    /// Remembered WalkTo terrain-bake choice (shared `panel-ui.json` key).
+    pub map_bake: MapBakeChoice,
+    /// The settings popup changed [`Self::map_bake`]; the binary persists it.
+    pub map_bake_dirty: bool,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: RunState,
@@ -416,6 +421,8 @@ impl TuiApp {
             nav: NavFindSettings::default(),
             settings_state: SettingsState::default(),
             settings_dirty: false,
+            map_bake: MapBakeChoice::Ask,
+            map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
             script_state: RunState::Idle,
             script_sel: None,
@@ -1061,10 +1068,16 @@ impl TuiApp {
             _ => {}
         }
         if self.settings_state.open {
-            let mut pane =
-                SettingsPane::new(&mut self.settings, &mut self.nav, &mut self.settings_state);
-            if pane.on_key(key) == SettingsKey::Changed {
-                self.settings_dirty = true;
+            let mut pane = SettingsPane::new(
+                &mut self.settings,
+                &mut self.nav,
+                &mut self.map_bake,
+                &mut self.settings_state,
+            );
+            match pane.on_key(key) {
+                SettingsKey::Changed => self.settings_dirty = true,
+                SettingsKey::MapBake => self.map_bake_dirty = true,
+                SettingsKey::Consumed | SettingsKey::Ignored => {}
             }
             return AppAction::None;
         }
@@ -1584,8 +1597,12 @@ impl TuiApp {
         self.draw_script(frame, chunks[4]);
 
         if self.settings_state.open {
-            let pane =
-                SettingsPane::new(&mut self.settings, &mut self.nav, &mut self.settings_state);
+            let pane = SettingsPane::new(
+                &mut self.settings,
+                &mut self.nav,
+                &mut self.map_bake,
+                &mut self.settings_state,
+            );
             frame.render_widget(pane, area);
         }
     }

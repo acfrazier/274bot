@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
+use frontend_core::{MapBakePrompt, MAP_BAKE_TITLE, MAP_BAKE_WARNING};
 use host_play::walk_map::{
     select_route_source, ActionError, MapModel, RouteProjection, RouteSource, Selection,
 };
@@ -1501,6 +1502,39 @@ fn picker_nested_in_game(
         });
 }
 
+/// The local terrain-bake warning while asking, or the Bake control after
+/// Not now (the map stays catalogue-only meanwhile). Wording and decision
+/// are frontend-core's [`frontend_core::MapBakeGate`], which the TUI's map
+/// demand also goes through.
+fn draw_map_bake_banner(ui: &Ui, session: &mut Session) {
+    match session.map_bake.prompt() {
+        MapBakePrompt::None => {}
+        MapBakePrompt::Asking => {
+            ui.text_colored(session.ui.chrome.warn_rgba(), MAP_BAKE_TITLE);
+            ui.text_wrapped(MAP_BAKE_WARNING);
+            if ui.button("Bake now") {
+                session.accept_map_bake(false);
+            }
+            ui.same_line();
+            if ui.button("Always bake") {
+                session.accept_map_bake(true);
+            }
+            ui.same_line();
+            if ui.button("Not now") {
+                session.decline_map_bake();
+            }
+            ui.separator();
+        }
+        MapBakePrompt::Declined => {
+            ui.text_disabled("terrain not baked \u{b7} catalogue only");
+            ui.same_line();
+            if ui.button("Bake terrain") {
+                session.accept_map_bake(false);
+            }
+        }
+    }
+}
+
 /// Toolbar, canvas, and footer. Used inside the Game pane and the test window.
 fn picker_map_body(
     ui: &Ui,
@@ -1511,6 +1545,7 @@ fn picker_map_body(
 ) {
     map.note_open();
     session.sync_walk_map(pack());
+    draw_map_bake_banner(ui, session);
     if let Some(images) = session.map_images.clone() {
         map.bind_ready_images(images);
     }

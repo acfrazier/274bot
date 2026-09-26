@@ -12,12 +12,17 @@
 //! and never copies a `GameSnapshot`.
 
 pub mod fleet;
+pub mod map_bake;
 pub mod operations;
 mod profiles;
 pub mod session;
 pub mod surface;
 
 pub use fleet::Fleet;
+pub use map_bake::{
+    load_map_bake_choice, persist_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt,
+    MAP_BAKE_TITLE, MAP_BAKE_WARNING,
+};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use session::{
     ArmMirror, OperatorSession, Removal, ScriptStart, Selection, SlotTransition, StartSettled,

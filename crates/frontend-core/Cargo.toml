@@ -10,6 +10,7 @@ publish = false
 host = { path = "../host" }
 host-play = { path = "../host-play" }
 script = { path = "../script" }
+serde = "=1.0.219"
 serde_json = "=1.0.140"
 vault = { path = "../vault" }
 

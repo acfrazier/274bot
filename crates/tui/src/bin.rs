@@ -42,12 +42,11 @@ use host_play::walk_map::{
 use host_play::{
     background_ack_text, background_bots_ack_error, background_bots_acked,
     clear_background_bots_ack_error, live_vault_passphrase_for, load_navpois, map_ready_catalogue,
-    mint_live_entries_for_target, mint_live_names, open_map_catalogue, open_vault,
-    parse_profile_args, peek_map_catalogue, persist_background_bots_ack, player_here_tile,
-    profile_password_for, run_with_io, run_with_template, step_walk_arm_bank_fetch,
-    walk_arm_bank_fetch_freezes_follow, MapDemandHandle, MapJobStatus, MapStage, PlayOptions,
-    ProfileOptions, ReadyCatalogue, ResourceSampler, ResourceView, ServerProfile,
-    SharedClientTemplate, WalkArm, WireCmd,
+    mint_live_entries_for_target, mint_live_names, open_vault, parse_profile_args,
+    peek_map_catalogue, persist_background_bots_ack, player_here_tile, profile_password_for,
+    run_with_io, run_with_template, step_walk_arm_bank_fetch, walk_arm_bank_fetch_freezes_follow,
+    MapDemandHandle, MapJobStatus, MapStage, PlayOptions, ProfileOptions, ReadyCatalogue,
+    ResourceSampler, ResourceView, ServerProfile, SharedClientTemplate, WalkArm, WireCmd,
 };
 use nav::map::identity::Digest;
 use nav::tile::Tile;
@@ -57,7 +56,11 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use vault::{Profile, Vault};
 
-use frontend_core::{HeadlessSurface, OperatorSession, ScriptStart};
+use frontend_core::{
+    load_map_bake_choice, persist_map_bake_choice, HeadlessSurface, MapBakeGate, OperatorSession,
+    ScriptStart,
+};
+use host_play::map_cache::MapDemand;
 
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
@@ -445,6 +448,9 @@ pub struct TuiSession {
     server_profile: Option<Arc<ServerProfile>>,
     /// Catalogue-only demand lease. Dropped on MapClose; never requests PNGs.
     map_demand: Option<MapDemandHandle>,
+    /// Map demand goes through the shared bake consent (catalogue-only here,
+    /// so it never asks); the remembered choice is edited in settings.
+    map_bake: MapBakeGate,
     map_catalogue_named: bool,
     /// The username the settings popup currently edits; reload
     /// `ProfileSettings` into the app when it changes.
@@ -549,6 +555,7 @@ impl TuiSession {
             template: None,
             server_profile: None,
             map_demand: None,
+            map_bake: MapBakeGate::new(load_map_bake_choice()),
             map_catalogue_named: false,
             last_focused: None,
             snapshots: Arc::new(Mutex::new(HashMap::new())),
@@ -1103,7 +1110,10 @@ impl TuiSession {
             return;
         };
         if self.map_demand.is_none() {
-            match open_map_catalogue(profile.as_ref()) {
+            match self
+                .map_bake
+                .open_profile(profile.as_ref(), MapDemand::CatalogueOnly)
+            {
                 Ok(handle) => self.map_demand = Some(handle),
                 Err(error) => {
                     app.set_map_unavailable(format!(
@@ -1763,6 +1773,18 @@ impl TuiSession {
         }
     }
 
+    /// The remembered terrain-bake choice, shared with the panel through
+    /// `panel-ui.json`.
+    fn persist_map_bake(&mut self, app: &mut TuiApp) {
+        self.map_bake.set_choice(app.map_bake);
+        if !self.persist_ui {
+            return;
+        }
+        if let Err(e) = persist_map_bake_choice(app.map_bake) {
+            app.error = Some(format!("settings: map bake: {e}"));
+        }
+    }
+
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
         #[cfg(feature = "memory-profile")]
@@ -1971,6 +1993,10 @@ impl TuiSession {
         if app.settings_dirty {
             self.persist_settings(app);
             app.settings_dirty = false;
+        }
+        if app.map_bake_dirty {
+            self.persist_map_bake(app);
+            app.map_bake_dirty = false;
         }
     }
 
@@ -2418,6 +2444,7 @@ impl Drop for TerminalGuard {
 /// Headless prints proof immediately. Headed holds it until after restore
 /// so the PASS JSON line cannot paint into Ratatui rows.
 fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
+    app.map_bake = session.map_bake.choice();
     if enable_raw_mode().is_err() {
         // No controlling terminal: pump the runner without drawing.
         loop {

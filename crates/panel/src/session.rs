@@ -27,15 +27,17 @@ use client::render::nav_debug::{
     CORNER_SW, FACE_E, FACE_N, FACE_S, FACE_W,
 };
 use client::sound::output::AudioOut;
+use frontend_core::MapBakeChoice;
 use host::{FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
+use host_play::map_cache::MapDemand;
 use host_play::profile::ProfileEnvironment;
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 use host_play::walk_map::{observed_services, Catalogue, ObservedService, SourceStatus};
 use host_play::{
-    map_ready_catalogue, map_ready_images, open_map_images, open_vault, peek_map_catalogue,
-    run_prepared_template, run_with_io, run_with_template, MapDemandHandle, MapJobStatus, MapStage,
-    PlayOptions, ProfileOptions, ReadyCatalogue, ReadyImages, ScriptNavPaint, ServerProfile,
+    map_ready_catalogue, map_ready_images, open_vault, peek_map_catalogue, run_prepared_template,
+    run_with_io, run_with_template, MapDemandHandle, MapJobStatus, MapStage, PlayOptions,
+    ProfileOptions, ReadyCatalogue, ReadyImages, ScriptNavPaint, ServerProfile,
     SharedClientTemplate, SlotStatus, ValidatedTemplate, WalkArm,
 };
 use nav::paint::{
@@ -1172,6 +1174,8 @@ pub struct Session {
     pub map_model: host_play::walk_map::MapModel,
     pub map_catalogue: Option<Arc<host_play::walk_map::Catalogue>>,
     pub map_demand: Option<MapDemandHandle>,
+    /// Consent before a local terrain bake (shared with the TUI).
+    pub map_bake: frontend_core::MapBakeGate,
     pub map_images: Option<Arc<ReadyImages>>,
     pub observed_map_services: Vec<ObservedService>,
     map_catalogue_named: bool,
@@ -1519,6 +1523,7 @@ impl Session {
         script::IsolatedEnv::ensure_thread();
         let ui = crate::ui_state::load();
         let capture_pref = ui.capture;
+        let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
         Self {
             focus: Arc::new(Mutex::new(crate::focus::Focus {
                 focused: None,
@@ -1558,6 +1563,7 @@ impl Session {
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
             map_demand: None,
+            map_bake,
             map_images: None,
             observed_map_services: Vec::new(),
             map_catalogue_named: false,
@@ -4154,7 +4160,10 @@ impl Session {
             return;
         };
         if self.map_demand.is_none() {
-            match open_map_images(profile.as_ref()) {
+            match self
+                .map_bake
+                .open_profile(profile.as_ref(), MapDemand::Images)
+            {
                 Ok(handle) => self.map_demand = Some(handle),
                 Err(error) => {
                     self.error = Some(error.to_string());
@@ -4182,6 +4191,39 @@ impl Session {
             }
         }
         self.refresh_observed_map_services(world);
+    }
+
+    /// Bake now (optionally remembering "always"): the images demand joins
+    /// the open catalogue demand before that one is dropped.
+    pub fn accept_map_bake(&mut self, remember: bool) {
+        if remember {
+            self.set_map_bake_choice(MapBakeChoice::Always);
+        }
+        self.map_bake.accept();
+        let Some(profile) = self.server_profile.clone() else {
+            return;
+        };
+        match self
+            .map_bake
+            .open_profile(profile.as_ref(), MapDemand::Images)
+        {
+            Ok(handle) => self.map_demand = Some(handle),
+            Err(error) => self.error = Some(error.to_string()),
+        }
+    }
+
+    /// Not now: the open map stays catalogue-only.
+    pub fn decline_map_bake(&mut self) {
+        self.map_bake.decline();
+    }
+
+    /// Remembered bake choice, persisted with the other panel prefs.
+    pub fn set_map_bake_choice(&mut self, choice: MapBakeChoice) {
+        self.map_bake.set_choice(choice);
+        self.ui.map_bake = choice;
+        if self.persist_ui {
+            crate::ui_state::save(&self.ui);
+        }
     }
 
     pub fn release_walk_map(&mut self) {

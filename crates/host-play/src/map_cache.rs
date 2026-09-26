@@ -1461,6 +1461,28 @@ impl MapDemandManager {
         &self.inner.root
     }
 
+    /// Lease the published artefacts for `demand` without starting a worker:
+    /// `None` when any required artefact is not ready (a bake would be needed).
+    /// A ready cache installed by another process or a packager is served
+    /// here exactly like one this process baked.
+    pub fn request_ready(
+        &self,
+        descriptor: &MapProfileDescriptor,
+        demand: MapDemand,
+    ) -> Result<Option<MapDemandHandle>, MapCacheError> {
+        // One lookup both probes and leases the ready set.  A key that another
+        // process holds exclusively or prunes meanwhile is simply not ready.
+        let Some(ready) = self.lookup_ready(descriptor, demand)? else {
+            return Ok(None);
+        };
+        Ok(Some(MapDemandHandle::already_ready(
+            self.clone(),
+            descriptor.clone().without_input(),
+            demand,
+            Arc::new(ready),
+        )))
+    }
+
     pub fn request(
         &self,
         descriptor: MapProfileDescriptor,
@@ -1470,19 +1492,12 @@ impl MapDemandManager {
             image: descriptor.image_key()?,
             catalogue: descriptor.catalogue_key()?,
         };
-        let handle_descriptor = descriptor.clone().without_input();
-        // One lookup both probes and leases the ready set.  A key that another
-        // process holds exclusively or prunes meanwhile is simply not ready,
-        // and the worker below waits for it; it is never a request error.
-        if let Some(ready) = self.lookup_ready(&descriptor, demand)? {
-            let ready = Arc::new(ready);
-            return Ok(MapDemandHandle::already_ready(
-                self.clone(),
-                handle_descriptor.clone(),
-                demand,
-                ready,
-            ));
+        // A key that is not ready here is not a request error: the worker
+        // below waits for another process's publish or prune.
+        if let Some(handle) = self.request_ready(&descriptor, demand)? {
+            return Ok(handle);
         }
+        let handle_descriptor = descriptor.clone().without_input();
         let mut active = self.inner.active.lock();
         if let Some(job) = (*active).as_mut() {
             if job.key == key {
@@ -2130,8 +2145,12 @@ impl Clone for MapDemandHandle {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixture;
+
 #[cfg(test)]
 mod tests {
+    use super::fixture::fixture_png;
     use super::*;
     use nav::map::formats::{ColorFormat, Coverage, CoverageLevel, ImageManifest, PlaneBounds};
     use nav::map::identity::{CATALOGUE_SCHEMA, IMAGE_SCHEMA};
@@ -2200,51 +2219,6 @@ mod tests {
                     z: 25,
                 },
             ]
-        }
-
-        fn fixture_png(seed: u8) -> Vec<u8> {
-            // Complete deterministic PNG: IHDR + a zlib stream containing
-            // one filtered RGBA row per pixel.  The fixture is intentionally
-            // small in policy (two units), but real enough for A's PNG guard
-            // and ReadyImages reader; no mocked payload is published.
-            let width = 258u32;
-            let height = 258u32;
-            let row_bytes = width as usize * 4 + 1;
-            let raw_len = row_bytes * height as usize;
-            let mut raw = vec![0u8; raw_len];
-            for y in 0..height as usize {
-                raw[y * row_bytes] = 0;
-                for x in 0..width as usize {
-                    let offset = y * row_bytes + 1 + x * 4;
-                    raw[offset] = seed;
-                    raw[offset + 1] = x as u8;
-                    raw[offset + 2] = y as u8;
-                    raw[offset + 3] = 255;
-                }
-            }
-            let mut zlib = vec![0x78, 0x01];
-            let mut index = 0;
-            while index < raw.len() {
-                let remaining = raw.len() - index;
-                let chunk = remaining.min(65_535);
-                let final_block = index + chunk == raw.len();
-                zlib.push(u8::from(final_block));
-                let length = chunk as u16;
-                zlib.extend_from_slice(&length.to_le_bytes());
-                zlib.extend_from_slice(&(!length).to_le_bytes());
-                zlib.extend_from_slice(&raw[index..index + chunk]);
-                index += chunk;
-            }
-            zlib.extend_from_slice(&adler32(&raw).to_be_bytes());
-            let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
-            let mut ihdr = Vec::new();
-            ihdr.extend_from_slice(&width.to_be_bytes());
-            ihdr.extend_from_slice(&height.to_be_bytes());
-            ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
-            png_chunk(&mut out, b"IHDR", &ihdr);
-            png_chunk(&mut out, b"IDAT", &zlib);
-            png_chunk(&mut out, b"IEND", &[]);
-            out
         }
     }
 
@@ -2319,7 +2293,7 @@ mod tests {
                         self.rasterized.fetch_add(1, AtomicOrdering::Relaxed);
                         writer.publish_unit(
                             UnitKey::Terrain { tile: key },
-                            &Self::fixture_png(index as u8 + 1),
+                            &fixture_png(index as u8 + 1),
                         )?;
                         if self.interrupt_once.swap(false, AtomicOrdering::AcqRel) {
                             return Err(MapCacheError::Cancelled);
@@ -2367,37 +2341,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    fn adler32(bytes: &[u8]) -> u32 {
-        let (mut a, mut b) = (1u32, 0u32);
-        for byte in bytes {
-            a = (a + u32::from(*byte)) % 65_521;
-            b = (b + a) % 65_521;
-        }
-        (b << 16) | a
-    }
-
-    fn png_chunk(out: &mut Vec<u8>, kind: &[u8; 4], payload: &[u8]) {
-        out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-        out.extend_from_slice(kind);
-        out.extend_from_slice(payload);
-        out.extend_from_slice(&crc32(&[kind.as_slice(), payload].concat()).to_be_bytes());
-    }
-
-    fn crc32(bytes: &[u8]) -> u32 {
-        let mut crc = 0xffff_ffffu32;
-        for byte in bytes {
-            crc ^= u32::from(*byte);
-            for _ in 0..8 {
-                crc = if crc & 1 != 0 {
-                    (crc >> 1) ^ 0xedb8_8320
-                } else {
-                    crc >> 1
-                };
-            }
-        }
-        !crc
     }
 
     fn wait_ready(handle: &MapDemandHandle) {
@@ -2591,7 +2534,7 @@ mod tests {
                             }
                         }
                         self.rasterized.fetch_add(1, AtomicOrdering::Relaxed);
-                        let png = FixtureProducer::fixture_png(index as u8 + 1);
+                        let png = fixture_png(index as u8 + 1);
                         fs::create_dir_all(path.parent().unwrap())?;
                         fs::write(&path, &png)?;
                         self.written.lock().push((key, file_id(&path)));
@@ -2675,7 +2618,7 @@ mod tests {
         let first = keys[0];
         let path = writer.directory().join(first.relative_path().unwrap());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, FixtureProducer::fixture_png(1)).unwrap();
+        fs::write(&path, fixture_png(1)).unwrap();
         drop(writer);
 
         let producer = ResumeAdoptProducer::new(true);
@@ -2767,7 +2710,7 @@ mod tests {
             BTreeSet::new(),
         )
         .unwrap();
-        let png = FixtureProducer::fixture_png(1);
+        let png = fixture_png(1);
         let key = ResumeAdoptProducer::keys()[0];
         let receipt = PayloadReceipt {
             bytes: png.len() as u32,
@@ -2956,7 +2899,7 @@ mod tests {
             assert!(writer
                 .record_unit(UnitKey::Terrain { tile: first }, receipt)
                 .unwrap());
-            fs::write(&path, FixtureProducer::fixture_png(9)).unwrap();
+            fs::write(&path, fixture_png(9)).unwrap();
         })
         .unwrap();
         let cold_root = temp_root("native-receipt-cold");
@@ -3165,7 +3108,7 @@ mod tests {
                 UnitKey::Terrain {
                     tile: FixtureProducer::tile_keys()[0],
                 },
-                &FixtureProducer::fixture_png(1),
+                &fixture_png(1),
             )
             .unwrap());
         assert_eq!(

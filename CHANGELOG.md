@@ -165,6 +165,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   On 289 the catalogue drops from 745 to 739 places, and none is labelled
   `Location`. The catalogue policy changed, so an existing catalogue is
   baked again once.
+- Before a local WalkTo terrain bake starts (no ready terrain for the bound
+  client cache's image identity), the panel's WalkTo map warns what it costs
+  (CPU for about 15 s, up to ~15 MiB once) and offers **Bake now**, **Always
+  bake** or **Not now**. Not now keeps the map catalogue-only (POIs, search,
+  grid) with a **Bake terrain** control for later. A ready terrain cache,
+  whether baked earlier or installed, opens without asking; catalogue-only
+  demand (the TUI map) never asks. The remembered choice is the `map_bake`
+  key of `panel-ui.json` (`ask` when absent, as in 0.1.8.1 files), edited in
+  the panel's Nav config (**ask before baking terrain**) and the TUI settings
+  popup (**map bake**). The decision is `frontend_core::MapBakeGate`, shared
+  by both front ends.
 
 ### Rendering and client
 

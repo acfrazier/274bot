@@ -327,13 +327,17 @@ pub fn panel_ui_path() -> PathBuf {
 }
 
 pub fn background_bots_acked() -> bool {
-    match std::fs::read(panel_ui_path()) {
-        Ok(data) => serde_json::from_slice::<serde_json::Value>(&data)
-            .ok()
-            .and_then(|v| v.get(BACKGROUND_BOTS_ACK_KEY)?.as_bool())
-            .unwrap_or(false),
-        Err(_) => false,
-    }
+    panel_ui_value(BACKGROUND_BOTS_ACK_KEY)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+/// One top-level value of `panel-ui.json`; `None` when the file, the key or
+/// a readable JSON object is absent.
+pub fn panel_ui_value(key: &str) -> Option<serde_json::Value> {
+    let data = std::fs::read(panel_ui_path()).ok()?;
+    let mut value: serde_json::Value = serde_json::from_slice(&data).ok()?;
+    value.as_object_mut()?.remove(key)
 }
 
 pub fn background_bots_ack_error(err: &io::Error) -> String {
@@ -351,21 +355,23 @@ pub fn clear_background_bots_ack_error(error: &mut Option<String>) {
 
 /// Set `background_bots_ack` in `panel-ui.json`, preserving other keys.
 pub fn persist_background_bots_ack() -> io::Result<()> {
+    persist_panel_ui_value(BACKGROUND_BOTS_ACK_KEY, serde_json::Value::Bool(true))
+}
+
+/// Set one top-level key of `panel-ui.json`, preserving every other key.
+pub fn persist_panel_ui_value(key: &str, value: serde_json::Value) -> io::Result<()> {
     let path = panel_ui_path();
-    let mut value = match std::fs::read(&path) {
+    let mut document = match std::fs::read(&path) {
         Ok(data) => serde_json::from_slice(&data).unwrap_or_else(|_| serde_json::json!({})),
         Err(e) if e.kind() == ErrorKind::NotFound => serde_json::json!({}),
         Err(e) => return Err(e),
     };
-    let obj = value
+    let obj = document
         .as_object_mut()
         .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "panel-ui.json is not an object"))?;
-    obj.insert(
-        BACKGROUND_BOTS_ACK_KEY.into(),
-        serde_json::Value::Bool(true),
-    );
-    let data =
-        serde_json::to_vec_pretty(&value).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+    obj.insert(key.into(), value);
+    let data = serde_json::to_vec_pretty(&document)
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     vault::write_private_file(&path, &data)
 }
 

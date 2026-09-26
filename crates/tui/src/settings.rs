@@ -1,7 +1,8 @@
 //! Settings popup (spec `2026-09-01-headless-tui-design.md`): an overlay
 //! keyed `s` with the focused profile's `random_events`, `lamp_skill`, and
 //! `lamp_auto`, plus session nav find opt-ins (teleports / wilderness /
-//! BankBudget). The random toggle flips [`ProfileSettings`] in place (the
+//! BankBudget) and the remembered WalkTo terrain-bake choice shared with the
+//! panel. The random toggle flips [`ProfileSettings`] in place (the
 //! operator vault; `--live` still ephemeral, no persist). Not crowding the
 //! main view — a small centered box drawn after the panes.
 
@@ -11,6 +12,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
+use frontend_core::MapBakeChoice;
 use vault::ProfileSettings;
 
 use crate::app::NavFindSettings;
@@ -32,7 +34,7 @@ pub const LAMP_SKILLS: [&str; 7] = [
 pub struct SettingsState {
     pub open: bool,
     /// 0 = random events, 1 = lamp skill, 2 = lamp auto, 3 = teleports,
-    /// 4 = wilderness, 5 = bank fetch.
+    /// 4 = wilderness, 5 = bank fetch, 6 = map bake.
     pub row: usize,
 }
 
@@ -41,6 +43,9 @@ pub struct SettingsState {
 pub enum SettingsKey {
     /// A profile setting value changed — persist [`ProfileSettings`] back.
     Changed,
+    /// The remembered map-bake choice changed — persist it to the shared
+    /// prefs (`panel-ui.json`).
+    MapBake,
     /// The key was consumed but nothing changed (navigation, Esc).
     Consumed,
     /// Not a settings key.
@@ -51,6 +56,7 @@ pub enum SettingsKey {
 pub struct SettingsPane<'a> {
     pub settings: &'a mut ProfileSettings,
     pub nav: &'a mut NavFindSettings,
+    pub map_bake: &'a mut MapBakeChoice,
     pub state: &'a mut SettingsState,
 }
 
@@ -58,11 +64,13 @@ impl<'a> SettingsPane<'a> {
     pub fn new(
         settings: &'a mut ProfileSettings,
         nav: &'a mut NavFindSettings,
+        map_bake: &'a mut MapBakeChoice,
         state: &'a mut SettingsState,
     ) -> Self {
         Self {
             settings,
             nav,
+            map_bake,
             state,
         }
     }
@@ -70,7 +78,8 @@ impl<'a> SettingsPane<'a> {
     /// One key while the popup is open. Up/Down move the row; Enter/Space
     /// toggle the row's setting (the random toggle flips `random_events`,
     /// lamp auto flips `lamp_auto`, lamp skill cycles [`LAMP_SKILLS`],
-    /// nav rows flip session find opt-ins); Esc closes.
+    /// nav rows flip session find opt-ins, the map-bake row flips ask /
+    /// always); Esc closes.
     pub fn on_key(&mut self, key: KeyEvent) -> SettingsKey {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -78,15 +87,15 @@ impl<'a> SettingsPane<'a> {
                 SettingsKey::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.state.row = (self.state.row + 1).min(5);
+                self.state.row = (self.state.row + 1).min(6);
                 SettingsKey::Consumed
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 self.activate();
-                if self.state.row <= 2 {
-                    SettingsKey::Changed
-                } else {
-                    SettingsKey::Consumed
+                match self.state.row {
+                    0..=2 => SettingsKey::Changed,
+                    6 => SettingsKey::MapBake,
+                    _ => SettingsKey::Consumed,
                 }
             }
             KeyCode::Esc => {
@@ -112,14 +121,15 @@ impl<'a> SettingsPane<'a> {
             2 => self.settings.lamp_auto = !self.settings.lamp_auto,
             3 => self.nav.allow_teleports = !self.nav.allow_teleports,
             4 => self.nav.allow_wilderness = !self.nav.allow_wilderness,
-            _ => self.nav.allow_bank_fetch = !self.nav.allow_bank_fetch,
+            5 => self.nav.allow_bank_fetch = !self.nav.allow_bank_fetch,
+            _ => *self.map_bake = self.map_bake.toggled(),
         }
     }
 
-    /// The popup rect: centered, sized to the six rows.
+    /// The popup rect: centered, sized to the seven rows.
     pub fn popup_rect(area: Rect) -> Rect {
         let w = area.width.min(36);
-        let h = 8.min(area.height);
+        let h = 9.min(area.height);
         Rect {
             x: area.x + area.width.saturating_sub(w) / 2,
             y: area.y + area.height.saturating_sub(h) / 2,
@@ -146,6 +156,7 @@ impl Widget for SettingsPane<'_> {
             ("allow teleports", format!("{}", self.nav.allow_teleports)),
             ("allow wilderness", format!("{}", self.nav.allow_wilderness)),
             ("bank fetch", format!("{}", self.nav.allow_bank_fetch)),
+            ("map bake", self.map_bake.as_str().to_string()),
         ];
         let lines: Vec<Line> = rows
             .iter()
@@ -167,6 +178,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
+    use frontend_core::MapBakeChoice;
     use vault::ProfileSettings;
 
     use crate::app::NavFindSettings;
@@ -197,13 +209,14 @@ mod tests {
     fn popup_flips_random_events_on_the_profile() {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
+        let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
             ..Default::default()
         };
         assert!(settings.random_events, "default random events on");
         let first = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Enter))
         };
         assert_eq!(first, SettingsKey::Changed, "Enter reports the change");
@@ -212,7 +225,7 @@ mod tests {
             "Enter on the random-events row flips it off"
         );
         let second = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Enter))
         };
         assert_eq!(second, SettingsKey::Changed);
@@ -223,9 +236,10 @@ mod tests {
     fn popup_cycles_lamp_skill_and_toggles_lamp_auto() {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
+        let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState { open: true, row: 1 };
         {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Enter));
         }
         assert_eq!(
@@ -233,7 +247,7 @@ mod tests {
             "default strength (index 1) cycles to the next skill"
         );
         let flipped = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
             pane.state.row = 2;
             pane.on_key(key(KeyCode::Char(' ')))
         };
@@ -245,9 +259,10 @@ mod tests {
     fn popup_toggles_bank_fetch_without_marking_profile_dirty() {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
+        let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState { open: true, row: 5 };
         let key = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Enter))
         };
         assert_eq!(key, SettingsKey::Consumed, "nav rows are session-only");
@@ -258,9 +273,10 @@ mod tests {
     fn up_and_down_move_the_row_and_esc_closes() {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
+        let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState { open: true, row: 0 };
         let rows = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
             let down = pane.on_key(key(KeyCode::Down));
             let at = pane.state.row;
             let up = pane.on_key(key(KeyCode::Up));
@@ -277,9 +293,10 @@ mod tests {
     fn popup_draws_the_rows_while_open_and_nothing_when_closed() {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
+        let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState { open: true, row: 0 };
         let text = render(
-            SettingsPane::new(&mut settings, &mut nav, &mut state),
+            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state),
             60,
             14,
         );
@@ -287,7 +304,7 @@ mod tests {
         assert!(text.contains("bank fetch"), "nav row paints: {text:?}");
         state.open = false;
         let text = render(
-            SettingsPane::new(&mut settings, &mut nav, &mut state),
+            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state),
             60,
             14,
         );
@@ -295,5 +312,35 @@ mod tests {
             !text.contains("random events"),
             "closed popup paints nothing: {text:?}"
         );
+    }
+
+    #[test]
+    fn map_bake_row_flips_the_shared_choice_and_asks_the_binary_to_persist_it() {
+        let mut settings = ProfileSettings::default();
+        let mut nav = NavFindSettings::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut state = SettingsState { open: true, row: 5 };
+        let (moved, flipped) = {
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+            let moved = pane.on_key(key(KeyCode::Down));
+            (moved, pane.on_key(key(KeyCode::Enter)))
+        };
+        assert_eq!(moved, SettingsKey::Consumed);
+        assert_eq!(state.row, 6, "the map-bake row is last");
+        assert_eq!(flipped, SettingsKey::MapBake);
+        assert_eq!(bake, MapBakeChoice::Always);
+        assert!(!nav.allow_bank_fetch, "the bank row is untouched");
+        let text = render(
+            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state),
+            60,
+            14,
+        );
+        assert!(text.contains("map bake: always"), "row paints: {text:?}");
+        let back = {
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+            pane.on_key(key(KeyCode::Char(' ')))
+        };
+        assert_eq!(back, SettingsKey::MapBake);
+        assert_eq!(bake, MapBakeChoice::Ask);
     }
 }

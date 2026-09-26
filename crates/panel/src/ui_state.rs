@@ -57,6 +57,10 @@ pub struct PanelUiState {
     /// Panel CRT palette (named theme consts). Absent = amber defaults.
     #[serde(default)]
     pub chrome: crate::theme::ChromeColors,
+    /// Remembered answer to the local WalkTo terrain bake warning, shared
+    /// with the TUI. Absent (0.1.8.1) or unknown = ask.
+    #[serde(default)]
+    pub map_bake: frontend_core::MapBakeChoice,
 }
 
 /// Panel subsection ids in General config (parameters shares
@@ -117,6 +121,7 @@ impl Default for PanelUiState {
             config_collapsed: HashMap::new(),
             background_bots_ack: false,
             chrome: crate::theme::ChromeColors::default(),
+            map_bake: frontend_core::MapBakeChoice::Ask,
         }
     }
 }
@@ -470,5 +475,26 @@ mod tests {
         let bytes = serde_json::to_vec(&state).unwrap();
         let back: PanelUiState = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(back.server_revision, 289);
+    }
+
+    #[test]
+    fn map_bake_choice_defaults_to_ask_and_a_bad_value_keeps_the_other_prefs() {
+        use frontend_core::MapBakeChoice;
+        let old: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":"alice","collapsed":{}}"#).unwrap();
+        assert_eq!(old.map_bake, MapBakeChoice::Ask, "0.1.8.1 file asks");
+        let odd: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":"alice","map_bake":7,"capture":false}"#).unwrap();
+        assert_eq!(odd.map_bake, MapBakeChoice::Ask);
+        assert_eq!(odd.last_focus.as_deref(), Some("alice"));
+        assert!(!odd.capture, "an unreadable choice does not reset the file");
+        let dir = TestDir::new("ui-map-bake");
+        let p = dir.join("panel-ui.json");
+        let state = PanelUiState {
+            map_bake: MapBakeChoice::Always,
+            ..Default::default()
+        };
+        save_at(&p, &state);
+        assert_eq!(load_at(&p).map_bake, MapBakeChoice::Always);
     }
 }

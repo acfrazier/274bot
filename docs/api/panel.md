@@ -330,7 +330,14 @@ process-wide map-cache images demand (catalogue first; real bake progress
 in the footer) or a grid and `map imagery unavailable — cache not bound`
 until that cache is ready. Opening WalkTo starts the demand against
 `~/.274bot/map-cache` for the bound profile; closing it releases the
-demand and GPU/CPU pixels. POIs come from `Catalogue::from_ready` (client
+demand and GPU/CPU pixels. When the terrain for the bound client cache's
+image identity is not ready (and would be baked locally), the map first
+shows the bake warning from `frontend_core` (CPU for about 15 s, up to
+~15 MiB once) with **Bake now**, **Always bake** and **Not now**; it
+stays catalogue-only until the operator bakes (**Bake terrain** after Not
+now). A ready cache, baked earlier or installed, opens without asking.
+**Always bake** and Nav config's **ask before baking terrain** set the
+shared `map_bake` key of `panel-ui.json` (`ask` when absent). POIs come from `Catalogue::from_ready` (client
 records, authenticated `navpois`, game-data names) plus live
 `observed_services` for the focused bot. Search uses that catalogue.
 Optional map-owned overlay toggles (not per-tile quads), vector route

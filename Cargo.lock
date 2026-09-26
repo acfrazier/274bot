@@ -1974,6 +1974,7 @@ dependencies = [
  "host",
  "host-play",
  "script",
+ "serde",
  "serde_json",
  "vault",
 ]

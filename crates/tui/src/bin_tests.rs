@@ -1635,6 +1635,33 @@ fn tui_notice_uses_shared_ack_file() {
 }
 
 #[test]
+fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
+    let iso = IsolatedEnv::enter("tui-map-bake");
+    let path = host_play::panel_ui_path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, r#"{"last_focus":"alice","map_bake":"always"}"#).unwrap();
+    let mut session = TuiSession::new(dummy_options());
+    assert_eq!(
+        session.map_bake.choice(),
+        frontend_core::MapBakeChoice::Always,
+        "the panel's remembered choice is read at start"
+    );
+    let mut app = TuiApp::new("tui");
+    app.map_bake = frontend_core::MapBakeChoice::Ask;
+    app.map_bake_dirty = true;
+    session.pump(&mut app);
+    assert!(!app.map_bake_dirty);
+    assert_eq!(session.map_bake.choice(), frontend_core::MapBakeChoice::Ask);
+    assert_eq!(
+        frontend_core::load_map_bake_choice(),
+        frontend_core::MapBakeChoice::Ask
+    );
+    let prefs: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(prefs["last_focus"], "alice", "other prefs survive");
+    let _iso = iso;
+}
+
+#[test]
 fn tui_pump_reaps_finished_workers_logged_out_arms_still_count() {
     let iso = IsolatedEnv::enter("tui-reap-finished");
     let mut play = empty_play();

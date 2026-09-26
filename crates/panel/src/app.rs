@@ -2767,6 +2767,17 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 changed = true;
             }
 
+            ui.spacing();
+            ui.text_colored(ACCENT, "WalkTo map");
+            let mut ask = session.map_bake.choice() == frontend_core::MapBakeChoice::Ask;
+            if ui.checkbox("ask before baking terrain", &mut ask) {
+                session.set_map_bake_choice(if ask {
+                    frontend_core::MapBakeChoice::Ask
+                } else {
+                    frontend_core::MapBakeChoice::Always
+                });
+            }
+
             if changed {
                 session.ui.nav = nav;
                 crate::ui_state::save(&session.ui);
