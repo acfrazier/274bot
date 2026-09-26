@@ -4,7 +4,7 @@ import { runMachine } from '../../shim/_kernel.js';
 
 /** True on the tick our swing animation began (frozen `swingStartedThisTick`). */
 export function swingStartedThisTick() {
-    return globalThis.__rs2b0t_attack_clock('fight');
+    return globalThis.__rs2b0t_swing_started();
 }
 
 /** One `fight-bury` machine: Rust gates, buries and confirms the burial. */

@@ -3,34 +3,36 @@
 //! id other than `-1` and every later change to another non-idle id start a
 //! new swing; returning to `-1` starts nothing (`:31-39`).
 //!
-//! `fightUpkeep` keeps one module-level clock (`fightUpkeep.ts:9-19`); each
-//! `new AttackClock()` a script makes (GreenDragon) keeps its own, held here
-//! by slot so the JS instance carries only the slot. Every frozen caller
-//! feeds `reader.selfAnim()` (the local player's primary animation), so the
-//! clock reads that id from the posted scene rather than from the argument.
+//! `fightUpkeep` keeps one module-level clock (`fightUpkeep.ts:9-19`) and
+//! feeds it `reader.selfAnim()`, so that clock reads the posted local-player
+//! animation id. Each `new AttackClock()` a script makes (GreenDragon) keeps
+//! its own, held here by slot so the JS instance carries only the slot, and
+//! observes exactly the `anim` its caller passes.
 
 use crate::observed;
 use std::cell::{Cell, RefCell};
 
+/// Animation ids and ticks are JS numbers; the frozen clock compares them
+/// with `!==` / `===`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct AttackClock {
-    last_anim: i32,
+    last_anim: f64,
     started_tick: f64,
 }
 
 impl AttackClock {
     const fn new() -> Self {
         Self {
-            last_anim: -1,
+            last_anim: -1.0,
             started_tick: -1.0,
         }
     }
 
     /// Frozen `observe(anim, tick)` (`eatTiming.ts:31-39`).
-    fn observe(&mut self, anim: i32, tick: f64) {
+    fn observe(&mut self, anim: f64, tick: f64) {
         if anim != self.last_anim {
             self.last_anim = anim;
-            if anim != -1 {
+            if anim != -1.0 {
                 self.started_tick = tick;
             }
         }
@@ -54,10 +56,10 @@ thread_local! {
 
 /// The posted primary animation id of the local player and the last posted
 /// tick (frozen `reader.selfAnim()`, `BotHost.tickCount`).
-fn posted() -> (i32, f64) {
+fn posted() -> (f64, f64) {
     observed::with(|scene| {
         let anim = scene.latest().self_anim().unwrap_or(-1);
-        (anim, scene.tick().unwrap_or(0) as f64)
+        (f64::from(anim), scene.tick().unwrap_or(0) as f64)
     })
 }
 
@@ -86,9 +88,8 @@ fn with_clock<R>(slot: usize, f: impl FnOnce(&mut AttackClock) -> R) -> Option<R
     CLOCKS.with(|clocks| clocks.borrow_mut().get_mut(slot).map(f))
 }
 
-/// `clock.observe(reader.selfAnim(), tick)`; `None` for an unknown slot.
-pub(crate) fn clock_observe(slot: usize, tick: f64) -> Option<()> {
-    let (anim, _) = posted();
+/// `clock.observe(anim, tick)`; `None` for an unknown slot.
+pub(crate) fn clock_observe(slot: usize, anim: f64, tick: f64) -> Option<()> {
     with_clock(slot, |clock| clock.observe(anim, tick))
 }
 
@@ -113,7 +114,7 @@ mod tests {
         let mut clock = AttackClock::new();
         let mut starts = Vec::new();
         for (tick, anim) in [(1, 390), (2, 390), (3, 391), (4, -1), (5, -1), (6, 391)] {
-            clock.observe(anim, f64::from(tick));
+            clock.observe(f64::from(anim), f64::from(tick));
             starts.push(clock.attacked_this_tick(f64::from(tick)));
         }
         assert_eq!(starts, [true, false, true, false, false, true]);

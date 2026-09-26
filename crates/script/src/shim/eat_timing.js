@@ -12,22 +12,21 @@ export function shouldHoldEat(input) {
 
 /**
  * Frozen `AttackClock`: the tick our attack animation began, keyed on
- * animation-id changes. Rust holds each instance's clock by slot; `observe`
- * reads the posted local-player animation (every frozen caller passes
- * `reader.selfAnim()`).
+ * animation-id changes. Rust holds each instance's clock by slot and
+ * observes the `anim` passed here.
  */
 export class AttackClock {
-    #slot = globalThis.__rs2b0t_attack_clock('new');
+    #slot = globalThis.__rs2b0t_attack_clock_new();
 
-    observe(_anim, tick) {
-        globalThis.__rs2b0t_attack_clock('observe', this.#slot, tick);
+    observe(anim, tick) {
+        globalThis.__rs2b0t_attack_clock_observe(this.#slot, anim, tick);
     }
 
     attackedThisTick(tick) {
-        return globalThis.__rs2b0t_attack_clock('attacked', this.#slot, tick);
+        return globalThis.__rs2b0t_attack_clock_attacked(this.#slot, tick);
     }
 
     reset() {
-        globalThis.__rs2b0t_attack_clock('reset', this.#slot);
+        globalThis.__rs2b0t_attack_clock_reset(this.#slot);
     }
 }

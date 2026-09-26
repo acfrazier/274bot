@@ -193,19 +193,22 @@ fn only_the_swing_start_tick_is_skipped() {
     iso.join();
 }
 
-/// A script's own `new AttackClock()` (GreenDragon) keeps its own state:
-/// it observes only when the script calls it.
+/// A script's own `new AttackClock()` (GreenDragon) keeps its own state and
+/// observes the `anim` it is given (`eatTiming.ts:31-39`), not the posted
+/// animation: here the posted id is 390 throughout while the script feeds
+/// -1, -1, 500, 500 (then resets) and 500.
 #[test]
-fn an_attack_clock_instance_observes_when_called() {
+fn an_attack_clock_instance_observes_the_anim_it_is_given() {
     let src = r#"
 import { AttackClock } from '../../api/combat/eatTiming.js';
 import { BotHost } from '../../runtime/BotHost.js';
 const clock = new AttackClock();
+const fed = { 1: -1, 2: -1, 3: 500, 4: 500, 5: 500 };
 globalThis.__seen = [];
 export default class T extends LoopingBot {
     loop() {
         const tick = BotHost.tickCount;
-        if (tick !== 2) clock.observe(-1, tick);
+        clock.observe(fed[tick], tick);
         globalThis.__seen.push(clock.attackedThisTick(tick));
         if (tick === 4) clock.reset();
     }
@@ -213,11 +216,10 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = common::ingame_snapshot();
-    for (tick, anim) in [(1, -1), (2, 390), (3, 390), (4, 390), (5, 390)] {
-        post_anim(&iso, &mut snap, tick, anim);
+    for tick in 1..=5 {
+        post_anim(&iso, &mut snap, tick, 390);
     }
-    // Tick 2 is not observed, so tick 3 is the first sight of 390; after
-    // `reset` the held 390 is new again.
+    // 500 is first seen on tick 3; after `reset` it is new again on tick 5.
     assert_eq!(
         iso.probe("__seen").unwrap(),
         serde_json::json!([false, false, true, false, true])
