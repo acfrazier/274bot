@@ -410,6 +410,33 @@ fn widen_fleet_post_start_waits(scenario: &mut scenario::Scenario, n: usize) {
         step.wait.budget_ticks = step.wait.budget_ticks.max(minimum);
     }
 }
+/// Shared single-combat actors cannot award XP to every fleet member: the
+/// frozen card counts another player's target disappearing as a kill. Keep the
+/// ordinary N=1 XP proof, but require a fail-closed local engagement for W2
+/// fleets so denied contenders do not block an otherwise representative load.
+fn qualify_contentious_moss_fleet(
+    scenario: &mut scenario::Scenario,
+    n: usize,
+) -> Result<(), String> {
+    if n <= 1 || scenario.name != "moss_giant_bank_start" {
+        return Ok(());
+    }
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, scenario::StepKind::StartScript))
+        .ok_or("moss fleet qualification is missing StartScript")?;
+    let step = scenario.steps[start + 1..]
+        .iter_mut()
+        .find(|step| {
+            step.name == "watch fresh Strength XP after the startup bank return"
+                && step.wait.arm == scenario::Proof::FreshStatXpGain { id: 2, min: 1 }
+        })
+        .ok_or("moss fleet qualification is missing its post-return Strength XP watch")?;
+    step.name = "watch the local player target a Moss giant after the startup bank return";
+    step.wait.arm = scenario::Proof::LocalTargetingNpcName { name: "Moss giant" };
+    Ok(())
+}
 
 fn seed_runner(
     scenario: scenario::Scenario,
@@ -697,6 +724,7 @@ impl Run {
                     .ok_or_else(|| format!("missing benchmark scenario {scenario_name}"))?
             };
             widen_fleet_post_start_waits(&mut scenario, self.config.n);
+            qualify_contentious_moss_fleet(&mut scenario, self.config.n)?;
             scenario.settings.terminal_shot = None;
             let seed = seed_runner(scenario, name, seed_world.clone());
             seeds.insert(name.clone(), Arc::new(Mutex::new(seed)));
@@ -943,6 +971,9 @@ impl Run {
             value["allocation_counting"] = (!cfg!(feature = "memory-profile-no-alloc")).into();
             value["diagnostic_sidecar"] = self.diagnostics.into();
             value["benchmark_scenario"] = self.scenario_name.clone().into();
+            value["contention_qualification"] = (self.config.n > 1
+                && self.scenario_name.as_deref() == Some("moss_giant_bank_start"))
+            .into();
             value["startup_ready_s"] = self
                 .warm
                 .map(|ready| ready.duration_since(self.started).as_secs_f64())
@@ -1616,6 +1647,31 @@ mod tests {
             .shared_world()
             .expect("world");
         assert!(Arc::ptr_eq(&world, &shared));
+    }
+
+    #[test]
+    fn moss_fleet_uses_engagement_without_weakening_single_bot_xp_proof() {
+        let mut single = scenario::get("moss_giant_bank_start").expect("moss scenario");
+        qualify_contentious_moss_fleet(&mut single, 1).expect("single qualifier");
+        assert!(single
+            .steps
+            .iter()
+            .any(|step| { step.wait.arm == scenario::Proof::FreshStatXpGain { id: 2, min: 1 } }));
+
+        let mut fleet = scenario::get("moss_giant_bank_start").expect("moss scenario");
+        qualify_contentious_moss_fleet(&mut fleet, 10).expect("fleet qualifier");
+        let engagement = fleet
+            .steps
+            .iter()
+            .find(|step| {
+                step.name
+                    == "watch the local player target a Moss giant after the startup bank return"
+            })
+            .expect("post-return engagement");
+        assert_eq!(
+            engagement.wait.arm,
+            scenario::Proof::LocalTargetingNpcName { name: "Moss giant" }
+        );
     }
 
     #[test]

@@ -126,6 +126,10 @@ pub enum Proof {
     /// A live, unengaged named NPC is within the player's radius and can
     /// see the player through the observed scene collision grid.
     NpcNameUnengagedInSight { name: &'static str, radius: i32 },
+    /// The local player currently targets an NPC with exact `name`.
+    /// Fail-closed when `self_slot`, the local actor target, or NPC identity is
+    /// unavailable.
+    LocalTargetingNpcName { name: &'static str },
     /// A placed loc of exact `id` stands within chebyshev `radius` of
     /// `(x, z, level)` on the snapshot loc sweep.
     LocIdNear {
@@ -226,6 +230,9 @@ impl Proof {
             }
             Proof::NpcNameUnengagedInSight { name, radius } => {
                 format!("npc_name({name})_unengaged_in_sight(r{radius})")
+            }
+            Proof::LocalTargetingNpcName { name } => {
+                format!("local_targeting_npc_name({name})")
             }
             Proof::LocIdNear {
                 id,
@@ -524,6 +531,22 @@ impl Proof {
             }
             Proof::NpcNameUnengagedInSight { name, radius } => {
                 npc_unengaged_in_sight(snap, name, *radius)
+            }
+            Proof::LocalTargetingNpcName { name } => {
+                if snap.self_slot() < 0 {
+                    return false;
+                }
+                let Some(target) = snap
+                    .local_player()
+                    .and_then(|player| player.player.actor.target)
+                else {
+                    return false;
+                };
+                target.kind == ActorKind::Npc
+                    && snap
+                        .npcs()
+                        .iter()
+                        .any(|npc| npc.index == target.index && npc.name.as_deref() == Some(*name))
             }
             Proof::LocIdNear {
                 id,
@@ -1738,6 +1761,46 @@ mod tests {
         assert!(
             !proof.check(&snap(&mut c), None),
             "unavailable collision fails closed"
+        );
+    }
+
+    #[test]
+    fn local_targeting_npc_name_requires_the_local_players_named_npc_target() {
+        let mut c = seeded();
+        c.self_slot = 4;
+        c.local_player.as_mut().unwrap().entity.face_entity = 3;
+        let mut npcs = (0..=708)
+            .map(|id| NpcType {
+                id,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        npcs[708].name = "Moss giant".into();
+        c.cache = Arc::new(Cache {
+            npcs,
+            ..Default::default()
+        });
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        c.bump_gens(ServerProt::NPC_INFO);
+
+        let proof = Proof::LocalTargetingNpcName { name: "Moss giant" };
+        let s = snap(&mut c);
+        assert!(proof.check(&s, None));
+        assert_eq!(proof.name(), "local_targeting_npc_name(Moss giant)");
+
+        c.local_player.as_mut().unwrap().entity.face_entity = -1;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "missing local actor target fails closed"
+        );
+
+        c.local_player.as_mut().unwrap().entity.face_entity = 3;
+        c.self_slot = -1;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "unset self_slot fails closed"
         );
     }
 
