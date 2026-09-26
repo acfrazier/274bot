@@ -4,6 +4,7 @@ pub(crate) mod bank;
 pub(crate) mod cell;
 pub(crate) mod clue;
 
+pub(crate) mod boat_fare;
 pub(crate) mod combat;
 pub(crate) mod enter_lair;
 pub(crate) mod fight_field;
@@ -31,6 +32,7 @@ pub(crate) use clue::{
     sherlock_talk_scenario,
 };
 
+pub(crate) use boat_fare::boat_fare_v1_scenario;
 pub(crate) use combat::{
     ardy_fighter_bank_scenario, ardy_fighter_bank_seeded_scenario, ardy_fighter_scenario,
     auto_fighter_bank_scenario, auto_fighter_mage_scenario, auto_fighter_range_scenario,

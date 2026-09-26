@@ -197,13 +197,6 @@ pub(super) fn wire_runtime(
         )
         .map_err(|e| format!("register common bank loot: {e}"))?;
     runtime
-        .register_function("__rs2b0t_walk", |args: &[serde_json::Value]| {
-            Ok(crate::walk_wait::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register walk: {e}"))?;
-    runtime
         .register_function("__rs2b0t_inspect", |args: &[serde_json::Value]| {
             Ok(crate::inspect_wait::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),

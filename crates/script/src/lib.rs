@@ -114,6 +114,8 @@ mod bank_select;
 mod bank_withdraw;
 #[cfg(feature = "load")]
 mod banking_open;
+#[cfg(feature = "load")]
+mod boat_fare;
 pub mod cake_stall;
 #[cfg(feature = "load")]
 mod clue;

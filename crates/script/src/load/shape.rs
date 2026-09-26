@@ -312,6 +312,7 @@ pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
         | "route_inspect_brimhaven_v2.ts"
         | "prayer_v2.ts"
         | "prayer_v1.ts"
+        | "boat_fare_v1.ts"
         | "line_of_sight_v2.ts"
         | "actor_observation_v2.ts"
         | "fight_field_v2.ts"

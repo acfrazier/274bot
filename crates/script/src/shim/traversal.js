@@ -1,5 +1,4 @@
-import { snap, queue, proxy, notImpl, arrived, runMachine } from '../../shim/_kernel.js';
-import { Execution } from '../execution/Execution.js';
+import { snap, proxy, notImpl, runMachine } from '../../shim/_kernel.js';
 import { Sustain } from '../sustain/Sustain.js';
 
 
@@ -7,40 +6,23 @@ function allowTeleports(opts) {
     return opts.useTeleportCatalog === true || opts.policy?.useTeleports === true;
 }
 
-function walkNative(payload) {
-    return globalThis.rustyscript.functions.__rs2b0t_walk(payload);
-}
-
+// Frozen Traversal.walkTo: Rust owns the walk, its settle, the boat-fare
+// recovery and the one re-walk (`walk-to`). The shim only coerces options.
 async function walkWorld(tile, opts = {}) {
-    const radius = opts.radius ?? 0;
-    if (!snap().here) return false;
-    const target = { x: tile.x, z: tile.z, level: tile.level ?? 0 };
-    if (arrived(target, radius)) return true;
-    const allow_teleports = allowTeleports(opts);
-    const token = walkNative({
-        op: 'begin',
-        x: target.x,
-        z: target.z,
-        level: target.level,
-        radius,
-        allow_teleports,
-    });
-    queue({
-        op: radius > 0 ? 'walk-near' : 'walk',
-        ...(radius > 0 ? { radius } : {}),
-        x: target.x,
-        z: target.z,
-        level: target.level,
-        allow_teleports,
-        allow_wilderness: true,
-        allow_bank_fetch: true,
-        request_id: token,
-    });
-    const done = await Execution.delayUntil(
-        () => walkNative({ op: 'settled', token }) === true,
-        opts.timeoutMs ?? 60_000,
+    const out = await runMachine(
+        'walk-to',
+        {
+            tile: { x: tile.x, z: tile.z, level: tile.level ?? 0 },
+            radius: opts.radius ?? 0,
+            ...(typeof opts.timeoutMs === 'number'
+                ? { timeoutMs: Math.floor(opts.timeoutMs) }
+                : {}),
+            allowTeleports: allowTeleports(opts),
+        },
+        { log: typeof opts.log === 'function' ? opts.log : undefined, sustain: () => Sustain.run() },
     );
-    return done === true && walkNative({ op: 'value', token }) === true;
+    if (out.kind === 'refused') throw notImpl('Traversal.walkTo', out.reason);
+    return out.kind === 'done' && out.value === true;
 }
 
 export const Traversal = proxy('Traversal', {

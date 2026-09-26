@@ -547,6 +547,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   script is paused (operator Pause or a reconnect), `Execution.delay` and
   `delayUntil` timeouts no longer run down: a wait resumes with the time it
   had left.
+- `Traversal.walkTo` is one Rust `walk-to` machine, and like frozen it earns a
+  missing Karamja boat fare: when a walk off the island fails with the 30-coin
+  fare as its only missing gate item, the bot takes Luthas's banana-plantation
+  job (employment, picks, fills the crate to ten, collects the 30 coins) and
+  walks again. `walkResilient`'s baked leg does the same. A pack with no free
+  slot and no banana skips the job, as frozen does. Qualification cell:
+  `script_boat_fare_v1_ts`.
 
 ### Upgrade compatibility
 

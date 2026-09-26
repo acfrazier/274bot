@@ -385,7 +385,7 @@ fn truthy(value: &Value) -> bool {
 }
 
 /// The last posted chat line's seq (frozen `GameMessages.mark()`).
-fn chat_mark() -> i32 {
+pub(crate) fn chat_mark() -> i32 {
     observed::with(|scene| {
         scene
             .since_login()
@@ -677,7 +677,6 @@ fn unreachable_line(what: &str, toward: Option<Tile>) -> String {
 pub(crate) enum TalkExpect {
     /// Frozen `ChatDialog.isOpen() || ChatDialog.canContinue()`
     /// (`primitives.ts:228`, `Reach.ts:295`).
-    #[cfg_attr(not(test), allow(dead_code))] // boat fare's openDialogue
     DialogReady,
     /// A dialogue the click produced: ready, and the chat modal differs from
     /// the one posted at the click, or opened from none, or Continue
@@ -769,8 +768,13 @@ fn talk_row(npc: &str) -> Option<TalkRow> {
     })
 }
 
+/// Whether a posted `npc` row has a talk op (frozen `openDialogue`'s `find()`).
+pub(crate) fn npc_talkable(npc: &str) -> bool {
+    talk_row(npc).is_some()
+}
+
 /// The posted chat modal id and Continue flag.
-fn chat_state() -> (i32, bool) {
+pub(crate) fn chat_state() -> (i32, bool) {
     observed::with(|scene| {
         let session = scene.since_login();
         (

@@ -48,6 +48,10 @@
 //!   201–204`), which [`Resilient::unreachable`] reports to callers that
 //!   branch on it (`Reach.ts:61–68`).
 //! - Backoff 2–16 ticks (`walkLadder.ts:30–31, 39–40`).
+//! - The baked leg is frozen `Traversal.walkTo` (`Traversal.ts:160–170`),
+//!   whose failed walk runs `recoverBoatFare` (`Traversal.ts:80–95`) before
+//!   its one re-walk: [`crate::boat_fare::Recover`] after a baked pass that
+//!   did not arrive, then the ladder goes on as frozen does.
 //! - Options (`Traversal.ts:19–35, 102–112, 160–170`): `sceneRadius`
 //!   (default `radius + 1`) bounds the scene step; the teleport choice is
 //!   frozen `resolveWalkUseTeleports` (`WalkExecutor.ts:165–177`: an
@@ -822,6 +826,9 @@ enum Phase {
     Verify {
         token: u64,
     },
+    /// Frozen `Traversal.walkTo`'s `recoverBoatFare` (`Traversal.ts:89`)
+    /// after a failed baked walk.
+    BoatFare(Box<crate::boat_fare::Recover>),
 }
 
 /// Frozen walkResilient ladder over baked [`Walk`]s. Shared by `walk-hops`.
@@ -842,6 +849,9 @@ pub(crate) struct Resilient {
     last_probe_terminal: Option<WorldTile>,
     /// The ladder ended on the frozen `unreachable` action.
     unreachable: bool,
+    /// The baked leg may run the boat-fare recovery (frozen
+    /// `Traversal.walkTo`); the recovery's own legs may not.
+    recover: bool,
     logs: VecDeque<String>,
 }
 
@@ -869,7 +879,24 @@ impl Resilient {
             unstick_dir: 0,
             last_probe_terminal: None,
             unreachable: false,
+            recover: true,
             logs: VecDeque::new(),
+        }
+    }
+
+    /// The recovery's own legs: frozen `recovering` makes a nested
+    /// `recoverBoatFare` answer false (`karamjaRecovery.ts:26`).
+    pub(crate) fn without_boat_fare(mut self) -> Self {
+        self.recover = false;
+        self
+    }
+
+    /// Stop the native walk this ladder has in flight.
+    pub(crate) fn abort(&self, cx: &mut Cx<'_>) {
+        match &self.phase {
+            Phase::Walking(walk) => walk.abort(cx),
+            Phase::BoatFare(recover) => recover.abort(cx),
+            _ => {}
         }
     }
 
@@ -932,9 +959,7 @@ impl Resilient {
         // Frozen: EventSignal.pending before isArrived (Traversal.ts:131,
         // walkLadder.ts:48–52).
         if interrupted() {
-            if let Phase::Walking(walk) = &self.phase {
-                walk.abort(cx);
-            }
+            self.abort(cx);
             self.logs
                 .push_back("walk interrupted by a runtime event — yielding to the runtime".into());
             return Some(false);
@@ -1060,6 +1085,15 @@ impl Resilient {
                 .unwrap_or(false);
                 self.after_verify(routed, cx)
             }
+            Phase::BoatFare(mut recover) => match recover.step(cx, &mut self.logs) {
+                None => {
+                    self.phase = Phase::BoatFare(recover);
+                    None
+                }
+                // Frozen `return WalkExecutor.walkTo(dest, opts)`.
+                Some(true) => self.kick_walk(cx),
+                Some(false) => self.after_baked_ladder(cx),
+            },
         }
     }
 
@@ -1126,6 +1160,17 @@ impl Resilient {
         if arrived(self.dest, self.radius) {
             return Some(true);
         }
+        if self.recover {
+            if let Ok(recover) = crate::boat_fare::Recover::start(self.dest, cx, &mut self.logs) {
+                self.phase = Phase::BoatFare(Box::new(recover));
+                return None;
+            }
+        }
+        self.after_baked_ladder(cx)
+    }
+
+    /// The ladder's next action after a baked pass that did not arrive.
+    fn after_baked_ladder(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         let Some(here) = here() else {
             return Some(false);
         };
