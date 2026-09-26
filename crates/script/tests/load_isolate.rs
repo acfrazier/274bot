@@ -7956,7 +7956,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn direct_navigator_walk_queues_scene_walk_to() {
+fn direct_navigator_walk_without_a_player_tile_is_false_and_sends_nothing() {
     let src = r#"
 import { DirectNavigator } from '@rs2b0t/api';
 export default class T extends LoopingBot {
@@ -7967,15 +7967,14 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
-    let _ = iso.probe("__probe");
     assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WalkTo {
-            x: 3222,
-            z: 3218,
-            level: 0
-        }],
-        "DirectNavigator.walk is the scene walk-to packet, not Traveller"
+        iso.probe("__probe").unwrap(),
+        false,
+        "frozen DirectNavigator.walk returns false without reader.worldTile()"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no scene click without a player tile"
     );
     iso.join();
 }
