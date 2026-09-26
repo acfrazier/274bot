@@ -162,9 +162,13 @@ fn walk_arm_outcome_tag(outcome: &RouteOutcome) -> &'static str {
 }
 
 fn log_walk_arm(name: &str, build: impl FnOnce() -> String) {
-    if debug_enabled() {
-        eprintln!("[nav-walk-arm {name}] {}", build());
-    }
+    api::host_log!(
+        api::hostlog::Category::NavTrace,
+        api::hostlog::Level::Debug,
+        slot = name,
+        "walk-arm {}",
+        build()
+    );
 }
 
 fn walk_arm_worker_slot() -> String {
@@ -175,9 +179,12 @@ fn walk_arm_worker_slot() -> String {
 }
 
 pub(super) fn log_walk_arm_bot(build: impl FnOnce() -> String) {
-    if debug_enabled() {
-        eprintln!("[nav-walk-arm] {}", build());
-    }
+    api::host_log!(
+        api::hostlog::Category::NavTrace,
+        api::hostlog::Level::Debug,
+        "walk-arm {}",
+        build()
+    );
 }
 
 impl ScriptWalkArm {

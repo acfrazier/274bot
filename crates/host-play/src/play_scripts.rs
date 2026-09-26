@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use api::host_log;
+use api::hostlog::{Category, Level};
 use api::snapshot::WorldTile;
 use nav::router::Route;
 
@@ -9,7 +11,7 @@ use crate::script_runtime;
 use crate::script_runtime::{
     abort_script_walk, poll_start, script_slot, script_slot_or_insert, NavBot, ScriptWall,
 };
-use crate::{debug_enabled, Play};
+use crate::Play;
 
 fn invalidate_bank_pick(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(bot) = navs.lock().unwrap().get_mut(name) {
@@ -59,9 +61,12 @@ impl ScriptStartHandle {
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
-        if debug_enabled() {
-            eprintln!("[script {name}] start load");
-        }
+        host_log!(
+            Category::ScriptLifecycle,
+            Level::Info,
+            slot = name,
+            "start load"
+        );
         let slot = script_slot_or_insert(&self.scripts, name);
         let mut slot = slot
             .lock()
@@ -78,7 +83,7 @@ impl ScriptStartHandle {
             invalidate_bank_pick(&self.navs, name);
         }
         if let Err(e) = &result {
-            eprintln!("[script {name}] start failed: {e}");
+            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {e}");
         }
         result
     }
@@ -96,9 +101,12 @@ impl ScriptStartHandle {
         siblings: Vec<(String, String)>,
         loadouts: &[script::Loadout],
     ) -> Result<(), String> {
-        if debug_enabled() {
-            eprintln!("[script {name}] start load");
-        }
+        host_log!(
+            Category::ScriptLifecycle,
+            Level::Info,
+            slot = name,
+            "start load"
+        );
         let slot = script_slot_or_insert(&self.scripts, name);
         let mut slot = slot
             .lock()
@@ -118,7 +126,7 @@ impl ScriptStartHandle {
             }
         }
         if let Err(e) = &result {
-            eprintln!("[script {name}] start failed: {e}");
+            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {e}");
         }
         result
     }
@@ -127,9 +135,13 @@ impl ScriptStartHandle {
     /// [`Play::script_start`], without the control-thread wake (the slot
     /// thread is already pumping).
     pub fn start_compiled(&self, name: &str, id: script::CompiledId) -> Result<(), String> {
-        if debug_enabled() {
-            eprintln!("[script {name}] start compiled {}", id.0);
-        }
+        host_log!(
+            Category::ScriptLifecycle,
+            Level::Info,
+            slot = name,
+            "start compiled {}",
+            id.0
+        );
         let make = script::factory(id).ok_or_else(|| format!("not ported: {}", id.0))?;
         let slot = script_slot_or_insert(&self.scripts, name);
         let mut slot = slot
@@ -140,7 +152,7 @@ impl ScriptStartHandle {
             invalidate_bank_pick(&self.navs, name);
         }
         if let Err(e) = &result {
-            eprintln!("[script {name}] start failed: {e}");
+            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {e}");
         }
         result
     }
@@ -243,9 +255,12 @@ impl Play {
         if !self.slot_active(name) {
             return Err(script::StartLoadError::Refused(format!("no slot: {name}")));
         }
-        if debug_enabled() {
-            eprintln!("[script {name}] start load");
-        }
+        host_log!(
+            Category::ScriptLifecycle,
+            Level::Info,
+            slot = name,
+            "start load"
+        );
         let slot = script_slot_or_insert(&self.scripts, name);
         let mut slot = slot.lock().map_err(|_| {
             script::StartLoadError::Refused(format!("script slot retiring: {name}"))
@@ -259,7 +274,7 @@ impl Play {
             Arc::clone(&self.named_banks),
         );
         if let Err(e) = &result {
-            eprintln!("[script {name}] start failed: {e}");
+            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {e}");
         }
         result?;
         invalidate_bank_pick(&self.navs, name);

@@ -3,6 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use api::host_log;
+use api::hostlog::{Category, Level};
 use client::client::client::SessionExitObservation;
 use client::client::{Client, LoginError};
 use client::config::IfType;
@@ -11,10 +13,7 @@ use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use parking_lot::Mutex as QueueMutex;
 use vault::Profile;
 
-use super::{
-    clear_startup_progress, debug_enabled, lock_statuses, public_worlds, Play, SlotStatus,
-    StartupPhase,
-};
+use super::{clear_startup_progress, lock_statuses, public_worlds, Play, SlotStatus, StartupPhase};
 
 pub(super) type SharedLoginQueue = Arc<QueueMutex<LoginQueue>>;
 
@@ -896,9 +895,12 @@ pub(super) fn wait_for_permit(
     let withdraw = || {
         arm.withdraw_login();
         drop_queue_place(queue, statuses, username, arm.queue_owner);
-        if debug_enabled() {
-            eprintln!("[host-play] slot {username}: permit wait withdrawn");
-        }
+        host_log!(
+            Category::Login,
+            Level::Info,
+            slot = username,
+            "permit wait withdrawn"
+        );
     };
     loop {
         if permit_wait_cancelled(arm) {

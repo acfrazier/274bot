@@ -18,7 +18,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::sync::OnceLock;
 
 /// Frozen `FIRE_START_TICKS`: wait this many game ticks for the attempt to start.
 pub const FIRE_START_TICKS: u64 = 14;
@@ -375,13 +374,14 @@ impl LightFire {
 /// `BOT_DEBUG=1` diagnostic only: never polls, changes a deadline, or sends
 /// an op.
 fn trace(at: &str, outcome: &str, machine: Option<&LightFire>) {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    if !*ENABLED.get_or_init(|| std::env::var("BOT_DEBUG").as_deref() == Ok("1")) {
+    if !api::hostlog::debug_enabled() {
         return;
     }
     let obs = NativeObservation::observe();
-    eprintln!(
-        "[fire-trace] at={at} tick={} outcome={outcome} phase={:?} logs={} xp={:?} observed_animating={} tile={:?} ticks_left={:?}",
+    api::host_log!(
+        api::hostlog::Category::ScriptTrace,
+        api::hostlog::Level::Debug,
+        "fire at={at} tick={} outcome={outcome} phase={:?} logs={} xp={:?} observed_animating={} tile={:?} ticks_left={:?}",
         obs.tick,
         machine.map(|m| m.phase),
         machine.map_or(0, |m| named_count(&obs.inv, &m.log_name)),

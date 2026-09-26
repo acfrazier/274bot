@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use api::host_log;
+use api::hostlog::{Category, Level};
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::config::Cache;
@@ -10,7 +12,6 @@ use nav::WorldState;
 
 use super::{abort_script_walk, action_slot, all_slot, route_inspect, NavBot, ScriptWalkArm};
 use crate::catalog_core::ScriptAct;
-use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
 fn act_tile(x: i32, z: i32, level: i32) -> crate::catalog_core::LineOfSightTile {
@@ -85,9 +86,14 @@ pub(crate) fn dispatch_script_interact_cached(
         })
         .collect();
     let mut ix = api::interact::Interactions::new(snapshot, driver);
-    if debug_enabled() {
+    if api::hostlog::enabled(Category::InteractTrace) {
         for req in &reqs {
-            eprintln!("[script {name}] interact {req:?}");
+            host_log!(
+                Category::InteractTrace,
+                Level::Debug,
+                slot = name,
+                "interact {req:?}"
+            );
         }
     }
     for req in &reqs {
@@ -461,21 +467,30 @@ pub(crate) fn dispatch_script_interact_cached(
                 }) {
                     if let Some(op) = action_slot(&item.actions, &action) {
                         let res = ix.interact(OpTarget::Item(item), ActionSpec::Operation(op));
-                        if host::debug_enabled() {
-                            let outcome = match &res {
-                                SendResult::Sent { .. } => "sent".to_string(),
-                                SendResult::Refused { reason, .. } => {
-                                    format!("refused {reason:?}")
-                                }
-                            };
-                            eprintln!("[shim-withdraw] {name} {action} -> {outcome}");
+                        match &res {
+                            SendResult::Sent { .. } => {
+                                host_log!(Category::BankOp, Level::Info, "withdraw {name} {action}")
+                            }
+                            SendResult::Refused { reason, .. } => host_log!(
+                                Category::BankOp,
+                                Level::Warn,
+                                "withdraw {name} {action} refused {reason:?}"
+                            ),
                         }
                         wrote |= matches!(res, SendResult::Sent { .. });
-                    } else if host::debug_enabled() {
-                        eprintln!("[shim-withdraw] {name} {action} -> no op slot");
+                    } else {
+                        host_log!(
+                            Category::BankOp,
+                            Level::Warn,
+                            "withdraw {name} {action}: no such action"
+                        );
                     }
-                } else if host::debug_enabled() {
-                    eprintln!("[shim-withdraw] {name} {action} -> no bank row");
+                } else {
+                    host_log!(
+                        Category::BankOp,
+                        Level::Warn,
+                        "withdraw {name} {action}: not in bank"
+                    );
                 }
             }
             // `script_observe` consumes this variant so it can arm the
@@ -494,13 +509,15 @@ pub(crate) fn dispatch_script_interact_cached(
                         .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
                 }) {
                     let res = ix.interact(OpTarget::Item(item), ActionSpec::Label(action.clone()));
-                    if host::debug_enabled() {
+                    if api::hostlog::enabled(Category::InteractTrace) {
                         let outcome = match &res {
                             SendResult::Sent { .. } => "sent".to_string(),
                             SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
                         };
-                        eprintln!(
-                            "[shim-held] {name} {action} slot={} -> {outcome}",
+                        host_log!(
+                            Category::InteractTrace,
+                            Level::Debug,
+                            "held {name} {action} slot={} -> {outcome}",
                             item.slot
                         );
                     }
@@ -624,12 +641,16 @@ pub(crate) fn dispatch_script_interact_cached(
             }
             InteractReq::Close => {
                 let res = ix.close_modal();
-                if host::debug_enabled() {
+                if api::hostlog::enabled(Category::InteractTrace) {
                     match &res {
-                        SendResult::Sent { .. } => eprintln!("[shim-close] sent"),
-                        SendResult::Refused { reason, .. } => {
-                            eprintln!("[shim-close] refused {reason:?}")
+                        SendResult::Sent { .. } => {
+                            host_log!(Category::InteractTrace, Level::Debug, "close sent")
                         }
+                        SendResult::Refused { reason, .. } => host_log!(
+                            Category::InteractTrace,
+                            Level::Debug,
+                            "close refused {reason:?}"
+                        ),
                     }
                 }
                 wrote |= matches!(res, SendResult::Sent { .. });
@@ -844,14 +865,16 @@ pub(crate) fn dispatch_script_interact_cached(
             }
             InteractReq::AnswerCount { value } => {
                 let res = ix.answer_count(value);
-                if host::debug_enabled() {
-                    match &res {
-                        SendResult::Sent { .. } => {
-                            eprintln!("[shim-count] {value} sent")
-                        }
-                        SendResult::Refused { reason, .. } => {
-                            eprintln!("[shim-count] {value} refused {reason:?}")
-                        }
+                match &res {
+                    SendResult::Sent { .. } => {
+                        host_log!(Category::BankOp, Level::Info, "count {value}")
+                    }
+                    SendResult::Refused { reason, .. } => {
+                        host_log!(
+                            Category::BankOp,
+                            Level::Warn,
+                            "count {value} refused {reason:?}"
+                        )
                     }
                 }
                 wrote |= matches!(res, SendResult::Sent { .. });
@@ -869,21 +892,25 @@ pub(crate) fn dispatch_script_interact_cached(
                 });
                 if let Some(id) = id {
                     let res = ix.wear(id);
-                    if host::debug_enabled() {
+                    if api::hostlog::enabled(Category::InteractTrace) {
                         let outcome = match &res {
                             SendResult::Sent { .. } => "sent".to_string(),
                             SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
                         };
-                        eprintln!(
-                            "[shim-wear] {name} id={id} inv={} zip={} -> {outcome}",
+                        host_log!(
+                            Category::InteractTrace,
+                            Level::Debug,
+                            "wear {name} id={id} inv={} zip={} -> {outcome}",
                             snapshot.inventory().len(),
                             snapshot.inv().len()
                         );
                     }
                     wrote |= matches!(res, SendResult::Sent { .. });
-                } else if host::debug_enabled() {
-                    eprintln!(
-                        "[shim-wear] {name} no inventory() row inv={} zip={:?}",
+                } else {
+                    host_log!(
+                        Category::InteractTrace,
+                        Level::Debug,
+                        "wear {name}: no inventory() row inv={} zip={:?}",
                         snapshot.inventory().len(),
                         snapshot.inv()
                     );
@@ -898,20 +925,24 @@ pub(crate) fn dispatch_script_interact_cached(
                 });
                 if let Some(id) = id {
                     let res = ix.unequip(id);
-                    if host::debug_enabled() {
+                    if api::hostlog::enabled(Category::InteractTrace) {
                         let outcome = match &res {
                             SendResult::Sent { .. } => "sent".to_string(),
                             SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
                         };
-                        eprintln!(
-                            "[shim-unequip] {name} id={id} worn={} -> {outcome}",
+                        host_log!(
+                            Category::InteractTrace,
+                            Level::Debug,
+                            "unequip {name} id={id} worn={} -> {outcome}",
                             snapshot.equipment().len()
                         );
                     }
                     wrote |= matches!(res, SendResult::Sent { .. });
-                } else if host::debug_enabled() {
-                    eprintln!(
-                        "[shim-unequip] {name} no equipment() row worn={}",
+                } else {
+                    host_log!(
+                        Category::InteractTrace,
+                        Level::Debug,
+                        "unequip {name}: no equipment() row worn={}",
                         snapshot.equipment().len()
                     );
                 }
@@ -924,13 +955,15 @@ pub(crate) fn dispatch_script_interact_cached(
             }
             InteractReq::SetNoteMode { on } => {
                 let res = ix.set_note_mode(on);
-                if host::debug_enabled() {
-                    match &res {
-                        SendResult::Sent { .. } => eprintln!("[shim-note] on={on} sent"),
-                        SendResult::Refused { reason, .. } => {
-                            eprintln!("[shim-note] on={on} refused {reason:?}")
-                        }
+                match &res {
+                    SendResult::Sent { .. } => {
+                        host_log!(Category::BankOp, Level::Info, "note mode on={on}")
                     }
+                    SendResult::Refused { reason, .. } => host_log!(
+                        Category::BankOp,
+                        Level::Warn,
+                        "note mode on={on} refused {reason:?}"
+                    ),
                 }
                 wrote |= matches!(res, SendResult::Sent { .. });
             }

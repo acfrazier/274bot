@@ -284,9 +284,12 @@ impl FollowRun {
                     report_walk(options, snapshot, here, hop.to, &result);
                     match result {
                         SendResult::Sent { .. } => {
-                            if crate::debug_enabled() {
-                                eprintln!("[nav-transport] cheap hop walk-through to {:?}", hop.to);
-                            }
+                            api::host_log!(
+                                Category::NavTrace,
+                                Level::Debug,
+                                "cheap hop walk-through to {:?}",
+                                hop.to
+                            );
                         }
                         SendResult::Refused { reason, .. } => {
                             fire_leg(options, &hop.leg, LegPhase::Failed);
@@ -317,9 +320,12 @@ impl FollowRun {
                     report_walk(options, snapshot, here, edge.to, &result);
                     match result {
                         SendResult::Sent { .. } => {
-                            if crate::debug_enabled() {
-                                eprintln!("[nav-transport] cheap hop door step to {:?}", edge.to);
-                            }
+                            api::host_log!(
+                                Category::NavTrace,
+                                Level::Debug,
+                                "cheap hop door step to {:?}",
+                                edge.to
+                            );
                         }
                         SendResult::Refused { reason, .. } => {
                             fire_leg(options, &hop.leg, LegPhase::Failed);
@@ -444,8 +450,10 @@ impl FollowRun {
         // records the wizard the player entered through.
         let entry_wizard = is_essence_entry_edge(&edge).then_some(edge.loc_id);
         if crate::debug_enabled() {
-            eprintln!(
-                "[nav-transport] here={here:?} to={:?} troll={} ticks_waited={} loc_id={} open={}",
+            api::host_log!(
+                Category::NavTrace,
+                Level::Debug,
+                "transport here={here:?} to={:?} troll={} ticks_waited={} loc_id={} open={}",
                 hop.to,
                 hop.troll,
                 hop.ticks_waited,
@@ -474,9 +482,12 @@ impl FollowRun {
             if snapshot.chat_continue_component_id() != -1 {
                 match ix.continue_dialog() {
                     SendResult::Sent { .. } => {
-                        if crate::debug_enabled() {
-                            eprintln!("[nav-transport] continued the npc {} dialog", edge.loc_id);
-                        }
+                        api::host_log!(
+                            Category::NavEvent,
+                            Level::Info,
+                            "continued the npc {} dialog",
+                            edge.loc_id
+                        );
                     }
                     SendResult::Refused { .. } => {}
                 }
@@ -505,18 +516,18 @@ impl FollowRun {
                     match ix.answer_choice(choice) {
                         SendResult::Sent { .. } => {
                             hop.dialog_page = Some(page);
-                            if crate::debug_enabled() {
-                                eprintln!(
-                                    "[nav-transport] answered choice {} for {} {}",
-                                    choice,
-                                    match edge.kind {
-                                        TransportKind::SpiritTree => "spirit tree",
-                                        TransportKind::Teleport => "jewellery",
-                                        _ => "npc",
-                                    },
-                                    edge.loc_id
-                                );
-                            }
+                            api::host_log!(
+                                Category::NavEvent,
+                                Level::Info,
+                                "answered choice {} for {} {}",
+                                choice,
+                                match edge.kind {
+                                    TransportKind::SpiritTree => "spirit tree",
+                                    TransportKind::Teleport => "jewellery",
+                                    _ => "npc",
+                                },
+                                edge.loc_id
+                            );
                         }
                         SendResult::Refused { .. } => {}
                     }
@@ -535,12 +546,15 @@ impl FollowRun {
                             match ix.press(widget) {
                                 SendResult::Sent { .. } => {
                                     hop.dialog_page = Some(page);
-                                    if crate::debug_enabled() {
-                                        eprintln!(
-                                            "[nav-transport] pressed glidermap {} for dest ({}, {}, {})",
-                                            com, edge.to.x, edge.to.z, edge.to.level
-                                        );
-                                    }
+                                    api::host_log!(
+                                        Category::NavEvent,
+                                        Level::Info,
+                                        "pressed glidermap {} for dest ({}, {}, {})",
+                                        com,
+                                        edge.to.x,
+                                        edge.to.z,
+                                        edge.to.level
+                                    );
                                 }
                                 SendResult::Refused { .. } => {}
                             }
@@ -663,12 +677,13 @@ impl FollowRun {
                 if let Some(wizard) = entry_wizard {
                     if let Some(session) = essence_session_for_wizard(wizard) {
                         *essence = Some(session);
-                        if crate::debug_enabled() {
-                            eprintln!(
-                                "[nav-transport] essence entry latched wizard {} -> {:?}",
-                                session.wizard_npc, session.return_tile
-                            );
-                        }
+                        api::host_log!(
+                            Category::NavEvent,
+                            Level::Info,
+                            "essence entry latched wizard {} -> {:?}",
+                            session.wizard_npc,
+                            session.return_tile
+                        );
                     }
                 }
                 fire_leg(options, &hop.leg, LegPhase::Done);
@@ -864,8 +879,10 @@ impl FollowRun {
         let here = here(snapshot);
         let tile = door_tile(&edge);
         if crate::debug_enabled() {
-            eprintln!(
-                "[nav-troll] here={here:?} at={tile:?} cheb={} ticks_waited={} loc_wait={}",
+            api::host_log!(
+                Category::NavTrace,
+                Level::Debug,
+                "troll here={here:?} at={tile:?} cheb={} ticks_waited={} loc_wait={}",
                 cheb(here, edge.at),
                 hop.ticks_waited,
                 self.loc_wait
@@ -984,9 +1001,14 @@ impl FollowRun {
         let open = loc.id != edge.loc_id;
         let mut ix = Interactions::new(snapshot, d);
         if crate::debug_enabled() {
-            eprintln!(
-                "[nav-troll] door loc={} at={:?} open={} closed_id={}",
-                loc.id, loc.tile, open, edge.loc_id
+            api::host_log!(
+                Category::NavTrace,
+                Level::Debug,
+                "troll door loc={} at={:?} open={} closed_id={}",
+                loc.id,
+                loc.tile,
+                open,
+                edge.loc_id
             );
         }
         // OP_LOC1 on an open door is Close. Closed: Open. Open: walk
@@ -996,9 +1018,7 @@ impl FollowRun {
             match interact_transport(snapshot, &mut ix, TransportTarget::Loc(loc), &edge, options) {
                 SendResult::Sent { .. } => {
                     hop.open_sent_tick = Some(snapshot.tick());
-                    if crate::debug_enabled() {
-                        eprintln!("[nav-troll] Open SENT");
-                    }
+                    api::host_log!(Category::NavEvent, Level::Info, "door open sent");
                 }
                 SendResult::Refused { reason, .. } => {
                     fire_leg(options, &hop.leg, LegPhase::Failed);
@@ -1011,9 +1031,12 @@ impl FollowRun {
         report_walk(options, snapshot, here, hop.to, &result);
         match result {
             SendResult::Sent { .. } => {
-                if crate::debug_enabled() {
-                    eprintln!("[nav-troll] walk-through SENT to {:?}", hop.to);
-                }
+                api::host_log!(
+                    Category::NavTrace,
+                    Level::Debug,
+                    "door walk-through sent to {:?}",
+                    hop.to
+                );
             }
             SendResult::Refused { reason, .. } => {
                 fire_leg(options, &hop.leg, LegPhase::Failed);

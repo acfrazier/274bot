@@ -511,6 +511,113 @@ fn transitions_report_each_change_once() {
     );
 }
 
+/// Rows of `slot`'s ring in the shared store (tests use unique slot names:
+/// the store is process-wide).
+fn slot_log(slot: &str) -> Vec<(Source, Level, String)> {
+    let mut view = crate::log::LogView::new(crate::log::LogScope::Slot(slot.into()));
+    view.edit_filter(|f| f.min_level = Level::Debug);
+    crate::log::global().refresh(&mut view);
+    view.rows()
+        .iter()
+        .map(|e| (e.source, e.level, e.message.to_string()))
+        .collect()
+}
+
+#[test]
+fn a_poll_moves_transitions_onto_each_slots_log() {
+    let mut s = session(
+        "log-transitions",
+        &[("logpoll-alice", 1, false), ("logpoll-bob", 2, false)],
+    );
+    let mut surface = Recorder::default();
+    s.load("logpoll-alice", &mut surface);
+    s.load("logpoll-bob", &mut surface);
+    push_status(&s, row("logpoll-alice"));
+    push_status(&s, row("logpoll-bob"));
+    s.poll();
+    {
+        let play = s.play().unwrap();
+        let mut rows = play.statuses.lock().unwrap();
+        rows[0].ingame = true;
+        rows[0].scene_state = 2;
+        rows[1].error = Some("code 3: invalid username or password".into());
+    }
+    s.poll();
+    assert_eq!(
+        slot_log("logpoll-alice"),
+        [
+            (Source::Host, Level::Info, "slot up".to_string()),
+            (Source::Login, Level::Debug, "ingame".to_string()),
+            (Source::Host, Level::Debug, "scene 2".to_string()),
+        ]
+    );
+    assert_eq!(
+        slot_log("logpoll-bob"),
+        [
+            (Source::Host, Level::Info, "slot up".to_string()),
+            (
+                Source::Login,
+                Level::Error,
+                "login code 3: invalid username or password".to_string()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn script_lines_reach_the_slot_log_through_the_poll() {
+    let iso = script::IsolatedEnv::enter("frontend-core-log-script");
+    let mut s = session("log-script", &[("logpoll-carol", 3, false)]);
+    let mut surface = Recorder::default();
+    s.load("logpoll-carol", &mut surface);
+    push_status(&s, row("logpoll-carol"));
+    let path = iso.dir.join("broken.ts");
+    std::fs::write(
+        &path,
+        "export default class T extends LoopingBot { \
+         constructor() { super(); throw new Error('boom in setup'); } \
+         override loop() {} }",
+    )
+    .unwrap();
+    let mut library = script::JsLibrary::new(iso.dir.join("js-scripts.json"));
+    let card = library.load(&path).unwrap();
+    s.start_script(
+        "logpoll-carol",
+        ScriptStart::Load {
+            js: card.js,
+            shape: card.shape,
+            bag: None,
+            siblings: Vec::new(),
+        },
+        Some("file:broken".into()),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut taken = Vec::new();
+    while Instant::now() < deadline && taken.is_empty() {
+        s.poll();
+        taken.extend(s.script_lines().iter().cloned());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    s.poll();
+    assert!(s.script_lines().is_empty(), "lines are handed out once");
+    assert!(
+        taken
+            .iter()
+            .any(|(slot, line)| slot == "logpoll-carol" && line.contains("boom in setup")),
+        "{taken:?}"
+    );
+    assert!(
+        slot_log("logpoll-carol")
+            .iter()
+            .any(|(source, level, line)| *source == Source::Script
+                && *level == Level::Error
+                && line.contains("boom in setup")),
+        "{:?}",
+        slot_log("logpoll-carol")
+    );
+}
+
 #[test]
 fn a_row_published_before_log_in_does_not_cancel_it() {
     let mut s = session("stale-latch-row", &[("alice", 1, false)]);

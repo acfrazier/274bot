@@ -12,6 +12,8 @@
 //! and never copies a `GameSnapshot`.
 
 pub mod fleet;
+pub mod log;
+pub mod log_file;
 pub mod map_bake;
 pub mod operations;
 mod profiles;

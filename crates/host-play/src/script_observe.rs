@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 
+use api::host_log;
+use api::hostlog::{Category, Level};
 use api::interact::Driver;
 use api::snapshot::GameSnapshot;
 use client::client::Client;
@@ -134,6 +136,25 @@ pub(crate) fn post_script_snapshot(
     accepted
 }
 
+/// Restart a script the watchdog gave up on and log the outcome.
+fn watchdog_restart(slot: &mut SlotScript, name: &str, now: Instant) {
+    match slot.restart_load_from_identity(now) {
+        Ok(()) => host_log!(
+            Category::Watchdog,
+            Level::Warn,
+            slot = name,
+            "restarted the script"
+        ),
+        Err(e) => host_log!(
+            stderr;
+            Category::Watchdog,
+            Level::Error,
+            slot = name,
+            "restart failed: {e}"
+        ),
+    }
+}
+
 /// Drain isolate `this.log` / tick-error lines onto stderr when
 /// `BOT_DEBUG=1`. Tick errors also become [`SlotScript::last_error`].
 fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
@@ -144,7 +165,7 @@ fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
         return;
     }
     for line in logs {
-        eprintln!("[script {name}] {line}");
+        host_log!(Category::Echo, Level::Debug, slot = name, "{line}");
     }
 }
 
@@ -706,9 +727,7 @@ pub(crate) fn script_observe_cached(
                     match slot.notify_walk_failed(now) {
                         script::WatchdogAction::Restart { .. } => {
                             interact.clear();
-                            if let Err(e) = slot.restart_load_from_identity(now) {
-                                eprintln!("[script {name}] watchdog restart failed: {e}");
-                            }
+                            watchdog_restart(&mut slot, name, now);
                         }
                         other => apply_watchdog_nav_action(
                             other,
@@ -729,16 +748,27 @@ pub(crate) fn script_observe_cached(
                 script::WatchdogAction::Restart { .. } => {
                     interact.clear();
                     if frozen {
-                        eprintln!("[script {name}] watchdog restart ignored: frozen");
-                    } else if let Err(e) = slot.restart_load_from_identity(now) {
-                        eprintln!("[script {name}] watchdog restart failed: {e}");
+                        host_log!(
+                            stderr;
+                            Category::Watchdog,
+                            Level::Warn,
+                            slot = name,
+                            "restart ignored: frozen"
+                        );
+                    } else {
+                        watchdog_restart(&mut slot, name, now);
                     }
                 }
                 script::WatchdogAction::RequestAnchor => slot.request_recovery_anchor(),
                 script::WatchdogAction::WarnHungLoop => {
-                    if debug_enabled() {
-                        eprintln!("[script {name}] watchdog hung loop (10s)");
-                    }
+                    // The slot stages its own "watchdog: hung loop" line, which
+                    // the operator session moves onto the slot log.
+                    host_log!(
+                        Category::Echo,
+                        Level::Warn,
+                        slot = name,
+                        "watchdog hung loop (10s)"
+                    );
                 }
                 other => apply_watchdog_nav_action(
                     other,

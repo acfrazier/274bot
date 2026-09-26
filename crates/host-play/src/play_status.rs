@@ -1,9 +1,11 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
+use api::host_log;
+use api::hostlog::{Category, Level};
 use client::client::{Client, LoginError};
 
-use super::{debug_enabled, RandomStatus};
+use super::RandomStatus;
 
 /// Pollable per-slot view; the slot threads update it after each frame.
 /// `clone_from` reuses the destination's string buffers, so a poll that
@@ -400,10 +402,26 @@ pub(super) fn set_startup_phase(
         if s.startup_phase != phase {
             s.startup_phase = phase;
             s.startup_phase_started = Instant::now();
-            if debug_enabled() {
-                eprintln!("[host-play] slot {name}: startup phase {phase:?}");
-            }
+            host_log!(
+                Category::Login,
+                phase_level(phase),
+                slot = name,
+                "startup phase {phase:?}"
+            );
         }
+    }
+}
+
+/// Scene loads flip LoadingScene/Ready on every region change, so those two
+/// phases log at Debug; the login path (Preparing/Queueing/Connecting/Error)
+/// stays visible at the default Info filter.
+fn phase_level(phase: StartupPhase) -> Level {
+    match phase {
+        StartupPhase::LoadingScene | StartupPhase::Ready => Level::Debug,
+        StartupPhase::Preparing
+        | StartupPhase::Queueing
+        | StartupPhase::Connecting
+        | StartupPhase::Error => Level::Info,
     }
 }
 
@@ -437,9 +455,12 @@ pub(super) fn apply_startup_phase(
         if s.startup_phase != next_phase {
             s.startup_phase = next_phase;
             s.startup_phase_started = Instant::now();
-            if debug_enabled() {
-                eprintln!("[host-play] slot {name}: startup phase {next_phase:?}");
-            }
+            host_log!(
+                Category::Login,
+                phase_level(next_phase),
+                slot = name,
+                "startup phase {next_phase:?}"
+            );
         }
     }
 }
@@ -450,8 +471,17 @@ pub(super) fn record_login_error(
     e: &LoginError,
 ) {
     let msg = format!("code {}: {}", e.code, e.mes2);
-    if debug_enabled() {
-        eprintln!("[host-play] slot {name}: login {msg}");
+    // Code 1 is a transient retry the host owns and never publishes; any
+    // other code reaches the slot log as the status row's login error.
+    if e.code == 1 {
+        host_log!(
+            Category::Login,
+            Level::Info,
+            slot = name,
+            "login {msg}: retrying"
+        );
+    } else {
+        host_log!(Category::Echo, Level::Warn, slot = name, "login {msg}");
     }
     // Response 1 is a transient protocol retry owned by this host. Keep the
     // slot in Connecting rather than publishing a terminal-looking Error.
@@ -514,12 +544,13 @@ pub(super) fn publish_slot_disconnected(statuses: &Arc<Mutex<Vec<SlotStatus>>>, 
         if s.startup_phase != StartupPhase::Error && s.startup_phase != StartupPhase::Queueing {
             s.startup_phase = StartupPhase::Queueing;
             s.startup_phase_started = Instant::now();
-            if debug_enabled() {
-                eprintln!(
-                    "[host-play] slot {name}: startup phase {:?}",
-                    StartupPhase::Queueing
-                );
-            }
+            host_log!(
+                Category::Login,
+                Level::Info,
+                slot = name,
+                "startup phase {:?}",
+                StartupPhase::Queueing
+            );
         }
     }
 }

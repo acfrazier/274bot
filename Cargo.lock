@@ -1970,9 +1970,12 @@ dependencies = [
 name = "frontend-core"
 version = "0.1.8"
 dependencies = [
+ "api",
  "frontend-core",
  "host",
  "host-play",
+ "libc",
+ "parking_lot",
  "script",
  "serde",
  "serde_json",

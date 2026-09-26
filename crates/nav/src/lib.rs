@@ -27,11 +27,9 @@ pub mod world_state;
 
 pub use world_state::WorldState;
 
-/// Verbose nav/traveller dumps (`BOT_DEBUG=1`). Cached once per process.
+/// Verbose nav/traveller dumps (`BOT_DEBUG=1` or host `--debug`).
 pub fn debug_enabled() -> bool {
-    use std::sync::OnceLock;
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("BOT_DEBUG").is_ok_and(|v| v == "1"))
+    api::hostlog::debug_enabled()
 }
 
 #[cfg(test)]

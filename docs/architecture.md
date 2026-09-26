@@ -63,7 +63,7 @@ punishment.
 | `nav` | Packed world, router, Traveller | Script isolate or operator UI |
 | `script` | Compiled cards, Load isolate, thin JS shim | A production dependant of `client` or `nav` |
 | `host-play` | Shared `Play` lifecycle over host/script/nav/vault | A second panel or client renderer |
-| `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries |
+| `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results, the structured operator log | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries |
 | `scenario` | Shared headed/headless live scenario runner | Panel/TUI chrome |
 | `panel` | Native ImGui UI, winit/wgpu window, game blit | The client 3D renderer or isolate runtime |
 | `tui` | Headless operator view over the same `frontend-core` session | A second kernel or GPU loop |
@@ -79,7 +79,7 @@ intentional graph, derived from the manifests:
 - `script` → `api`, `vault` (runtime); `client`, `nav` **dev-only**
 - `host-play` → `api`, `client`, `host`, `nav`, `script`, `vault`; `scenario` **optional**; `nav` also **build**
 - `scenario` → `api`, `client`, `nav`
-- `frontend-core` → `host`, `host-play`, `script`, `vault`
+- `frontend-core` → `api`, `host`, `host-play`, `script`, `vault`
 - `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`
 - `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host` **dev-only**
 - `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `scenario`, `vault`
@@ -98,6 +98,8 @@ claim that `e2e` owns those crates' production behavior.
   through `frontend-core` and `host-play`.
 - **`frontend-core` → `host`** carries only the `SlotInput`/`FrameBuf`
   handles a surface passes to `Play::try_spawn_slot`.
+- **`frontend-core` → `api`** carries only the `api::hostlog` facade: the
+  operator log store is its sink.
 - **`host-play` → `scenario`** is optional (feature-gated harness), not a
   default required edge. A required `[target.*.dependencies]` edge does
   **not** satisfy an optional-only allow. `optional = true` on a target
@@ -139,6 +141,7 @@ owners.
 | `query/widget_search.rs` | widget and button lookups | snapshot-level |
 | `query/loc_approach.rs` | loc approach mask | footprint plus wall flags |
 | `interact.rs` | send vocabulary and dispatch | `Driver` seam, accepted-send semantics |
+| `hostlog.rs` | host logging facade | `host_log!` categories, slot-log allowlist, stderr under `BOT_DEBUG`, one process sink |
 | `interact/driver.rs` | client transport mapping | `doAction`, `tryMove`, `out`, ISAAC intact |
 | `game_data.rs` | generated game facts by revision | decoding, indexes, lookups |
 | `content.rs` | shared rock names and loot predicate | revision facts stay in `game_data` |
@@ -384,6 +387,8 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `operations.rs` | operation results | ids, per-member outcomes, bounded book |
 | `profiles.rs` | durable profile writes | one writer thread, ordered, last write per profile wins; results settle in `poll` |
 | `surface.rs` | front-end slot adapter | `SlotSurface`, `HeadlessSurface` |
+| `log.rs` | structured operator log | per-slot and process rings (500 each), redaction, filtered `LogView`, Save log… |
+| `log_file.rs` | per-session log file | shared off-by-default preference, background writer, size rotation, session pruning |
 | `session_tests.rs` | test bodies | real `Play` seam, no server |
 
 ### panel

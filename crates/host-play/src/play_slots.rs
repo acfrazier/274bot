@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use api::host_log;
+use api::hostlog::{Category, Level};
 use api::snapshot::GameSnapshot;
 use client::client::Client;
 use client::config::{Cache, IfType, IfTypeMut};
@@ -259,8 +261,9 @@ impl Play {
         mailbox: Option<Arc<FrameBuf>>,
         arm: Option<Arc<SlotArm>>,
     ) {
+        let username = profile.username.clone();
         if let Err(error) = self.try_spawn_slot(profile, input, mailbox, arm) {
-            eprintln!("[host-play] {error}");
+            host_log!(stderr; Category::Lifecycle, Level::Error, slot = &username, "{error}");
         }
     }
 
@@ -551,6 +554,7 @@ fn spawn_slot_thread(
             .name(username.clone())
             .stack_size(THREAD_STACK)
             .spawn(move || {
+            api::hostlog::bind_slot(&username);
             let worker_outcome = catch_unwind(AssertUnwindSafe(|| {
             #[cfg(test)]
             let startup_entries_published = arm.wait_worker_start_for_test();
@@ -591,9 +595,7 @@ fn spawn_slot_thread(
             // The host owns every reconnect attempt so each fresh socket
             // returns through the shared FIFO and reservation accounting.
             client.set_external_reconnect_owner(true);
-            if debug_enabled() {
-                eprintln!("[host-play] slot {username}: thread up");
-            }
+            host_log!(Category::Lifecycle, Level::Info, "thread up");
 
             // Jag/anim/model/map prefetch (mirrors client-play; the scene
             // cannot reach scene_state 2 until the loc models are in).
@@ -624,8 +626,8 @@ fn spawn_slot_thread(
             }
             clear_startup_progress(&slot_statuses, &username);
             set_startup_phase(&slot_statuses, &username, StartupPhase::Queueing);
-            if client.error_loading && debug_enabled() {
-                eprintln!("[host-play] slot {username}: maininit failed");
+            if client.error_loading {
+                host_log!(Category::Lifecycle, Level::Error, "maininit failed");
             }
 
             let mut backoff = LoginBackoff::new();
@@ -711,12 +713,12 @@ fn spawn_slot_thread(
                         if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
                             row.world = Some(world.number);
                         }
-                        if debug_enabled() {
-                            eprintln!(
-                                "[host-play] slot {username}: world w{} {}:{} node {}",
-                                world.number, world.host, world.port, world.node_id
-                            );
-                        }
+                        host_log!(
+                            Category::Login,
+                            Level::Info,
+                            "world w{} {}:{} node {}",
+                            world.number, world.host, world.port, world.node_id
+                        );
                         world_dirty = false;
                         refresh_key = false;
                     }
@@ -754,11 +756,7 @@ fn spawn_slot_thread(
                     let mut permit = GrantedReservation::new(&slot_queue, uid);
                     mark_login_started(&slot_statuses, &username);
                     let reconnect = arm.reconnect.load(Ordering::Relaxed);
-                    if debug_enabled() {
-                        eprintln!(
-                            "[host-play] slot {username}: handshake begin reconnect={reconnect}"
-                        );
-                    }
+                    host_log!(Category::Login, Level::Info, "handshake begin reconnect={reconnect}");
                     // Read at each handshake, not captured at spawn: a
                     // password saved since then applies to this login.
                     let password = arm.login_password();
@@ -772,9 +770,7 @@ fn spawn_slot_thread(
                             key_refreshed = false;
                             on_login_success(&arm, login_command);
                             set_startup_phase(&slot_statuses, &username, StartupPhase::LoadingScene);
-                            if debug_enabled() {
-                                eprintln!("[host-play] slot {username}: handshake ok");
-                            }
+                            host_log!(Category::Login, Level::Info, "handshake ok");
                         }
                         Err(e) => {
                             if wait_for_transfer_response(
@@ -973,7 +969,7 @@ fn spawn_slot_thread(
                                 login_readiness::try_close_welcome(&nav_snapshot, c)
                             });
                             if let Some(line) = welcome_step.notice.as_deref() {
-                                eprintln!("[host-play] slot {name}: {line}");
+                                host_log!(stderr; Category::Echo, Level::Info, "{line}");
                             }
                             let hold = status.hold || !ready || session_boundary || welcome_step.hold;
                             #[cfg(feature = "memory-profile")]
@@ -988,6 +984,7 @@ fn spawn_slot_thread(
                             }
                             let tick_edge = should_emit_tick(drain.player_info);
                             if tick_edge {
+                                api::hostlog::set_tick(nav_snapshot.tick());
                                 *script_tick = script_tick.wrapping_add(1);
                             }
                             // The slot's paint frame is read before the

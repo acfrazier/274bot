@@ -140,12 +140,25 @@ impl Default for ProfileSettings {
 }
 
 /// A stored login profile, keyed by username.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub username: String,
     pub password: String,
     pub uid: i32,
     pub settings: ProfileSettings,
+}
+
+/// The password never appears in `{:?}` output, so a profile formatted into
+/// a log line or a panic message cannot leak it.
+impl std::fmt::Debug for Profile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Profile")
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .field("uid", &self.uid)
+            .field("settings", &self.settings)
+            .finish()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -537,6 +550,13 @@ mod tests {
                 ..ProfileSettings::default()
             },
         }
+    }
+
+    #[test]
+    fn profile_debug_never_prints_the_password() {
+        let text = format!("{:?}", profile("alice", "hunter22"));
+        assert!(!text.contains("hunter22"), "{text}");
+        assert!(text.contains("alice"));
     }
 
     #[test]

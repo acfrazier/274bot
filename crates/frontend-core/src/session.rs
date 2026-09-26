@@ -15,6 +15,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use api::hostlog::{Level, Source};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus};
 use vault::{Profile, Vault, VaultChange};
 
@@ -128,6 +129,7 @@ pub struct OperatorSession<Io> {
     /// buffers and a steady-state poll allocates nothing.
     polled: Vec<SlotStatus>,
     transitions: Vec<SlotTransition>,
+    script_lines: Vec<(String, String)>,
     operations: OperationBook,
     /// Durable vault writes, created with the first write.
     writer: Option<ProfileWriter>,
@@ -155,6 +157,7 @@ pub struct OperatorSession<Io> {
 
 impl<Io> OperatorSession<Io> {
     pub fn new(instance: InstancePermit) -> Self {
+        crate::log::global();
         Self {
             vault: None,
             play: None,
@@ -165,6 +168,7 @@ impl<Io> OperatorSession<Io> {
             statuses: Vec::new(),
             polled: Vec::new(),
             transitions: Vec::new(),
+            script_lines: Vec::new(),
             operations: OperationBook::default(),
             writer: None,
             writes: HashMap::new(),
@@ -185,6 +189,10 @@ impl<Io> OperatorSession<Io> {
     /// Adopt an unlocked vault and its freshly built [`Play`]. No slot is
     /// spawned here.
     pub fn start(&mut self, vault: Vault, play: Play) {
+        let log = crate::log::global();
+        for profile in vault.profiles() {
+            log.register_secret(&profile.username, &profile.password);
+        }
         play.statuses_into(&mut self.statuses);
         self.play = Some(play);
         self.vault = Some(vault);
@@ -726,7 +734,49 @@ impl<Io> OperatorSession<Io> {
         self.poll_starts();
         record_transitions(&self.statuses, &self.polled, &mut self.transitions);
         std::mem::swap(&mut self.statuses, &mut self.polled);
+        self.log_poll();
         self.settle_operations();
+    }
+
+    /// Move this poll's transitions and every slot's staged script lines
+    /// onto the shared log. Script lines stay readable for one poll through
+    /// [`Self::script_lines`] (harness watches).
+    fn log_poll(&mut self) {
+        let log = crate::log::global();
+        for change in &self.transitions {
+            let (source, level, text): (Source, Level, std::borrow::Cow<'_, str>) =
+                match &change.transition {
+                    Transition::SlotUp => (Source::Host, Level::Info, "slot up".into()),
+                    Transition::LoginError(e) => {
+                        (Source::Login, Level::Error, format!("login {e}").into())
+                    }
+                    // Recurs after every scene reload; the login itself
+                    // shows as the host's "handshake ok".
+                    Transition::Ingame => (Source::Login, Level::Debug, "ingame".into()),
+                    Transition::Scene(scene) => {
+                        (Source::Host, Level::Debug, format!("scene {scene}").into())
+                    }
+                    Transition::Welcome(line) => (Source::Login, Level::Info, line.into()),
+                    Transition::WelcomeFailure(line) => (Source::Login, Level::Warn, line.into()),
+                };
+            log.slot_line(&change.slot, source, level, &text);
+        }
+        self.script_lines.clear();
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        for status in &self.statuses {
+            for line in play.script_take_pending_logs(&status.username) {
+                let (source, level) = crate::log::classify_script_line(&line);
+                log.slot_line(&status.username, source, level, &line);
+                self.script_lines.push((status.username.clone(), line));
+            }
+        }
+    }
+
+    /// Script lines taken by the last poll, `(slot, line)` in order.
+    pub fn script_lines(&self) -> &[(String, String)] {
+        &self.script_lines
     }
 
     /// First half of [`Self::poll`]: reap finished workers and advance
@@ -1011,6 +1061,7 @@ impl<Io> OperatorSession<Io> {
         self.ensure_writer();
         self.hold_durable(&profile.username)
             .ok_or_else(|| format!("{label}: vault locked"))?;
+        crate::log::global().register_secret(&profile.username, &profile.password);
         if let Some(vault) = self.vault.as_mut() {
             vault.stage_upsert(profile.clone());
         }
@@ -1036,6 +1087,7 @@ impl<Io> OperatorSession<Io> {
         self.hold_durable(&profile.username)
             .ok_or_else(|| format!("{label}: vault locked"))?;
         self.hold_durable(old);
+        crate::log::global().register_secret(&profile.username, &profile.password);
         if let Some(vault) = self.vault.as_mut() {
             vault.stage_upsert(profile.clone());
             vault.stage_remove(old);

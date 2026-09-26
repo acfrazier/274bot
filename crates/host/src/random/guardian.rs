@@ -1,4 +1,5 @@
 use super::*;
+use api::hostlog::{Category, Level};
 /// The chrome contract both views bind (guardian spec `RandomStatus`):
 /// published every tick on the slot status row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1009,22 +1010,22 @@ impl Guardian {
             let me = (px, pz);
             match maze::select_route(maze::graph(), me) {
                 Some(doors) => {
-                    if crate::debug_enabled() {
-                        eprintln!(
-                            "[host] maze: spawn ({px},{pz}) -> {} doors, first ({},{})",
-                            doors.len(),
-                            doors[0].0,
-                            doors[0].1
-                        );
-                    }
+                    api::host_log!(
+                        Category::RandomEvent,
+                        Level::Info,
+                        "maze: spawn ({px},{pz}) -> {} doors, first ({},{})",
+                        doors.len(),
+                        doors[0].0,
+                        doors[0].1
+                    );
                     self.maze = Some(maze::MazeSolve::new(doors));
                 }
                 None => {
-                    if crate::debug_enabled() {
-                        eprintln!(
-                            "[host] maze: no route solvable from ({px},{pz}); the layout does not reach the shrine from here"
-                        );
-                    }
+                    api::host_log!(
+                        Category::RandomEvent,
+                        Level::Warn,
+                        "maze: no route solvable from ({px},{pz}); the layout does not reach the shrine from here"
+                    );
                 }
             }
             return;
@@ -1036,9 +1037,11 @@ impl Guardian {
             (px, pz),
         );
         if !keep {
-            if crate::debug_enabled() {
-                eprintln!("[host] maze: pass gave up; restarting the route from ({px},{pz})");
-            }
+            api::host_log!(
+                Category::RandomEvent,
+                Level::Warn,
+                "maze: pass gave up; restarting the route from ({px},{pz})"
+            );
             self.maze = None;
         }
     }
@@ -1084,9 +1087,12 @@ impl Guardian {
                     // An unknown `lamp_skill` cannot be clicked at all.
                     // No click (fail closed) — and no endless hold behind
                     // a lamp the host will not redeem.
-                    if crate::debug_enabled() {
-                        eprintln!("[host] lamp: unknown skill {:?}", settings.lamp_skill);
-                    }
+                    api::host_log!(
+                        Category::RandomEvent,
+                        Level::Warn,
+                        "lamp: unknown skill {:?}",
+                        settings.lamp_skill
+                    );
                     self.stall_lamp();
                     return;
                 };
@@ -1108,9 +1114,11 @@ impl Guardian {
             // Waiting for the skill IF to open after the Rub.
             self.lamp_wait += 1;
             if self.lamp_wait > MAX_LAMP_WAIT {
-                if crate::debug_enabled() {
-                    eprintln!("[host] lamp: the skill interface never opened; giving up");
-                }
+                api::host_log!(
+                    Category::RandomEvent,
+                    Level::Warn,
+                    "lamp: the skill interface never opened; giving up"
+                );
                 self.stall_lamp();
             }
             return;
@@ -1167,9 +1175,11 @@ impl Guardian {
             // open / the selection was refused) or the reward never
             // arrived. Give up without replaying Confirm; the stall latch
             // keeps a fresh Rub from starting while the lamp is held.
-            if crate::debug_enabled() {
-                eprintln!("[host] lamp: redemption did not complete; giving up");
-            }
+            api::host_log!(
+                Category::RandomEvent,
+                Level::Warn,
+                "lamp: redemption did not complete; giving up"
+            );
             self.stall_lamp();
         }
     }

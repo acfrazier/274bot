@@ -160,6 +160,12 @@ reason = "frontend-core owns the operator lifecycle above Play (vault, fleet, se
 
 [[allow]]
 from = "frontend-core"
+to = "api"
+kinds = ["normal"]
+reason = "the structured operator log is the api::hostlog sink; it uses the facade's Level/Source/Record vocabulary and nothing else from api."
+
+[[allow]]
+from = "frontend-core"
 to = "host"
 kinds = ["normal"]
 reason = "the slot surface hands host SlotInput/FrameBuf handles to Play::try_spawn_slot; no host API is called directly."

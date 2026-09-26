@@ -14,6 +14,7 @@
 
 use std::collections::VecDeque;
 
+use api::hostlog::{Category, Level};
 use api::interact::{
     op_loc, press, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult,
 };
@@ -350,8 +351,10 @@ impl Traveller {
             .and_then(|run| run.step(d, snapshot, options, &mut self.essence));
         if crate::debug_enabled() {
             let run = self.follow.as_ref();
-            eprintln!(
-                "[nav-follow] here={:?} walk={} transport={} leg={} hops={} outcome={:?}",
+            api::host_log!(
+                Category::NavTrace,
+                Level::Debug,
+                "follow here={:?} walk={} transport={} leg={} hops={} outcome={:?}",
                 here(snapshot),
                 run.is_some_and(|r| r.walk.is_some()),
                 run.is_some_and(|r| r.transport.is_some()),

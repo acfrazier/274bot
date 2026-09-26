@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use api::host_log;
+use api::hostlog::{Category, Level};
 use api::interact::set_run;
 use api::run_policy::RunPolicyOverrideCell;
 use api::snapshot::GameSnapshot;
@@ -29,21 +31,14 @@ pub use slot_io::{
     map_image_to_applet, wake_channel, FrameBuf, InputEv, SlotInput, SlotPark, SlotWake,
 };
 
-/// Host debug toggle, set by host-play's `--debug`; `BOT_DEBUG=1` enables it
-/// via [`debug_enabled`] regardless.
-static DEBUG: AtomicBool = AtomicBool::new(false);
-
 /// Enable host debug logging (host-play maps `--debug` to this).
 pub fn set_debug(enabled: bool) {
-    DEBUG.store(enabled, Ordering::Relaxed);
+    api::hostlog::set_debug(enabled);
 }
 
 /// Host debug logging is on when `BOT_DEBUG=1` or [`set_debug`] ran.
 pub fn debug_enabled() -> bool {
-    DEBUG.load(Ordering::Relaxed)
-        || std::env::var("BOT_DEBUG")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+    api::hostlog::debug_enabled()
 }
 
 /// The 274 client's frame time: one `mainloop` pass every 20 ms.
@@ -153,6 +148,7 @@ impl Host {
         ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
+            api::hostlog::bind_slot(&profile.username);
             let mut client = prepare_client(
                 config,
                 profile.uid,
@@ -161,9 +157,7 @@ impl Host {
                 ifaces_mut_template,
             );
 
-            if debug_enabled() {
-                eprintln!("[host] slot {}: thread up", profile.username);
-            }
+            host_log!(Category::Lifecycle, Level::Info, "thread up");
 
             let settings = profile.settings;
             let lamp_auto = settings.lamp_auto;
@@ -356,9 +350,14 @@ impl Host {
         }
         if debug_enabled() {
             if let Some(us) = debug_observe_hitch_us(observe_ns / 1000) {
-                eprintln!(
-                    "[host] hitch {username}: observe_us={us} paints={} skips={} ticks={}",
-                    slot.paint_n, slot.skip_n, slot.tick_n
+                host_log!(
+                    Category::FrameStats,
+                    Level::Debug,
+                    slot = username,
+                    "hitch: observe_us={us} paints={} skips={} ticks={}",
+                    slot.paint_n,
+                    slot.skip_n,
+                    slot.tick_n
                 );
             }
         }
@@ -540,9 +539,14 @@ impl Host {
         if debug_enabled() {
             let frame_us = t_loop.elapsed().as_micros() as u64;
             if let Some(us) = debug_hitch_us(frame_us) {
-                eprintln!(
-                    "[host] hitch {username}: frame_us={us} paints={} skips={} ticks={}",
-                    slot.paint_n, slot.skip_n, slot.tick_n
+                host_log!(
+                    Category::FrameStats,
+                    Level::Debug,
+                    slot = username,
+                    "hitch: frame_us={us} paints={} skips={} ticks={}",
+                    slot.paint_n,
+                    slot.skip_n,
+                    slot.tick_n
                 );
             }
             if slot.log_n.is_multiple_of(DEBUG_SUMMARY_EVERY) {
@@ -558,8 +562,11 @@ impl Host {
                     debug_window_delta(slot.dbg, now);
                 let window_ms = slot.dbg_at.map(|t| t.elapsed().as_millis()).unwrap_or(0);
                 let max_observe_us = slot.observe_max_ns / 1000;
-                eprintln!(
-                    "[host] slot {username}: d_loop_us={d_loop} d_raster_us={d_raster} d_observe_us={d_observe} max_observe_us={max_observe_us} d_paints={d_paint} d_skips={d_skip} d_ticks={d_tick} window_ms={window_ms}"
+                host_log!(
+                    Category::FrameStats,
+                    Level::Debug,
+                    slot = username,
+                    "d_loop_us={d_loop} d_raster_us={d_raster} d_observe_us={d_observe} max_observe_us={max_observe_us} d_paints={d_paint} d_skips={d_skip} d_ticks={d_tick} window_ms={window_ms}"
                 );
                 slot.dbg = now;
                 slot.dbg_at = Some(Instant::now());
