@@ -170,7 +170,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   (CPU for about 15 s, up to ~15 MiB once) and offers **Bake now**, **Always
   bake** or **Not now**. Not now keeps the map catalogue-only (POIs, search,
   grid) with a **Bake terrain** control for later. A ready terrain cache,
-  whether baked earlier or installed, opens without asking; catalogue-only
+  whether baked earlier or installed, opens without asking (a missing or
+  stale catalogue is derived silently); catalogue-only
   demand (the TUI map) never asks. The remembered choice is the `map_bake`
   key of `panel-ui.json` (`ask` when absent, as in 0.1.8.1 files), edited in
   the panel's Nav config (**ask before baking terrain**) and the TUI settings

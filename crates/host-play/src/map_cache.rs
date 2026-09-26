@@ -1461,26 +1461,12 @@ impl MapDemandManager {
         &self.inner.root
     }
 
-    /// Lease the published artefacts for `demand` without starting a worker:
-    /// `None` when any required artefact is not ready (a bake would be needed).
-    /// A ready cache installed by another process or a packager is served
-    /// here exactly like one this process baked.
-    pub fn request_ready(
-        &self,
-        descriptor: &MapProfileDescriptor,
-        demand: MapDemand,
-    ) -> Result<Option<MapDemandHandle>, MapCacheError> {
-        // One lookup both probes and leases the ready set.  A key that another
-        // process holds exclusively or prunes meanwhile is simply not ready.
-        let Some(ready) = self.lookup_ready(descriptor, demand)? else {
-            return Ok(None);
-        };
-        Ok(Some(MapDemandHandle::already_ready(
-            self.clone(),
-            descriptor.clone().without_input(),
-            demand,
-            Arc::new(ready),
-        )))
+    /// Whether published terrain imagery for `descriptor` is ready (baked
+    /// earlier or installed), independent of the catalogue: a missing or
+    /// stale catalogue is derived cheaply by the worker, terrain is the
+    /// expensive local bake.
+    pub fn images_ready(&self, descriptor: &MapProfileDescriptor) -> Result<bool, MapCacheError> {
+        Ok(self.cached_images(descriptor.image_identity())?.is_some())
     }
 
     pub fn request(
@@ -1492,12 +1478,19 @@ impl MapDemandManager {
             image: descriptor.image_key()?,
             catalogue: descriptor.catalogue_key()?,
         };
-        // A key that is not ready here is not a request error: the worker
-        // below waits for another process's publish or prune.
-        if let Some(handle) = self.request_ready(&descriptor, demand)? {
-            return Ok(handle);
-        }
         let handle_descriptor = descriptor.clone().without_input();
+        // One lookup both probes and leases the ready set.  A key that another
+        // process holds exclusively or prunes meanwhile is simply not ready,
+        // and the worker below waits for it; it is never a request error.
+        if let Some(ready) = self.lookup_ready(&descriptor, demand)? {
+            let ready = Arc::new(ready);
+            return Ok(MapDemandHandle::already_ready(
+                self.clone(),
+                handle_descriptor.clone(),
+                demand,
+                ready,
+            ));
+        }
         let mut active = self.inner.active.lock();
         if let Some(job) = (*active).as_mut() {
             if job.key == key {
@@ -2083,6 +2076,10 @@ impl MapDemandHandle {
     }
     pub fn generation(&self) -> Option<u64> {
         self.generation
+    }
+    /// Ready without cloning the status (no allocation on a UI frame).
+    pub fn is_ready(&self) -> bool {
+        matches!(*self.status.lock(), MapJobStatus::Ready)
     }
     pub fn status(&self) -> MapJobStatus {
         let status = self.status.lock().clone();

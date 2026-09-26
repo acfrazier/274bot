@@ -608,6 +608,8 @@ pub fn debug_maxme_cheats() -> &'static [&'static str] {
 /// Cooldown between cpal open retries after a device failure: a machine
 /// without an audio device must not re-open (and re-log) every 20 ms frame.
 const AUDIO_OPEN_RETRY: Duration = Duration::from_secs(5);
+/// Cadence of the published-catalogue probe while a WalkTo map demand bakes.
+const MAP_CATALOGUE_PROBE: Duration = Duration::from_secs(1);
 
 /// Vault path used by panel-play (`~/.274bot/vault` local, `vault-prod` on
 /// `--prod`). The same helper host-play and tui-play use.
@@ -1179,6 +1181,9 @@ pub struct Session {
     pub map_images: Option<Arc<ReadyImages>>,
     pub observed_map_services: Vec<ObservedService>,
     map_catalogue_named: bool,
+    /// Last published-catalogue probe while the map demand is not ready;
+    /// probes run at [`MAP_CATALOGUE_PROBE`], never every frame.
+    map_catalogue_probe: Option<Instant>,
     /// WalkTo Send: focused vs group checklist. Recomputed on open/refresh.
     pub walk_send: WalkSendState,
     /// Nav config window open flag (non-modal, same as General config).
@@ -1567,6 +1572,7 @@ impl Session {
             map_images: None,
             observed_map_services: Vec::new(),
             map_catalogue_named: false,
+            map_catalogue_probe: None,
             walk_send: WalkSendState::default(),
             nav_settings_open: false,
             global_settings_open: false,
@@ -4172,18 +4178,25 @@ impl Session {
             }
         }
         if let Some(handle) = &self.map_demand {
-            match handle.status() {
-                MapJobStatus::Ready => {
-                    if self.map_images.is_none() {
-                        if let Ok(Some(images)) = map_ready_images(handle) {
-                            self.map_images = Some(images);
-                        }
-                    }
-                    if let Ok(ready) = map_ready_catalogue(handle) {
-                        self.bind_ready_catalogue(world.clone(), ready);
+            if handle.is_ready() {
+                if self.map_images.is_none() {
+                    if let Ok(Some(images)) = map_ready_images(handle) {
+                        self.map_images = Some(images);
                     }
                 }
-                _ => {
+                if let Ok(ready) = map_ready_catalogue(handle) {
+                    self.bind_ready_catalogue(world.clone(), ready);
+                }
+            } else if self.map_catalogue.is_none() || !self.map_catalogue_named {
+                // The catalogue publishes before the terrain bake ends; look
+                // for it at a coarse cadence (descriptor + directory probe),
+                // not on every frame of the bake.
+                let now = Instant::now();
+                if self
+                    .map_catalogue_probe
+                    .is_none_or(|at| now.duration_since(at) >= MAP_CATALOGUE_PROBE)
+                {
+                    self.map_catalogue_probe = Some(now);
                     if let Some(ready) = peek_map_catalogue(profile.as_ref()) {
                         self.bind_ready_catalogue(world.clone(), ready);
                     }
@@ -4228,6 +4241,7 @@ impl Session {
 
     pub fn release_walk_map(&mut self) {
         self.map_demand = None;
+        self.map_catalogue_probe = None;
         self.map_images = None;
         self.map_catalogue = None;
         self.observed_map_services.clear();

@@ -162,30 +162,26 @@ impl MapBakeGate {
         self.open(manager, descriptor, demand)
     }
 
-    /// Open `demand`. Terrain that would need a local bake without consent
-    /// returns a catalogue-only handle instead and raises the prompt.
+    /// Open `demand`. Only terrain readiness decides the prompt: ready
+    /// terrain opens the images demand (a missing or stale catalogue is
+    /// derived silently, it is cheap); terrain that would need a local bake
+    /// without consent returns a catalogue-only handle and raises the prompt.
     pub fn open(
         &mut self,
         manager: &MapDemandManager,
         descriptor: MapProfileDescriptor,
         demand: MapDemand,
     ) -> Result<MapDemandHandle, MapCacheError> {
-        if demand == MapDemand::CatalogueOnly
-            || self.accepted
-            || self.choice == MapBakeChoice::Always
-        {
-            if demand == MapDemand::Images {
-                self.prompt = MapBakePrompt::None;
+        let consent = self.accepted || self.choice == MapBakeChoice::Always;
+        if demand == MapDemand::Images && !consent && !manager.images_ready(&descriptor)? {
+            if self.prompt == MapBakePrompt::None {
+                self.prompt = MapBakePrompt::Asking;
             }
-            return host_play::open_map_demand(manager, descriptor, demand);
+            return host_play::open_map_demand(manager, descriptor, MapDemand::CatalogueOnly);
         }
-        if let Some(handle) = manager.request_ready(&descriptor, MapDemand::Images)? {
+        if demand == MapDemand::Images {
             self.prompt = MapBakePrompt::None;
-            return Ok(handle);
         }
-        if self.prompt == MapBakePrompt::None {
-            self.prompt = MapBakePrompt::Asking;
-        }
-        host_play::open_map_demand(manager, descriptor, MapDemand::CatalogueOnly)
+        host_play::open_map_demand(manager, descriptor, demand)
     }
 }
