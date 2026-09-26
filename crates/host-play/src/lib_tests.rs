@@ -14975,6 +14975,28 @@ fn the_login_want_follows_auto_login_or_an_active_script() {
     assert!(!should_handshake(&arm, false), "a Logout latches it off");
 }
 
+/// A world-preference error parks an auto-login slot with no script; the
+/// operator's corrected world (`remember_profile`) lets it log in again.
+#[test]
+fn a_corrected_world_lets_an_auto_login_slot_log_in_after_a_world_error() {
+    let (endpoint, _) = counting_login_server();
+    let mut play = offline_play(endpoint);
+    let arm = SlotArm::new(42, true);
+    play.arms.insert("alice".into(), Arc::clone(&arm));
+    assert!(should_handshake(&arm, false));
+
+    arm.hold_login_on_error();
+    assert!(!should_handshake(&arm, false), "the error parks the slot");
+
+    let mut corrected = profile("alice", 42);
+    corrected.settings.world = Some(2);
+    play.remember_profile(corrected);
+    assert!(
+        should_handshake(&arm, false),
+        "the corrected world restores the auto-login"
+    );
+}
+
 #[test]
 fn watchdog_restart_does_not_override_not_ready_freeze() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));

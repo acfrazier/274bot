@@ -334,6 +334,22 @@ impl SlotArm {
         self.retry_wake.notify_all();
     }
 
+    /// The operator corrected the world: lift a world-error hold and
+    /// re-derive the login want from the still-enabled auto-login, as the
+    /// script reason already is (level-triggered).
+    pub(super) fn release_error_hold(&self) {
+        let mut intent = self.intent.lock();
+        if !intent.error_hold {
+            return;
+        }
+        intent.generation = intent.generation.wrapping_add(1);
+        intent.error_hold = false;
+        if self.auto_login.load(Ordering::Relaxed) && !intent.login_latched && !intent.want_login {
+            intent.want_login = true;
+            intent.auto_intent = true;
+        }
+    }
+
     /// Publish whether a script is running or paused on the slot. Frozen
     /// AutoRelogin recomputes `wantLogin = credentials && (autoLogin ||
     /// scriptActive())` every frame (`AutoRelogin.ts:175-198`): an active
@@ -473,7 +489,7 @@ pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
     };
     if world_changed {
         arm.world_generation.fetch_add(1, Ordering::Relaxed);
-        arm.intent.lock().error_hold = false;
+        arm.release_error_hold();
         arm.notify_retry_wait();
     }
 }
