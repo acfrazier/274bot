@@ -31,6 +31,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 ### Navigation
 
+- A bank walk after smithing can recover when the final crafting delay drops
+  its first click and a queued level-up blocks the retry. The follower reissues
+  its current aim after five stationary game ticks even if the map flag remains,
+  without extending the original hop budget or changing the route.
 - Radius walks to a solid in-scene target now route to one of its wall-valid
   cardinal / interaction stands with one first-goal baked search, so doors
   and transports remain usable. The same search serves the old radius goal

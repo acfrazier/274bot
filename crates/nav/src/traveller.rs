@@ -545,7 +545,6 @@ impl FollowRun {
                         stall_idle_ticks: 0,
                         stall_idle_last_tick: None,
                         stall_idle_at: None,
-                        stall_recovered: false,
                         end_refused_ticks: 0,
                         end_refused_last_tick: None,
                     };
@@ -869,23 +868,21 @@ struct WalkHop {
     ticks_waited: u32,
     /// The player's tile when the hop's walk was sent. Used for
     /// Dropped vs Expired stall classification (`here == sent_tile` →
-    /// Dropped). Cancelled-walk recovery idle is tracked separately at
-    /// the latest observed position (`stall_idle_at`).
+    /// Dropped). Stalled-walk recovery idle is tracked separately at the
+    /// latest observed position (`stall_idle_at`).
     sent_tile: Option<WorldTile>,
     tries: u32,
-    /// Distinct game ticks observed idle at `stall_idle_at` with no map
-    /// flag and no movement — the cancelled-walk recovery window.
+    /// Distinct game ticks observed idle at `stall_idle_at` without actor
+    /// movement — a map flag alone does not prove the server is walking.
     /// Separate from `ticks_waited` (poll budget); duplicate snapshot
     /// polls do not count. Tile movement resets this counter.
     stall_idle_ticks: u32,
     /// Snapshot tick last credited to `stall_idle_ticks`.
     stall_idle_last_tick: Option<u32>,
-    /// Latest observed tile while counting cancelled-walk idle. A change
+    /// Latest observed tile while counting stalled-walk idle. A change
     /// of tile (partial hop progress) clears the idle window and starts
     /// a new one at the new position.
     stall_idle_at: Option<WorldTile>,
-    /// A cancelled-walk recovery already reissued this hop's aim once.
-    stall_recovered: bool,
     /// Distinct game ticks the route's last tile, one step away, refused
     /// the click while no walk of this follow was accepted
     /// ([`HopFailure::EndBlocked`]).

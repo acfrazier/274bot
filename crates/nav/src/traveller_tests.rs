@@ -5250,9 +5250,9 @@ fn follow_stalls_dropped_when_the_player_never_moves() {
 }
 
 #[test]
-fn follow_recovers_cancelled_walk_once_with_same_aim() {
+fn follow_recovers_cancelled_walk_with_same_aim() {
     // Sent hop cancelled in place (no map flag, still on sent_tile):
-    // after five distinct idle game ticks, reissue the same aim once.
+    // after five distinct idle game ticks, reissue the same aim.
     let mut c = scene_client();
     let mut snap = snap_at(&mut c, 0, 0);
     let mut rec = FollowRec {
@@ -5311,14 +5311,6 @@ fn follow_recovers_cancelled_walk_once_with_same_aim() {
         "recovery preserves sent aim"
     );
     assert_eq!(attempts.borrow()[1].1, None);
-    // Further cancellation does not spam another recovery.
-    for _ in 0..6 {
-        bump_rebuild(&mut c, &mut snap);
-        assert!(t
-            .follow(&mut rec, &snap, route.clone(), &mut options)
-            .is_none());
-    }
-    assert_eq!(rec.walked.len(), 2, "at most one recovery per hop");
     // Arrival after recovery still completes.
     plant_player(&mut c, 0, 4);
     bump_rebuild(&mut c, &mut snap);
@@ -5329,7 +5321,7 @@ fn follow_recovers_cancelled_walk_once_with_same_aim() {
 }
 
 #[test]
-fn follow_does_not_recover_cancelled_walk_while_map_flag_or_moving() {
+fn follow_does_not_recover_walk_while_moving() {
     let mut c = scene_client();
     let mut snap = snap_at(&mut c, 0, 0);
     let mut rec = FollowRec {
@@ -5360,20 +5352,20 @@ fn follow_does_not_recover_cancelled_walk_while_map_flag_or_moving() {
         .follow(&mut rec, &snap, route.clone(), &mut options)
         .is_none());
     assert_eq!(rec.walked.len(), 1);
-    // Active map flag: idle window must not accumulate toward recovery.
+    // Movement must not accumulate idle ticks, with or without a map flag.
     c.minimap_flag_x = 12;
     c.minimap_flag_z = 34;
+    c.local_player.as_mut().unwrap().entity.route_length = 3;
     for _ in 0..8 {
         bump_rebuild(&mut c, &mut snap);
         assert!(t
             .follow(&mut rec, &snap, route.clone(), &mut options)
             .is_none());
     }
-    assert_eq!(rec.walked.len(), 1, "map flag must not spuriously retry");
+    assert_eq!(rec.walked.len(), 1, "a live walk must not spuriously retry");
     // Flag clears but actor is moving: still no recovery.
     c.minimap_flag_x = 0;
     c.minimap_flag_z = 0;
-    c.local_player.as_mut().unwrap().entity.route_length = 3;
     for _ in 0..8 {
         bump_rebuild(&mut c, &mut snap);
         assert!(t
@@ -5444,8 +5436,8 @@ fn follow_cancelled_walk_idle_ignores_duplicate_snapshot_ticks() {
 
 #[test]
 fn follow_persistent_cancel_after_recovery_exhausts_original_budget() {
-    // One recovery is spent; continued cancellation must still Drop
-    // under the original hop budget (ticks_waited is not reset).
+    // Repeated recovery must still Drop under the original hop budget
+    // (ticks_waited is not reset and recovery does not consume max_hops).
     let mut c = scene_client();
     let mut snap = snap_at(&mut c, 0, 0);
     let mut rec = FollowRec {
@@ -5469,7 +5461,7 @@ fn follow_persistent_cancel_after_recovery_exhausts_original_budget() {
         ticks: 2.0,
     };
     let mut options = TravelOptions {
-        budget_ticks_per_hop: 8,
+        budget_ticks_per_hop: 12,
         max_hops: 1,
         ..TravelOptions::default()
     };
@@ -5488,16 +5480,15 @@ fn follow_persistent_cancel_after_recovery_exhausts_original_budget() {
             why: HopFailure::Dropped,
             tries,
             ..
-        } if tries >= 2
+        } if tries == 3
     ));
-    // First send + one recovery only; max_hops is not expanded by retry.
-    assert_eq!(rec.walked.len(), 2);
+    assert_eq!(rec.walked.len(), 3, "only two idle windows fit the budget");
 }
 
 #[test]
 fn follow_recovers_cancelled_walk_after_partial_progress() {
     // Chaos-style: hop progresses partway, map flag clears, player
-    // idles off the original sent_tile — one same-aim recovery after
+    // idles off the original sent_tile — same-aim recovery after
     // five distinct idle ticks at the new position.
     let mut c = scene_client();
     let mut snap = snap_at(&mut c, 0, 0);
@@ -5569,14 +5560,6 @@ fn follow_recovers_cancelled_walk_after_partial_progress() {
         "recovery preserves sent aim"
     );
     assert_eq!(attempts.borrow()[1].1, None);
-    // Further idle does not spam another recovery.
-    for _ in 0..6 {
-        bump_rebuild(&mut c, &mut snap);
-        assert!(t
-            .follow(&mut rec, &snap, route.clone(), &mut options)
-            .is_none());
-    }
-    assert_eq!(rec.walked.len(), 2, "at most one recovery per hop");
 }
 
 #[test]
@@ -5648,8 +5631,8 @@ fn follow_partial_progress_tile_change_resets_stall_idle() {
 
 #[test]
 fn follow_partial_progress_cancel_still_exhausts_original_budget() {
-    // Progress off sent_tile, one recovery spent, continued cancel
-    // still Drop/Expire under the original hop budget.
+    // Progress off sent_tile and repeated recovery must still Drop/Expire
+    // under the original hop budget.
     let mut c = scene_client();
     let mut snap = snap_at(&mut c, 0, 0);
     let mut rec = FollowRec {
@@ -5702,9 +5685,9 @@ fn follow_partial_progress_cancel_still_exhausts_original_budget() {
         TravelOutcome::Stalled {
             tries,
             ..
-        } if tries >= 2
+        } if tries == 3
     ));
-    assert_eq!(rec.walked.len(), 2, "first send + one recovery only");
+    assert_eq!(rec.walked.len(), 3, "only two idle windows fit the budget");
 }
 
 #[test]

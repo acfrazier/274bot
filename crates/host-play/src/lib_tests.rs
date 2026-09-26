@@ -17145,6 +17145,103 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
     }
 }
 
+#[test]
+fn host_walk_recovers_when_a_late_modal_stalls_the_first_reissue() {
+    let dest = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    let route = Route {
+        legs: vec![Leg::Walk {
+            tiles: (0..=4).map(|x| WorldTile { x, z: 0, level: 0 }).collect(),
+        }],
+        dest,
+        ticks: 2.0,
+    };
+    let mut bot = NavBot {
+        route_generation: 1,
+        requested_route: Some(native_requested(dest, 0, false)),
+        walk_request_id: 1,
+        ..Default::default()
+    };
+    bot.publish_route(1, 1, false, RouteOutcome::Routed(route));
+    let navs = Arc::new(Mutex::new(HashMap::from([("alice".to_string(), bot)])));
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    }]));
+    let world = open_world(5, 1);
+    let mut d = NavRec::default();
+    let mut c = nav_client();
+    let mut snap = GameSnapshot::new();
+    let step = |d: &mut NavRec, snap: &GameSnapshot, x| {
+        step_nav_bot(
+            d,
+            "alice",
+            Some((x, 0, 0)),
+            snap,
+            &navs,
+            &statuses,
+            Some(&world),
+            false,
+            false,
+            no_reach,
+        );
+    };
+
+    nav_snapshot_at(&mut c, &mut snap, 0, 0);
+    step(&mut d, &snap, 0);
+    assert_eq!(d.walked.take(), Some((4, 0)));
+
+    // The smithing delay drops the first click and clears the map flag.
+    // Five idle ticks reissue the walk past the no-bars message.
+    c.chat_modal_id = 356;
+    c.bump_gens(client::io::ServerProt::IF_OPENCHAT);
+    for idle in 1..=5 {
+        nav_snapshot_at(&mut c, &mut snap, 0, 0);
+        step(&mut d, &snap, 0);
+        assert_eq!(d.walked.take(), (idle == 5).then_some((4, 0)));
+    }
+    // Dirty observations on the recovery tick must not shorten the next
+    // five-tick window.
+    for _ in 0..3 {
+        step(&mut d, &snap, 0);
+        assert_eq!(d.walked.take(), None);
+    }
+
+    // A queued level-up opens after that reissue. The flag survives but
+    // the server has not moved the player: it is not evidence of progress.
+    c.chat_modal_id = 6221;
+    c.bump_gens(client::io::ServerProt::IF_OPENCHAT);
+    c.minimap_flag_x = 4;
+    for idle in 1..=5 {
+        nav_snapshot_at(&mut c, &mut snap, 0, 0);
+        step(&mut d, &snap, 0);
+        assert_eq!(
+            d.walked.take(),
+            (idle == 5).then_some((4, 0)),
+            "a retained map flag must not suppress recovery after another idle window",
+        );
+        assert_eq!(queued(&navs), Some(dest), "the walk is still owed");
+    }
+
+    // The second recovery unblocks movement; normal arrival retires the
+    // original host-owned follow instead of sending another click.
+    c.chat_modal_id = -1;
+    c.bump_gens(client::io::ServerProt::IF_OPENCHAT);
+    c.minimap_flag_x = 0;
+    nav_snapshot_at(&mut c, &mut snap, 4, 0);
+    step(&mut d, &snap, 4);
+    assert_eq!(d.walked, None, "arrival must not reissue the walk");
+    assert_eq!(queued(&navs), None);
+    let rows = statuses.lock().unwrap();
+    assert_eq!(
+        (rows[0].walk_x, rows[0].walk_z, rows[0].walk_level),
+        (-1, -1, -1)
+    );
+}
+
 /// A WalkNear settles in the isolate once `here` is within its radius, even
 /// short of the approach tile the route aimed at (the live chaos druid card
 /// stood at (3114,9932), four tiles from its dest, while the route still

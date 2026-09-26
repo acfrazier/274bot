@@ -1,11 +1,10 @@
 use super::*;
 
-/// Distinct game ticks a sent walk may sit without tile progress, with
-/// no map flag and no movement, before one same-aim recovery reissue.
-/// Counts at the latest observed position (partial-hop progress still
-/// recovers once the player stops). Covers the short engine freeze
-/// window (Bind ~3 ticks); matches the canonical WalkExecutor stallTicks
-/// default of 5. Not a second hop budget.
+/// Distinct game ticks a sent walk may sit without tile progress or actor
+/// movement before reissuing the same aim. A map flag alone is not progress:
+/// the server can retain it while a delayed action or queued modal blocks
+/// movement. Matches the canonical WalkExecutor stallTicks default of 5;
+/// each reissue stays inside the original hop budget.
 pub(super) const WALK_STALL_RECOVER_IDLE_TICKS: u32 = 5;
 /// Frozen `DEFAULT_PATH_STALL_TICKS` (`pathFollowPolicy.ts:6`).
 const END_BLOCKED_STALL_TICKS: u32 = 5;
@@ -176,8 +175,8 @@ impl FollowRun {
                         why,
                         tries: hop.tries.max(1),
                     })
-                } else if self.should_recover_cancelled_walk(&hop, snapshot, here) {
-                    self.recover_cancelled_walk(d, snapshot, options, hop, here)
+                } else if self.should_recover_stalled_walk(&hop, snapshot, here) {
+                    self.recover_stalled_walk(d, snapshot, options, hop, here)
                 } else {
                     self.note_walk_stall_idle(&mut hop, snapshot, here);
                     self.walk = Some(hop);
@@ -187,22 +186,16 @@ impl FollowRun {
         }
     }
 
-    /// True when a sent walk has been cancelled long enough to warrant
-    /// one same-aim recovery: no map flag, not moving, recovery not yet
-    /// spent, and enough *distinct* game ticks with no tile progress at
-    /// the latest observed position (duplicate snapshot polls do not
-    /// count). Progress away from the original `sent_tile` still qualifies
-    /// once the player stops; `sent_tile` remains only for Dropped/Expired.
-    pub(super) fn should_recover_cancelled_walk(
+    /// True after enough *distinct* game ticks without movement at the
+    /// latest observed position. Progress away from `sent_tile` still
+    /// qualifies once the player stops; that tile is only for Dropped/Expired.
+    pub(super) fn should_recover_stalled_walk(
         &self,
         hop: &WalkHop,
         snapshot: &GameSnapshot,
         here: WorldTile,
     ) -> bool {
-        if hop.stall_recovered || hop.sent_tile.is_none() {
-            return false;
-        }
-        if snapshot.map_flag().is_some() {
+        if hop.sent_tile.is_none() {
             return false;
         }
         if snapshot
@@ -223,22 +216,19 @@ impl FollowRun {
         idle >= WALK_STALL_RECOVER_IDLE_TICKS
     }
 
-    /// Advance or clear the cancelled-walk idle counter. Only distinct
-    /// snapshot ticks count; active map flag, actor movement, or an
-    /// actual tile change resets the window so a live hop is never
-    /// spuriously reissued. Idle is tracked at the latest observed tile
-    /// so partial-hop progress can still recover once movement stops.
+    /// Advance or clear the stalled-walk idle counter. Only distinct
+    /// snapshot ticks count; actor movement or an actual tile change resets
+    /// the window. Partial-hop progress can recover once movement stops.
     pub(super) fn note_walk_stall_idle(
         &self,
         hop: &mut WalkHop,
         snapshot: &GameSnapshot,
         here: WorldTile,
     ) {
-        let active = snapshot.map_flag().is_some()
-            || snapshot
-                .local_player()
-                .is_some_and(|p| p.player.actor.moving);
-        if hop.sent_tile.is_none() || active || hop.stall_recovered {
+        let moving = snapshot
+            .local_player()
+            .is_some_and(|p| p.player.actor.moving);
+        if hop.sent_tile.is_none() || moving {
             hop.stall_idle_ticks = 0;
             hop.stall_idle_last_tick = None;
             hop.stall_idle_at = None;
@@ -257,11 +247,11 @@ impl FollowRun {
         hop.stall_idle_ticks = hop.stall_idle_ticks.saturating_add(1);
     }
 
-    /// One same-aim walk reissue after a cancelled hop. Does not reset
-    /// `ticks_waited` (hop budget stays finite), does not consume another
-    /// `max_hops` slot, and does not re-pick aim. At most one recovery per
-    /// stalled hop; further cancellation exhausts the original bound.
-    pub(super) fn recover_cancelled_walk<D: Driver>(
+    /// Reissue the same aim without resetting `ticks_waited`, consuming
+    /// another `max_hops` slot, or re-picking aim. Another delay or queued
+    /// modal can block a recovery too, so start a fresh idle window while
+    /// retaining the original finite hop budget.
+    pub(super) fn recover_stalled_walk<D: Driver>(
         &mut self,
         d: &mut D,
         snapshot: &GameSnapshot,
@@ -279,10 +269,9 @@ impl FollowRun {
                 hop.sent_tick = snapshot.tick();
                 hop.sent_tile = Some(here);
                 hop.tries = hop.tries.max(1) + 1;
-                hop.stall_recovered = true;
                 hop.stall_idle_ticks = 0;
-                hop.stall_idle_last_tick = None;
-                hop.stall_idle_at = None;
+                hop.stall_idle_last_tick = Some(snapshot.tick());
+                hop.stall_idle_at = Some(here);
                 // Keep ticks_waited: recovery is not a fresh hop budget.
                 self.walk = Some(hop);
                 Poll::Watching
@@ -292,13 +281,11 @@ impl FollowRun {
                     SendReason::OffScene | SendReason::Unreachable | SendReason::SceneUnavailable,
                 ..
             } => {
-                // Spend the recovery slot so we do not re-send every poll
-                // while the scene is unavailable; the original tick budget
-                // still bounds the hop.
-                hop.stall_recovered = true;
+                // Wait another idle window before trying an unavailable
+                // scene again; the original tick budget still bounds the hop.
                 hop.stall_idle_ticks = 0;
-                hop.stall_idle_last_tick = None;
-                hop.stall_idle_at = None;
+                hop.stall_idle_last_tick = Some(snapshot.tick());
+                hop.stall_idle_at = Some(here);
                 self.walk = Some(hop);
                 Poll::Watching
             }
@@ -392,7 +379,6 @@ impl FollowRun {
                     hop.stall_idle_ticks = 0;
                     hop.stall_idle_last_tick = None;
                     hop.stall_idle_at = None;
-                    hop.stall_recovered = false;
                     self.walk = Some(hop);
                     return Poll::Watching;
                 }

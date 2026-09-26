@@ -212,6 +212,12 @@ progress and `Some(TravelOutcome)` at a terminal state
 call. `TravelOptions { close_enough, budget_ticks_per_hop, max_hops,
 on_leg, troll_doors }`.
 
+- **Stalled walk recovery:** five distinct game ticks without tile progress
+  or actor movement reissue the current aim, even if the map flag remains.
+  A delayed action or queued modal can block successive accepted clicks;
+  each reissue starts a fresh idle window, not a new hop budget. Movement
+  resets the idle window, duplicate observations do not advance it, and
+  recovery does not consume another `max_hops` slot.
 - **`Stalled { why: EndBlocked }`:** no walk of the follow was accepted,
   the player stands within one tile of the route's last tile on its level,
   and the client refused the click onto it on five distinct ticks (frozen
