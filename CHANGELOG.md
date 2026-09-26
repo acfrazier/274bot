@@ -269,7 +269,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   `measuring…`, one the platform cannot measure says so, traffic with no live
   worker reads `no live slots` (not 0 B/s), a replaced or restarted worker
   re-measures instead of showing a false rate, and a failed sample reads as an
-  error.
+  error. The TUI header also carries the meter on one line at every size,
+  80×24 included (`cpu 12% ram 263.9 MB net 1.2 KB/s`; `…` while measuring,
+  `-` with nothing to measure, `err` on failure).
 - **One status per bot in both front ends.** The operator session derives
   each bot's status once (offline, preparing, waiting, queued k/n, logging in,
   loading, idle/running, logged out, login error, failed; a bot walking a

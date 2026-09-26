@@ -70,11 +70,13 @@ fn a_platform_without_a_sampler_and_a_failed_read_say_so() {
         Metric::Unavailable(NO_LIVE_SLOTS),
         "no workers: no rate to measure, not 0 B/s"
     );
+    assert_eq!(view.brief, "cpu - ram - net -", "the header says so too");
 
     let mut meter = Resources::with_probe(failing);
     settle(&mut meter, now, None, |view| view.cpu != Metric::Measuring);
     assert_eq!(meter.view().cpu, Metric::Error(PROBE_FAILED.into()));
     assert_eq!(meter.view().ram, Metric::Error(PROBE_FAILED.into()));
+    assert_eq!(meter.view().brief, "cpu err ram err net -");
 }
 
 static CPU_READS: AtomicUsize = AtomicUsize::new(0);
@@ -105,16 +107,22 @@ fn cpu_measures_after_two_reads_and_memory_names_its_definition() {
         meter.view().ram,
         Metric::Available("peak 3.00 GB process".into())
     );
+    assert_eq!(meter.view().brief, "cpu … ram peak 3.00 GB net -");
     meter.poll(start + Duration::from_millis(500), None, None);
     assert_eq!(CPU_READS.load(Ordering::SeqCst), 1, "not due yet");
     settle(&mut meter, start + Duration::from_secs(1), None, |view| {
         view.cpu != Metric::Measuring
     });
     assert!(matches!(meter.view().cpu, Metric::Available(_)));
+    let brief = &meter.view().brief;
+    assert!(
+        brief.starts_with("cpu ") && brief.ends_with("% ram peak 3.00 GB net -"),
+        "the header shows the CPU share: {brief}"
+    );
     // Half a CPU second over one wall second is half a core.
     assert_eq!(
         cpu_from_delta(0.5, 1.0, 4),
-        Metric::Available("0.5 cores (12% of 4)".into())
+        Some(("0.5 cores (12% of 4)".into(), "12%".into()))
     );
 }
 

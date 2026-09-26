@@ -155,26 +155,17 @@ impl TuiApp {
         let right = area.x + area.width;
         let counts = self.counts;
         let compact = class == SizeClass::Compact;
+        // The full meter (with its units and peak) is in the status pane;
+        // the header carries the core's narrow line.
         let tail = if compact {
             format!(
-                " │ {}/{} ready Q:{} Err:{} │ cpu {} ram {}",
-                counts.ready,
-                counts.loaded,
-                counts.queued,
-                counts.failed,
-                self.resources.cpu.text(),
-                self.resources.ram.text()
+                " │ {}/{} ready Q:{} Err:{} │ {}",
+                counts.ready, counts.loaded, counts.queued, counts.failed, self.resources.brief
             )
         } else {
             format!(
-                " │ loaded {} ready {} queued {} failed {} │ cpu {} ram {} net {}",
-                counts.loaded,
-                counts.ready,
-                counts.queued,
-                counts.failed,
-                self.resources.cpu.text(),
-                self.resources.ram.text(),
-                self.resources.traffic.text()
+                " │ loaded {} ready {} queued {} failed {} │ {}",
+                counts.loaded, counts.ready, counts.queued, counts.failed, self.resources.brief
             )
         };
         let tail_w = tail.chars().count() as u16;

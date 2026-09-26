@@ -195,6 +195,7 @@ mod tests {
             cpu: Metric::Measuring,
             ram: Metric::Available("64.0 MB process, peak 80.0 MB".into()),
             traffic: Metric::Unavailable("no live slots"),
+            ..ResourceView::default()
         };
         let text = render(
             StatusPane::new(None, "—", "lowmem").resources(&view),
@@ -234,6 +235,7 @@ mod tests {
             cpu: Metric::Available("0.1 cores (0% of 16)".into()),
             ram: Metric::Available("263.9 MB process, peak 263.9 MB".into()),
             traffic: Metric::Available("1.2 KB/s".into()),
+            ..ResourceView::default()
         };
         let text = render(
             StatusPane::new(Some(&detail), "—", "lowmem").resources(&view),

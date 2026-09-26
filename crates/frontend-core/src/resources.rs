@@ -56,6 +56,10 @@ pub struct ResourceView {
     pub ram: Metric,
     /// Summed stream bytes of every live worker, per second.
     pub traffic: Metric,
+    /// The three values on one narrow line for a header: `cpu 12% ram
+    /// 263.9 MB net 1.2 KB/s`. A value still measuring reads `…`, one with
+    /// nothing to measure `-` and a failed one `err`.
+    pub brief: String,
 }
 
 impl Default for ResourceView {
@@ -67,7 +71,19 @@ impl Default for ResourceView {
             cpu: Metric::Measuring,
             ram: Metric::Measuring,
             traffic: Metric::Measuring,
+            brief: String::from("cpu … ram … net …"),
         }
+    }
+}
+
+/// One value as a narrow header shows it: `figure` when measured, else
+/// `…` (measuring), `-` (nothing to measure) or `err`.
+fn brief_text<'a>(metric: &'a Metric, figure: &'a str) -> &'a str {
+    match metric {
+        Metric::Measuring => "…",
+        Metric::Available(_) => figure,
+        Metric::Unavailable(_) => "-",
+        Metric::Error(_) => "err",
     }
 }
 
@@ -111,11 +127,28 @@ const NOT_MEASURED_HERE: &str = "not measured on this platform";
 const NO_LIVE_SLOTS: &str = "no live slots";
 const PROBE_FAILED: &str = "process sample failed";
 
-/// CPU and memory as the probe thread last measured them.
+/// CPU and memory as the probe thread last measured them, with the short
+/// figures a narrow header shows while they are available.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProcessMetrics {
     cpu: Metric,
     ram: Metric,
+    /// The CPU share of all cores (`12%`).
+    cpu_figure: String,
+    /// The current resident size (`263.9 MB`), else the peak.
+    ram_figure: String,
+}
+
+impl ProcessMetrics {
+    /// Both values in one state that has no figure.
+    fn without_figures(value: Metric) -> Self {
+        Self {
+            cpu: value.clone(),
+            ram: value,
+            cpu_figure: String::new(),
+            ram_figure: String::new(),
+        }
+    }
 }
 
 /// What the poll and the probe thread share.
@@ -164,40 +197,47 @@ fn process_metrics(
     match probe {
         ProcessProbe::Unsupported => {
             *last_cpu = None;
-            ProcessMetrics {
-                cpu: Metric::Unavailable(NOT_MEASURED_HERE),
-                ram: Metric::Unavailable(NOT_MEASURED_HERE),
-            }
+            ProcessMetrics::without_figures(Metric::Unavailable(NOT_MEASURED_HERE))
         }
         ProcessProbe::Failed => {
             *last_cpu = None;
-            ProcessMetrics {
-                cpu: Metric::Error(PROBE_FAILED.into()),
-                ram: Metric::Error(PROBE_FAILED.into()),
-            }
+            ProcessMetrics::without_figures(Metric::Error(PROBE_FAILED.into()))
         }
         ProcessProbe::Sampled {
             cpu_seconds,
             resident,
             peak,
         } => {
-            let cpu = match last_cpu.replace((taken, cpu_seconds)) {
-                Some((then, cpu0)) => cpu_from_delta(
-                    cpu_seconds - cpu0,
-                    taken.saturating_duration_since(then).as_secs_f64(),
-                    cores,
-                ),
-                None => Metric::Measuring,
+            let cpu = last_cpu
+                .replace((taken, cpu_seconds))
+                .and_then(|(then, cpu0)| {
+                    cpu_from_delta(
+                        cpu_seconds - cpu0,
+                        taken.saturating_duration_since(then).as_secs_f64(),
+                        cores,
+                    )
+                });
+            let (cpu, cpu_figure) = match cpu {
+                Some((text, figure)) => (Metric::Available(text), figure),
+                None => (Metric::Measuring, String::new()),
             };
-            let ram = match resident {
-                Some(resident) => Metric::Available(format!(
-                    "{} process, peak {}",
-                    format_bytes(resident),
-                    format_bytes(peak.max(resident))
-                )),
-                None => Metric::Available(format!("peak {} process", format_bytes(peak))),
+            let (ram, ram_figure) = match resident {
+                Some(resident) => {
+                    let now = format_bytes(resident);
+                    let ram = format!("{now} process, peak {}", format_bytes(peak.max(resident)));
+                    (Metric::Available(ram), now)
+                }
+                None => {
+                    let peak = format!("peak {}", format_bytes(peak));
+                    (Metric::Available(format!("{peak} process")), peak)
+                }
             };
-            ProcessMetrics { cpu, ram }
+            ProcessMetrics {
+                cpu,
+                ram,
+                cpu_figure,
+                ram_figure,
+            }
         }
     }
 }
@@ -262,6 +302,9 @@ pub(crate) struct Resources {
     last_sample: Option<Instant>,
     traffic: Traffic,
     view: ResourceView,
+    /// [`ProcessMetrics`]' figures behind `view.cpu` and `view.ram`.
+    cpu_figure: String,
+    ram_figure: String,
     generation: u64,
 }
 
@@ -289,10 +332,7 @@ impl Resources {
                 requested: AtomicBool::new(false),
                 stop: AtomicBool::new(false),
                 finished: AtomicU64::new(0),
-                latest: Mutex::new(ProcessMetrics {
-                    cpu: Metric::Measuring,
-                    ram: Metric::Measuring,
-                }),
+                latest: Mutex::new(ProcessMetrics::without_figures(Metric::Measuring)),
             }),
             worker: None,
             in_flight: false,
@@ -300,6 +340,8 @@ impl Resources {
             last_sample: None,
             traffic: Traffic::default(),
             view: ResourceView::default(),
+            cpu_figure: String::new(),
+            ram_figure: String::new(),
             generation: 0,
         }
     }
@@ -327,8 +369,24 @@ impl Resources {
             changed |= self.sample_fleet(now, play, selected);
         }
         if changed {
+            self.write_brief();
             self.generation += 1;
         }
+    }
+
+    /// Rebuild the narrow header line from the current values (into its
+    /// own buffer).
+    fn write_brief(&mut self) {
+        use std::fmt::Write as _;
+        let view = &mut self.view;
+        view.brief.clear();
+        let _ = write!(
+            view.brief,
+            "cpu {} ram {} net {}",
+            brief_text(&view.cpu, &self.cpu_figure),
+            brief_text(&view.ram, &self.ram_figure),
+            brief_text(&view.traffic, view.traffic.text()),
+        );
     }
 
     fn take_process_metrics(&mut self) -> bool {
@@ -343,6 +401,8 @@ impl Resources {
         if changed {
             self.view.cpu.clone_from(&latest.cpu);
             self.view.ram.clone_from(&latest.ram);
+            self.cpu_figure.clone_from(&latest.cpu_figure);
+            self.ram_figure.clone_from(&latest.ram_figure);
         }
         changed
     }
@@ -422,14 +482,18 @@ impl Resources {
 }
 
 /// CPU use from CPU and wall deltas: busy cores and their share of all
-/// `cores`. `Measuring` when no wall time passed.
-pub fn cpu_from_delta(cpu_secs: f64, wall_secs: f64, cores: u32) -> Metric {
+/// `cores` (`0.5 cores (12% of 4)`), then the share alone for a narrow
+/// header (`12%`). `None` (still measuring) when no wall time passed.
+pub fn cpu_from_delta(cpu_secs: f64, wall_secs: f64, cores: u32) -> Option<(String, String)> {
     if wall_secs <= 0.0 {
-        return Metric::Measuring;
+        return None;
     }
     let busy = cpu_secs / wall_secs;
     let percent = 100.0 * busy / f64::from(cores.max(1));
-    Metric::Available(format!("{busy:.1} cores ({percent:.0}% of {cores})"))
+    Some((
+        format!("{busy:.1} cores ({percent:.0}% of {cores})"),
+        format!("{percent:.0}%"),
+    ))
 }
 
 /// Bytes in the nearest unit: B under 1 KB, then KB, MB, GB.

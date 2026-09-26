@@ -386,7 +386,9 @@ impl FleetTable<'_> {
                 let queue_len = cell.len() - queue_at;
                 cell.extend(std::iter::repeat_n(' ', QUEUE.saturating_sub(queue_len)));
                 cell.push(' ');
-                cell.push_str(run_state_label(row.map_or(RunState::Idle, |row| row.script)));
+                cell.push_str(run_state_label(
+                    row.map_or(RunState::Idle, |row| row.script),
+                ));
             }
             if is_cursor && keys {
                 let used = cell.chars().count();

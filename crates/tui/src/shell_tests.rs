@@ -4,15 +4,21 @@ use crate::app::AppAction;
 use crate::layout::{Pane, Screen};
 use crate::test_support::{ch, draw, find, fleet_app, key, ready_detail, text};
 
-/// 80x24: two header rows, one main pane (the fleet drawer or the bot's
-/// tab), a three-row message/log drawer and the one-row footer.
+/// 80x24: two header rows (the title yields to the counts and the whole
+/// meter), one main pane (the fleet drawer or the bot's tab), a three-row
+/// message/log drawer and the one-row footer.
 #[test]
 fn compact_80x24_keeps_one_main_pane_between_header_drawer_and_footer() {
     let mut app = fleet_app(&["alice", "bob"]);
     app.error = Some("Start all: started 2, skipped 0".into());
+    app.resources.brief = "cpu 12% ram 263.9 MB net 1.2 KB/s".into();
     let rows = draw(&mut app, 80, 24);
     assert!(rows[0].contains("289bot"), "{}", rows[0]);
-    assert!(rows[0].contains("2/2 ready Q:0 Err:0"), "{}", rows[0]);
+    assert!(
+        rows[0].contains("2/2 ready Q:0 Err:0 │ cpu 12% ram 263.9 MB net 1.2 KB/s"),
+        "{}",
+        rows[0]
+    );
     assert!(rows[1].starts_with("BOT alice @w2 idle"), "{}", rows[1]);
     assert!(
         rows[1].contains("[Fleet]"),
@@ -63,8 +69,8 @@ fn standard_120x40_shows_fleet_detail_drawer_and_footer() {
     let mut app = fleet_app(&["alice", "bob", "carol"]);
     let rows = draw(&mut app, 120, 40);
     assert!(
-        rows[0].contains("loaded 3 ready 3 queued 0 failed 0"),
-        "{}",
+        rows[0].contains("loaded 3 ready 3 queued 0 failed 0 │ cpu … ram … net …"),
+        "counts, then the meter still measuring: {}",
         rows[0]
     );
     assert!(rows[1].contains(" Fleet F2 "), "{}", rows[1]);
