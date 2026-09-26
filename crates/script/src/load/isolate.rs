@@ -181,6 +181,11 @@ impl CmdQueue {
 
 enum ThreadMsg {
     Log(String),
+    /// The isolate thread processed the session reset that opened
+    /// `generation`: every tick of the previous connection has finished.
+    SessionReset {
+        generation: u64,
+    },
     /// A diagnostic emitted while processing one tick. The host keeps this
     /// separate from user-authored log lines so a later user message cannot
     /// clear or create the slot's active tick error.
@@ -294,6 +299,10 @@ pub struct LoadIsolate {
     /// A reconnect is holding the script's work: walk requests of batches
     /// from the dropped connection are kept, not discarded.
     holding_walks: AtomicBool,
+    /// The work generation of a reconnect reset the isolate thread has not
+    /// processed yet: a tick of the dropped connection may still be running
+    /// and emit a walk, so the held walks are not handed out before then.
+    held_fence: Mutex<Option<u64>>,
     /// The latest paint frame the tick thread forwarded (the
     /// [`crate::shim::ScriptPaint`] the recorder built after each tick),
     /// shared with every reader instead of copied per read.
@@ -509,6 +518,7 @@ impl LoadIsolate {
             lifecycle: Mutex::new(Vec::new()),
             held_walks: Mutex::new(Vec::new()),
             holding_walks: AtomicBool::new(false),
+            held_fence: Mutex::new(None),
             paint: Mutex::new(None),
             ignored_randoms: Mutex::new(Vec::new()),
             handle: Some(handle),
@@ -960,8 +970,15 @@ impl LoadIsolate {
     /// the script emitted just before the drop still goes out and its held
     /// wait settles on it (frozen resumes the walker itself,
     /// `AutoRelogin.ts:159-163`).
+    ///
+    /// Empty (and still holding) until the isolate thread has processed the
+    /// reconnect's reset: a tick of the dropped connection that was running
+    /// then finishes first, and its walk requests join the held ones.
     pub fn take_held_walks(&self) -> Vec<crate::shim::InteractReq> {
         self.pump_logs();
+        if self.held_fence.lock().unwrap().is_some() {
+            return Vec::new();
+        }
         self.holding_walks
             .store(false, std::sync::atomic::Ordering::Release);
         std::mem::take(&mut *self.held_walks.lock().unwrap())
@@ -1044,6 +1061,7 @@ impl LoadIsolate {
             }
             self.holding_walks
                 .store(keep_work, std::sync::atomic::Ordering::Release);
+            *self.held_fence.lock().unwrap() = keep_work.then_some(generation);
             interacts.clear();
             self.lifecycle.lock().unwrap().clear();
             generation
@@ -1314,6 +1332,12 @@ impl LoadIsolate {
                 ThreadMsg::ScriptStopped { tick, reason } => {
                     *self.script_stop.lock().unwrap() = Some(ScriptStopReceipt { tick, reason });
                 }
+                ThreadMsg::SessionReset { generation } => {
+                    let mut fence = self.held_fence.lock().unwrap();
+                    if *fence == Some(generation) {
+                        *fence = None;
+                    }
+                }
                 ThreadMsg::Stopped => {
                     self.stopped
                         .store(true, std::sync::atomic::Ordering::Release);
@@ -1484,25 +1508,29 @@ fn ensure_platform() {
     });
 }
 
-/// Walk requests a reconnect keeps; `held` stays bounded.
+/// Walk requests a reconnect keeps; `held` never grows past this.
 const HELD_WALKS: usize = 8;
 
 /// Keep the walk-control requests of `reqs` (walk, walk-near, abort-walk)
-/// in order, dropping the oldest past [`HELD_WALKS`].
+/// in order, only the newest [`HELD_WALKS`]: the oldest row goes before a
+/// row is pushed at the cap.
 fn hold_walk_requests(
     held: &mut Vec<crate::shim::InteractReq>,
     reqs: impl IntoIterator<Item = crate::shim::InteractReq>,
 ) {
-    held.extend(reqs.into_iter().filter(|req| {
-        matches!(
+    for req in reqs {
+        if !matches!(
             req,
             crate::shim::InteractReq::Walk { .. }
                 | crate::shim::InteractReq::WalkNear { .. }
                 | crate::shim::InteractReq::AbortWalk { .. }
-        )
-    }));
-    if held.len() > HELD_WALKS {
-        held.drain(..held.len() - HELD_WALKS);
+        ) {
+            continue;
+        }
+        if held.len() == HELD_WALKS {
+            held.remove(0);
+        }
+        held.push(req);
     }
 }
 

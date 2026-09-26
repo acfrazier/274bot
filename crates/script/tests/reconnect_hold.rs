@@ -497,3 +497,59 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+/// The reviewer's ordering: the connection drops while a tick of the old
+/// connection is still in JS, and the relogged session's first dispatch
+/// asks for the held walks before that tick has emitted its walk. The
+/// handover waits for the isolate to finish the old tick, so the walk it
+/// emits late still goes out, once.
+#[test]
+fn a_walk_emitted_late_by_a_tick_crossing_the_drop_still_goes_out_once() {
+    let src = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (!globalThis.__armed) { globalThis.__armed = true; return; }
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        const until = Date.now() + 300;
+        while (Date.now() < until) {}
+        globalThis.__ok = await Traversal.walkResilient(
+            { x: 3300, z: 3300, level: 0 },
+            { radius: 1, timeoutMs: 300000 },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = ingame_snapshot();
+    snap.here = Some(tile(3222, 3222));
+    tick(&iso, &snap);
+    assert!(walks(&iso.drain_interacts()).is_empty());
+
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    sleep(Duration::from_millis(100));
+    iso.reconnect_session_work();
+    // The relog dispatch wins the race against the old tick.
+    let mut out = iso.take_held_walks();
+    assert!(walks(&out).is_empty(), "the old tick has not walked yet");
+
+    let next = relog(&iso, &mut snap, 3, tile(3240, 3240));
+    out.extend(iso.take_held_walks());
+    out.extend(iso.drain_interacts());
+    assert!(
+        matches!(
+            walks(&out).as_slice(),
+            [InteractReq::WalkNear { x: 3300, z: 3300, request_id, .. }] if *request_id != 0
+        ),
+        "the late walk goes out once: {out:?}"
+    );
+
+    snap.tick = next;
+    snap.here = Some(tile(3300, 3301));
+    tick(&iso, &snap);
+    assert_eq!(value(&iso, "globalThis.__ok"), true, "and its wait settles");
+    iso.join();
+}

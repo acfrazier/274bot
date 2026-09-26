@@ -14705,7 +14705,6 @@ fn an_active_script_relogs_a_dropped_connection_with_auto_login_off() {
     end_slot_session(
         "alice",
         &arm,
-        false,
         &rig.scripts,
         &rig.cheats,
         &rig.wires,
@@ -14717,7 +14716,6 @@ fn an_active_script_relogs_a_dropped_connection_with_auto_login_off() {
     end_slot_session(
         "alice",
         &arm,
-        true,
         &rig.scripts,
         &rig.cheats,
         &rig.wires,
@@ -14725,15 +14723,11 @@ fn an_active_script_relogs_a_dropped_connection_with_auto_login_off() {
     );
     rig.frames(2);
     assert_eq!(rig.armed(), armed, "and its walk carries on");
-    assert!(
-        !should_handshake(&arm, false),
-        "once back, auto-login stays off"
-    );
     rig.slot().lock().unwrap().stop();
 }
 
-/// A relog armed only for the script lapses when the script stops before
-/// it happens (frozen `clearReconnect`, `AutoRelogin.ts:196-198`).
+/// A relog only the script wanted lapses when the script stops before it
+/// happens (frozen `clearReconnect`, `AutoRelogin.ts:196-198`).
 #[test]
 fn a_script_relog_lapses_when_the_script_stops_first() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -14744,7 +14738,6 @@ fn a_script_relog_lapses_when_the_script_stops_first() {
     end_slot_session(
         "alice",
         &arm,
-        false,
         &rig.scripts,
         &rig.cheats,
         &rig.wires,
@@ -14754,7 +14747,7 @@ fn a_script_relog_lapses_when_the_script_stops_first() {
 
     rig.slot().lock().unwrap().stop();
     rig.wait_state(script::RunState::Idle);
-    lapse_idle_script_relog(&arm, &rig.scripts, "alice");
+    sync_script_login(&arm, &rig.scripts, "alice");
     assert!(
         !should_handshake(&arm, false),
         "nothing wants the relog now"
@@ -14778,7 +14771,6 @@ fn an_operator_logout_ends_the_script_work_and_does_not_relog() {
     end_slot_session(
         "alice",
         &arm,
-        false,
         &rig.scripts,
         &rig.cheats,
         &rig.wires,
@@ -14791,7 +14783,6 @@ fn an_operator_logout_ends_the_script_work_and_does_not_relog() {
     end_slot_session(
         "alice",
         &arm,
-        true,
         &rig.scripts,
         &rig.cheats,
         &rig.wires,
@@ -14872,6 +14863,116 @@ fn a_restart_during_a_reconnect_hold_drops_the_old_runs_carried_walk() {
     assert_eq!(requested, walk_dest(40, 40));
     assert_eq!(rig.walks(), vec![(old_id, 40, 40), (new_id, 40, 40)]);
     rig.slot().lock().unwrap().stop();
+}
+
+/// A fake login server: every connection that opens with the login
+/// preface (14) is counted and closed.
+fn counting_login_server() -> (std::net::SocketAddr, Arc<std::sync::atomic::AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&attempts);
+    thread::spawn(move || {
+        for socket in listener.incoming() {
+            let Ok(mut socket) = socket else { return };
+            let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut preface = [0; 2];
+            if socket.read_exact(&mut preface).is_ok() && preface[0] == 14 {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    });
+    (endpoint, attempts)
+}
+
+fn offline_play(endpoint: std::net::SocketAddr) -> Play {
+    run_with_io(
+        &PlayOptions {
+            host: endpoint.ip().to_string(),
+            port: endpoint.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+}
+
+fn start_offline_script(play: &Play) {
+    script_slot_or_insert(&play.scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_load_settled(
+            walk_resilient_src(40, 40, 1),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+}
+
+/// Frozen recomputes `autoLogin || scriptActive()` every frame
+/// (`AutoRelogin.ts:175-198`). A slot sitting offline with auto-login off
+/// and nothing to log in for stays on the title; a script started there
+/// (Stop→Start during an outage) logs it in on the title loop.
+#[test]
+fn a_script_started_on_an_offline_slot_logs_it_in() {
+    let (endpoint, attempts) = counting_login_server();
+    let mut play = offline_play(endpoint);
+    let arm = SlotArm::new(42, false);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(attempts.load(Ordering::SeqCst), 0, "nothing wants a login");
+
+    start_offline_script(&play);
+    assert!(
+        wait_until(5_000, || attempts.load(Ordering::SeqCst) > 0),
+        "the active script logs the slot in"
+    );
+    arm.stop.store(true, Ordering::Relaxed);
+    play.script_stop("alice");
+    play.stop_slot("alice");
+}
+
+/// Turning auto-login off while a script is active keeps the login the
+/// script wants (frozen `autoLogin || scriptActive()`).
+#[test]
+fn turning_auto_login_off_keeps_the_login_an_active_script_wants() {
+    let (endpoint, attempts) = counting_login_server();
+    let mut play = offline_play(endpoint);
+    start_offline_script(&play);
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    arm.set_auto_login(false);
+    play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
+    assert!(
+        wait_until(5_000, || attempts.load(Ordering::SeqCst) > 0),
+        "the active script still logs the slot in"
+    );
+    arm.stop.store(true, Ordering::Relaxed);
+    play.script_stop("alice");
+    play.stop_slot("alice");
+}
+
+/// The login want is the level of both reasons: auto-login turned on while
+/// a script wanted the login survives the script's Stop, and neither
+/// outlasts an operator Logout.
+#[test]
+fn the_login_want_follows_auto_login_or_an_active_script() {
+    let arm = SlotArm::new(0, false);
+    assert!(!should_handshake(&arm, false));
+    arm.set_script_active(true);
+    assert!(should_handshake(&arm, false), "the script wants it");
+    arm.set_auto_login(true);
+    arm.set_script_active(false);
+    assert!(should_handshake(&arm, false), "auto-login still wants it");
+    arm.set_auto_login(false);
+    assert!(!should_handshake(&arm, false), "nothing wants it");
+    arm.set_script_active(true);
+    arm.request_logout();
+    assert!(!should_handshake(&arm, false), "a Logout latches it off");
 }
 
 #[test]

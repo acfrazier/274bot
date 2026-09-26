@@ -1649,6 +1649,10 @@ fn tick_loop(
                         generation: reset_generation,
                     });
                 }
+                // Every tick of the dropped connection has finished.
+                let _ = out.send(ThreadMsg::SessionReset {
+                    generation: reset_generation,
+                });
             }
             IsolateCmd::Pause => {
                 paused = true;

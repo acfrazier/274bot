@@ -401,31 +401,25 @@ pub(super) fn reset_slot_session_work(
 /// `wantLogin = credentials && (autoLogin || scriptActive())`,
 /// `AutoRelogin.ts:175-190`), unless the slot is stopping or the operator
 /// latched it logged out (Logout, an idle logout) or asked for a logout.
-/// Off the game with only the script wanting it, the relog is armed here.
 pub(super) fn end_slot_session(
     name: &str,
     arm: &SlotArm,
-    ingame: bool,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
 ) {
-    let active = script_active(scripts, name);
-    let reconnect = !arm.stop.load(Ordering::Relaxed) && arm.relogs_after_drop(active);
-    if reconnect && active && !ingame {
-        arm.arm_script_relog();
-    }
+    arm.set_script_active(script_active(scripts, name));
+    let reconnect = !arm.stop.load(Ordering::Relaxed) && arm.relogs_after_drop();
     reset_slot_session_work(name, scripts, cheats, wires, navs, reconnect);
 }
 
-/// Withdraw a relog armed only for the slot's script once that script is no
-/// longer running or paused (frozen `clearReconnect`, `AutoRelogin.ts:
-/// 196-198`).
-pub(super) fn lapse_idle_script_relog(arm: &SlotArm, scripts: &ScriptWall, name: &str) {
-    if arm.script_relog_armed() && !script_active(scripts, name) {
-        arm.lapse_script_relog();
-    }
+/// Publish the slot's script activity to its login want, as frozen
+/// recomputes `autoLogin || scriptActive()` every frame
+/// (`AutoRelogin.ts:175-198`): a script started during an outage logs the
+/// slot back in, a stopped one stops the relog nothing else wants.
+pub(super) fn sync_script_login(arm: &SlotArm, scripts: &ScriptWall, name: &str) {
+    arm.set_script_active(script_active(scripts, name));
 }
 
 /// Compact prior-frame guardian fact for catalog proof. The observe hook
@@ -624,7 +618,7 @@ fn spawn_slot_thread(
                     return;
                 }
                 if !client.ingame {
-                    lapse_idle_script_relog(&arm, &slot_scripts, &username);
+                    sync_script_login(&arm, &slot_scripts, &username);
                     if !should_handshake(&arm, client.ingame) {
                         // No pending intent (title hold, latched logout, or a
                         // withdrawn wait): a parked slot holds no FIFO place
@@ -669,7 +663,7 @@ fn spawn_slot_thread(
                                         "public world preference failed: {error}"
                                     ));
                                 }
-                                arm.withdraw_login();
+                                arm.hold_login_on_error();
                                 continue;
                             }
                         }
@@ -723,8 +717,9 @@ fn spawn_slot_thread(
                     }
                     // A withdrawal or stop that lands after the granting poll
                     // releases the unused reservation before any login call,
-                    // as does a script relog whose script has since stopped.
-                    lapse_idle_script_relog(&arm, &slot_scripts, &username);
+                    // as does a relog wanted only by a script that has since
+                    // stopped.
+                    sync_script_login(&arm, &slot_scripts, &username);
                     let Some(login_command) = granted_permit_may_start_login(
                         &slot_queue,
                         uid,
@@ -878,7 +873,6 @@ fn spawn_slot_thread(
                                 end_slot_session(
                                     name,
                                     &arm_latch_obs,
-                                    c.ingame,
                                     &slot_scripts,
                                     &slot_cheats,
                                     &slot_wires,
@@ -1143,7 +1137,6 @@ fn spawn_slot_thread(
                 end_slot_session(
                     &username,
                     &arm,
-                    client.ingame,
                     &slot_scripts,
                     &slot_cheats,
                     &slot_wires,

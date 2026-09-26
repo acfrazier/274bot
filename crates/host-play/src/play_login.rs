@@ -31,9 +31,10 @@ struct SlotIntent {
     want_logout: bool,
     login_latched: bool,
     auto_intent: bool,
-    /// `want_login` was armed for the slot's active script after a drop
-    /// ([`SlotArm::arm_script_relog`]), not by the operator or auto-login.
-    script_intent: bool,
+    /// A world-preference error withdrew the login: the slot's active
+    /// script does not log it back in until the operator arms a login,
+    /// changes auto-login or the world ([`SlotArm::hold_login_on_error`]).
+    error_hold: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -85,6 +86,9 @@ pub struct SlotArm {
     /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
     /// is 16; after a grant this is true.
     pub reconnect: Arc<AtomicBool>,
+    /// A script is running or paused on the slot, as the slot thread last
+    /// published it ([`SlotArm::set_script_active`]).
+    script_active: AtomicBool,
     retry_wake: parking_lot::Condvar,
     /// Test seam for worker lifecycle cases whose subject starts at the
     /// login queue, after unrelated asset initialization.
@@ -117,7 +121,7 @@ impl SlotArm {
                 want_logout: false,
                 login_latched: false,
                 auto_intent: want_login,
-                script_intent: false,
+                error_hold: false,
             }),
             stop: Arc::new(AtomicBool::new(false)),
             auto_login: Arc::new(AtomicBool::new(want_login)),
@@ -127,6 +131,7 @@ impl SlotArm {
             world: Arc::new(parking_lot::Mutex::new(None)),
             world_generation: AtomicU64::new(0),
             reconnect: Arc::new(AtomicBool::new(false)),
+            script_active: AtomicBool::new(false),
             retry_wake: parking_lot::Condvar::new(),
             #[cfg(test)]
             bypass_asset_startup: AtomicBool::new(false),
@@ -239,10 +244,10 @@ impl SlotArm {
     pub fn arm_explicit_login(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
+        intent.error_hold = false;
         intent.login_latched = false;
         intent.want_login = true;
         intent.auto_intent = false;
-        intent.script_intent = false;
         intent.want_logout = false;
         drop(intent);
         self.retry_wake.notify_all();
@@ -256,7 +261,6 @@ impl SlotArm {
         intent.want_logout = true;
         intent.want_login = false;
         intent.auto_intent = false;
-        intent.script_intent = false;
         drop(intent);
         self.retry_wake.notify_all();
     }
@@ -270,7 +274,6 @@ impl SlotArm {
         intent.want_login = false;
         intent.want_logout = false;
         intent.auto_intent = false;
-        intent.script_intent = false;
         drop(intent);
         self.retry_wake.notify_all();
     }
@@ -293,6 +296,7 @@ impl SlotArm {
         self.auto_login.store(enabled, Ordering::Relaxed);
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
+        intent.error_hold = false;
         if enabled {
             if !intent.login_latched && !intent.want_login {
                 intent.want_login = true;
@@ -313,53 +317,49 @@ impl SlotArm {
         intent.generation = intent.generation.wrapping_add(1);
         intent.want_login = false;
         intent.auto_intent = false;
-        intent.script_intent = false;
         drop(intent);
         self.retry_wake.notify_all();
     }
 
-    /// Frozen AutoRelogin relogs a dropped connection while a script is
-    /// running or paused, whatever the auto-login checkbox says
-    /// (`wantLogin = credentials && (autoLogin || scriptActive())`,
-    /// `AutoRelogin.ts:175-190`). Arm that login for the slot's active
-    /// script, unless the operator latched the slot logged out, asked for a
-    /// logout, or a login is already wanted.
-    pub(super) fn arm_script_relog(&self) {
+    /// Withdraw the login after a world-preference error, including the one
+    /// the slot's active script wants, until the operator arms a login,
+    /// changes auto-login or the world.
+    pub(super) fn hold_login_on_error(&self) {
         let mut intent = self.intent.lock();
-        if intent.login_latched || intent.want_logout || intent.want_login {
-            return;
-        }
-        intent.generation = intent.generation.wrapping_add(1);
-        intent.want_login = true;
-        intent.script_intent = true;
-        drop(intent);
-        self.retry_wake.notify_all();
-    }
-
-    /// The script a relog was armed for is no longer active: frozen stops a
-    /// relog nothing else wants (`AutoRelogin.ts:196-198`).
-    pub(super) fn lapse_script_relog(&self) {
-        let mut intent = self.intent.lock();
-        if !intent.script_intent {
-            return;
-        }
         intent.generation = intent.generation.wrapping_add(1);
         intent.want_login = false;
-        intent.script_intent = false;
+        intent.auto_intent = false;
+        intent.error_hold = true;
         drop(intent);
         self.retry_wake.notify_all();
     }
 
-    pub(super) fn script_relog_armed(&self) -> bool {
-        self.intent.lock().script_intent
+    /// Publish whether a script is running or paused on the slot. Frozen
+    /// AutoRelogin recomputes `wantLogin = credentials && (autoLogin ||
+    /// scriptActive())` every frame (`AutoRelogin.ts:175-198`): an active
+    /// script wants the login whatever the auto-login checkbox says, and a
+    /// stopped one stops wanting it. The slot thread calls this on every
+    /// title-loop pass and at every session boundary.
+    pub(super) fn set_script_active(&self, active: bool) {
+        if self.script_active.swap(active, Ordering::AcqRel) != active {
+            self.notify_retry_wait();
+        }
     }
 
     /// Whether a dropped connection is relogged: a login is wanted, or a
     /// script is active (frozen `scriptActive()`), and the operator has not
     /// latched the slot logged out or asked for a logout.
-    pub(super) fn relogs_after_drop(&self, script_active: bool) -> bool {
+    pub(super) fn relogs_after_drop(&self) -> bool {
         let intent = self.intent.lock();
-        !intent.login_latched && !intent.want_logout && (intent.want_login || script_active)
+        !intent.want_logout && self.wanted(&intent)
+    }
+
+    /// The level-triggered login want: not latched off by the operator, and
+    /// a login intent or an active script.
+    fn wanted(&self, intent: &SlotIntent) -> bool {
+        !intent.login_latched
+            && (intent.want_login
+                || (!intent.error_hold && self.script_active.load(Ordering::Acquire)))
     }
 
     /// Wake a retry/backoff wait after non-intent control changes. Taking the
@@ -390,7 +390,7 @@ impl SlotArm {
         let world_generation = self.world_generation.load(Ordering::Relaxed);
         let deadline = Instant::now() + timeout;
         loop {
-            if self.stop.load(Ordering::Relaxed) || !intent.want_login || intent.login_latched {
+            if self.stop.load(Ordering::Relaxed) || !self.wanted(&intent) {
                 return false;
             }
             if interrupt_on_world_change
@@ -410,7 +410,7 @@ impl SlotArm {
 
     pub(super) fn login_command(&self, ingame: bool) -> Option<IntentCommand> {
         let intent = self.intent.lock();
-        (!ingame && intent.want_login && !intent.login_latched).then_some(IntentCommand {
+        (!ingame && self.wanted(&intent)).then_some(IntentCommand {
             generation: intent.generation,
         })
     }
@@ -431,21 +431,18 @@ impl SlotArm {
         intent.login_latched = true;
         intent.want_login = false;
         intent.auto_intent = false;
-        intent.script_intent = false;
     }
 
     fn acknowledge_observed_idle_logout(&self) {
         let mut intent = self.intent.lock();
         // An explicit Login issued after the idle request is the newest
         // command and must survive the delayed server acknowledgement.
-        if intent.want_login && !intent.auto_intent && !intent.script_intent && !intent.want_logout
-        {
+        if intent.want_login && !intent.auto_intent && !intent.want_logout {
             return;
         }
         intent.login_latched = true;
         intent.want_login = false;
         intent.auto_intent = false;
-        intent.script_intent = false;
     }
 
     fn acknowledge_login(&self, command: IntentCommand) {
@@ -458,7 +455,6 @@ impl SlotArm {
         let keep = self.auto_login.load(Ordering::Relaxed) && !intent.login_latched;
         intent.want_login = keep;
         intent.auto_intent = keep;
-        intent.script_intent = false;
     }
 }
 
@@ -477,6 +473,7 @@ pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
     };
     if world_changed {
         arm.world_generation.fetch_add(1, Ordering::Relaxed);
+        arm.intent.lock().error_hold = false;
         arm.notify_retry_wait();
     }
 }
@@ -842,10 +839,11 @@ impl Drop for QueuePlaceRetirement<'_> {
 /// observed even when it happens before the first queue poll.
 pub(super) fn permit_wait_cancelled(arm: &SlotArm) -> bool {
     let intent = arm.intent.lock();
+    let stale_auto = intent.auto_intent && !arm.auto_login.load(Ordering::Relaxed);
+    let script = !intent.error_hold && arm.script_active.load(Ordering::Acquire);
     arm.stop.load(Ordering::Relaxed)
-        || !intent.want_login
         || intent.login_latched
-        || (intent.auto_intent && !arm.auto_login.load(Ordering::Relaxed))
+        || !((intent.want_login && !stale_auto) || script)
 }
 
 /// Block until the already-enqueued slot owner receives a handshake permit,

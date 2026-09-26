@@ -30,15 +30,19 @@ inventory count as “all catalog scripts / all options qualified.”
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
 
-A dropped connection relogs when a login is wanted or a script is running or
-paused (rs2b0t's `autoLogin || scriptActive()`), unless the operator logged
-the slot out. It pauses a Load script whole: every await, step machine and
-task runtime stays, their clocks and the `Execution` wait clock stop, and the
-script resumes on the relogged session's first tick with the script walk it
-was following, and any walk request the dropped connection never sent,
-re-sent. An operator or idle logout, Stop or slot removal ends the session
-instead: the in-flight machine rows and task runtimes end (`aborted`,
-`reset`). Compiled scripts end their live step at either boundary.
+An offline slot logs in while a login is wanted (auto-login or a Log in) or a
+script is running or paused on it (rs2b0t's `autoLogin || scriptActive()`,
+re-evaluated on every title-loop pass), unless the operator logged the slot
+out. A dropped connection relogged that way pauses a Load script whole: every
+await, step machine and task runtime stays, their clocks and the `Execution`
+wait clock stop, and the script resumes on the relogged session's first
+tick. The slot then re-sends the script walk it was following, and the last
+eight walk, walk-near and abort-walk requests the script queued that never
+reached the dropped connection. Other unsent requests are dropped; their
+owners retry on their own timeouts. An operator or idle logout, Stop or slot
+removal ends the session instead: the in-flight machine rows and task
+runtimes end (`aborted`, `reset`). Compiled scripts end their live step at
+either boundary.
 
 ### File Load and catalog cards
 

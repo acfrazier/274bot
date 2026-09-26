@@ -127,8 +127,7 @@ use play_login::{
 use play_slots::SlotFrame;
 #[cfg(test)]
 use play_slots::{
-    end_slot_session, lapse_idle_script_relog, observe_slot_catalog_and_paired,
-    reset_slot_session_work,
+    end_slot_session, observe_slot_catalog_and_paired, reset_slot_session_work, sync_script_login,
 };
 #[cfg(test)]
 use play_status::{
