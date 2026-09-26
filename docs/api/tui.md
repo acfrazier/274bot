@@ -13,6 +13,8 @@ export BOT_VAULT_PASS=bot
 cargo run --release -p tui --bin tui-play -- --profile local-289
 # same scenarios as panel-play --live:
 cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_nav_routes
+# qualify under the shared core witness (panel catalog_watch / pair_watch):
+cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_thiever --catalog-core
 ```
 
 Shared server-profile flags match host-play / panel-play
@@ -23,7 +25,10 @@ Shared server-profile flags match host-play / panel-play
 accounts keep their vault setting. Unit tests render to
 ratatui `TestBackend` (no TTY). `--live` headed when a controlling
 terminal is present; otherwise it pumps headless and still prints
-PASS/FAIL.
+PASS/FAIL. `--catalog-core` / `--pair-core` (environment form
+`BOT_LIVE_CORE=catalog|pair`) hold a `--live` PASS until the shared core
+witness qualifies, exactly as the panel watches do; see
+[the harness guide](../harness.md#core-gated-qualification).
 
 ## Layout
 
