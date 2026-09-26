@@ -13,7 +13,7 @@
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, SceneRow};
 use crate::shim::InteractReq;
-use crate::walk::{Resilient, Walk, BAKED_TIMEOUT_MS, HOP_ATTEMPTS};
+use crate::walk::{Resilient, BAKED_TIMEOUT_MS, HOP_ATTEMPTS};
 
 use api::query::SceneReachOptions;
 use api::snapshot::WorldTile;
@@ -33,8 +33,10 @@ const LEAF_CLOSE_RADIUS: i32 = 3;
 const TOWARD_SLACK: i32 = 4;
 /// Frozen door open / leaf close settle wait.
 const DOOR_WAIT_MS: u64 = 5_000;
-/// Frozen `openBlockingDoor` walk timeout.
+/// Frozen `openBlockingDoor` walk: `walkResilient(t, { radius: 1,
+/// attempts: 3, timeoutMs: 30_000 })` (`Reach.ts:112–114`).
 const DOOR_WALK_MS: u64 = 30_000;
+const DOOR_WALK_ATTEMPTS: u32 = 3;
 /// Frozen `Traversal.walkResilient` default baked timeout (`Traversal.ts:107`).
 const WALK_MS: u64 = BAKED_TIMEOUT_MS;
 
@@ -196,7 +198,7 @@ struct Clear {
 enum ClearPhase {
     Start,
     LeafWait,
-    DoorWalk { door: Tile, walk: Walk },
+    DoorWalk { door: Tile, walk: Resilient },
     DoorOpen { door: Tile },
     DoorWait { door: Tile },
 }
@@ -237,13 +239,21 @@ impl Clear {
                         return done;
                     }
                 }
-                ClearPhase::DoorWalk { door, walk } => match walk.step(cx) {
-                    None => {
-                        self.phase = ClearPhase::DoorWalk { door, walk };
-                        return None;
+                ClearPhase::DoorWalk { door, mut walk } => {
+                    let out = walk.step(cx);
+                    while let Some(line) = walk.pop_log() {
+                        says.push_back(line);
                     }
-                    Some(_) => self.phase = ClearPhase::DoorOpen { door },
-                },
+                    match out {
+                        None => {
+                            self.phase = ClearPhase::DoorWalk { door, walk };
+                            return None;
+                        }
+                        // Frozen ignores the walk's result and reads the
+                        // door where the player stopped (`Reach.ts:112–118`).
+                        Some(_) => self.phase = ClearPhase::DoorOpen { door },
+                    }
+                }
                 ClearPhase::DoorOpen { door } => {
                     let Some(shut) = shut_at(door) else {
                         return Some(true);
@@ -275,6 +285,14 @@ impl Clear {
                     return None;
                 }
             }
+        }
+    }
+
+    /// The door-approach walk this clear has armed ([`Resilient::release`]).
+    fn release(&self) -> Option<InteractReq> {
+        match &self.phase {
+            ClearPhase::DoorWalk { walk, .. } => walk.release(),
+            _ => None,
         }
     }
 
@@ -328,7 +346,14 @@ impl Clear {
         let door = loc_tile(&door);
         if here.cheb(door) > 1 {
             // Frozen ignores the walk's result.
-            if let Ok(walk) = Walk::begin(door.world(), 1, DOOR_WALK_MS, false, cx) {
+            let walk = Resilient::new(
+                door.world(),
+                1,
+                DOOR_WALK_MS,
+                Some(DOOR_WALK_ATTEMPTS),
+                false,
+            );
+            if let Ok(walk) = walk.start(cx) {
                 self.phase = ClearPhase::DoorWalk { door, walk };
                 return Some(None);
             }
@@ -467,6 +492,14 @@ impl Family for EntityOp {
             logger: Logger::default(),
             after: None,
         })
+    }
+
+    /// A superseded reach stops the door approach it armed.
+    fn release(&self) -> Option<InteractReq> {
+        match &self.phase {
+            Phase::Clearing { clear, .. } => clear.release(),
+            _ => None,
+        }
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<&'static str> {

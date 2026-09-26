@@ -32,6 +32,9 @@
 //!   (`{ walkBack: () => opts.walkBack?.() }`).
 //! - [`Family::abort`]: optional cleanup when the host drops a live row
 //!   (ResetSession, a superseding start). It emits nothing.
+//! - [`Family::release`]: optional op that stops host work the row armed
+//!   (its walk follow). A superseding start sends it at the new start's
+//!   queue position; a reset does not (the host drops that work itself).
 //!
 //! # Lifecycle
 //!
@@ -172,6 +175,13 @@ pub(crate) trait Family: Sized + 'static {
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<Self::Output>;
 
     fn abort(&mut self, _why: AbortReason) {}
+
+    /// The op that stops the host work this row armed (a host walk follow),
+    /// sent when a newer exclusive start supersedes the row. A reset needs
+    /// none: the host drops its session work itself.
+    fn release(&self) -> Option<InteractReq> {
+        None
+    }
 }
 
 /// What `begin` decided.
@@ -612,6 +622,7 @@ pub(crate) fn kick_on_start(family: &str) -> bool {
 trait Machine {
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value>;
     fn abort(&mut self, why: AbortReason);
+    fn release(&self) -> Option<InteractReq>;
 }
 
 impl<F: Family> Machine for F {
@@ -626,6 +637,10 @@ impl<F: Family> Machine for F {
 
     fn abort(&mut self, why: AbortReason) {
         Family::abort(self, why);
+    }
+
+    fn release(&self) -> Option<InteractReq> {
+        Family::release(self)
     }
 }
 
@@ -712,11 +727,16 @@ impl Host {
         })
     }
 
-    fn abort_superseded(&mut self) {
+    /// Abort every superseded row; the ops that stop their host work
+    /// ([`Family::release`]) join the batch at `at`.
+    fn abort_superseded(&mut self, at: usize) {
         let mut i = 0;
         while i < self.rows.len() {
             if self.superseded(&self.rows[i]) {
                 let mut row = self.rows.remove(i);
+                if let Some(op) = row.machine.release() {
+                    self.ops.push((at, op));
+                }
                 row.machine.abort(AbortReason::Superseded);
                 self.settled
                     .push((row.handle, Outcome::Aborted(AbortReason::Superseded)));
@@ -802,7 +822,7 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
                     host.newest
                         .retain(|(group, _)| *group != F::EXCLUSIVE_GROUP);
                     host.newest.push((F::EXCLUSIVE_GROUP, handle));
-                    host.abort_superseded();
+                    host.abort_superseded(at);
                 }
                 host.place(at, ops);
                 host.rows.push(Row {
@@ -921,6 +941,9 @@ fn pass(js: &mut impl Js, pass: Pass) {
             return true;
         }
         if HOST.with(|host| host.borrow().superseded(row)) {
+            if let Some(op) = row.machine.release() {
+                HOST.with(|host| host.borrow_mut().place(at, vec![op]));
+            }
             row.machine.abort(AbortReason::Superseded);
             HOST.with(|host| host.borrow_mut().unstep(row.family, row.handle));
             settle(row.handle, Outcome::Aborted(AbortReason::Superseded));
@@ -940,7 +963,7 @@ fn pass(js: &mut impl Js, pass: Pass) {
         host.stepping.clear();
         let started = std::mem::replace(&mut host.rows, rows);
         host.rows.extend(started);
-        host.abort_superseded();
+        host.abort_superseded(at);
     });
 }
 
@@ -987,6 +1010,9 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
         // An ask started a newer row of this exclusive family: that row
         // owns the tick, so this step's decision and ops are dropped.
         if asked && HOST.with(|host| host.borrow().superseded(row)) {
+            if let Some(op) = row.machine.release() {
+                HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
+            }
             row.machine.abort(AbortReason::Superseded);
             return Some(Outcome::Aborted(AbortReason::Superseded));
         }

@@ -862,6 +862,19 @@ impl Resilient {
         self
     }
 
+    /// The host walk this ladder has armed, as the op that stops it: an
+    /// owner that ends or is dropped before the ladder does sends it, so
+    /// the host follow does not resume after a hold (as a returned frozen
+    /// walk has stopped its walker).
+    pub(crate) fn release(&self) -> Option<InteractReq> {
+        match &self.phase {
+            Phase::Walking(walk) => Some(InteractReq::AbortWalk {
+                request_id: walk.token,
+            }),
+            _ => None,
+        }
+    }
+
     /// Whether the ladder ended as frozen `WalkExecutor.lastOutcome ===
     /// 'unreachable'` (`Traversal.ts:201–204`): a dead verify probe.
     pub(crate) fn unreachable(&self) -> bool {

@@ -475,15 +475,35 @@ fn npc_dialog_opens_the_door_in_front_of_an_unreachable_npc_then_talks() {
         }] => *request_id,
         other => panic!("walk to the blocking door first, got {other:?}"),
     };
+    // Frozen approaches the door with walkResilient (Reach.ts:112-114): a
+    // failed baked walk takes the ladder's scene step, not the Open.
     snap.tick = 2;
     post_native(&iso, &snap, fail_native(request_id, 7, 5, 1));
     tick(&iso, 2);
-    assert_eq!(iso.drain_interacts(), vec![loc_op(7, 5, "Open", 1530)]);
-
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkTo {
+            x: 7,
+            z: 5,
+            level: 0
+        }]
+    );
+    let beside = grid((6, 5), &[], &[(7, 5)]);
     snap.tick = 3;
-    snap.locs = &[];
+    snap.here = Some(TileInput {
+        x: 6,
+        z: 5,
+        level: 0,
+    });
+    snap.reach = view(&beside);
     post(&iso, &snap);
     tick(&iso, 3);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(7, 5, "Open", 1530)]);
+
+    snap.tick = 4;
+    snap.locs = &[];
+    post(&iso, &snap);
+    tick(&iso, 4);
     assert_eq!(
         iso.drain_interacts(),
         vec![InteractReq::Npc {
@@ -493,15 +513,17 @@ fn npc_dialog_opens_the_door_in_front_of_an_unreachable_npc_then_talks() {
         }],
         "the cleared round talks"
     );
-    snap.tick = 4;
+    snap.tick = 5;
     snap.chat_modal_id = 241;
     post(&iso, &snap);
-    tick(&iso, 4);
+    tick(&iso, 5);
     assert_eq!(iso.probe("__ok").unwrap(), "done");
     assert!(logs(&iso).contains(&"reach: opening blocking 'Door' at (7,5)".to_string()));
     iso.join();
 }
 
+/// The door-approach walk of an interrupted reach is stopped: a guardian
+/// hold only freezes the host follow, which would resume after release.
 #[test]
 fn hold_and_reset_do_not_emit_another_talk() {
     let iso = spawn(NPC_DIALOG);
@@ -768,9 +790,28 @@ fn entity_op_walks_to_and_opens_the_door_toward_the_target_then_retries() {
         other => panic!("walk to the blocking door, got {other:?}"),
     };
 
-    // The walk fails; frozen ignores its result and still opens the door.
+    // The approach is frozen walkResilient (Reach.ts:112-114): a failed
+    // baked walk takes the scene step; the Open follows once the ladder
+    // ends beside the door.
     snap.tick = 3;
     post_native(&iso, &snap, fail_native(request_id, 7, 5, 1));
+    tick(&iso, 3);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkTo {
+            x: 7,
+            z: 5,
+            level: 0
+        }]
+    );
+    let beside = grid((6, 5), &[], &[(7, 5)]);
+    snap.here = Some(TileInput {
+        x: 6,
+        z: 5,
+        level: 0,
+    });
+    snap.reach = view(&beside);
+    post(&iso, &snap);
     tick(&iso, 3);
     assert_eq!(iso.drain_interacts(), vec![loc_op(7, 5, "Open", 1530)]);
     assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
