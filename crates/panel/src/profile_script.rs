@@ -163,7 +163,7 @@ impl Session {
         profile: &str,
         edit: impl FnOnce(&mut vault::ProfileSettings),
     ) -> bool {
-        let Some(vault) = self.core.vault_mut() else {
+        let Some(vault) = self.core.vault() else {
             self.error = Some("script: vault locked".into());
             return false;
         };
@@ -172,13 +172,16 @@ impl Session {
             return false;
         };
         edit(&mut row.settings);
-        match vault.upsert(row) {
-            Ok(()) => {
+        match self
+            .core
+            .save_profile(row, frontend_core::ArmMirror::None, "script")
+        {
+            Ok(_) => {
                 self.error = None;
                 true
             }
             Err(e) => {
-                self.error = Some(format!("script: {e}"));
+                self.error = Some(e);
                 false
             }
         }
@@ -540,20 +543,12 @@ impl Session {
                 names.push(name.clone());
             }
         }
-        let Some(play) = self.core.play() else {
+        if self.core.play().is_none() {
             return;
-        };
-        let mut stopped = 0usize;
-        for name in names {
-            let state = play.script_state(&name);
-            if matches!(
-                state,
-                script::RunState::Running | script::RunState::Paused | script::RunState::Starting
-            ) {
-                play.script_stop(&name);
-                stopped += 1;
-            }
         }
+        // The core also stops a slot still reaping a reload, which drops the
+        // replacement Start queued behind that reap.
+        let (_, stopped) = self.core.stop_scripts(&names);
         self.reload_generation = self.reload_generation.wrapping_add(1);
         self.reload_validation = None;
         self.clear_pending_reload();

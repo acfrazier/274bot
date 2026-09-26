@@ -4705,6 +4705,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
     assert_eq!(session.cred_settings.world, None);
     session.cred_settings.world = Some(2);
     assert!(session.save_credentials());
+    session.core.flush_writes();
     assert_eq!(
         Vault::unlock(&path, "bot")
             .unwrap()
@@ -4722,6 +4723,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
     session.cred_settings.world = None;
     session.cred_pass = "updated".into();
     assert!(session.save_credentials());
+    session.core.flush_writes();
     assert_eq!(
         Vault::unlock(&path, "bot")
             .unwrap()
@@ -4857,13 +4859,19 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
     s.cred_user = "alice".into();
     s.cred_pass = "pw".into();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
-    assert!(!s.save_credentials());
+    assert!(s.save_credentials(), "the edit is accepted and queued");
+    s.core.flush_writes();
+    s.pump_status();
     assert!(
         s.error
             .as_ref()
             .is_some_and(|e| e.starts_with("credentials:")),
-        "upsert failure must land on session.error, got {:?}",
+        "a failed durable write must land on session.error, got {:?}",
         s.error
+    );
+    assert!(
+        s.core.vault().unwrap().get("alice").is_none(),
+        "the unsaved profile is rolled back"
     );
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
@@ -5097,6 +5105,7 @@ fn set_random_settings_mirrors_running_arm() {
     play.attach_arm("alice", Arc::clone(&arm));
     s.core.set_play(Some(play));
     assert!(s.set_random_settings("alice", false, "attack", true));
+    s.core.flush_writes();
     assert!(
         !arm.random_events.load(Ordering::Relaxed),
         "toggle off must reach the live arm without respawn"
@@ -5111,6 +5120,7 @@ fn set_random_settings_mirrors_running_arm() {
         "lamp skill must reach the live arm without respawn"
     );
     assert!(s.set_random_settings("alice", true, "strength", true));
+    s.core.flush_writes();
     assert!(arm.random_events.load(Ordering::Relaxed));
     assert!(arm.lamp_auto.load(Ordering::Relaxed));
     assert_eq!(arm.lamp_skill.lock().unwrap().as_str(), "strength");
@@ -5195,8 +5205,10 @@ fn set_auto_login_mirrors_running_arm() {
     play.attach_arm("alice", Arc::clone(&arm));
     s.core.set_play(Some(play));
     assert!(s.set_auto_login("alice", true));
+    s.core.flush_writes();
     assert!(arm.auto_login.load(Ordering::Relaxed));
     assert!(s.set_auto_login("alice", false));
+    s.core.flush_writes();
     assert!(!arm.auto_login.load(Ordering::Relaxed));
 }
 

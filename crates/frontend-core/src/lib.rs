@@ -13,13 +13,14 @@
 
 pub mod fleet;
 pub mod operations;
+mod profiles;
 pub mod session;
 pub mod surface;
 
 pub use fleet::Fleet;
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use session::{
-    OperatorSession, Removal, ScriptStart, Selection, SlotTransition, StartSettled, Transition,
-    SLOT_REMOVE_TIMEOUT,
+    ArmMirror, OperatorSession, Removal, ScriptStart, Selection, SlotTransition, StartSettled,
+    Transition, SLOT_REMOVE_TIMEOUT,
 };
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface};

@@ -878,6 +878,7 @@ impl TuiSession {
         } else if removal.selection_cleared {
             app.focused = None;
         }
+        // The strip drops the member on the next pump.
     }
 
     /// Load every vault profile and log in every member (the `m` key). A
@@ -1792,17 +1793,24 @@ impl TuiSession {
         self.core.poll();
         self.settle_script_starts(app);
 
-        let statuses = self.core.statuses().to_vec();
-        // Running slots join the strip even when they are not in the
-        // vault (live minted names).
-        let mut names = self.names.clone();
-        for s in &statuses {
-            if !names.contains(&s.username) {
-                names.push(s.username.clone());
-            }
+        // The strip is the fleet: a removed member leaves it at once (its
+        // worker may still be logging out). Both copies reuse the app's
+        // buffers, so a steady pump allocates nothing here.
+        let members = self.core.members();
+        if app.names.as_slice() != members {
+            app.names.truncate(members.len());
+            let kept = app.names.len();
+            app.names.clone_from_slice(&members[..kept]);
+            app.names.extend_from_slice(&members[kept..]);
         }
-        app.names = names;
-        app.statuses = statuses;
+        app.focused = self
+            .core
+            .selected()
+            .and_then(|selected| app.names.iter().position(|n| n == selected));
+        self.core.copy_statuses_into(&mut app.statuses);
+        for failure in self.core.take_write_failures() {
+            app.error = Some(failure);
+        }
         let now = Instant::now();
         let sampled = self.resource_sampler.due(now);
         if sampled {
@@ -2345,10 +2353,16 @@ impl TuiSession {
             uid,
             settings: vault::ProfileSettings::default(),
         };
-        let Some(vault) = self.core.vault_mut() else {
-            return Ok(());
-        };
-        vault.upsert(profile).map_err(|e| format!("profile: {e}"))
+        // Startup only (before the terminal loop): waiting on the write
+        // here keeps a failed first-run profile a startup error.
+        let op = self
+            .core
+            .save_profile(profile, frontend_core::ArmMirror::None, "profile")?;
+        self.core.flush_writes();
+        match self.core.failure(op) {
+            Some(error) => Err(format!("profile: {error}")),
+            None => Ok(()),
+        }
     }
 }
 

@@ -65,13 +65,18 @@ fn empty_play() -> Play {
     )
 }
 
+fn vault_path(test: &str) -> std::path::PathBuf {
+    std::env::temp_dir()
+        .join(format!(
+            "274bot-frontend-core-{}-{test}",
+            std::process::id()
+        ))
+        .join("vault")
+}
+
 fn vault_with(test: &str, profiles: &[(&str, i32, bool)]) -> Vault {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-frontend-core-{}-{test}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("vault");
+    let path = vault_path(test);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let _ = std::fs::remove_file(&path);
     let mut vault = Vault::create(&path, "bot").unwrap();
     for (name, uid, auto_login) in profiles {
@@ -531,5 +536,141 @@ fn a_row_published_before_log_in_does_not_cancel_it() {
         s.operation(login).unwrap().outcome("alice"),
         Some(&Outcome::Cancelled),
         "a later Log out does cancel it"
+    );
+}
+
+#[test]
+fn a_profile_write_is_queued_and_the_arm_follows_only_once_it_is_durable() {
+    let mut s = session("write-queued", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let alice = arm(&s, "alice");
+
+    let op = s.set_auto_login("alice", true).unwrap();
+
+    assert!(
+        s.vault().unwrap().get("alice").unwrap().settings.auto_login,
+        "the edit is staged in memory at once"
+    );
+    assert!(
+        !alice.auto_login.load(Ordering::Relaxed),
+        "the running slot changes only after the write is durable"
+    );
+    assert_eq!(
+        s.operation(op).unwrap().outcome("alice"),
+        Some(&Outcome::Pending)
+    );
+    s.flush_writes();
+    assert_eq!(
+        s.operation(op).unwrap().outcome("alice"),
+        Some(&Outcome::Completed)
+    );
+    assert!(alice.auto_login.load(Ordering::Relaxed));
+    let disk = Vault::unlock(&vault_path("write-queued"), "bot").unwrap();
+    assert!(disk.get("alice").unwrap().settings.auto_login);
+}
+
+#[test]
+fn consecutive_writes_land_in_order_with_the_last_one_on_disk() {
+    let mut s = session("write-order", &[("alice", 1, false)]);
+    s.set_random_settings("alice", false, "Magic", false)
+        .unwrap();
+    s.set_auto_login("alice", true).unwrap();
+    s.set_random_settings("alice", true, "Prayer", true)
+        .unwrap();
+    s.flush_writes();
+    let disk = Vault::unlock(&vault_path("write-order"), "bot").unwrap();
+    let saved = &disk.get("alice").unwrap().settings;
+    assert!(saved.auto_login, "the earlier field edit is not lost");
+    assert!(saved.random_events);
+    assert_eq!(saved.lamp_skill, "Prayer");
+}
+
+#[test]
+fn a_failed_write_is_reported_restores_the_durable_value_and_leaves_the_arm() {
+    let mut s = session("write-fail", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let alice = arm(&s, "alice");
+    let before = alice.random_events.load(Ordering::Relaxed);
+    // The writer's temp file cannot be created where a directory sits.
+    let blocker = vault_path("write-fail").with_extension("tmp");
+    std::fs::create_dir_all(&blocker).unwrap();
+
+    let op = s
+        .set_random_settings("alice", !before, "Magic", false)
+        .unwrap();
+    s.flush_writes();
+    std::fs::remove_dir_all(&blocker).unwrap();
+
+    assert!(matches!(
+        s.operation(op).unwrap().outcome("alice"),
+        Some(Outcome::Failed(_))
+    ));
+    let failures = s.take_write_failures();
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].starts_with("random: "), "{failures:?}");
+    assert_eq!(
+        s.vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .random_events,
+        before,
+        "the staged edit is rolled back to the durable value"
+    );
+    assert_eq!(alice.random_events.load(Ordering::Relaxed), before);
+}
+
+#[test]
+fn stop_scripts_drops_a_start_queued_behind_a_reap() {
+    let iso = script::IsolatedEnv::enter("frontend-core-stop-queued");
+    let mut s = session("stop-queued", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let (js, shape) = looping_bot(&iso.dir);
+    let load = |js: &str| ScriptStart::Load {
+        js: js.to_string(),
+        shape,
+        bag: None,
+        siblings: Vec::new(),
+    };
+    s.start_script("alice", load(&js), None).unwrap();
+    settle_start(&mut s);
+    // Reload shape: Stop, then a replacement Start queued behind the reap.
+    s.stop_script("alice");
+    let replacement = s.start_script("alice", load(&js), None).unwrap();
+    assert_eq!(
+        s.play().unwrap().script_state("alice"),
+        script::RunState::Stopping
+    );
+
+    let (op, stopped) = s.stop_scripts(&["alice".to_string()]);
+
+    assert_eq!(stopped, 1, "a Stopping slot with a queued Start is stopped");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while s.operation(op).unwrap().outcome("alice") == Some(&Outcome::Pending)
+        && Instant::now() < deadline
+    {
+        s.poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        s.operation(op).unwrap().outcome("alice"),
+        Some(&Outcome::Completed)
+    );
+    for _ in 0..20 {
+        s.poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        s.play().unwrap().script_state("alice"),
+        script::RunState::Idle,
+        "the queued replacement never runs"
+    );
+    assert_eq!(
+        s.operation(replacement).unwrap().outcome("alice"),
+        Some(&Outcome::Cancelled)
     );
 }

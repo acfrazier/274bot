@@ -1101,9 +1101,9 @@ fn paint_button_action_does_not_queue_a_wire_cmd() {
 #[test]
 fn pump_resets_the_paint_toggle_when_the_paint_is_gone() {
     let mut session = TuiSession::new(dummy_options());
-    session.names = vec!["test".into()];
+    session.core.fleet_mut().add("test");
+    session.core.select("test");
     let mut app = TuiApp::new("274bot headless");
-    app.focused = Some(0);
     // The operator toggled to game chat while the old script painted.
     app.chat_data.show_game_chat = true;
     session.pump(&mut app);
@@ -1787,9 +1787,9 @@ fn settings_popup_writes_only_guardian_fields() {
         .play_mut()
         .unwrap()
         .attach_arm("alice", Arc::clone(&alice));
+    session.core.fleet_mut().add("alice");
+    session.core.select("alice");
     let mut app = TuiApp::new("tui");
-    app.names = vec!["alice".into()];
-    app.focused = Some(0);
     // A stale popup draft: every non-guardian field at its default.
     app.settings = vault::ProfileSettings {
         random_events: false,
@@ -1802,6 +1802,11 @@ fn settings_popup_writes_only_guardian_fields() {
     app.settings_dirty = true;
 
     session.pump(&mut app);
+    assert!(
+        alice.random_events.load(Ordering::Relaxed),
+        "the arm waits for the durable write"
+    );
+    session.core.flush_writes();
 
     let saved = session.core.vault().unwrap().get("alice").unwrap().clone();
     assert!(!saved.settings.random_events);
@@ -1835,8 +1840,23 @@ fn removing_the_focused_member_focuses_its_neighbour() {
     dispatch(&mut session, &mut app, AppAction::Focus("bob".into()));
 
     dispatch(&mut session, &mut app, AppAction::Remove);
+    session.pump(&mut app);
 
+    assert_eq!(
+        app.names,
+        ["alice".to_string()],
+        "the strip drops the member"
+    );
     assert_eq!(app.focused_name().as_deref(), Some("alice"));
+    let tab = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Tab,
+        crossterm::event::KeyModifiers::NONE,
+    );
+    let action = app.on_key(tab);
+    assert!(
+        !matches!(&action, AppAction::Focus(name) if name == "bob"),
+        "Tab must not reach a removed member still logging out: {action:?}"
+    );
     assert_eq!(session.core.selected(), Some("alice"));
     assert_eq!(session.core.members(), ["alice".to_string()]);
     assert!(bob.wants_logout(), "a connected member logs out cleanly");

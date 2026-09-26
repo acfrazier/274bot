@@ -2481,17 +2481,17 @@ impl Session {
         // stay raster Off so a flipped only-render-selected cannot attach
         // 49 extra RenderWorlds (~1 GB of loc Model clones each). Full-rate
         // keeps Gpu on every member on purpose.
-        if let Some(vault) = self.core.vault_mut() {
-            for (i, (name, _)) in names.iter().enumerate() {
-                if let Some(mut p) = vault.get(name).cloned() {
-                    p.settings.lowmem = true;
-                    p.settings.raster = if full_rate || i == 0 {
-                        vault::RasterMode::Gpu
-                    } else {
-                        vault::RasterMode::Off
-                    };
-                    let _ = vault.upsert(p);
-                }
+        for (i, (name, _)) in names.iter().enumerate() {
+            if let Some(mut p) = self.core.vault().and_then(|v| v.get(name)).cloned() {
+                p.settings.lowmem = true;
+                p.settings.raster = if full_rate || i == 0 {
+                    vault::RasterMode::Gpu
+                } else {
+                    vault::RasterMode::Off
+                };
+                let _ = self
+                    .core
+                    .save_profile(p, frontend_core::ArmMirror::None, "stress");
             }
         }
         self.set_multibox(true);
@@ -3209,6 +3209,9 @@ impl Session {
             }
         }
         if self.core.play().is_none() {
+            // A locked-down session still settles its profile writes.
+            self.core.poll_host();
+            self.surface_write_failures();
             return;
         }
         // Start/Stop return before the isolate is up or reaped: the core
@@ -3216,10 +3219,10 @@ impl Session {
         // observe of its own), refreshes rows and records transitions; the
         // panel then commits the Starts that settled.
         self.core.poll_host();
+        self.surface_write_failures();
         self.settle_script_starts();
         let mut current = std::mem::take(&mut self.statuses);
-        current.clear();
-        current.extend_from_slice(self.core.statuses());
+        self.core.copy_statuses_into(&mut current);
         self.ingest_tutorial_chat(&current);
         self.maybe_getvar_tutorial(&current);
         if let Some(play) = self.core.play() {
@@ -3294,9 +3297,16 @@ impl Session {
         }
     }
 
-    /// Snapshot of every slot's status (for the status section).
-    pub fn statuses(&self) -> Vec<SlotStatus> {
-        self.statuses.clone()
+    /// A durable profile write that failed after its edit was accepted.
+    fn surface_write_failures(&mut self) {
+        for failure in self.core.take_write_failures() {
+            self.error = Some(failure);
+        }
+    }
+
+    /// Every slot's status from the last poll (for the status section).
+    pub fn statuses(&self) -> &[SlotStatus] {
+        &self.statuses
     }
 
     /// Vault usernames plus any running slot outside the vault.
@@ -3363,18 +3373,18 @@ impl Session {
     }
 
     fn cache_tutorial(&mut self, name: &str, skipped: bool) {
-        let Some(vault) = self.core.vault_mut() else {
-            return;
-        };
-        let Some(mut profile) = vault.get(name).cloned() else {
+        let Some(mut profile) = self.core.vault().and_then(|v| v.get(name)).cloned() else {
             return;
         };
         if profile.settings.tutorial_skipped == Some(skipped) {
             return;
         }
         profile.settings.tutorial_skipped = Some(skipped);
-        if let Err(e) = vault.upsert(profile) {
-            self.error = Some(format!("tutorial: {e}"));
+        if let Err(e) = self
+            .core
+            .save_profile(profile, frontend_core::ArmMirror::None, "tutorial")
+        {
+            self.error = Some(e);
         }
     }
 
@@ -3756,7 +3766,7 @@ impl Session {
     /// (`ProfileSettings.auto_login`) and mirror it onto a running slot's
     /// `arm.auto_login`. Never spawns or stops a slot.
     pub fn set_auto_login(&mut self, name: &str, on: bool) -> bool {
-        let result = self.core.set_auto_login(name, on);
+        let result = self.core.set_auto_login(name, on).map(|_| ());
         self.apply_result(result)
     }
 
@@ -3787,7 +3797,8 @@ impl Session {
     ) -> bool {
         let result = self
             .core
-            .set_random_settings(name, random_events, lamp_skill, lamp_auto);
+            .set_random_settings(name, random_events, lamp_skill, lamp_auto)
+            .map(|_| ());
         self.apply_result(result)
     }
 
@@ -3817,14 +3828,14 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        let Some(vault) = self.core.vault_mut() else {
-            return;
-        };
-        if let Some(mut p) = vault.get(&name).cloned() {
+        if let Some(mut p) = self.core.vault().and_then(|v| v.get(&name)).cloned() {
             p.settings.raster = self.ui.raster;
             p.settings.lowmem = self.ui.lowmem;
-            if let Err(e) = vault.upsert(p) {
-                self.error = Some(format!("render prefs: {e}"));
+            if let Err(e) =
+                self.core
+                    .save_profile(p, frontend_core::ArmMirror::None, "render prefs")
+            {
+                self.error = Some(e);
             }
         }
     }
@@ -3943,10 +3954,10 @@ impl Session {
     pub fn vault_remove(&mut self, name: &str) -> bool {
         match self.core.vault_remove(name) {
             Ok(removed) => {
-                if removed {
+                if removed.is_some() {
                     self.error = None;
                 }
-                removed
+                removed.is_some()
             }
             Err(error) => {
                 self.error = Some(error);

@@ -431,6 +431,7 @@ fn claim_legacy_read_path_writes_vault_once() {
     let vault_path = dir.join("v.vault");
     let before = fs::read(&vault_path).unwrap();
     let _ = s.profile_overrides("alice", "catalog:Alcher", "Alcher");
+    s.core.flush_writes();
     let after_claim = fs::read(&vault_path).unwrap();
     assert_ne!(
         before, after_claim,
@@ -444,6 +445,7 @@ fn claim_legacy_read_path_writes_vault_once() {
         &[],
     );
     let _ = s.profile_overrides("alice", "catalog:Alcher", "Alcher");
+    s.core.flush_writes();
     let after_reads = fs::read(&vault_path).unwrap();
     assert_eq!(
         after_claim, after_reads,
@@ -1548,6 +1550,51 @@ fn reload_stop_all_clears_pending_without_restart() {
     assert!(s.pending_reload.is_none());
     wait_state(&s, "alice", script::RunState::Idle);
     wait_state(&s, "bob", script::RunState::Idle);
+}
+
+#[test]
+fn stop_all_during_a_reload_reap_drops_the_queued_replacement() {
+    let (mut s, dir) = session_with_play(&["alice"]);
+    let path = write_bot(&dir, "reap.ts", BOT_TS);
+    s.load_js(&path);
+    start_file_on(&mut s, "alice", &path);
+    let card = s.js.load(&path).unwrap();
+    // Reload shape: the old isolate is reaping and its replacement Start is
+    // queued behind the reap (no observe has run in between).
+    s.core.stop_script("alice");
+    s.core
+        .start_script(
+            "alice",
+            frontend_core::ScriptStart::Load {
+                js: card.js.clone(),
+                shape: card.shape,
+                bag: None,
+                siblings: Vec::new(),
+            },
+            Some(card.identity_key()),
+        )
+        .unwrap();
+    assert_eq!(
+        s.core.play().unwrap().script_state("alice"),
+        script::RunState::Stopping
+    );
+
+    s.script_stop_all();
+
+    assert_eq!(
+        s.last_bulk_script_report.as_deref(),
+        Some("Stop all: stopped 1")
+    );
+    wait_state(&s, "alice", script::RunState::Idle);
+    for _ in 0..20 {
+        s.pump_status();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        s.core.play().unwrap().script_state("alice"),
+        script::RunState::Idle,
+        "the queued replacement must not start after Stop all"
+    );
 }
 
 #[test]

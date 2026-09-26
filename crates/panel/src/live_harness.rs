@@ -1049,7 +1049,7 @@ pub(super) fn live_script_tick(
         let guard = session.scenario.lock().unwrap();
         guard.as_ref().and_then(|runner| {
             let owned = runner.owned_profile_names();
-            host_play::owned_terminal_startup_error(&session.statuses(), &owned)
+            host_play::owned_terminal_startup_error(session.statuses(), &owned)
         })
     };
     if let Some(message) = terminal_startup_failure {
@@ -1381,7 +1381,7 @@ impl LiveHarness {
             Self::Smoke(s) => !smoke_settled(
                 s.saw_scene2_at,
                 now,
-                focused_slot(session, &session.statuses()).is_some_and(|slot| slot.ingame),
+                focused_slot(session, session.statuses()).is_some_and(|slot| slot.ingame),
             ),
             _ => false,
         }

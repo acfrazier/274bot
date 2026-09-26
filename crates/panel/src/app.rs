@@ -1187,7 +1187,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         state.overlay.frame(ui, queue, min, size);
         // Script-paint overlay: the focused slot's paint renders in an
         // ImGui window over the chatbox rect — never on the game texture.
-        let statuses = state.session.statuses();
+        let statuses = state.session.statuses().to_vec();
         overlay_script_paint(
             ui,
             gpu,
@@ -1244,7 +1244,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             members.iter().any(|m| m == name) && draw_for_slot(&focus, name)
         });
     }
-    let statuses = state.session.statuses();
+    let statuses = state.session.statuses().to_vec();
     for (i, name) in members.iter().enumerate() {
         let [cx, cy, cw, ch] = cells[i];
         let is_focused = focused.as_deref() == Some(name.as_str());
@@ -3786,7 +3786,7 @@ fn background_ack_window(ui: &Ui, session: &mut Session, view: &ResourceView) {
 fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
     let members = state.session.core.members().to_vec();
-    let statuses = state.session.statuses();
+    let statuses = state.session.statuses().to_vec();
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     {
         let focus = state.session.focus.lock().unwrap();
@@ -4759,7 +4759,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
         }
     }
     state.session.pump_script_transpile();
-    let statuses = state.session.statuses();
+    let statuses = state.session.statuses().to_vec();
     let terminal_shot_status = {
         let label = state
             .session

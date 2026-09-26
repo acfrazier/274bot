@@ -6,8 +6,11 @@
 
 use std::collections::VecDeque;
 
-/// Reports kept for inspection. Older reports are dropped first; a pending
-/// member of a dropped report is simply no longer tracked.
+/// Settled reports kept for inspection. Only settled history is evicted
+/// (oldest first); a report with a pending member stays until it settles.
+/// Pending reports are bounded by live work: each new Login, Logout or
+/// Remove of a slot cancels that slot's older pending one, and Start, Stop,
+/// Pause, Resume and profile writes settle as the host or the writer reports.
 const REPORT_CAP: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -24,6 +27,8 @@ pub enum ActionKind {
     ScriptPause,
     ScriptResume,
     ScriptStop,
+    SaveProfile,
+    DeleteProfile,
 }
 
 impl ActionKind {
@@ -38,6 +43,8 @@ impl ActionKind {
             Self::ScriptPause => "Pause",
             Self::ScriptResume => "Resume",
             Self::ScriptStop => "Stop",
+            Self::SaveProfile => "Save profile",
+            Self::DeleteProfile => "Delete profile",
         }
     }
 }
@@ -105,8 +112,10 @@ impl OperationBook {
     pub(crate) fn open(&mut self, action: ActionKind) -> OperationId {
         self.next += 1;
         let id = OperationId(self.next);
-        if self.reports.len() == REPORT_CAP {
-            self.reports.pop_front();
+        if self.reports.len() >= REPORT_CAP {
+            if let Some(index) = self.reports.iter().position(OperationReport::is_settled) {
+                self.reports.remove(index);
+            }
         }
         self.reports.push_back(OperationReport {
             id,
@@ -178,13 +187,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn book_drops_the_oldest_report_past_its_cap() {
+    fn full_history_evicts_settled_reports_and_keeps_a_pending_one_until_it_settles() {
         let mut book = OperationBook::default();
-        let first = book.open(ActionKind::Load);
-        for _ in 0..REPORT_CAP {
-            book.open(ActionKind::Login);
+        let pending = book.open(ActionKind::Login);
+        book.set(pending, "slow", Outcome::Pending);
+        let first_settled = book.open(ActionKind::Load);
+        book.set(first_settled, "a", Outcome::Completed);
+        for _ in 0..(2 * REPORT_CAP) {
+            let op = book.open(ActionKind::Load);
+            book.set(op, "a", Outcome::Completed);
         }
-        assert!(book.get(first).is_none());
-        assert_eq!(book.last().unwrap().id, OperationId(REPORT_CAP as u64 + 1));
+        assert!(book.get(first_settled).is_none(), "settled history rolls");
+        assert_eq!(book.reports.len(), REPORT_CAP);
+
+        book.settle(|_, _| Some(Outcome::Completed));
+        assert_eq!(
+            book.get(pending).unwrap().outcome("slow"),
+            Some(&Outcome::Completed),
+            "a late settlement still lands on the accepted operation"
+        );
     }
 }

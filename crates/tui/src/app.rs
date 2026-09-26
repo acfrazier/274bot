@@ -867,7 +867,14 @@ impl TuiApp {
     /// `Play::focus` — the app's index alone would leave the session on
     /// the boot slot's sample gate.
     fn cycle_focus(&mut self) -> Option<String> {
-        let running: Vec<&str> = self.statuses.iter().map(|s| s.username.as_str()).collect();
+        // Running members only: a removed slot still logging out is not in
+        // the strip and must not be focusable.
+        let running: Vec<&str> = self
+            .statuses
+            .iter()
+            .map(|s| s.username.as_str())
+            .filter(|name| self.names.iter().any(|n| n == name))
+            .collect();
         if running.is_empty() {
             return None;
         }

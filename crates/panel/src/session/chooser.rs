@@ -8,9 +8,10 @@ impl Session {
     /// Save the credentials fields as a vault profile: the username field
     /// is the key, the password field the secret, and an existing profile's
     /// uid/settings are kept. Does not require a focused profile (first-run
-    /// empty vault). After a successful upsert, spawns the slot via the
+    /// empty vault). After the write is queued, spawns the slot via the
     /// existing FIFO if it is not running, then selects it. Returns whether
-    /// the write landed; failures set [`Session::error`].
+    /// the write was accepted; a failed durable write is reported on a later
+    /// frame and restores the saved profile.
     pub fn save_credentials(&mut self) -> bool {
         if self.core.vault().is_none() {
             self.error = Some("credentials: vault locked".into());
@@ -26,7 +27,7 @@ impl Session {
             .as_deref()
             .filter(|old| !old.is_empty() && old.trim() != username);
         let profile = {
-            let vault = self.core.vault_mut().expect("vault checked");
+            let vault = self.core.vault().expect("vault checked");
             let existing = if let Some(old) = rename_from {
                 vault.get(old).cloned()
             } else {
@@ -50,29 +51,21 @@ impl Session {
                     .unwrap_or_else(|| self.cred_settings.clone()),
             }
         };
-        match self
-            .core
-            .vault_mut()
-            .expect("vault checked")
-            .upsert(profile.clone())
+        // Staged now and written off this thread; a running slot learns the
+        // next-handshake settings once the write is durable.
+        if let Err(e) =
+            self.core
+                .save_profile(profile, frontend_core::ArmMirror::Remember, "credentials")
         {
-            Ok(()) => {}
-            Err(e) => {
-                self.error = Some(format!("credentials: {e}"));
-                return false;
-            }
+            self.error = Some(e);
+            return false;
         }
         if let Some(old) = rename_from {
-            match self.core.vault_mut().expect("vault checked").remove(old) {
-                Ok(_) => {}
-                Err(e) => {
-                    self.error = Some(format!("credentials: {e}"));
-                    return false;
-                }
+            let old = old.to_string();
+            if let Err(e) = self.core.vault_remove(&old) {
+                self.error = Some(e);
+                return false;
             }
-        }
-        if let Some(play) = self.core.play_mut() {
-            play.remember_profile(profile);
         }
         self.chooser_edit = None;
         // `select` builds the arm from the vault auto-login setting; a

@@ -16,10 +16,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus};
-use vault::Vault;
+use vault::{Profile, Vault, VaultChange};
 
 use crate::fleet::Fleet;
 use crate::operations::{ActionKind, OperationBook, OperationId, OperationReport, Outcome};
+use crate::profiles::{ProfileWriter, Written};
 use crate::surface::SlotSurface;
 
 /// Clean-logout window a connected member gets on removal before its worker
@@ -92,6 +93,26 @@ pub struct StartSettled {
     pub outcome: Option<script::StartOutcome>,
 }
 
+/// What a running slot learns once a profile write is durable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArmMirror {
+    /// Nothing live changes (assignments, tutorial flag, render prefs).
+    None,
+    AutoLogin(bool),
+    Guardian {
+        random_events: bool,
+        lamp_skill: String,
+        lamp_auto: bool,
+    },
+    /// Handshake-time settings (password, world) for the next login.
+    Remember,
+}
+
+struct PendingWrite {
+    label: &'static str,
+    mirror: ArmMirror,
+}
+
 pub struct OperatorSession<Io> {
     vault: Option<Vault>,
     play: Option<Play>,
@@ -100,8 +121,18 @@ pub struct OperatorSession<Io> {
     slots: HashMap<String, Io>,
     removals: HashMap<String, PendingRemoval<Io>>,
     statuses: Vec<SlotStatus>,
+    /// The next poll's rows; swapped with `statuses` so both keep their
+    /// buffers and a steady-state poll allocates nothing.
+    polled: Vec<SlotStatus>,
     transitions: Vec<SlotTransition>,
     operations: OperationBook,
+    /// Durable vault writes, created with the first write.
+    writer: Option<ProfileWriter>,
+    writes: HashMap<OperationId, PendingWrite>,
+    /// The newest write per profile: only its failure restores the durable
+    /// value, so an older failure cannot undo a newer staged edit.
+    latest_write: HashMap<String, OperationId>,
+    write_failures: Vec<String>,
     /// Load Starts whose setup has not settled, by slot.
     starts: HashMap<String, OperationId>,
     settled_starts: Vec<StartSettled>,
@@ -120,8 +151,13 @@ impl<Io> OperatorSession<Io> {
             slots: HashMap::new(),
             removals: HashMap::new(),
             statuses: Vec::new(),
+            polled: Vec::new(),
             transitions: Vec::new(),
             operations: OperationBook::default(),
+            writer: None,
+            writes: HashMap::new(),
+            latest_write: HashMap::new(),
+            write_failures: Vec::new(),
             starts: HashMap::new(),
             settled_starts: Vec::new(),
             spawn_workers: true,
@@ -132,17 +168,14 @@ impl<Io> OperatorSession<Io> {
     /// Adopt an unlocked vault and its freshly built [`Play`]. No slot is
     /// spawned here.
     pub fn start(&mut self, vault: Vault, play: Play) {
-        self.statuses = play.statuses();
+        play.statuses_into(&mut self.statuses);
         self.play = Some(play);
         self.vault = Some(vault);
+        self.writer = None;
     }
 
     pub fn vault(&self) -> Option<&Vault> {
         self.vault.as_ref()
-    }
-
-    pub fn vault_mut(&mut self) -> Option<&mut Vault> {
-        self.vault.as_mut()
     }
 
     pub fn play(&self) -> Option<&Play> {
@@ -189,6 +222,15 @@ impl<Io> OperatorSession<Io> {
         &self.statuses
     }
 
+    /// Copy the rows into a front end's retained vector, reusing its row
+    /// buffers: no allocation when nothing grew.
+    pub fn copy_statuses_into(&self, out: &mut Vec<SlotStatus>) {
+        out.truncate(self.statuses.len());
+        let kept = out.len();
+        out.clone_from_slice(&self.statuses[..kept]);
+        out.extend_from_slice(&self.statuses[kept..]);
+    }
+
     pub fn status(&self, name: &str) -> Option<&SlotStatus> {
         self.statuses.iter().find(|s| s.username == name)
     }
@@ -225,11 +267,9 @@ impl<Io> OperatorSession<Io> {
             .as_ref()
             .map(|v| v.profiles().map(|p| p.username.clone()).collect())
             .unwrap_or_default();
-        if let Some(play) = &self.play {
-            for s in play.statuses() {
-                if !names.contains(&s.username) {
-                    names.push(s.username);
-                }
+        for s in &self.statuses {
+            if !names.contains(&s.username) {
+                names.push(s.username.clone());
             }
         }
         names
@@ -568,11 +608,10 @@ impl<Io> OperatorSession<Io> {
         self.fleet.remove(name);
         self.fleet.clear_latch(name);
         self.operations.cancel_pending(ActionKind::Login, name);
-        let connected = self.play.as_ref().is_some_and(|play| {
-            play.statuses()
-                .iter()
-                .any(|status| status.username == name && status.connected)
-        });
+        let connected = self
+            .play
+            .as_ref()
+            .is_some_and(|play| play.slot_connected(name));
         let retained = self
             .slots
             .remove(name)
@@ -642,14 +681,15 @@ impl<Io> OperatorSession<Io> {
     /// their own work between the phases call the halves directly.
     pub fn poll_host(&mut self) {
         self.transitions.clear();
+        self.take_writes();
         let Some(play) = self.play.as_ref() else {
             return;
         };
         play.pump_script_lifecycles();
-        let current = play.statuses();
+        play.statuses_into(&mut self.polled);
         self.poll_starts();
-        record_transitions(&self.statuses, &current, &mut self.transitions);
-        self.statuses = current;
+        record_transitions(&self.statuses, &self.polled, &mut self.transitions);
+        std::mem::swap(&mut self.statuses, &mut self.polled);
         self.settle_operations();
     }
 
@@ -663,7 +703,6 @@ impl<Io> OperatorSession<Io> {
         if self.removals.is_empty() {
             return;
         }
-        let statuses = self.play.as_ref().map(Play::statuses).unwrap_or_default();
         let ready: Vec<(String, bool)> = self
             .removals
             .iter()
@@ -672,9 +711,10 @@ impl<Io> OperatorSession<Io> {
                 let owns_current_lifetime = current_arm
                     .as_ref()
                     .is_some_and(|arm| Arc::ptr_eq(arm, &pending.arm));
-                let disconnected = !statuses
-                    .iter()
-                    .any(|status| status.username == name.as_str() && status.connected);
+                let disconnected = !self
+                    .play
+                    .as_ref()
+                    .is_some_and(|play| play.slot_connected(name));
                 let timed_out =
                     now.saturating_duration_since(pending.started) >= SLOT_REMOVE_TIMEOUT;
                 // A missing arm means the pending lifetime ended by itself;
@@ -800,8 +840,13 @@ impl<Io> OperatorSession<Io> {
                         _ => Some(Outcome::Completed),
                     }
                 }
-                // Settled at dispatch (Load, Select) or by poll_starts.
-                ActionKind::Select | ActionKind::Load | ActionKind::ScriptStart => None,
+                // Settled at dispatch (Load, Select), by poll_starts, or by
+                // the profile writer.
+                ActionKind::Select
+                | ActionKind::Load
+                | ActionKind::ScriptStart
+                | ActionKind::SaveProfile
+                | ActionKind::DeleteProfile => None,
             }
         });
     }
@@ -886,68 +931,228 @@ impl<Io> OperatorSession<Io> {
         op
     }
 
-    /// Persist a profile's auto-login and mirror it onto a running slot's
-    /// arm. Never spawns or stops a slot.
-    pub fn set_auto_login(&mut self, name: &str, on: bool) -> Result<(), String> {
+    /// Stop every listed slot's script, including a slot still reaping a
+    /// previous run with a replacement Start queued behind it: Stop drops
+    /// that queued Start. Returns the operation and how many were stopped.
+    pub fn stop_scripts(&mut self, names: &[String]) -> (OperationId, usize) {
+        let op = self.operations.open(ActionKind::ScriptStop);
+        let mut stopped = 0;
+        for name in names {
+            let state = self
+                .play
+                .as_ref()
+                .map_or(script::RunState::Idle, |play| play.script_state(name));
+            let outcome = match (state, self.play.as_ref()) {
+                (
+                    script::RunState::Running
+                    | script::RunState::Paused
+                    | script::RunState::Starting
+                    | script::RunState::Stopping,
+                    Some(play),
+                ) => {
+                    play.script_stop(name);
+                    stopped += 1;
+                    Outcome::Pending
+                }
+                _ => Outcome::Skipped("no script".into()),
+            };
+            self.operations.set(op, name, outcome);
+        }
+        (op, stopped)
+    }
+
+    /// Stage `profile` in the in-memory vault and queue its durable write.
+    /// Returns at once; the operation settles in [`Self::poll`], where a
+    /// successful write applies `mirror` to a running slot and a failed one
+    /// restores the durable value (unless a newer write is queued) and is
+    /// reported through [`Self::take_write_failures`] prefixed by `label`.
+    pub fn save_profile(
+        &mut self,
+        profile: Profile,
+        mirror: ArmMirror,
+        label: &'static str,
+    ) -> Result<OperationId, String> {
+        self.ensure_writer();
         let vault = self
             .vault
             .as_mut()
-            .ok_or_else(|| "auto-login: vault locked".to_string())?;
-        let mut profile = vault
+            .ok_or_else(|| format!("{label}: vault locked"))?;
+        vault.stage_upsert(profile.clone());
+        Ok(self.submit_write(
+            ActionKind::SaveProfile,
+            VaultChange::Upsert(profile),
+            mirror,
+            label,
+        ))
+    }
+
+    /// Delete a vault profile only; a live member is not logged out or
+    /// dropped. Returns `None` when there was no such profile.
+    pub fn vault_remove(&mut self, name: &str) -> Result<Option<OperationId>, String> {
+        self.ensure_writer();
+        let vault = self
+            .vault
+            .as_mut()
+            .ok_or_else(|| "chooser: vault locked".to_string())?;
+        if !vault.stage_remove(name) {
+            return Ok(None);
+        }
+        Ok(Some(self.submit_write(
+            ActionKind::DeleteProfile,
+            VaultChange::Remove(name.to_string()),
+            ArmMirror::None,
+            "chooser",
+        )))
+    }
+
+    /// The writer snapshots the durable vault, so it must exist before the
+    /// first change is staged.
+    fn ensure_writer(&mut self) {
+        if self.writer.is_none() {
+            if let Some(vault) = self.vault.as_ref() {
+                self.writer = Some(ProfileWriter::spawn(vault.store()));
+            }
+        }
+    }
+
+    fn submit_write(
+        &mut self,
+        action: ActionKind,
+        change: VaultChange,
+        mirror: ArmMirror,
+        label: &'static str,
+    ) -> OperationId {
+        let op = self.operations.open(action);
+        let name = change.username().to_string();
+        self.operations.set(op, &name, Outcome::Pending);
+        self.writes.insert(op, PendingWrite { label, mirror });
+        self.latest_write.insert(name, op);
+        if let Some(writer) = self.writer.as_mut() {
+            writer.submit(op, change);
+        }
+        op
+    }
+
+    /// Persist a profile's auto-login; a running slot's arm follows once the
+    /// write is durable. Never spawns or stops a slot.
+    pub fn set_auto_login(&mut self, name: &str, on: bool) -> Result<OperationId, String> {
+        let mut profile = self
+            .vault
+            .as_ref()
+            .ok_or_else(|| "auto-login: vault locked".to_string())?
             .get(name)
             .cloned()
             .ok_or_else(|| format!("auto-login: no profile {name}"))?;
         profile.settings.auto_login = on;
-        vault
-            .upsert(profile)
-            .map_err(|e| format!("auto-login: {e}"))?;
-        if let Some(play) = self.play.as_ref() {
-            if let Some(arm) = play.arm(name) {
-                arm.set_auto_login(on);
-            }
-            play.wake(name);
-        }
-        Ok(())
+        self.save_profile(profile, ArmMirror::AutoLogin(on), "auto-login")
     }
 
-    /// Persist a profile's random-event guardian settings and mirror them
-    /// onto a running slot's arm so toggling off never acts or holds without
-    /// a respawn. The vault is written first; the arm only on success.
+    /// Persist a profile's random-event guardian fields; a running slot's
+    /// arm follows once the write is durable, so toggling off never acts or
+    /// holds without a respawn.
     pub fn set_random_settings(
         &mut self,
         name: &str,
         random_events: bool,
         lamp_skill: &str,
         lamp_auto: bool,
-    ) -> Result<(), String> {
-        let vault = self
+    ) -> Result<OperationId, String> {
+        let mut profile = self
             .vault
-            .as_mut()
-            .ok_or_else(|| "random: vault locked".to_string())?;
-        let mut profile = vault
+            .as_ref()
+            .ok_or_else(|| "random: vault locked".to_string())?
             .get(name)
             .cloned()
             .ok_or_else(|| format!("random: no profile {name}"))?;
         profile.settings.random_events = random_events;
         profile.settings.lamp_skill = lamp_skill.to_string();
         profile.settings.lamp_auto = lamp_auto;
-        vault.upsert(profile).map_err(|e| format!("random: {e}"))?;
-        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.random_events.store(random_events, Ordering::Relaxed);
-            arm.lamp_auto.store(lamp_auto, Ordering::Relaxed);
-            *arm.lamp_skill.lock().unwrap() = lamp_skill.to_string();
-        }
-        Ok(())
+        let mirror = ArmMirror::Guardian {
+            random_events,
+            lamp_skill: lamp_skill.to_string(),
+            lamp_auto,
+        };
+        self.save_profile(profile, mirror, "random")
     }
 
-    /// Delete a vault profile only. A live member is not logged out or
-    /// dropped. Returns whether a row was removed.
-    pub fn vault_remove(&mut self, name: &str) -> Result<bool, String> {
-        let vault = self
-            .vault
-            .as_mut()
-            .ok_or_else(|| "chooser: vault locked".to_string())?;
-        vault.remove(name).map_err(|e| format!("chooser: {e}"))
+    /// Failed profile writes since the last take, as `label: error` lines.
+    pub fn take_write_failures(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.write_failures)
+    }
+
+    /// Wait for every queued profile write and settle it. For startup and
+    /// harness boundaries only: it blocks on disk I/O, so frame paths use
+    /// [`Self::poll`] instead.
+    pub fn flush_writes(&mut self) {
+        while let Some(written) = self.writer.as_mut().and_then(ProfileWriter::wait_take) {
+            self.settle_write(written);
+        }
+    }
+
+    fn take_writes(&mut self) {
+        while let Some(written) = self.writer.as_mut().and_then(ProfileWriter::try_take) {
+            self.settle_write(written);
+        }
+    }
+
+    fn settle_write(&mut self, written: Written) {
+        let Some(pending) = self.writes.remove(&written.op) else {
+            return;
+        };
+        let newest = self.latest_write.get(&written.username) == Some(&written.op);
+        if newest {
+            self.latest_write.remove(&written.username);
+        }
+        match written.result {
+            Ok(()) => {
+                self.operations
+                    .set(written.op, &written.username, Outcome::Completed);
+                self.apply_mirror(&written.username, pending.mirror);
+            }
+            Err(error) => {
+                if newest {
+                    if let Some(vault) = self.vault.as_mut() {
+                        vault.restore(&written.username, written.durable);
+                    }
+                }
+                self.write_failures
+                    .push(format!("{}: {error}", pending.label));
+                self.operations
+                    .set(written.op, &written.username, Outcome::Failed(error));
+            }
+        }
+    }
+
+    fn apply_mirror(&mut self, name: &str, mirror: ArmMirror) {
+        let Some(play) = self.play.as_mut() else {
+            return;
+        };
+        match mirror {
+            ArmMirror::None => {}
+            ArmMirror::AutoLogin(on) => {
+                if let Some(arm) = play.arm(name) {
+                    arm.set_auto_login(on);
+                }
+                play.wake(name);
+            }
+            ArmMirror::Guardian {
+                random_events,
+                lamp_skill,
+                lamp_auto,
+            } => {
+                if let Some(arm) = play.arm(name) {
+                    arm.random_events.store(random_events, Ordering::Relaxed);
+                    arm.lamp_auto.store(lamp_auto, Ordering::Relaxed);
+                    *arm.lamp_skill.lock().unwrap() = lamp_skill;
+                }
+            }
+            ArmMirror::Remember => {
+                let profile = self.vault.as_ref().and_then(|v| v.get(name)).cloned();
+                if let Some(profile) = profile {
+                    play.remember_profile(profile);
+                }
+            }
+        }
     }
 }
 
@@ -959,8 +1164,17 @@ impl<Io> OperatorSession<Io> {
         self.spawn_workers = on;
     }
 
+    /// Direct vault access for fixture setup. Settles queued writes first
+    /// and lets the next write snapshot whatever the fixture persisted.
+    pub fn vault_mut(&mut self) -> Option<&mut Vault> {
+        self.flush_writes();
+        self.writer = None;
+        self.vault.as_mut()
+    }
+
     pub fn set_vault(&mut self, vault: Option<Vault>) {
         self.vault = vault;
+        self.writer = None;
     }
 
     pub fn set_play(&mut self, play: Option<Play>) {
@@ -974,7 +1188,6 @@ impl<Io> OperatorSession<Io> {
     pub fn fleet_mut(&mut self) -> &mut Fleet {
         &mut self.fleet
     }
-
 }
 
 fn completed_or_failed(result: Result<(), String>) -> Outcome {
