@@ -120,6 +120,8 @@ mod dialog;
 #[cfg(feature = "load")]
 mod drive_partner_trade;
 #[cfg(feature = "load")]
+mod fight_upkeep;
+#[cfg(feature = "load")]
 mod fire;
 /// The hunt step machines on the machine host (fence F09).
 #[cfg(feature = "load")]

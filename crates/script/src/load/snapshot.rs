@@ -15,11 +15,20 @@ thread_local! {
     /// primary animation began). Cleared on `ResetSession` and whenever the JS
     /// snapshot object is rebuilt.
     static LAST_ANIMATING: Cell<Option<(bool, u64)>> = const { Cell::new(None) };
+    /// The edge of the last post, as the JS snapshot's `swing_started` holds
+    /// it, for step machines that gate on it (`fight_upkeep`).
+    static SWING_STARTED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// `ResetSession`: the swing edge starts over with the new session.
 pub(super) fn on_reset() {
     LAST_ANIMATING.with(|cell| cell.set(None));
+    SWING_STARTED.with(|cell| cell.set(false));
+}
+
+/// Frozen `swingStartedThisTick()`: the last post began our swing animation.
+pub(crate) fn swing_started() -> bool {
+    SWING_STARTED.with(Cell::get)
 }
 
 /// Materialise the decoded FlatBuffer snapshot as the JS object the
@@ -816,6 +825,7 @@ pub(super) fn materialize_snapshot(
         let previous = cell.replace(Some((animating_now, tick_number)));
         previous.is_some_and(|(anim, tick)| animating_now && !anim && tick != tick_number)
     });
+    SWING_STARTED.with(|cell| cell.set(swing_started));
     let swing = v8::Boolean::new(&mut scope, swing_started);
     set(&mut scope, obj, "swing_started", swing.into())?;
     if snap.has_main_modal_id() {

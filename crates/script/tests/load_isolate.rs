@@ -8969,33 +8969,6 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_bury_one_in_fight_queues_held_bury_when_idle() {
-    let src = r#"
-import { buryOneInFight } from '../../api/combat/fightUpkeep.js';
-export default class T extends LoopingBot {
-    loop() { globalThis.__probe = buryOneInFight('Bones'); }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.animating = false;
-    let inv = [nc(Some("Bones"), 2)];
-    snap.inv = &inv;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    assert_eq!(value, true, "buryOneInFight queues when not animating");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::Held {
-            name: "Bones".into(),
-            action: "Bury".into(),
-        }],
-    );
-    iso.join();
-}
-
-#[test]
 fn isolate_hash_bot_shop_import_resolves_at_start() {
     let src = r#"
 import { Shop } from '#/bot/api/shop/Shop.js';

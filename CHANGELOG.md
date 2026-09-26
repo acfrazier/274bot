@@ -306,6 +306,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   and cancelled ticks no longer manufacture recovery, while a clean loop after
   reconnect and explicit Stop clear the active status and retain diagnostic
   history.
+- `buryOneInFight` follows frozen `fightUpkeep`: it skips only the tick the
+  swing began instead of every animating tick, so bones are buried during
+  attack cooldowns, and it answers true only once the backpack drops a slot
+  within three ticks (a queued Bury is no longer a burial). One Rust
+  `fight-bury` machine owns the gate, the click and the confirmation.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 
