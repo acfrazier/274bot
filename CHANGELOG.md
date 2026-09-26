@@ -72,8 +72,25 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   hat/apron checks on the way in, free on the way out), the West Ardougne
   fence climb and the Miscellania castle stairs are now edges. 2,240 →
   2,758 edges (+510 door, +8 stairs), pack +34,776 bytes; bakes stay
-  byte-identical. Quest-stage named doors, bespoke quest/area handlers and
-  player-relative or randomised landings are not edges yet.
+  byte-identical.
+- Quest-stage and guild doors and guarded ladders are now 289 edges (274V10
+  unchanged). A loc no other producer covers whose own `[oploc1]` opener (or
+  its category's) walks the player through one of the engine's
+  open-and-close door procs, or climbs `~climb_ladder`, gets an edge per
+  crossing the opener provably makes: it is evaluated per placement and
+  side with the player past every threshold, and each check on that path
+  becomes the minimum the edge requires (quest progress as the completed
+  journal row, or the raw varp when 289 transmits it; skill levels; carried
+  or worn items; members). Talk, NPC lookups, key use, state writes and
+  movement after the crossing keep an opener out. New: the Heroes' and
+  Legends' Guild doors, the Mining Guild door and surface ladder (mining
+  60), Witch's House, Priest in Peril temple, Nature Spirit, Mourner HQ,
+  Troll Stronghold arena and Tai Bwo Wannai doors, one-way exits (Khazard's
+  stronghold, jail and cell doors) and quest ladders. 2,758 → 2,961 edges
+  (+155 door, +48 ladder), pack +14,550 bytes, placements with an edge
+  1,744 → 1,901; bakes stay byte-identical. Openers gated on an in-progress
+  quest window, shared or untransmitted flags, NPC dialogs, keys used on the
+  loc and player-relative or randomised landings are still not edges.
 - Added shared native-map data contracts: independently keyed image/POI caches,
   checked manifests and data-only service records, resumable partial-entry
   validation, bounded map-record reads and 24-texture LOD selection. Raw visual

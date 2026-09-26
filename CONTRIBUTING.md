@@ -130,6 +130,17 @@ LIVE=1 cargo test -p host-play -- --ignored --test-threads=1
 LIVE=1 cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_nav_door
 ```
 
+Ordinary `cargo test` reads no content outside the repo. The nav real-map
+qualification tests are `#[ignore]`d and need the content tree and its
+client config jag named explicitly (colon-separated, one jag per root or one
+for all); a missing input fails, never skips:
+
+```bash
+NAV_CONTENT_ROOT=$HOME/experiments/lostcity-289/content \
+NAV_CACHE=$HOME/experiments/lostcity-289/engine/data/pack/client/config \
+cargo test -p nav --lib -- --ignored
+```
+
 Nav / panel / scenario twins live in `crates/e2e`. Login / RSS / null-raster
 twins live in `crates/host-play`. Ordered multi-case native runs:
 [docs/e2e-suite.md](docs/e2e-suite.md). Memory fleet harness:
