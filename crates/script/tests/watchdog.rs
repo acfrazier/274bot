@@ -490,6 +490,44 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
     slot.stop();
 }
 
+/// Frozen `RecoveryHints` outlives a StallGuard restart (`StallGuard.ts:34–39`):
+/// the restarted script takes the anchor the previous run latched.
+#[test]
+fn watchdog_restart_hands_the_latched_recovery_anchor_to_the_new_isolate() {
+    let mut slot = SlotScript::new();
+    let src = r#"
+import { RecoveryHints } from '../../runtime/RecoveryHints.js';
+globalThis.__hints = RecoveryHints;
+export default class T extends LoopingBot { loop() {} }
+"#;
+    slot.start_load(src.into(), LoadShape::CompatClass, vec![])
+        .unwrap();
+    wait_slot_state(&mut slot, script::RunState::Running);
+    let take =
+        "(() => { const t = __hints.takeAnchor(); return t ? [t.x, t.z, t.level] : null; })()";
+    assert_eq!(
+        slot.probe(take).unwrap(),
+        serde_json::Value::Null,
+        "no restart yet"
+    );
+    slot.probe("(__hints.anchor = { x: 3200, z: 3201, level: 0 }, true)")
+        .unwrap();
+
+    slot.restart_load_from_identity(Instant::now()).unwrap();
+    wait_slot_state(&mut slot, script::RunState::Running);
+    assert_eq!(
+        slot.probe(take).unwrap(),
+        serde_json::json!([3200, 3201, 0]),
+        "the restarted isolate takes the anchor the stalled run latched"
+    );
+    assert_eq!(
+        slot.probe(take).unwrap(),
+        serde_json::Value::Null,
+        "taken once"
+    );
+    slot.stop();
+}
+
 #[test]
 fn slot_start_while_running_still_errors() {
     let mut slot = SlotScript::new();

@@ -568,6 +568,7 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("shim: {e}"))?;
     super::run_policy_v8::install(runtime, run_policy_override_cell)
         .map_err(|e| format!("run-policy v8: {e}"))?;
+    super::recovery_hints_v8::install(runtime).map_err(|e| format!("recovery hints v8: {e}"))?;
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
     super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
     super::selected_facts_v8::install(runtime).map_err(|e| format!("selected facts v8: {e}"))?;

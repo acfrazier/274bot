@@ -59,6 +59,8 @@ mod quest_facts_v8;
 #[cfg(feature = "load")]
 pub(crate) mod reach_query;
 #[cfg(feature = "load")]
+mod recovery_hints_v8;
+#[cfg(feature = "load")]
 mod run_policy_v8;
 #[cfg(feature = "load")]
 mod scene_v8;
@@ -96,3 +98,9 @@ pub use library::{
 pub(crate) use isolate::TickOutcome;
 #[cfg(feature = "load")]
 pub use isolate::{LoadIsolate, Ready, ScriptStopReceipt, TeardownProof};
+#[cfg(feature = "load")]
+pub(crate) use recovery_hints_v8::{
+    post as post_recovery_hints, startup_complete as recovery_startup_complete,
+};
+#[cfg(feature = "load")]
+pub use recovery_hints_v8::{HintTile, RecoveryHintsCell};

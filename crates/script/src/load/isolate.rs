@@ -126,6 +126,8 @@ enum IsolateCmd {
     Settings(serde_json::Map<String, serde_json::Value>),
     /// Available loadouts. Rust keeps them for `selectedLoadout`.
     Loadouts(Vec<crate::loadouts_store::Loadout>),
+    /// The slot's recovery hints, which outlive this isolate.
+    RecoveryHints(std::sync::Arc<super::RecoveryHintsCell>),
     Pause,
     Resume,
     /// One-shot script-local paint button, tagged with the isolate
@@ -588,6 +590,12 @@ impl LoadIsolate {
     /// Post available loadouts before subsequent tick commands.
     pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
         self.send(IsolateCmd::Loadouts(loadouts.to_vec()));
+    }
+
+    /// Use the slot's frozen `RecoveryHints` for this isolate, so a watchdog
+    /// restart finds what the previous run latched.
+    pub fn post_recovery_hints(&self, hints: std::sync::Arc<super::RecoveryHintsCell>) {
+        self.send(IsolateCmd::RecoveryHints(hints));
     }
 
     /// Post the merged operator settings bag (schema defaults + panel/TUI

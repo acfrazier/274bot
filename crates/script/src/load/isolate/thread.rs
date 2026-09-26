@@ -674,6 +674,9 @@ impl Runner {
             Phase::Idle
         };
         self.start_ok |= !is_loop && err.is_none();
+        if !is_loop && err.is_none() {
+            crate::load::recovery_startup_complete();
+        }
         match err {
             Some(e) => {
                 let _ = out.send(ThreadMsg::TickError {
@@ -1152,6 +1155,7 @@ fn tick_loop(
                 }
             }
             IsolateCmd::Loadouts(rows) => super::loadout_v8::post(rows),
+            IsolateCmd::RecoveryHints(hints) => crate::load::post_recovery_hints(hints),
             IsolateCmd::Settings(bag) => {
                 if let Err(e) = materialize_settings_bag(&mut runtime, &bag) {
                     let _ = out.send(ThreadMsg::Log(format!("settings: {e}")));

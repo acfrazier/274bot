@@ -235,6 +235,9 @@ pub struct SlotScript {
     native_input: Arc<NativeInputAuthority>,
     /// Script-session run policy shared with the host slot.
     run_policy_override: Arc<api::run_policy::RunPolicyOverrideCell>,
+    /// Frozen `RecoveryHints`, kept across watchdog isolate restarts.
+    #[cfg(feature = "load")]
+    recovery_hints: Arc<crate::load::RecoveryHintsCell>,
 }
 
 impl Default for SlotScript {
@@ -306,6 +309,8 @@ impl SlotScript {
             last_settings_fp: None,
             native_input: NativeInputAuthority::new(),
             run_policy_override: Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
+            #[cfg(feature = "load")]
+            recovery_hints: Arc::new(crate::load::RecoveryHintsCell::new()),
         }
     }
 
@@ -566,6 +571,7 @@ impl SlotScript {
             Arc::clone(&self.run_policy_override),
         )?;
         isolate.post_loadouts(&identity.loadouts);
+        isolate.post_recovery_hints(Arc::clone(&self.recovery_hints));
         if let Some(bag) = identity.settings_bag.as_deref() {
             isolate.post_settings_bag(bag);
         }
@@ -1493,6 +1499,9 @@ impl SlotScript {
         };
         self.run_policy_override.clear();
         self.revoke_native_input();
+        // Frozen StallGuard: the restarted script finds `pendingRecovery`
+        // (`StallGuard.ts:34–39`).
+        self.recovery_hints.note_restart();
         if self.begin_async_stop(AfterStop::Restart) {
             // Stamp the recovery and its cooldown at the decision, as the
             // synchronous restart did; the respawn follows the reap.
