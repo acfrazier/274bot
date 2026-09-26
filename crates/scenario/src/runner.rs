@@ -184,9 +184,13 @@ pub struct ScenarioRunner {
     /// StartScript has begun: paint published before it cannot belong to
     /// this run's card.
     script_started: bool,
-    /// File-card receipt rows [`Proof::ScriptReceipt`] watches latched from
-    /// the driven slot's published paint (first row per prefix). Host-fed
-    /// through [`ScenarioRunner::observe_script_paint`]; not snapshot state.
+    /// The prefixes the scenario's [`Proof::ScriptReceipt`] watches name,
+    /// collected once at construction (empty, unallocated, for every
+    /// scenario without one), so the per-frame pump never walks the steps.
+    receipt_prefixes: Vec<&'static str>,
+    /// File-card receipt rows those watches latched from the driven slot's
+    /// published paint (first row per prefix). Host-fed through
+    /// [`ScenarioRunner::observe_script_paint`]; not snapshot state.
     script_receipts: Vec<String>,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
@@ -233,6 +237,7 @@ impl ScenarioRunner {
         let require_mainland_base =
             scenario.seed.mainland || scenario.settings.require_mainland_base;
         let engine_speed_ms = scenario.settings.nav.engine_speed_ms;
+        let receipt_prefixes = receipt_prefixes(&scenario);
         Self {
             scenario,
             snapshot: GameSnapshot::new(),
@@ -265,6 +270,7 @@ impl ScenarioRunner {
             maze_episode: None,
             stall_combat: None,
             script_started: false,
+            receipt_prefixes,
             script_receipts: Vec::new(),
             shot_sink: None,
         }
@@ -426,12 +432,7 @@ impl ScenarioRunner {
     pub fn wants_script_paint(&self) -> bool {
         self.script_started
             && !matches!(self.phase, Phase::Done)
-            && receipt_prefixes(&self.scenario).any(|prefix| {
-                !self
-                    .script_receipts
-                    .iter()
-                    .any(|row| row.starts_with(prefix))
-            })
+            && self.receipt_prefixes.len() > self.script_receipts.len()
     }
 
     /// Latch the first published paint row that starts with each receipt
@@ -443,8 +444,10 @@ impl ScenarioRunner {
             return;
         }
         for line in lines {
-            let Some(prefix) =
-                receipt_prefixes(&self.scenario).find(|prefix| line.starts_with(prefix))
+            let Some(prefix) = self
+                .receipt_prefixes
+                .iter()
+                .find(|prefix| line.starts_with(**prefix))
             else {
                 continue;
             };
@@ -1327,17 +1330,23 @@ impl ScenarioRunner {
     }
 }
 
-/// The receipt prefixes a scenario's [`Proof::ScriptReceipt`] watches name.
-fn receipt_prefixes(scenario: &Scenario) -> impl Iterator<Item = &'static str> + '_ {
-    scenario
+/// The distinct receipt prefixes a scenario's [`Proof::ScriptReceipt`]
+/// watches name.
+fn receipt_prefixes(scenario: &Scenario) -> Vec<&'static str> {
+    let mut prefixes = Vec::new();
+    for proof in scenario
         .steps
         .iter()
         .map(|step| step.wait.arm)
         .chain([scenario.proof])
-        .filter_map(|proof| match proof {
-            Proof::ScriptReceipt { prefix } => Some(prefix),
-            _ => None,
-        })
+    {
+        if let Proof::ScriptReceipt { prefix } = proof {
+            if !prefixes.contains(&prefix) {
+                prefixes.push(prefix);
+            }
+        }
+    }
+    prefixes
 }
 
 fn snapshot_tile(snapshot: &GameSnapshot) -> Option<WorldTile> {
