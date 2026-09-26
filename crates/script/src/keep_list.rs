@@ -98,11 +98,21 @@ pub(crate) fn food_forms(items: &[GameItem], food: &str) -> Vec<String> {
         return vec![key];
     }
 
-    let aliases = [
+    // Frozen `FOOD_FORMS` (`api/combat/food.ts:7-17`) by the selected
+    // aliases: `2/3 cake` / `slice of cake` (`partial_`, `_slice`), the
+    // `chocolate slice` of `chocolate_cake`, `1/2 … pizza` (`half_`) and
+    // `half a/an … pie` (`half_a_`, `half_an_`).
+    let mut aliases = vec![
         alias.to_string(),
         format!("partial_{alias}"),
         format!("{alias}_slice"),
+        format!("half_{alias}"),
+        format!("half_a_{alias}"),
+        format!("half_an_{alias}"),
     ];
+    if let Some(stem) = alias.strip_suffix("_cake") {
+        aliases.push(format!("{stem}_slice"));
+    }
     let mut seen = HashSet::new();
     items
         .iter()

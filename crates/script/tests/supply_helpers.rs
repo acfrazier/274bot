@@ -212,6 +212,75 @@ export default class T extends LoopingBot {
     }
 }
 
+/// Frozen `FOOD_FORMS` (`food.ts:7-17`): a chocolate cake's slice, a pizza's
+/// half and a pie's half are forms of the whole food, so `foodCount` counts
+/// them. The cache spells the pineapple half `1/2pineapple pizza`.
+#[test]
+fn v1_food_forms_cover_slices_and_halves() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let value = probe_compat(
+            r#"
+import { foodForms, foodCount } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = JSON.stringify({
+            chocolate: foodForms('Chocolate cake'),
+            plain: foodForms('Plain pizza'),
+            pineapple: foodForms('Pineapple pizza'),
+            redberry: foodForms('Redberry pie'),
+            apple: foodForms('Apple pie'),
+            half: foodForms('Half a meat pie'),
+            counted: foodCount([
+                { name: 'Chocolate cake' },
+                { name: 'Chocolate slice' },
+                { name: 'Meat pizza' },
+                { name: '1/2 meat pizza' },
+                { name: 'Half a meat pie' },
+            ], 'Chocolate cake') + foodCount([
+                { name: '1/2 meat pizza' },
+            ], 'Meat pizza') + foodCount([
+                { name: 'Half a meat pie' },
+            ], 'Meat pie'),
+        });
+    }
+}
+"#,
+            revision,
+        );
+        assert_eq!(
+            value["chocolate"],
+            serde_json::json!(["chocolate cake", "2/3 chocolate cake", "chocolate slice"]),
+            "{revision:?}"
+        );
+        assert_eq!(
+            value["plain"],
+            serde_json::json!(["plain pizza", "1/2 plain pizza"]),
+            "{revision:?}"
+        );
+        assert_eq!(
+            value["pineapple"],
+            serde_json::json!(["pineapple pizza", "1/2pineapple pizza"]),
+            "{revision:?}"
+        );
+        assert_eq!(
+            value["redberry"],
+            serde_json::json!(["redberry pie", "half a redberry pie"]),
+            "{revision:?}"
+        );
+        assert_eq!(
+            value["apple"],
+            serde_json::json!(["apple pie", "half an apple pie"]),
+            "{revision:?}"
+        );
+        assert_eq!(
+            value["half"],
+            serde_json::json!(["half a meat pie"]),
+            "{revision:?}"
+        );
+        assert_eq!(value["counted"], 4, "{revision:?}");
+    }
+}
+
 /// Frozen `foodHealAmount` (`api/combat/food.ts:86-106`) always answers: an
 /// empty, unknown or ambiguous name is `DEFAULT_FOOD_HEAL` (8), a partial
 /// name takes the first food it matches, and `shouldEatFood` eats smart on

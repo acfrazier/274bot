@@ -347,6 +347,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - `eatAtHpThreshold(maxHp, heal, minHp)` is implemented as frozen: the HP
   at which a full heal fits, kept below max HP and at least the floor
   (default 5); it threw `not impl`.
+- `foodForms` / `foodCount` / the combat keep list treat the frozen partial
+  forms as the whole food: a chocolate cake's `Chocolate slice`, a pizza's
+  `1/2 … pizza` and a pie's `Half a/an … pie` (read from the selected item
+  aliases; the cache spells the pineapple half `1/2pineapple pizza`).
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 
