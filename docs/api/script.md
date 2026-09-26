@@ -180,7 +180,9 @@ arguments and awaits one completion.
   still choosing). Nothing is re-sent when the script run changed, the
   walk was cancelled (an `AbortWalk`, a failed walk machine, Stop, or the
   script stopping itself), the player already stands within the walk's
-  arrival radius, or a newer walk request replaces it. A request queued
+  arrival radius, or a newer walk request replaces it; a bank trip planned
+  for the walk is planned again from the current pack. A late copy of the
+  request the host already follows is not sent twice. A request queued
   but not yet dispatched when Pause lands goes out once, as queued. A
   watchdog recovery walk interrupted by Pause is re-armed on Resume.
   Scene clicks (`WalkTo`, `DirectNavigator`) are not host routes and are

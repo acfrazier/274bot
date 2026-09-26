@@ -14642,6 +14642,35 @@ fn following_script_walk() -> NavBot {
     }
 }
 
+/// A BankBudget session latched on the walk is part of it: an abort
+/// (Stop, AbortWalk, a failed walk machine) ends its bank steps and the
+/// route it would restore.
+#[test]
+fn an_aborted_walk_ends_its_bank_fetch_session() {
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let mut bot = following_script_walk();
+    let route = bot.route.clone().unwrap();
+    bot.bank_fetch = Some(PendingBankFetch {
+        steps: vec![
+            nav::bank_fetch::BankStep::Open,
+            nav::bank_fetch::BankStep::Close,
+        ]
+        .into(),
+        dest: route.dest,
+        opts: FindOptions::default(),
+        final_route: route,
+        avoid: Vec::new(),
+    });
+    navs.lock().unwrap().insert("alice".to_string(), bot);
+    abort_script_walk(&navs, "alice");
+    let navs = navs.lock().unwrap();
+    assert!(
+        navs["alice"].bank_fetch.is_none(),
+        "no bank step runs after the abort"
+    );
+    assert!(!navs["alice"].script_walk_armed());
+}
+
 #[test]
 fn operator_stop_stops_the_script_walk() {
     let mut play = run_with_io(
@@ -14969,6 +14998,21 @@ impl ReconnectRig {
         self.slot().lock().unwrap().resume();
     }
 
+    /// Dispatch `reqs` as the slot's script requests this frame.
+    fn dispatch(&mut self, reqs: Vec<script::shim::InteractReq>) {
+        dispatch_script_interact(
+            &mut self.client,
+            &self.snap,
+            None,
+            Some(self.here),
+            &self.navs,
+            &self.world,
+            None,
+            "alice",
+            reqs,
+        );
+    }
+
     fn boundary(&self, reconnect: bool) {
         reset_slot_session_work(
             "alice",
@@ -15053,6 +15097,89 @@ fn pause_resume_resends(rig: &mut ReconnectRig) {
 fn operator_pause_carries_the_script_walk_and_resume_sends_it_once() {
     let mut rig = ReconnectRig::new(40, 40);
     pause_resume_resends(&mut rig);
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Pause, Resume, Pause again before any observation, observe while
+/// paused, Resume: the walk goes out once more in all, not once per Resume.
+#[test]
+fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let walks = rig.walks();
+    assert_eq!(walks.len(), 1, "{walks:?}");
+    rig.operator_pause();
+    rig.resume();
+    rig.operator_pause();
+    rig.frames(2);
+    rig.resume();
+    rig.frames(3);
+    // The same request surfacing late from the isolate after the carry went
+    // out (ReviewBoatFareR4 race): the route already follows it.
+    let (request_id, requested) = rig.armed();
+    let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch) =
+        requested.expect("the carry re-armed the walk");
+    rig.dispatch(vec![script::shim::InteractReq::WalkNear {
+        x: to.x,
+        z: to.z,
+        level: to.level,
+        radius,
+        allow_teleports,
+        allow_wilderness,
+        allow_bank_fetch,
+        request_id,
+        avoid: Vec::new(),
+    }]);
+    rig.frames(4);
+    assert_eq!(
+        rig.walks(),
+        vec![walks[0], walks[0]],
+        "the walk and one re-send, nothing else"
+    );
+    assert_eq!(rig.armed().0, walks[0].0);
+    rig.slot().lock().unwrap().stop();
+}
+
+/// A live watchdog recovery paused and resumed far from its anchor:
+/// Resume re-arms the recovery walk once (the idle route is not a failed
+/// walk) and the script keeps running.
+#[test]
+fn a_paused_recovery_resumes_its_walk_instead_of_restarting() {
+    let mut rig = ReconnectRig::with_source(
+        once_src("", "new Promise(() => {})"),
+        open_world_at(3150, 3150, 128, 128),
+        (3160, 3160, 0),
+    );
+    rig.frames(1);
+    force_watchdog_recovering(&mut rig.slot().lock().unwrap(), rig.here);
+    rig.operator_pause();
+    rig.frames(2);
+    rig.resume();
+    let mut arms = Vec::new();
+    for tick in 3..7 {
+        rig.frames(tick);
+        let bot = rig.navs.lock().unwrap();
+        if let Some(bot) = bot.get("alice") {
+            if arms.last() != Some(&bot.route_generation) && bot.requested_route.is_some() {
+                arms.push(bot.route_generation);
+            }
+        }
+    }
+    let slot = rig.slot();
+    let slot = slot.lock().unwrap();
+    assert_eq!(slot.state(), script::RunState::Running, "no restart");
+    assert!(
+        slot.watchdog().recovering_anchor().is_some(),
+        "still recovering"
+    );
+    assert_eq!(arms.len(), 1, "one re-armed recovery walk: {arms:?}");
+    let requested = rig.armed().1.expect("the recovery walk is armed");
+    assert_eq!(
+        (requested.0.x, requested.0.z),
+        (3200, 3200),
+        "toward the recovery anchor"
+    );
+    drop(slot);
     rig.slot().lock().unwrap().stop();
 }
 

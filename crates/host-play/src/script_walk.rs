@@ -24,6 +24,9 @@ pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name
         bot.requested_route = None;
         bot.walk_request_id = 0;
         bot.clear_walk_outcome();
+        // A BankBudget session is part of the walk: its deposits, withdrawals
+        // and the route it restores stop with it.
+        bot.bank_fetch = None;
         // Cancelled for good: nothing carries it to a Resume or a relog.
         bot.carried_walk = None;
     }
@@ -33,8 +36,11 @@ pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name
 /// `await` and carries on the same walk after Resume, so the host ends the
 /// route it is following and carries it ([`hold_script_nav`], as a
 /// reconnect does); the first dispatch after Resume re-sends it once
-/// ([`resumed_walk`]). A watchdog recovery walk is not the script's: the
-/// watchdog re-arms it on Resume itself.
+/// ([`resumed_walk`]). A BankBudget session latched on the route ends with
+/// the follow and is re-planned by the re-sent walk: its deposits and
+/// withdrawals were planned from the pack and bank at arm time, which the
+/// operator may change while paused. A watchdog recovery walk is not the
+/// script's: the watchdog re-arms it on Resume itself.
 pub(crate) fn pause_script(
     slot: &mut script::SlotScript,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,

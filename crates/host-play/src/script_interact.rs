@@ -51,6 +51,24 @@ fn avoid_rects(avoid: Vec<script::shim::InspectAvoidWire>) -> Option<Vec<nav::ro
         .then_some(rects)
 }
 
+/// The walk `request_id` asks for is the one the host already follows
+/// (same id, same route key): a retransmission, such as a request that
+/// surfaces from the isolate after the Resume carry re-armed it. It is not
+/// sent or recorded again.
+fn already_following(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    request_id: u64,
+    key: (WorldTile, i32, bool, bool, bool),
+) -> bool {
+    request_id != 0
+        && navs.lock().unwrap().get(name).is_some_and(|bot| {
+            bot.walk_request_id == request_id
+                && bot.requested_route == Some(key)
+                && bot.script_walk_armed()
+        })
+}
+
 /// Note one game request host-play dispatched for `slot`'s script. The
 /// catalog hunt watch reads this record; the isolate never sees it.
 fn record_script_act(navs: &Arc<Mutex<HashMap<String, NavBot>>>, slot: &str, act: ScriptAct) {
@@ -233,6 +251,16 @@ pub(crate) fn dispatch_script_interact_cached(
                 request_id,
                 avoid,
             } => {
+                let key = (
+                    WorldTile { x, z, level },
+                    0,
+                    allow_teleports,
+                    allow_wilderness,
+                    allow_bank_fetch,
+                );
+                if already_following(navs, name, request_id, key) {
+                    continue;
+                }
                 let bank_rows: Vec<(i32, i32)> = snapshot
                     .bank()
                     .iter()
@@ -298,6 +326,16 @@ pub(crate) fn dispatch_script_interact_cached(
                 request_id,
                 avoid,
             } => {
+                let key = (
+                    WorldTile { x, z, level },
+                    radius,
+                    allow_teleports,
+                    allow_wilderness,
+                    allow_bank_fetch,
+                );
+                if already_following(navs, name, request_id, key) {
+                    continue;
+                }
                 let arm = ScriptWalkArm {
                     here,
                     world: world.clone(),

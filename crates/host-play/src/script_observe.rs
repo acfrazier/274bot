@@ -736,7 +736,9 @@ pub(crate) fn script_observe_cached(
                         })
                     })
                     .unwrap_or(true);
-                if far && recovery_walk_idle(navs, name) {
+                // A recovery Resume re-entered is idle until `feed_watchdog`
+                // re-arms its walk below: that is not a failed walk.
+                if far && !slot.watchdog().rearm_pending() && recovery_walk_idle(navs, name) {
                     match slot.notify_walk_failed(now) {
                         script::WatchdogAction::Restart { .. } => {
                             interact.clear();

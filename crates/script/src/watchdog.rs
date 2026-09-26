@@ -139,6 +139,13 @@ impl ProgressWatchdog {
         }
     }
 
+    /// A recovery Resume re-entered still owes its walk ([`Self::observe`]
+    /// returns it): the route is idle because it has not been re-armed yet,
+    /// not because it failed.
+    pub fn rearm_pending(&self) -> bool {
+        self.rearm_walk
+    }
+
     /// Operator Pause: the recovery walk stops with the script (the host
     /// ends its route) but is not abandoned. Resume re-enters it with a
     /// fresh walk to the same anchor. Without a live recovery this is

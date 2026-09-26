@@ -95,8 +95,8 @@ Loot / hostility / weapon / spell / camp data that would decide *what* to do, no
 _Avoid_: predicate, SETTINGS option keys (`FOOD_OPTIONS` / `SPELL_DB` stub names)
 
 **WalkTo** vs **walkResilient**:
-`Traversal.walkTo` is the scene packet (`Interactions::walk` / `try_move`). `Traversal.walkResilient` is packed nav (`Traveller` / `ScriptWalkArm`) with `FindOptions.allow_teleports` default off, force-on via `useTeleportCatalog` / `policy.useTeleports`. A Chebyshev walk packet for `walkResilient` is a compat break. A walk that never reaches Traveller is a **wire / name-map** miss. Traveller returning unreachable is **host nav**.
-_Avoid_: mapping both to `op: walk`; mapping `walkTo` onto Traveller; calling every failed walk host nav
+The operator/panel **WalkTo** button and `InteractReq::WalkTo` are the scene packet (`Interactions::walk` / `try_move`); `DirectNavigator` clicks it too. Script `Traversal.walkTo` and `Traversal.walkResilient` are both packed nav (`Traveller` / `ScriptWalkArm`): `walkTo` is the Rust `walk-to` machine (one host route, frozen `WalkOptions` defaults, the Karamja boat-fare recovery), `walkResilient` the frozen ladder over it. Teleports follow `useTeleportCatalog` / `policy.useTeleports` (an explicit false wins; default off). The host owns a script's active route: Pause carries it and Resume re-sends it. A walk that never reaches Traveller is a **wire / name-map** miss. Traveller returning unreachable is **host nav**.
+_Avoid_: mapping script walks onto scene `WalkTo` packets; calling every failed walk host nav
 
 ### Rewrites
 

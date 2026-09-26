@@ -1154,6 +1154,7 @@ impl NavBot {
     /// Whether a script walk is armed, in flight or following.
     pub(crate) fn script_walk_armed(&self) -> bool {
         self.route.is_some()
+            || self.bank_fetch.is_some()
             || self.route_worker.is_some()
             || self.pending_route.is_some()
             || self.requested_route.is_some()
