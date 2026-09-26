@@ -147,25 +147,103 @@ const INERT_CALLS: [&str; 10] = [
     "if_close",
 ];
 
-/// Engine commands that move the player, start another interaction or
-/// hand control elsewhere; none may follow the crossing, directly or in a
-/// proc it calls (an unknown or unparsed proc counts as moving).
-const MOVES: [&str; 15] = [
-    "p_teleport",
-    "p_telejump",
-    "p_exactmove",
-    "p_walk",
-    "p_opnpc",
-    "p_oploc",
-    "p_opobj",
-    "p_opplayer",
-    "p_opheld",
-    "jump",
-    "queue",
-    "longqueue",
-    "weakqueue",
-    "strongqueue",
-    "softqueue",
+/// Engine commands certified never to move the player, start another
+/// interaction, or run other code: the only commands a statement after the
+/// crossing (or a proc it calls, or an `if` skipped before it) may make.
+/// Anything else — `p_teleport`, `p_op*`, queues, `gosub`, `jump`, an
+/// unrecognised command — leaves the statement uncertified.
+const NON_MOVING_COMMANDS: &[&str] = &[
+    // Output, delays and animation.
+    "mes",
+    "sound_synth",
+    "say",
+    "p_delay",
+    "p_arrivedelay",
+    "facesquare",
+    "anim",
+    "spotanim_pl",
+    "if_close",
+    "obj_add",
+    // Pure values.
+    "lowercase",
+    "uppercase",
+    "tostring",
+    "append",
+    "text_gender",
+    "displayname",
+    "loc_name",
+    "nc_name",
+    "string_length",
+    "add",
+    "sub",
+    "multiply",
+    "divide",
+    "modulo",
+    "calc",
+    "coordx",
+    "coordy",
+    "coordz",
+    "movecoord",
+    "loc_param",
+    "lc_param",
+    "stat",
+    "stat_base",
+    "inv_total",
+    "testbit",
+    "getbit_range",
+    "setbit",
+    "setbit_range",
+    "clearbit",
+    "clearbit_range",
+    "inzone",
+    // Active-NPC lookups, speech and spawns; NPC modes (an NPC may face or
+    // attack the player, which does not move them).
+    "npc_find",
+    "npc_findexact",
+    "npc_huntall",
+    "npc_findallany",
+    "npc_findnext",
+    "npc_say",
+    "npc_add",
+    "npc_del",
+    "npc_anim",
+    "npc_getmode",
+    "npc_setmode",
+    // Dialog text paging, pause and interface text/tabs.
+    "split_init",
+    "split_pagecount",
+    "split_get",
+    "split_getanim",
+    "split_linecount",
+    "p_pausebutton",
+    "if_settext",
+    "if_settab",
+    "if_setanim",
+    "if_setnpchead",
+    "if_setplayerhead",
+    "if_setmodel",
+    "if_setobject",
+    "if_setcolour",
+    "if_sethide",
+    "if_openchat",
+    "if_openoverlay",
+    "tut_flash",
+    // Hint arrows, timers, run mode and appearance animations.
+    "hint_coord",
+    "hint_npc",
+    "hint_stop",
+    "gettimer",
+    "cleartimer",
+    "p_finduid",
+    "p_run",
+    "readyanim",
+    "turnanim",
+    "walkanim",
+    "walkanim_b",
+    "walkanim_l",
+    "walkanim_r",
+    "runanim",
+    "buildappearance",
 ];
 
 /// Engine `PlayerStat` order (`engine/src/engine/entity/PlayerStat.ts`):
@@ -297,15 +375,15 @@ impl Sources {
     }
 
     /// Whether a proc provably never moves the player: defined once, parsed,
-    /// and no statement of it moves or jumps ([`Sources::moves_or_jumps`]).
-    /// A proc on a call cycle is unproven.
+    /// and every statement of it certified ([`Sources::certified`]). A proc
+    /// on a call cycle is unproven.
     fn proc_non_moving(&self, name: &str) -> bool {
         if let Some(&known) = self.non_moving.borrow().get(name) {
             return known;
         }
         self.non_moving.borrow_mut().insert(name.to_string(), false);
         let proven = match self.procs.get(name).map(Vec::as_slice) {
-            Some([(_, Some(body))]) => !body.iter().any(|s| self.moves_or_jumps(s)),
+            Some([(_, Some(body))]) => body.iter().all(|s| self.certified(s)),
             _ => false,
         };
         self.non_moving
@@ -314,17 +392,21 @@ impl Sources {
         proven
     }
 
-    /// Whether a statement may move the player or hand control elsewhere: a
-    /// [`MOVES`] command, an `@label` jump, or a `~proc` not proven
-    /// non-moving (the crossing procs and `~climb_ladder` move).
-    fn moves_or_jumps(&self, stmt: &Stmt) -> bool {
+    /// Whether a statement provably never moves the player or hands control
+    /// elsewhere: it is fully structured (no [`Stmt::Other`]) and every call
+    /// it makes — in conditions, arguments, arithmetic, returned values and
+    /// string interpolations — is a [`NON_MOVING_COMMANDS`] command or a
+    /// `~proc` proven non-moving. An `@label` jump or any other command is
+    /// uncertified.
+    fn certified(&self, stmt: &Stmt) -> bool {
+        if stmt.has_unstructured() {
+            return false;
+        }
         let mut calls = Vec::new();
         stmt.calls(&mut calls);
-        calls.iter().any(|c| {
-            c.starts_with('@')
-                || MOVES.contains(&c.as_str())
-                || c.strip_prefix('~')
-                    .is_some_and(|p| !self.proc_non_moving(p))
+        calls.iter().all(|c| match c.strip_prefix('~') {
+            Some(p) => self.proc_non_moving(p),
+            None => NON_MOVING_COMMANDS.contains(&c.as_str()),
         })
     }
 
@@ -551,7 +633,7 @@ impl Eval<'_> {
                 // makes have run.
                 Flow::Crossed(leaf, false) => {
                     for rest in &stmts[k + 1..] {
-                        if self.src.moves_or_jumps(rest) {
+                        if !self.src.certified(rest) {
                             return Flow::Refused;
                         }
                         if matches!(rest, Stmt::Return(_)) {
@@ -573,10 +655,13 @@ impl Eval<'_> {
             Stmt::Return(calls) if calls.is_empty() => Flow::Return,
             Stmt::Return(_) => Flow::Refused,
             // A branch that only prints or drops items cannot change the
-            // crossing, so its condition is not a requirement.
+            // crossing, so its condition is not a requirement — provided
+            // nothing in it (the condition, an argument, an interpolation)
+            // calls anything but certified commands and procs.
             Stmt::If(arms, other)
                 if arms.iter().all(|(_, body)| inert(body))
-                    && other.as_deref().is_none_or(inert) =>
+                    && other.as_deref().is_none_or(inert)
+                    && self.src.certified(stmt) =>
             {
                 Flow::Next
             }
@@ -642,7 +727,7 @@ impl Eval<'_> {
                     Flow::Refused
                 }
             }
-            Stmt::Other(_) => Flow::Refused,
+            Stmt::While(..) | Stmt::Switch(..) | Stmt::Other(_) => Flow::Refused,
         }
     }
 
@@ -762,10 +847,14 @@ impl Eval<'_> {
     fn value(&self, e: &Expr, env: &Env) -> Option<Val> {
         match e {
             Expr::Num(n) => Some(Val::Int(*n)),
-            Expr::Str => Some(Val::Name(String::new())),
+            // Text whose interpolations only format values.
+            Expr::Str(calls) if calls.iter().all(|c| PURE_OPAQUE.contains(&c.as_str())) => {
+                Some(Val::Name(String::new()))
+            }
+            Expr::Str(_) => None,
             Expr::Word(w) => self.word(w, env),
             Expr::Call(name, args) => self.call_value(name, args, env),
-            Expr::Cmp(..) | Expr::And(..) | Expr::Or(..) | Expr::Other => None,
+            Expr::Cmp(..) | Expr::And(..) | Expr::Or(..) | Expr::Other(_) => None,
         }
     }
 

@@ -1,10 +1,12 @@
 //! A small RuneScript statement/expression parser for the door openers
-//! [`super::stage_doors`] evaluates. It reads only what a wall opener's
-//! control flow needs — `if`/`else`, `return`, `@label` jumps, `def_*`
-//! bindings, calls and comparisons — and keeps every other statement as
-//! [`Stmt::Other`] (with the calls it contains), which the evaluator
-//! refuses to run through. Parsing never guesses: an unbalanced or
-//! unexpected token makes the whole block unparsed.
+//! [`super::stage_doors`] evaluates. It reads what a wall opener's control
+//! flow needs — `if`/`else`, `while`, `switch_*`, `return`, `@label`
+//! jumps, `def_*` bindings, calls and comparisons — and keeps every other
+//! statement as [`Stmt::Other`], which the evaluator never certifies.
+//! Every call a statement or expression makes is recorded, including those
+//! inside arithmetic ([`Expr::Other`]), string interpolations (`"<~proc>"`)
+//! and starred commands (`queue*(…)(…)`). Parsing never guesses: an
+//! unbalanced or unexpected token makes the whole block unparsed.
 
 /// One lexical token. Words keep their sigil (`~proc`, `$local`, `%varp`,
 /// `^const`, `@label`, `.secondary`); coord literals (`0_50_50_10_10`)
@@ -13,23 +15,25 @@
 pub(super) enum Tok {
     Word(String),
     Num(i32),
-    Str,
+    /// A string literal and the calls its `<…>` interpolations make.
+    Str(Vec<String>),
     Punct(&'static str),
 }
 
 /// A parsed expression. String literals carry no value (openers only
-/// print them).
+/// print them), only the calls their interpolations make.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Expr {
     Word(String),
     Num(i32),
-    Str,
+    Str(Vec<String>),
     Call(String, Vec<Expr>),
     Cmp(CmpOp, Box<Expr>, Box<Expr>),
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
-    /// Arithmetic or a unary minus the evaluator does not model.
-    Other,
+    /// Arithmetic or another form the evaluator does not model, with every
+    /// call it makes.
+    Other(Vec<String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,9 +46,9 @@ pub(super) enum CmpOp {
     Ge,
 }
 
-/// A parsed statement. `calls` on [`Stmt::Other`] lists every call and
-/// `@label` jump inside it, so the evaluator can refuse a movement after
-/// the crossing without understanding the statement.
+/// A parsed statement. [`Stmt::Other`] is a statement the parser could not
+/// structure (a starred command, an unrecognised form); it keeps the calls
+/// it saw but is never proven safe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Stmt {
     If(Vec<(Expr, Vec<Stmt>)>, Option<Vec<Stmt>>),
@@ -56,10 +60,31 @@ pub(super) enum Stmt {
     Def(String, Option<Expr>),
     Assign(Vec<String>, Expr),
     Call(String, Vec<Expr>),
+    While(Expr, Vec<Stmt>),
+    /// `switch_*(<expr>) { case <keys> : <stmts> … }`.
+    Switch(Expr, Vec<(Vec<Expr>, Vec<Stmt>)>),
     Other(Vec<String>),
 }
 
 impl Stmt {
+    /// Whether the statement (recursively) contains a [`Stmt::Other`].
+    pub(super) fn has_unstructured(&self) -> bool {
+        match self {
+            Stmt::Other(_) => true,
+            Stmt::If(arms, other) => {
+                arms.iter().flat_map(|(_, b)| b).any(Stmt::has_unstructured)
+                    || other.iter().flatten().any(Stmt::has_unstructured)
+            }
+            Stmt::Block(body) | Stmt::While(_, body) => body.iter().any(Stmt::has_unstructured),
+            Stmt::Switch(_, arms) => arms.iter().flat_map(|(_, b)| b).any(Stmt::has_unstructured),
+            Stmt::Return(_)
+            | Stmt::Jump(..)
+            | Stmt::Def(..)
+            | Stmt::Assign(..)
+            | Stmt::Call(..) => false,
+        }
+    }
+
     /// Every call name and `@label` jump in the statement, recursively.
     pub(super) fn calls(&self, out: &mut Vec<String>) {
         match self {
@@ -82,6 +107,17 @@ impl Stmt {
                 out.push(name.clone());
                 args.iter().for_each(|a| expr_calls(a, out));
             }
+            Stmt::While(cond, body) => {
+                expr_calls(cond, out);
+                body.iter().for_each(|s| s.calls(out));
+            }
+            Stmt::Switch(on, arms) => {
+                expr_calls(on, out);
+                for (keys, body) in arms {
+                    keys.iter().for_each(|k| expr_calls(k, out));
+                    body.iter().for_each(|s| s.calls(out));
+                }
+            }
             Stmt::Other(calls) => out.extend(calls.iter().cloned()),
         }
     }
@@ -99,13 +135,15 @@ fn expr_calls(expr: &Expr, out: &mut Vec<String>) {
         }
         // An argument-less proc call (`~proc` without parentheses).
         Expr::Word(w) if w.starts_with('~') => out.push(w.clone()),
-        Expr::Word(_) | Expr::Num(_) | Expr::Str | Expr::Other => {}
+        Expr::Str(calls) | Expr::Other(calls) => out.extend(calls.iter().cloned()),
+        Expr::Word(_) | Expr::Num(_) => {}
     }
 }
 
 /// Tokens of a script body: `//` and `/* */` comments dropped, strings
-/// (with `<…>` interpolations that may nest strings) one [`Tok::Str`].
-/// `None` for an unterminated string or comment.
+/// (with `<…>` interpolations that may nest strings) one [`Tok::Str`]
+/// carrying the calls of its interpolations. `None` for an unterminated
+/// string, comment or interpolation.
 pub(super) fn lex(text: &str) -> Option<Vec<Tok>> {
     let b = text.as_bytes();
     let mut out = Vec::new();
@@ -122,8 +160,9 @@ pub(super) fn lex(text: &str) -> Option<Vec<Tok>> {
             let end = text[i + 2..].find("*/")?;
             i += 2 + end + 2;
         } else if c == b'"' {
-            i = skip_string(b, i)?;
-            out.push(Tok::Str);
+            let (end, calls) = scan_string(text, i)?;
+            i = end;
+            out.push(Tok::Str(calls));
         } else if c.is_ascii_alphanumeric()
             || matches!(c, b'_' | b'~' | b'$' | b'%' | b'^' | b'@' | b'.')
         {
@@ -174,38 +213,44 @@ pub(super) fn lex(text: &str) -> Option<Vec<Tok>> {
     Some(out)
 }
 
-/// Index just past the string opening at `b[start]`. A `<` opens a tag; a
-/// tag reaching a `"` before its `>` is an interpolation whose nested
-/// strings are skipped (`"<text_gender("Sir", "Madam")>"`).
-fn skip_string(b: &[u8], start: usize) -> Option<usize> {
+/// Index just past the string opening at `text[start]`, and the calls its
+/// `<…>` segments make. RuneScript text writes a literal `<` as `<lt>`, so
+/// every `<` opens a tag or interpolation (`<p,neutral>`, `<$name>`,
+/// `<~proc>`, `<text_gender("Sir", "Madam")>` with nested strings) that
+/// runs to its `>`; its inside is lexed as script and its calls kept. A
+/// segment or string that never closes leaves the text unlexed (`None`).
+fn scan_string(text: &str, start: usize) -> Option<(usize, Vec<String>)> {
+    let b = text.as_bytes();
+    let mut calls = Vec::new();
     let mut i = start + 1;
     while i < b.len() {
         match b[i] {
             b'\\' => i += 2,
-            b'"' => return Some(i + 1),
+            b'"' => return Some((i + 1, calls)),
             b'<' => {
-                let close = b[i..].iter().position(|&c| c == b'>');
-                let quote = b[i..].iter().position(|&c| c == b'"');
-                match (close, quote) {
-                    (Some(c), Some(q)) if q < c => {
-                        let mut j = i + 1;
-                        while j < b.len() && b[j] != b'>' {
-                            if b[j] == b'"' {
-                                j = skip_string(b, j)?;
-                            } else {
-                                j += 1;
-                            }
-                        }
-                        i = j + 1;
-                    }
-                    _ => i += 1,
+                let mut j = i + 1;
+                while *b.get(j)? != b'>' {
+                    j = if b[j] == b'"' {
+                        scan_string(text, j)?.0
+                    } else {
+                        j + 1
+                    };
                 }
+                match lex(&text[i + 1..j]) {
+                    Some(toks) => calls.extend(calls_in(&toks)),
+                    None => calls.push(UNPARSED.to_string()),
+                }
+                i = j + 1;
             }
             _ => i += 1,
         }
     }
     None
 }
+
+/// The call name recorded for script text that could not be lexed; it is
+/// never a known command, so its statement is never certified.
+pub(super) const UNPARSED: &str = "<unparsed>";
 
 /// The statements of a script body, or `None` when it does not parse.
 pub(super) fn parse_body(text: &str) -> Option<Vec<Stmt>> {
@@ -294,11 +339,38 @@ impl Parser<'_> {
                 self.eat_punct(";")?;
                 Some(Stmt::Return(calls))
             }
-            w if w.starts_with("switch_") || w == "while" => {
+            "while" => {
                 self.i += 1;
-                let mut calls = self.balanced_calls("(", ")")?;
-                calls.extend(self.balanced_calls("{", "}")?);
-                Some(Stmt::Other(calls))
+                let cond = self.paren_expr()?;
+                let body = self.body()?;
+                Some(Stmt::While(cond, body))
+            }
+            w if w.starts_with("switch_") => {
+                self.i += 1;
+                let on = self.paren_expr()?;
+                self.eat_punct("{")?;
+                let mut arms = Vec::new();
+                while !self.is_punct("}") {
+                    if !self.is_word("case") {
+                        return None;
+                    }
+                    self.i += 1;
+                    let start = self.i;
+                    while !self.is_punct(":") {
+                        self.peek()?;
+                        self.i += 1;
+                    }
+                    let keys = split_args(&self.toks[start..self.i])?;
+                    self.i += 1;
+                    let mut body = Vec::new();
+                    while !self.is_word("case") && !self.is_punct("}") {
+                        self.peek()?;
+                        body.push(self.stmt()?);
+                    }
+                    arms.push((keys, body));
+                }
+                self.i += 1;
+                Some(Stmt::Switch(on, arms))
             }
             w if w.starts_with('@') => {
                 self.i += 1;
@@ -432,31 +504,23 @@ impl Parser<'_> {
         }
         Some((start, self.i))
     }
-
-    fn balanced_calls(&mut self, open: &'static str, close: &'static str) -> Option<Vec<String>> {
-        let start = self.i;
-        self.eat_punct(open)?;
-        let mut depth = 1;
-        while depth > 0 {
-            match self.peek()? {
-                Tok::Punct(p) if *p == open => depth += 1,
-                Tok::Punct(p) if *p == close => depth -= 1,
-                _ => {}
-            }
-            self.i += 1;
-        }
-        Some(calls_in(&self.toks[start..self.i]))
-    }
 }
 
-/// Every `name(` call, `~proc` and `@label` in a token run.
+/// Every call in a token run: a word followed by `(` or by `*` (a starred
+/// command, `queue*(…)(…)`), every `~proc` and `@label`, and the calls of
+/// every string's interpolations.
 fn calls_in(toks: &[Tok]) -> Vec<String> {
     let mut out = Vec::new();
     for (k, t) in toks.iter().enumerate() {
-        if let Tok::Word(w) = t {
-            if w.starts_with(['@', '~']) || matches!(toks.get(k + 1), Some(Tok::Punct("("))) {
-                out.push(w.clone());
+        match t {
+            Tok::Word(w)
+                if w.starts_with(['@', '~'])
+                    || matches!(toks.get(k + 1), Some(Tok::Punct("(" | "*"))) =>
+            {
+                out.push(w.clone())
             }
+            Tok::Str(calls) => out.extend(calls.iter().cloned()),
+            _ => {}
         }
     }
     out
@@ -539,12 +603,12 @@ fn primary(toks: &[Tok]) -> Option<Expr> {
         [Tok::Punct("("), inner @ .., Tok::Punct(")")] if balanced(inner) => parse_expr(inner),
         [Tok::Num(n)] => Some(Expr::Num(*n)),
         [Tok::Punct("-"), Tok::Num(n)] => Some(Expr::Num(-n)),
-        [Tok::Str] => Some(Expr::Str),
+        [Tok::Str(calls)] => Some(Expr::Str(calls.clone())),
         [Tok::Word(w)] => Some(Expr::Word(w.clone())),
         [Tok::Word(w), Tok::Punct("("), inner @ .., Tok::Punct(")")] if balanced(inner) => {
             Some(Expr::Call(w.clone(), split_args(inner)?))
         }
-        _ if balanced(toks) => Some(Expr::Other),
+        _ if balanced(toks) => Some(Expr::Other(calls_in(toks))),
         _ => None,
     }
 }

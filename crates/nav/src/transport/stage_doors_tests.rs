@@ -658,3 +658,86 @@ fn stage_door_refuses_an_unproven_proc_after_the_crossing() {
         assert_eq!(!door_crossings(&graph, 900).is_empty(), crosses, "{call}");
     }
 }
+
+/// Every call an opener makes is accounted for, wherever it hides: in a
+/// string interpolation, in `calc(…)` arithmetic, in a starred queue, behind
+/// `gosub`, as a targeted `p_op*t`, or in the condition or arguments of an
+/// `if` whose branches only print. Each form below calls a proc that
+/// teleports (or hands control elsewhere) and must leave the door without an
+/// edge, before or after the crossing; the controls beside them, which only
+/// format text or compute values, keep it.
+#[test]
+fn stage_door_certifies_every_call_an_opener_makes() {
+    const DOOR: &str =
+        "~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);";
+    const PROCS: &str = "\
+[proc,nudge_string]()(string)
+p_teleport(movecoord(coord, 0, 0, 5));
+return(\"x\");
+
+[proc,nudge_int]()(int)
+p_teleport(movecoord(coord, 0, 0, 5));
+return(1);
+
+[proc,nudge_bool]()(boolean)
+p_teleport(movecoord(coord, 0, 0, 5));
+return(true);
+
+[proc,quiet_string]()(string)
+return(\"x\");
+
+[queue,nudge_queue]
+p_teleport(movecoord(coord, 0, 0, 5));
+";
+    let after = [
+        ("return(\"<~nudge_string>\");", false),
+        ("mes(\"<~nudge_string>\");", false),
+        ("def_string $s = \"<~nudge_string>\";", false),
+        ("def_int $n = calc(~nudge_int + 1);", false),
+        ("if (calc(~nudge_int + 1) > 0) {\n    mes(\"x\");\n}", false),
+        ("queue*(nudge_queue, 0)(1);", false),
+        ("strongqueue*(nudge_queue, 0)(1);", false),
+        ("gosub(nudge_int);", false),
+        ("def_proc $p = nudge_int;\ngosub($p);", false),
+        ("p_opnpct(1);", false),
+        ("p_opplayert(1);", false),
+        // Controls.
+        (
+            "mes(\"<p,neutral>Hello <text_gender(\"Sir\", \"Madam\")>, <tostring(1)>.\");",
+            true,
+        ),
+        ("mes(\"<~quiet_string>\");", true),
+        ("def_int $n = calc(1 + 2);", true),
+    ];
+    let before = [
+        ("mes(\"<~nudge_string>\");", false),
+        ("def_string $s = \"<~nudge_string>\";", false),
+        ("if (~nudge_bool = true) {\n    mes(\"x\");\n}", false),
+        (
+            "if (%heroquest >= ^hero_complete) {\n    mes(~nudge_string);\n}",
+            false,
+        ),
+        // Controls.
+        (
+            "mes(\"<p,neutral>Hello <text_gender(\"Sir\", \"Madam\")>.\");",
+            true,
+        ),
+        (
+            "if (%heroquest >= ^hero_complete) {\n    mes(\"x\");\n}",
+            true,
+        ),
+    ];
+    let cases = after
+        .iter()
+        .map(|(stmt, crosses)| (format!("{DOOR}\n{stmt}"), *crosses))
+        .chain(
+            before
+                .iter()
+                .map(|(stmt, crosses)| (format!("{stmt}\n{DOOR}"), *crosses)),
+        );
+    for (body, crosses) in cases {
+        let fx = plain_opener_fixture(&format!("[oploc1,plain_door]\n{body}\n\n{PROCS}"));
+        let (graph, _) = derive_stage(&fx, &[900]);
+        assert_eq!(!door_crossings(&graph, 900).is_empty(), crosses, "{body}");
+    }
+}

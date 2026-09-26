@@ -86,9 +86,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   Legends' Guild doors, the Mining Guild door and surface ladder (mining
   60), Witch's House, Priest in Peril temple, Nature Spirit, Mourner HQ,
   Troll Stronghold arena and Tai Bwo Wannai doors, one-way exits (Khazard's
-  stronghold, jail and cell doors) and quest ladders. 2,758 → 2,961 edges
-  (+155 door, +48 ladder), pack +14,550 bytes, placements with an edge
-  1,744 → 1,901; bakes stay byte-identical. Openers gated on an in-progress
+  stronghold, jail and cell doors) and quest ladders. An opener is only
+  trusted while the engine door procs it calls match their pinned 289
+  bodies and every call after the crossing (in arguments, arithmetic,
+  string interpolations or called procs) is a command certified not to
+  move the player. 2,758 → 2,959 edges (+153 door, +48 ladder), pack
+  +14,416 bytes, placements with an edge 1,744 → 1,900; bakes stay
+  byte-identical. Openers gated on an in-progress
   quest window, shared or untransmitted flags, NPC dialogs, keys used on the
   loc and player-relative or randomised landings are still not edges.
 - Added shared native-map data contracts: independently keyed image/POI caches,
