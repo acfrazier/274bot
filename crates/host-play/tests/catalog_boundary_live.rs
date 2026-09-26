@@ -8229,7 +8229,8 @@ export default class NativeStop extends LoopingBot {{
         );
         // One published frame: a real client with the local player on the
         // stand and the given `(slot, type, world tile, face target)` NPCs.
-        let frame = |npcs: &[(usize, usize, (i32, i32, i32), i32)]| {
+        type NpcRow = (usize, usize, (i32, i32, i32), i32);
+        let frame = |npcs: &[NpcRow]| {
             let mut client = Client::new(ClientConfig {
                 host: "127.0.0.1".into(),
                 port: 43594,
@@ -8266,7 +8267,7 @@ export default class NativeStop extends LoopingBot {{
             client.local_player = Some(ClientPlayer::at(stand.0, stand.1));
             for (row, (slot, type_id, tile, face)) in npcs.iter().enumerate() {
                 let mut npc = ClientNpc {
-                    r#type: Some(*type_id as usize),
+                    r#type: Some(*type_id),
                     ..Default::default()
                 };
                 // The actor tile is un-scaled from these pixel coords.
