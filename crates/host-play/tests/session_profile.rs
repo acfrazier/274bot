@@ -1236,6 +1236,38 @@ fn missing_289_sidecar_and_missing_pack_keep_existing_refusals() {
 }
 
 #[test]
+fn external_v9_pack_degrades_to_unavailable_without_deleting_user_file() {
+    let fixture = Fixture::new();
+    let pack = fixture.0.join("from-0.1.8.1.navpack");
+    let mut bytes = tiny_v8_pack();
+    bytes[4] = 9;
+    std::fs::write(&pack, &bytes).unwrap();
+    write_nav_sidecar(
+        &pack,
+        289,
+        CacheManifest::capture(289, &fixture.0).unwrap().identity(),
+        &bytes,
+    );
+    let mut options = fixture.options(289);
+    options.nav_pack = Some(pack.clone());
+
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    let NavAvailability::Unavailable(message) = profile.nav_availability() else {
+        panic!("stale external navigation must be unavailable");
+    };
+    assert!(
+        message.contains("navigation pack was built by an older 274bot; rebuild it with nav-pack"),
+        "{message}"
+    );
+    assert!(profile.world().is_none());
+    assert_eq!(std::fs::read(pack).unwrap(), bytes);
+}
+
+#[test]
 fn revision_274_without_sidecar_is_legacy_and_decodes_once() {
     let fixture = Fixture::new();
     let bytes = nav::pack::encode_grid(&nav::grid::StepGrid::fixture_door_corridor());

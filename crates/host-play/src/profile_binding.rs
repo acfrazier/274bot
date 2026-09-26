@@ -415,6 +415,20 @@ impl ProfileSelection {
                 .as_deref(),
             observer,
         )?;
+        if runtime && loaded.world.is_some() {
+            if origin.is_bundled() {
+                eprintln!(
+                    "host-play: navigation source: packaged {} bundle: {}",
+                    nav::pack::FORMAT_ID,
+                    nav_pack.display()
+                );
+            } else {
+                eprintln!(
+                    "host-play: navigation source: external pack: {}",
+                    nav_pack.display()
+                );
+            }
+        }
         if runtime {
             if let Some(identity) = &loaded.identity {
                 // Public installations need no server source checkout: only a
@@ -529,6 +543,21 @@ impl ProfileSelection {
         let bytes = std::fs::read(pack_path)
             .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
         counters.pack_reads = 1;
+        if !origin.is_bundled() && bytes.starts_with(b"274V\x09") {
+            let message = format!(
+                "navigation unavailable: navigation pack was built by an older 274bot; rebuild it with nav-pack: {}",
+                pack_path.display()
+            );
+            eprintln!("host-play: {message}");
+            return Ok(LoadedNav {
+                availability: NavAvailability::Unavailable(message),
+                identity: None,
+                world: None,
+                reach: None,
+                canlight: None,
+                counters,
+            });
+        }
         let identity = match origin {
             NavOrigin::Bundled { identity, .. } => NavManifest {
                 revision: identity.revision,

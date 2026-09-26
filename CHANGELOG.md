@@ -454,6 +454,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   save/reopen. The release audit inventories every operator and derived
   on-disk artifact, includes the in-flight frontend vault writer, and defines
   the packaged macOS/Windows/Linux in-place upgrade gate.
+- An external 0.1.8.1 `274V9` navigation pack now leaves navigation
+  unavailable with a `rebuild it with nav-pack` diagnostic instead of aborting
+  panel/TUI startup; the old file is never deleted. Startup logs whether a
+  loaded pack came from the packaged `274V10` bundle or an external path so
+  release gates can prove package provenance.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 
