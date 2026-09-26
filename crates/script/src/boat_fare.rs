@@ -403,7 +403,7 @@ impl Pages {
 
 /// Frozen `talkStrict(LUTHAS.npc, LUTHAS.prefer, log)`.
 enum Talk {
-    Open(NpcReach),
+    Open(Box<NpcReach>),
     Drive(Pages),
 }
 
@@ -418,7 +418,7 @@ impl Talk {
             logs.push_back(format!("no '{LUTHAS}' nearby to talk to"));
             return Err(false);
         }
-        Ok(Self::Open(NpcReach::new(
+        Ok(Self::Open(Box::new(NpcReach::new(
             LUTHAS,
             NpcReachOpts {
                 expect: TalkExpect::DialogReady,
@@ -427,7 +427,7 @@ impl Talk {
                 probe_unreachable: true,
                 skip_click_when_expected: true,
             },
-        )))
+        ))))
     }
 
     fn step(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<bool> {
@@ -947,10 +947,10 @@ impl Recover {
         }
     }
 
-    /// Stop any native walk this recovery has in flight.
-    pub(crate) fn abort(&self, cx: &mut Cx<'_>) {
+    /// The op that stops the native walk this recovery has in flight.
+    pub(crate) fn release(&self) -> Option<InteractReq> {
         match &self.stage {
-            Stage::TalkWalk { walk, .. } => walk.abort(cx),
+            Stage::TalkWalk { walk, .. } => Some(walk.release()),
             Stage::Fill(fill) => match &fill.phase {
                 FillPhase::Search(SearchCrate::Walk(walk))
                 | FillPhase::Final(SearchCrate::Walk(walk))
@@ -959,17 +959,23 @@ impl Recover {
                     phase: PickPhase::Walk(walk),
                     ..
                 })
-                | FillPhase::Pack(PackOne::Walk { walk, .. }) => walk.abort(cx),
-                _ => {}
+                | FillPhase::Pack(PackOne::Walk { walk, .. }) => walk.release(),
+                _ => None,
             },
-            Stage::Talk { .. } => {}
+            Stage::Talk {
+                talk: Talk::Open(reach),
+                ..
+            } => reach.release(),
+            Stage::Talk { .. } => None,
         }
     }
 
     /// `Some(fare_held)` once the recovery ended.
     pub(crate) fn step(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<bool> {
         if interrupted() {
-            self.abort(cx);
+            if let Some(stop) = self.release() {
+                cx.emit(stop);
+            }
             return Some(false);
         }
         let next = match &mut self.stage {
@@ -1040,7 +1046,7 @@ const WALK_TO_MS: u64 = 60_000;
 
 enum WalkToPhase {
     Walking { walk: Walk, retried: bool },
-    Recover(Recover),
+    Recover(Box<Recover>),
 }
 
 /// Frozen `Traversal.walkTo(dest, opts)` (`Traversal.ts:80–95`).
@@ -1147,7 +1153,7 @@ impl WalkTo {
                     return;
                 }
                 match Recover::start(self.dest, cx, &mut self.logs) {
-                    Ok(recover) => self.phase = WalkToPhase::Recover(recover),
+                    Ok(recover) => self.phase = WalkToPhase::Recover(Box::new(recover)),
                     Err(_) => self.result = Some(false),
                 }
             }

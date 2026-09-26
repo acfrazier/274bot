@@ -777,9 +777,14 @@ impl Walk {
     }
 
     pub(crate) fn abort(&self, cx: &mut Cx<'_>) {
-        cx.emit(InteractReq::AbortWalk {
+        cx.emit(self.release());
+    }
+
+    /// The op that stops this walk's host follow.
+    pub(crate) fn release(&self) -> InteractReq {
+        InteractReq::AbortWalk {
             request_id: self.token,
-        });
+        }
     }
 
     /// The settled walk ended frozen `'blocked'`: the host follow stood next
@@ -891,15 +896,6 @@ impl Resilient {
         self
     }
 
-    /// Stop the native walk this ladder has in flight.
-    pub(crate) fn abort(&self, cx: &mut Cx<'_>) {
-        match &self.phase {
-            Phase::Walking(walk) => walk.abort(cx),
-            Phase::BoatFare(recover) => recover.abort(cx),
-            _ => {}
-        }
-    }
-
     /// Frozen `opts.sceneRadius` (`Traversal.ts:105`).
     fn with_scene_radius(mut self, scene_radius: i32) -> Self {
         self.scene_radius = scene_radius;
@@ -918,9 +914,8 @@ impl Resilient {
     /// walk has stopped its walker).
     pub(crate) fn release(&self) -> Option<InteractReq> {
         match &self.phase {
-            Phase::Walking(walk) => Some(InteractReq::AbortWalk {
-                request_id: walk.token,
-            }),
+            Phase::Walking(walk) => Some(walk.release()),
+            Phase::BoatFare(recover) => recover.release(),
             _ => None,
         }
     }
@@ -959,7 +954,9 @@ impl Resilient {
         // Frozen: EventSignal.pending before isArrived (Traversal.ts:131,
         // walkLadder.ts:48–52).
         if interrupted() {
-            self.abort(cx);
+            if let Some(stop) = self.release() {
+                cx.emit(stop);
+            }
             self.logs
                 .push_back("walk interrupted by a runtime event — yielding to the runtime".into());
             return Some(false);
