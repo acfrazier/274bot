@@ -1192,19 +1192,29 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
         .contains("navigation/profile mismatch"));
 
     wrong.revision = 289;
+    let mut newer = bytes.clone();
+    newer[4] = nav::pack::VERSION + 1;
+    wrong.nav_sha256 = nav::manifest::hash_bytes(&newer);
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
         serde_json::to_vec(&wrong).unwrap(),
     )
     .unwrap();
-    let mut corrupt = bytes.clone();
-    corrupt[4] = 5;
-    std::fs::write(&pack, &corrupt).unwrap();
+    std::fs::write(&pack, &newer).unwrap();
     let error = selection.bind().unwrap_err();
-    assert!(
-        error.contains("navigation/profile mismatch") || error.contains("unsupported pack version"),
-        "{error}"
-    );
+    assert!(error.contains("unsupported pack version"), "{error}");
+
+    let mut garbage = bytes.clone();
+    garbage[..4].copy_from_slice(b"nope");
+    wrong.nav_sha256 = nav::manifest::hash_bytes(&garbage);
+    std::fs::write(
+        host_play::profile::nav_manifest_path(&pack),
+        serde_json::to_vec(&wrong).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(&pack, &garbage).unwrap();
+    let error = selection.bind().unwrap_err();
+    assert!(error.contains("bad pack magic"), "{error}");
 }
 
 #[test]
@@ -1235,12 +1245,11 @@ fn missing_289_sidecar_and_missing_pack_keep_existing_refusals() {
     assert_eq!(missing.nav_load_counters().pack_reads, 0);
 }
 
-#[test]
-fn external_v9_pack_degrades_to_unavailable_without_deleting_user_file() {
+fn assert_external_old_pack_degrades_without_deleting_user_file(version: u8) {
     let fixture = Fixture::new();
-    let pack = fixture.0.join("from-0.1.8.1.navpack");
+    let pack = fixture.0.join(format!("old-v{version}.navpack"));
     let mut bytes = tiny_v8_pack();
-    bytes[4] = 9;
+    bytes[4] = version;
     std::fs::write(&pack, &bytes).unwrap();
     write_nav_sidecar(
         &pack,
@@ -1265,6 +1274,16 @@ fn external_v9_pack_degrades_to_unavailable_without_deleting_user_file() {
     );
     assert!(profile.world().is_none());
     assert_eq!(std::fs::read(pack).unwrap(), bytes);
+}
+
+#[test]
+fn external_v8_pack_degrades_to_unavailable_without_deleting_user_file() {
+    assert_external_old_pack_degrades_without_deleting_user_file(8);
+}
+
+#[test]
+fn external_v9_pack_degrades_to_unavailable_without_deleting_user_file() {
+    assert_external_old_pack_degrades_without_deleting_user_file(9);
 }
 
 #[test]

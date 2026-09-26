@@ -109,7 +109,7 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// than compat-loaded.
 /// Rebake with `nav-pack` over `$ENGINE_DIR/../content/maps` whenever the
 /// Server content changes (new loc/NPC placements, pack bumps).
-const VERSION: u8 = 10;
+pub const VERSION: u8 = 10;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Pack format identity as it appears in bundled navigation identities: the

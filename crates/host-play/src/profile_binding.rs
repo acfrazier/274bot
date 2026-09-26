@@ -543,7 +543,12 @@ impl ProfileSelection {
         let bytes = std::fs::read(pack_path)
             .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
         counters.pack_reads = 1;
-        if !origin.is_bundled() && bytes.starts_with(b"274V\x09") {
+        if !origin.is_bundled()
+            && bytes.starts_with(b"274V")
+            && bytes
+                .get(4)
+                .is_some_and(|version| *version < nav::pack::VERSION)
+        {
             let message = format!(
                 "navigation unavailable: navigation pack was built by an older 274bot; rebuild it with nav-pack: {}",
                 pack_path.display()
