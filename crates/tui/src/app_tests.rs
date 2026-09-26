@@ -1087,11 +1087,21 @@ fn browse_rows_select_a_card_for_start() {
     );
     assert_eq!(
         app.on_key(ch('t')),
+        AppAction::None,
+        "Browse keeps the keys while it is open: t does not start yet"
+    );
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert!(
+        !app.script_browse_open,
+        "Enter closes Browse; the pick stays"
+    );
+    assert_eq!(
+        app.on_key(ch('t')),
         AppAction::ScriptStart(ScriptSel::Loaded(
             ScriptSource::Catalog,
             "BoneBurier".into(),
         )),
-        "t starts the card picked in Browse, with the picker still open"
+        "t starts the card picked in Browse"
     );
 }
 
@@ -1406,10 +1416,11 @@ fn script_commands_are_reachable_at_80x24() {
     assert_eq!(app.on_key(ch('C')), AppAction::None);
     app.reload_confirm = true;
     assert_eq!(app.on_key(ch('C')), AppAction::ScriptReloadCancel);
-    // Browse and Load open in the tab.
+    // Browse and Load open in the tab and keep the keys until closed.
     assert_eq!(app.on_key(ch('b')), AppAction::ScriptBrowse);
     assert!(app.script_browse_open);
-    app.script_browse_open = false;
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+    assert!(!app.script_browse_open);
     assert_eq!(app.on_key(ch('f')), AppAction::None);
     assert!(app.script_load_open);
 }

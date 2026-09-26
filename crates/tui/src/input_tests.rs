@@ -485,3 +485,223 @@ fn header_counts_follow_the_rows() {
     );
     assert!(text(&rows).contains("offline"));
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScriptPopup {
+    Browse,
+    Load,
+    Catalog,
+}
+
+const SCRIPT_POPUPS: [ScriptPopup; 3] =
+    [ScriptPopup::Browse, ScriptPopup::Load, ScriptPopup::Catalog];
+
+fn popup_open(app: &TuiApp, popup: ScriptPopup) -> bool {
+    match popup {
+        ScriptPopup::Browse => app.script_browse_open,
+        ScriptPopup::Load => app.script_load_open,
+        ScriptPopup::Catalog => app.rs2b0t_catalog_open,
+    }
+}
+
+/// A folder with a sub folder and a script file for the Load and catalog
+/// folder lists.
+fn scratch_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "274bot-tui-{tag}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    std::fs::write(dir.join("digbot.js"), "export default class T {}\n").unwrap();
+    dir
+}
+
+fn browse_card(name: &str) -> crate::script_shape::BrowseCard {
+    crate::script_shape::BrowseCard {
+        name: name.into(),
+        description: String::new(),
+        category: "Skilling".into(),
+        tags: Vec::new(),
+        kind: script::ScriptKind::Compat,
+        source: ScriptSource::File,
+        unloadable: None,
+    }
+}
+
+/// Open `popup` the way an operator does, from the Script tab.
+fn open_popup(app: &mut TuiApp, popup: ScriptPopup, dir: &std::path::Path) {
+    assert_eq!(app.on_key(key(KeyCode::F(5))), AppAction::None);
+    match popup {
+        ScriptPopup::Browse => assert_eq!(app.on_key(ch('b')), AppAction::ScriptBrowse),
+        ScriptPopup::Load => {
+            app.script_load_last_dir = Some(dir.to_path_buf());
+            assert_eq!(app.on_key(ch('f')), AppAction::None);
+        }
+        ScriptPopup::Catalog => {
+            app.rs2b0t_catalog_dir = dir.to_path_buf();
+            app.on_key(ch(':'));
+            for c in "import".chars() {
+                app.on_key(ch(c));
+            }
+            assert_eq!(
+                app.on_key(key(KeyCode::Enter)),
+                AppAction::ScriptImportCatalog
+            );
+            // What tui-play's dispatch does with that action.
+            app.rs2b0t_catalog_open = true;
+            app.catalog_sel = 0;
+        }
+    }
+    assert!(popup_open(app, popup), "{popup:?} opened");
+}
+
+/// Browse, the Load file browser and the catalog folder prompt own every
+/// key while open: no global chord, no other pane's letter and no script
+/// letter gets past them (the old router let `q` open the quit dialog over
+/// Browse and `t` start a script from it). Only their own keys act; Esc
+/// closes them. Ctrl-Q still asks to quit and cancelling returns to them.
+#[test]
+fn script_popups_own_every_key_until_closed() {
+    let dir = scratch_dir("popup-keys");
+    let leaks = [
+        ch('q'),
+        ch('?'),
+        ch(':'),
+        ctrl('p'),
+        key(KeyCode::F(1)),
+        key(KeyCode::F(2)),
+        key(KeyCode::F(3)),
+        key(KeyCode::F(4)),
+        key(KeyCode::F(5)),
+        key(KeyCode::F(6)),
+        key(KeyCode::F(7)),
+        key(KeyCode::Tab),
+        key(KeyCode::BackTab),
+        ch('t'),
+        ch('e'),
+        ch('T'),
+        ch('E'),
+        ch('b'),
+        ch('f'),
+        ch('v'),
+        ch('R'),
+        ch('m'),
+        ch('i'),
+        ch('x'),
+    ];
+    for popup in SCRIPT_POPUPS {
+        let mut app = fleet_app(&["alice", "bob"]);
+        app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "Alpha".into()));
+        app.script_cards = vec![browse_card("Alpha"), browse_card("Bravo")];
+        open_popup(&mut app, popup, &dir);
+        for k in leaks {
+            assert_eq!(app.on_key(k), AppAction::None, "{popup:?}: {k:?}");
+            assert!(popup_open(&app, popup), "{popup:?} stays open after {k:?}");
+            assert!(
+                app.modal.is_none(),
+                "{popup:?}: {k:?} opened {:?}",
+                app.modal
+            );
+            assert!(!app.quit);
+            assert_eq!(app.screen, Screen::Script, "{popup:?}: {k:?}");
+            assert_eq!(app.key_focus, Pane::Detail, "{popup:?}: {k:?}");
+            assert!(!app.map_active && !app.settings_state.open && !app.loadouts_state.open);
+        }
+        let footer = draw(&mut app, 80, 24)[23].clone();
+        let scope = match popup {
+            ScriptPopup::Browse => "KEYS Script: Browse ▸",
+            ScriptPopup::Load => "KEYS Script: load file ▸",
+            ScriptPopup::Catalog => "KEYS Script: catalog folder ▸",
+        };
+        assert!(footer.starts_with(scope), "{footer}");
+
+        assert_eq!(app.on_key(ctrl('q')), AppAction::None);
+        assert!(matches!(
+            &app.modal,
+            Some(Modal::Confirm(c)) if c.kind == ConfirmKind::Quit
+        ));
+        assert_eq!(app.on_key(ch('n')), AppAction::None);
+        assert!(
+            popup_open(&app, popup),
+            "{popup:?} is still there after the quit dialog"
+        );
+
+        let esc = app.on_key(key(KeyCode::Esc));
+        if popup == ScriptPopup::Catalog {
+            assert_eq!(
+                esc,
+                AppAction::ScriptDeferCatalog,
+                "Esc on the prompt is Not now"
+            );
+        } else {
+            assert_eq!(esc, AppAction::None);
+            assert!(!popup_open(&app, popup), "{popup:?}: Esc closes it");
+            assert_eq!(app.on_key(ch('q')), AppAction::None);
+            assert!(
+                matches!(&app.modal, Some(Modal::Confirm(c)) if c.kind == ConfirmKind::Quit),
+                "{popup:?}: once closed, q asks to quit again"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A click outside an open Script popup reaches nothing behind it: Browse
+/// and Load close (the pick stays), the catalog prompt stays open because
+/// dismissing it means Not now. The wheel moves the popup's own list.
+#[test]
+fn script_popups_swallow_clicks_outside_themselves() {
+    let dir = scratch_dir("popup-clicks");
+    for popup in SCRIPT_POPUPS {
+        let mut app = fleet_app(&["alice", "bob"]);
+        app.script_cards = vec![browse_card("Alpha"), browse_card("Bravo")];
+        open_popup(&mut app, popup, &dir);
+        let rows = draw(&mut app, 120, 40);
+        let (bob_x, bob_y) = find(&rows, "bob").expect("fleet row");
+        let (map_x, map_y) = find(&rows, " Map F4 ").expect("map tab");
+
+        let sel_before = app.script_sel.clone();
+        let load_before = app.script_load_sel;
+        let catalog_before = app.catalog_sel;
+        let fleet = app.regions.fleet_rows;
+        app.on_mouse(mouse(MouseEventKind::ScrollDown, fleet.x + 2, fleet.y));
+        assert_eq!(
+            app.table.cursor, 0,
+            "{popup:?}: the wheel left the fleet alone"
+        );
+        match popup {
+            ScriptPopup::Browse => assert_ne!(app.script_sel, sel_before),
+            ScriptPopup::Load => assert!(app.script_load_sel > load_before),
+            ScriptPopup::Catalog => assert!(app.catalog_sel > catalog_before),
+        }
+
+        assert_eq!(app.on_click(map_x + 1, map_y), AppAction::None, "{popup:?}");
+        assert_eq!(
+            app.screen,
+            Screen::Script,
+            "{popup:?}: the tab click did not switch"
+        );
+        assert!(!app.map_active);
+        if popup != ScriptPopup::Catalog {
+            assert!(
+                !popup_open(&app, popup),
+                "{popup:?}: an outside click closes it"
+            );
+            open_popup(&mut app, popup, &dir);
+            draw(&mut app, 120, 40);
+        }
+        assert_eq!(app.on_click(bob_x, bob_y), AppAction::None, "{popup:?}");
+        assert_eq!(
+            app.focused_name().as_deref(),
+            Some("alice"),
+            "{popup:?}: the click never selected the bot behind it"
+        );
+        assert_eq!(popup_open(&app, popup), popup == ScriptPopup::Catalog);
+        assert!(app.modal.is_none());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -56,7 +56,9 @@ label in its border. Everything is plain text as well as colour.
 
 ## Keys
 
-One routing model: an open popup or overlay takes every key; then the
+One routing model: an open popup or overlay takes every key (the Script
+tab's Browse, Load file and catalog folder prompt included: only their own
+Up/Down, `j`/`k`, `Enter` and `Esc` act until they close); then the
 focused pane's text field (fleet filter, map search, log search) takes
 typing; then the global keys; then the focused pane's own keys. No letter
 is global, and moving the fleet cursor never changes the selected bot.
@@ -75,7 +77,7 @@ is global, and moving the fleet cursor never changes the selected bot.
 | Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot; `Space` selects the row for group actions; `/` filters by name, `wN` / `world:N` or state; `m` Load+login all…; `U` Log out all… |
 | Overview | `i` Log in, `u` Log out, `x` Remove…, `o` settings, `l` loadouts, `w` Manual walk, `n` Got it (background-bots notice) |
 | Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` layers, `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
-| Script | `b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f` Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start all…, `E` Stop all… |
+| Script | `b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f` Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start all…, `E` Stop all…; in Browse, Up/Down pick and `Enter` or `Esc` close it (the pick stays for `t`) |
 | Chat | arrows / `j` `k` choose, `Space` / `Enter` continue or answer, `1`-`9` script paint buttons, `p` paint / game chat |
 | Logs, log drawer | `/` search, `v` level, `s` source, `b` scope, `f` follow, arrows PgUp PgDn Home End scroll, `w` save, `F` session file |
 | Manual walk | `W` `A` `S` `D` / arrows walk one tile; `Esc` disarms |
@@ -93,7 +95,9 @@ for the row or pane and never acts as a left click; the wheel scrolls the
 list, log or map under the pointer. The palette's **Mouse capture off**
 hands the mouse back to the terminal for selecting and copying text. A
 resize re-lays the shell at once; click targets always come from the
-current layout, and an open overlay swallows clicks outside itself.
+current layout. An open overlay or Script popup swallows clicks outside
+itself and takes the wheel: Browse and Load close on an outside click, the
+catalog prompt stays (dismissing it means Not now).
 
 ### Changed keys (0.1.9)
 

@@ -1,14 +1,16 @@
 //! Input routing: one model for keys and the mouse. Keys go, in order, to
-//! Ctrl-Q (always a quit request); the open popup or overlay (it takes
-//! every key); the focused pane's text field (fleet filter, map search, log
+//! Ctrl-Q (always a quit request); the open popup or overlay (params,
+//! loadouts, settings, then help/palette/confirm/menu/message/manual walk,
+//! then the Script tab's Load, catalog and Browse popups; it takes every
+//! key); the focused pane's text field (fleet filter, map search, log
 //! search: typing wins); the global chords (F1-F7, Ctrl-P, Tab/Shift-Tab
 //! and, outside text, `?`, `:`, `q`); then the focused pane's own keys. No
 //! letter is global: each pane's shortcuts live in `commands` and act only
 //! while that pane has keyboard focus. The mouse hit-tests the regions of
-//! the last draw: an overlay first (it swallows clicks outside itself), then
-//! the header tabs, then the pane under the pointer, which also takes
-//! keyboard focus. A right click opens a context menu and never acts as a
-//! left click.
+//! the last draw: an overlay or Script popup first (it swallows clicks and
+//! the wheel outside itself), then the header tabs, then the pane under the
+//! pointer, which also takes keyboard focus. A right click opens a context
+//! menu and never acts as a left click.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -98,6 +100,9 @@ impl TuiApp {
         if self.modal.is_some() {
             return self.modal_key(key);
         }
+        if let Some(action) = self.script_popup_key(key) {
+            return action;
+        }
         if let Some(action) = self.text_entry_key(key) {
             return action;
         }
@@ -147,6 +152,15 @@ impl TuiApp {
         if let Some(modal) = &self.modal {
             return modal.scope();
         }
+        if self.script_load_open {
+            return "Script: load file";
+        }
+        if self.rs2b0t_catalog_open {
+            return "Script: catalog folder";
+        }
+        if self.script_browse_open {
+            return "Script: Browse";
+        }
         match self.key_focus {
             Pane::Fleet if self.table.editing => "Fleet filter",
             Pane::Fleet => "Fleet",
@@ -155,9 +169,6 @@ impl TuiApp {
             Pane::Detail => match self.screen {
                 Screen::Map if self.map_search_open => "Map search",
                 Screen::Logs if self.log.editing => "Log search",
-                Screen::Script if self.script_load_open => "Script: load file",
-                Screen::Script if self.rs2b0t_catalog_open => "Script: catalog folder",
-                Screen::Script if self.script_browse_open => "Script: Browse",
                 screen => screen.label(),
             },
         }
@@ -183,8 +194,9 @@ impl TuiApp {
             "Log search" => "type to search · Enter done · Esc done",
             "Log drawer" | "Logs" => "/ search · v level · s source · b scope · f follow · Up/Down scroll · w save",
             "Map search" => "name or x,z,plane · Up/Down results · Enter jump · Esc close",
-            "Script: load file" | "Script: catalog folder" => "Up/Down · Enter open · Esc close",
-            "Script: Browse" => "Up/Down pick · Enter/Esc close · t start",
+            "Script: load file" => "Up/Down · Enter open · Esc close",
+            "Script: catalog folder" => "Up/Down · Enter open · Esc not now",
+            "Script: Browse" => "Up/Down pick · Enter or Esc closes, the pick stays",
             "Overview" => "i login · u logout · x remove · o settings · l loadouts · w manual walk",
             "Map" => "arrows pan · +/- zoom · Enter select/walk · / search · g group · t teleport · Esc back",
             "Script" => "b browse · t start · P pause · e stop · f load · v params · R reload · T/E all",
@@ -510,32 +522,9 @@ impl TuiApp {
         }
     }
 
-    /// The Script tab's keys: an open Load or catalog browser takes them;
-    /// the Browse list takes navigation and lets the script keys through.
+    /// The Script tab's letters (`SCRIPT_KEYS`). Its Browse, Load and
+    /// catalog popups never get here: they own the keys while open.
     fn script_pane_key(&mut self, key: KeyEvent) -> AppAction {
-        if self.script_load_open {
-            return self.load_on_key(key);
-        }
-        if self.rs2b0t_catalog_open {
-            return self.catalog_on_key(key);
-        }
-        if self.script_browse_open {
-            match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.move_script_sel(-1);
-                    return AppAction::None;
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.move_script_sel(1);
-                    return AppAction::None;
-                }
-                KeyCode::Enter | KeyCode::Esc => {
-                    self.script_browse_open = false;
-                    return AppAction::None;
-                }
-                _ => {}
-            }
-        }
         match key.code {
             KeyCode::Char(c) if is_text(&key) => {
                 script_key_command(c).map_or(AppAction::None, |command| self.run_command(command))
@@ -590,6 +579,9 @@ impl TuiApp {
         }
         if self.modal.is_some() {
             return self.modal_click(col, row);
+        }
+        if self.script_popup_open() {
+            return self.script_popup_click(col, row);
         }
         if let Some(tab) = self.regions.tab_at(col, row) {
             return match tab {
@@ -676,6 +668,9 @@ impl TuiApp {
             }
             return AppAction::None;
         }
+        if self.script_popup_open() {
+            return AppAction::None;
+        }
         let menu = if contains(self.regions.fleet_rows, col, row) {
             let Some((_, member)) = self.fleet_row_at(row) else {
                 return AppAction::None;
@@ -732,6 +727,10 @@ impl TuiApp {
             self.modal_scroll(delta as i32);
             return AppAction::None;
         }
+        if self.script_popup_open() {
+            self.script_popup_scroll(delta);
+            return AppAction::None;
+        }
         if contains(self.regions.fleet_rows, col, row) {
             self.table.sync(&self.names, &self.statuses);
             self.table.move_cursor(delta * 3, &self.names);
@@ -739,8 +738,6 @@ impl TuiApp {
             self.log.scroll_by(delta * 3);
         } else if contains(self.regions.map, col, row) {
             self.map_pan_rows(-delta as i32);
-        } else if contains(self.script_area, col, row) && self.script_browse_open {
-            self.move_script_sel(delta as i32);
         }
         AppAction::None
     }

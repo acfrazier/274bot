@@ -84,6 +84,10 @@ const SCRIPT_NAV: &[(&str, &str)] = &[
         "Esc",
         "close Browse / Load; the catalog prompt means Not now",
     ),
+    (
+        "other keys",
+        "ignored while Browse, Load or the catalog prompt is open",
+    ),
 ];
 
 const CHAT_NAV: &[(&str, &str)] = &[

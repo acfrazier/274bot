@@ -335,7 +335,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   `Ctrl-P`/`:` opens a command palette listing every command with its
   target and why it is unavailable (it also reaches every screen when an
   SSH terminal swallows function keys). One routing model replaces the old
-  global letters: an open popup or overlay takes every key, typing wins in
+  global letters: an open popup or overlay takes every key (the Script tab's Browse, Load and catalog prompts too), typing wins in
   text fields, and each pane's letters act only in that pane — so `q` no
   longer quits from a popup and `x` no longer removes a bot from the
   settings popup. `Tab` moves keyboard focus (it no longer cycles the bot);

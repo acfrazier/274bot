@@ -1111,7 +1111,7 @@ impl TuiApp {
         out
     }
 
-    pub(crate) fn load_on_key(&mut self, key: KeyEvent) -> AppAction {
+    fn load_on_key(&mut self, key: KeyEvent) -> AppAction {
         let entries = self.load_entries();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -1166,7 +1166,7 @@ impl TuiApp {
     }
 
     /// First-run catalog folder browser keys.
-    pub(crate) fn catalog_on_key(&mut self, key: KeyEvent) -> AppAction {
+    fn catalog_on_key(&mut self, key: KeyEvent) -> AppAction {
         let entries = self.catalog_entries();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -1231,7 +1231,7 @@ impl TuiApp {
 
     /// Move the Browse selection `step` cards through the grouped list
     /// (wrapping).
-    pub(crate) fn move_script_sel(&mut self, step: i32) {
+    fn move_script_sel(&mut self, step: i32) {
         let deferred = script::rs2b0t_import_deferred();
         let lines = browse_lines(&self.script_cards, &self.script_category_order, deferred);
         let card_indices: Vec<usize> = lines
@@ -1260,6 +1260,71 @@ impl TuiApp {
         let card = &self.script_cards[card_indices[next]];
         self.script_sel = Some(ScriptSel::Loaded(card.source, card.name.clone()));
         self.browse_changed = true;
+    }
+
+    /// Browse, the Load file browser or the catalog folder prompt is open.
+    /// Each is drawn in the Script tab and, like an overlay, owns every key
+    /// and click until it closes.
+    pub(crate) fn script_popup_open(&self) -> bool {
+        self.script_load_open || self.rs2b0t_catalog_open || self.script_browse_open
+    }
+
+    /// Keys while a Script popup is open: its own navigation, Enter and
+    /// Esc act; every other key is ignored, so no global chord, other
+    /// pane's letter or script letter gets past it. `None` when no popup is
+    /// open. Load sits over the catalog prompt, which sits over Browse.
+    pub(crate) fn script_popup_key(&mut self, key: KeyEvent) -> Option<AppAction> {
+        if self.script_load_open {
+            return Some(self.load_on_key(key));
+        }
+        if self.rs2b0t_catalog_open {
+            return Some(self.catalog_on_key(key));
+        }
+        if !self.script_browse_open {
+            return None;
+        }
+        let text = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        match key.code {
+            KeyCode::Up => self.move_script_sel(-1),
+            KeyCode::Char('k') if text => self.move_script_sel(-1),
+            KeyCode::Down => self.move_script_sel(1),
+            KeyCode::Char('j') if text => self.move_script_sel(1),
+            // The pick stays for Start.
+            KeyCode::Enter | KeyCode::Esc => self.script_browse_open = false,
+            _ => {}
+        }
+        Some(AppAction::None)
+    }
+
+    /// A click while a Script popup is open. Inside the Script pane it
+    /// picks a row or presses one of the pane's buttons; outside it reaches
+    /// nothing: Browse and Load close (the pick stays), the catalog prompt
+    /// stays open because dismissing it means Not now.
+    pub(crate) fn script_popup_click(&mut self, col: u16, row: u16) -> AppAction {
+        if crate::layout::contains(self.script_area, col, row) {
+            return self.script_click(col, row);
+        }
+        if !self.rs2b0t_catalog_open {
+            self.script_load_open = false;
+            self.script_browse_open = false;
+        }
+        AppAction::None
+    }
+
+    /// The wheel over anything while a Script popup is open moves that
+    /// popup's list (`delta` -1 up, 1 down).
+    pub(crate) fn script_popup_scroll(&mut self, delta: isize) {
+        if self.script_load_open {
+            let last = self.load_entries().len().saturating_sub(1);
+            self.script_load_sel = self.script_load_sel.saturating_add_signed(delta).min(last);
+        } else if self.rs2b0t_catalog_open {
+            let last = self.catalog_entries().len().saturating_sub(1);
+            self.catalog_sel = self.catalog_sel.saturating_add_signed(delta).min(last);
+        } else if self.script_browse_open {
+            self.move_script_sel(delta as i32);
+        }
     }
 
     /// The script pane's clicks: a button runs its command (the same path
