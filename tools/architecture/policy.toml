@@ -212,8 +212,8 @@ reason = "tui observes client facts with raster Off; it does not own a GPU loop.
 [[allow]]
 from = "tui"
 to = "host-play"
-kinds = ["normal"]
-reason = "tui composes the same Play session as panel; production tui does not depend on host directly."
+kinds = ["normal", "dev"]
+reason = "tui composes the same Play session as panel; production tui does not depend on host directly. The dev edge only enables host-play's test-support feature for tui tests."
 
 [[allow]]
 from = "tui"
