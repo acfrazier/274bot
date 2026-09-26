@@ -49,7 +49,9 @@ pub(super) enum CmpOp {
 pub(super) enum Stmt {
     If(Vec<(Expr, Vec<Stmt>)>, Option<Vec<Stmt>>),
     Block(Vec<Stmt>),
-    Return,
+    /// `return;` or `return(<expr>);`, with every call and `@label` the
+    /// returned expression makes (they run before the script ends).
+    Return(Vec<String>),
     Jump(String, Vec<Expr>),
     Def(String, Option<Expr>),
     Assign(Vec<String>, Expr),
@@ -69,7 +71,7 @@ impl Stmt {
                 other.iter().flatten().for_each(|s| s.calls(out));
             }
             Stmt::Block(body) => body.iter().for_each(|s| s.calls(out)),
-            Stmt::Return => {}
+            Stmt::Return(calls) => out.extend(calls.iter().cloned()),
             Stmt::Jump(name, args) => {
                 out.push(format!("@{name}"));
                 args.iter().for_each(|a| expr_calls(a, out));
@@ -283,11 +285,14 @@ impl Parser<'_> {
             "if" => self.if_stmt(),
             "return" => {
                 self.i += 1;
-                if self.is_punct("(") {
-                    self.balanced_group()?;
-                }
+                let calls = if self.is_punct("(") {
+                    let (start, end) = self.balanced_group()?;
+                    calls_in(&self.toks[start..end])
+                } else {
+                    vec![]
+                };
                 self.eat_punct(";")?;
-                Some(Stmt::Return)
+                Some(Stmt::Return(calls))
             }
             w if w.starts_with("switch_") || w == "while" => {
                 self.i += 1;

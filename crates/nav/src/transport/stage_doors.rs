@@ -547,14 +547,15 @@ impl Eval<'_> {
                 Flow::Crossed(leaf, true) => return Flow::Crossed(leaf, true),
                 // The rest of this block still runs after the crossing: it
                 // may print or talk, never move the player or jump. A
-                // `return` ends the script there.
+                // `return` ends the script there, once the calls its value
+                // makes have run.
                 Flow::Crossed(leaf, false) => {
                     for rest in &stmts[k + 1..] {
-                        if *rest == Stmt::Return {
-                            return Flow::Crossed(leaf, true);
-                        }
                         if self.src.moves_or_jumps(rest) {
                             return Flow::Refused;
+                        }
+                        if matches!(rest, Stmt::Return(_)) {
+                            return Flow::Crossed(leaf, true);
                         }
                     }
                     return Flow::Crossed(leaf, false);
@@ -568,7 +569,9 @@ impl Eval<'_> {
     fn stmt(&mut self, stmt: &Stmt, env: &mut Env) -> Flow {
         match stmt {
             Stmt::Block(body) => self.run(body, env),
-            Stmt::Return => Flow::Return,
+            // A returned value computed by a call is not modelled.
+            Stmt::Return(calls) if calls.is_empty() => Flow::Return,
+            Stmt::Return(_) => Flow::Refused,
             // A branch that only prints or drops items cannot change the
             // crossing, so its condition is not a requirement.
             Stmt::If(arms, other)

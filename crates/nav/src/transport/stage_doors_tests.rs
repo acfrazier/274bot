@@ -634,7 +634,9 @@ fn stage_door_refuses_an_unproven_proc_after_the_crossing() {
             "[oploc1,plain_door]\n~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n{call}\n\n\
 [proc,say_goodbye]\nmes(\"The door shuts.\");\n\n\
 [proc,relocate_after_open]\np_delay(0);\n~nudge;\n\n\
-[proc,nudge]\np_teleport(movecoord(coord, 0, 0, 5));\n"
+[proc,nudge]\np_teleport(movecoord(coord, 0, 0, 5));\nreturn(true);\n\n\
+[proc,returns_nudge](boolean)\nreturn(~nudge);\n\n\
+[proc,returns_flag](boolean)\nreturn(true);\n"
         )
     };
     for (call, crosses) in [
@@ -642,6 +644,10 @@ fn stage_door_refuses_an_unproven_proc_after_the_crossing() {
         ("~relocate_after_open;", false),
         ("~nudge;", false),
         ("~missing_proc;", false),
+        // `traiborn.rs2:36` shape: the movement hides in a return value.
+        ("def_boolean $moved = ~returns_nudge;", false),
+        ("return(~nudge);", false),
+        ("def_boolean $flag = ~returns_flag;", true),
         (
             "if (%heroquest >= ^hero_complete) {\n    ~relocate_after_open;\n}",
             false,
