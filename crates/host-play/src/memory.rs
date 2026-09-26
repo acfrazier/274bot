@@ -390,6 +390,27 @@ fn seeded_idle_scenario() -> scenario::Scenario {
     scenario
 }
 
+/// Preserve every scenario predicate while allowing a fleet to share the
+/// local engine's actors and script work. Scenario budgets count dirty
+/// snapshots, not wall time; the ordinary single-bot budgets are too short
+/// when many benchmark slots contend for the same combat area.
+fn widen_fleet_post_start_waits(scenario: &mut scenario::Scenario, n: usize) {
+    if n <= 1 {
+        return;
+    }
+    let minimum = (n as u32).saturating_mul(20).clamp(300, 1_800);
+    let Some(start) = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, scenario::StepKind::StartScript))
+    else {
+        return;
+    };
+    for step in &mut scenario.steps[start + 1..] {
+        step.wait.budget_ticks = step.wait.budget_ticks.max(minimum);
+    }
+}
+
 fn seed_runner(
     scenario: scenario::Scenario,
     name: &str,
@@ -675,6 +696,7 @@ impl Run {
                 scenario::get(scenario_name)
                     .ok_or_else(|| format!("missing benchmark scenario {scenario_name}"))?
             };
+            widen_fleet_post_start_waits(&mut scenario, self.config.n);
             scenario.settings.terminal_shot = None;
             let seed = seed_runner(scenario, name, seed_world.clone());
             seeds.insert(name.clone(), Arc::new(Mutex::new(seed)));
