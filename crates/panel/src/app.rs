@@ -544,7 +544,7 @@ impl PanelState {
             return;
         }
         let focused = self.session.focused_name();
-        match self.session.play.as_ref() {
+        match self.session.core.play() {
             Some(play) => self
                 .resource_sampler
                 .sample_play(now, play, focused.as_deref()),
@@ -1226,7 +1226,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
 /// 330px panel collapsed. `only_render_selected` / fold hide the blit
 /// only. Capture reaches the focused cell's body.
 fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
-    let members = state.session.wall.members.clone();
+    let members = state.session.core.members().to_vec();
     if members.is_empty() {
         ui.text_disabled("no wall members");
         state.paint.release_canvas(gpu);
@@ -1253,8 +1253,8 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         let running = status.is_some_and(|s| s.walk_x != -1)
             || state
                 .session
-                .play
-                .as_ref()
+                .core
+                .play()
                 .is_some_and(|p| p.script_state(name) == script::RunState::Running);
         let light = traffic_light(
             status.is_some_and(|s| s.connected),
@@ -1703,7 +1703,7 @@ fn profile_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "profile") {
         return;
     }
-    if session.vault.is_none() {
+    if session.core.vault().is_none() {
         vault_unlock_prompt(ui, session);
         return;
     }
@@ -1779,7 +1779,7 @@ fn logout_enabled(vault_open: bool, focused: bool, connected: bool, queued: bool
 fn login_logout_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
     let cells = button_cells(avail, 2);
-    let vault_open = session.vault.is_some();
+    let vault_open = session.core.vault().is_some();
     let focused = session.focused_name();
     let can_login = vault_open && focused.is_some();
     let focused_queued = focused
@@ -3785,7 +3785,7 @@ fn background_ack_window(ui: &Ui, session: &mut Session, view: &ResourceView) {
 /// (a sibling button, never part of the name click) removes it.
 fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
-    let members = state.session.wall.members.clone();
+    let members = state.session.core.members().to_vec();
     let statuses = state.session.statuses();
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     {
@@ -3799,8 +3799,8 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         let running = status.is_some_and(|s| s.walk_x != -1)
             || state
                 .session
-                .play
-                .as_ref()
+                .core
+                .play()
                 .is_some_and(|p| p.script_state(name) == script::RunState::Running);
         let light = traffic_light(
             status.is_some_and(|s| s.connected),
@@ -3953,8 +3953,8 @@ fn cell_body(
         match state.session.focused_pixels() {
             Some(buf) => state
                 .session
-                .slots
-                .get(name)
+                .core
+                .slot_io(name)
                 .map(|s| Arc::ptr_eq(&s.pixels, &buf))
                 .unwrap_or(false),
             None => false,
@@ -3964,7 +3964,12 @@ fn cell_body(
         // `take` moves the stored frame out; `present` routes it: the
         // `PixMap` (CPU) arm uploads into the tile's owned texture, the
         // `Texture` (GPU) arm binds the client's frame view directly.
-        if let Some(frame) = state.session.slots.get(name).and_then(|s| s.pixels.take()) {
+        if let Some(frame) = state
+            .session
+            .core
+            .slot_io(name)
+            .and_then(|s| s.pixels.take())
+        {
             tv.view.present(gpu, frame);
         }
     }
@@ -4032,17 +4037,15 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .size_constraints([200.0, 80.0], [f32::MAX, 720.0])
         .build(|| {
             let _wrap = ui.push_text_wrap_pos(0.0);
-            if session.vault.is_none() {
+            if session.core.vault().is_none() {
                 vault_unlock_prompt(ui, session);
             } else {
-            let names: Vec<String> = session
-                .vault
-                .as_ref()
+            let names: Vec<String> = session.core.vault()
                 .map(|v| v.profiles().map(|p| p.username.clone()).collect())
                 .unwrap_or_default();
             let w = ui.content_region_avail()[0];
             let focused = session.focused_name();
-            let members = session.wall.members.clone();
+            let members = session.core.members().to_vec();
             let multibox = session.multibox;
             if multibox && ui.button_with_size("Load all", [w, 0.0]) {
                 session.load_all();
@@ -4741,7 +4744,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     #[cfg(feature = "memory-profile")]
     if let Some(run) = state.memory.as_mut() {
         state.session.memory_focus(run);
-        if let Some(play) = state.session.play.as_ref() {
+        if let Some(play) = state.session.core.play() {
             match run.poll(play) {
                 Ok(true) => {
                     eprintln!("PASS: memory panel observation complete");

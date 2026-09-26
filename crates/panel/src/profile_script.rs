@@ -135,8 +135,8 @@ impl Session {
     }
 
     pub fn profile_assignment(&self, profile: &str) -> Option<ScriptAssignment> {
-        self.vault
-            .as_ref()
+        self.core
+            .vault()
             .and_then(|v| v.get(profile))
             .and_then(|p| p.settings.script_assignment.clone())
     }
@@ -163,7 +163,7 @@ impl Session {
         profile: &str,
         edit: impl FnOnce(&mut vault::ProfileSettings),
     ) -> bool {
-        let Some(vault) = self.vault.as_mut() else {
+        let Some(vault) = self.core.vault_mut() else {
             self.error = Some("script: vault locked".into());
             return false;
         };
@@ -201,8 +201,8 @@ impl Session {
 
     fn claim_legacy_for(&mut self, profile: &str, key: &str, card_name: &str) {
         let already = self
-            .vault
-            .as_ref()
+            .core
+            .vault()
             .and_then(|v| v.get(profile))
             .is_some_and(|p| p.settings.script_settings.contains_key(key));
         if already {
@@ -225,8 +225,8 @@ impl Session {
         card_name: &str,
     ) -> Map<String, Value> {
         self.claim_legacy_for(profile, key, card_name);
-        self.vault
-            .as_ref()
+        self.core
+            .vault()
             .and_then(|v| v.get(profile))
             .and_then(|p| p.settings.script_settings.get(key).cloned())
             .unwrap_or_default()
@@ -280,7 +280,7 @@ impl Session {
         path: &Path,
     ) {
         let (identity, generation) = {
-            let Some(play) = self.play.as_ref() else {
+            let Some(play) = self.core.play() else {
                 return;
             };
             let Some(identity) = play.script_source_identity(profile) else {
@@ -301,7 +301,7 @@ impl Session {
             .map(|c| c.settings_schema.clone())
             .unwrap_or_default();
         let bag = self.merged_profile_bag(profile, source, name, path, &schema);
-        if let Some(play) = self.play.as_ref() {
+        if let Some(play) = self.core.play() {
             let _ = play.script_post_settings_fenced(profile, &bag, &identity, generation);
         }
     }
@@ -337,16 +337,18 @@ impl Session {
     }
 
     fn script_start_sel(&mut self, profile: &str, sel: script::ScriptSel) -> Result<(), String> {
-        if self.play.is_none() {
+        if self.core.play().is_none() {
             return Err("no play".into());
         }
         match sel {
             script::ScriptSel::Compiled(id) => {
-                {
-                    let play = self.play.as_ref().ok_or_else(|| "no play".to_string())?;
-                    play.script_start(profile, id)?;
-                    play.script_attach_identity(profile, script::compiled_identity_key(id));
-                }
+                self.core
+                    .start_script(
+                        profile,
+                        frontend_core::ScriptStart::Compiled(id),
+                        Some(script::compiled_identity_key(id)),
+                    )
+                    .map_err(|e| e.to_string())?;
                 self.persist_successful_assignment(profile, script::compiled_assignment(id));
                 Ok(())
             }
@@ -392,17 +394,18 @@ impl Session {
                         api_family: Some(card.api_family.as_str().into()),
                     },
                 )?;
-                let play = self.play.as_ref().ok_or_else(|| "no play".to_string())?;
-                if let Err(e) = play.script_start_load_typed(
-                    profile,
-                    card.js.clone(),
-                    card.shape,
+                let start = frontend_core::ScriptStart::Load {
+                    js: card.js.clone(),
+                    shape: card.shape,
                     bag,
                     siblings,
-                ) {
+                };
+                if let Err(e) = self
+                    .core
+                    .start_script(profile, start, Some(card.identity_key()))
+                {
                     return self.js.record_start_result(&card, Err(e));
                 }
-                play.script_attach_identity(profile, card.identity_key());
                 self.pending_starts.insert(
                     profile.to_string(),
                     PendingStart {
@@ -416,7 +419,7 @@ impl Session {
     }
 
     pub fn script_start_all(&mut self) {
-        let members = self.wall.members.clone();
+        let members = self.core.members().to_vec();
         if members.is_empty() {
             self.error = Some("Start all: no wall members".into());
             return;
@@ -426,8 +429,8 @@ impl Session {
         let mut skipped = 0usize;
         for name in members {
             let state = self
-                .play
-                .as_ref()
+                .core
+                .play()
                 .map(|p| p.script_state(&name))
                 .unwrap_or(script::RunState::Idle);
             match state {
@@ -468,22 +471,13 @@ impl Session {
     /// load diagnostic; a failure records it and reports it where the
     /// Start was made. Called once per UI frame.
     pub fn settle_script_starts(&mut self) {
-        if self.pending_starts.is_empty() {
-            return;
-        }
-        let Some(play) = self.play.as_ref() else {
-            return;
-        };
-        let mut settled = Vec::new();
-        for name in self.pending_starts.keys() {
-            match play.script_poll_start(name) {
-                script::StartPoll::Pending => {}
-                script::StartPoll::Settled(outcome) => settled.push((name.clone(), Some(outcome))),
-                // The slot was removed (its Stop cancelled the Start).
-                script::StartPoll::NotOwed => settled.push((name.clone(), None)),
-            }
-        }
-        for (name, outcome) in settled {
+        let settled = self.core.take_settled_starts();
+        for frontend_core::StartSettled {
+            slot: name,
+            outcome,
+            ..
+        } in settled
+        {
             let Some(pending) = self.pending_starts.remove(&name) else {
                 continue;
             };
@@ -540,13 +534,13 @@ impl Session {
     }
 
     pub fn script_stop_all(&mut self) {
-        let mut names: Vec<String> = self.wall.members.clone();
-        for name in self.slots.keys() {
+        let mut names: Vec<String> = self.core.members().to_vec();
+        for name in self.core.slots().keys() {
             if !names.iter().any(|n| n == name) {
                 names.push(name.clone());
             }
         }
-        let Some(play) = self.play.as_ref() else {
+        let Some(play) = self.core.play() else {
             return;
         };
         let mut stopped = 0usize;
@@ -966,8 +960,8 @@ impl Session {
         let mut found = Vec::new();
         for name in &warning.running {
             let paused_now = self
-                .play
-                .as_ref()
+                .core
+                .play()
                 .is_some_and(|p| p.script_state(name) == script::RunState::Paused);
             if paused_now && !warning.paused_during_prep.iter().any(|n| n == name) {
                 found.push(name.clone());
@@ -1020,7 +1014,7 @@ impl Session {
         profile: &str,
         prepared: &script::PreparedCard,
     ) -> Result<(), String> {
-        if self.play.is_none() {
+        if self.core.play().is_none() {
             return Err("no play".into());
         }
         let card = &prepared.card;
@@ -1036,17 +1030,18 @@ impl Session {
         if self.fail_reload_start_for.as_deref() == Some(profile) {
             return Err("injected start failure".into());
         }
-        let play = self.play.as_ref().ok_or_else(|| "no play".to_string())?;
-        if let Err(e) = play.script_start_load_typed(
-            profile,
-            card.js.clone(),
-            card.shape,
+        let start = frontend_core::ScriptStart::Load {
+            js: card.js.clone(),
+            shape: card.shape,
             bag,
-            prepared.siblings.clone(),
-        ) {
+            siblings: prepared.siblings.clone(),
+        };
+        if let Err(e) = self
+            .core
+            .start_script(profile, start, Some(card.identity_key()))
+        {
             return self.js.record_start_result(card, Err(e));
         }
-        play.script_attach_identity(profile, card.identity_key());
         self.pending_starts.insert(
             profile.to_string(),
             PendingStart {
@@ -1084,7 +1079,7 @@ impl Session {
                 failed += 1;
                 break;
             }
-            let Some(play) = self.play.as_ref() else {
+            let Some(play) = self.core.play() else {
                 errors.push(format!("{slot_name}: no play"));
                 failed += 1;
                 continue;
@@ -1150,11 +1145,11 @@ impl Session {
     }
 
     fn reload_logout_pending(&self, name: &str) -> bool {
-        if self.wall.latch.contains(name) {
+        if self.core.fleet().latched(name) {
             return true;
         }
-        self.play
-            .as_ref()
+        self.core
+            .play()
             .and_then(|p| p.arm(name))
             .is_some_and(|arm| arm.wants_logout())
     }
@@ -1162,7 +1157,7 @@ impl Session {
     fn slots_with_identity(&self, key: &str) -> (Vec<String>, Vec<String>) {
         let mut running = Vec::new();
         let mut paused = Vec::new();
-        let Some(play) = self.play.as_ref() else {
+        let Some(play) = self.core.play() else {
             return (running, paused);
         };
         for name in self.slot_names() {
@@ -1179,8 +1174,8 @@ impl Session {
     }
 
     fn slot_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.wall.members.clone();
-        for name in self.slots.keys() {
+        let mut names: Vec<String> = self.core.members().to_vec();
+        for name in self.core.slots().keys() {
             if !names.iter().any(|n| n == name) {
                 names.push(name.clone());
             }
@@ -1189,7 +1184,7 @@ impl Session {
     }
 
     fn generations_for(&self, names: &[String]) -> Vec<(String, u64)> {
-        let Some(play) = self.play.as_ref() else {
+        let Some(play) = self.core.play() else {
             return Vec::new();
         };
         names
@@ -1410,8 +1405,8 @@ impl Session {
         let key =
             script::card_identity_key(script::ScriptSource::Catalog, Path::new(""), card_name);
         let names: Vec<String> = self
-            .vault
-            .as_ref()
+            .core
+            .vault()
             .map(|v| v.profiles().map(|p| p.username.clone()).collect())
             .unwrap_or_default();
         for name in names {
@@ -1498,8 +1493,8 @@ fn lookup_name(source: script::ScriptSource, name: &str, path: &Path) -> String 
 fn script_active_name(session: &Session, name: &str) -> bool {
     matches!(
         session
-            .play
-            .as_ref()
+            .core
+            .play()
             .map(|p| p.script_state(name))
             .unwrap_or(script::RunState::Idle),
         script::RunState::Starting

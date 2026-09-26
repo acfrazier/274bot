@@ -45,28 +45,29 @@ use map_fixture::MapFixture;
 
 #[test]
 fn memory_override_changes_spawn_profile_without_persisting_it() {
-    let profile = Profile {
-        uid: 274,
-        username: "alice".into(),
-        password: "pw".into(),
-        settings: ProfileSettings {
-            lowmem: true,
-            ..ProfileSettings::default()
-        },
-    };
-    let effective = Session::profile_with_memory_override(profile.clone(), Some(false));
+    let path = tmp_vault("memory-override-spawn.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut alice = profile("alice", "pw", 274);
+    alice.settings.lowmem = true;
+    vault.upsert(alice).unwrap();
+    s.core.set_vault(Some(vault));
+    s.set_memory_override(Some(false));
+
+    s.load("alice");
+
+    assert!(s.audio.music_on("alice"), "spawn must use explicit highmem");
     assert!(
-        !effective.settings.lowmem,
-        "spawn must use explicit highmem"
-    );
-    assert!(
-        profile.settings.lowmem,
-        "the vault profile must remain unchanged"
-    );
-    assert!(
-        Session::profile_with_memory_override(profile, None)
+        s.core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
             .settings
-            .lowmem
+            .lowmem,
+        "the vault profile must remain unchanged"
     );
 }
 
@@ -333,7 +334,7 @@ fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf
 
 fn preparation_only_session() -> Session {
     let mut session = Session::new();
-    session.skip_slot_spawn = true;
+    session.core.set_spawn_workers(false);
     session
 }
 
@@ -402,9 +403,9 @@ fn stale_profile_preparation_is_dropped_without_partial_session_state() {
     );
     assert!(!session.profile_bound());
     assert!(session.template.is_none());
-    assert!(session.play.is_none());
-    assert!(session.vault.is_none());
-    assert!(session.slots.is_empty());
+    assert!(session.core.play().is_none());
+    assert!(session.core.vault().is_none());
+    assert!(session.core.slots().is_empty());
 }
 
 #[test]
@@ -422,9 +423,9 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
     assert_eq!(session.error.as_deref(), Some("cache changed"));
     assert!(!session.profile_bound());
     assert!(session.template.is_none());
-    assert!(session.play.is_none());
-    assert!(session.vault.is_none());
-    assert!(session.slots.is_empty());
+    assert!(session.core.play().is_none());
+    assert!(session.core.vault().is_none());
+    assert!(session.core.slots().is_empty());
 }
 
 #[test]
@@ -462,9 +463,9 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     std::fs::write(cache.join("config"), b"changed after validation").unwrap();
     assert!(session.unlock("prepared-pass"));
     assert!(session.profile_bound());
-    assert!(session.play.is_some());
-    assert!(session.vault.is_some());
-    assert!(session.slots.is_empty());
+    assert!(session.core.play().is_some());
+    assert!(session.core.vault().is_some());
+    assert!(session.core.slots().is_empty());
 }
 
 #[test]
@@ -711,19 +712,19 @@ fn debug_dest_greenland_tooltip_is_the_script_comment() {
 fn mark_tutorial_skipped_persists_on_focused_profile() {
     let path = tmp_vault("tutskip-pref.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     assert_eq!(s.focused_tutorial_skipped(), None);
     s.mark_tutorial_skipped();
     assert_eq!(s.focused_tutorial_skipped(), Some(true));
     assert_eq!(
-        s.vault
-            .as_ref()
+        s.core
+            .vault()
             .unwrap()
             .get("alice")
             .unwrap()
@@ -1439,9 +1440,10 @@ fn remove_only_focused_drawing_slot_releases_flags() {
 
     let vault_path = tmp_vault("flags-last-slot-remove.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&vault_path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core
+        .set_vault(Some(Vault::create(&vault_path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -1943,16 +1945,16 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
 #[test]
 fn tv_name_follows_the_focused_slot() {
     let mut s = Session::new();
-    s.play = Some(empty_play());
-    s.slots.insert(
-        "s00".into(),
+    s.core.set_play(Some(empty_play()));
+    s.core.insert_slot_io(
+        "s00",
         SlotIo {
             input: SlotInput::new(),
             pixels: FrameBuf::new(),
         },
     );
-    s.slots.insert(
-        "s05".into(),
+    s.core.insert_slot_io(
+        "s05",
         SlotIo {
             input: SlotInput::new(),
             pixels: FrameBuf::new(),
@@ -1965,7 +1967,7 @@ fn tv_name_follows_the_focused_slot() {
         "Login all must prefer the focused slot, not the first FrameBuf key"
     );
     assert_eq!(
-        s.play.as_ref().unwrap().focused().as_deref(),
+        s.core.play().unwrap().focused().as_deref(),
         Some("s05"),
         "select mirrors the sampled slot onto the play (pure bookkeeping)"
     );
@@ -1987,7 +1989,7 @@ fn pump_status_log_is_per_username() {
         .lock()
         .unwrap()
         .extend([status("alice", false, 0), status("bob", false, 0)]);
-    s.play = Some(play);
+    s.core.set_play(Some(play));
 
     s.pump_status();
     {
@@ -2000,8 +2002,8 @@ fn pump_status_log_is_per_username() {
         assert!(bob.iter().all(|l| !l.contains("alice")));
     }
 
-    s.play
-        .as_ref()
+    s.core
+        .play()
         .unwrap()
         .statuses
         .lock()
@@ -2041,9 +2043,9 @@ fn pump_status_log_is_per_username() {
 fn music_toggle_mirrors_onto_the_audio_gate_live() {
     let path = tmp_vault("audio-toggle.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -2068,15 +2070,15 @@ fn sidecar_cadence_sync_raises_members_not_focus() {
     let mut s = Session::new();
     let a_in = SlotInput::new();
     let b_in = SlotInput::new();
-    s.slots.insert(
-        "a".into(),
+    s.core.insert_slot_io(
+        "a",
         SlotIo {
             input: Arc::clone(&a_in),
             pixels: FrameBuf::new(),
         },
     );
-    s.slots.insert(
-        "b".into(),
+    s.core.insert_slot_io(
+        "b",
         SlotIo {
             input: Arc::clone(&b_in),
             pixels: FrameBuf::new(),
@@ -2119,7 +2121,7 @@ fn unlock_at_uses_the_given_path() {
     let path = tmp_vault("unlock-at.vault");
     let mut s = Session::new();
     assert!(s.unlock_at(&path, "bot"));
-    assert!(s.vault.is_some());
+    assert!(s.core.vault().is_some());
 }
 
 #[test]
@@ -2127,8 +2129,8 @@ fn wrong_pass_does_not_delete_or_replace_the_vault() {
     let path = tmp_vault("wrong-pass.vault");
     let mut s = Session::new();
     assert!(s.unlock_at(&path, "bot"));
-    s.vault
-        .as_mut()
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -2136,7 +2138,7 @@ fn wrong_pass_does_not_delete_or_replace_the_vault() {
 
     let mut s = Session::new();
     assert!(!s.unlock_at(&path, "nope"));
-    assert!(s.vault.is_none());
+    assert!(s.core.vault().is_none());
     assert!(path.is_file());
     let v = Vault::unlock(&path, "bot").unwrap();
     assert!(v.get("alice").is_some());
@@ -2149,7 +2151,7 @@ fn reset_vault_at_refuses_while_unlocked() {
     assert!(s.unlock_at(&path, "bot"));
     assert!(!s.reset_vault_at(&path));
     assert!(path.is_file());
-    assert!(s.vault.is_some());
+    assert!(s.core.vault().is_some());
 }
 
 #[test]
@@ -2157,7 +2159,7 @@ fn reset_vault_at_deletes_while_locked() {
     let path = tmp_vault("reset-ok.vault");
     let mut s = Session::new();
     assert!(s.unlock_at(&path, "bot"));
-    s.vault = None;
+    s.core.set_vault(None);
     assert!(s.reset_vault_at(&path));
     assert!(!path.exists());
     assert!(s.unlock_at(&path, "newpass"));
@@ -2196,8 +2198,8 @@ fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFi
     let play = fixture.play(origin);
     s.server_profile = Some(Arc::clone(fixture.template.profile()));
     s.statuses = play.statuses();
-    s.focus.lock().unwrap().focused = Some("alice".into());
-    s.play = Some(play);
+    s.set_focus_for_test("alice");
+    s.core.set_play(Some(play));
     fixture
 }
 
@@ -2271,12 +2273,12 @@ fn push_session_slot(
     connected: bool,
     ingame: bool,
 ) {
-    s.play
-        .as_mut()
+    s.core
+        .play_mut()
         .unwrap()
         .attach_arm(name, SlotArm::new(1, false));
-    s.play
-        .as_ref()
+    s.core
+        .play()
         .unwrap()
         .statuses
         .lock()
@@ -2320,12 +2322,12 @@ fn picker_focus_switch_walks_the_newly_focused_bot() {
         true,
         true,
     );
-    s.statuses = s.play.as_ref().unwrap().statuses();
-    s.wall.load("alice");
-    s.wall.load("bob");
+    s.statuses = s.core.play().unwrap().statuses();
+    s.core.fleet_mut().add("alice");
+    s.core.fleet_mut().add("bob");
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
-    s.focus.lock().unwrap().focused = Some("bob".into());
-    s.play.as_mut().unwrap().focus("bob");
+    s.set_focus_for_test("bob");
+    s.core.play_mut().unwrap().focus("bob");
     assert!(s.map_model.pending().is_some());
     assert!(s.confirm_picker_walk(&world));
     assert!(s.error.is_none());
@@ -2375,9 +2377,9 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
         true,
         true,
     );
-    s.statuses = s.play.as_ref().unwrap().statuses();
+    s.statuses = s.core.play().unwrap().statuses();
     for name in ["alice", "bob", "logged-out", "nopos"] {
-        s.wall.load(name);
+        s.core.fleet_mut().add(name);
     }
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     s.refresh_walk_send();
@@ -2431,8 +2433,8 @@ fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
     let mut s = Session::new();
     s.server_profile = Some(Arc::clone(fixture.template.profile()));
     s.statuses = play.statuses();
-    s.focus.lock().unwrap().focused = Some("alice".into());
-    s.play = Some(play);
+    s.set_focus_for_test("alice");
+    s.core.set_play(Some(play));
     s.select_picker_tile(
         &world,
         Tile {
@@ -2467,8 +2469,8 @@ fn picker_teleport_without_spawned_queue_is_no_focus() {
     let play = fixture.play(origin);
     s.server_profile = Some(Arc::clone(fixture.template.profile()));
     s.statuses = play.statuses();
-    s.focus.lock().unwrap().focused = Some("alice".into());
-    s.play = Some(play);
+    s.set_focus_for_test("alice");
+    s.core.set_play(Some(play));
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     assert!(!s.confirm_picker_teleport(&world));
     assert_eq!(s.error, Some(ActionError::NoFocus.to_string()));
@@ -2506,8 +2508,8 @@ fn picker_teleport_follows_session_target_and_host() {
     let play = local_fixture.play(origin);
     local.server_profile = Some(Arc::clone(local_fixture.template.profile()));
     local.statuses = play.statuses();
-    local.focus.lock().unwrap().focused = Some("alice".into());
-    local.play = Some(play);
+    local.set_focus_for_test("alice");
+    local.core.set_play(Some(play));
     local.select_picker_tile(&world, blocked);
     assert_eq!(local.target(), client::BotTarget::Local);
     assert!(local.map_teleport_authorized());
@@ -2616,7 +2618,7 @@ fn picker_mine_world() -> NavWorld {
 #[test]
 fn picker_confirm_feeds_the_focused_slots_latched_essence_session() {
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     // Alice's walker already latched the mine session (entered via
     // Aubury): a WalkTo out of the mine must route through the exit
     // portal's return hop — the arm feeds the traveller's latch.
@@ -2668,7 +2670,7 @@ fn picker_confirm_feeds_the_focused_slots_latched_essence_session() {
 #[test]
 fn picker_confirm_without_a_latch_keeps_the_mine_sealed() {
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     // No latch: the session return hop is never relaxed — the sealed
     // mine stays NoPath (fail-closed without a session is correct).
     let world = picker_mine_world();
@@ -2697,7 +2699,7 @@ fn picker_confirm_without_a_latch_keeps_the_mine_sealed() {
 #[test]
 fn picker_confirm_no_path_keeps_destination_without_arming() {
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     // Block the middle column: (1,0), (1,1), (1,2) on the 3x3 world.
     let mut flags = vec![0u32; 9];
     for z in 0..3 {
@@ -2840,7 +2842,7 @@ fn coins_snapshot_state() -> WorldState {
 fn picker_confirm_uses_focused_slot_state_across_a_toll() {
     let world = toll_world();
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     // The slot thread published 10 coins (derived from a live
     // snapshot); the picker routes with those facts.
     s.nav_states.lock().unwrap().insert(
@@ -2906,7 +2908,7 @@ fn walk_follow_uses_stored_nav_snapshot() {
 fn picker_confirm_falls_back_to_empty_when_slot_has_no_state() {
     let world = toll_world();
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     assert!(!confirm_map_walk(
         &mut s,
         &world,
@@ -2935,7 +2937,7 @@ fn picker_confirm_falls_back_to_empty_when_slot_has_no_state() {
 fn picker_confirm_ignores_teles_until_allow_teleports() {
     // world: origin cannot walk to dest; a teleport edge can.
     let mut session = Session::new();
-    session.focus.lock().unwrap().focused = Some("alice".into());
+    session.set_focus_for_test("alice");
     // Wall splits the 5x5 between x=1 and x=2 (nav fixture shape), so
     // no walk crosses; only the any-tile teleport edge reaches (4,4).
     let mut flags = vec![0u32; 25];
@@ -3024,7 +3026,7 @@ fn picker_confirm_uses_find_with_options() {
     // `ui.nav.allow_teleports` and `ui.nav.allow_wilderness` through
     // to `find_with`.
     let mut session = Session::new();
-    session.focus.lock().unwrap().focused = Some("alice".into());
+    session.set_focus_for_test("alice");
     let mut flags = vec![0u32; 5 * 12];
     for z in 0..12 {
         flags[z * 5 + 1] |= CollisionFlag::W_E as u32;
@@ -3125,7 +3127,7 @@ fn picker_confirm_uses_find_with_options() {
 #[test]
 fn sync_walk_status_copies_queued_and_clears_dest_on_arrived() {
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     let world = open_world(3, 3);
     let dest = Tile {
         x: 2,
@@ -3189,15 +3191,15 @@ fn select_bumps_route_gen_only_on_focus_change() {
 
 #[test]
 fn focused_tile_is_none_without_status() {
-    let s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    let mut s = Session::new();
+    s.set_focus_for_test("alice");
     assert_eq!(s.focused_tile(), None, "no status rows yet");
 }
 
 #[test]
 fn disconnected_focused_slot_has_no_tile() {
     let mut session = Session::new();
-    session.focus.lock().unwrap().focused = Some("alice".into());
+    session.set_focus_for_test("alice");
     session.statuses.push(SlotStatus {
         username: "alice".into(),
         connected: false,
@@ -3224,23 +3226,23 @@ fn focus_first_profile_selects_first_vault_name() {
     crate::ui_state::save(&crate::ui_state::PanelUiState::default());
     let path = tmp_vault("focus-first.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s.vault
-        .as_mut()
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
     s.focus_first_profile();
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
     assert_eq!(s.cred_user, "alice");
-    assert!(s.slots.contains_key("alice"));
+    assert!(s.core.slots().contains_key("alice"));
     assert!(
-        !s.slots.contains_key("bob"),
+        !s.core.slots().contains_key("bob"),
         "parked vault rows must not start a Client"
     );
 }
@@ -3249,14 +3251,14 @@ fn focus_first_profile_selects_first_vault_name() {
 fn focus_first_prefers_last_focus() {
     let path = tmp_vault("focus-last.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s.vault
-        .as_mut()
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
@@ -3274,9 +3276,9 @@ fn select_saves_last_focus() {
     crate::ui_state::save(&crate::ui_state::PanelUiState::default());
     let path = tmp_vault("select-last-focus.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -3288,19 +3290,19 @@ fn select_saves_last_focus() {
 fn set_multibox_restores_last_focus_when_focus_not_on_wall() {
     let path = tmp_vault("multibox-last-focus.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s.vault
-        .as_mut()
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
     s.select("alice");
-    s.wall.load("bob");
+    s.core.fleet_mut().add("bob");
     crate::ui_state::save(&crate::ui_state::PanelUiState {
         last_focus: Some("bob".into()),
         ..Default::default()
@@ -3308,30 +3310,30 @@ fn set_multibox_restores_last_focus_when_focus_not_on_wall() {
     // Focused alice is not a wall member; MultiBox-on should pick bob.
     s.set_multibox(true);
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
-    assert!(s.wall.members.iter().any(|m| m == "bob"));
+    assert!(s.core.members().iter().any(|m| m == "bob"));
 }
 
 #[test]
 fn select_spawns_parked_profile_once() {
     let path = tmp_vault("select-spawn.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s.vault
-        .as_mut()
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
     s.select("alice");
-    assert_eq!(s.slots.len(), 1);
+    assert_eq!(s.core.slots().len(), 1);
     s.select("bob");
-    assert_eq!(s.slots.len(), 2);
+    assert_eq!(s.core.slots().len(), 2);
     s.select("alice");
-    assert_eq!(s.slots.len(), 2);
+    assert_eq!(s.core.slots().len(), 2);
 }
 
 #[test]
@@ -3340,8 +3342,8 @@ fn flat_model_spawns_every_member_as_a_client() {
     let mut s = Session::new();
     assert!(s.unlock_at(&path, "bot"));
     for (n, uid) in [("alice", 1), ("bob", 2), ("carol", 3)] {
-        s.vault
-            .as_mut()
+        s.core
+            .vault_mut()
             .unwrap()
             .upsert(profile(n, "pw", uid))
             .unwrap();
@@ -3353,28 +3355,32 @@ fn flat_model_spawns_every_member_as_a_client() {
     // slot threads to publish their status rows.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     while std::time::Instant::now() < deadline {
-        if s.play.as_ref().unwrap().statuses().len() == 3 {
+        if s.core.play().unwrap().statuses().len() == 3 {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    assert_eq!(s.slots.len(), 3, "every wall member owns a FrameBuf slot");
     assert_eq!(
-        s.play.as_ref().unwrap().statuses().len(),
+        s.core.slots().len(),
+        3,
+        "every wall member owns a FrameBuf slot"
+    );
+    assert_eq!(
+        s.core.play().unwrap().statuses().len(),
         3,
         "one full Client slot per profile — no lean channels"
     );
     assert!(
-        s.play.as_ref().unwrap().arm("carol").is_some(),
+        s.core.play().unwrap().arm("carol").is_some(),
         "every member has a control arm"
     );
     // Focus is pure bookkeeping: selecting bob redirects the sampled
     // slot without touching a socket.
     s.select("bob");
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
-    assert_eq!(s.play.as_ref().unwrap().focused().as_deref(), Some("bob"));
+    assert_eq!(s.core.play().unwrap().focused().as_deref(), Some("bob"));
     assert_eq!(
-        s.play.as_ref().unwrap().statuses().len(),
+        s.core.play().unwrap().statuses().len(),
         3,
         "focus does not swap sockets; every slot stays up"
     );
@@ -3388,30 +3394,30 @@ fn sidecar_select_does_not_restart_when_game_is_highmem() {
     let path = tmp_vault("select-no-restart.vault");
     let mut s = Session::new();
     s.persist_ui = false;
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s.vault
-        .as_mut()
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
     s.ui.lowmem = false;
     s.select("alice");
     s.load("bob");
-    let alice_px = std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels);
-    let bob_px = std::sync::Arc::as_ptr(&s.slots.get("bob").unwrap().pixels);
+    let alice_px = std::sync::Arc::as_ptr(&s.core.slot_io("alice").unwrap().pixels);
+    let bob_px = std::sync::Arc::as_ptr(&s.core.slot_io("bob").unwrap().pixels);
     s.select("bob");
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
     assert_eq!(
-        std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels),
+        std::sync::Arc::as_ptr(&s.core.slot_io("alice").unwrap().pixels),
         alice_px
     );
     assert_eq!(
-        std::sync::Arc::as_ptr(&s.slots.get("bob").unwrap().pixels),
+        std::sync::Arc::as_ptr(&s.core.slot_io("bob").unwrap().pixels),
         bob_px
     );
     let log = s.log_by.lock().unwrap();
@@ -3423,24 +3429,24 @@ fn sidecar_select_does_not_restart_when_game_is_cpu() {
     let path = tmp_vault("select-no-restart-cpu.vault");
     let mut s = Session::new();
     s.persist_ui = false;
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s.vault
-        .as_mut()
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
     s.ui.raster = vault::RasterMode::Cpu;
     s.select("alice");
     s.load("bob");
-    let alice_px = std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels);
+    let alice_px = std::sync::Arc::as_ptr(&s.core.slot_io("alice").unwrap().pixels);
     s.select("bob");
     assert_eq!(
-        std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels),
+        std::sync::Arc::as_ptr(&s.core.slot_io("alice").unwrap().pixels),
         alice_px
     );
 }
@@ -3451,35 +3457,30 @@ fn logout_all_arms_every_wall_member() {
     let mut s = Session::new();
     assert!(s.unlock_at(&path, "bot"));
     for (n, uid) in [("alice", 1), ("bob", 2)] {
-        s.vault
-            .as_mut()
+        s.core
+            .vault_mut()
             .unwrap()
             .upsert(profile(n, "pw", uid))
             .unwrap();
     }
     s.select("alice");
     s.load("bob");
-    s.wall.load("alice");
-    s.wall.load("bob");
+    s.core.fleet_mut().add("alice");
+    s.core.fleet_mut().add("bob");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     while std::time::Instant::now() < deadline {
-        if s.play.as_ref().unwrap().arm("bob").is_some() {
+        if s.core.play().unwrap().arm("bob").is_some() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     s.logout_all();
     assert!(
-        s.play
-            .as_ref()
-            .unwrap()
-            .arm("alice")
-            .unwrap()
-            .wants_logout(),
+        s.core.play().unwrap().arm("alice").unwrap().wants_logout(),
         "the focused member must logout"
     );
     assert!(
-        s.play.as_ref().unwrap().arm("bob").unwrap().wants_logout(),
+        s.core.play().unwrap().arm("bob").unwrap().wants_logout(),
         "every wall member must logout"
     );
 }
@@ -3494,12 +3495,16 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
     s.live_prepare_stress(3, false).expect("prepare");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     while std::time::Instant::now() < deadline {
-        if s.play.as_ref().unwrap().statuses().len() == 3 {
+        if s.core.play().unwrap().statuses().len() == 3 {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    assert_eq!(s.slots.len(), 3, "every member owns its own Client slot");
+    assert_eq!(
+        s.core.slots().len(),
+        3,
+        "every member owns its own Client slot"
+    );
     assert_eq!(
         s.focused_name().as_deref(),
         Some("s00"),
@@ -3507,7 +3512,7 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
     );
     assert_eq!(s.tv_name().as_deref(), Some("s00"));
     assert!(
-        s.play.as_ref().unwrap().arm("s00").unwrap().wants_login(),
+        s.core.play().unwrap().arm("s00").unwrap().wants_login(),
         "the focused slot arms immediately"
     );
     assert!(
@@ -3533,7 +3538,7 @@ fn login_all_arms_every_wall_member() {
     let mut s = Session::new();
     s.live_prepare_stress(2, false).expect("prepare");
     assert!(
-        s.play.as_ref().unwrap().arm("s01").unwrap().wants_login(),
+        s.core.play().unwrap().arm("s01").unwrap().wants_login(),
         "login all arms every member immediately (the FIFO serializes)"
     );
 }
@@ -3554,7 +3559,7 @@ fn headed_stress_full_paints_every_member_at_50fps() {
     assert!(f.live_full_rate, "full-rate overlay on Game + sidecar");
     drop(f);
     for name in ["s00", "s01"] {
-        let slot = s.slots.get(name).expect("slot");
+        let slot = s.core.slot_io(name).expect("slot");
         assert!(slot.input.full_rate(), "{name} must run the 50 fps cadence");
     }
 }
@@ -3610,8 +3615,8 @@ fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
     // Live boots a minted per-run account — never the registry's
     // `test` (engine auto-registers unknown names).
     let name = s
-        .vault
-        .as_ref()
+        .core
+        .vault()
         .expect("live vault open")
         .profiles()
         .next()
@@ -3619,7 +3624,7 @@ fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
         .username
         .clone();
     assert_ne!(name, "test", "live must not log in `test`");
-    let play = s.play.as_ref().expect("play started");
+    let play = s.core.play().expect("play started");
     assert!(
         play.arm(&name).unwrap().wants_login(),
         "login all arms the minted profile's handshake"
@@ -3653,8 +3658,8 @@ fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
     let mut s = preparation_only_session();
     let result = s.live_prepare_script(scenario::get("bone_burier").expect("registered"));
     let name = s
-        .vault
-        .as_ref()
+        .core
+        .vault()
         .expect("live vault open")
         .profiles()
         .next()
@@ -3674,7 +3679,7 @@ fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
         )),
         "prepare sets script_sel to the catalog card"
     );
-    let play = s.play.as_ref().expect("play started");
+    let play = s.core.play().expect("play started");
     assert_ne!(
         play.script_state(&name),
         script::RunState::Running,
@@ -3829,8 +3834,8 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
         "script_trade loads the in-tree TradeBot fixture as File"
     );
     let names: Vec<_> = s
-        .vault
-        .as_ref()
+        .core
+        .vault()
         .expect("live vault")
         .profiles()
         .map(|p| p.username.clone())
@@ -3983,8 +3988,8 @@ fn live_prepare_script_enables_multibox_for_a_fleet_only() {
     );
     // Both fleet slots are minted fresh accounts, not `test`/`test2`.
     let vault_names: Vec<String> = s
-        .vault
-        .as_ref()
+        .core
+        .vault()
         .expect("live vault open")
         .profiles()
         .map(|p| p.username.clone())
@@ -3993,7 +3998,7 @@ fn live_prepare_script_enables_multibox_for_a_fleet_only() {
     for name in &vault_names {
         assert_ne!(name, "test", "live must not log in `test`");
         assert!(
-            s.wall.members.iter().any(|m| m == name),
+            s.core.members().iter().any(|m| m == name),
             "every minted profile is a wall member"
         );
     }
@@ -4096,9 +4101,9 @@ fn live_prepare_script_never_upserts_the_operator_vault() {
 fn focused_lowmem_follows_the_spawned_slot_not_a_session_leftover() {
     let path = tmp_vault("mem-gate.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -4264,15 +4269,15 @@ fn live_full_rate_sync_raises_focus_and_members() {
     let mut s = Session::new();
     let a_in = SlotInput::new();
     let b_in = SlotInput::new();
-    s.slots.insert(
-        "a".into(),
+    s.core.insert_slot_io(
+        "a",
         SlotIo {
             input: Arc::clone(&a_in),
             pixels: FrameBuf::new(),
         },
     );
-    s.slots.insert(
-        "b".into(),
+    s.core.insert_slot_io(
+        "b",
         SlotIo {
             input: Arc::clone(&b_in),
             pixels: FrameBuf::new(),
@@ -4309,7 +4314,7 @@ fn queue_for_rejects_invalid_queue_tuple() {
 fn focus_first_profile_noop_when_empty() {
     let path = tmp_vault("focus-empty.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
     s.focus_first_profile();
     assert!(s.focused_name().is_none());
 }
@@ -4333,8 +4338,8 @@ fn closing_game_pane_leaves_capture_pref_on() {
 #[test]
 fn reopening_game_pane_resumes_capture_drain() {
     let mut s = Session::new();
-    s.slots.insert(
-        "alice".into(),
+    s.core.insert_slot_io(
+        "alice",
         SlotIo {
             input: SlotInput::new(),
             pixels: FrameBuf::new(),
@@ -4386,17 +4391,17 @@ fn login_after_logout_rearms_handshake_on_fake_arm() {
     );
     let arm = SlotArm::new(7, false);
     play.attach_arm("alice", Arc::clone(&arm));
-    s.play = Some(play);
-    s.wall.load("alice");
+    s.core.set_play(Some(play));
+    s.core.fleet_mut().add("alice");
     s.logout("alice");
-    assert!(s.wall.latch.contains("alice"));
+    assert!(s.core.fleet().latched("alice"));
 
     s.login("alice");
 
     assert!(arm.wants_login());
     assert!(!arm.wants_logout());
     assert!(!arm.login_latched());
-    assert!(!s.wall.latch.contains("alice"));
+    assert!(!s.core.fleet().latched("alice"));
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
 }
 
@@ -4406,13 +4411,13 @@ fn load_refresh_keeps_an_explicit_non_auto_login() {
     let mut session = Session::new();
     let mut vault = Vault::create(&path, "bot").unwrap();
     vault.upsert(profile("alice", "pw", 42)).unwrap();
-    session.vault = Some(vault);
+    session.core.set_vault(Some(vault));
     let mut play = empty_play();
     let arm = SlotArm::new(42, false);
     arm.arm_explicit_login();
     play.attach_arm("alice", Arc::clone(&arm));
-    session.play = Some(play);
-    session.wall.load("alice");
+    session.core.set_play(Some(play));
+    session.core.fleet_mut().add("alice");
 
     assert!(!session.load("alice"));
     assert!(
@@ -4429,13 +4434,13 @@ fn load_keeps_an_idle_timeout_latched_auto_member_logged_out() {
     let mut alice = profile("alice", "pw", 42);
     alice.settings.auto_login = true;
     vault.upsert(alice).unwrap();
-    session.vault = Some(vault);
+    session.core.set_vault(Some(vault));
     let mut play = empty_play();
     let arm = SlotArm::new(42, true);
     arm.hold_logged_out();
     play.attach_arm("alice", Arc::clone(&arm));
-    session.play = Some(play);
-    session.wall.load("alice");
+    session.core.set_play(Some(play));
+    session.core.fleet_mut().add("alice");
 
     assert!(!session.load("alice"));
     assert!(arm.login_latched());
@@ -4449,15 +4454,17 @@ fn load_keeps_an_idle_timeout_latched_auto_member_logged_out() {
 fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
     let path = tmp_vault("terminal-worker-login.vault");
     let mut session = Session::new();
-    session.vault = Some(Vault::create(&path, "bot").unwrap());
     session
-        .vault
-        .as_mut()
+        .core
+        .set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    session
+        .core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    session.skip_slot_spawn = true;
-    session.play = Some(host_play::run_with_io(
+    session.core.set_spawn_workers(false);
+    session.core.set_play(Some(host_play::run_with_io(
         &host_play::PlayOptions {
             host: "127.0.0.1".into(),
             port: 43594,
@@ -4468,10 +4475,10 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    ));
+    )));
     let input = SlotInput::new();
-    session.slots.insert(
-        "alice".into(),
+    session.core.insert_slot_io(
+        "alice",
         SlotIo {
             input: Arc::clone(&input),
             pixels: FrameBuf::new(),
@@ -4481,13 +4488,13 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
     session.login("alice");
 
     let replacement = session
-        .play
-        .as_ref()
+        .core
+        .play()
         .and_then(|play| play.arm("alice"))
         .expect("explicit login recreates the terminal worker arm");
     assert!(replacement.wants_login());
     assert!(Arc::ptr_eq(
-        &session.slots.get("alice").unwrap().input,
+        &session.core.slot_io("alice").unwrap().input,
         &input
     ));
 }
@@ -4498,8 +4505,8 @@ fn login_all_recreates_terminal_worker_and_reuses_slot_io() {
     let mut session = Session::new();
     let mut vault = Vault::create(&path, "bot").unwrap();
     vault.upsert(profile("alice", "pw", 42)).unwrap();
-    session.vault = Some(vault);
-    session.skip_slot_spawn = true;
+    session.core.set_vault(Some(vault));
+    session.core.set_spawn_workers(false);
     let play = empty_play();
     play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
@@ -4507,28 +4514,28 @@ fn login_all_recreates_terminal_worker_and_reuses_slot_io() {
         worker_terminal: Some(host_play::WorkerTerminal::Panicked),
         ..SlotStatus::default()
     });
-    session.play = Some(play);
-    session.wall.load("alice");
+    session.core.set_play(Some(play));
+    session.core.fleet_mut().add("alice");
     let input = SlotInput::new();
-    session.slots.insert(
-        "alice".into(),
+    session.core.insert_slot_io(
+        "alice",
         SlotIo {
             input: Arc::clone(&input),
             pixels: FrameBuf::new(),
         },
     );
-    assert!(session.play.as_ref().unwrap().arm("alice").is_none());
+    assert!(session.core.play().unwrap().arm("alice").is_none());
 
     session.login_all();
 
     let replacement = session
-        .play
-        .as_ref()
+        .core
+        .play()
         .and_then(|play| play.arm("alice"))
         .expect("Login all recreates the terminal worker arm");
     assert!(replacement.wants_login());
     assert!(Arc::ptr_eq(
-        &session.slots.get("alice").unwrap().input,
+        &session.core.slot_io("alice").unwrap().input,
         &input
     ));
 }
@@ -4537,14 +4544,16 @@ fn login_all_recreates_terminal_worker_and_reuses_slot_io() {
 fn selecting_a_terminal_member_preserves_its_failure_until_explicit_login() {
     let path = tmp_vault("terminal-worker-select.vault");
     let mut session = Session::new();
-    session.vault = Some(Vault::create(&path, "bot").unwrap());
     session
-        .vault
-        .as_mut()
+        .core
+        .set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    session
+        .core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    session.skip_slot_spawn = true;
+    session.core.set_spawn_workers(false);
     let play = empty_play();
     play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
@@ -4552,10 +4561,10 @@ fn selecting_a_terminal_member_preserves_its_failure_until_explicit_login() {
         error: Some("slot worker panicked: synthetic".into()),
         ..SlotStatus::default()
     });
-    session.play = Some(play);
-    session.wall.load("alice");
-    session.slots.insert(
-        "alice".into(),
+    session.core.set_play(Some(play));
+    session.core.fleet_mut().add("alice");
+    session.core.insert_slot_io(
+        "alice",
         SlotIo {
             input: SlotInput::new(),
             pixels: FrameBuf::new(),
@@ -4565,10 +4574,10 @@ fn selecting_a_terminal_member_preserves_its_failure_until_explicit_login() {
     session.select("alice");
 
     assert!(
-        session.play.as_ref().unwrap().arm("alice").is_none(),
+        session.core.play().unwrap().arm("alice").is_none(),
         "focus alone must not replace a terminal worker"
     );
-    let row = &session.play.as_ref().unwrap().statuses()[0];
+    let row = &session.core.play().unwrap().statuses()[0];
     assert_eq!(
         row.worker_terminal,
         Some(host_play::WorkerTerminal::Panicked)
@@ -4583,12 +4592,14 @@ fn selecting_a_terminal_member_preserves_its_failure_until_explicit_login() {
 fn explicit_login_arms_a_fresh_non_auto_profile() {
     let path = tmp_vault("fresh-explicit-login.vault");
     let mut session = Session::new();
-    session.vault = Some(Vault::create(&path, "bot").unwrap());
+    session
+        .core
+        .set_vault(Some(Vault::create(&path, "bot").unwrap()));
     let mut alice = profile("alice", "pw", 42);
     alice.settings.auto_login = false;
-    session.vault.as_mut().unwrap().upsert(alice).unwrap();
-    session.skip_slot_spawn = true;
-    session.play = Some(host_play::run_with_io(
+    session.core.vault_mut().unwrap().upsert(alice).unwrap();
+    session.core.set_spawn_workers(false);
+    session.core.set_play(Some(host_play::run_with_io(
         &host_play::PlayOptions {
             host: "127.0.0.1".into(),
             port: 43594,
@@ -4599,13 +4610,13 @@ fn explicit_login_arms_a_fresh_non_auto_profile() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    ));
+    )));
 
     session.login("alice");
 
     let arm = session
-        .play
-        .as_ref()
+        .core
+        .play()
         .and_then(|play| play.arm("alice"))
         .expect("fresh explicit login creates an arm");
     assert!(arm.wants_login());
@@ -4630,9 +4641,9 @@ fn arm_login_all_cancels_pending_logout() {
 fn select_syncs_credentials_fields_from_focused_profile() {
     let path = tmp_vault("select-sync.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -4646,9 +4657,9 @@ fn select_syncs_credentials_fields_from_focused_profile() {
 fn save_credentials_upserts_under_username_key_keeping_uid() {
     let path = tmp_vault("save-creds.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "oldpass", 42))
         .unwrap();
@@ -4657,7 +4668,7 @@ fn save_credentials_upserts_under_username_key_keeping_uid() {
     s.cred_pass = "newpass".into();
     assert!(s.save_credentials());
 
-    let p = s.vault.as_ref().unwrap().get("alice").unwrap();
+    let p = s.core.vault().unwrap().get("alice").unwrap();
     assert_eq!(p.password, "newpass");
     assert_eq!(p.uid, 42, "save must keep the existing uid");
 }
@@ -4666,10 +4677,12 @@ fn save_credentials_upserts_under_username_key_keeping_uid() {
 fn chooser_world_edit_persists_and_updates_running_slot() {
     let path = tmp_vault("world-choice.vault");
     let mut session = Session::new();
-    session.vault = Some(Vault::create(&path, "bot").unwrap());
     session
-        .vault
-        .as_mut()
+        .core
+        .set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    session
+        .core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -4687,7 +4700,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
     );
     let arm = SlotArm::new(42, false);
     play.attach_arm("alice", Arc::clone(&arm));
-    session.play = Some(play);
+    session.core.set_play(Some(play));
     session.begin_edit_profile(Some("alice"));
     assert_eq!(session.cred_settings.world, None);
     session.cred_settings.world = Some(2);
@@ -4730,9 +4743,9 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
 fn save_credentials_creates_new_profile_when_username_is_new() {
     let path = tmp_vault("new-user.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -4741,13 +4754,13 @@ fn save_credentials_creates_new_profile_when_username_is_new() {
     s.cred_pass = "bobpass".into();
     assert!(s.save_credentials());
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
-    assert!(s.slots.contains_key("bob"));
+    assert!(s.core.slots().contains_key("bob"));
 
-    let p = s.vault.as_ref().unwrap().get("bob").unwrap();
+    let p = s.core.vault().unwrap().get("bob").unwrap();
     assert_eq!(p.password, "bobpass");
     assert_ne!(p.uid, 42, "a new profile gets a fresh uid");
     assert_eq!(
-        s.vault.as_ref().unwrap().get("alice").unwrap().password,
+        s.core.vault().unwrap().get("alice").unwrap().password,
         "pw",
         "saving a new username must not touch existing profiles"
     );
@@ -4757,7 +4770,7 @@ fn save_credentials_creates_new_profile_when_username_is_new() {
 fn save_credentials_rejects_empty_username() {
     let path = tmp_vault("empty-user.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
     s.cred_user = "  ".into();
     s.cred_pass = "x".into();
     assert!(!s.save_credentials());
@@ -4768,28 +4781,28 @@ fn save_credentials_rejects_empty_username() {
 fn save_credentials_without_focus_upserts_spawns_and_selects() {
     let path = tmp_vault("empty-first-run.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
     assert!(s.focused_name().is_none());
     s.cred_user = "test".into();
     s.cred_pass = "test".into();
     assert!(s.save_credentials());
-    assert!(s.vault.as_ref().unwrap().get("test").is_some());
+    assert!(s.core.vault().unwrap().get("test").is_some());
     assert_eq!(s.focused_name().as_deref(), Some("test"));
-    assert!(s.slots.contains_key("test"));
+    assert!(s.core.slots().contains_key("test"));
 }
 
 #[test]
 fn save_credentials_does_not_duplicate_running_slot() {
     let path = tmp_vault("no-dup-slot.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s.slots.insert(
-        "alice".into(),
+    s.core.insert_slot_io(
+        "alice",
         SlotIo {
             input: SlotInput::new(),
             pixels: FrameBuf::new(),
@@ -4798,7 +4811,7 @@ fn save_credentials_does_not_duplicate_running_slot() {
     s.cred_user = "alice".into();
     s.cred_pass = "newpw".into();
     assert!(s.save_credentials());
-    assert_eq!(s.slots.len(), 1);
+    assert_eq!(s.core.slots().len(), 1);
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
 }
 
@@ -4806,9 +4819,9 @@ fn save_credentials_does_not_duplicate_running_slot() {
 fn save_credentials_rename_editing_profile_replaces_old_key() {
     let path = tmp_vault("rename-creds.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -4818,7 +4831,7 @@ fn save_credentials_rename_editing_profile_replaces_old_key() {
     s.cred_pass = "bobpass".into();
     assert!(s.save_credentials());
 
-    let vault = s.vault.as_ref().unwrap();
+    let vault = s.core.vault().unwrap();
     assert!(vault.get("bob").is_some(), "rename must upsert the new key");
     assert!(
         vault.get("alice").is_none(),
@@ -4840,7 +4853,7 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
     let dir = TestDir::new("save-err");
     let path = dir.join("vault.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
     s.cred_user = "alice".into();
     s.cred_pass = "pw".into();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
@@ -4859,9 +4872,9 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
 fn clear_credentials_empties_fields_but_keeps_vault() {
     let path = tmp_vault("clear-creds.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -4872,7 +4885,7 @@ fn clear_credentials_empties_fields_but_keeps_vault() {
     assert!(s.cred_user.is_empty());
     assert!(s.cred_pass.is_empty());
     assert!(
-        s.vault.as_ref().unwrap().get("alice").is_some(),
+        s.core.vault().unwrap().get("alice").is_some(),
         "clear must not delete the vault profile"
     );
 }
@@ -4881,9 +4894,9 @@ fn clear_credentials_empties_fields_but_keeps_vault() {
 fn begin_edit_profile_loads_fields_and_opens_chooser() {
     let path = tmp_vault("edit-profile.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "secret", 42))
         .unwrap();
@@ -4908,13 +4921,13 @@ fn begin_edit_profile_loads_fields_and_opens_chooser() {
 fn begin_edit_profile_loads_guardian_settings() {
     let path = tmp_vault("edit-guardian.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
     let mut p = profile("alice", "secret", 42);
     p.settings.auto_login = true;
     p.settings.lamp_auto = false;
     p.settings.lamp_skill = "magic".into();
     p.settings.random_events = false;
-    s.vault.as_mut().unwrap().upsert(p).unwrap();
+    s.core.vault_mut().unwrap().upsert(p).unwrap();
 
     s.begin_edit_profile(Some("alice"));
     assert!(s.cred_settings.auto_login);
@@ -4933,9 +4946,9 @@ fn begin_edit_profile_loads_guardian_settings() {
 fn set_multibox_off_cancels_picker_edit() {
     let path = tmp_vault("edit-off.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -4990,27 +5003,30 @@ fn multibox_on_never_latches_a_tv_mode() {
 fn set_auto_login_upserts_without_spawning() {
     let path = tmp_vault("auto-login.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     assert!(s.set_auto_login("alice", true));
     assert!(
-        s.vault
-            .as_ref()
+        s.core
+            .vault()
             .unwrap()
             .get("alice")
             .unwrap()
             .settings
             .auto_login
     );
-    assert!(s.slots.is_empty(), "set_auto_login must not spawn a slot");
+    assert!(
+        s.core.slots().is_empty(),
+        "set_auto_login must not spawn a slot"
+    );
     assert!(s.set_auto_login("alice", false));
     assert!(
-        !s.vault
-            .as_ref()
+        !s.core
+            .vault()
             .unwrap()
             .get("alice")
             .unwrap()
@@ -5023,23 +5039,23 @@ fn set_auto_login_upserts_without_spawning() {
 fn set_random_settings_upserts_all_three_fields_without_spawning() {
     let path = tmp_vault("random-settings.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     assert!(s.set_random_settings("alice", false, "magic", false));
-    let p = s.vault.as_ref().unwrap().get("alice").unwrap();
+    let p = s.core.vault().unwrap().get("alice").unwrap();
     assert!(!p.settings.random_events, "random events persist off");
     assert_eq!(p.settings.lamp_skill, "magic");
     assert!(!p.settings.lamp_auto, "lamp auto persists off");
     assert!(
-        s.slots.is_empty(),
+        s.core.slots().is_empty(),
         "set_random_settings must not spawn a slot"
     );
     assert!(s.set_random_settings("alice", true, "strength", true));
-    let p = s.vault.as_ref().unwrap().get("alice").unwrap();
+    let p = s.core.vault().unwrap().get("alice").unwrap();
     assert!(p.settings.random_events);
     assert_eq!(p.settings.lamp_skill, "strength");
     assert!(p.settings.lamp_auto);
@@ -5049,9 +5065,9 @@ fn set_random_settings_upserts_all_three_fields_without_spawning() {
 fn set_random_settings_mirrors_running_arm() {
     let path = tmp_vault("random-settings-arm.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -5079,7 +5095,7 @@ fn set_random_settings_mirrors_running_arm() {
         "default lamp skill"
     );
     play.attach_arm("alice", Arc::clone(&arm));
-    s.play = Some(play);
+    s.core.set_play(Some(play));
     assert!(s.set_random_settings("alice", false, "attack", true));
     assert!(
         !arm.random_events.load(Ordering::Relaxed),
@@ -5104,7 +5120,7 @@ fn set_random_settings_mirrors_running_arm() {
 fn set_random_settings_rejects_unknown_or_locked_vault() {
     let path = tmp_vault("random-settings-unknown.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
     assert!(
         !s.set_random_settings("nobody", false, "magic", false),
         "unknown profile must fail"
@@ -5122,9 +5138,9 @@ fn music_sfx_persists_lowmem_false() {
     let path = tmp_vault("music-sfx.vault");
     let mut s = Session::new();
     assert!(s.focused_lowmem(), "no focused profile defaults to lowmem");
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -5132,8 +5148,8 @@ fn music_sfx_persists_lowmem_false() {
     assert!(s.focused_lowmem(), "fresh profile defaults to lowmem");
     assert!(s.set_focused_lowmem(false));
     assert!(
-        !s.vault
-            .as_ref()
+        !s.core
+            .vault()
             .unwrap()
             .get("alice")
             .unwrap()
@@ -5143,8 +5159,8 @@ fn music_sfx_persists_lowmem_false() {
     assert!(!s.focused_lowmem(), "focused profile reflects the setting");
     assert!(s.set_focused_lowmem(true));
     assert!(
-        s.vault
-            .as_ref()
+        s.core
+            .vault()
             .unwrap()
             .get("alice")
             .unwrap()
@@ -5157,9 +5173,9 @@ fn music_sfx_persists_lowmem_false() {
 fn set_auto_login_mirrors_running_arm() {
     let path = tmp_vault("auto-login-arm.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -5177,7 +5193,7 @@ fn set_auto_login_mirrors_running_arm() {
     );
     let arm = SlotArm::new(42, false);
     play.attach_arm("alice", Arc::clone(&arm));
-    s.play = Some(play);
+    s.core.set_play(Some(play));
     assert!(s.set_auto_login("alice", true));
     assert!(arm.auto_login.load(Ordering::Relaxed));
     assert!(s.set_auto_login("alice", false));
@@ -5187,7 +5203,7 @@ fn set_auto_login_mirrors_running_arm() {
 #[test]
 fn set_renderer_writes_renderer_by_for_focused() {
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     s.set_renderer(false);
     let f = s.focus.lock().unwrap();
     assert!(!f.renderer);
@@ -5203,15 +5219,15 @@ fn set_renderer_writes_renderer_by_for_focused() {
 fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
     let path = tmp_vault("raster-mode.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     s.select("alice");
     assert_eq!(s.focused_raster(), vault::RasterMode::Gpu);
-    assert!(!s.slots.get("alice").unwrap().input.prefer_cpu());
+    assert!(!s.core.slot_io("alice").unwrap().input.prefer_cpu());
     assert!(s.set_focused_raster(vault::RasterMode::Off));
     assert_eq!(s.focused_raster(), vault::RasterMode::Off);
     assert_eq!(
@@ -5219,15 +5235,15 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
         Some(false)
     );
     assert!(
-        !s.slots.get("alice").unwrap().input.prefer_cpu(),
+        !s.core.slot_io("alice").unwrap().input.prefer_cpu(),
         "Off must not flip the GPU/CPU latch"
     );
     assert!(s.set_focused_raster(vault::RasterMode::Cpu));
     assert_eq!(s.focused_raster(), vault::RasterMode::Cpu);
-    assert!(s.slots.get("alice").unwrap().input.prefer_cpu());
+    assert!(s.core.slot_io("alice").unwrap().input.prefer_cpu());
     assert_eq!(
-        s.vault
-            .as_ref()
+        s.core
+            .vault()
             .unwrap()
             .get("alice")
             .unwrap()
@@ -5257,9 +5273,9 @@ fn raster_switch_confirm_only_when_backend_changes_on_spawned_slot() {
 fn request_raster_cpu_on_spawned_slot_applies_immediately() {
     let path = tmp_vault("raster-no-confirm.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -5272,44 +5288,50 @@ fn request_raster_cpu_on_spawned_slot_applies_immediately() {
     );
     s.request_focused_raster(vault::RasterMode::Off);
     assert_eq!(s.focused_raster(), vault::RasterMode::Off);
-    assert!(s.slots.contains_key("alice"), "Off must keep the slot");
+    assert!(
+        s.core.slots().contains_key("alice"),
+        "Off must keep the slot"
+    );
 }
 
 #[test]
 fn request_focused_lowmem_applies_without_confirm_and_keeps_slot() {
     let path = tmp_vault("mem-no-confirm.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     s.select("alice");
     s.request_focused_lowmem(false);
     assert!(!s.focused_lowmem(), "mem flip applies at once");
-    assert!(s.slots.contains_key("alice"), "mem flip must keep the slot");
+    assert!(
+        s.core.slots().contains_key("alice"),
+        "mem flip must keep the slot"
+    );
 }
 
 #[test]
 fn raster_switch_keeps_slot_frame_buf_and_input() {
     let path = tmp_vault("raster-no-restart.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     s.select("alice");
-    let slot = s.slots.get("alice").expect("select spawns the slot");
+    let slot = s.core.slot_io("alice").expect("select spawns the slot");
     let buf = Arc::clone(&slot.pixels);
     let inp = Arc::clone(&slot.input);
     assert!(s.set_focused_raster(vault::RasterMode::Cpu));
     assert!(inp.prefer_cpu(), "GPU→CPU sets the slot's prefer_cpu latch");
     assert!(s.set_focused_raster(vault::RasterMode::Gpu));
     assert!(!inp.prefer_cpu(), "CPU→GPU clears the prefer_cpu latch");
-    let slot = s.slots.get("alice").expect("GPU↔CPU must keep the slot");
+    let slot = s.core.slot_io("alice").expect("GPU↔CPU must keep the slot");
     assert!(
         Arc::ptr_eq(&slot.pixels, &buf),
         "a GPU↔CPU flip must keep the same FrameBuf (no restart)"
@@ -5324,19 +5346,22 @@ fn raster_switch_keeps_slot_frame_buf_and_input() {
 fn lowmem_flip_keeps_slot_frame_buf_and_input() {
     let path = tmp_vault("mem-no-restart.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     s.select("alice");
-    let slot = s.slots.get("alice").expect("select spawns the slot");
+    let slot = s.core.slot_io("alice").expect("select spawns the slot");
     let buf = Arc::clone(&slot.pixels);
     let inp = Arc::clone(&slot.input);
     assert!(s.set_focused_lowmem(false));
     assert!(s.set_focused_lowmem(true));
-    let slot = s.slots.get("alice").expect("a mem flip must keep the slot");
+    let slot = s
+        .core
+        .slot_io("alice")
+        .expect("a mem flip must keep the slot");
     assert!(
         Arc::ptr_eq(&slot.pixels, &buf),
         "a mem flip must keep the same FrameBuf (no restart)"
@@ -5352,15 +5377,15 @@ fn lowmem_flip_keeps_slot_frame_buf_and_input() {
 fn arm_for_profile_respects_auto_login_and_latch() {
     let path = tmp_vault("arm-for-profile.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
     let mut p = profile("alice", "pw", 42);
     p.settings.auto_login = true;
-    s.vault.as_mut().unwrap().upsert(p).unwrap();
-    let arm = s.arm_for_profile("alice").expect("arm");
+    s.core.vault_mut().unwrap().upsert(p).unwrap();
+    let arm = s.core.arm_for_profile("alice").expect("arm");
     assert!(arm.wants_login());
     assert!(arm.auto_login.load(Ordering::Relaxed));
-    s.wall.latch_logout("alice");
-    let arm = s.arm_for_profile("alice").expect("arm");
+    s.core.fleet_mut().latch_logout("alice");
+    let arm = s.core.arm_for_profile("alice").expect("arm");
     assert!(!arm.wants_login(), "latch blocks handshake");
     assert!(
         arm.auto_login.load(Ordering::Relaxed),
@@ -5372,22 +5397,25 @@ fn arm_for_profile_respects_auto_login_and_latch() {
 fn set_auto_login_rejects_unknown_profile_without_spawning() {
     let path = tmp_vault("auto-login-missing.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
     assert!(!s.set_auto_login("nobody", true));
     assert!(s.error.is_some(), "missing profile sets the banner");
-    assert!(s.slots.is_empty());
+    assert!(s.core.slots().is_empty());
 }
 
 #[test]
 fn logout_latches_member_until_login_all() {
     let mut s = Session::new();
-    s.wall.load("alice");
+    s.core.fleet_mut().add("alice");
     s.logout("alice");
-    assert!(s.wall.latch.contains("alice"), "intentional logout latches");
-    assert!(!s.wall.should_auto_login("alice", true));
+    assert!(
+        s.core.fleet().latched("alice"),
+        "intentional logout latches"
+    );
+    assert!(!s.core.fleet().should_auto_login("alice", true));
     s.login_all();
     assert!(
-        !s.wall.latch.contains("alice"),
+        !s.core.fleet().latched("alice"),
         "Login all clears the latch"
     );
 }
@@ -5413,24 +5441,24 @@ fn login_all_during_loading_scene_publishes_no_control_owned_place() {
         },
     ]);
     for name in ["alice", "bob"] {
-        s.wall.load(name);
-        s.slots.insert(
-            name.into(),
+        s.core.fleet_mut().add(name);
+        s.core.insert_slot_io(
+            name,
             SlotIo {
                 input: SlotInput::new(),
                 pixels: FrameBuf::new(),
             },
         );
     }
-    s.focus.lock().unwrap().focused = Some("alice".into());
-    s.play = Some(play);
+    s.set_focus_for_test("alice");
+    s.core.set_play(Some(play));
 
     s.login_all();
 
     assert!(alice.wants_login());
     assert!(bob.wants_login());
     assert!(
-        s.play.as_ref().unwrap().login_queue_uids().is_empty(),
+        s.core.play().unwrap().login_queue_uids().is_empty(),
         "only worker Queueing transitions create FIFO membership"
     );
 }
@@ -5438,7 +5466,7 @@ fn login_all_during_loading_scene_publishes_no_control_owned_place() {
 #[test]
 fn focused_connection_is_distinct_from_game_readiness() {
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     assert!(!s.focused_connected());
     assert!(!s.focused_ingame());
     s.statuses.push(SlotStatus {
@@ -5455,7 +5483,7 @@ fn focused_connection_is_distinct_from_game_readiness() {
 #[test]
 fn queue_for_tracks_each_named_status_independent_of_focus() {
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     assert_eq!(s.queue_for("alice"), None, "not queued by default");
     s.statuses.push(SlotStatus {
         username: "alice".into(),
@@ -5472,7 +5500,7 @@ fn queue_for_tracks_each_named_status_independent_of_focus() {
     assert_eq!(s.queue_for("alice"), Some((2, 3)));
     assert_eq!(s.queue_for("bob"), Some((1, 2)));
 
-    s.focus.lock().unwrap().focused = Some("bob".into());
+    s.set_focus_for_test("bob");
     assert_eq!(s.queue_for("alice"), Some((2, 3)));
     assert_eq!(s.queue_for("bob"), Some((1, 2)));
 }
@@ -5481,14 +5509,14 @@ fn queue_for_tracks_each_named_status_independent_of_focus() {
 fn load_and_rail_remove_sync_focus_wall() {
     let path = tmp_vault("focus-wall-sync.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s.vault
-        .as_mut()
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
@@ -5517,9 +5545,9 @@ fn load_and_rail_remove_sync_focus_wall() {
 fn rail_remove_clears_focus_when_last_member() {
     let path = tmp_vault("rail-remove-last.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
@@ -5527,7 +5555,7 @@ fn rail_remove_clears_focus_when_last_member() {
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
     s.rail_remove("alice");
     assert!(s.focused_name().is_none());
-    assert!(s.wall.members.is_empty());
+    assert!(s.core.members().is_empty());
 }
 
 #[test]
@@ -5542,11 +5570,11 @@ fn rail_remove_treats_loading_session_as_connected_without_blocking() {
         ingame: false,
         ..SlotStatus::default()
     });
-    s.play = Some(play);
-    s.wall.load("alice");
-    s.focus.lock().unwrap().focused = Some("alice".into());
-    s.slots.insert(
-        "alice".into(),
+    s.core.set_play(Some(play));
+    s.core.fleet_mut().add("alice");
+    s.set_focus_for_test("alice");
+    s.core.insert_slot_io(
+        "alice",
         SlotIo {
             input: SlotInput::new(),
             pixels: FrameBuf::new(),
@@ -5560,7 +5588,7 @@ fn rail_remove_treats_loading_session_as_connected_without_blocking() {
         "a connected loading session must receive clean Logout"
     );
     assert!(
-        s.pending_slot_removals.contains_key("alice"),
+        s.core.removal_pending("alice"),
         "clean removal remains pending until a later UI pump"
     );
     assert!(
@@ -5568,8 +5596,8 @@ fn rail_remove_treats_loading_session_as_connected_without_blocking() {
         "rail removal must return without stopping the connected worker"
     );
 
-    s.play.as_ref().unwrap().statuses.lock().unwrap()[0].connected = false;
-    s.pump_slot_removals_at(started);
+    s.core.play().unwrap().statuses.lock().unwrap()[0].connected = false;
+    s.core.advance_removals(started);
     assert!(
         arm.stop.load(Ordering::Relaxed),
         "the later pump stops the lifetime after disconnect"
@@ -5581,7 +5609,7 @@ fn connected_removal_session(test_name: &str) -> (Session, Arc<SlotArm>) {
     let mut session = Session::new();
     let mut vault = Vault::create(&path, "bot").unwrap();
     vault.upsert(profile("alice", "pw", 42)).unwrap();
-    session.vault = Some(vault);
+    session.core.set_vault(Some(vault));
 
     let mut play = empty_play();
     let arm = SlotArm::new(42, true);
@@ -5591,10 +5619,10 @@ fn connected_removal_session(test_name: &str) -> (Session, Arc<SlotArm>) {
         connected: true,
         ..SlotStatus::default()
     });
-    session.play = Some(play);
-    session.wall.load("alice");
-    session.slots.insert(
-        "alice".into(),
+    session.core.set_play(Some(play));
+    session.core.fleet_mut().add("alice");
+    session.core.insert_slot_io(
+        "alice",
         SlotIo {
             input: SlotInput::new(),
             pixels: FrameBuf::new(),
@@ -5609,17 +5637,19 @@ fn readd_during_rail_removal_cancels_the_old_lifetime() {
     let started = Instant::now();
 
     session.rail_remove_at("alice", started);
-    assert!(!session.slots.contains_key("alice"));
+    assert!(!session.core.slots().contains_key("alice"));
     assert!(session.load("alice"));
     assert!(
-        session.slots.contains_key("alice"),
+        session.core.slots().contains_key("alice"),
         "re-adding must restore the running lifetime's IO"
     );
 
-    session.play.as_ref().unwrap().statuses.lock().unwrap()[0].connected = false;
-    session.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);
+    session.core.play().unwrap().statuses.lock().unwrap()[0].connected = false;
+    session
+        .core
+        .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT);
 
-    let current = session.play.as_ref().unwrap().arm("alice").unwrap();
+    let current = session.core.play().unwrap().arm("alice").unwrap();
     assert!(
         Arc::ptr_eq(&current, &arm),
         "the stale removal must not stop the re-added lifetime"
@@ -5629,25 +5659,27 @@ fn readd_during_rail_removal_cancels_the_old_lifetime() {
 #[test]
 fn multibox_reseed_cancels_pending_removal_for_running_member() {
     let (mut session, arm) = connected_removal_session("rail-remove-multibox-reseed.vault");
-    session.wall.load("bob");
-    session.focus.lock().unwrap().focused = Some("bob".into());
+    session.core.fleet_mut().add("bob");
+    session.set_focus_for_test("bob");
     let started = Instant::now();
 
     session.rail_remove_at("alice", started);
-    assert!(!session.slots.contains_key("alice"));
+    assert!(!session.core.slots().contains_key("alice"));
     session.set_multibox(false);
     session.set_multibox(true);
 
-    assert!(session.wall.members.iter().any(|name| name == "alice"));
+    assert!(session.core.members().iter().any(|name| name == "alice"));
     assert!(
-        session.slots.contains_key("alice"),
+        session.core.slots().contains_key("alice"),
         "re-seeding a running member must restore its retained IO"
     );
-    assert!(!session.pending_slot_removals.contains_key("alice"));
+    assert!(!session.core.removal_pending("alice"));
 
-    session.play.as_ref().unwrap().statuses.lock().unwrap()[0].connected = false;
-    session.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);
-    let current = session.play.as_ref().unwrap().arm("alice").unwrap();
+    session.core.play().unwrap().statuses.lock().unwrap()[0].connected = false;
+    session
+        .core
+        .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT);
+    let current = session.core.play().unwrap().arm("alice").unwrap();
     assert!(Arc::ptr_eq(&current, &arm));
     assert!(
         !arm.stop.load(Ordering::Relaxed),
@@ -5662,16 +5694,18 @@ fn login_during_rail_removal_cancels_the_old_timeout() {
 
     session.rail_remove_at("alice", started);
     session.login("alice");
-    session.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);
+    session
+        .core
+        .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT);
 
-    let current = session.play.as_ref().unwrap().arm("alice").unwrap();
+    let current = session.core.play().unwrap().arm("alice").unwrap();
     assert!(Arc::ptr_eq(&current, &arm));
     assert!(
         arm.wants_login(),
         "Log in must survive the cancelled removal"
     );
     assert!(
-        session.slots.contains_key("alice"),
+        session.core.slots().contains_key("alice"),
         "Log in must restore the running lifetime's IO"
     );
 }
@@ -5682,21 +5716,25 @@ fn rail_removal_pump_stops_its_lifetime_on_disconnect_or_timeout() {
     let (mut disconnected, disconnected_arm) =
         connected_removal_session("rail-remove-disconnect.vault");
     disconnected.rail_remove_at("alice", started);
-    disconnected.play.as_ref().unwrap().statuses.lock().unwrap()[0].connected = false;
-    disconnected.pump_slot_removals_at(started);
+    disconnected.core.play().unwrap().statuses.lock().unwrap()[0].connected = false;
+    disconnected.core.advance_removals(started);
     assert!(disconnected_arm.stop.load(Ordering::Relaxed));
-    assert!(disconnected.play.as_ref().unwrap().arm("alice").is_none());
-    assert!(disconnected.pending_slot_removals.is_empty());
+    assert!(disconnected.core.play().unwrap().arm("alice").is_none());
+    assert!(!disconnected.core.removal_pending("alice"));
 
     let (mut timed_out, timed_out_arm) = connected_removal_session("rail-remove-timeout.vault");
     timed_out.rail_remove_at("alice", started);
-    timed_out.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT - Duration::from_nanos(1));
+    timed_out
+        .core
+        .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT - Duration::from_nanos(1));
     assert!(!timed_out_arm.stop.load(Ordering::Relaxed));
-    assert!(timed_out.play.as_ref().unwrap().arm("alice").is_some());
-    timed_out.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);
+    assert!(timed_out.core.play().unwrap().arm("alice").is_some());
+    timed_out
+        .core
+        .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT);
     assert!(timed_out_arm.stop.load(Ordering::Relaxed));
-    assert!(timed_out.play.as_ref().unwrap().arm("alice").is_none());
-    assert!(timed_out.pending_slot_removals.is_empty());
+    assert!(timed_out.core.play().unwrap().arm("alice").is_none());
+    assert!(!timed_out.core.removal_pending("alice"));
 }
 
 #[test]
@@ -5705,7 +5743,7 @@ fn removal_pump_retires_terminal_row_after_owner_arm_disappears() {
     let (mut session, _) = connected_removal_session("rail-remove-terminal-owner.vault");
     session.rail_remove_at("alice", started);
     {
-        let play = session.play.as_mut().unwrap();
+        let play = session.core.play_mut().unwrap();
         play.begin_stop_slot("alice");
         play.statuses.lock().unwrap().push(SlotStatus {
             username: "alice".into(),
@@ -5714,15 +5752,15 @@ fn removal_pump_retires_terminal_row_after_owner_arm_disappears() {
             ..SlotStatus::default()
         });
     }
-    assert!(session.pending_slot_removals.contains_key("alice"));
+    assert!(session.core.removal_pending("alice"));
 
-    session.pump_slot_removals_at(started);
+    session.core.advance_removals(started);
 
-    assert!(session.pending_slot_removals.is_empty());
+    assert!(!session.core.removal_pending("alice"));
     assert!(
         session
-            .play
-            .as_ref()
+            .core
+            .play()
             .unwrap()
             .statuses()
             .iter()
@@ -5734,21 +5772,23 @@ fn removal_pump_retires_terminal_row_after_owner_arm_disappears() {
     replaced.rail_remove_at("alice", started);
     let replacement = SlotArm::new(42, true);
     replaced
-        .play
-        .as_mut()
+        .core
+        .play_mut()
         .unwrap()
         .attach_arm("alice", Arc::clone(&replacement));
-    replaced.play.as_ref().unwrap().statuses.lock().unwrap()[0].connected = false;
+    replaced.core.play().unwrap().statuses.lock().unwrap()[0].connected = false;
 
-    replaced.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);
+    replaced
+        .core
+        .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT);
 
-    let current = replaced.play.as_ref().unwrap().arm("alice").unwrap();
+    let current = replaced.core.play().unwrap().arm("alice").unwrap();
     assert!(Arc::ptr_eq(&current, &replacement));
     assert!(
         !replacement.stop.load(Ordering::Relaxed),
         "a stale removal must not stop a replacement lifetime"
     );
-    assert!(replaced.pending_slot_removals.is_empty());
+    assert!(!replaced.core.removal_pending("alice"));
 }
 
 #[test]
@@ -5757,57 +5797,60 @@ fn set_multibox_on_syncs_focus_wall() {
     s.set_multibox(true);
     assert_eq!(
         s.focus.lock().unwrap().wall,
-        s.wall.members,
+        s.core.members(),
         "the seed path (running slots) mirrors into Focus.wall too"
     );
     s.set_multibox(false);
-    assert_eq!(s.focus.lock().unwrap().wall, s.wall.members);
+    assert_eq!(s.focus.lock().unwrap().wall, s.core.members());
 }
 
 #[test]
 fn load_all_loads_vault_profiles_and_syncs_focus_wall() {
     let path = tmp_vault("load-all.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s.vault
-        .as_mut()
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
     s.load("alice");
     let added = s.load_all();
     assert_eq!(added, 1, "only bob is new");
-    assert_eq!(s.wall.members, vec!["alice".to_string(), "bob".to_string()]);
-    assert_eq!(s.focus.lock().unwrap().wall, s.wall.members);
+    assert_eq!(
+        s.core.members(),
+        vec!["alice".to_string(), "bob".to_string()]
+    );
+    assert_eq!(s.focus.lock().unwrap().wall, s.core.members());
 }
 
 #[test]
 fn chooser_vault_remove_keeps_wall_member_and_slot() {
     let path = tmp_vault("chooser-remove.vault");
     let mut s = Session::new();
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     s.load("alice");
     assert!(s.vault_remove("alice"), "chooser ✕ deletes the vault row");
     assert!(
-        s.vault.as_ref().unwrap().get("alice").is_none(),
+        s.core.vault().unwrap().get("alice").is_none(),
         "profile row gone from the vault"
     );
     assert_eq!(
-        s.wall.members,
+        s.core.members(),
         vec!["alice".to_string()],
         "chooser ✕ must not rail_remove a live member"
     );
-    assert!(s.slots.contains_key("alice"), "slot stays up");
+    assert!(s.core.slots().contains_key("alice"), "slot stays up");
     assert!(
         s.focus.lock().unwrap().wall.contains(&"alice".to_string()),
         "Focus.wall still lists the member"
@@ -5855,8 +5898,8 @@ fn script_start_selected_unported_id_reports_not_ported() {
     let mut s = Session::new();
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(42, false));
-    s.play = Some(play);
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.core.set_play(Some(play));
+    s.set_focus_for_test("alice");
     s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId(
         "BoneBurier",
     )));
@@ -5905,7 +5948,7 @@ fn script_start_selected_refuses_without_selection_or_play() {
     let err = s.error.clone().expect("no-focus banner");
     assert!(err.contains("focused"), "{err}");
     s.error = None;
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     s.script_start_selected();
     let err = s.error.clone().expect("no-selection banner");
     assert!(
@@ -5935,8 +5978,8 @@ fn script_start_selected_refuses_unloadable_import() {
     s.js = script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(42, false));
-    s.play = Some(play);
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.core.set_play(Some(play));
+    s.set_focus_for_test("alice");
     s.load_js(&path);
     assert_eq!(
         s.error, None,
@@ -6198,16 +6241,16 @@ fn two_live_session(label: &str) -> (Session, script::IsolatedEnv) {
     let iso = script::IsolatedEnv::enter(label);
     let path = tmp_vault(label);
     let mut s = Session::new();
-    s.skip_slot_spawn = true;
-    s.play = Some(empty_play());
-    s.vault = Some(Vault::create(&path, "bot").unwrap());
-    s.vault
-        .as_mut()
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s.vault
-        .as_mut()
+    s.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
@@ -6258,16 +6301,18 @@ fn background_ack_survives_session_restart() {
     s.ack_background_bots();
     drop(s);
     let mut s2 = Session::new();
-    s2.skip_slot_spawn = true;
-    s2.play = Some(empty_play());
-    s2.vault = Some(Vault::create(&tmp_vault("bg-ack-restart-2"), "bot").unwrap());
-    s2.vault
-        .as_mut()
+    s2.core.set_spawn_workers(false);
+    s2.core.set_play(Some(empty_play()));
+    s2.core.set_vault(Some(
+        Vault::create(&tmp_vault("bg-ack-restart-2"), "bot").unwrap(),
+    ));
+    s2.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    s2.vault
-        .as_mut()
+    s2.core
+        .vault_mut()
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
@@ -6366,7 +6411,7 @@ fn background_ack_closes_when_the_last_other_bot_retires() {
     s.select("alice");
     let mut play = empty_play();
     play.attach_arm("alice", host_play::SlotArm::new(1, false));
-    s.play = Some(play);
+    s.core.set_play(Some(play));
     s.pump_status();
     assert_eq!(s.background_bot_count(), 0);
     assert!(
@@ -6409,7 +6454,7 @@ fn locked_session_releases_the_instance_lock_on_drop() {
 fn background_count_ignores_terminal_status_rows() {
     let iso = script::IsolatedEnv::enter("bg-ack-terminal");
     let mut s = Session::new();
-    s.skip_slot_spawn = true;
+    s.core.set_spawn_workers(false);
     let mut play = empty_play();
     play.attach_arm("alice", host_play::SlotArm::new(1, false));
     play.statuses.lock().unwrap().extend([
@@ -6426,8 +6471,8 @@ fn background_count_ignores_terminal_status_rows() {
             ..SlotStatus::default()
         },
     ]);
-    s.play = Some(play);
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.core.set_play(Some(play));
+    s.set_focus_for_test("alice");
     assert_eq!(s.background_bot_count(), 0);
     let _iso = iso;
 }

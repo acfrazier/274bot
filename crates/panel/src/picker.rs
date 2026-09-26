@@ -1248,7 +1248,7 @@ fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
         .as_ref()
         .and_then(|runner| runner.drives(&name).then(|| runner.armed_route()).flatten());
     let live = live_route.map(|route| RouteProjection::live(route, session.route_gen(), None));
-    if let Some(play) = session.play.as_ref() {
+    if let Some(play) = session.core.play() {
         play.with_map_route(&name, manual.as_deref(), live, |proj| {
             update_route_cache(
                 proj.map(|p| (p.stamp.source, p.stamp.generation, p.route)),

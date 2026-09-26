@@ -12,7 +12,7 @@ impl Session {
     /// existing FIFO if it is not running, then selects it. Returns whether
     /// the write landed; failures set [`Session::error`].
     pub fn save_credentials(&mut self) -> bool {
-        if self.vault.is_none() {
+        if self.core.vault().is_none() {
             self.error = Some("credentials: vault locked".into());
             return false;
         }
@@ -26,7 +26,7 @@ impl Session {
             .as_deref()
             .filter(|old| !old.is_empty() && old.trim() != username);
         let profile = {
-            let vault = self.vault.as_mut().expect("vault checked");
+            let vault = self.core.vault_mut().expect("vault checked");
             let existing = if let Some(old) = rename_from {
                 vault.get(old).cloned()
             } else {
@@ -51,8 +51,8 @@ impl Session {
             }
         };
         match self
-            .vault
-            .as_mut()
+            .core
+            .vault_mut()
             .expect("vault checked")
             .upsert(profile.clone())
         {
@@ -63,7 +63,7 @@ impl Session {
             }
         }
         if let Some(old) = rename_from {
-            match self.vault.as_mut().expect("vault checked").remove(old) {
+            match self.core.vault_mut().expect("vault checked").remove(old) {
                 Ok(_) => {}
                 Err(e) => {
                     self.error = Some(format!("credentials: {e}"));
@@ -71,7 +71,7 @@ impl Session {
                 }
             }
         }
-        if let Some(play) = self.play.as_mut() {
+        if let Some(play) = self.core.play_mut() {
             play.remember_profile(profile);
         }
         self.chooser_edit = None;
@@ -92,7 +92,7 @@ impl Session {
     pub fn begin_edit_profile(&mut self, name: Option<&str>) {
         match name {
             Some(n) => {
-                if let Some(p) = self.vault.as_ref().and_then(|v| v.get(n)) {
+                if let Some(p) = self.core.vault().and_then(|v| v.get(n)) {
                     self.cred_user = p.username.clone();
                     self.cred_pass = p.password.clone();
                     self.cred_settings = p.settings.clone();

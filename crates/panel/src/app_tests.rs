@@ -404,9 +404,9 @@ fn normal_unlock_waits_for_worker_validation_then_uses_prepared_profile() {
     startup.validate = Some(validation);
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
-    assert!(state.session.vault.is_some());
-    assert!(state.session.play.is_some());
-    assert!(state.session.slots.is_empty());
+    assert!(state.session.core.vault().is_some());
+    assert!(state.session.core.play().is_some());
+    assert!(state.session.core.slots().is_empty());
     assert!(startup_progress(&startup, state.session.profile_generation()).is_none());
 }
 
@@ -417,9 +417,9 @@ fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
     assert!(state.session.profile_bound());
     let validation = startup.validate.take().expect("final validation worker");
     assert!(state.session.profile_preparing());
-    assert!(state.session.vault.is_none());
-    assert!(state.session.play.is_none());
-    assert!(state.session.slots.is_empty());
+    assert!(state.session.core.vault().is_none());
+    assert!(state.session.core.play().is_none());
+    assert!(state.session.core.slots().is_empty());
     assert!(validation
         .receiver
         .recv_timeout(Duration::from_secs(2))
@@ -513,9 +513,9 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     assert!(startup_progress(&startup, generation).is_none());
     assert!(!state.session.profile_preparing());
     assert!(!state.session.profile_bound());
-    assert!(state.session.vault.is_none());
-    assert!(state.session.play.is_none());
-    assert!(state.session.slots.is_empty());
+    assert!(state.session.core.vault().is_none());
+    assert!(state.session.core.play().is_none());
+    assert!(state.session.core.slots().is_empty());
     assert_eq!(
         state.session.error.as_deref(),
         Some("fixture preparation failed")
@@ -1378,7 +1378,7 @@ fn manual_shot_without_a_focused_live_snapshot_is_not_enqueued() {
 #[test]
 fn manual_shot_rejects_an_empty_published_snapshot() {
     let mut state = PanelState::default();
-    state.session.focus.lock().unwrap().focused = Some("alice".into());
+    state.session.set_focus_for_test("alice");
     state.session.nav_states.lock().unwrap().insert(
         "alice".into(),
         (
@@ -1493,8 +1493,8 @@ fn live_script_tick_holds_pass_until_clean_script_stop() {
 
 #[test]
 fn clean_stop_rearms_written_shot_once_and_can_complete() {
-    let session = crate::session::Session::new();
-    session.focus.lock().unwrap().focused = Some("alice".into());
+    let mut session = crate::session::Session::new();
+    session.set_focus_for_test("alice");
     let client = script_client();
     let mut snapshot = api::snapshot::GameSnapshot::new();
     snapshot.rebuild(&client);
@@ -1574,8 +1574,8 @@ fn clean_stop_rearms_written_shot_once_and_can_complete() {
 
 #[test]
 fn clean_stop_missing_scene_cannot_reuse_prior_written_capture() {
-    let session = crate::session::Session::new();
-    session.focus.lock().unwrap().focused = Some("alice".into());
+    let mut session = crate::session::Session::new();
+    session.set_focus_for_test("alice");
     let mut client = script_client();
     client.scene_state = 1;
     let mut snapshot = api::snapshot::GameSnapshot::new();
@@ -1704,7 +1704,7 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
         .as_mut()
         .unwrap()
         .set_terminal_shot("core-pass");
-    s.focus.lock().unwrap().focused = Some("catalogtest".into());
+    s.set_focus_for_test("catalogtest");
     let mut terminal_snapshot = api::snapshot::GameSnapshot::new();
     terminal_snapshot.rebuild(&script_client());
     s.nav_states.lock().unwrap().insert(
@@ -2062,8 +2062,8 @@ fn terminal_shot_drain_accepts_a_write_from_an_earlier_core_pending_frame() {
 
 #[test]
 fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
-    let session = crate::session::Session::new();
-    session.focus.lock().unwrap().focused = Some("alice".into());
+    let mut session = crate::session::Session::new();
+    session.set_focus_for_test("alice");
     let client = script_client();
     let mut snapshot = api::snapshot::GameSnapshot::new();
     snapshot.rebuild(&client);
@@ -2136,8 +2136,8 @@ fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
 
 #[test]
 fn native_failure_missing_scene_cannot_reuse_prior_written_capture() {
-    let session = crate::session::Session::new();
-    session.focus.lock().unwrap().focused = Some("alice".into());
+    let mut session = crate::session::Session::new();
+    session.set_focus_for_test("alice");
     let mut client = script_client();
     client.scene_state = 1;
     let mut snapshot = api::snapshot::GameSnapshot::new();
@@ -2343,9 +2343,9 @@ fn sidecar_actor_and_scene(json: &str) -> (String, i64) {
 #[test]
 fn pump_shots_does_not_promote_two_pair_actors_from_an_unready_buffer() {
     let mut state = PanelState::default();
-    state.session.slots.insert("alice".into(), dummy_slot());
-    state.session.slots.insert("bob".into(), dummy_slot());
-    state.session.focus.lock().unwrap().focused = Some("alice".into());
+    state.session.core.insert_slot_io("alice", dummy_slot());
+    state.session.core.insert_slot_io("bob", dummy_slot());
+    state.session.set_focus_for_test("alice");
     insert_named_scene2(&state.session, "alice", Some("NatureMaster"));
     insert_named_scene2(&state.session, "bob", None);
     {
@@ -2439,8 +2439,8 @@ fn pump_shots_fails_a_missing_pair_actor_without_deadlocking() {
 #[test]
 fn pump_shots_does_not_promote_a_presented_actor_that_left_scene2() {
     let mut state = PanelState::default();
-    state.session.slots.insert("alice".into(), dummy_slot());
-    state.session.focus.lock().unwrap().focused = Some("alice".into());
+    state.session.core.insert_slot_io("alice", dummy_slot());
+    state.session.set_focus_for_test("alice");
     state.last_upload = Some(("alice".into(), 1));
     state.session.nav_states.lock().unwrap().insert(
         "alice".into(),
@@ -2474,8 +2474,8 @@ fn actor_snapshot_serialization_count() -> u64 {
 #[test]
 fn pump_shots_does_not_serialize_sidecar_without_a_pending_actor_capture() {
     let mut state = PanelState::default();
-    state.session.slots.insert("alice".into(), dummy_slot());
-    state.session.focus.lock().unwrap().focused = Some("alice".into());
+    state.session.core.insert_slot_io("alice", dummy_slot());
+    state.session.set_focus_for_test("alice");
     insert_named_scene2(&state.session, "alice", Some("NatureMaster"));
     state.last_upload = Some(("alice".into(), 1));
 
@@ -2846,7 +2846,7 @@ fn live_smoke_tick_passes_when_the_shot_is_written() {
 #[test]
 fn live_smoke_tick_latches_scene2_once_and_reports_a_missing_write() {
     let mut s = crate::session::Session::new();
-    s.focus.lock().unwrap().focused = Some("test".into());
+    s.set_focus_for_test("test");
     let mut live = smoke_at(Instant::now());
     // Before scene 2 nothing latches.
     assert_eq!(
@@ -2867,7 +2867,7 @@ fn live_smoke_tick_latches_scene2_once_and_reports_a_missing_write() {
 #[test]
 fn live_smoke_tick_deadline_reports_scene2_never_reached() {
     let mut s = crate::session::Session::new();
-    s.focus.lock().unwrap().focused = Some("test".into());
+    s.set_focus_for_test("test");
     let mut live = smoke_at(Instant::now() - SMOKE_DEADLINE);
     let err = live_smoke_tick(&mut live, &mut s, &[st("test", false, 0)], 0).expect("deadline");
     assert!(

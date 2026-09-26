@@ -11,6 +11,7 @@ client = { workspace = true, features = ["audio"] }
 dear-imgui-rs = "0.15"
 dear-imgui-wgpu = "0.15"
 dear-imgui-winit = "0.15"
+frontend-core = { path = "../frontend-core" }
 host = { path = "../host" }
 host-play = { path = "../host-play" }
 nav = { path = "../nav" }
@@ -39,4 +40,5 @@ memory-profile = ["host-play/memory-profile"]
 memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"]
 
 [dev-dependencies]
+frontend-core = { path = "../frontend-core", features = ["test-support"] }
 parking_lot = "0.12"

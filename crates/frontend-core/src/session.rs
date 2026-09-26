@@ -637,7 +637,14 @@ impl<Io> OperatorSession<Io> {
     }
 
     pub fn poll_at(&mut self, now: Instant) {
-        self.pump_removals(now);
+        self.advance_removals(now);
+        self.poll_host();
+    }
+
+    /// Second half of [`Self::poll`]: resolve script Start/Stop, refresh
+    /// rows and transitions, settle operations. Front ends that must run
+    /// their own work between the phases call the halves directly.
+    pub fn poll_host(&mut self) {
         self.transitions.clear();
         let Some(play) = self.play.as_ref() else {
             return;
@@ -650,7 +657,10 @@ impl<Io> OperatorSession<Io> {
         self.settle_operations();
     }
 
-    fn pump_removals(&mut self, now: Instant) {
+    /// First half of [`Self::poll`]: reap finished workers and advance
+    /// pending removals (stop on disconnect or timeout). Never joins a live
+    /// worker.
+    pub fn advance_removals(&mut self, now: Instant) {
         if let Some(play) = self.play.as_mut() {
             play.pump_worker_reaps();
         }

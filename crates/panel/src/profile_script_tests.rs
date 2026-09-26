@@ -12,6 +12,7 @@ fn settle(s: &mut Session) {
         && Instant::now() < deadline
     {
         s.poll_reload_validation();
+        s.core.poll_host();
         s.settle_script_starts();
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -39,7 +40,7 @@ fn refresh_catalog(s: &mut Session, root: &std::path::Path) -> ReloadOutcome {
 /// Pump `name`'s lifecycle until it reaches `want` (Stop returns
 /// before the reap).
 fn wait_state(s: &Session, name: &str, want: script::RunState) {
-    let play = s.play.as_ref().unwrap();
+    let play = s.core.play().unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     while play.script_state(name) != want && Instant::now() < deadline {
         play.pump_script_lifecycle(name);
@@ -68,7 +69,7 @@ fn session_with_profiles(names: &[&str]) -> (Session, TestDir) {
             .unwrap();
     }
     let mut s = Session::new();
-    s.vault = Some(vault);
+    s.core.set_vault(Some(vault));
     s.persist_ui = false;
     (s, dir)
 }
@@ -105,9 +106,9 @@ fn focus_restores_assignment_not_other_profile_pending() {
             "Alcher".into()
         ))
     );
-    s.focus.lock().unwrap().focused = Some("bob".into());
+    s.set_focus_for_test("bob");
     assert!(!s.heading_is_pending());
-    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.set_focus_for_test("alice");
     s.restore_script_heading("alice");
     assert!(s.heading_is_pending());
 }
@@ -161,8 +162,8 @@ fn missing_file_assignment_is_kept_not_substituted() {
 #[test]
 fn start_all_without_play_reports_per_profile_and_is_idempotent() {
     let (mut s, _dir) = session_with_profiles(&["alice", "bob"]);
-    s.wall.load("alice");
-    s.wall.load("bob");
+    s.core.fleet_mut().add("alice");
+    s.core.fleet_mut().add("bob");
     s.script_start_all();
     let first = s.error.clone().unwrap();
     assert!(first.contains("Start all"));
@@ -242,11 +243,11 @@ fn session_with_play(names: &[&str]) -> (Session, TestDir) {
     let mut play = empty_play();
     for name in names {
         play.attach_arm(name, host_play::SlotArm::new(42, false));
-        s.wall.load(name);
+        s.core.fleet_mut().add(name);
     }
-    s.play = Some(play);
+    s.core.set_play(Some(play));
     if let Some(first) = names.first() {
-        s.focus.lock().unwrap().focused = Some((*first).into());
+        s.set_focus_for_test(first);
     }
     (s, dir)
 }
@@ -302,7 +303,7 @@ fn initial_runtime_load_failure_survives_another_card_start() {
         s.error
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Idle
     );
     assert!(
@@ -324,7 +325,7 @@ fn initial_runtime_load_failure_survives_another_card_start() {
     );
     assert_eq!(failure.api_family, Some(script::ApiFamily::V2));
     assert!(s.js.named_failure_output().contains("initial-load-proof"));
-    s.play.as_ref().unwrap().script_stop("bob");
+    s.core.play().unwrap().script_stop("bob");
 }
 
 #[test]
@@ -349,13 +350,13 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
         s.error
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Idle
     );
     let failure = s.js.load_failure(&card.identity_key()).unwrap().clone();
     assert!(s.profile_assignment("alice").is_none());
     assert_eq!(
-        s.play.as_ref().unwrap().script_runtime_generation("alice"),
+        s.core.play().unwrap().script_runtime_generation("alice"),
         Some(0)
     );
     assert_eq!(
@@ -399,7 +400,7 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
         s.js.load_failure(&other.identity_key()),
         Some(&other_failure)
     );
-    let play = s.play.as_ref().unwrap();
+    let play = s.core.play().unwrap();
     assert_eq!(play.script_runtime_generation("alice"), Some(1));
     assert_eq!(
         play.script_source_identity("alice"),
@@ -418,10 +419,10 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
         Some(&other_failure)
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_runtime_generation("alice"),
+        s.core.play().unwrap().script_runtime_generation("alice"),
         Some(1)
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -467,7 +468,7 @@ fn external_ts_load_start_stop_persists_assignment_only_on_success() {
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
-    let play = s.play.as_ref().unwrap();
+    let play = s.core.play().unwrap();
     assert_eq!(play.script_state("alice"), script::RunState::Running);
     let asg = s
         .profile_assignment("alice")
@@ -495,7 +496,7 @@ fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
     );
     assert_eq!(s.error, None, "{:?}", s.error);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Idle,
         "load must not Start"
     );
@@ -514,7 +515,7 @@ fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
     assert_eq!(again, 1, "same path must replace, not duplicate");
     s.script_start_selected();
     settle(&mut s);
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
     assert_eq!(reload(&mut s), ReloadOutcome::NothingChanged);
 }
 
@@ -531,10 +532,10 @@ fn reload_unchanged_reports_exact_string() {
     assert_eq!(out, ReloadOutcome::NothingChanged);
     assert_eq!(s.error.as_deref(), Some(script::NOTHING_CHANGED_RELOAD));
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -749,7 +750,7 @@ fn reload_clicked_warns_before_replacing_running() {
         s.error
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
     let now_js =
@@ -758,7 +759,7 @@ fn reload_clicked_warns_before_replacing_running() {
             .js
             .clone();
     assert_eq!(old_js, now_js, "preview must not replace registration");
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -771,9 +772,9 @@ fn reload_commit_gates_pause_during_prep() {
     fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
     s.begin_script_reload_clicked();
     assert!(s.reload_validation_pending());
-    s.play.as_ref().unwrap().script_pause("alice");
+    s.core.play().unwrap().script_pause("alice");
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Paused
     );
     let old_js =
@@ -792,7 +793,7 @@ fn reload_commit_gates_pause_during_prep() {
         s.error
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Paused
     );
     let now_js =
@@ -801,7 +802,7 @@ fn reload_commit_gates_pause_during_prep() {
             .js
             .clone();
     assert_eq!(old_js, now_js);
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -831,10 +832,10 @@ fn prepare_failure_preserves_old_instance() {
     assert_eq!(now.origin, old.origin);
     assert_eq!(now.js, old.js);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -854,7 +855,7 @@ fn live_settings_reach_running_and_paused() {
         "n",
         Value::String("2".into()),
     ));
-    let play = s.play.as_ref().unwrap();
+    let play = s.core.play().unwrap();
     let identity = play.script_source_identity("alice").unwrap();
     let gen = play.script_runtime_generation("alice").unwrap();
     let mut bag = serde_json::Map::new();
@@ -873,7 +874,7 @@ fn live_settings_reach_running_and_paused() {
         Value::String("3".into()),
     ));
     bag.insert("n".into(), Value::String("3".into()));
-    let play = s.play.as_ref().unwrap();
+    let play = s.core.play().unwrap();
     assert!(
         !play.script_post_settings_fenced("alice", &bag, &identity, gen),
         "unchanged bag after live Paused delivery is not reposted"
@@ -1027,7 +1028,7 @@ fn catalog_refresh_warns_before_stopping_running() {
     refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running,
         "catalog refresh must warn before stopping"
     );
@@ -1037,7 +1038,7 @@ fn catalog_refresh_warns_before_stopping_running() {
         s.error,
         s.reload_warning.as_ref().map(|w| &w.running)
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -1065,14 +1066,14 @@ fn start_after_launch_runs_saved_catalog_assignment_before_any_browse() {
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 fn focus_profile(s: &mut Session, name: &str) {
-    s.focus.lock().unwrap().focused = Some(name.into());
+    s.set_focus_for_test(name);
     s.restore_script_heading(name);
 }
 
@@ -1118,7 +1119,7 @@ fn cancel_reload_preserves_running_and_paused_executions() {
     s.load_js(&path);
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
-    s.play.as_ref().unwrap().script_pause("bob");
+    s.core.play().unwrap().script_pause("bob");
     let generations = s.generations_for(&["alice".into(), "bob".into()]);
     let old_js =
         s.js.get(script::ScriptSource::File, &path.to_string_lossy())
@@ -1134,11 +1135,11 @@ fn cancel_reload_preserves_running_and_paused_executions() {
         generations
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("bob"),
+        s.core.play().unwrap().script_state("bob"),
         script::RunState::Paused
     );
     assert_eq!(
@@ -1149,8 +1150,8 @@ fn cancel_reload_preserves_running_and_paused_executions() {
     );
     // A later click must prepare and warn again, never reuse cancelled consent.
     assert_eq!(reload(&mut s), ReloadOutcome::NeedsConfirm);
-    s.play.as_ref().unwrap().script_stop("alice");
-    s.play.as_ref().unwrap().script_stop("bob");
+    s.core.play().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("bob");
 }
 
 #[test]
@@ -1167,7 +1168,7 @@ fn reload_confirm_does_not_authorize_switched_selection() {
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
-    s.play.as_ref().unwrap().script_pause("bob");
+    s.core.play().unwrap().script_pause("bob");
     let old_b =
         s.js.get(script::ScriptSource::File, &path_b.to_string_lossy())
             .unwrap()
@@ -1193,7 +1194,7 @@ fn reload_confirm_does_not_authorize_switched_selection() {
         "A's warning must not confirm B"
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("bob"),
+        s.core.play().unwrap().script_state("bob"),
         script::RunState::Paused,
         "B must not be replaced without its own warning"
     );
@@ -1203,8 +1204,8 @@ fn reload_confirm_does_not_authorize_switched_selection() {
             .js
             .clone();
     assert_eq!(old_b, now_b, "B registration stays until B is confirmed");
-    s.play.as_ref().unwrap().script_stop("alice");
-    s.play.as_ref().unwrap().script_stop("bob");
+    s.core.play().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("bob");
 }
 
 #[test]
@@ -1235,10 +1236,10 @@ fn reload_warn_survives_focus_only() {
         other => panic!("focus-only must leave A's confirm valid, got {other:?}"),
     }
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -1279,14 +1280,14 @@ fn catalog_confirm_gates_newly_paused() {
     refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_pause("alice");
+    s.core.play().unwrap().script_pause("alice");
     refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Paused,
         "newly paused catalog bot needs its own warning"
     );
@@ -1308,7 +1309,7 @@ fn catalog_confirm_gates_newly_paused() {
             .js
             .clone();
     assert_eq!(old_js, now_js);
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -1343,10 +1344,10 @@ fn reload_toplevel_throw_fails_before_replacement() {
     assert_eq!(now.origin, old.origin);
     assert_eq!(now.js, old.js);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -1381,10 +1382,10 @@ fn reload_missing_named_export_fails_before_replacement() {
     assert_eq!(now.origin, old.origin);
     assert_eq!(now.js, old.js);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -1421,20 +1422,20 @@ fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
     refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
     fs::write(&bot, format!("{BOT_TS}// second\n")).unwrap();
     refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running,
         "content change after warn must not authorize the previous prepared set"
     );
     let now = s.js.get(script::ScriptSource::Catalog, "StaleBot").unwrap();
     assert_eq!(now.js, old_js);
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -1445,7 +1446,7 @@ fn reload_removal_skips_target_and_reloads_peer() {
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
-    s.play.as_mut().unwrap().stop_slot("bob");
+    s.core.play_mut().unwrap().stop_slot("bob");
     let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 0);
@@ -1455,10 +1456,10 @@ fn reload_removal_skips_target_and_reloads_peer() {
         s.error
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -1479,12 +1480,12 @@ fn reload_reports_true_startup_failure_without_aborting_peer() {
         s.error
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
     // A failed replacement start leaves the stopped target stopped.
     wait_state(&s, "bob", script::RunState::Idle);
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -1495,22 +1496,22 @@ fn reload_native_stop_skips_target_and_reloads_peer() {
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
-    s.play.as_ref().unwrap().script_stop("bob");
+    s.core.play().unwrap().script_stop("bob");
     let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 0);
     wait_state(&s, "bob", script::RunState::Idle);
     assert!(s
-        .play
-        .as_ref()
+        .core
+        .play()
         .unwrap()
         .script_source_identity("bob")
         .is_none());
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -1529,10 +1530,10 @@ fn reload_session_stop_skips_target_and_reloads_peer() {
     assert_applied(out, 1, 0);
     wait_state(&s, "bob", script::RunState::Idle);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }
 
 #[test]
@@ -1557,26 +1558,26 @@ fn reload_logout_skips_target_and_reloads_peer() {
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
-    let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
+    let bob_gen = s.core.play().unwrap().script_runtime_generation("bob");
     s.logout("bob");
     let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 0);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("bob"),
+        s.core.play().unwrap().script_state("bob"),
         script::RunState::Running,
         "logout skips replacement; it does not stop the isolate"
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_runtime_generation("bob"),
+        s.core.play().unwrap().script_runtime_generation("bob"),
         bob_gen
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
-    s.play.as_ref().unwrap().script_stop("bob");
+    s.core.play().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("bob");
 }
 
 #[test]
@@ -1587,22 +1588,22 @@ fn reload_logout_all_skips_replacement() {
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
-    let alice_gen = s.play.as_ref().unwrap().script_runtime_generation("alice");
-    let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
+    let alice_gen = s.core.play().unwrap().script_runtime_generation("alice");
+    let bob_gen = s.core.play().unwrap().script_runtime_generation("bob");
     s.logout_all();
     let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 0, 0);
     assert_eq!(
-        s.play.as_ref().unwrap().script_runtime_generation("alice"),
+        s.core.play().unwrap().script_runtime_generation("alice"),
         alice_gen
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_runtime_generation("bob"),
+        s.core.play().unwrap().script_runtime_generation("bob"),
         bob_gen
     );
-    s.play.as_ref().unwrap().script_stop("alice");
-    s.play.as_ref().unwrap().script_stop("bob");
+    s.core.play().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("bob");
 }
 
 #[test]
@@ -1614,7 +1615,7 @@ fn reload_reassignment_skips_target_and_reloads_peer() {
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
-    let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
+    let bob_gen = s.core.play().unwrap().script_runtime_generation("bob");
     s.persist_successful_assignment(
         "bob",
         ScriptAssignment {
@@ -1628,20 +1629,20 @@ fn reload_reassignment_skips_target_and_reloads_peer() {
     settle(&mut s);
     assert_applied(out, 1, 0);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("bob"),
+        s.core.play().unwrap().script_state("bob"),
         script::RunState::Running,
         "reassignment wins; do not stop the old isolate"
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_runtime_generation("bob"),
+        s.core.play().unwrap().script_runtime_generation("bob"),
         bob_gen
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
-    s.play.as_ref().unwrap().script_stop("bob");
+    s.core.play().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("bob");
 }
 
 #[test]
@@ -1652,31 +1653,31 @@ fn reload_new_start_after_stop_is_not_consumed() {
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
-    s.play.as_ref().unwrap().script_stop("bob");
+    s.core.play().unwrap().script_stop("bob");
     // The panel's Start is disabled while the reap runs; Start again
     // once the slot is Idle, as the operator would.
     wait_state(&s, "bob", script::RunState::Idle);
     start_file_on(&mut s, "bob", &path);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("bob"),
+        s.core.play().unwrap().script_state("bob"),
         script::RunState::Running
     );
-    let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
+    let bob_gen = s.core.play().unwrap().script_runtime_generation("bob");
     focus_profile(&mut s, "alice");
     let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 0);
     assert_eq!(
-        s.play.as_ref().unwrap().script_runtime_generation("bob"),
+        s.core.play().unwrap().script_runtime_generation("bob"),
         bob_gen,
         "a new Start after cancellation is a new generation"
     );
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
-    s.play.as_ref().unwrap().script_stop("bob");
+    s.core.play().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("bob");
 }
 
 #[test]
@@ -1686,7 +1687,7 @@ fn reload_of_a_running_script_restarts_it() {
     s.load_js(&path);
     s.script_start_selected();
     settle(&mut s);
-    let play = s.play.as_ref().unwrap();
+    let play = s.core.play().unwrap();
     let identity = play.script_source_identity("alice").unwrap();
     let before = play.script_runtime_generation("alice").unwrap();
     fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
@@ -1694,7 +1695,7 @@ fn reload_of_a_running_script_restarts_it() {
     assert_applied(reload(&mut s), 1, 0);
     // The old isolate is still reaping; the restart is queued behind it.
     settle(&mut s);
-    let play = s.play.as_ref().unwrap();
+    let play = s.core.play().unwrap();
     assert_eq!(play.script_state("alice"), script::RunState::Running);
     assert!(play.script_runtime_generation("alice").unwrap() > before);
     assert_eq!(
@@ -1728,7 +1729,7 @@ fn start_all_lists_a_member_whose_setup_fails_after_the_click() {
             && report.contains("bulk-load-proof"),
         "{report}"
     );
-    let play = s.play.as_ref().unwrap();
+    let play = s.core.play().unwrap();
     assert_eq!(play.script_state("alice"), script::RunState::Running);
     assert_eq!(play.script_state("bob"), script::RunState::Idle);
     let failure = s.js.load_failure(&bad.identity_key()).expect("recorded");
@@ -1777,16 +1778,16 @@ fn catalog_native_stop_skips_target_and_reloads_peer() {
     refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("bob");
+    s.core.play().unwrap().script_stop("bob");
     refresh_catalog(&mut s, &root);
     settle(&mut s);
     wait_state(&s, "bob", script::RunState::Idle);
     assert_eq!(
-        s.play.as_ref().unwrap().script_state("alice"),
+        s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    s.play.as_ref().unwrap().script_stop("alice");
+    s.core.play().unwrap().script_stop("alice");
 }

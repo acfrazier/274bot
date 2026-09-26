@@ -1,13 +1,14 @@
-//! Panel session: owns the unlocked vault, the running slot map, the shared
-//! `Focus`, and per-slot frame/input channels. The panel frame reads
-//! `Session`; slot threads stay in `host_play` (spawned via `run_with_io`
-//! with per-profile `FrameBuf` mailbox/`SlotInput`, keeping the login FIFO
-//! and the mainland hop).
+//! Panel session: the native adapter over the shared operator core
+//! ([`frontend_core::OperatorSession`], which owns the vault, the play,
+//! fleet membership, the selected bot, removals and operation results).
+//! The panel keeps the render `Focus` mirror the slot threads read, the
+//! per-slot frame/input channels ([`SlotIo`] via [`PanelSurface`]), audio,
+//! nav paint, WalkTo and the proof harness state.
 //!
 //! Flat slot model (M2 Task 2b): every wall member is its own full `Client`
 //! on its own slot thread — there is no channel head and no lean baton.
-//! Clicking a member is [`Session::select`], which is pure `focus` bookkeeping:
-//! the Game pane samples that slot's `FrameBuf`. The single-client boot still
+//! Clicking a member is [`Session::select`]: the core selects it and the
+//! Game pane samples that slot's `FrameBuf`. The single-client boot still
 //! holds: unlock spawns **one** Client (the focused profile); MultiBox spawns
 //! the rest.
 
@@ -34,8 +35,8 @@ use host_play::walk_map::{observed_services, Catalogue, ObservedService, SourceS
 use host_play::{
     map_ready_catalogue, map_ready_images, open_map_images, open_vault, peek_map_catalogue,
     run_prepared_template, run_with_io, run_with_template, MapDemandHandle, MapJobStatus, MapStage,
-    Play, PlayOptions, ProfileOptions, ReadyCatalogue, ReadyImages, ScriptNavPaint, ServerProfile,
-    SharedClientTemplate, SlotArm, SlotStatus, ValidatedTemplate, WalkArm,
+    PlayOptions, ProfileOptions, ReadyCatalogue, ReadyImages, ScriptNavPaint, ServerProfile,
+    SharedClientTemplate, SlotStatus, ValidatedTemplate, WalkArm,
 };
 use nav::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
@@ -51,6 +52,7 @@ use vault::{Profile, ProfileSettings, Vault};
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
+use frontend_core::{OperatorSession, SlotAttach, SlotSurface};
 
 /// Catalog card live_prepare stashes so the StartScript pump can
 /// `script_start_load` once after seed waits. Fleet P2P golds stash one
@@ -624,14 +626,70 @@ pub struct SlotIo {
     pub pixels: Arc<FrameBuf>,
 }
 
-/// A rail removal is owned by the exact arm that received its clean-logout
-/// request. `io` stays here while that worker drains so re-adding the member
-/// can reattach the same framebuffer and input channels without spawning a
-/// second client lifetime.
-struct PendingSlotRemoval {
-    started: Instant,
-    arm: Arc<SlotArm>,
-    io: Option<SlotIo>,
+/// Panel adapter for the core's slot lifetimes: the per-slot input channel
+/// and frame mailbox, the per-slot draw and audio policy fixed at spawn, and
+/// the frontend facts dropped at a username-reuse boundary.
+struct PanelSurface<'a> {
+    focus: &'a Mutex<crate::focus::Focus>,
+    audio: &'a AudioGate<AudioOut>,
+    memory_override: Option<bool>,
+    frontend_gens: &'a Arc<Mutex<HashMap<String, ClientGens>>>,
+    nav_states: &'a Arc<Mutex<HashMap<String, (GameSnapshot, WorldState)>>>,
+    travellers: &'a SlotTravellers,
+    tick_latch: &'a Arc<Mutex<HashMap<String, (u64, Tile)>>>,
+    walk_dest: &'a mut Option<Tile>,
+}
+
+impl SlotSurface for PanelSurface<'_> {
+    type Io = SlotIo;
+
+    fn attach(
+        &mut self,
+        name: &str,
+        profile: &mut Profile,
+        retained: Option<SlotIo>,
+    ) -> SlotAttach<SlotIo> {
+        let SlotIo { input, pixels } = retained.unwrap_or_else(|| SlotIo {
+            input: SlotInput::new(),
+            pixels: FrameBuf::new(),
+        });
+        // Raster comes from the vault profile (the same source as
+        // `bot_client_config`); a focus change never re-roles a live slot.
+        let raster = profile.settings.raster;
+        // The session-only memory choice applies to this disposable spawn
+        // profile only; it is never written to the vault.
+        if let Some(lowmem) = self.memory_override {
+            profile.settings.lowmem = lowmem;
+        }
+        input.set_prefer_cpu(raster == vault::RasterMode::Cpu);
+        self.focus
+            .lock()
+            .unwrap()
+            .renderer_by
+            .insert(name.to_string(), raster != vault::RasterMode::Off);
+        self.audio.set_music(name, !profile.settings.lowmem);
+        SlotAttach {
+            input: Some(Arc::clone(&input)),
+            mailbox: Some(Arc::clone(&pixels)),
+            io: SlotIo { input, pixels },
+        }
+    }
+
+    fn lifetime_reset(&mut self, name: &str) {
+        if reset_frontend_slot_lifetime(
+            name,
+            self.frontend_gens,
+            self.nav_states,
+            self.travellers,
+            self.tick_latch,
+        ) {
+            *self.walk_dest = None;
+        }
+    }
+
+    fn released(&mut self, name: &str) {
+        self.audio.release(name);
+    }
 }
 
 /// Combo highlight: `None` when nothing is focused so the widget cannot
@@ -1050,17 +1108,12 @@ pub struct Session {
     /// apply `client.set_draw(draw_for_slot(&focus, name))`, so only the
     /// focused slot rasters.
     pub focus: Arc<Mutex<crate::focus::Focus>>,
-    pub vault: Option<Vault>,
+    /// Shared operator lifecycle: vault, play, fleet membership and latch,
+    /// the selected bot (mirrored into `focus.focused` for slot threads),
+    /// per-slot [`SlotIo`], removals and operation results.
+    pub core: OperatorSession<SlotIo>,
     /// Last vault/connection error shown in the banner.
     pub error: Option<String>,
-    /// Running slot threads and their shared statuses (created at unlock).
-    pub play: Option<Play>,
-    /// Per-username slot IO.
-    pub slots: HashMap<String, SlotIo>,
-    /// Rail removals waiting for clean disconnect or their bounded deadline.
-    /// Each entry is bound to one arm lifetime; the UI frame only polls these,
-    /// and worker joins stay in `Play`.
-    pending_slot_removals: HashMap<String, PendingSlotRemoval>,
     /// The focused slot's live capture sender; `None` while capture is off,
     /// so UI send paths no-op.
     pub capture_tx: Option<Sender<InputEv>>,
@@ -1071,7 +1124,8 @@ pub struct Session {
     pub log_by: Arc<Mutex<HashMap<String, Vec<String>>>>,
     /// Vault passphrase scratch buffer for the in-panel unlock prompt.
     pub pass_scratch: String,
-    /// Last status poll (delta source for the log).
+    /// Display copy of the core's last status poll, with queued walk
+    /// destinations applied.
     pub statuses: Vec<SlotStatus>,
     /// Picker edit scratch (username/password). Empty on the strip.
     pub cred_user: String,
@@ -1211,10 +1265,6 @@ pub struct Session {
     /// eligibility and was stopped. Not a cancellation fixture.
     #[cfg(test)]
     pub fail_reload_start_for: Option<String>,
-    /// Test-only: prepare wall/runner state with fake arms and no client
-    /// thread. Preparation-state tests must not contact an update server.
-    #[cfg(test)]
-    skip_slot_spawn: bool,
     /// Catalog warmup: at most one `ensure_js` per armed frame.
     pub transpile_queue: VecDeque<(script::ScriptSource, String)>,
     pub(crate) transpile_armed: bool,
@@ -1309,13 +1359,10 @@ pub struct Session {
     pub fixture_mode: scenario::FixtureMode,
     /// Optional identity receipt path; default `~/.274bot/fixtures/<scenario>.json`.
     pub fixture_path: Option<PathBuf>,
-    /// Process-lifetime instance lock, or skip for harness / Continue anyway.
-    _instance: host_play::InstancePermit,
 }
 
 /// Keep each per-name panel log bounded.
 const LOG_CAP: usize = 200;
-const SLOT_REMOVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Log bucket for vault errors and lines with no username.
 pub const PROCESS: &str = "*";
@@ -1483,11 +1530,8 @@ impl Session {
                 wall: Vec::new(),
                 renderer_by: HashMap::new(),
             })),
-            vault: None,
+            core: OperatorSession::new(_instance),
             error: None,
-            play: None,
-            slots: HashMap::new(),
-            pending_slot_removals: HashMap::new(),
             capture_tx: None,
             mainland: Arc::new(AtomicBool::new(
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
@@ -1546,8 +1590,6 @@ impl Session {
             external_reload_pending: None,
             #[cfg(test)]
             fail_reload_start_for: None,
-            #[cfg(test)]
-            skip_slot_spawn: false,
             transpile_queue: VecDeque::new(),
             transpile_armed: false,
             transpile_done: 0,
@@ -1617,7 +1659,6 @@ impl Session {
             profile_preparing: false,
             requested_unlock: None,
             validated_template: None,
-            _instance,
         }
     }
 
@@ -1733,14 +1774,14 @@ impl Session {
         }
         if watch.status() == host_play::external_loader::ExternalWatchStatus::Failed {
             let state = self
-                .play
-                .as_ref()
+                .core
+                .play()
                 .map(|play| play.script_state(&account))
                 .unwrap_or(script::RunState::Idle);
             let idle = matches!(state, script::RunState::Idle);
             let mut stop_invoked = false;
             if !idle && !matches!(state, script::RunState::Stopping) {
-                if let Some(play) = self.play.as_ref() {
+                if let Some(play) = self.core.play() {
                     play.script_stop(&account);
                 }
                 stop_invoked = true;
@@ -1788,7 +1829,7 @@ impl Session {
                     script::ScriptSel::Loaded(script::ScriptSource::File, card.identity_id());
                 let selected = self.script_sel.as_ref() == Some(&want)
                     || self.pending_browse.get(&account) == Some(&want);
-                let running = self.play.as_ref().is_some_and(|play| {
+                let running = self.core.play().is_some_and(|play| {
                     !matches!(play.script_state(&account), script::RunState::Idle)
                 });
                 watch.note_load(
@@ -1812,8 +1853,8 @@ impl Session {
             }
             Some(Operation::Stop) => {
                 let state = self
-                    .play
-                    .as_ref()
+                    .core
+                    .play()
                     .map(|play| play.script_state(&account))
                     .unwrap_or(script::RunState::Idle);
                 let paint = self
@@ -1945,7 +1986,7 @@ impl Session {
                     script::ScriptSel::Loaded(script::ScriptSource::File, card.identity_id());
                 let selected = self.script_sel.as_ref() == Some(&want)
                     || self.pending_browse.get(&account) == Some(&want);
-                let running = self.play.as_ref().is_some_and(|play| {
+                let running = self.core.play().is_some_and(|play| {
                     !matches!(play.script_state(&account), script::RunState::Idle)
                 });
                 watch.note_reload_changed(
@@ -2257,7 +2298,7 @@ impl Session {
     /// Delete `path` while locked. Refuses if a vault is open so a running
     /// session cannot clobber the file. Forgotten-password recovery.
     pub fn reset_vault_at(&mut self, path: &Path) -> bool {
-        if self.vault.is_some() {
+        if self.core.vault().is_some() {
             self.error = Some("reset vault: unlock / close the session first".into());
             return false;
         }
@@ -2370,12 +2411,13 @@ impl Session {
                 .unwrap_or_else(|| "benchmark vault failed".into()));
         }
         run.bind_seed_nav(host_play::memory::SeedNav::FromPlay(
-            self.play.as_ref().and_then(|p| p.world()),
+            self.core.play().and_then(|p| p.world()),
         ))?;
         self.set_multibox(true);
         for name in &run.names {
-            let _ = self.wall.load(name);
-            self.ensure_slot(name, self.arm_for_profile(name), false);
+            let (core, mut surface) = self.core_and_surface();
+            let (op, _) = core.load(name, &mut surface);
+            self.report_failure(op);
         }
         self.sync_wall_focus();
         self.wall.chooser_open = false;
@@ -2439,7 +2481,7 @@ impl Session {
         // stay raster Off so a flipped only-render-selected cannot attach
         // 49 extra RenderWorlds (~1 GB of loc Model clones each). Full-rate
         // keeps Gpu on every member on purpose.
-        if let Some(vault) = self.vault.as_mut() {
+        if let Some(vault) = self.core.vault_mut() {
             for (i, (name, _)) in names.iter().enumerate() {
                 if let Some(mut p) = vault.get(name).cloned() {
                     p.settings.lowmem = true;
@@ -2465,8 +2507,9 @@ impl Session {
         // are drop+reattach now, but focus apply still joins handshakes.
         // s00 is focused last so it is FIFO head.
         for (name, _) in &names {
-            let _ = self.wall.load(name);
-            self.ensure_slot(name, self.arm_for_profile(name), false);
+            let (core, mut surface) = self.core_and_surface();
+            let (op, _) = core.load(name, &mut surface);
+            self.report_failure(op);
         }
         self.sync_wall_focus();
         self.wall.chooser_open = false;
@@ -2608,8 +2651,8 @@ impl Session {
             watch.configure(case, names[0].clone(), names[1].clone());
             if case == host_play::paired_core::PairCase::Duel {
                 let weapon_id = self
-                    .play
-                    .as_ref()
+                    .core
+                    .play()
                     .and_then(|play| play.game_data())
                     .and_then(|data| {
                         data.item_by_alias(host_play::paired_core::DUEL_WEAPON_ALIAS)
@@ -2654,9 +2697,9 @@ impl Session {
         self.nav_overlay = Some(from_scenario(&view.nav));
         // NEVER assign sidecar_50 — it stays the operator knob.
         self.sync_sidecar_cadence();
-        let world = self.play.as_ref().and_then(|play| play.world());
+        let world = self.core.play().and_then(|play| play.world());
         let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
-        if let Some(play) = &self.play {
+        if let Some(play) = self.core.play() {
             runner.set_map_members(play.map_members());
         }
         if let Some(budget) = scenario::budget_s_from_env() {
@@ -2665,7 +2708,7 @@ impl Session {
         // The runner drives/companions the minted names, never the seed's
         // `test`/`test2` (the vault holds the fresh accounts).
         runner.set_live_names(&names);
-        if let Some(play) = &self.play {
+        if let Some(play) = self.core.play() {
             runner.set_obj_names(play.obj_names());
         }
         *self.scenario.lock().unwrap() = Some(runner);
@@ -3130,10 +3173,9 @@ impl Session {
         self.install_catalog_core_watch(Some(play.catalog_core_watch()));
         self.install_paired_core_watch(Some(play.paired_core_watch()));
         *self.script_nav_paint.lock().unwrap() = Some(play.script_nav_paint());
-        self.play = Some(play);
-        crate::picker::set_pack(self.play.as_ref().and_then(|p| p.world()));
-        self.statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
-        self.vault = Some(vault);
+        crate::picker::set_pack(play.world());
+        self.statuses = play.statuses();
+        self.core.start(vault, play);
         Ok(())
     }
 
@@ -3148,92 +3190,10 @@ impl Session {
         }
     }
 
-    /// Advance clean rail removals without sleeping or joining on the UI
-    /// thread. A disconnected slot stops immediately; a connected one gets
-    /// the bounded clean-logout window before Stop is signalled.
-    fn pump_slot_removals(&mut self) {
-        self.pump_slot_removals_at(Instant::now());
-    }
-
-    fn pump_slot_removals_at(&mut self, now: Instant) {
-        if let Some(play) = self.play.as_mut() {
-            play.pump_worker_reaps();
-        }
-        if self.pending_slot_removals.is_empty() {
-            return;
-        }
-        let statuses = self.play.as_ref().map(Play::statuses).unwrap_or_default();
-        let ready: Vec<(String, bool)> = self
-            .pending_slot_removals
-            .iter()
-            .map(|(name, pending)| {
-                let current_arm = self.play.as_ref().and_then(|play| play.arm(name));
-                let owns_current_lifetime = current_arm
-                    .as_ref()
-                    .is_some_and(|arm| Arc::ptr_eq(arm, &pending.arm));
-                let disconnected = !statuses
-                    .iter()
-                    .any(|status| status.username == name.as_str() && status.connected);
-                let timed_out =
-                    now.saturating_duration_since(pending.started) >= SLOT_REMOVE_TIMEOUT;
-                // A missing arm means the pending lifetime ended by itself;
-                // retire its preserved terminal row. A different arm is a
-                // replacement and must only cause the stale pending entry to
-                // be dropped, never stop the replacement.
-                (
-                    name.clone(),
-                    current_arm.is_none() || (owns_current_lifetime && (disconnected || timed_out)),
-                )
-            })
-            .collect();
-        for (name, stop) in ready {
-            if stop {
-                if let Some(play) = self.play.as_mut() {
-                    play.begin_stop_slot(&name);
-                }
-            }
-            if stop
-                || !self
-                    .play
-                    .as_ref()
-                    .and_then(|play| play.arm(&name))
-                    .is_some_and(|arm| {
-                        self.pending_slot_removals
-                            .get(&name)
-                            .is_some_and(|pending| Arc::ptr_eq(&arm, &pending.arm))
-                    })
-            {
-                self.pending_slot_removals.remove(&name);
-            }
-        }
-    }
-
-    /// Cancel a pending rail removal in response to an operator action.
-    /// The retained IO is reusable only when no replacement arm exists or
-    /// when the current arm is the exact lifetime that owned the removal.
-    /// Returns true only when the current arm also owns the cancelled
-    /// removal, so callers may undo that removal's clean-logout latch.
-    fn cancel_slot_removal(&mut self, name: &str) -> bool {
-        let Some(mut pending) = self.pending_slot_removals.remove(name) else {
-            return false;
-        };
-        let current = self.play.as_ref().and_then(|play| play.arm(name));
-        let owns_cancelled_removal = current
-            .as_ref()
-            .is_some_and(|arm| Arc::ptr_eq(arm, &pending.arm));
-        let may_restore_io = current.as_ref().is_none_or(|_| owns_cancelled_removal);
-        if may_restore_io {
-            if let Some(io) = pending.io.take() {
-                self.slots.entry(name.to_string()).or_insert(io);
-            }
-        }
-        owns_cancelled_removal
-    }
-
     /// Poll slot statuses and append log lines for transitions (slot up,
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
-        self.pump_slot_removals();
+        self.core.advance_removals(Instant::now());
         if self.background_ack_open && self.background_bot_count() == 0 {
             self.background_ack_open = false;
         }
@@ -3244,23 +3204,25 @@ impl Session {
         self.poll_reload_validation();
         self.sync_nav_publish();
         if let Some(owner) = self.audio.owner() {
-            if !self.slots.contains_key(&owner) {
+            if !self.core.slots().contains_key(&owner) {
                 self.audio.release(&owner);
             }
         }
-        let Some(current) = self.play.as_ref().map(|p| p.statuses()) else {
+        if self.core.play().is_none() {
             return;
-        };
-        // Start/Stop return before the isolate is up or reaped: resolve
-        // them here for every slot (an offline or queued slot has no
-        // observe of its own) and commit the Starts that settled.
-        if let Some(play) = &self.play {
-            play.pump_script_lifecycles();
         }
+        // Start/Stop return before the isolate is up or reaped: the core
+        // resolves them for every slot (an offline or queued slot has no
+        // observe of its own), refreshes rows and records transitions; the
+        // panel then commits the Starts that settled.
+        self.core.poll_host();
         self.settle_script_starts();
+        let mut current = std::mem::take(&mut self.statuses);
+        current.clear();
+        current.extend_from_slice(self.core.statuses());
         self.ingest_tutorial_chat(&current);
         self.maybe_getvar_tutorial(&current);
-        if let Some(play) = &self.play {
+        if let Some(play) = self.core.play() {
             let mut log_by = self.log_by.lock().unwrap();
             for s in &current {
                 for line in play.script_take_pending_logs(&s.username) {
@@ -3278,52 +3240,20 @@ impl Session {
             }
         }
         {
+            use frontend_core::Transition;
             let mut log_by = self.log_by.lock().unwrap();
-            for s in &current {
-                let name = s.username.as_str();
-                let prev = self.statuses.iter().find(|p| p.username == s.username);
-                match prev {
-                    None => {
-                        push_log(&mut log_by, name, format!("{name}: slot up"));
-                        if let Some(e) = &s.error {
-                            push_log(&mut log_by, name, format!("{name}: login {e}"));
-                        }
+            for change in self.core.transitions() {
+                let name = change.slot.as_str();
+                let line = match &change.transition {
+                    Transition::SlotUp => format!("{name}: slot up"),
+                    Transition::LoginError(e) => format!("{name}: login {e}"),
+                    Transition::Ingame => format!("{name}: ingame"),
+                    Transition::Scene(scene) => format!("{name}: scene {scene}"),
+                    Transition::Welcome(line) | Transition::WelcomeFailure(line) => {
+                        format!("{name}: {line}")
                     }
-                    Some(p) => {
-                        if p.error.is_none() && s.error.is_some() {
-                            push_log(
-                                &mut log_by,
-                                name,
-                                format!("{name}: login {}", s.error.as_deref().unwrap_or_default()),
-                            );
-                        }
-                        if !p.ingame && s.ingame {
-                            push_log(&mut log_by, name, format!("{name}: ingame"));
-                        }
-                        if p.scene_state != s.scene_state {
-                            push_log(
-                                &mut log_by,
-                                name,
-                                format!("{name}: scene {}", s.scene_state),
-                            );
-                        }
-                        if p.welcome_notice != s.welcome_notice {
-                            if let Some(line) = s.welcome_notice.as_deref() {
-                                push_log(&mut log_by, name, format!("{name}: {line}"));
-                            }
-                        }
-                        if p.welcome_failure.is_none() && s.welcome_failure.is_some() {
-                            push_log(
-                                &mut log_by,
-                                name,
-                                format!(
-                                    "{name}: {}",
-                                    s.welcome_failure.as_deref().unwrap_or_default()
-                                ),
-                            );
-                        }
-                    }
-                }
+                };
+                push_log(&mut log_by, name, line);
             }
         }
         self.statuses = current;
@@ -3371,32 +3301,20 @@ impl Session {
 
     /// Vault usernames plus any running slot outside the vault.
     pub fn profile_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .vault
-            .as_ref()
-            .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-            .unwrap_or_default();
-        if let Some(play) = &self.play {
-            for s in play.statuses() {
-                if !names.contains(&s.username) {
-                    names.push(s.username);
-                }
-            }
-        }
-        names
+        self.core.profile_names()
     }
 
     pub fn focused_name(&self) -> Option<String> {
-        self.focus.lock().unwrap().focused.clone()
+        self.core.selected().map(str::to_owned)
     }
 
     fn map_members(&self) -> bool {
-        self.play.as_ref().map(|p| p.map_members()).unwrap_or(false)
+        self.core.play().map(|p| p.map_members()).unwrap_or(false)
     }
 
     /// Queue a `CLIENT_CHEAT` on the focused slot. No-op without play/focus.
     pub fn cheat_focused(&self, cmd: &str) {
-        let Some(play) = self.play.as_ref() else {
+        let Some(play) = self.core.play() else {
             return;
         };
         let Some(name) = self.focused_name() else {
@@ -3413,7 +3331,7 @@ impl Session {
     /// WalkTo Teleport uses the host's Local+loopback rule on this session's
     /// play connection when present, otherwise the bound target and play host.
     pub fn map_teleport_authorized(&self) -> bool {
-        match self.play.as_ref() {
+        match self.core.play() {
             Some(play) => play.map_teleport_authorized(),
             None => {
                 host_play::walk_map::debug_teleport_authorized(self.target(), &self.options.host)
@@ -3430,8 +3348,8 @@ impl Session {
     /// skipped, `Some(false)` still in tutorial.
     pub fn focused_tutorial_skipped(&self) -> Option<bool> {
         let name = self.focused_name()?;
-        self.vault
-            .as_ref()
+        self.core
+            .vault()
             .and_then(|v| v.get(&name))
             .and_then(|p| p.settings.tutorial_skipped)
     }
@@ -3445,7 +3363,7 @@ impl Session {
     }
 
     fn cache_tutorial(&mut self, name: &str, skipped: bool) {
-        let Some(vault) = self.vault.as_mut() else {
+        let Some(vault) = self.core.vault_mut() else {
             return;
         };
         let Some(mut profile) = vault.get(name).cloned() else {
@@ -3486,7 +3404,7 @@ impl Session {
         if !ready || !self.tutorial_getvar_sent.insert(name.clone()) {
             return;
         }
-        if let Some(play) = self.play.as_ref() {
+        if let Some(play) = self.core.play() {
             play.cheat(&name, "getvar tutorial");
         }
     }
@@ -3498,26 +3416,30 @@ impl Session {
         if let Some(slot) = self.focused_slot() {
             return Some(Arc::clone(&slot.pixels));
         }
-        self.slots.values().next().map(|s| Arc::clone(&s.pixels))
+        self.core
+            .slots()
+            .values()
+            .next()
+            .map(|s| Arc::clone(&s.pixels))
     }
 
     /// Username of the focused slot (the sampled one, the old TV). Falls
     /// back to the first spawned slot when the focus has no slot yet.
     pub fn tv_name(&self) -> Option<String> {
         self.focused_name()
-            .filter(|n| self.slots.contains_key(n))
-            .or_else(|| self.slots.keys().next().cloned())
+            .filter(|n| self.core.slots().contains_key(n))
+            .or_else(|| self.core.slots().keys().next().cloned())
     }
 
     fn focused_slot(&self) -> Option<&SlotIo> {
         let name = self.focused_name()?;
-        self.slots.get(&name)
+        self.core.slot_io(&name)
     }
 
     /// Switch focus only onto an already-live slot. Capture sequencing uses
     /// this instead of [`Self::select`] so a missing actor cannot spawn.
     pub fn focus_existing(&mut self, name: &str) -> Result<(), String> {
-        if !self.slots.contains_key(name) {
+        if !self.core.slots().contains_key(name) {
             return Err(format!("pair capture actor {name} is not a live slot"));
         }
         self.apply_focus(name);
@@ -3534,9 +3456,10 @@ impl Session {
     /// that slot's `FrameBuf`. No socket is swapped (the channel-head baton
     /// is gone); every slot keeps running.
     pub fn select(&mut self, name: &str) {
-        self.cancel_slot_removal(name);
-        let arm = self.arm_for_profile(name);
-        self.ensure_slot(name, arm, false);
+        let (core, mut surface) = self.core_and_surface();
+        if let Err(error) = core.open_slot(name, &mut surface) {
+            self.error = Some(error);
+        }
         self.apply_focus(name);
         self.restore_script_heading(name);
         if !self.multibox {
@@ -3545,10 +3468,7 @@ impl Session {
     }
 
     pub fn background_bot_count(&self) -> usize {
-        self.play
-            .as_ref()
-            .map(|play| play.background_bot_count(self.focused_name().as_deref()))
-            .unwrap_or(0)
+        self.core.background_bot_count()
     }
 
     fn maybe_offer_background_ack(&mut self) {
@@ -3591,6 +3511,11 @@ impl Session {
             crate::ui_state::save(&ui);
             self.ui = ui;
         }
+        // The core owns the selection (and mirrors it onto the play, waking
+        // the outgoing and incoming slots); `focus.focused` is the render
+        // mirror the slot threads read. Destination is not a bot: switching
+        // focus keeps the pending tile.
+        self.core.select(name);
         let mut focus = self.focus.lock().unwrap();
         if focus.focused.as_deref() == Some(name) {
             return;
@@ -3599,25 +3524,12 @@ impl Session {
         focus.focused = Some(name.to_string());
         let capture = focus.capture;
         drop(focus);
-        // Destination is not a bot: switching focus keeps the pending tile.
-        // Mirror onto the play: which slot the panel samples (host-play
-        // keeps it as pure bookkeeping — no socket adopt/park).
-        if let Some(play) = self.play.as_mut() {
-            play.focus(name);
-            // The draw state of both the outgoing and incoming slot can
-            // change (draw_for_slot follows the focus); kick both so a
-            // parked thread re-reads it within a frame, not at the next
-            // game-tick park timeout.
-            if let Some(old) = old.as_deref() {
-                play.wake(old);
-            }
-        }
         // The overlay follows the focused traveller: switching focus may
         // show a different (or no) route, so force a rebuild.
         self.route_gen += 1;
         if capture {
             if let Some(old) = old.clone() {
-                if let Some(slot) = self.slots.get(&old) {
+                if let Some(slot) = self.core.slot_io(&old) {
                     slot.input.set_enabled(false);
                 }
             }
@@ -3628,7 +3540,7 @@ impl Session {
         // Credentials fields follow the newly focused profile; the General
         // config mirrors the profile's raster/mem so the pane shows what the
         // slot actually runs (display only — no write-back, no re-role).
-        if let Some(vault) = &self.vault {
+        if let Some(vault) = self.core.vault() {
             if let Some(p) = vault.get(name) {
                 self.cred_user = p.username.clone();
                 self.cred_pass = p.password.clone();
@@ -3652,7 +3564,7 @@ impl Session {
         // The focused slot's draw state flips with the checkbox; kick it so
         // a parked thread applies `set_draw` within a frame.
         if let Some(name) = name {
-            if let Some(play) = self.play.as_ref() {
+            if let Some(play) = self.core.play() {
                 play.wake(&name);
             }
         }
@@ -3689,7 +3601,7 @@ impl Session {
     /// renderer, or wall-policy change lands within a frame.
     fn sync_sidecar_cadence(&mut self) {
         let focus = self.focus.lock().unwrap();
-        for (name, slot) in &self.slots {
+        for (name, slot) in self.core.slots() {
             slot.input.set_full_rate(full_rate_for(&focus, name));
         }
     }
@@ -3740,7 +3652,7 @@ impl Session {
         // draw_for_slot gates on the pane; kick the focused slot so a
         // parked thread sees the change within a frame.
         if let Some(name) = name {
-            if let Some(play) = self.play.as_ref() {
+            if let Some(play) = self.core.play() {
                 play.wake(&name);
             }
         }
@@ -3767,14 +3679,14 @@ impl Session {
         // Capture flips the slot's idle classification (capture → frame
         // loop); kick it so the change lands within a frame.
         if let Some(name) = name {
-            if let Some(play) = self.play.as_ref() {
+            if let Some(play) = self.core.play() {
                 play.wake(&name);
             }
         }
     }
 
     fn capture_on(&mut self, name: &str) {
-        if let Some(slot) = self.slots.get(name) {
+        if let Some(slot) = self.core.slot_io(name) {
             let (tx, rx) = mpsc::channel();
             slot.input.connect_rx(rx);
             slot.input.set_enabled(true);
@@ -3791,130 +3703,44 @@ impl Session {
         self.capture_tx = None;
     }
 
-    /// Control arm for a vault profile: auto-login remains a saved policy,
-    /// while a persisted wall logout latch starts the worker in an explicit
-    /// logged-out hold.
-    fn arm_for_profile(&self, name: &str) -> Option<Arc<SlotArm>> {
-        let profile = self.vault.as_ref().and_then(|v| v.get(name))?;
-        let auto_login = profile.settings.auto_login;
-        let arm = SlotArm::new(profile.uid, auto_login);
-        arm.random_events
-            .store(profile.settings.random_events, Ordering::Relaxed);
-        arm.lamp_auto
-            .store(profile.settings.lamp_auto, Ordering::Relaxed);
-        *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
-        if self.wall.latch.contains(name) {
-            arm.hold_logged_out();
-        }
-        Some(arm)
+    /// Test fixture: select `name` in the core and mirror it onto the render
+    /// focus, without spawn, persistence or capture effects.
+    #[cfg(test)]
+    pub(crate) fn set_focus_for_test(&mut self, name: &str) {
+        self.core.select(name);
+        self.focus.lock().unwrap().focused = Some(name.to_string());
     }
 
-    /// Return the profile values used for a client spawn without mutating the
-    /// persisted vault profile.
-    fn profile_with_memory_override(
-        mut profile: Profile,
-        memory_override: Option<bool>,
-    ) -> Profile {
-        if let Some(lowmem) = memory_override {
-            profile.settings.lowmem = lowmem;
-        }
-        profile
+    /// Split borrow: the core plus the panel adapter over the other fields.
+    fn core_and_surface(&mut self) -> (&mut OperatorSession<SlotIo>, PanelSurface<'_>) {
+        (
+            &mut self.core,
+            PanelSurface {
+                focus: &self.focus,
+                audio: &self.audio,
+                memory_override: self.memory_override,
+                frontend_gens: &self.frontend_gens,
+                nav_states: &self.nav_states,
+                travellers: &self.travellers,
+                tick_latch: &self.tick_latch,
+                walk_dest: &mut self.walk_dest,
+            },
+        )
     }
 
-    /// Register per-slot IO and spawn via [`Play::try_spawn_slot`] when a play
-    /// is live. Without `play` (unit tests / pre-unlock) only the IO map is
-    /// filled so focus can attach. `arm` carries the spawn's login intent:
-    /// `None` logs in immediately (CLI/e2e); panel paths pass
-    /// [`Session::arm_for_profile`] so auto-login / latch are respected.
-    /// Existing IO with no arm is a preserved terminal lifetime and restarts
-    /// only when `restart_terminal` is true for explicit Log in.
-    ///
-    /// Flat model: every profile spawns **one** full `Client` slot with its
-    /// own input + framebuffer (no lean channel, no render-all guard — a
-    /// headless member just has its draw off).
-    fn ensure_slot(&mut self, username: &str, arm: Option<Arc<SlotArm>>, restart_terminal: bool) {
-        if self
-            .play
-            .as_ref()
-            .is_some_and(|play| play.arm(username).is_some())
-        {
-            return;
+    /// Show a failed lifecycle operation on the banner.
+    fn report_failure(&mut self, op: frontend_core::OperationId) {
+        if let Some(error) = self.core.failure(op) {
+            self.error = Some(error);
         }
-        if self.slots.contains_key(username) && (self.play.is_none() || !restart_terminal) {
-            return;
-        }
-        let Some(profile) = self.vault.as_ref().and_then(|v| v.get(username)).cloned() else {
-            return;
-        };
-        if reset_frontend_slot_lifetime(
-            username,
-            &self.frontend_gens,
-            &self.nav_states,
-            &self.travellers,
-            &self.tick_latch,
-        ) {
-            self.walk_dest = None;
-        }
-        let existing_io = self
-            .slots
-            .get(username)
-            .map(|slot| (Arc::clone(&slot.input), Arc::clone(&slot.pixels)));
-        let (input, pixels) = existing_io.unwrap_or_else(|| (SlotInput::new(), FrameBuf::new()));
-        // Raster comes from the vault profile (the same source as
-        // `bot_client_config`); a focus change never re-roles a live slot.
-        let raster = profile.settings.raster;
-        let lowmem = self.memory_override.unwrap_or(profile.settings.lowmem);
-        // Apply the session-only choice to the disposable profile used for
-        // initial client construction. Never write this override to the vault.
-        let profile = Self::profile_with_memory_override(profile, self.memory_override);
-        input.set_prefer_cpu(raster == vault::RasterMode::Cpu);
-        {
-            let mut f = self.focus.lock().unwrap();
-            f.renderer_by
-                .insert(username.to_string(), raster != vault::RasterMode::Off);
-        }
-        self.audio.set_music(username, !lowmem);
-        #[cfg(test)]
-        if self.skip_slot_spawn {
-            if let (Some(play), Some(arm)) = (self.play.as_mut(), arm.as_ref()) {
-                play.attach_arm(username, Arc::clone(arm));
-            }
-            self.slots
-                .insert(username.to_string(), SlotIo { input, pixels });
-            return;
-        }
-        if let Some(play) = &mut self.play {
-            if let Err(error) = play.try_spawn_slot(
-                profile,
-                Some(Arc::clone(&input)),
-                Some(Arc::clone(&pixels)),
-                arm,
-            ) {
-                self.error = Some(error);
-                return;
-            }
-        }
-        self.slots
-            .insert(username.to_string(), SlotIo { input, pixels });
     }
 
     /// Credentials Log in: clear the logout latch, arm an explicit one-shot
     /// handshake, then select (spawn if needed).
     pub fn login(&mut self, name: &str) {
-        self.cancel_slot_removal(name);
-        self.wall.clear_latch(name);
-        if let Some(play) = self.play.as_mut() {
-            play.reap_finished_workers();
-        }
-        if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
-            arm.arm_explicit_login();
-        } else {
-            let arm = self.arm_for_profile(name);
-            if let Some(arm) = arm.as_ref() {
-                arm.arm_explicit_login();
-            }
-            self.ensure_slot(name, arm, true);
-        }
+        let (core, mut surface) = self.core_and_surface();
+        let op = core.login(name, &mut surface);
+        self.report_failure(op);
         self.select(name);
     }
 
@@ -3923,46 +3749,28 @@ impl Session {
     /// IF logout. The slot stays up and focused; only the login intent
     /// changes.
     pub fn logout(&mut self, name: &str) {
-        self.wall.latch_logout(name);
-        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.request_logout();
-        }
-        // The logout press lives in the probe (per-tick); kick a parked
-        // slot so the clean logout goes out within a frame.
-        if let Some(play) = self.play.as_ref() {
-            play.wake(name);
-        }
+        self.core.logout(name);
     }
 
     /// Persist the focused profile's auto-login checkbox to the vault
     /// (`ProfileSettings.auto_login`) and mirror it onto a running slot's
     /// `arm.auto_login`. Never spawns or stops a slot.
     pub fn set_auto_login(&mut self, name: &str, on: bool) -> bool {
-        let Some(vault) = self.vault.as_mut() else {
-            self.error = Some("auto-login: vault locked".into());
-            return false;
-        };
-        let Some(mut profile) = vault.get(name).cloned() else {
-            self.error = Some(format!("auto-login: no profile {name}"));
-            return false;
-        };
-        profile.settings.auto_login = on;
-        match vault.upsert(profile) {
-            Ok(()) => self.error = None,
-            Err(e) => {
-                self.error = Some(format!("auto-login: {e}"));
-                return false;
+        let result = self.core.set_auto_login(name, on);
+        self.apply_result(result)
+    }
+
+    fn apply_result(&mut self, result: Result<(), String>) -> bool {
+        match result {
+            Ok(()) => {
+                self.error = None;
+                true
+            }
+            Err(error) => {
+                self.error = Some(error);
+                false
             }
         }
-        if let Some(play) = self.play.as_ref() {
-            if let Some(arm) = play.arm(name) {
-                arm.set_auto_login(on);
-            }
-        }
-        if let Some(play) = self.play.as_ref() {
-            play.wake(name);
-        }
-        true
     }
 
     /// Persist the focused profile's guardian settings (`random_events`,
@@ -3977,30 +3785,10 @@ impl Session {
         lamp_skill: &str,
         lamp_auto: bool,
     ) -> bool {
-        let Some(vault) = self.vault.as_mut() else {
-            self.error = Some("random: vault locked".into());
-            return false;
-        };
-        let Some(mut profile) = vault.get(name).cloned() else {
-            self.error = Some(format!("random: no profile {name}"));
-            return false;
-        };
-        profile.settings.random_events = random_events;
-        profile.settings.lamp_skill = lamp_skill.to_string();
-        profile.settings.lamp_auto = lamp_auto;
-        match vault.upsert(profile) {
-            Ok(()) => self.error = None,
-            Err(e) => {
-                self.error = Some(format!("random: {e}"));
-                return false;
-            }
-        }
-        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.random_events.store(random_events, Ordering::Relaxed);
-            arm.lamp_auto.store(lamp_auto, Ordering::Relaxed);
-            *arm.lamp_skill.lock().unwrap() = lamp_skill.to_string();
-        }
-        true
+        let result = self
+            .core
+            .set_random_settings(name, random_events, lamp_skill, lamp_auto);
+        self.apply_result(result)
     }
 
     /// Game-pane lowmem (General config). Follows the focused slot's
@@ -4029,7 +3817,7 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        let Some(vault) = self.vault.as_mut() else {
+        let Some(vault) = self.core.vault_mut() else {
             return;
         };
         if let Some(mut p) = vault.get(&name).cloned() {
@@ -4056,7 +3844,7 @@ impl Session {
             return true;
         }
         let want_cpu = raster == vault::RasterMode::Cpu;
-        if let Some(slot) = self.slots.get(&name) {
+        if let Some(slot) = self.core.slot_io(&name) {
             slot.input.set_prefer_cpu(want_cpu);
         }
         true
@@ -4123,48 +3911,28 @@ impl Session {
     /// spawned holding the title screen until [`Session::login_all`].
     /// Returns whether the name was newly added to the wall.
     pub fn load(&mut self, name: &str) -> bool {
-        let cancelled_removal = self.cancel_slot_removal(name);
-        let newly = self.wall.load(name);
-        let auto_login = self
-            .vault
-            .as_ref()
-            .and_then(|v| v.get(name))
-            .map(|p| p.settings.auto_login)
-            .unwrap_or(false);
-        let want_login = self.wall.should_auto_login(name, auto_login);
-        if let Some(play) = self.play.as_ref() {
-            // Already running (re-click): refresh saved auto intent. Only a
-            // cancelled removal may reverse the clean logout it requested;
-            // unrelated client-idle and operator latches remain parked.
-            if let Some(arm) = play.arm(name) {
-                arm.set_auto_login(auto_login);
-                if cancelled_removal && want_login && arm.login_latched() {
-                    arm.arm_explicit_login();
-                }
-            } else {
-                self.ensure_slot(name, self.arm_for_profile(name), false);
-            }
-        } else {
-            self.ensure_slot(name, self.arm_for_profile(name), false);
-        }
+        let (core, mut surface) = self.core_and_surface();
+        let (op, added) = core.load(name, &mut surface);
+        self.report_failure(op);
         // Load all / chooser rows spawn onto the rail and focus the member
         // (the flat model's "click" — the Game pane samples this slot).
         self.apply_focus(name);
         self.sync_wall_focus();
-        newly
+        added
     }
 
     /// Load every profile (vault plus running slots) that is not already a
     /// wall member — the chooser's "Load all". Returns how many were newly
     /// added. Login intent still follows each profile's auto-login setting.
     pub fn load_all(&mut self) -> usize {
-        let names = self.profile_names();
-        let mut added = 0;
-        for name in names {
-            if self.load(&name) {
-                added += 1;
-            }
+        let (core, mut surface) = self.core_and_surface();
+        let (op, added) = core.load_all(&mut surface);
+        self.report_failure(op);
+        if let Some(last) = self.core.profile_names().last() {
+            let last = last.clone();
+            self.apply_focus(&last);
         }
+        self.sync_wall_focus();
         added
     }
 
@@ -4173,19 +3941,15 @@ impl Session {
     /// chooser (credentials Save re-creates it). Returns whether a row was
     /// removed; failures set [`Session::error`].
     pub fn vault_remove(&mut self, name: &str) -> bool {
-        let Some(vault) = self.vault.as_mut() else {
-            self.error = Some("chooser: vault locked".into());
-            return false;
-        };
-        match vault.remove(name) {
+        match self.core.vault_remove(name) {
             Ok(removed) => {
                 if removed {
                     self.error = None;
                 }
                 removed
             }
-            Err(e) => {
-                self.error = Some(format!("chooser: {e}"));
+            Err(error) => {
+                self.error = Some(error);
                 false
             }
         }
@@ -4195,7 +3959,7 @@ impl Session {
     /// unfocused tiles when only-render-selected is off. Call whenever
     /// membership changes: load, load_all, rail_remove, or the seed path.
     fn sync_wall_focus(&mut self) {
-        let members = self.wall.members.clone();
+        let members = self.core.members().to_vec();
         self.focus.lock().unwrap().wall = members;
     }
 
@@ -4203,7 +3967,7 @@ impl Session {
     /// selected` toggling flips every member's draw state; a parked thread
     /// must re-read it within a frame, not at the game-tick timeout).
     pub fn wake_all_slots(&self) {
-        if let Some(play) = self.play.as_ref() {
+        if let Some(play) = self.core.play() {
             play.wake_all();
         }
     }
@@ -4215,31 +3979,9 @@ impl Session {
     /// armed after the handshake). Queue membership follows worker arrival at
     /// Queueing; the focused slot is the sole priority exception.
     pub fn login_all(&mut self) {
-        let names = self.wall.members.clone();
-        for name in &names {
-            self.cancel_slot_removal(name);
-            self.wall.clear_latch(name);
-        }
-        if let Some(play) = self.play.as_mut() {
-            play.reap_finished_workers();
-        }
-        for name in &names {
-            if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
-                arm.arm_explicit_login();
-            } else {
-                let arm = self.arm_for_profile(name);
-                if let Some(arm) = arm.as_ref() {
-                    arm.arm_explicit_login();
-                }
-                self.ensure_slot(name, arm, true);
-            }
-        }
-        if let (Some(play), Some(head)) = (self.play.as_ref(), self.tv_name()) {
-            play.prefer_login(&head);
-            play.wake_all();
-        } else if let Some(play) = self.play.as_ref() {
-            play.wake_all();
-        }
+        let (core, mut surface) = self.core_and_surface();
+        let op = core.login_all(&mut surface);
+        self.report_failure(op);
     }
 
     /// Log out every wall member: record the latch (blocks auto-login
@@ -4247,23 +3989,7 @@ impl Session {
     /// `want_login` is cleared too so a title-screen member does not
     /// handshake right back in.
     pub fn logout_all(&mut self) {
-        let mut names = self.wall.members.clone();
-        if let Some(play) = &self.play {
-            for s in play.statuses() {
-                if !names.iter().any(|n| n == &s.username) {
-                    names.push(s.username);
-                }
-            }
-        }
-        for name in names {
-            self.wall.latch_logout(&name);
-            if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
-                arm.request_logout();
-            }
-        }
-        if let Some(play) = self.play.as_ref() {
-            play.wake_all();
-        }
+        self.core.logout_all();
     }
 
     /// MultiBox toggle. On: seed the wall with every already-running slot
@@ -4275,24 +4001,17 @@ impl Session {
         let turning_off = self.multibox && !on;
         self.multibox = on;
         if on {
-            let running: Vec<String> = self
-                .play
-                .as_ref()
-                .map(|p| p.statuses().iter().map(|s| s.username.clone()).collect())
-                .unwrap_or_default();
-            // Re-seeding adopts these live lifetimes even when another member
-            // keeps focus, so cancel their rail teardown before rebuilding the
-            // wall and restore any retained IO.
-            for name in &running {
-                self.cancel_slot_removal(name);
-            }
-            self.wall.on_multibox_on(&running);
+            // Re-seeding adopts every live lifetime even when another member
+            // keeps focus: the core cancels their rail teardown and restores
+            // any retained IO before rebuilding the fleet.
+            self.core.seed_running();
+            self.wall.on_multibox_on();
             // After seed: if focus is missing or not a wall member, restore
             // last_focus when it is on the wall, else the first member.
             let focused = self.focused_name();
             let need = match focused.as_deref() {
                 None => true,
-                Some(f) => !self.wall.members.iter().any(|m| m == f),
+                Some(f) => !self.core.fleet().contains(f),
             };
             if need {
                 // Live boots never restore the operator's disk last_focus;
@@ -4302,7 +4021,8 @@ impl Session {
                 } else {
                     None
                 };
-                if let Some(name) = crate::ui_state::pick_focus(&self.wall.members, last.as_deref())
+                if let Some(name) =
+                    crate::ui_state::pick_focus(self.core.members(), last.as_deref())
                 {
                     self.select(&name);
                 }
@@ -4315,7 +4035,7 @@ impl Session {
         self.sync_wall_focus();
         // The wall policy change flips every member's draw state; kick all
         // so parked threads re-read it within a frame.
-        if let Some(play) = self.play.as_ref() {
+        if let Some(play) = self.core.play() {
             play.wake_all();
         }
         if turning_off {
@@ -4340,65 +4060,17 @@ impl Session {
     }
 
     fn rail_remove_at(&mut self, name: &str, now: Instant) {
-        let focused = self.focused_name();
-        let neighbour = self.wall.focus_neighbour(name, focused.as_deref());
-        self.wall.rail_remove(name);
-        self.wall.clear_latch(name);
-        let connected = self.play.as_ref().is_some_and(|play| {
-            play.statuses()
-                .iter()
-                .any(|status| status.username == name && status.connected)
-        });
-        let retained_io = self.slots.remove(name).or_else(|| {
-            self.pending_slot_removals
-                .remove(name)
-                .and_then(|pending| pending.io)
-        });
-        let arm = self.play.as_ref().and_then(|play| play.arm(name));
-        if connected {
-            if let (Some(play), Some(arm)) = (self.play.as_ref(), arm) {
-                // Clean logout only — Stop follows disconnect or timeout.
-                arm.request_logout();
-                play.wake(name);
-                self.pending_slot_removals.insert(
-                    name.to_string(),
-                    PendingSlotRemoval {
-                        started: now,
-                        arm,
-                        io: retained_io,
-                    },
-                );
-            } else if let Some(play) = self.play.as_mut() {
-                play.begin_stop_slot(name);
-            }
-        } else {
-            self.pending_slot_removals.remove(name);
-            if let Some(play) = self.play.as_mut() {
-                play.begin_stop_slot(name);
-            }
-        }
-        if reset_frontend_slot_lifetime(
-            name,
-            &self.frontend_gens,
-            &self.nav_states,
-            &self.travellers,
-            &self.tick_latch,
-        ) {
-            self.walk_dest = None;
-        }
-        self.audio.release(name);
+        let (core, mut surface) = self.core_and_surface();
+        let removal = core.remove(name, now, &mut surface);
         self.sync_wall_focus();
-        if focused.as_deref() == Some(name) {
-            match neighbour {
-                Some(n) => self.select(&n),
-                None => {
-                    self.focus.lock().unwrap().focused = None;
-                    self.capture_tx = None;
-                    // Last focused slot gone and no neighbour: no remaining
-                    // drawer will publish, so release the flags sidecar here.
-                    crate::picker::drop_flags_sidecar();
-                }
-            }
+        if let Some(next) = removal.reselected {
+            self.select(&next);
+        } else if removal.selection_cleared {
+            self.focus.lock().unwrap().focused = None;
+            self.capture_tx = None;
+            // Last focused slot gone and no neighbour: no remaining drawer
+            // will publish, so release the flags sidecar here.
+            crate::picker::drop_flags_sidecar();
         }
     }
 
@@ -4514,7 +4186,7 @@ impl Session {
 
     fn bind_ready_catalogue(&mut self, world: Option<Arc<NavWorld>>, ready: Arc<ReadyCatalogue>) {
         let Some(world) = world
-            .or_else(|| self.play.as_ref().and_then(|play| play.world()))
+            .or_else(|| self.core.play().and_then(|play| play.world()))
             .or_else(|| {
                 self.server_profile
                     .as_ref()
@@ -4530,7 +4202,7 @@ impl Session {
             .server_profile
             .as_ref()
             .and_then(|profile| profile.game_data())
-            .or_else(|| self.play.as_ref().and_then(|play| play.game_data()));
+            .or_else(|| self.core.play().and_then(|play| play.game_data()));
         let same = self.map_catalogue.as_ref().is_some_and(|catalogue| {
             catalogue.identity() == identity
                 && catalogue.nav_identity() == nav
@@ -4610,7 +4282,7 @@ impl Session {
         MapContext {
             focus: name
                 .as_deref()
-                .and_then(|name| self.play.as_ref()?.map_focus(name)),
+                .and_then(|name| self.core.play()?.map_focus(name)),
             nav,
             overlay: self.map_catalogue.as_ref().map(|c| c.key()),
             generation: self.profile_generation,
@@ -4681,7 +4353,7 @@ impl Session {
             },
         );
         let result = command.and_then(|command| {
-            let play = self.play.as_ref().ok_or(ActionError::NoFocus)?;
+            let play = self.core.play().ok_or(ActionError::NoFocus)?;
             self.walk_dest = Some(command.destination());
             let state = self.focused_walk_state();
             let bank = self.focused_walk_bank();
@@ -4705,8 +4377,8 @@ impl Session {
     }
 
     fn walk_send_names(&self) -> Vec<String> {
-        if !self.wall.members.is_empty() {
-            return self.wall.members.clone();
+        if !self.core.members().is_empty() {
+            return self.core.members().to_vec();
         }
         if let Some(name) = self.focused_name() {
             return vec![name];
@@ -4723,7 +4395,7 @@ impl Session {
             .iter()
             .map(|row| (row.name.clone(), row.checked))
             .collect();
-        let play = self.play.as_ref();
+        let play = self.core.play();
         let mut rows = Vec::with_capacity(names.len());
         for name in names {
             let status = match play {
@@ -4801,7 +4473,7 @@ impl Session {
             }
         };
         self.walk_dest = Some(plan.destination());
-        if self.play.is_none() {
+        if self.core.play().is_none() {
             self.error = Some(ActionError::NoFocus.to_string());
             return false;
         }
@@ -4823,8 +4495,8 @@ impl Session {
             })
             .collect();
         let report =
-            self.play
-                .as_ref()
+            self.core
+                .play()
                 .unwrap()
                 .map_walk_group(plan, &context, &reqs, &self.travellers);
         {
@@ -4857,8 +4529,8 @@ impl Session {
                 FindOptions::default(),
             )
             .and_then(|command| {
-                self.play
-                    .as_ref()
+                self.core
+                    .play()
                     .ok_or(ActionError::NoFocus)?
                     .map_teleport(command, &context)
             });
@@ -4953,8 +4625,8 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return script::RunState::Idle;
         };
-        self.play
-            .as_ref()
+        self.core
+            .play()
             .map(|p| p.script_state(&name))
             .unwrap_or(script::RunState::Idle)
     }
@@ -4964,7 +4636,7 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return false;
         };
-        let Some(play) = self.play.as_ref() else {
+        let Some(play) = self.core.play() else {
             return false;
         };
         script_self_stop_observed(
@@ -4978,7 +4650,7 @@ impl Session {
     /// script error (or nothing is focused).
     pub fn focused_script_last_error(&self) -> Option<String> {
         let name = self.focused_name()?;
-        self.play.as_ref()?.script_last_error(&name)
+        self.core.play()?.script_last_error(&name)
     }
 
     /// Merged operator bag for the Browse-selected JS card (schema defaults,
@@ -5039,13 +4711,8 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        let Some(play) = self.play.as_ref() else {
-            return;
-        };
-        if play.script_state(&name) == script::RunState::Paused {
-            play.script_resume(&name);
-        } else {
-            play.script_pause(&name);
+        if self.core.play().is_some() {
+            self.core.toggle_pause(&name);
         }
     }
 
@@ -5054,8 +4721,8 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        if let Some(play) = self.play.as_ref() {
-            play.script_stop(&name);
+        if self.core.play().is_some() {
+            self.core.stop_script(&name);
         }
     }
 
@@ -5064,7 +4731,7 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        if let Some(play) = self.play.as_ref() {
+        if let Some(play) = self.core.play() {
             play.script_paint_click(&name, id, generation);
         }
     }
@@ -5074,7 +4741,7 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        if let Some(play) = self.play.as_ref() {
+        if let Some(play) = self.core.play() {
             play.script_paint_select(&name, key, select_name, generation);
         }
     }
@@ -5200,7 +4867,7 @@ fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
 impl Drop for Session {
     fn drop(&mut self) {
         self.release_walk_map();
-        self.play = None;
+        self.core.close_play();
         crate::picker::set_pack(None);
     }
 }

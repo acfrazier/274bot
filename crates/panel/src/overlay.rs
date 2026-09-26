@@ -175,7 +175,7 @@ mod tests {
             queue_total: 3,
             ..host_play::SlotStatus::default()
         });
-        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.set_focus_for_test("alice");
         let mut alice = PathOverlay::new();
         let mut bob = PathOverlay::new();
         ui.window("##overlay-alice").build(|| {
@@ -184,7 +184,7 @@ mod tests {
         ui.window("##overlay-bob").build(|| {
             bob.frame(ui, s.queue_for("bob"), [110.0, 10.0], [90.0, 90.0]);
         });
-        s.focus.lock().unwrap().focused = Some("bob".into());
+        s.set_focus_for_test("bob");
         ui.window("##overlay-alice-after-focus").build(|| {
             alice.frame(ui, s.queue_for("alice"), [10.0, 110.0], [90.0, 90.0]);
         });
@@ -206,7 +206,7 @@ mod tests {
         );
         let ui = ctx.frame();
         let mut s = Session::new();
-        s.focus.lock().unwrap().focused = Some("s00".into());
+        s.set_focus_for_test("s00");
         s.statuses.push(host_play::SlotStatus {
             username: "s00".into(),
             ..host_play::SlotStatus::default()
@@ -234,8 +234,8 @@ mod tests {
                 .renderer_has_textures(),
         );
         let ui = ctx.frame();
-        let s = Session::new();
-        s.focus.lock().unwrap().focused = Some("alice".into());
+        let mut s = Session::new();
+        s.set_focus_for_test("alice");
         let mut overlay = PathOverlay::new();
         ui.window("##overlay-queue-test").build(|| {
             overlay.frame(ui, None, [10.0, 10.0], [90.0, 90.0]);
