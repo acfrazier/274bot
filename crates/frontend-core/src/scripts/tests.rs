@@ -469,3 +469,30 @@ fn overlapping_syncs_each_settle_their_own_operation() {
         Some(bag(&[("target", json!("Guard"))]))
     );
 }
+
+/// A Start that clears a card's earlier load failure does not replace an
+/// unrelated banner: the Start all report stays shown.
+#[test]
+fn a_ready_start_keeps_the_start_all_report_shown() {
+    let mut f = fixture("ready-keeps-report", &["alice"]);
+    std::fs::write(f.dir.join("gate.ts"), "export const fail = true;").unwrap();
+    let card = f.card(
+        "retry.ts",
+        "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('first-load');\nexport function tick(api) {}\n",
+    );
+    f.assign("alice", &card);
+    f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
+    f.settle();
+    assert!(f.scripts.js.load_failure(&card.identity_key()).is_some());
+    std::fs::write(f.dir.join("gate.ts"), "export const fail = false;").unwrap();
+    f.scripts.take_notice();
+
+    f.scripts.start_all(&mut f.core, None);
+    let report = Notice::Show("Start all: started 1, skipped 0".into());
+    assert_eq!(f.scripts.take_notice(), Some(report));
+    f.settle();
+    f.core.flush_writes();
+    assert!(f.scripts.js.load_failure(&card.identity_key()).is_none());
+    assert_eq!(f.scripts.take_notice(), None, "the report is not replaced");
+    f.core.play().unwrap().script_stop("alice");
+}

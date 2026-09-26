@@ -269,7 +269,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   focused profile's own parameters (not the global `script-settings.json`),
   keeps a per-profile Browse selection, saves the assignment once a Start is
   Ready, and has Reload (warning, then Confirm or Cancel), Start all and Stop
-  all buttons under the script buttons. A parameter edit reaches the running
+  all buttons under the script buttons. Every script command also has a key,
+  shown in its button (`b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f`
+  Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start all, `E` Stop
+  all), and the script rows stay on screen at 80×24 (map, chat and status
+  shrink first). A parameter edit reaches the running
   script only after it is saved; a failed save is never pushed.
 - Apply to all: from a profile's script parameters (panel Script prefs, TUI
   parameters `a` then `y`), copy that card's parameters to every wall member

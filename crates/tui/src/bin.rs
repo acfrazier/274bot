@@ -1595,14 +1595,15 @@ impl TuiSession {
         let result = self
             .scripts
             .start_selected(&mut self.core, &name, Some(sel), root.as_deref());
-        self.apply_script_notice(app);
-        app.error = match result {
-            Ok(()) => {
-                let failures = self.scripts.js.load_failures();
-                (!failures.is_empty()).then(|| self.scripts.js.named_failure_output())
+        match result {
+            Ok(()) => self.scripts.show_load_failures(),
+            Err(e) => {
+                self.apply_script_notice(app);
+                app.error = Some(format!("script: {e}"));
+                return;
             }
-            Err(e) => Some(format!("script: {e}")),
-        };
+        }
+        self.apply_script_notice(app);
     }
 
     /// Fold settled script work (reload validation, Start setup, parameter

@@ -1087,7 +1087,7 @@ fn full_draw_paints_all_panes() {
     let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
     assert!(text.contains("focused: test"), "strip: {text:?}");
     assert!(text.contains("ingame scene 2"), "status: {text:?}");
-    assert!(text.contains("[Start]"), "script shape: {text:?}");
+    assert!(text.contains("[Start t]"), "script shape: {text:?}");
     assert!(text.contains("script: idle"), "script state: {text:?}");
 }
 
@@ -1145,17 +1145,17 @@ fn paused_script_shows_resume_and_click_dispatches_toggle() {
     let buf = terminal.backend().buffer();
     let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
     assert!(
-        text.contains("[Resume]"),
+        text.contains("[Resume P]"),
         "paused script paints Resume: {text:?}"
     );
     assert!(
-        !text.contains("[Pause]"),
+        !text.contains("[Pause P]"),
         "paused script must not paint Pause: {text:?}"
     );
     let area = app.script_area;
-    // `[Browse] ` + `[Start] ` → `[Resume] ` at inner.x + 17 = area.x + 18.
+    // `[Browse b] ` + `[Start t] ` → `[Resume P]` at inner.x + 21 = area.x + 22.
     assert_eq!(
-        app.on_click(area.x + 18, area.y + 2),
+        app.on_click(area.x + 24, area.y + 2),
         AppAction::ScriptPause,
         "Resume click dispatches the pause/resume toggle"
     );
@@ -1175,7 +1175,7 @@ fn click_start_with_a_selected_card_returns_script_start() {
     terminal.draw(|frame| app.draw(frame)).unwrap();
     let area = app.script_area;
     assert_eq!(
-        app.on_click(area.x + 10, area.y + 2),
+        app.on_click(area.x + 14, area.y + 2),
         AppAction::ScriptStart(ScriptSel::Loaded(
             ScriptSource::Catalog,
             "BoneBurier".into(),
@@ -1224,7 +1224,7 @@ fn browse_rows_select_a_card_for_start() {
         "clicking the first card row selects it"
     );
     assert_eq!(
-        app.on_click(area.x + 10, area.y + 2),
+        app.on_click(area.x + 14, area.y + 2),
         AppAction::ScriptStart(ScriptSel::Loaded(
             ScriptSource::Catalog,
             "BoneBurier".into(),
@@ -1489,4 +1489,98 @@ fn strip_message_is_visible_at_80_columns() {
         strip.contains("!! Start all: started 2, skipped 0"),
         "{strip}"
     );
+}
+
+/// At 80×24 with chat and status filled, both script command rows stay on
+/// screen and clickable, and every command also has its key.
+#[test]
+fn script_commands_are_reachable_at_80x24() {
+    let mut app = TuiApp::new("289bot headless · local-289 · 127.0.0.1:44594 · revision 289");
+    app.names = vec!["alice".into(), "bob".into()];
+    app.focused = Some(0);
+    app.chat_data.lines = (0..8).map(|i| line(&format!("chat {i}"))).collect();
+    app.script_state = RunState::Running;
+    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    app.params_schema = vec![script::SettingDef {
+        id: "target".into(),
+        ty: "string".into(),
+        default: Some("Man".into()),
+        label: None,
+        min: None,
+        max: None,
+        step: None,
+        options: Vec::new(),
+        option_labels: Vec::new(),
+        group: None,
+        show_if: None,
+        options_from: None,
+        csv_toggle: None,
+        help: None,
+        item_option_spec: None,
+    }];
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let area = app.script_area;
+    let row_text = |y: u16| -> String {
+        (0..80)
+            .map(|x| terminal.backend().buffer()[(x, y)].symbol().to_string())
+            .collect()
+    };
+    let main = row_text(area.y + 2);
+    let bulk = row_text(area.y + 3);
+    assert!(
+        main.contains("[Browse b] [Start t] [Pause P] [Stop e] [Load f]"),
+        "{main}"
+    );
+    assert!(
+        bulk.contains("[Params v] [Reload R] [Start all T] [Stop all E]"),
+        "{bulk}"
+    );
+    let at = |row: &str, label: &str| row.find(label).unwrap() as u16 + 1;
+    let sel = app.script_sel.clone().unwrap();
+    let clicks = [
+        (
+            area.y + 2,
+            at(&main, "[Start"),
+            AppAction::ScriptStart(sel.clone()),
+        ),
+        (area.y + 2, at(&main, "[Pause"), AppAction::ScriptPause),
+        (area.y + 2, at(&main, "[Stop"), AppAction::ScriptStop),
+        (area.y + 3, at(&bulk, "[Params"), AppAction::ScriptParams),
+        (area.y + 3, at(&bulk, "[Reload"), AppAction::ScriptReload),
+        (
+            area.y + 3,
+            at(&bulk, "[Start all"),
+            AppAction::ScriptStartAll,
+        ),
+        (area.y + 3, at(&bulk, "[Stop all"), AppAction::ScriptStopAll),
+    ];
+    for (y, x, want) in clicks {
+        assert_eq!(app.on_click(x, y), want, "click at {x},{y}");
+    }
+    let keys = [
+        ('t', AppAction::ScriptStart(sel)),
+        ('P', AppAction::ScriptPause),
+        ('e', AppAction::ScriptStop),
+        ('v', AppAction::ScriptParams),
+        ('R', AppAction::ScriptReload),
+        ('T', AppAction::ScriptStartAll),
+        ('E', AppAction::ScriptStopAll),
+    ];
+    for (c, want) in keys {
+        assert_eq!(app.on_key(key(KeyCode::Char(c))), want, "key {c}");
+    }
+    // `C` cancels only a shown reload warning.
+    assert_eq!(app.on_key(key(KeyCode::Char('C'))), AppAction::None);
+    app.reload_confirm = true;
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('C'))),
+        AppAction::ScriptReloadCancel
+    );
+    // Browse and Load open in the pane.
+    assert_eq!(app.on_key(key(KeyCode::Char('b'))), AppAction::ScriptBrowse);
+    assert!(app.script_browse_open);
+    app.script_browse_open = false;
+    assert_eq!(app.on_key(key(KeyCode::Char('f'))), AppAction::None);
+    assert!(app.script_load_open);
 }

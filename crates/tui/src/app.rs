@@ -28,8 +28,8 @@ use crate::loadouts::{LoadoutsPane, LoadoutsState};
 use crate::map::{Map, MapAction, MapView, ObservedMark};
 use crate::script_params::{ParamsCommit, ParamsKey, ParamsPane, ParamsState};
 use crate::script_shape::{
-    browse_lines, browse_section_height, rs2b0t_root_has_index, BrowseCard, BrowseLine,
-    ScriptClick, ScriptPane,
+    browse_lines, browse_section_height, rs2b0t_root_has_index, script_command_for_key, BrowseCard,
+    BrowseLine, ScriptClick, ScriptPane,
 };
 use crate::settings::{SettingsKey, SettingsPane, SettingsState};
 use crate::status::StatusPane;
@@ -1142,6 +1142,11 @@ impl TuiApp {
                 _ => {}
             }
         }
+        if let KeyCode::Char(c) = key.code {
+            if let Some(command) = script_command_for_key(c) {
+                return self.script_command(command);
+            }
+        }
         if let Some(here) = self.here {
             if let Some((x, z, level)) = wasd_target((here.x, here.z, here.level), key.code) {
                 return AppAction::WalkTile(Tile { x, z, level });
@@ -1481,37 +1486,8 @@ impl TuiApp {
         )
         .with_reload_confirm(self.reload_confirm);
         match pane.on_click(self.script_area, col, row) {
-            ScriptClick::Button("Browse") => {
-                let opening = !self.script_browse_open;
-                self.script_browse_open = opening;
-                if opening {
-                    AppAction::ScriptBrowse
-                } else {
-                    AppAction::None
-                }
-            }
-            ScriptClick::Button("Start") => match self.script_sel.clone() {
-                Some(sel) => AppAction::ScriptStart(sel),
-                None => {
-                    self.error = Some("script: browse to pick one first".into());
-                    AppAction::None
-                }
-            },
-            ScriptClick::Button("Pause") | ScriptClick::Button("Resume") => AppAction::ScriptPause,
-            ScriptClick::Button("Stop") => AppAction::ScriptStop,
-            ScriptClick::Button("Load") => {
-                let last = self.script_load_last_dir.clone();
-                self.open_script_load_browser(last.as_deref());
-                AppAction::None
-            }
-            ScriptClick::Params => AppAction::ScriptParams,
-            ScriptClick::Button("Reload") | ScriptClick::Button("Confirm") => {
-                AppAction::ScriptReload
-            }
-            ScriptClick::Button("Cancel") => AppAction::ScriptReloadCancel,
-            ScriptClick::Button("Start all") => AppAction::ScriptStartAll,
-            ScriptClick::Button("Stop all") => AppAction::ScriptStopAll,
-            ScriptClick::Button(_) => AppAction::None,
+            ScriptClick::Button(label) => self.script_command(label),
+            ScriptClick::Params => self.script_command("Params"),
             ScriptClick::ImportCatalog => AppAction::ScriptImportCatalog,
             ScriptClick::Pick(idx) => {
                 if let Some(card) = self.script_cards.get(idx) {
@@ -1521,6 +1497,48 @@ impl TuiApp {
                 AppAction::None
             }
             ScriptClick::None => AppAction::None,
+        }
+    }
+
+    /// One script command, from its button or its key (`SCRIPT_KEYS`):
+    /// Browse toggles the picker, Start emits [`AppAction::ScriptStart`]
+    /// with the heading (an error when nothing is selected), Load opens the
+    /// file browser, and the rest map to their actions.
+    fn script_command(&mut self, command: &str) -> AppAction {
+        match command {
+            "Browse" => {
+                let opening = !self.script_browse_open;
+                self.script_browse_open = opening;
+                if opening {
+                    AppAction::ScriptBrowse
+                } else {
+                    AppAction::None
+                }
+            }
+            "Start" => match self.script_sel.clone() {
+                Some(sel) => AppAction::ScriptStart(sel),
+                None => {
+                    self.error = Some("script: browse to pick one first".into());
+                    AppAction::None
+                }
+            },
+            "Pause" | "Resume" => AppAction::ScriptPause,
+            "Stop" => AppAction::ScriptStop,
+            "Load" => {
+                let last = self.script_load_last_dir.clone();
+                self.open_script_load_browser(last.as_deref());
+                AppAction::None
+            }
+            "Params" if self.params_schema.is_empty() => {
+                self.error = Some("parameters: the selected script has none".into());
+                AppAction::None
+            }
+            "Params" => AppAction::ScriptParams,
+            "Reload" | "Confirm" => AppAction::ScriptReload,
+            "Cancel" if self.reload_confirm => AppAction::ScriptReloadCancel,
+            "Start all" => AppAction::ScriptStartAll,
+            "Stop all" => AppAction::ScriptStopAll,
+            _ => AppAction::None,
         }
     }
 
@@ -1606,25 +1624,45 @@ impl TuiApp {
                 !self.script_browse_open && !self.rs2b0t_catalog_open && !self.script_load_open,
             );
         let chat_h = self.chat_data.view().preferred_height();
-        let chunks = Layout::vertical([
+        // The script commands keep their rows on a short terminal: the
+        // strip and the script pane are placed first, and map, chat and
+        // status share (and shrink within) what is left, keeping at least
+        // `MIN_MIDDLE` rows for them.
+        const MIN_MIDDLE: u16 = 6;
+        let script_h = script_h.min(area.height.saturating_sub(1 + MIN_MIDDLE));
+        let outer = Layout::vertical([
             Constraint::Length(1),
-            Constraint::Min(8),
-            Constraint::Length(chat_h),
-            Constraint::Min(6),
+            Constraint::Min(0),
             Constraint::Length(script_h),
         ])
         .split(area);
+        // Tall enough: the map keeps its 8 rows. Otherwise the pane in use
+        // keeps room: an active map keeps 8 rows and status shrinks; else
+        // the idle map shrinks before chat (paint buttons) and status.
+        let (map_min, status_min) = if outer[1].height >= 8 + chat_h + 6 {
+            (8, 6)
+        } else if self.map_active {
+            (8, 3)
+        } else {
+            (3, 4)
+        };
+        let chunks = Layout::vertical([
+            Constraint::Min(map_min),
+            Constraint::Length(chat_h),
+            Constraint::Min(status_min),
+        ])
+        .split(outer[1]);
 
-        self.draw_strip(frame, chunks[0]);
-        self.draw_map(frame, chunks[1]);
-        self.chat_area = chunks[2];
-        self.draw_chat(frame, chunks[2]);
+        self.draw_strip(frame, outer[0]);
+        self.draw_map(frame, chunks[0]);
+        self.chat_area = chunks[1];
+        self.draw_chat(frame, chunks[1]);
         let bottom = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[3]);
+            .split(chunks[2]);
         self.draw_status(frame, bottom[0]);
         self.draw_inv_locs(frame, bottom[1]);
-        self.script_area = chunks[4];
-        self.draw_script(frame, chunks[4]);
+        self.script_area = outer[2];
+        self.draw_script(frame, outer[2]);
 
         if self.settings_state.open {
             let pane = SettingsPane::new(
@@ -1722,7 +1760,7 @@ impl TuiApp {
             text.push_str(&format!("!! {err}   "));
         }
         text.push_str(&format!(
-            "{}   F4 map · F7 log · q quit · o options · l loadouts · Tab focus · m load+login all · i login · u logout · U logout all · x remove",
+            "{}   F4 map · F7 log · q quit · o options · l loadouts · Tab focus · m load+login all · i login · u logout · U logout all · x remove · script keys: letter in each [button]",
             self.title
         ));
         let p = Paragraph::new(text).wrap(Wrap { trim: false });

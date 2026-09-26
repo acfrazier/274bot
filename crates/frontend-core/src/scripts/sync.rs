@@ -93,7 +93,23 @@ impl SyncReport {
             }
         }
         if !self.skipped.is_empty() {
-            text.push_str(&format!(", skipped {} (other card)", self.skipped.len()));
+            let other = self
+                .skipped
+                .iter()
+                .filter(|(_, reason)| reason == OTHER_CARD)
+                .count();
+            let unassigned = self.skipped.len() - other;
+            text.push_str(&format!(", skipped {} (", self.skipped.len()));
+            if other > 0 {
+                text.push_str(&format!("{other} other card"));
+            }
+            if unassigned > 0 {
+                if other > 0 {
+                    text.push_str(", ");
+                }
+                text.push_str(&format!("{unassigned} unassigned"));
+            }
+            text.push(')');
         }
         let live = [
             (self.delivered, "delivered"),

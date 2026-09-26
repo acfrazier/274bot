@@ -118,6 +118,10 @@ pub struct Scripts {
     reload: reload::ReloadState,
     sync: sync::SyncState,
     notice: Option<Notice>,
+    /// The text of the last notice shown (`None` once cleared): a settled
+    /// Start only replaces the banner when it still shows the load-failure
+    /// list it changes.
+    shown: Option<String>,
     start_failures: Vec<(String, String)>,
     /// Test-only: fail the replacement Start for this profile after it
     /// passed eligibility and was stopped.
@@ -139,6 +143,7 @@ impl Scripts {
             reload: reload::ReloadState::default(),
             sync: sync::SyncState::default(),
             notice: None,
+            shown: None,
             start_failures: Vec::new(),
             #[cfg(any(test, feature = "test-support"))]
             fail_reload_start_for: None,
@@ -151,11 +156,24 @@ impl Scripts {
     }
 
     fn show(&mut self, text: impl Into<String>) {
-        self.notice = Some(Notice::Show(text.into()));
+        let text = text.into();
+        self.shown = Some(text.clone());
+        self.notice = Some(Notice::Show(text));
     }
 
     fn clear_notice(&mut self) {
+        self.shown = None;
         self.notice = Some(Notice::Clear);
+    }
+
+    /// Show the library's load-failure list (or clear the banner when there
+    /// is none): what an operator Start reports once it is accepted.
+    pub fn show_load_failures(&mut self) {
+        if self.js.load_failures().is_empty() {
+            self.clear_notice();
+        } else {
+            self.show(self.js.named_failure_output());
+        }
     }
 
     /// Operator Start setup failures (profile, `script: …` text) since the
@@ -653,16 +671,16 @@ impl Scripts {
                 Some(script::StartOutcome::Ready) => {
                     let key = pending.card.identity_key();
                     let had_failure = self.js.load_failure(&key).is_some();
+                    // Only a banner still listing load failures is refreshed;
+                    // any other message (a Start all report) stays.
+                    let listing = had_failure
+                        && self.shown.as_deref() == Some(self.js.named_failure_output().as_str());
                     let _ = self.js.record_start_result(&pending.card, Ok(()));
+                    if listing {
+                        self.show_load_failures();
+                    }
                     // Persisting is bookkeeping: only its failure is shown.
                     self.persist_assignment(core, &name, pending.card.assignment());
-                    if had_failure {
-                        if self.js.load_failures().is_empty() {
-                            self.clear_notice();
-                        } else {
-                            self.show(self.js.named_failure_output());
-                        }
-                    }
                 }
                 Some(script::StartOutcome::Failed(e)) => {
                     let diagnostic = self
