@@ -331,6 +331,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   returned only when its bank is unlocked, and a caller's `unlocked`
   predicate replaces the bank requirement. The host cook table itself still
   lists Catherby only.
+- `withdrawOp(ops, amount)` reads the label off the bank row's own ops for
+  all six frozen amounts (`all`, `10`, `5`, `x`, `1`, `any`) instead of
+  assuming `Withdraw All/10/1`; a row without the op answers `null`, so a
+  catalog fallback (`?? withdrawOp(ops, 'any')`) takes the op the row
+  actually has.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 
