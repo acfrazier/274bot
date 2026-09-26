@@ -70,6 +70,7 @@ mod walk_plan;
 pub use map_bind::{
     load_navpois, map_demand_manager, map_profile_descriptor, map_ready, map_ready_catalogue,
     map_ready_images, open_map_catalogue, open_map_images, peek_map_catalogue, poll_map_status,
+    reap_map_demand,
 };
 pub use map_cache::{
     MapCacheError, MapDemandHandle, MapJobStatus, MapProgress, MapStage, ReadyCatalogue,

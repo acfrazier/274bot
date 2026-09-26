@@ -32,11 +32,10 @@ use host_play::profile::ProfileEnvironment;
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 use host_play::walk_map::{observed_services, Catalogue, ObservedService, SourceStatus};
 use host_play::{
-    map_demand_manager, map_ready_catalogue, map_ready_images, open_map_images, open_vault,
-    peek_map_catalogue, run_prepared_template, run_with_io, run_with_template, MapDemandHandle,
-    MapJobStatus, MapStage, Play, PlayOptions, ProfileOptions, ReadyCatalogue, ReadyImages,
-    ScriptNavPaint, ServerProfile, SharedClientTemplate, SlotArm, SlotStatus, ValidatedTemplate,
-    WalkArm,
+    map_ready_catalogue, map_ready_images, open_map_images, open_vault, peek_map_catalogue,
+    run_prepared_template, run_with_io, run_with_template, MapDemandHandle, MapJobStatus, MapStage,
+    Play, PlayOptions, ProfileOptions, ReadyCatalogue, ReadyImages, ScriptNavPaint, ServerProfile,
+    SharedClientTemplate, SlotArm, SlotStatus, ValidatedTemplate, WalkArm,
 };
 use nav::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
@@ -4482,9 +4481,7 @@ impl Session {
         self.observed_map_services.clear();
         self.map_catalogue_named = false;
         self.map_model.close();
-        if let Ok(manager) = map_demand_manager() {
-            manager.reap();
-        }
+        host_play::reap_map_demand();
     }
 
     pub fn map_bind_status(&self) -> Option<String> {

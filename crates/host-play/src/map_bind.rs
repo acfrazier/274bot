@@ -29,6 +29,14 @@ pub fn map_demand_manager() -> Result<&'static MapDemandManager, MapCacheError> 
     Ok(MANAGER.get_or_init(|| created))
 }
 
+/// Join a finished bake thread on close. Never creates the manager: a map
+/// that was never opened leaves nothing to reap.
+pub fn reap_map_demand() {
+    if let Some(manager) = MANAGER.get() {
+        manager.reap();
+    }
+}
+
 /// Descriptor for the bound profile: image/catalogue policies from B plus a
 /// second `Arc` on the prepared client cache.
 pub fn map_profile_descriptor(
