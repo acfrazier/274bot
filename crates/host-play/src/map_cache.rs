@@ -960,11 +960,13 @@ impl BakeWriter {
     }
 
     pub fn should_skip(&self, key: UnitKey) -> bool {
+        // Completed units are strictly increasing: `admit_unit` rejects any
+        // key at or below the last one.
         self.checkpoint
             .completed
             .as_slice()
-            .iter()
-            .any(|unit| unit.key == key)
+            .binary_search_by(|unit| unit.key.cmp(&key))
+            .is_ok()
     }
 
     pub fn set_stage(
@@ -985,54 +987,16 @@ impl BakeWriter {
     /// Write one complete output unit and checkpoint it.  A second invocation
     /// for a verified completed unit performs no write and no raster work.
     pub fn publish_unit(&mut self, key: UnitKey, payload: &[u8]) -> Result<bool, MapCacheError> {
-        if self.is_cancelled() {
-            if self.checkpoint_dirty {
-                self.persist_checkpoint()?;
-            }
-            return Err(MapCacheError::Cancelled);
-        }
-        if self.should_skip(key) {
+        let Some(next_bytes) = self.admit_unit(key, payload.len() as u64)? else {
             return Ok(false);
-        }
+        };
         self.validate_unit(key, payload)?;
-        let previous = self
-            .checkpoint
-            .completed
-            .as_slice()
-            .last()
-            .map(|unit| unit.key);
-        if previous.is_some_and(|previous| previous >= key) {
-            return Err(MapCacheError::Map(MapError::Invalid(
-                "checkpoint unit ordering",
-            )));
-        }
-        let next_bytes = self
-            .bytes
-            .checked_add(payload.len() as u64)
-            .ok_or(MapCacheError::Map(MapError::Limit("artifact bytes")))?;
-        if next_bytes > max_artifact_bytes(self.artifact()) {
-            return Err(MapCacheError::Map(MapError::Limit("artifact bytes")));
-        }
-        let payload_bytes = payload.len() as u64;
-        if self.cache_bytes.saturating_add(payload_bytes) > MAX_GENERATED_CACHE_BYTES {
-            self.root
-                .ensure_capacity(payload_bytes, &self.required, Some(&self.cancel))?;
-            self.cache_bytes = self.root.generated_bytes()?;
-        }
-        let relative = unit_relative_path(key)?;
-        atomic_write(&self.partial.join(relative), payload)?;
-        self.cache_bytes = self.cache_bytes.saturating_add(payload_bytes);
-        let mut completed = self.checkpoint.completed.as_slice().to_vec();
-        completed.push(CompletedUnit {
-            key,
-            payload: PayloadReceipt {
-                bytes: payload.len() as u32,
-                sha256: Digest::of(payload),
-            },
-        });
-        self.checkpoint.completed = nav::map::Rows::new(completed)?;
-        self.bytes = next_bytes;
-        self.checkpoint_dirty = true;
+        atomic_write(&self.partial.join(unit_relative_path(key)?), payload)?;
+        let receipt = PayloadReceipt {
+            bytes: payload.len() as u32,
+            sha256: Digest::of(payload),
+        };
+        self.complete_unit(key, receipt, next_bytes)?;
         if self
             .checkpoint
             .completed
@@ -1051,6 +1015,89 @@ impl BakeWriter {
             ),
         );
         Ok(true)
+    }
+
+    /// Checkpoint a unit the producer already wrote, synced and verified in
+    /// [`Self::directory`] with `receipt` computed from those bytes (the
+    /// terrain raster publishes each tile itself). The file is neither read
+    /// back nor rewritten; readers verify every payload against its manifest
+    /// receipt. Only its length is checked here, so a missing tile fails the
+    /// bake instead of publishing a manifest with a hole. The caller persists
+    /// the checkpoint (`finish` does).
+    pub fn record_unit(
+        &mut self,
+        key: UnitKey,
+        receipt: PayloadReceipt,
+    ) -> Result<bool, MapCacheError> {
+        let Some(next_bytes) = self.admit_unit(key, u64::from(receipt.bytes))? else {
+            return Ok(false);
+        };
+        let on_disk = fs::metadata(self.partial.join(unit_relative_path(key)?))?;
+        if !on_disk.is_file() || on_disk.len() != u64::from(receipt.bytes) {
+            return Err(MapCacheError::Map(MapError::Invalid(
+                "recorded unit length",
+            )));
+        }
+        self.complete_unit(key, receipt, next_bytes)?;
+        Ok(true)
+    }
+
+    /// Ordering, per-key and generated-cache limits for one more unit of
+    /// `payload_bytes`. `None` when the unit is already checkpointed.
+    fn admit_unit(
+        &mut self,
+        key: UnitKey,
+        payload_bytes: u64,
+    ) -> Result<Option<u64>, MapCacheError> {
+        if self.is_cancelled() {
+            if self.checkpoint_dirty {
+                self.persist_checkpoint()?;
+            }
+            return Err(MapCacheError::Cancelled);
+        }
+        if self.should_skip(key) {
+            return Ok(None);
+        }
+        let previous = self
+            .checkpoint
+            .completed
+            .as_slice()
+            .last()
+            .map(|unit| unit.key);
+        if previous.is_some_and(|previous| previous >= key) {
+            return Err(MapCacheError::Map(MapError::Invalid(
+                "checkpoint unit ordering",
+            )));
+        }
+        let next_bytes = self
+            .bytes
+            .checked_add(payload_bytes)
+            .ok_or(MapCacheError::Map(MapError::Limit("artifact bytes")))?;
+        if next_bytes > max_artifact_bytes(self.artifact()) {
+            return Err(MapCacheError::Map(MapError::Limit("artifact bytes")));
+        }
+        if self.cache_bytes.saturating_add(payload_bytes) > MAX_GENERATED_CACHE_BYTES {
+            self.root
+                .ensure_capacity(payload_bytes, &self.required, Some(&self.cancel))?;
+            self.cache_bytes = self.root.generated_bytes()?;
+        }
+        Ok(Some(next_bytes))
+    }
+
+    fn complete_unit(
+        &mut self,
+        key: UnitKey,
+        receipt: PayloadReceipt,
+        next_bytes: u64,
+    ) -> Result<(), MapCacheError> {
+        self.checkpoint.completed.push(CompletedUnit {
+            key,
+            payload: receipt,
+        })?;
+        self.cache_bytes = self.cache_bytes.saturating_add(u64::from(receipt.bytes));
+        self.bytes = next_bytes;
+        self.checkpoint_dirty = true;
+        Ok(())
     }
 
     fn validate_unit(&self, key: UnitKey, payload: &[u8]) -> Result<(), MapCacheError> {
@@ -2424,16 +2471,22 @@ mod tests {
         let _ = fs::remove_dir_all(root.path());
     }
 
+    /// Mirrors `bake_images_into`: each tile is written straight into the
+    /// partial directory (a valid tile already there is adopted instead), and
+    /// the outcome goes through the production `finish_image_bake`.
     struct ResumeAdoptProducer {
         rasterized: Arc<AtomicUsize>,
         interrupt_once: AtomicBool,
+        /// Inode of every tile file this producer wrote.
+        written: Mutex<Vec<(TileKey, u64)>>,
     }
 
     impl ResumeAdoptProducer {
-        fn new() -> Arc<Self> {
+        fn new(interrupt: bool) -> Arc<Self> {
             Arc::new(Self {
                 rasterized: Arc::new(AtomicUsize::new(0)),
-                interrupt_once: AtomicBool::new(true),
+                interrupt_once: AtomicBool::new(interrupt),
+                written: Mutex::new(Vec::new()),
             })
         }
 
@@ -2458,6 +2511,16 @@ mod tests {
                     z: 25,
                 },
             ]
+        }
+
+        fn metrics() -> nav::map::raster::RasterMetrics {
+            nav::map::raster::RasterMetrics {
+                plan: nav::map::raster::PlanStats::default(),
+                lods: Vec::new(),
+                total_compressed_bytes: 0,
+                peak_tracked_bytes: 0,
+                elapsed: Duration::ZERO,
+            }
         }
     }
 
@@ -2484,46 +2547,45 @@ mod tests {
                 ArtifactKind::Catalogue => FixtureProducer::new(false).run(request, writer),
                 ArtifactKind::Images => {
                     let keys = Self::keys();
-                    crate::map_producer::publish_existing_image_units(writer, &keys)?;
+                    let mut tiles = Vec::new();
                     for (index, key) in keys.into_iter().enumerate() {
-                        if writer.should_skip(UnitKey::Terrain { tile: key }) {
-                            continue;
+                        let path = writer
+                            .directory()
+                            .join(unit_relative_path(UnitKey::Terrain { tile: key })?);
+                        if let Ok(bytes) = fs::read(&path) {
+                            let receipt = TileReceipt {
+                                key,
+                                payload: PayloadReceipt {
+                                    bytes: bytes.len() as u32,
+                                    sha256: Digest::of(&bytes),
+                                },
+                            };
+                            if receipt.verify_png(&bytes).is_ok() {
+                                tiles.push(receipt);
+                                continue;
+                            }
                         }
                         self.rasterized.fetch_add(1, AtomicOrdering::Relaxed);
-                        writer.publish_unit(
-                            UnitKey::Terrain { tile: key },
-                            &FixtureProducer::fixture_png(index as u8 + 1),
-                        )?;
+                        let png = FixtureProducer::fixture_png(index as u8 + 1);
+                        fs::create_dir_all(path.parent().unwrap())?;
+                        fs::write(&path, &png)?;
+                        self.written.lock().push((key, file_id(&path)));
+                        tiles.push(TileReceipt {
+                            key,
+                            payload: PayloadReceipt {
+                                bytes: png.len() as u32,
+                                sha256: Digest::of(&png),
+                            },
+                        });
                         if self.interrupt_once.swap(false, AtomicOrdering::AcqRel) {
                             return crate::map_producer::finish_image_bake(
                                 writer,
-                                nav::map::raster::ImageBakeOutcome::Paused(
-                                    nav::map::raster::RasterMetrics {
-                                        plan: nav::map::raster::PlanStats::default(),
-                                        lods: Vec::new(),
-                                        total_compressed_bytes: 0,
-                                        peak_tracked_bytes: 0,
-                                        elapsed: Duration::ZERO,
-                                    },
-                                ),
+                                nav::map::raster::ImageBakeOutcome::Paused(Self::metrics()),
                             );
                         }
                     }
                     let identity = request.descriptor().image_identity();
-                    let pngs = keys.map(|key| {
-                        let path = writer
-                            .directory()
-                            .join(unit_relative_path(UnitKey::Terrain { tile: key }).unwrap());
-                        let bytes = fs::read(path).unwrap();
-                        TileReceipt {
-                            key,
-                            payload: PayloadReceipt {
-                                bytes: bytes.len() as u32,
-                                sha256: Digest::of(&bytes),
-                            },
-                        }
-                    });
-                    Ok(BakeOutput::Images(ImageManifest {
+                    let manifest = ImageManifest {
                         schema: IMAGE_SCHEMA,
                         identity,
                         key: identity.key()?,
@@ -2546,8 +2608,17 @@ mod tests {
                         interior: TILE_INTERIOR,
                         gutter: TILE_GUTTER,
                         color: ColorFormat::Rgba8Unorm,
-                        tiles: nav::map::Rows::new(pngs.to_vec())?,
-                    }))
+                        tiles: nav::map::Rows::new(tiles)?,
+                    };
+                    crate::map_producer::finish_image_bake(
+                        writer,
+                        nav::map::raster::ImageBakeOutcome::Complete(
+                            nav::map::raster::ImageBakeReport {
+                                manifest,
+                                metrics: Self::metrics(),
+                            },
+                        ),
+                    )
                 }
             }
         }
@@ -2582,7 +2653,7 @@ mod tests {
         fs::write(&path, FixtureProducer::fixture_png(1)).unwrap();
         drop(writer);
 
-        let producer = ResumeAdoptProducer::new();
+        let producer = ResumeAdoptProducer::new(true);
         let manager = MapDemandManager::new(root.clone(), producer.clone());
         let first = manager
             .request(descriptor.clone(), MapDemand::Images)
@@ -2605,6 +2676,90 @@ mod tests {
             2,
             "resume must bake only the remaining unit"
         );
+        let _ = fs::remove_dir_all(root.path());
+    }
+
+    /// Identity of the file behind `path`: a rewrite (temp file + rename)
+    /// replaces it even when the bytes are identical.
+    #[cfg(unix)]
+    fn file_id(path: &Path) -> u64 {
+        std::os::unix::fs::MetadataExt::ino(&fs::metadata(path).unwrap())
+    }
+
+    #[cfg(not(unix))]
+    fn file_id(_path: &Path) -> u64 {
+        0
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finished_image_bake_publishes_the_raster_tiles_without_rewriting_them() {
+        let root = temp_root("record-not-rewrite");
+        let descriptor = descriptor(&root);
+        let producer = ResumeAdoptProducer::new(false);
+        let manager = MapDemandManager::new(root.clone(), producer.clone());
+        let handle = manager
+            .request(descriptor.clone(), MapDemand::Images)
+            .unwrap();
+        wait_ready(&handle);
+        let images = handle.ready().unwrap().images.expect("images ready");
+        let ready_dir = root.image_dir(descriptor.image_identity()).unwrap();
+        let written = producer.written.lock().clone();
+        assert_eq!(written.len(), 3);
+        let mut buffer = Vec::new();
+        for (key, raster_file) in written {
+            // The published tile is the very file the raster wrote and synced.
+            assert_eq!(
+                file_id(&ready_dir.join(key.relative_path().unwrap())),
+                raster_file,
+                "finish rewrote tile {key:?}"
+            );
+            assert!(images.read_tile_into(key, &mut buffer).unwrap().is_some());
+        }
+        drop(images);
+        drop(handle);
+        let _ = fs::remove_dir_all(root.path());
+    }
+
+    #[test]
+    fn finished_image_bake_fails_when_a_recorded_tile_is_missing() {
+        let root = temp_root("record-missing");
+        let descriptor = descriptor(&root);
+        let request = BakeRequest {
+            artifact: ArtifactKind::Images,
+            descriptor: descriptor.clone(),
+        };
+        let progress: Arc<dyn Fn(MapProgress) + Send + Sync> = Arc::new(|_| {});
+        let mut writer = BakeWriter::open(
+            root.clone(),
+            &request,
+            BakePlan {
+                planned_units: 1,
+                stage: BakeStage::BaseTerrain,
+            },
+            Arc::new(AtomicBool::new(false)),
+            progress,
+            BTreeSet::new(),
+        )
+        .unwrap();
+        let png = FixtureProducer::fixture_png(1);
+        let key = ResumeAdoptProducer::keys()[0];
+        let receipt = PayloadReceipt {
+            bytes: png.len() as u32,
+            sha256: Digest::of(&png),
+        };
+        assert!(writer
+            .record_unit(UnitKey::Terrain { tile: key }, receipt)
+            .is_err());
+        assert!(writer.checkpoint().completed.as_slice().is_empty());
+        let path = writer.directory().join(key.relative_path().unwrap());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, &png).unwrap();
+        assert!(writer
+            .record_unit(UnitKey::Terrain { tile: key }, receipt)
+            .unwrap());
+        assert!(writer.should_skip(UnitKey::Terrain { tile: key }));
+        drop(writer);
         let _ = fs::remove_dir_all(root.path());
     }
 

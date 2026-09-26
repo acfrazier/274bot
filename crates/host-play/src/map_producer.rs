@@ -10,9 +10,7 @@ use nav::map::formats::{CatalogueManifest, PayloadReceipt};
 use nav::map::identity::{Digest, CATALOGUE_SCHEMA};
 use nav::map::producer::{self, derive_catalogue};
 use nav::map::raster::{self, bake_images_into, ImageBakeOutcome, RasterStage};
-use nav::map::spatial::TileKey;
 use nav::map::MapError;
-use std::fs;
 use std::sync::OnceLock;
 
 /// Native client-cache producer. One instance is shared by the process-wide
@@ -140,57 +138,23 @@ fn run_images(
     finish_image_bake(writer, outcome)
 }
 
-/// Publish validated terrain PNGs already in the partial directory, in plan
-/// `UnitKey` order. Stops at the first missing planned tile so the checkpoint
-/// never gains a hole (later units cannot publish out of order).
-pub(crate) fn publish_existing_image_units(
-    writer: &mut BakeWriter,
-    planned: &[TileKey],
-) -> Result<u32, MapCacheError> {
-    let mut published = 0u32;
-    for key in planned {
-        let unit = UnitKey::Terrain { tile: *key };
-        if writer.should_skip(unit) {
-            continue;
-        }
-        let path = writer.directory().join(key.relative_path()?);
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(_) => break,
-        };
-        match writer.publish_unit(unit, &bytes) {
-            Ok(true) => published += 1,
-            Ok(false) => {}
-            Err(MapCacheError::Map(MapError::Invalid("checkpoint unit ordering"))) => break,
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(published)
-}
-
 pub(crate) fn finish_image_bake(
     writer: &mut BakeWriter,
     outcome: ImageBakeOutcome,
 ) -> Result<BakeOutput, MapCacheError> {
     match outcome {
         ImageBakeOutcome::Complete(report) => {
-            let mut planned: Vec<TileKey> = report
-                .manifest
-                .tiles
-                .as_slice()
-                .iter()
-                .map(|tile| tile.key)
-                .collect();
-            planned.sort();
-            publish_existing_image_units(writer, &planned)?;
+            // The raster already wrote, synced and hashed every tile in the
+            // partial directory (or adopted a verified one from disk), and
+            // its manifest lists them in key order. Checkpoint those receipts
+            // without reading or rewriting a single PNG.
+            for tile in report.manifest.tiles.as_slice() {
+                writer.record_unit(UnitKey::Terrain { tile: tile.key }, tile.payload)?;
+            }
             Ok(BakeOutput::Images(report.manifest))
         }
-        ImageBakeOutcome::Paused(metrics) => {
-            // Disk tiles are adopted on the next bake; only publish a prefix
-            // when the interrupted plan is known. A hole-free checkpoint is
-            // optional because `bake_images_into` re-validates on-disk PNGs.
-            let _ = metrics;
-            Err(MapCacheError::Cancelled)
-        }
+        // Nothing is checkpointed on a pause: the next bake adopts every
+        // valid tile already on disk (`bake_images_into`).
+        ImageBakeOutcome::Paused(_) => Err(MapCacheError::Cancelled),
     }
 }
