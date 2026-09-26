@@ -114,3 +114,31 @@ export default class T extends LoopingBot {
     assert_eq!(result["attackLabel"], "attack (training Attack)");
     isolate.join();
 }
+
+/// Frozen `parseCombatStyle` / `tryParseCombatStyle` / `parseRangeStyle`
+/// (`CombatStyle.ts:39-49`, `:171-183`): aliases resolve, and an unknown
+/// setting falls back to `strength` / `null` / mode 1 instead of throwing.
+#[test]
+fn style_parsers_answer_frozen_defaults_for_unknown_settings() {
+    let source = r#"
+import { parseCombatStyle, tryParseCombatStyle, parseRangeStyle, resolveSplitCombatSettings } from '../../api/combat/CombatStyle.js';
+globalThis.result = {
+    alias: parseCombatStyle(' Defensive '),
+    unknown: parseCombatStyle('no-such-style'),
+    tryAlias: tryParseCombatStyle('shared'),
+    tryUnknown: tryParseCombatStyle('mage'),
+    ranges: ['Accurate', 'rapid', 'long range', 'long-range', 'longrange', 'fast'].map(parseRangeStyle),
+    split: resolveSplitCombatSettings('melee', 'bogus'),
+};
+export default class T extends LoopingBot { loop() {} }
+"#;
+    let isolate = LoadIsolate::spawn(source.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let result = isolate.probe("result").unwrap();
+    assert_eq!(result["alias"], "defence");
+    assert_eq!(result["unknown"], "strength");
+    assert_eq!(result["tryAlias"], "controlled");
+    assert_eq!(result["tryUnknown"], serde_json::Value::Null);
+    assert_eq!(result["ranges"], serde_json::json!([0, 1, 2, 2, 2, 1]));
+    assert_eq!(result["split"]["meleeStyle"], "strength");
+    isolate.join();
+}

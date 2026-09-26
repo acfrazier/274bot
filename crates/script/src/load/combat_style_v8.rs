@@ -1,8 +1,9 @@
 //! v1 `CombatStyleLogic` rune helpers (frozen
 //! `bot/api/combat/CombatStyleLogic.ts`) as one native call each:
 //! `__rs2b0t_combat_style(op, spellName, wielded, heldOrCasts)`; and the
-//! frozen `CombatStyle.describeCombatStyle` label table:
-//! `__rs2b0t_describe_combat_style(resolution)`.
+//! frozen `CombatStyle` tables: `__rs2b0t_describe_combat_style(resolution)`,
+//! `__rs2b0t_parse_combat_style` / `__rs2b0t_try_parse_combat_style(name)`
+//! and `__rs2b0t_parse_range_style(name)`.
 //!
 //! The remaining per-cast costs are `SelectedGameData::runes_per_cast`; the
 //! shim passes the spell name and wielded names already coerced to strings.
@@ -22,7 +23,71 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         runtime,
         "__rs2b0t_describe_combat_style",
         describe_combat_style,
-    )
+    )?;
+    cb::install(runtime, "__rs2b0t_parse_combat_style", parse_combat_style)?;
+    cb::install(
+        runtime,
+        "__rs2b0t_try_parse_combat_style",
+        try_parse_combat_style,
+    )?;
+    cb::install(runtime, "__rs2b0t_parse_range_style", parse_range_style)
+}
+
+/// Frozen `COMBAT_STYLE` (`api/combat/CombatStyle.ts:3-13`): the melee style a
+/// trimmed, lowercased token names.
+pub(super) fn melee_style(name: &str) -> Option<&'static str> {
+    match name.trim().to_lowercase().as_str() {
+        "attack" | "accurate" => Some("attack"),
+        "strength" | "aggressive" => Some("strength"),
+        "controlled" | "shared" => Some("controlled"),
+        "defence" | "defense" | "defensive" => Some("defence"),
+        _ => None,
+    }
+}
+
+/// Frozen `RANGE_STYLE_MODE` (`CombatStyle.ts:171-177`).
+fn range_mode(name: &str) -> Option<f64> {
+    match name.trim().to_lowercase().as_str() {
+        "accurate" => Some(0.0),
+        "rapid" => Some(1.0),
+        "longrange" | "long range" | "long-range" => Some(2.0),
+        _ => None,
+    }
+}
+
+/// Frozen `parseCombatStyle` (`CombatStyle.ts:39-41`): unknown is `strength`.
+fn parse_combat_style<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = cb::to_string(scope, args.get(0))
+        .map(|name| cb::string(scope, melee_style(&name).unwrap_or("strength")));
+    cb::finish(scope, rv, result);
+}
+
+/// Frozen `tryParseCombatStyle` (`CombatStyle.ts:47-49`): unknown is `null`.
+fn try_parse_combat_style<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = cb::to_string(scope, args.get(0)).map(|name| match melee_style(&name) {
+        Some(style) => cb::string(scope, style),
+        None => v8::null(scope).into(),
+    });
+    cb::finish(scope, rv, result);
+}
+
+/// Frozen `parseRangeStyle` (`CombatStyle.ts:181-183`): unknown is mode 1.
+fn parse_range_style<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = cb::to_string(scope, args.get(0))
+        .map(|name| cb::num(scope, range_mode(&name).unwrap_or(1.0)));
+    cb::finish(scope, rv, result);
 }
 
 /// Frozen `describeCombatStyle(resolution)` (`api/combat/CombatStyle.ts:148-169`):

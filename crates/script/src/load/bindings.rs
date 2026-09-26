@@ -44,15 +44,8 @@ fn interface_style(label: &str) -> Option<&'static str> {
 /// The frozen `tryParseCombatStyle` aliases: a known token resolves to its
 /// canonical style, anything else is itself (trimmed, lowercased).
 fn style_token(style: &str) -> String {
-    let key = style.trim().to_ascii_lowercase();
-    match key.as_str() {
-        "attack" | "accurate" => "attack",
-        "strength" | "aggressive" => "strength",
-        "controlled" | "shared" => "controlled",
-        "defence" | "defense" | "defensive" => "defence",
-        _ => key.as_str(),
-    }
-    .to_string()
+    super::combat_style_v8::melee_style(style)
+        .map_or_else(|| style.trim().to_ascii_lowercase(), str::to_string)
 }
 
 /// The frozen `resolveCombatStyle` over the posted combat-tab buttons

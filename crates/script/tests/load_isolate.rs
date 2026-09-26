@@ -7216,7 +7216,6 @@ export default class T extends LoopingBot {
 #[test]
 fn isolate_silent_fakes_throw_and_rust_policy_tables_are_published() {
     let src = r#"
-import { parseCombatStyle } from '../../api/combat/CombatStyle.js';
 import { SettingsStore } from '../../runtime/Settings.js';
 import { foodOf } from '../../api/loadout/loadoutPlan.js';
 import { matchesCommonBankLoot, COMMON_BANK_LOOT } from '../../api/bank/Banking.js';
@@ -7231,7 +7230,6 @@ export default class T extends LoopingBot {
         const tryHit = async (fn) => {
             try { await fn(); hits.push('ok'); } catch (e) { hits.push(String(e.message || e)); }
         };
-        await tryHit(() => parseCombatStyle('no-such-style'));
         await tryHit(() => SettingsStore.globalBag());
         await tryHit(() => foodOf({ carry: ['Shark'] }, 'Shark'));
         await tryHit(() => matchesCommonBankLoot('uncut sapphire'));
@@ -7263,12 +7261,12 @@ export default class T extends LoopingBot {
     let hits = parsed["hits"].as_array().expect("hits");
     assert_eq!(
         hits.len(),
-        7,
+        6,
         "every silent fake must be probed: {parsed:?}"
     );
     for (i, hit) in hits.iter().enumerate() {
         let s = hit.as_str().unwrap_or("");
-        if i == 3 {
+        if i == 2 {
             assert_eq!(s, "ok", "the Rust common-loot predicate is supported");
             continue;
         }

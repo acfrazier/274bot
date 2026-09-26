@@ -340,6 +340,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   frozen does (`strength (training Strength)`, or `defence (training
   Defence; controlled unavailable)` after a fallback), instead of echoing
   the requested style.
+- `parseCombatStyle` and `parseRangeStyle` answer frozen's defaults for an
+  unknown setting (`strength`, rapid mode 1) instead of throwing `not impl`,
+  and `parseRangeStyle` accepts `long range` / `long-range`. The style tables
+  are Rust's.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 
