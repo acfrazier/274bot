@@ -324,6 +324,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   dialog reported false to callers that branch on it (GatheringBot's desert
   camp route) and a vanished Continue on the same page reported true. The
   press and wait now run in the Rust `chat-dialog` machine.
+- `resolveCookLocation(setting, from, unlocked?)` follows frozen
+  `CookLocations`: `Auto` takes the host cook location whose bank is
+  nearest `from` among those the account can open (it was always `null`,
+  so CookBot stopped with "no bank called 'Auto'"), a named location is
+  returned only when its bank is unlocked, and a caller's `unlocked`
+  predicate replaces the bank requirement. The host cook table itself still
+  lists Catherby only.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 

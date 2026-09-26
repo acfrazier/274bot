@@ -59,6 +59,20 @@ pub(crate) fn unlocked(name: &str, tile: WorldTile) -> bool {
     })
 }
 
+/// Frozen `approachOf(bank)` (`api/bank/BankLocations.ts:115-117`) for the
+/// named bank at `tile`: its approach stand when the catalog has one, else
+/// the bank tile.
+pub(crate) fn approach_of(name: &str, tile: WorldTile) -> WorldTile {
+    BANKS.with(|banks| {
+        banks
+            .borrow()
+            .banks()
+            .iter()
+            .find(|bank| bank.name == name && bank.tile == tile)
+            .map_or(tile, NamedBank::air_tile)
+    })
+}
+
 pub(crate) fn bank_value(bank: &NamedBank) -> Value {
     let mut value = json!({"name": bank.name, "tile": {"x": bank.tile.x, "z": bank.tile.z, "level": bank.tile.level}});
     if let Some(definition) = bank.definition {

@@ -1,9 +1,32 @@
-//! CookBot reads bank.tile and surface.stand from posted Catherby facts.
+//! CookBot reads bank.tile and surface.stand from posted Catherby facts, and
+//! frozen `resolveCookLocation` (`api/cooking/CookLocations.ts:25-49`) picks
+//! the location: named only when unlocked, `Auto` the nearest unlocked one.
 
+use std::sync::Arc;
+
+use api::named_banks::{NamedBankFacts, BANK_CATALOG};
+use nav::named_banks::resolve;
 use script::{LoadIsolate, LoadShape};
 
+fn spawn_with(src: &str, facts: NamedBankFacts) -> LoadIsolate {
+    LoadIsolate::spawn_with_content(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        None,
+        Arc::new(facts),
+        Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
+    )
+    .unwrap()
+}
+
+/// The full bank catalog, every bank reachable.
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let facts = resolve(BANK_CATALOG, &data.bank_placements().unwrap().rows, |_| {
+        true
+    });
+    spawn_with(src, facts)
 }
 
 const SRC: &str = r#"
@@ -78,6 +101,14 @@ globalThis.__custom = consume('Custom', 'range', 'Range');
 globalThis.__unknown = consume('Seers', 'range', 'Range');
 globalThis.__falador = consume('Falador East', 'range', 'Range');
 globalThis.__maxCheb = MAX_SURFACE_CHEB;
+const far = { x: 3200, z: 3200, level: 0 };
+globalThis.__lockedNamed = resolveCookLocation('Catherby', far, () => false);
+globalThis.__lockedAuto = resolveCookLocation('Auto', far, () => false);
+globalThis.__asked = [];
+globalThis.__askedAuto = resolveCookLocation('Auto', far, (loc) => {
+    globalThis.__asked.push([loc.name, xyz(loc.bank.tile)]);
+    return true;
+})?.name ?? null;
 
 export default class T extends LoopingBot {
     loop() {}
@@ -113,14 +144,12 @@ fn catherby_consumer_reads_bank_tile_and_host_stand() {
 }
 
 #[test]
-fn unknown_and_auto_do_not_invent_a_location() {
+fn auto_takes_the_nearest_unlocked_location_and_unknown_stays_null() {
     let iso = spawn(SRC);
-    assert_eq!(
-        probe_obj(&iso, "__auto").get("stopped"),
-        Some(&serde_json::json!(
-            "no bank called 'Auto' that this account can open"
-        ))
-    );
+    let auto = probe_obj(&iso, "__auto");
+    assert_eq!(auto.get("stopped"), Some(&serde_json::Value::Null));
+    assert_eq!(auto.get("whereName"), Some(&serde_json::json!("Catherby")));
+    assert_eq!(auto.get("bank"), Some(&serde_json::json!([2809, 3441, 0])));
     assert_eq!(
         probe_obj(&iso, "__unknown").get("stopped"),
         Some(&serde_json::json!(
@@ -134,6 +163,40 @@ fn unknown_and_auto_do_not_invent_a_location() {
         ))
     );
     assert_eq!(probe_obj(&iso, "__maxCheb"), serde_json::json!(20));
+    iso.join();
+}
+
+#[test]
+fn a_locked_location_is_null_by_name_and_for_auto() {
+    let iso = spawn(SRC);
+    assert_eq!(probe_obj(&iso, "__lockedNamed"), serde_json::Value::Null);
+    assert_eq!(probe_obj(&iso, "__lockedAuto"), serde_json::Value::Null);
+    assert_eq!(
+        probe_obj(&iso, "__asked"),
+        serde_json::json!([["Catherby", [2809, 3441, 0]]]),
+        "the caller's predicate sees each CookLocation"
+    );
+    assert_eq!(
+        probe_obj(&iso, "__askedAuto"),
+        serde_json::json!("Catherby")
+    );
+    iso.join();
+
+    // The default gate is the bank's own: a catalog without the Catherby
+    // bank cannot open it.
+    let iso = spawn_with(SRC, NamedBankFacts::empty());
+    assert_eq!(
+        probe_obj(&iso, "__catherby").get("stopped"),
+        Some(&serde_json::json!(
+            "no bank called 'Catherby' that this account can open"
+        ))
+    );
+    assert_eq!(
+        probe_obj(&iso, "__auto").get("stopped"),
+        Some(&serde_json::json!(
+            "no bank called 'Auto' that this account can open"
+        ))
+    );
     iso.join();
 }
 
