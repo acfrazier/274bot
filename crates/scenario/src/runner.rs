@@ -105,6 +105,14 @@ impl MazeEpisodeObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum StallCombatObservation {
+    FirstSession,
+    FirstBank,
+    Returning,
+    SecondSession { guard_ready: bool },
+}
+
 const LAMP_AWARD_MARKER: &str = "Your wish has been granted!";
 
 /// The machine both runners drive. One instance per scenario run.
@@ -171,6 +179,8 @@ pub struct ScenarioRunner {
     lamp_episode: Option<LampEpisodeObservation>,
     /// Native host-hold + snapshot ordering for the current Maze witness.
     maze_episode: Option<MazeEpisodeObservation>,
+    /// At most one catch-less stall session may be followed by a bank retry.
+    stall_combat: Option<StallCombatObservation>,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
     /// panel fills this with its window capture; the headless twin keeps
@@ -246,6 +256,7 @@ impl ScenarioRunner {
             fresh_xp_baseline: None,
             lamp_episode: None,
             maze_episode: None,
+            stall_combat: None,
             shot_sink: None,
         }
     }
@@ -547,16 +558,23 @@ impl ScenarioRunner {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
             };
+            let arm_holds = arm.check_with_xp_context(
+                &self.snapshot,
+                self.obj_names.as_deref(),
+                Some(&self.xp_baselines),
+                self.fresh_xp_baseline,
+            );
+            let stall_combat_holds = match self.observe_stall_combat(arm_holds) {
+                Ok(holds) => holds,
+                Err(message) => {
+                    self.finish_fail(message);
+                    return;
+                }
+            };
             let native_episode_holds = self.observe_lamp_redemption(hold).unwrap_or(true)
-                && self.observe_maze_completion(hold).unwrap_or(true);
-            if native_episode_holds
-                && arm.check_with_xp_context(
-                    &self.snapshot,
-                    self.obj_names.as_deref(),
-                    Some(&self.xp_baselines),
-                    self.fresh_xp_baseline,
-                )
-            {
+                && self.observe_maze_completion(hold).unwrap_or(true)
+                && stall_combat_holds;
+            if native_episode_holds && arm_holds {
                 // A nav step only advances once its follow has
                 // terminated: the arm can hold on a snapshot the
                 // traveller has not polled yet — the essence-mine entry
@@ -591,6 +609,10 @@ impl ScenarioRunner {
                         self.maze_episode
                             .as_ref()
                             .map(MazeEpisodeObservation::summary)
+                    })
+                    .or_else(|| {
+                        self.stall_combat
+                            .map(|state| format!("{} [stall_combat={state:?}]", arm.name()))
                     })
                     .unwrap_or_else(|| arm.name());
                 self.finish_fail(&format!(
@@ -687,6 +709,11 @@ impl ScenarioRunner {
             }
             _ => None,
         };
+        self.stall_combat = matches!(
+            self.current_step().kind,
+            StepKind::ObserveStallCombat { .. }
+        )
+        .then_some(StallCombatObservation::FirstSession);
         if matches!(self.current_step().kind, StepKind::StartScript) {
             // Several skills can advance before their sequential watches
             // begin (a catching Guard can die before the first cake is stolen).
@@ -703,6 +730,59 @@ impl ScenarioRunner {
             }
         }
         self.capture_xp_baseline(self.current_step().wait.arm);
+    }
+
+    fn observe_stall_combat(&mut self, xp_gained: bool) -> Result<bool, &'static str> {
+        let StepKind::ObserveStallCombat { stand, guard_ready } = self.current_step().kind else {
+            return Ok(true);
+        };
+        let bank_open = self.snapshot.bank_component_id() >= 0;
+        let state = self
+            .stall_combat
+            .get_or_insert(StallCombatObservation::FirstSession);
+        match state {
+            StallCombatObservation::FirstSession => {
+                if xp_gained {
+                    return Ok(true);
+                }
+                if bank_open {
+                    *state = StallCombatObservation::FirstBank;
+                }
+            }
+            StallCombatObservation::FirstBank => {
+                if Proof::BankClosed.check(&self.snapshot, None) {
+                    *state = StallCombatObservation::Returning;
+                }
+            }
+            StallCombatObservation::Returning => {
+                if (Proof::ArrivedNear {
+                    x: stand.x,
+                    z: stand.z,
+                    level: stand.level,
+                    radius: 6,
+                })
+                .check(&self.snapshot, None)
+                {
+                    let ready = guard_ready.check(&self.snapshot, self.obj_names.as_deref());
+                    *state = StallCombatObservation::SecondSession { guard_ready: ready };
+                    return Ok(ready);
+                }
+            }
+            StallCombatObservation::SecondSession { guard_ready: seen } => {
+                if !*seen {
+                    *seen = guard_ready.check(&self.snapshot, self.obj_names.as_deref());
+                }
+                if *seen && xp_gained {
+                    return Ok(true);
+                }
+                if bank_open {
+                    return Err(
+                        "second stall session reached the bank without renewed Guard readiness and combat XP",
+                    );
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Update the current lamp episode from the native host hold input and
@@ -997,7 +1077,8 @@ impl ScenarioRunner {
             }
             StepKind::Shot { .. }
             | StepKind::StartScript
-            | StepKind::ObserveLampRedemption { .. } => Ok(()),
+            | StepKind::ObserveLampRedemption { .. }
+            | StepKind::ObserveStallCombat { .. } => Ok(()),
             StepKind::Relog => {
                 if client.ingame && !self.relog_logout_sent {
                     let ifaces = std::sync::Arc::clone(&client.ifaces);

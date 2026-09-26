@@ -67,9 +67,7 @@ pub(crate) const CLIMBING_BOOTS_FURTHER_WATCH_TICKS: u32 = 600;
 /// with ~20% margin. Teleport measured live at bce85f2df: Start 15s,
 /// 25th pair 286s, landing 292s, restock closed 306s, hut re-entered 404s,
 /// further pair (last watch) 427s → 720s keeps ~65% margin. The Magic XP
-/// proof shares the cast arm's baseline, so it holds at the last watch; a
-/// baseline taken after the cycle instead needs a second full trip (that
-/// run's 25th second-trip pair only landed at 715s).
+/// cast arm and terminal proof share the baseline captured before Start.
 pub(crate) const CLIMBING_BOOTS_WALK_DEADLINE: Duration = Duration::from_secs(900);
 pub(crate) const CLIMBING_BOOTS_TELE_DEADLINE: Duration = Duration::from_secs(720);
 /// The Water rune id for the bank-seed acknowledgement (Law 563 and Air 556
@@ -409,14 +407,9 @@ fn climbing_boots_variant(
         ),
     ];
     if use_teleport {
-        // The runner takes a `StatXpGain` baseline when the first arm of
-        // that shape begins and the proof reuses it. Without an arm here
-        // the baseline is taken when proving starts, after the further
-        // pair, so the proof would wait for a second full trip and cast.
-        // `magic_teleport` deletes the runes and grants the XP one tick
-        // before `player_teleport_normal` jumps, so the XP arm (baseline
-        // after the 2-pair spend, before any cast) comes first, then the
-        // landing.
+        // Observe the real cast as well as its landing. This arm and the
+        // terminal proof use the Magic XP baseline captured before Start.
+        // The server grants XP one tick before completing the teleport.
         watches.insert(
             2,
             (

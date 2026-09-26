@@ -1362,7 +1362,13 @@ fn runecraft_xp_watch_before_product_catches_simultaneous_craft() {
 
 #[test]
 fn ardy_cakes_fight_observes_both_skills_regardless_of_gain_order() {
-    for (combat_before_start, thieving_first) in [(false, false), (false, true), (true, false)] {
+    for (combat_before_start, thieving_first, thieving_gain, cake) in [
+        (false, false, true, true),
+        (false, true, true, true),
+        (true, false, true, true),
+        (false, false, false, false),
+        (false, false, true, false),
+    ] {
         let mut scenario = crate::get("ardy_cakes_fight").unwrap();
         let start = scenario
             .steps
@@ -1391,8 +1397,12 @@ fn ardy_cakes_fight_observes_both_skills_regardless_of_gain_order() {
         // Either skill may gain XP before its individual watch begins.
         for thieving in [thieving_first, !thieving_first] {
             if thieving {
-                c.stat_xp[17] += 16;
-                set_inv(&mut c, &[(1891, 1)]);
+                if thieving_gain {
+                    c.stat_xp[17] += 16;
+                }
+                if cake {
+                    set_inv(&mut c, &[(1891, 1)]);
+                }
             } else if !combat_before_start {
                 c.stat_xp[2] += 96;
             }
@@ -1401,10 +1411,10 @@ fn ardy_cakes_fight_observes_both_skills_regardless_of_gain_order() {
         }
         tick_until_done(&mut runner, &mut c);
 
-        if combat_before_start {
+        if combat_before_start || !thieving_gain || !cake {
             assert!(
                 matches!(runner.status(), RunnerStatus::Failed(_)),
-                "preparation XP must not count as script-caused combat"
+                "seeded combat or missing post-Start stall evidence must not qualify"
             );
         } else {
             assert_eq!(
@@ -1413,6 +1423,152 @@ fn ardy_cakes_fight_observes_both_skills_regardless_of_gain_order() {
                 "both post-Start XP gains must survive either watch order"
             );
         }
+    }
+}
+
+const ARDY_FIGHT_STAND: WorldTile = WorldTile {
+    x: 2668,
+    z: 3312,
+    level: 0,
+};
+const ARDY_FIGHT_BANK: WorldTile = WorldTile {
+    x: 2655,
+    z: 3286,
+    level: 0,
+};
+
+fn ardy_fight_after_start() -> (ScenarioRunner, Client) {
+    use client::client::ClientNpc;
+    use client::config::{Cache, NpcType};
+
+    let mut scenario = crate::get("ardy_cakes_fight").unwrap();
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    scenario.steps.drain(..start);
+    scenario.seed.mainland = false;
+    scenario.settings.require_mainland_base = false;
+    let mut c = seeded_client();
+    set_world_tile(&mut c, ARDY_FIGHT_STAND);
+    set_inv(&mut c, &[]);
+    c.cache = Arc::new(Cache {
+        npcs: vec![NpcType {
+            id: 0,
+            name: "Guard".into(),
+            size: 1,
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    for column in &mut c.collision[0].flags {
+        column.fill(0);
+    }
+    let mut npc = ClientNpc {
+        r#type: Some(0),
+        ..Default::default()
+    };
+    npc.entity.route_x[0] = ARDY_FIGHT_STAND.x - c.map_build_base_x + 2;
+    npc.entity.route_z[0] = ARDY_FIGHT_STAND.z - c.map_build_base_z;
+    npc.entity.x = npc.entity.route_x[0] * 128 + 64;
+    npc.entity.z = npc.entity.route_z[0] * 128 + 64;
+    npc.entity.face_entity = -1;
+    c.npc[3] = Some(Box::new(npc));
+    c.npc_ids[0] = 3;
+    // The pre-Start guard has wandered away; expose it again only on return.
+    c.npc_count = 0;
+    c.set_iface(
+        600,
+        IfType {
+            id: 600,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![601]),
+            ..Default::default()
+        },
+    );
+    c.set_iface(
+        601,
+        IfType {
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Withdraw 1".into()), None, None, None, None],
+            ..Default::default()
+        },
+    );
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    (runner, c)
+}
+
+fn ardy_fight_bank_visit(runner: &mut ScenarioRunner, c: &mut Client) {
+    set_world_tile(c, ARDY_FIGHT_BANK);
+    c.main_modal_id = 600;
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+    tick_dirty(runner, c, false);
+}
+
+fn ardy_fight_catchless_first_session(runner: &mut ScenarioRunner, c: &mut Client) {
+    c.stat_xp[17] += 16;
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    set_inv(c, &[(1891, 6)]);
+    for _ in 0..80 {
+        tick_dirty(runner, c, false);
+    }
+    ardy_fight_bank_visit(runner, c);
+    set_inv(c, &[]);
+    c.main_modal_id = -1;
+    c.bump_gens(ServerProt::IF_CLOSE);
+    tick_dirty(runner, c, false);
+    // The bank trip can outlast the old 150-dirty Strength watch.
+    for _ in 0..75 {
+        tick_dirty(runner, c, false);
+    }
+    set_world_tile(c, ARDY_FIGHT_STAND);
+}
+
+#[test]
+fn ardy_fight_accepts_combat_in_the_second_stall_session() {
+    let (mut runner, mut c) = ardy_fight_after_start();
+    ardy_fight_catchless_first_session(&mut runner, &mut c);
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "one catch-less session must not end the combat watch: {:?}",
+        runner.status()
+    );
+    c.npc_count = 1;
+    c.bump_gens(ServerProt::NPC_INFO);
+    tick_dirty(&mut runner, &mut c, false);
+    c.stat_xp[2] += 4;
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    set_inv(&mut c, &[(1891, 1)]);
+    tick_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+#[test]
+fn ardy_fight_rejects_a_second_unqualified_stall_session() {
+    for (combat_xp, guard_ready) in [(false, true), (true, false)] {
+        let (mut runner, mut c) = ardy_fight_after_start();
+        ardy_fight_catchless_first_session(&mut runner, &mut c);
+        c.npc_count = i32::from(guard_ready);
+        c.bump_gens(ServerProt::NPC_INFO);
+        tick_dirty(&mut runner, &mut c, false);
+        if combat_xp {
+            c.stat_xp[2] += 4;
+            c.bump_gens(ServerProt::UPDATE_STAT);
+        }
+        set_inv(&mut c, &[(1891, 6)]);
+        tick_until_done(&mut runner, &mut c);
+        assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+        ardy_fight_bank_visit(&mut runner, &mut c);
+        assert!(
+            matches!(runner.status(), RunnerStatus::Failed(_)),
+            "a second catch-less trip or missing renewed Guard readiness must fail closed"
+        );
     }
 }
 

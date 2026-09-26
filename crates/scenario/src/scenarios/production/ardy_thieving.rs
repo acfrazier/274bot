@@ -3,6 +3,14 @@ pub(crate) const THIEVING_STAT: i32 = 17;
 const ARDY_CAKES_BALLAST_KNIVES: i32 = 22;
 // Finish back-to-back Guard fights inside the bounded post-Start stall watch.
 const ARDY_CAKES_FIGHT_LEVEL: i32 = 70;
+// Readiness, two stall sessions and one bank round trip remain wall-bounded.
+const ARDY_CAKES_FIGHT_DEADLINE: Duration = Duration::from_secs(360);
+// Dirty snapshots are not engine ticks; 900 leaves the 360s wall in control.
+const ARDY_CAKES_FIGHT_WATCH_TICKS: u32 = 900;
+const ARDY_CAKES_GUARD_READY: Proof = Proof::NpcNameUnengagedInSight {
+    name: "Guard",
+    radius: 5,
+};
 pub(crate) const CAKE_ID: i32 = 1891;
 pub(crate) const BREAD_ID: i32 = 2309;
 pub(crate) const CHOCOLATE_SLICE_ID: i32 = 1901;
@@ -420,17 +428,21 @@ pub(crate) fn ardy_cakes_fight_scenario() -> Scenario {
     // until the server's bounded guard-catch prerequisites are observable.
     steps.push(bank_fletcher_watch(
         "wait for an unengaged Guard in sight of the stall stand before Start",
-        Proof::NpcNameUnengagedInSight {
-            name: "Guard",
-            radius: 5,
-        },
+        ARDY_CAKES_GUARD_READY,
     ));
     steps.push(start_catalog_step());
+    steps.push(Step {
+        name: "watch Strength XP across at most two Guard-ready stall sessions",
+        kind: StepKind::ObserveStallCombat {
+            stand,
+            guard_ready: ARDY_CAKES_GUARD_READY,
+        },
+        wait: Wait {
+            arm: style_xp,
+            budget_ticks: ARDY_CAKES_FIGHT_WATCH_TICKS,
+        },
+    });
     for (step_name, arm) in [
-        (
-            "watch Strength XP from FightBack on the catching Guard after Start",
-            style_xp,
-        ),
         ("watch Thieving XP from Baker's stall after Start", first_xp),
         ("watch exact Cake 1891 stolen after Start", cake),
     ] {
@@ -448,7 +460,7 @@ pub(crate) fn ardy_cakes_fight_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            deadline: ARDY_CAKES_FIGHT_DEADLINE,
             start_script: Some("ArdyCakes"),
             script_settings_inject: Some(ARDY_CAKES_FIGHT_INJECT),
             terminal_shot: Some("ardy_cakes_fight"),

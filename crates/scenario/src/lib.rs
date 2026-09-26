@@ -393,6 +393,14 @@ pub enum StepKind {
         /// Old Man NPC.
         trigger: Option<&'static str>,
     },
+    /// Observe combat XP across at most two stall sessions. After a catch-less
+    /// first bank visit, require a closed bank, return to `stand`, and renewed
+    /// native `guard_ready` evidence. A second unqualified bank visit fails.
+    /// Sends no actions and preserves the Start-anchored cumulative XP arm.
+    ObserveStallCombat {
+        stand: WorldTile,
+        guard_ready: Proof,
+    },
     /// Host starts the catalog isolate (`script_start_load`) once when
     /// the live pump sees this step. No-op on the client. The wait is an
     /// immediate / one-tick arm that does not require XP.

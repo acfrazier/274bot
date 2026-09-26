@@ -21,8 +21,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   excluding seeded XP without losing real gains that arrive before a later
   sequential watch. Fresh bank-return XP proofs remain step-local.
 - ArdyCakes FightBack waits for an idle nearby Guard with line of sight and
-  prepares melee stats at 70 before Start. It retains real combat XP,
-  Thieving XP and Cake requirements within the existing time bounds.
+  prepares melee stats at 70 before Start. It tolerates one catch-less
+  stall session through a bank return and renewed Guard readiness, within
+  a 360-second deadline; a second unqualified bank visit fails. Real
+  combat XP, Thieving XP and Cake requirements remain mandatory.
 ### Navigation
 
 - Radius walks to a solid in-scene target now route to one of its wall-valid

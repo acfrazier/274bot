@@ -66,9 +66,14 @@ The `ardy_cakes_fight` fixture waits, within its ordinary bounded scenario
 step, for a nearby unengaged Guard with native scene line of sight before
 starting the catalog script. It prepares Attack, Strength and Hitpoints 70
 with the same adamant scimitar so back-to-back Guard fights do not consume
-the entire stall watch. Qualification still requires real post-Start
-Strength XP, Thieving XP and an exact Cake; watch budgets and the overall
-deadline are unchanged. Script kill messages alone are not XP evidence:
+the entire stall watch. A ready Guard can still wander away: the Strength
+watch tolerates one catch-less stall session, observes its bank visit,
+closure and return, then requires renewed Guard readiness at the stall.
+A second unqualified bank visit fails rather than admitting a third try.
+The scenario has a 360-second wall deadline and a 900-dirty-snapshot combat
+watch; the Thieving XP and exact Cake watches retain their original bounds.
+All three still require real post-Start evidence; no catch is forced.
+Script kill messages alone are not XP evidence:
 in a crowded single-combat camp, a selected NPC can disappear after
 another player kills it while the observing slot receives no XP.
 
