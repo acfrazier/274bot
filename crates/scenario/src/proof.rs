@@ -1806,7 +1806,7 @@ mod tests {
             "an NPC target with the wrong name must not qualify"
         );
 
-        c.local_player.as_mut().unwrap().entity.face_entity = 32768;
+        c.local_player.as_mut().unwrap().entity.face_entity = api::snapshot::PLAYER_FACE_BASE + 3;
         c.bump_gens(ServerProt::PLAYER_INFO);
         assert!(
             !proof.check(&snap(&mut c), None),

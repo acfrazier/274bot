@@ -21,6 +21,7 @@ static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
 const PANEL_FRAME_BUCKETS: usize = 251;
 static PANEL_FRAME_MS: [AtomicU64; PANEL_FRAME_BUCKETS] =
     [const { AtomicU64::new(0) }; PANEL_FRAME_BUCKETS];
+static PANEL_FRAME_INTERVAL_MAX_NS: AtomicU64 = AtomicU64::new(0);
 
 const READY_SETTLE: Duration = Duration::from_secs(2);
 
@@ -39,9 +40,12 @@ impl PanelFrameTimer {
 
 impl Drop for PanelFrameTimer {
     fn drop(&mut self) {
-        let elapsed_us = self.0.elapsed().as_micros() as usize;
+        let elapsed = self.0.elapsed();
+        let elapsed_us = elapsed.as_micros() as usize;
         let elapsed_ms = elapsed_us.div_ceil(1000).min(PANEL_FRAME_BUCKETS - 1);
         PANEL_FRAME_MS[elapsed_ms].fetch_add(1, Relaxed);
+        let elapsed_ns = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
+        PANEL_FRAME_INTERVAL_MAX_NS.fetch_max(elapsed_ns, Relaxed);
     }
 }
 
@@ -50,6 +54,10 @@ fn panel_frame_histogram() -> Vec<u64> {
         .iter()
         .map(|bucket| bucket.load(Relaxed))
         .collect()
+}
+
+fn take_panel_frame_interval_max_ns() -> u64 {
+    PANEL_FRAME_INTERVAL_MAX_NS.swap(0, Relaxed)
 }
 
 /// Installed only by benchmark-enabled frontend binaries; no logging or
@@ -536,6 +544,14 @@ fn update_stable_all_ingame(
     }
 }
 
+fn qualification_timestamp(workload: Workload, all_ingame: Instant, now: Instant) -> Instant {
+    if workload == Workload::Idle {
+        all_ingame
+    } else {
+        now
+    }
+}
+
 impl Run {
     /// Mint ephemeral accounts, a throwaway vault, and an optional benchmark
     /// card, then install seed runners via [`SeedNav::LoadDefault`]. Prefer
@@ -908,8 +924,11 @@ impl Run {
 
         if self.qualification_complete.is_none() && established {
             if let Some(all_ingame) = self.all_ingame {
-                self.qualification_complete =
-                    Some(if self.card.is_none() { all_ingame } else { now });
+                self.qualification_complete = Some(qualification_timestamp(
+                    self.config.workload,
+                    all_ingame,
+                    now,
+                ));
             }
         }
         if self.qualification_complete.is_none()
@@ -1085,13 +1104,17 @@ impl Run {
             for (key, counter) in [
                 ("client_tick", &client::profiling::CLIENT_TICK),
                 ("ui_draw", &client::profiling::UI_DRAW),
-                ("ui_frame", &client::profiling::UI_FRAME),
             ] {
                 let (count, total, max) = counter.read();
                 value[format!("{key}_count")] = count.into();
                 value[format!("{key}_total_ns")] = total.into();
                 value[format!("{key}_max_ns")] = max.into();
             }
+            let (ui_frame_count, ui_frame_total_ns, _) = client::profiling::UI_FRAME.read();
+            value["ui_frame_count"] = ui_frame_count.into();
+            value["ui_frame_total_ns"] = ui_frame_total_ns.into();
+            value["ui_frame_max_ns"] = take_panel_frame_interval_max_ns().into();
+            value["ui_frame_max_scope"] = "sample-interval".into();
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
             if self.diagnostics {
                 self.write_diagnostics(play, None)?;
@@ -1208,6 +1231,29 @@ mod tests {
         update_stable_all_ingame(&mut since, &mut ready, 1, 1, settled);
         update_stable_all_ingame(&mut since, &mut ready, 1, 1, settled + READY_SETTLE);
         assert_eq!(ready, Some(settled));
+    }
+
+    #[test]
+    fn seeded_idle_qualification_records_seed_completion_not_ingame_readiness() {
+        let all_ingame = Instant::now();
+        let seeded = all_ingame + Duration::from_secs(7);
+        assert_eq!(
+            qualification_timestamp(Workload::SeededIdle, all_ingame, seeded),
+            seeded
+        );
+        assert_eq!(
+            qualification_timestamp(Workload::Idle, all_ingame, seeded),
+            all_ingame
+        );
+    }
+
+    #[test]
+    fn panel_frame_interval_max_resets_at_each_sample() {
+        PANEL_FRAME_INTERVAL_MAX_NS.store(0, Relaxed);
+        PANEL_FRAME_INTERVAL_MAX_NS.fetch_max(12, Relaxed);
+        PANEL_FRAME_INTERVAL_MAX_NS.fetch_max(7, Relaxed);
+        assert_eq!(take_panel_frame_interval_max_ns(), 12);
+        assert_eq!(take_panel_frame_interval_max_ns(), 0);
     }
 
     #[test]

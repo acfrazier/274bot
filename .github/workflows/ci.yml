@@ -68,6 +68,7 @@ jobs:
           cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings
           cargo clippy -p host --all-targets --no-deps --features performance-profile -- -D warnings
           cargo clippy -p panel --all-targets --no-deps --features memory-profile -- -D warnings
+          cargo clippy -p host-play --all-targets --no-deps --features memory-profile -- -D warnings
 
   architecture:
     name: architecture

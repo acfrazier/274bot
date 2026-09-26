@@ -147,11 +147,12 @@ remain in the per-username process totals across relogs, while
 `host_profile_slots` counts only active slots.
 
 Panel samples include a cumulative one-millisecond frame histogram whose final
-bucket means “at least 250 ms”, plus `ui_frame_count`, `ui_frame_total_ns` and
-`ui_frame_max_ns`. A receipt must label overflow percentiles as censored and
-report overflow count, mean and maximum rather than presenting 250 ms as an
-exact slow-frame duration. Requested rendering metadata does not prove the
-observed backend or cadence.
+bucket means “at least 250 ms”, cumulative `ui_frame_count` and
+`ui_frame_total_ns`, and a swap-reset `ui_frame_max_ns` for that sample
+interval. A receipt must label overflow percentiles as censored and report
+overflow count, observation-window mean and the maximum of the interval maxima
+rather than presenting 250 ms as an exact slow-frame duration. Requested
+rendering metadata does not prove the observed backend or cadence.
 
 `samples.qualification.jsonl` contains observation start/end progress. With
 optional diagnostics, `samples.diagnostics.jsonl` adds bounded per-slot evidence.
