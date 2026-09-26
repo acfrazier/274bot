@@ -227,7 +227,6 @@ fn start_walk_to(world: &mut World) -> machine::Handle {
     world.post();
     let args = json!({
         "tile": { "x": PORT_SARIM.x, "z": PORT_SARIM.z, "level": 0 },
-        "radius": 2,
     });
     match machine::start("walk-to", args, Vec::new(), 0) {
         Started::Running(handle) => handle,
@@ -403,5 +402,76 @@ fn walk_resilient_baked_failure_short_of_the_fare_goes_to_luthas() {
         matches!(ops.as_slice(), [op] if walk_near(LUTHAS, 2)(op)),
         "frozen walkResilient's baked Traversal.walkTo recovers the fare, not a scene step: {ops:?}"
     );
+    assert_eq!(machine::take(h), Take::Pending);
+}
+
+#[test]
+fn walk_to_waits_out_the_frozen_300_second_default() {
+    // Frozen `opts?.timeoutMs ?? 300_000` (WalkExecutor.ts:228).
+    reset();
+    let mut world = World::new(
+        WorldTile {
+            x: 3100,
+            z: 3200,
+            level: 0,
+        },
+        5,
+    );
+    let h = start_walk_to(&mut world);
+    let first = machine::merge_ops(Vec::new());
+    assert!(
+        matches!(first.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)),
+        "{first:?}"
+    );
+    machine::age(h, 60_001);
+    world.post();
+    assert!(tick().is_empty(), "no stop at a minute");
+    assert_eq!(machine::take(h), Take::Pending);
+    machine::age(h, 240_000);
+    world.post();
+    assert_eq!(
+        tick(),
+        vec![InteractReq::AbortWalk {
+            request_id: token(&first[0])
+        }],
+        "the bound stops the host follow"
+    );
+    assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+}
+
+#[test]
+fn pause_and_resume_mid_leg_reissues_the_same_walk() {
+    // Operator Pause drops the host route (`abort_script_walk`); frozen
+    // resumes the same walk and repaths.
+    reset();
+    let mut world = World::new(MUSA, 5);
+    world.post();
+    let args = json!({
+        "tile": { "x": PORT_SARIM.x, "z": PORT_SARIM.z, "level": 0 },
+        "radius": 2,
+    });
+    let Started::Running(h) = machine::start("walk-to", args, Vec::new(), 0) else {
+        panic!("walk-to runs");
+    };
+    let first = machine::merge_ops(Vec::new());
+    fail_short(&mut world, token(&first[0]), PORT_SARIM, 2, (995, 30));
+    let leg = until(&mut world, "walk to Luthas", walk_near(LUTHAS, 2));
+    crate::walk_wait::on_pause();
+    crate::walk_wait::on_operator_pause();
+    machine::on_pause();
+    world.post();
+    assert!(tick().is_empty(), "a paused leg sends nothing");
+    crate::walk_wait::on_resume();
+    machine::on_resume();
+    world.post();
+    assert_eq!(
+        tick(),
+        vec![leg.clone()],
+        "Resume re-issues the same request"
+    );
+    world.post();
+    assert!(tick().is_empty(), "once");
+    world.here = LUTHAS;
+    until(&mut world, "talk to Luthas after the resumed leg", is_talk);
     assert_eq!(machine::take(h), Take::Pending);
 }

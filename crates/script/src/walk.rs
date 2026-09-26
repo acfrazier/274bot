@@ -242,7 +242,7 @@ fn max_budget_note(max_budget: u64) -> Option<String> {
 /// false wins, then an explicit true. Unset falls to the global
 /// `navTeleports` toggle, which the host does not have; its frozen default
 /// is off.
-fn resolve_teleports(catalog: Option<bool>, policy: Option<bool>) -> bool {
+pub(crate) fn resolve_teleports(catalog: Option<bool>, policy: Option<bool>) -> bool {
     if catalog == Some(false) || policy == Some(false) {
         return false;
     }
@@ -251,7 +251,7 @@ fn resolve_teleports(catalog: Option<bool>, policy: Option<bool>) -> bool {
 
 /// Frozen `teleportAllowedByPolicy`'s span gate (`policy.ts:61–67`) with
 /// `routeSpanChebyshev` (`policy.ts:72–74`, levels ignored).
-fn teleport_span_allows(min_span: i32, from: WorldTile, to: WorldTile) -> bool {
+pub(crate) fn teleport_span_allows(min_span: i32, from: WorldTile, to: WorldTile) -> bool {
     min_span <= 0 || (from.x - to.x).abs().max((from.z - to.z).abs()) >= min_span
 }
 
@@ -699,6 +699,9 @@ fn shut_obstacle_at(door: WorldTile, obstacles: &[String]) -> Option<SceneRow> {
 /// `walkResilient`'s baked `walkTo`; `walk-hops` and `walk-resilient` share it.
 pub(crate) struct Walk {
     token: u64,
+    dest: WorldTile,
+    radius: i32,
+    allow_teleports: bool,
 }
 
 impl Walk {
@@ -728,30 +731,15 @@ impl Walk {
         }))
         .as_u64()
         .unwrap_or(0);
-        cx.emit(if radius > 0 {
-            InteractReq::WalkNear {
-                x: dest.x,
-                z: dest.z,
-                level: dest.level,
-                radius,
-                allow_teleports,
-                allow_wilderness: true,
-                allow_bank_fetch: true,
-                request_id: token,
-            }
-        } else {
-            InteractReq::Walk {
-                x: dest.x,
-                z: dest.z,
-                level: dest.level,
-                allow_teleports,
-                allow_wilderness: true,
-                allow_bank_fetch: true,
-                request_id: token,
-            }
-        });
+        let walk = Self {
+            token,
+            dest,
+            radius,
+            allow_teleports,
+        };
+        cx.emit(walk.request());
         cx.clock().arm(timeout_ms);
-        Ok(Self { token })
+        Ok(walk)
     }
 
     /// `Some(settled)` once the walk wait settled or timed out. A timeout
@@ -759,6 +747,11 @@ impl Walk {
     /// stopped its walker). The bool is the wait's value, not `isArrived`:
     /// a closest terminal is true here and the ladder re-checks arrival.
     pub(crate) fn step(&self, cx: &mut Cx<'_>) -> Option<bool> {
+        // Pause dropped the host route; the deadline was frozen with the
+        // row, so the same request goes out again on the same bound.
+        if walk_wait::take_resume(self.token) {
+            cx.emit(self.request());
+        }
         let settled = walk_wait::dispatch(&json!({ "op": "settled", "token": self.token }))
             .as_bool()
             .unwrap_or(false);
@@ -778,6 +771,33 @@ impl Walk {
 
     pub(crate) fn abort(&self, cx: &mut Cx<'_>) {
         cx.emit(self.release());
+    }
+
+    /// The native walk this wait is for, as sent (and re-sent after Resume).
+    fn request(&self) -> InteractReq {
+        let WorldTile { x, z, level } = self.dest;
+        if self.radius > 0 {
+            InteractReq::WalkNear {
+                x,
+                z,
+                level,
+                radius: self.radius,
+                allow_teleports: self.allow_teleports,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                request_id: self.token,
+            }
+        } else {
+            InteractReq::Walk {
+                x,
+                z,
+                level,
+                allow_teleports: self.allow_teleports,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                request_id: self.token,
+            }
+        }
     }
 
     /// The op that stops this walk's host follow.

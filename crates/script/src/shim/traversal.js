@@ -1,23 +1,40 @@
 import { snap, proxy, notImpl, runMachine } from '../../shim/_kernel.js';
 import { Sustain } from '../sustain/Sustain.js';
 
+const whole = (value) => (typeof value === 'number' ? { value: Math.floor(value) } : null);
+const count = (value) => (Array.isArray(value) ? value.length : 0);
 
-function allowTeleports(opts) {
-    return opts.useTeleportCatalog === true || opts.policy?.useTeleports === true;
-}
-
-// Frozen Traversal.walkTo: Rust owns the walk, its settle, the boat-fare
-// recovery and the one re-walk (`walk-to`). The shim only coerces options.
+// Frozen Traversal.walkTo(dest, WalkOptions): Rust owns the walk, the
+// option defaults and refusals, the Sustain pumps, the boat-fare recovery
+// and the one re-walk (`walk-to`). The shim only coerces options.
 async function walkWorld(tile, opts = {}) {
+    const policy = opts.policy || {};
+    const radius = whole(opts.radius);
+    const timeoutMs = whole(opts.timeoutMs);
+    const span = whole(policy.distanceBeforeTeleport);
     const out = await runMachine(
         'walk-to',
         {
             tile: { x: tile.x, z: tile.z, level: tile.level ?? 0 },
-            radius: opts.radius ?? 0,
-            ...(typeof opts.timeoutMs === 'number'
-                ? { timeoutMs: Math.floor(opts.timeoutMs) }
+            ...(radius ? { radius: radius.value } : {}),
+            ...(timeoutMs ? { timeoutMs: timeoutMs.value } : {}),
+            ...(typeof opts.useTeleportCatalog === 'boolean'
+                ? { useTeleportCatalog: opts.useTeleportCatalog }
                 : {}),
-            allowTeleports: allowTeleports(opts),
+            policy: {
+                ...(typeof policy.useTeleports === 'boolean' ? { useTeleports: policy.useTeleports } : {}),
+                ...(span ? { distanceBeforeTeleport: span.value } : {}),
+                allowTeleportIds: count(policy.allowTeleportIds),
+                denyTeleportIds: count(policy.denyTeleportIds),
+                ...(typeof policy.useShips === 'boolean' ? { useShips: policy.useShips } : {}),
+                ...(typeof policy.useShortcuts === 'boolean' ? { useShortcuts: policy.useShortcuts } : {}),
+            },
+            ...(typeof opts.maxExpansions === 'number' && opts.maxExpansions >= 0
+                ? { maxExpansions: Math.floor(opts.maxExpansions) }
+                : {}),
+            avoidZones: count(opts.avoidZones),
+            pathFollow: opts.pathFollow !== undefined && opts.pathFollow !== null,
+            forceRepath: opts.forceRepath === true,
         },
         { log: typeof opts.log === 'function' ? opts.log : undefined, sustain: () => Sustain.run() },
     );

@@ -7,6 +7,16 @@
 //! `walkResilient` is the same `Traversal.walkTo` (`Traversal.ts:160–170`),
 //! so [`crate::walk::Resilient`] embeds [`Recover`] too.
 //!
+//! `WalkOptions` (`WalkExecutor.ts:113–139, 226–245`): `radius` defaults to
+//! 2 and `timeoutMs` to 300 s; teleports are `resolveWalkUseTeleports` (an
+//! explicit false wins) gated on `policy.distanceBeforeTeleport`;
+//! `maxExpansions` maps to the host router's fixed bound (logged above it);
+//! `bankItemCounts` is not a host input (the BankBudget fetch reads the live
+//! bank). `avoidZones`, teleport id lists, `useShips`/`useShortcuts` false,
+//! `pathFollow` and `forceRepath` have no host wire and are refused loud.
+//! The caller's `Sustain.run()` runs once a tick while walking, as frozen
+//! runs it every follow pass (`WalkExecutor.ts:844–853`).
+//!
 //! `missingBoatFare` (`karamjaRecovery.ts:16–20`): standing on Karamja
 //! (`onIsland`), walking off it, fewer than 30 coins, and the failed walk's
 //! only missing gate item is coins making up the fare. Frozen names the
@@ -38,7 +48,9 @@ use crate::reach_entity::{
     chat_mark, chat_state, npc_talkable, NpcReach, NpcReachOpts, TalkExpect,
 };
 use crate::shim::InteractReq;
-use crate::walk::{here, interrupted, Resilient, Walk};
+use crate::walk::{
+    here, interrupted, resolve_teleports, teleport_span_allows, Resilient, Walk, HOST_SEARCH_BOUND,
+};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
 use serde_json::json;
@@ -1029,20 +1041,102 @@ struct TileArg {
     level: i32,
 }
 
+/// Frozen `PathPolicy` (`types.ts:147–161`) as the shim marshals it:
+/// the id lists as their lengths.
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WalkToPolicy {
+    #[serde(default)]
+    use_teleports: Option<bool>,
+    #[serde(default)]
+    distance_before_teleport: Option<i32>,
+    #[serde(default)]
+    allow_teleport_ids: usize,
+    #[serde(default)]
+    deny_teleport_ids: usize,
+    #[serde(default)]
+    use_ships: Option<bool>,
+    #[serde(default)]
+    use_shortcuts: Option<bool>,
+}
+
+/// Frozen `WalkOptions` (`WalkExecutor.ts:113–139`). `log` is the hook.
+/// `bankItemCounts` is only the bank planner's input: the host BankBudget
+/// fetch reads the live bank itself (FENCE 2026-09-18), so it is not a
+/// host input.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WalkToArgs {
     tile: TileArg,
     #[serde(default)]
-    radius: i32,
+    radius: Option<i32>,
     #[serde(default)]
     timeout_ms: Option<u64>,
     #[serde(default)]
-    allow_teleports: bool,
+    use_teleport_catalog: Option<bool>,
+    #[serde(default)]
+    policy: WalkToPolicy,
+    #[serde(default)]
+    max_expansions: Option<u64>,
+    /// How many `avoidZones` the caller passed.
+    #[serde(default)]
+    avoid_zones: usize,
+    /// Whether the caller passed `pathFollow` overrides.
+    #[serde(default)]
+    path_follow: bool,
+    #[serde(default)]
+    force_repath: bool,
 }
 
-/// The host `Traversal.walkTo` wait bound when the caller names none.
-const WALK_TO_MS: u64 = 60_000;
+/// Frozen `opts?.radius ?? 2` (`WalkExecutor.ts:227`).
+const WALK_TO_RADIUS: i32 = 2;
+/// Frozen `opts?.timeoutMs ?? 300_000` (`WalkExecutor.ts:228`).
+const WALK_TO_MS: u64 = 300_000;
+
+impl WalkToArgs {
+    /// Options the host walk has no wire for, refused loud (never dropped).
+    fn refusal(&self) -> Option<&'static str> {
+        if self.avoid_zones > 0 {
+            return Some("avoidZones: the host walk has no avoid-zone wire");
+        }
+        if self.policy.allow_teleport_ids > 0 || self.policy.deny_teleport_ids > 0 {
+            return Some("policy.allowTeleportIds/denyTeleportIds: the host router has no teleport id filter");
+        }
+        if self.policy.use_ships == Some(false) || self.policy.use_shortcuts == Some(false) {
+            return Some("policy.useShips/useShortcuts false: the host router cannot exclude ships or shortcuts");
+        }
+        if self.path_follow {
+            return Some("pathFollow: the host follow has no stall/deviation overrides");
+        }
+        if self.force_repath {
+            return Some("forceRepath: the host walk has no forced repath of a live route");
+        }
+        None
+    }
+
+    /// Frozen `resolveWalkUseTeleports` (`WalkExecutor.ts:165–177`) gated on
+    /// `policy.distanceBeforeTeleport` over the planar span from here
+    /// (`policy.ts:61–74`; frozen default 0).
+    fn allow_teleports(&self, dest: WorldTile) -> bool {
+        resolve_teleports(self.use_teleport_catalog, self.policy.use_teleports)
+            && here().is_some_and(|me| {
+                teleport_span_allows(self.policy.distance_before_teleport.unwrap_or(0), me, dest)
+            })
+    }
+}
+
+/// Frozen `maxExpansions` caps the walk's search (`WalkExecutor.ts:230`).
+/// The host router searches every walk to one fixed bound
+/// ([`HOST_SEARCH_BOUND`]) with no `budget` outcome, so a cap at or under it
+/// is searched at least that far; one above it is logged.
+fn max_expansions_note(max: u64) -> Option<String> {
+    (max > HOST_SEARCH_BOUND).then(|| {
+        format!(
+            "walkTo: maxExpansions {max} is above the host search bound \
+             {HOST_SEARCH_BOUND}; routes search {HOST_SEARCH_BOUND}"
+        )
+    })
+}
 
 enum WalkToPhase {
     Walking { walk: Walk, retried: bool },
@@ -1074,23 +1168,32 @@ impl Family for WalkTo {
     type Output = bool;
 
     fn begin(args: WalkToArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        if let Some(reason) = args.refusal() {
+            return Begin::Refuse(reason.into());
+        }
         let dest = WorldTile {
             x: args.tile.x,
             z: args.tile.z,
             level: args.tile.level,
         };
+        let radius = args.radius.unwrap_or(WALK_TO_RADIUS);
         let timeout_ms = args.timeout_ms.unwrap_or(WALK_TO_MS);
-        match Walk::begin(dest, args.radius, timeout_ms, args.allow_teleports, cx) {
+        let allow_teleports = args.allow_teleports(dest);
+        match Walk::begin(dest, radius, timeout_ms, allow_teleports, cx) {
             Ok(walk) => Begin::Run(Self {
                 dest,
-                radius: args.radius,
+                radius,
                 timeout_ms,
-                allow_teleports: args.allow_teleports,
+                allow_teleports,
                 phase: WalkToPhase::Walking {
                     walk,
                     retried: false,
                 },
-                logs: VecDeque::new(),
+                logs: args
+                    .max_expansions
+                    .and_then(max_expansions_note)
+                    .into_iter()
+                    .collect(),
                 result: None,
                 pumped: false,
                 waiting: false,
@@ -1120,9 +1223,11 @@ impl Family for WalkTo {
                 self.pumped = false;
                 return Step::Wait;
             }
-            // The recovery's `await Sustain.run()` points (`karamja.ts:55,
-            // 91`; `Traversal.ts:130` in its resilient legs), once a tick.
-            if matches!(self.phase, WalkToPhase::Recover(_)) && !self.pumped && cx.has(SUSTAIN) {
+            // Frozen `await Sustain.run()` on every follow pass
+            // (`WalkExecutor.ts:844–853`) and at the recovery's points
+            // (`karamja.ts:55, 91`; `Traversal.ts:130` in its resilient
+            // legs), once a tick in every phase.
+            if !self.pumped && cx.has(SUSTAIN) {
                 self.pumped = true;
                 return Step::Call(Call {
                     hook: SUSTAIN,

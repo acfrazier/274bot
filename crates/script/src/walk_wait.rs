@@ -131,6 +131,10 @@ struct Wait {
     matched: Option<bool>,
     /// The matched route end is frozen `'blocked'` (`Traversal.ts:171–174`).
     blocked: bool,
+    /// Operator Pause aborted the host follow (`abort_script_walk`) while
+    /// this wait was live; the owner re-issues the same request once when it
+    /// steps after Resume (frozen resumes the same walk and repaths).
+    resume_owed: bool,
 }
 
 /// The one live wait. The player tile and the host outcome are read from
@@ -168,6 +172,7 @@ impl WalkSlot {
             seq_at_begin: outcome.seq,
             matched: None,
             blocked: false,
+            resume_owed: false,
         });
         token
     }
@@ -250,6 +255,42 @@ pub(crate) fn on_reset() {
 pub(crate) fn on_pause() {}
 
 pub(crate) fn on_resume() {}
+
+/// Operator Pause: the host drops the live walk's route
+/// (`abort_script_walk`), so an unsettled wait is owed one re-issue by its
+/// owner when its row steps again after Resume ([`take_resume`]). Not a
+/// session hold: the host keeps (or carries) that route itself.
+pub(crate) fn on_operator_pause() {
+    SLOT.with(|slot| {
+        if let Some(wait) = slot.borrow_mut().wait.as_mut() {
+            if wait.settled.is_none() {
+                wait.resume_owed = true;
+            }
+        }
+    });
+}
+
+/// A reconnect that keeps the script's work: the host carry owns the
+/// re-dispatch of the held walk, so no re-issue is owed.
+pub(crate) fn clear_resume_debt() {
+    SLOT.with(|slot| {
+        if let Some(wait) = slot.borrow_mut().wait.as_mut() {
+            wait.resume_owed = false;
+        }
+    });
+}
+
+/// Whether `token`'s wait is owed a re-issue after an operator Pause;
+/// taking it clears the debt.
+pub(crate) fn take_resume(token: u64) -> bool {
+    SLOT.with(|slot| {
+        slot.borrow_mut()
+            .wait
+            .as_mut()
+            .filter(|wait| wait.token == token)
+            .is_some_and(|wait| std::mem::take(&mut wait.resume_owed))
+    })
+}
 
 pub(crate) fn on_hold(_held: bool) {}
 

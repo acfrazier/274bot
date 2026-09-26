@@ -1604,6 +1604,9 @@ fn tick_loop(
                         runtime.eval::<()>("globalThis.__rs2b0t_pending_native_event_batch = null");
                 }
                 if keep_work {
+                    // The host carry re-dispatches the held walk on the
+                    // relogged session; a Pause before the drop owes nothing.
+                    crate::walk_wait::clear_resume_debt();
                     // Frozen AutoRelogin pauses the whole script on a
                     // disconnect and resumes it after the relog
                     // (`AutoRelogin.ts:180-190`, `159-163`): every parked
@@ -1662,6 +1665,12 @@ fn tick_loop(
                 paused = true;
                 let _ = event_producer.set_paused(true);
                 sync_work_freeze(&mut work_frozen, true);
+                // Operator Pause drops the host route; the walk is re-sent
+                // after Resume. During a reconnect hold the host carry
+                // re-dispatches the walk instead.
+                if !session_held {
+                    crate::walk_wait::on_operator_pause();
+                }
                 clear_unconsumed_paint_click(&mut runtime);
             }
             IsolateCmd::Resume => {

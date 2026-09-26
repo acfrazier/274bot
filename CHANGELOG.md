@@ -554,6 +554,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   walks again. `walkResilient`'s baked leg does the same. A pack with no free
   slot and no banana skips the job, as frozen does. Qualification cell:
   `script_boat_fare_v1_ts`.
+- `Traversal.walkTo` keeps frozen `WalkOptions`: radius 2 and a 300 s bound
+  by default, an explicit teleport opt-out wins, `distanceBeforeTeleport`
+  gates teleports, and the card's Sustain hook runs every tick of the walk.
+  Options the host cannot honour (`avoidZones`, teleport id lists, ship or
+  shortcut exclusion, `pathFollow`, `forceRepath`) now fail loudly instead
+  of being dropped.
+- Stopping a script, or a script stopping itself, now stops its walk; after
+  an operator Pause, Resume sends the paused walk again instead of waiting
+  out its timeout.
 
 ### Upgrade compatibility
 

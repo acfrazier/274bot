@@ -7040,13 +7040,15 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_walk_to_queues_native_route_not_scene_walk_to() {
+    // An exact walk (radius 0); the frozen option defaults are pinned by
+    // behaviour in `walk_options.rs`.
     let src = r#"
 import { Traversal } from '../../api/walking/Traversal.js';
 export default class T extends LoopingBot {
     async loop() {
         globalThis.__probe = 'go';
         try {
-            await Traversal.walkTo({ x: 3222, z: 3223, level: 0 });
+            await Traversal.walkTo({ x: 3222, z: 3223, level: 0 }, { radius: 0 });
         } catch (e) {
             globalThis.__probe = String(e.message || e);
         }

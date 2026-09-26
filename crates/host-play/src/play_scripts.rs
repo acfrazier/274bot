@@ -334,6 +334,9 @@ impl Play {
         if let Some(slot) = guard.as_mut() {
             slot.stop();
         }
+        // A stopped script's walk stops with it, as a returned frozen walk
+        // has stopped its walker: the pump must not keep following it.
+        abort_script_walk(&self.navs, name);
         // Keep the script admission lock until its bank epoch is invalidated.
         // A previously dequeued worker can no longer publish or arm a route.
         invalidate_bank_pick(&self.navs, name);
@@ -362,6 +365,7 @@ impl Play {
                 return false;
             }
             slot.stop();
+            abort_script_walk(&self.navs, name);
             invalidate_bank_pick(&self.navs, name);
         }
         self.clear_script_paint_status(name);

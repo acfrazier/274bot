@@ -1066,6 +1066,15 @@ impl NavBot {
         self.walk_missing_carry.clear();
     }
 
+    /// Whether a script walk is armed, in flight or following.
+    pub(crate) fn script_walk_armed(&self) -> bool {
+        self.route.is_some()
+            || self.route_worker.is_some()
+            || self.pending_route.is_some()
+            || self.requested_route.is_some()
+            || self.walk_request_id != 0
+    }
+
     /// Record the shopping list of the failure this attempt published. Only
     /// the outcome that is live when the diagnosis lands carries one: a
     /// superseded worker (stale generation) and a refusal `note_failure`

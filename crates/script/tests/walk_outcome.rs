@@ -602,7 +602,8 @@ fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u
 #[test]
 fn walk_to_off_scene_world_dest_queues_native_walk_not_scene_walk_to() {
     let iso = LoadIsolate::spawn(
-        walk_to_src("Traversal.walkTo({ x: 3096, z: 9868, level: 0 })"),
+        // An exact walk; the frozen default radius 2 is `walk_options.rs`'s.
+        walk_to_src("Traversal.walkTo({ x: 3096, z: 9868, level: 0 }, { radius: 0 })"),
         LoadShape::CompatClass,
         vec![],
     )

@@ -272,6 +272,19 @@ pub(crate) fn script_observe_cached(
         slot.observe_lifecycle();
         // Reap a script-requested Stop before advancing host continuations.
         emit_script_debug_logs(&mut slot, name);
+        // A script that stopped itself or died leaves no owner for its walk:
+        // stop the follow, as operator Stop does.
+        if matches!(
+            slot.state(),
+            script::RunState::Idle | script::RunState::Error
+        ) && navs
+            .lock()
+            .unwrap()
+            .get(name)
+            .is_some_and(NavBot::script_walk_armed)
+        {
+            abort_script_walk(navs, name);
+        }
         slot.on_is_up(up);
         // Compiled clue machine: apply the owed abort and this frame's
         // pause/hold freeze here, on the slot's own thread, whether or not

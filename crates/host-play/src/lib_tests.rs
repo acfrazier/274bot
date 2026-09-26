@@ -14518,6 +14518,125 @@ fn pause_clears_live_recovery_walk() {
     play.script_stop("alice");
 }
 
+/// A script walk mid-follow: armed route, request id, worker.
+fn following_script_walk() -> NavBot {
+    let dest = WorldTile {
+        x: 2939,
+        z: 3154,
+        level: 0,
+    };
+    NavBot {
+        route: Some(Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        }),
+        route_worker: Some(Arc::new(())),
+        requested_route: Some((dest, 2, false, true, true)),
+        walk_request_id: 9,
+        route_request_id: 9,
+        ..NavBot::default()
+    }
+}
+
+#[test]
+fn operator_stop_stops_the_script_walk() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    play.script_start_load(
+        "alice",
+        "export default class T extends LoopingBot { loop() {} }".into(),
+        script::LoadShape::CompatClass,
+        None,
+        vec![],
+    )
+    .unwrap();
+    play.navs
+        .lock()
+        .unwrap()
+        .insert("alice".into(), following_script_walk());
+    play.script_stop("alice");
+    let navs = play.navs.lock().unwrap();
+    let bot = navs.get("alice").expect("nav bot");
+    assert!(
+        !bot.script_walk_armed(),
+        "Stop must end the script's walk, not leave the pump following it"
+    );
+}
+
+#[test]
+fn a_script_that_stops_itself_stops_its_walk() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let (navs, world) = empty_nav();
+    script_slot_or_insert(&scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_load_settled(
+            r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() { ScriptRunner.stop('done'); }
+}
+"#
+            .into(),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+    navs.lock()
+        .unwrap()
+        .insert("alice".into(), following_script_walk());
+    let mut c = bank_fetch_client();
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let stopped = wait_until(10_000, || {
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            None,
+            None,
+            Some(&snap),
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        !navs.lock().unwrap()["alice"].script_walk_armed()
+    });
+    assert!(
+        stopped,
+        "a self-stopped script's walk must not keep following"
+    );
+    assert_ne!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .state(),
+        script::RunState::Running
+    );
+}
+
 #[test]
 fn session_reset_clears_live_recovery_walk() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
