@@ -137,6 +137,14 @@ struct Wait {
     resume_owed: bool,
 }
 
+impl Wait {
+    /// Neither settled nor holding a latched host outcome: the host route
+    /// is still this wait's to finish.
+    fn open(&self) -> bool {
+        self.settled.is_none() && self.matched.is_none()
+    }
+}
+
 /// The one live wait. The player tile and the host outcome are read from
 /// the isolate scene; only the wait itself is this module's state.
 struct WalkSlot {
@@ -263,9 +271,7 @@ pub(crate) fn on_resume() {}
 pub(crate) fn on_operator_pause() {
     SLOT.with(|slot| {
         if let Some(wait) = slot.borrow_mut().wait.as_mut() {
-            if wait.settled.is_none() {
-                wait.resume_owed = true;
-            }
+            wait.resume_owed = wait.open();
         }
     });
 }
@@ -288,7 +294,7 @@ pub(crate) fn take_resume(token: u64) -> bool {
             .wait
             .as_mut()
             .filter(|wait| wait.token == token)
-            .is_some_and(|wait| std::mem::take(&mut wait.resume_owed))
+            .is_some_and(|wait| std::mem::take(&mut wait.resume_owed) && wait.open())
     })
 }
 

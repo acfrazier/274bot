@@ -177,8 +177,9 @@ pub(crate) trait Family: Sized + 'static {
     fn abort(&mut self, _why: AbortReason) {}
 
     /// The op that stops the host work this row armed (a host walk follow),
-    /// sent when a newer exclusive start supersedes the row. A reset needs
-    /// none: the host drops its session work itself.
+    /// sent when a newer exclusive start supersedes the row and when the
+    /// row fails or is terminated. A reset needs none: the host drops its
+    /// session work itself.
     fn release(&self) -> Option<InteractReq> {
         None
     }
@@ -1000,12 +1001,21 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
         let asked = cx.asks > 0;
         // An ask that failed ends the row whatever the step returned; the
         // ops of that step are dropped with it.
+        // Every ending stops the host work the row armed.
         match cx.ending.take() {
             Some(Ending::Stopped) => {
+                if let Some(op) = row.machine.release() {
+                    HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
+                }
                 row.machine.abort(AbortReason::Terminated);
                 return Some(Outcome::Aborted(AbortReason::Terminated));
             }
-            Some(Ending::Failed(thrown)) => return Some(Outcome::Failed(thrown)),
+            Some(Ending::Failed(thrown)) => {
+                if let Some(op) = row.machine.release() {
+                    HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
+                }
+                return Some(Outcome::Failed(thrown));
+            }
             None => {}
         }
         // An ask started a newer row of this exclusive family: that row
@@ -1021,7 +1031,12 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
         match step {
             Step::Wait => return None,
             Step::Done(value) => return Some(Outcome::Done(value)),
-            Step::Fail(thrown) => return Some(Outcome::Failed(thrown)),
+            Step::Fail(thrown) => {
+                if let Some(op) = row.machine.release() {
+                    HOST.with(|host| host.borrow_mut().place(*at, vec![op]));
+                }
+                return Some(Outcome::Failed(thrown));
+            }
             Step::Call(call) => {
                 let hook = row.hooks.get(call.hook).map(|hook| &hook.callback);
                 let called = js.call(hook, &call.args);

@@ -14576,6 +14576,50 @@ fn operator_stop_stops_the_script_walk() {
 }
 
 #[test]
+fn operator_pause_stops_an_ordinary_script_walk() {
+    // Frozen stops clicking at the paused await; the watchdog is Armed,
+    // not recovering, so this is the script's own route.
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    play.script_start_load(
+        "alice",
+        "export default class T extends LoopingBot { loop() {} }".into(),
+        script::LoadShape::CompatClass,
+        None,
+        vec![],
+    )
+    .unwrap();
+    assert!(script_slot(&play.scripts, "alice")
+        .unwrap()
+        .lock()
+        .unwrap()
+        .watchdog()
+        .recovering_anchor()
+        .is_none());
+    play.navs
+        .lock()
+        .unwrap()
+        .insert("alice".into(), following_script_walk());
+    play.script_pause("alice");
+    assert!(
+        !play.navs.lock().unwrap()["alice"].script_walk_armed(),
+        "Pause must stop the script's route, not leave the pump following it"
+    );
+    play.script_stop("alice");
+}
+
+#[test]
 fn a_script_that_stops_itself_stops_its_walk() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =

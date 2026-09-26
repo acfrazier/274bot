@@ -560,9 +560,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   Options the host cannot honour (`avoidZones`, teleport id lists, ship or
   shortcut exclusion, `pathFollow`, `forceRepath`) now fail loudly instead
   of being dropped.
-- Stopping a script, or a script stopping itself, now stops its walk; after
-  an operator Pause, Resume sends the paused walk again instead of waiting
-  out its timeout.
+- Stopping or pausing a script, or a script stopping itself, now stops its
+  walk; Resume sends a paused walk that had not finished again instead of
+  waiting out its timeout. A walk interrupted by a random event, or whose
+  Sustain hook throws, also stops its route.
 
 ### Upgrade compatibility
 

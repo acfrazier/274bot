@@ -301,9 +301,11 @@ impl Play {
             let Ok(mut slot) = slot.lock() else {
                 return;
             };
-            if slot.pause() {
-                abort_script_walk(&self.navs, name);
-            }
+            // Frozen stops clicking at the paused `await`: the host follow of
+            // any script-owned route stops too, recovery walk or not. The
+            // walk wait re-issues an unsettled request after Resume.
+            slot.pause();
+            abort_script_walk(&self.navs, name);
         }
         self.wake(name);
     }

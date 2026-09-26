@@ -48,6 +48,7 @@ struct World {
     options: Vec<String>,
     lines: Vec<ChatLine>,
     seq: i32,
+    ours: bool,
 }
 
 impl World {
@@ -63,6 +64,7 @@ impl World {
             options: Vec::new(),
             lines: Vec::new(),
             seq: 0,
+            ours: false,
         }
     }
 
@@ -92,6 +94,7 @@ impl World {
         let here = self.here;
         observed::post(self.tick, |post| {
             post.session(true)
+                .ours(self.ours)
                 .here(observed::Tile {
                     x: here.x,
                     z: here.z,
@@ -234,8 +237,9 @@ fn start_walk_to(world: &mut World) -> machine::Handle {
     }
 }
 
-#[test]
-fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
+/// The whole plantation job up to the re-walk to the boat; returns the
+/// row, the world, the first walk and the re-walk.
+fn earn_the_fare() -> (machine::Handle, World, InteractReq, InteractReq) {
     reset();
     let mut world = World::new(MUSA, 5);
     let h = start_walk_to(&mut world);
@@ -320,18 +324,39 @@ fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
         },
     );
 
-    // The fare is held: the one re-walk to the boat, and it arrives.
     let again = until(
         &mut world,
         "walk to the boat again",
         walk_near(PORT_SARIM, 2),
     );
+    (h, world, first[0].clone(), again)
+}
+
+#[test]
+fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
+    let (h, mut world, first, again) = earn_the_fare();
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
     world.post();
     assert!(tick().is_empty());
-    assert_ne!(token(&again), token(&first[0]));
+    assert_ne!(token(&again), token(&first));
     assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(true))));
+}
+
+#[test]
+fn an_interrupt_during_the_re_walk_stops_it_and_ends_false() {
+    // Frozen follow pass: EventSignal.pending ends the walk (WalkExecutor.ts:844-853).
+    let (h, mut world, _, again) = earn_the_fare();
+    world.ours = true;
+    world.post();
+    assert_eq!(
+        tick(),
+        vec![InteractReq::AbortWalk {
+            request_id: token(&again)
+        }],
+        "the interrupted re-walk stops its host follow"
+    );
+    assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
 }
 
 #[test]

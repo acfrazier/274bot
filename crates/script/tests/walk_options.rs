@@ -1,6 +1,7 @@
-//! Frozen `Traversal.walkResilient` options the host maps rather than
-//! runs: `maxBudget` (`Traversal.ts:24, 106`); and frozen `Traversal.walkTo`
-//! `WalkOptions` (`WalkExecutor.ts:113–139, 165–177, 226–245`).
+//! Frozen `Traversal.walkResilient` / `Traversal.walkTo` options: the
+//! `maxBudget` / `maxExpansions` search bounds (`Traversal.ts:24, 106`,
+//! `WalkExecutor.ts:230`) and walkTo's `WalkOptions`
+//! (`WalkExecutor.ts:113–139, 165–177, 226–245`).
 
 use script::isolate_fb::TileInput;
 use script::shim::InteractReq;
@@ -9,20 +10,24 @@ use script::{LoadIsolate, LoadShape};
 mod common;
 use common::{ingame_snapshot, post_snapshot_input};
 
-fn walk_with_budget(max_budget: u64) -> (Vec<String>, Vec<InteractReq>) {
+/// A frozen search bound (`maxBudget` on walkResilient, `maxExpansions` on
+/// walkTo) is accepted and the walk still routes and settles: the host
+/// router's own bound never searches less than a frozen caller asked.
+fn walk_with_bound(call: &str) -> (String, Vec<InteractReq>, serde_json::Value) {
     let src = format!(
         r#"
 import {{ Traversal }} from '../../api/walking/Traversal.js';
 export default class T extends LoopingBot {{
-    loop() {{
+    async loop() {{
         if (globalThis.__did) return;
         globalThis.__did = true;
-        globalThis.__logs = [];
-        Traversal.walkResilient({{ x: 3222, z: 3240, level: 0 }}, {{
-            radius: 0,
-            maxBudget: {max_budget},
-            log: (m) => globalThis.__logs.push(String(m)),
-        }});
+        globalThis.__err = '';
+        globalThis.__ok = null;
+        try {{
+            globalThis.__ok = await {call};
+        }} catch (e) {{
+            globalThis.__err = String(e.message || e);
+        }}
     }}
 }}
 "#
@@ -36,49 +41,58 @@ export default class T extends LoopingBot {{
     });
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
+    iso.probe("true").unwrap();
+    let ops = iso.drain_interacts();
+    // The route ends at the dest.
     snap.tick = 2;
+    snap.here = Some(TileInput {
+        x: 3222,
+        z: 3240,
+        level: 0,
+    });
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
-    let logs: Vec<String> = serde_json::from_value(iso.probe("__logs").unwrap()).unwrap();
-    let ops = iso.drain_interacts();
+    iso.probe("true").unwrap();
+    let err = iso
+        .probe("__err")
+        .unwrap()
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let ok = iso.probe("__ok").unwrap();
     iso.join();
-    (logs, ops)
-}
-
-fn walked(ops: &[InteractReq]) -> bool {
-    ops.iter().any(|op| {
-        matches!(
-            op,
-            InteractReq::Walk {
-                x: 3222,
-                z: 3240,
-                ..
-            }
-        )
-    })
+    (err, ops, ok)
 }
 
 #[test]
-fn a_max_budget_within_the_host_bound_walks_without_a_note() {
-    // Frozen JiveKQ passes maxBudget 120_000 (route.ts:17): the host
-    // router searches its fixed bound, at least that far.
-    let (logs, ops) = walk_with_budget(120_000);
-    assert!(walked(&ops), "the baked walk goes out: {ops:?}");
-    assert!(
-        !logs.iter().any(|line| line.contains("maxBudget")),
-        "{logs:?}"
-    );
-}
-
-#[test]
-fn a_max_budget_above_the_host_bound_is_logged_not_refused() {
-    let (logs, ops) = walk_with_budget(9_000_000);
-    assert!(walked(&ops), "the walk still runs: {ops:?}");
-    assert!(
-        logs.iter().any(|line| line
-            == "walkResilient: maxBudget 9000000 is above the host search bound 4000000; routes search 4000000"),
-        "{logs:?}"
-    );
+fn a_frozen_search_bound_is_accepted_and_the_walk_still_resolves() {
+    // JiveKQ passes maxBudget 120_000 (route.ts:17); 0 and a bound past the
+    // host's own are accepted the same way.
+    for bound in [0u64, 120_000, 9_000_000] {
+        for call in [
+            format!(
+                "Traversal.walkResilient({{ x: 3222, z: 3240, level: 0 }}, {{ radius: 0, maxBudget: {bound} }})"
+            ),
+            format!(
+                "Traversal.walkTo({{ x: 3222, z: 3240, level: 0 }}, {{ radius: 0, maxExpansions: {bound} }})"
+            ),
+        ] {
+            let (err, ops, ok) = walk_with_bound(&call);
+            assert_eq!(err, "", "{call}");
+            assert!(
+                ops.iter().any(|op| matches!(
+                    op,
+                    InteractReq::Walk {
+                        x: 3222,
+                        z: 3240,
+                        ..
+                    }
+                )),
+                "{call}: the walk goes out: {ops:?}"
+            );
+            assert_eq!(ok, true, "{call}: the walk settles arrived");
+        }
+    }
 }
 
 /// One `Traversal.walkTo(3222,3240)` with `opts` (a JS object literal) from
@@ -251,23 +265,6 @@ fn walk_to_refuses_options_the_host_cannot_honour() {
 }
 
 #[test]
-fn walk_to_max_expansions_above_the_host_bound_is_logged_not_refused() {
-    let (ops, logs, err, _, _) = walk_to_with("{ maxExpansions: 9000000 }", 2);
-    assert_eq!(err, "");
-    assert_eq!(world_walks(&ops).len(), 1, "{ops:?}");
-    assert!(
-        logs.iter().any(|line| line
-            == "walkTo: maxExpansions 9000000 is above the host search bound 4000000; routes search 4000000"),
-        "{logs:?}"
-    );
-    let (_, logs, _, _, _) = walk_to_with("{ maxExpansions: 500000 }", 2);
-    assert!(
-        !logs.iter().any(|line| line.contains("maxExpansions")),
-        "{logs:?}"
-    );
-}
-
-#[test]
 fn walk_to_runs_the_callers_sustain_every_tick_it_walks() {
     // Frozen `await Sustain.run()` on every follow pass (WalkExecutor.ts:844-853).
     let (ops, _, err, sus, ok) = walk_to_with("{}", 5);
@@ -275,4 +272,46 @@ fn walk_to_runs_the_callers_sustain_every_tick_it_walks() {
     assert_eq!(ok, serde_json::Value::Null, "still walking");
     assert_eq!(world_walks(&ops).len(), 1, "{ops:?}");
     assert!(sus >= 4, "Sustain ran {sus} times over 5 walking ticks");
+}
+
+#[test]
+fn walk_to_a_throwing_sustain_stops_the_host_walk_it_armed() {
+    let src = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+import { Sustain } from '../../api/sustain/Sustain.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__err = '';
+        Sustain.set(() => { throw new Error('sustain boom'); });
+        try {
+            await Traversal.walkTo({ x: 3222, z: 3240, level: 0 });
+        } catch (e) {
+            globalThis.__err = String(e.message || e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = ingame_snapshot();
+    let mut ops = Vec::new();
+    for tick in 1..=3 {
+        snap.tick = tick;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+        ops.extend(iso.drain_interacts());
+    }
+    let err = iso.probe("__err").unwrap();
+    iso.join();
+    assert_eq!(err, "sustain boom", "the rejection reaches the caller");
+    let token = match world_walks(&ops).as_slice() {
+        [InteractReq::WalkNear { request_id, .. }] => *request_id,
+        other => panic!("one world walk, got {other:?}"),
+    };
+    assert!(
+        ops.contains(&InteractReq::AbortWalk { request_id: token }),
+        "the failed walk stops its host follow: {ops:?}"
+    );
 }

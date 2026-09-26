@@ -810,9 +810,9 @@ impl SlotScript {
     }
 
     /// Operator Pause: `want_run` stays false (survives login) until
-    /// Resume. Instance kept. Returns whether a live recovery walk must be
-    /// aborted on the host nav bot.
-    pub fn pause(&mut self) -> bool {
+    /// Resume. Instance kept. The host stops the script's walk
+    /// (`abort_script_walk`), a watchdog recovery walk included.
+    pub fn pause(&mut self) {
         self.want_run = false;
         self.revoke_native_input();
         if let Some(pending) = &mut self.pending_withdraw_x {
@@ -821,8 +821,6 @@ impl SlotScript {
         if let Some(pending) = &mut self.pending_bank_op {
             pending.freeze();
         }
-        #[cfg(feature = "load")]
-        let mut abort_recovery = false;
         if self.has_instance() && matches!(self.state, RunState::Running | RunState::Starting) {
             #[cfg(feature = "load")]
             if let Some(isolate) = &self.load {
@@ -830,21 +828,10 @@ impl SlotScript {
             }
             #[cfg(feature = "load")]
             {
-                abort_recovery = matches!(
-                    self.watchdog.abort_owned_recovery(),
-                    WatchdogAction::AbortWalk
-                );
+                let _ = self.watchdog.abort_owned_recovery();
                 let _ = self.watchdog.set_frozen(true, Instant::now());
             }
             self.state = RunState::Paused;
-        }
-        #[cfg(feature = "load")]
-        {
-            abort_recovery
-        }
-        #[cfg(not(feature = "load"))]
-        {
-            false
         }
     }
 

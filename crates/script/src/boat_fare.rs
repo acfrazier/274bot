@@ -10,7 +10,8 @@
 //! `WalkOptions` (`WalkExecutor.ts:113–139, 226–245`): `radius` defaults to
 //! 2 and `timeoutMs` to 300 s; teleports are `resolveWalkUseTeleports` (an
 //! explicit false wins) gated on `policy.distanceBeforeTeleport`;
-//! `maxExpansions` maps to the host router's fixed bound (logged above it);
+//! `maxExpansions` is accepted: it bounds the frozen PathFinder, and the host
+//! router searches to its own bound (4,000,000 expansions), never less;
 //! `bankItemCounts` is not a host input (the BankBudget fetch reads the live
 //! bank). `avoidZones`, teleport id lists, `useShips`/`useShortcuts` false,
 //! `pathFollow` and `forceRepath` have no host wire and are refused loud.
@@ -48,9 +49,7 @@ use crate::reach_entity::{
     chat_mark, chat_state, npc_talkable, NpcReach, NpcReachOpts, TalkExpect,
 };
 use crate::shim::InteractReq;
-use crate::walk::{
-    here, interrupted, resolve_teleports, teleport_span_allows, Resilient, Walk, HOST_SEARCH_BOUND,
-};
+use crate::walk::{here, interrupted, resolve_teleports, teleport_span_allows, Resilient, Walk};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
 use serde_json::json;
@@ -1076,8 +1075,6 @@ pub(crate) struct WalkToArgs {
     use_teleport_catalog: Option<bool>,
     #[serde(default)]
     policy: WalkToPolicy,
-    #[serde(default)]
-    max_expansions: Option<u64>,
     /// How many `avoidZones` the caller passed.
     #[serde(default)]
     avoid_zones: usize,
@@ -1123,19 +1120,6 @@ impl WalkToArgs {
                 teleport_span_allows(self.policy.distance_before_teleport.unwrap_or(0), me, dest)
             })
     }
-}
-
-/// Frozen `maxExpansions` caps the walk's search (`WalkExecutor.ts:230`).
-/// The host router searches every walk to one fixed bound
-/// ([`HOST_SEARCH_BOUND`]) with no `budget` outcome, so a cap at or under it
-/// is searched at least that far; one above it is logged.
-fn max_expansions_note(max: u64) -> Option<String> {
-    (max > HOST_SEARCH_BOUND).then(|| {
-        format!(
-            "walkTo: maxExpansions {max} is above the host search bound \
-             {HOST_SEARCH_BOUND}; routes search {HOST_SEARCH_BOUND}"
-        )
-    })
 }
 
 enum WalkToPhase {
@@ -1189,11 +1173,7 @@ impl Family for WalkTo {
                     walk,
                     retried: false,
                 },
-                logs: args
-                    .max_expansions
-                    .and_then(max_expansions_note)
-                    .into_iter()
-                    .collect(),
+                logs: VecDeque::new(),
                 result: None,
                 pumped: false,
                 waiting: false,
@@ -1223,6 +1203,13 @@ impl Family for WalkTo {
                 self.pumped = false;
                 return Step::Wait;
             }
+            // Frozen follow pass: `EventSignal.pending()` ends the walk
+            // before `Sustain.run()` (`WalkExecutor.ts:844–853, 359–362`),
+            // the re-walk and the recovery included; the host route stops.
+            if interrupted() {
+                self.interrupt(cx);
+                continue;
+            }
             // Frozen `await Sustain.run()` on every follow pass
             // (`WalkExecutor.ts:844–853`) and at the recovery's points
             // (`karamja.ts:55, 91`; `Traversal.ts:130` in its resilient
@@ -1244,9 +1231,28 @@ impl Family for WalkTo {
             }
         }
     }
+
+    fn release(&self) -> Option<InteractReq> {
+        match &self.phase {
+            WalkToPhase::Walking { walk, .. } => Some(walk.release()),
+            WalkToPhase::Recover(recover) => recover.release(),
+        }
+    }
 }
 
 impl WalkTo {
+    /// Frozen `'interrupted'`: the walk returns false and stops its walker.
+    fn interrupt(&mut self, cx: &mut Cx<'_>) {
+        if let Some(stop) = Family::release(self) {
+            cx.emit(stop);
+        }
+        if matches!(self.phase, WalkToPhase::Walking { .. }) {
+            self.logs
+                .push_back("walk interrupted — a random event is being handled".into());
+        }
+        self.result = Some(false);
+    }
+
     fn advance(&mut self, cx: &mut Cx<'_>) {
         match &mut self.phase {
             WalkToPhase::Walking { walk, retried } => {
