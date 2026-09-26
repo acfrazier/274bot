@@ -351,7 +351,6 @@ impl<'a> Cx<'a> {
 impl Cx<'_> {
     /// Append one game op to this tick's InteractReq batch.
     pub(crate) fn emit(&mut self, op: InteractReq) {
-        crate::walk_wait::note_request(&op);
         self.ops.push(op);
     }
 
@@ -942,14 +941,6 @@ fn pass(js: &mut impl Js, pass: Pass) {
     // Script code may have queued rows before this pass (a probe, the
     // recovery anchor, this tick's own JS); step ops land after them.
     let mut at = js.queue_len();
-    // An operator Pause dropped the host route of the live walk wait: its
-    // request goes out again on the first step after Resume, whichever
-    // family owns it (the deadline was frozen with the rows).
-    if pass == Pass::Step {
-        if let Some(op) = crate::walk_wait::take_owed_request() {
-            HOST.with(|host| host.borrow_mut().place(at, vec![op]));
-        }
-    }
     rows.retain_mut(|row| {
         if pass == Pass::Step {
             row.calls = 0;

@@ -172,11 +172,19 @@ arguments and awaits one completion.
   only the fare as missing), it earns the fare at Luthas's plantation and
   walks once more. Teleport id lists, ship or shortcut exclusion,
   `pathFollow` and `forceRepath` fail with `not impl`.
-- Operator Pause stops a script's walk and Resume sends it again if it had
-  not finished, whichever machine owns it (walks, reach, the hunt
-  steppers); during a reconnect hold the host's carry re-sends it instead.
-  Stop, or a script stopping itself, stops it for good. A
-  walk machine that fails (a throwing `Sustain` or `log`) stops its route.
+- The host owns a script's active route. Operator Pause ends the follow
+  and keeps the route as carried state, as a reconnect does; the first
+  dispatch after Resume sends it once more under its own request id,
+  whichever script code asked for it (walks, reach, the hunt steppers, a
+  bank open's booth walk, raw v2 requests, `walkNearestBank` while it is
+  still choosing). Nothing is re-sent when the script run changed, the
+  walk was cancelled (an `AbortWalk`, a failed walk machine, Stop, or the
+  script stopping itself), the player already stands within the walk's
+  arrival radius, or a newer walk request replaces it. A request queued
+  but not yet dispatched when Pause lands goes out once, as queued. A
+  watchdog recovery walk interrupted by Pause is re-armed on Resume.
+  Scene clicks (`WalkTo`, `DirectNavigator`) are not host routes and are
+  not carried.
 - **`createReturnToAnchorTask`:** `validate` is beyond the bot's leash plus
   slack. `execute` does nothing inside the arrive disk, walks a resilient leg
   first when farther than `longRangeTiles`, opens `obstacles` on the way

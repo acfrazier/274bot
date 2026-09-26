@@ -9,7 +9,8 @@ use nav::router::Route;
 use crate::play_status::lock_statuses;
 use crate::script_runtime;
 use crate::script_runtime::{
-    abort_script_walk, poll_start, script_slot, script_slot_or_insert, NavBot, ScriptWall,
+    abort_script_walk, pause_script, poll_start, script_slot, script_slot_or_insert, NavBot,
+    ScriptWall,
 };
 use crate::Play;
 
@@ -301,11 +302,7 @@ impl Play {
             let Ok(mut slot) = slot.lock() else {
                 return;
             };
-            // Frozen stops clicking at the paused `await`: the host follow of
-            // any script-owned route stops too, recovery walk or not. The
-            // walk wait re-issues an unsettled request after Resume.
-            slot.pause();
-            abort_script_walk(&self.navs, name);
+            pause_script(&mut slot, &self.navs, name);
         }
         self.wake(name);
     }

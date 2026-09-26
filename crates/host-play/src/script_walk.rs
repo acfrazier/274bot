@@ -24,7 +24,84 @@ pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name
         bot.requested_route = None;
         bot.walk_request_id = 0;
         bot.clear_walk_outcome();
+        // Cancelled for good: nothing carries it to a Resume or a relog.
+        bot.carried_walk = None;
     }
+}
+
+/// Operator Pause of the slot's script. Frozen stops clicking at the paused
+/// `await` and carries on the same walk after Resume, so the host ends the
+/// route it is following and carries it ([`hold_script_nav`], as a
+/// reconnect does); the first dispatch after Resume re-sends it once
+/// ([`resumed_walk`]). A watchdog recovery walk is not the script's: the
+/// watchdog re-arms it on Resume itself.
+pub(crate) fn pause_script(
+    slot: &mut script::SlotScript,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+) {
+    let recovery = slot.watchdog().recovering_anchor().is_some();
+    let generation = slot.runtime_generation();
+    slot.pause();
+    if recovery {
+        abort_script_walk(navs, name);
+    } else {
+        super::hold_script_nav(navs, name, Some(generation));
+    }
+}
+
+/// The carried walk the first dispatch after a Resume or a relog sends,
+/// if it still applies: not when a request in `queued` replaces it (a
+/// newer walk, a nearest-bank walk, an abort) and not when the player
+/// already stands within its arrival radius (`arrived`).
+pub(crate) fn resumed_walk(
+    carried: Option<script::shim::InteractReq>,
+    queued: &[script::shim::InteractReq],
+    arrived: impl FnOnce(WorldTile, i32) -> bool,
+) -> Option<script::shim::InteractReq> {
+    use script::shim::InteractReq;
+    let carried = carried?;
+    let superseded = queued.iter().any(|op| {
+        matches!(
+            op,
+            InteractReq::Walk { .. }
+                | InteractReq::WalkNear { .. }
+                | InteractReq::WalkNearestBank
+                | InteractReq::AbortWalk { .. }
+        )
+    });
+    if superseded {
+        return None;
+    }
+    let target = match &carried {
+        InteractReq::Walk { x, z, level, .. } => Some((
+            WorldTile {
+                x: *x,
+                z: *z,
+                level: *level,
+            },
+            0,
+        )),
+        InteractReq::WalkNear {
+            x,
+            z,
+            level,
+            radius,
+            ..
+        } => Some((
+            WorldTile {
+                x: *x,
+                z: *z,
+                level: *level,
+            },
+            *radius,
+        )),
+        _ => None,
+    };
+    if target.is_some_and(|(dest, radius)| arrived(dest, radius)) {
+        return None;
+    }
+    Some(carried)
 }
 
 pub(super) fn recovery_walk_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) -> bool {

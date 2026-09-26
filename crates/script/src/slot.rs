@@ -810,8 +810,9 @@ impl SlotScript {
     }
 
     /// Operator Pause: `want_run` stays false (survives login) until
-    /// Resume. Instance kept. The host stops the script's walk
-    /// (`abort_script_walk`), a watchdog recovery walk included.
+    /// Resume. Instance kept. The host ends the script's route and carries
+    /// it to Resume; a watchdog recovery walk is re-armed on Resume instead
+    /// ([`ProgressWatchdog::defer_recovery`]).
     pub fn pause(&mut self) {
         self.want_run = false;
         self.revoke_native_input();
@@ -828,7 +829,8 @@ impl SlotScript {
             }
             #[cfg(feature = "load")]
             {
-                let _ = self.watchdog.abort_owned_recovery();
+                // A recovery walk is resumed with the script, not dropped.
+                let _ = self.watchdog.defer_recovery();
                 let _ = self.watchdog.set_frozen(true, Instant::now());
             }
             self.state = RunState::Paused;

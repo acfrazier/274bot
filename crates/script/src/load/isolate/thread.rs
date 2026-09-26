@@ -1664,12 +1664,6 @@ fn tick_loop(
                 paused = true;
                 let _ = event_producer.set_paused(true);
                 sync_work_freeze(&mut work_frozen, true);
-                // Operator Pause drops the host route; the walk is re-sent
-                // after Resume. During a reconnect hold the host carry
-                // re-dispatches the walk instead.
-                if !session_held {
-                    crate::walk_wait::on_operator_pause();
-                }
                 clear_unconsumed_paint_click(&mut runtime);
             }
             IsolateCmd::Resume => {

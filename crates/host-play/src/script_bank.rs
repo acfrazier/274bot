@@ -35,6 +35,16 @@ pub(crate) struct BankPickState {
     facts: Option<Arc<NamedBankFacts>>,
 }
 
+impl BankPickState {
+    /// A `walk-nearest-bank` pick for the route of `route_generation` is
+    /// still being resolved (its walk not armed yet).
+    pub(crate) fn walking(&self, route_generation: u64) -> bool {
+        self.current
+            .as_ref()
+            .is_some_and(|active| active.job.request.walk_generation == Some(route_generation))
+    }
+}
+
 struct ActivePick {
     deadline: Option<Instant>,
     job: BankPickJob,

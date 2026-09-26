@@ -14854,14 +14854,24 @@ struct ReconnectRig {
     world: Option<Arc<NavWorld>>,
     client: Client,
     snap: GameSnapshot,
+    here: (i32, i32, i32),
 }
 
 type ArmedWalk = (u64, Option<(WorldTile, i32, bool, bool, bool)>);
 
 impl ReconnectRig {
     fn new(x: i32, z: i32) -> Self {
+        Self::with_source(walk_resilient_src(x, z, 1), open_world(64, 64), (3, 3, 0))
+    }
+
+    /// A rig running `source` on `world`, the player at `here`.
+    fn with_source(source: String, world: NavWorld, here: (i32, i32, i32)) -> Self {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-        Self::start(&scripts, x, z);
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load_settled(source, script::LoadShape::CompatClass, vec![])
+            .unwrap();
         let client = bank_client();
         let mut snap = GameSnapshot::new();
         snap.rebuild(&client);
@@ -14870,9 +14880,10 @@ impl ReconnectRig {
             cheats: Arc::new(Mutex::new(HashMap::new())),
             wires: Arc::new(Mutex::new(HashMap::new())),
             navs: Arc::new(Mutex::new(HashMap::new())),
-            world: Some(Arc::new(open_world(64, 64))),
+            world: Some(Arc::new(world)),
             client,
             snap,
+            here,
         }
     }
 
@@ -14901,7 +14912,7 @@ impl ReconnectRig {
             true,
             tick_edge,
             tick,
-            Some((3, 3, 0)),
+            Some(self.here),
             None,
             None,
             Some(&self.snap),
@@ -14951,8 +14962,11 @@ impl ReconnectRig {
 
     /// `Play::script_pause`: the slot pauses and its route stops.
     fn operator_pause(&self) {
-        self.slot().lock().unwrap().pause();
-        abort_script_walk(&self.navs, "alice");
+        pause_script(&mut self.slot().lock().unwrap(), &self.navs, "alice");
+    }
+
+    fn resume(&self) {
+        self.slot().lock().unwrap().resume();
     }
 
     fn boundary(&self, reconnect: bool) {
@@ -14982,6 +14996,204 @@ impl ReconnectRig {
             thread::sleep(Duration::from_millis(5));
         }
     }
+}
+
+/// An open `w`×`h` world whose south-west tile is `(x, z, 0)`.
+fn open_world_at(x: i32, z: i32, w: usize, h: usize) -> NavWorld {
+    let mut world = open_world(w, h);
+    world.collision.origin = WorldTile { x, z, level: 0 };
+    world
+}
+
+/// A compat script that runs `body` once (in an async `loop`), recording
+/// what it resolves to in `__rs_ok`.
+fn once_src(imports: &str, body: &str) -> String {
+    format!(
+        r#"
+{imports}
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__rs_ok = null;
+        try {{
+            globalThis.__rs_ok = await ({body});
+        }} catch (e) {{
+            globalThis.__rs_ok = String(e.message || e);
+        }}
+    }}
+}}
+"#
+    )
+}
+
+/// Pause with the rig's script walk armed, Resume, and the same walk goes
+/// out once more; nothing else is walked.
+fn pause_resume_resends(rig: &mut ReconnectRig) {
+    rig.frames(1);
+    let walks = rig.walks();
+    let armed = rig.armed();
+    assert_eq!(walks.len(), 1, "one walk before the Pause: {walks:?}");
+    rig.operator_pause();
+    assert_eq!(rig.armed(), (0, None), "Pause ends the follow");
+    rig.frames(2);
+    assert_eq!(rig.walks(), walks, "paused: nothing goes out");
+    rig.resume();
+    rig.frames(3);
+    rig.frames(4);
+    assert_eq!(rig.armed(), armed, "Resume re-arms the same walk");
+    assert_eq!(
+        rig.walks(),
+        vec![walks[0], walks[0]],
+        "the walk and its one re-send after Resume, nothing else"
+    );
+}
+
+#[test]
+fn operator_pause_carries_the_script_walk_and_resume_sends_it_once() {
+    let mut rig = ReconnectRig::new(40, 40);
+    pause_resume_resends(&mut rig);
+    rig.slot().lock().unwrap().stop();
+}
+
+/// A one-shot id-0 owner: the bank-access booth walk.
+#[test]
+fn a_paused_bank_access_booth_walk_resumes() {
+    let mut rig = ReconnectRig::with_source(
+        once_src(
+            "import { Bank } from '../../api/bank/Bank.js';",
+            "Bank.openNearestAccess({ name: 'Bank booth', op: 'Use-quickly' })",
+        ),
+        open_world_at(3190, 3190, 64, 64),
+        (3230, 3205, 0),
+    );
+    // The bank is closed: the booth is found in the scene, away from here.
+    rig.client.main_modal_id = -1;
+    rig.snap = GameSnapshot::new();
+    rig.snap.rebuild(&rig.client);
+    assert_eq!(rig.snap.bank_component_id(), -1, "the bank is closed");
+    pause_resume_resends(&mut rig);
+    assert_eq!(rig.walks()[0].0, 0, "an id-0 walk");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// The hunt steppers' world walk (WalkToSpot).
+#[test]
+fn a_paused_hunt_walk_resumes() {
+    let mut rig = ReconnectRig::with_source(
+        once_src(
+            "import { WalkToSpot } from '../../api/combat/hunting/combat.js';",
+            r#"(() => {
+                const host = {
+                    died: false, targetIdx: null, hpFraction: () => 1, panicHp: () => 0.2,
+                    retreatHp: () => 0.5, hasFood: () => false, needEat: () => false,
+                    style: () => 'range', safespotIndex: () => 0, buryBones: () => false,
+                    boneName: () => 'Bones', fight: { interruptWatch() {} }, log() {},
+                    setStatus() {},
+                };
+                const site = {
+                    key: 'test', target: 'Goblin', alsoHunt: [],
+                    safespots: [{ x: 2901, z: 9809, level: 0 }],
+                    meleeAnchor: { x: 2900, z: 9808, level: 0 },
+                    boxes: [{ minX: 2888, maxX: 2923, minZ: 9769, maxZ: 9816, level: 0 }],
+                    fireAtRange: false, rangedThreat: false, approach: [],
+                };
+                return new WalkToSpot(host, site).execute();
+            })()"#,
+        ),
+        open_world_at(2880, 9780, 64, 64),
+        (2914, 9809, 0),
+    );
+    pause_resume_resends(&mut rig);
+    rig.slot().lock().unwrap().stop();
+}
+
+/// The reach close-in walk (Reach.npcDialog with no NPC in the scene).
+#[test]
+fn a_paused_reach_walk_resumes() {
+    let mut rig = ReconnectRig::with_source(
+        once_src(
+            "import { Reach } from '../../api/walking/Reach.js';",
+            "Reach.npcDialog({ name: 'Traiborn', near: { x: 40, z: 40, level: 0 } })",
+        ),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    pause_resume_resends(&mut rig);
+    rig.slot().lock().unwrap().stop();
+}
+
+/// A walk whose machine failed (its Sustain threw) was stopped for good:
+/// a later Pause and Resume do not bring it back.
+#[test]
+fn a_failed_walk_is_not_resurrected_by_pause_and_resume() {
+    let mut rig = ReconnectRig::with_source(
+        once_src(
+            "import { Traversal } from '../../api/walking/Traversal.js';\n\
+             import { Sustain } from '../../api/sustain/Sustain.js';",
+            "(Sustain.set(() => { throw new Error('boom'); }), \
+             Traversal.walkTo({ x: 40, z: 40, level: 0 }))",
+        ),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    rig.frames(1);
+    rig.frames(2);
+    assert_eq!(
+        rig.slot().lock().unwrap().probe("__rs_ok").unwrap(),
+        "boom",
+        "the caller caught the failure"
+    );
+    let walks = rig.walks();
+    assert_eq!(walks.len(), 1, "{walks:?}");
+    assert_eq!(rig.armed(), (0, None), "the failed walk stopped its route");
+    rig.operator_pause();
+    rig.resume();
+    rig.frames(3);
+    rig.frames(4);
+    assert_eq!(rig.walks(), walks, "no ownerless walk after Resume");
+    assert_eq!(rig.armed(), (0, None));
+    rig.slot().lock().unwrap().stop();
+}
+
+/// The player reached the walk's radius while paused: Resume sends nothing
+/// and the walk settles arrived.
+#[test]
+fn arrival_while_paused_is_not_walked_again() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let walks = rig.walks();
+    rig.operator_pause();
+    rig.here = (40, 40, 0);
+    rig.resume();
+    rig.frames(2);
+    rig.frames(3);
+    assert_eq!(rig.walks(), walks, "no re-send once arrived");
+    assert_eq!(
+        rig.slot().lock().unwrap().probe("__rs_ok").unwrap(),
+        true,
+        "the walk settles arrived"
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Pause lands while the script's tick has queued its walk but before the
+/// host dispatched it: the host never started that route, so Resume sends
+/// the queued walk once and nothing more.
+#[test]
+fn a_walk_queued_before_the_pause_goes_out_once_after_resume() {
+    let mut rig = ReconnectRig::new(40, 40);
+    // The posting frame only: the tick queues the walk, nothing drains it.
+    rig.frame(1, true);
+    assert_eq!(rig.armed(), (0, None));
+    rig.operator_pause();
+    rig.resume();
+    rig.frames(2);
+    rig.frames(3);
+    let (request_id, requested) = rig.armed();
+    assert_eq!(requested, walk_dest(40, 40));
+    assert_eq!(rig.walks(), vec![(request_id, 40, 40)], "exactly once");
+    rig.slot().lock().unwrap().stop();
 }
 
 fn walk_dest(x: i32, z: i32) -> Option<(WorldTile, i32, bool, bool, bool)> {

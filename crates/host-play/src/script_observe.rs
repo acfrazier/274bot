@@ -19,8 +19,8 @@ use script::{ScriptCtx, SlotScript};
 use super::{
     abort_script_walk, action_slot, apply_watchdog_nav_action, dispatch_observed_bank_op,
     dispatch_script_interact_cached, fill_withdraw_action, pack_cached_reach, recovery_walk_idle,
-    route_inspect, script_slot, take_carried_walk, with_script_snapshot_input_shorts, NavBot,
-    PostedWalkOutcome, ScriptWalkArm, ScriptWall,
+    resumed_walk, route_inspect, script_slot, take_carried_walk, with_script_snapshot_input_shorts,
+    NavBot, PostedWalkOutcome, ScriptWalkArm, ScriptWall,
 };
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
@@ -804,11 +804,35 @@ pub(crate) fn script_observe_cached(
                     // resumed script asks for: the walk the host was
                     // following, then the walk requests the dropped
                     // connection never dispatched (newer, an abort included).
+                    // A carried walk goes out once, unless a queued walk
+                    // request replaces it or the player already arrived.
+                    let mut queued = Vec::new();
+                    let mut carried = None;
                     if up && !hold && here.is_some() && snapshot.is_some() {
-                        interact.extend(take_carried_walk(navs, name, slot.runtime_generation()));
-                        interact.extend(slot.take_held_walks());
+                        carried = take_carried_walk(navs, name, slot.runtime_generation());
+                        queued.extend(slot.take_held_walks());
                     }
-                    interact.extend(take_script_interacts(slot.drain_interacts(), slot_input));
+                    queued.extend(take_script_interacts(slot.drain_interacts(), slot_input));
+                    interact.extend(resumed_walk(carried, &queued, |dest, radius| {
+                        let (Some((x, z, level)), Some(snapshot)) = (here, snapshot) else {
+                            return false;
+                        };
+                        let view = pack_cached_reach(
+                            slot.reach_pack_cache(),
+                            Some(snapshot),
+                            here,
+                            world.as_deref(),
+                            canlight,
+                        )
+                        .view;
+                        api::query::is_arrived(
+                            api::snapshot::WorldTile { x, z, level },
+                            dest,
+                            radius,
+                            || view,
+                        )
+                    }));
+                    interact.extend(queued);
                 }
             }
         } else if slot.state() == script::RunState::Running {

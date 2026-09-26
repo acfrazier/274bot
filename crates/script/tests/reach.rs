@@ -280,50 +280,6 @@ fn missing_npc_close_in_failure_keeps_the_resilient_ladder_going() {
     iso.join();
 }
 
-/// Operator Pause drops the host route; the reach's close-in walk is sent
-/// again once after Resume, under its own request id.
-#[test]
-fn a_paused_reach_walk_is_sent_again_once_after_resume() {
-    let iso = spawn(NPC_DIALOG);
-    let mut snap = base(TileInput {
-        x: 0,
-        z: 0,
-        level: 0,
-    });
-    post(&iso, &snap);
-    tick(&iso, 1);
-    let walks = |ops: Vec<InteractReq>| -> Vec<u64> {
-        ops.into_iter()
-            .filter_map(|op| match op {
-                InteractReq::WalkNear {
-                    x: 5,
-                    z: 5,
-                    radius: 3,
-                    request_id,
-                    ..
-                } => Some(request_id),
-                _ => None,
-            })
-            .collect()
-    };
-    let first = walks(iso.drain_interacts());
-    assert_eq!(first.len(), 1, "the close-in walk goes out once: {first:?}");
-    iso.pause();
-    iso.resume();
-    for n in 2..=3 {
-        snap.tick = n;
-        post(&iso, &snap);
-        tick(&iso, n);
-    }
-    assert_eq!(
-        walks(iso.drain_interacts()),
-        first,
-        "Resume sends the same walk once more, no other"
-    );
-    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
-    iso.join();
-}
-
 #[test]
 fn stand_walk_failure_takes_the_ladder_scene_step_before_the_talk() {
     let iso = spawn(NPC_DIALOG);

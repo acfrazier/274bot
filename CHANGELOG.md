@@ -561,10 +561,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   walk. Options the host cannot honour (catalog zone ids, teleport id lists,
   ship or shortcut exclusion, `pathFollow`, `forceRepath`) now fail loudly
   instead of being dropped.
-- Stopping or pausing a script, or a script stopping itself, now stops its
-  walk; Resume sends any paused script walk that had not finished (walks,
-  reach, hunt steps) again instead of waiting out its timeout. A walk interrupted by a random event, or whose
-  Sustain hook throws, also stops its route.
+- Stopping a script, or a script stopping itself, now stops its walk. An
+  operator Pause stops the walk and the host carries it: Resume sends it
+  once more (any script walk, bank-open and raw v2 walks included) unless
+  it was cancelled, the player already arrived, or a newer walk replaced
+  it; a watchdog recovery walk resumes too. A walk interrupted by a random
+  event, or whose Sustain hook throws, also stops its route.
 
 ### Upgrade compatibility
 

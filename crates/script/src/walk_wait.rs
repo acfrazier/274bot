@@ -26,7 +26,6 @@
 
 use crate::isolate_fb::SnapshotReader;
 use crate::observed::{self, Scene};
-use crate::shim::InteractReq;
 use api::snapshot::WorldTile;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -132,21 +131,6 @@ struct Wait {
     matched: Option<bool>,
     /// The matched route end is frozen `'blocked'` (`Traversal.ts:171–174`).
     blocked: bool,
-    /// Operator Pause aborted the host follow (`abort_script_walk`) while
-    /// this wait was live; the machine host re-sends `request` once on the
-    /// first step after Resume (frozen resumes the same walk and repaths).
-    resume_owed: bool,
-    /// The walk request that carries this wait's token, as its owner sent
-    /// it ([`note_request`]).
-    request: Option<InteractReq>,
-}
-
-impl Wait {
-    /// Neither settled nor holding a latched host outcome: the host route
-    /// is still this wait's to finish.
-    fn open(&self) -> bool {
-        self.settled.is_none() && self.matched.is_none()
-    }
 }
 
 /// The one live wait. The player tile and the host outcome are read from
@@ -184,8 +168,6 @@ impl WalkSlot {
             seq_at_begin: outcome.seq,
             matched: None,
             blocked: false,
-            resume_owed: false,
-            request: None,
         });
         token
     }
@@ -268,52 +250,6 @@ pub(crate) fn on_reset() {
 pub(crate) fn on_pause() {}
 
 pub(crate) fn on_resume() {}
-
-/// A walk request an owner sent: the one carrying the live wait's token is
-/// what an operator Resume re-sends. Every walk owner (the Rust walk, the
-/// hunt steppers) sends through [`crate::machine::Cx::emit`], which calls
-/// this, so the re-send is one rule for every script walk.
-pub(crate) fn note_request(op: &InteractReq) {
-    let (InteractReq::Walk { request_id, .. } | InteractReq::WalkNear { request_id, .. }) = op
-    else {
-        return;
-    };
-    SLOT.with(|slot| {
-        if let Some(wait) = slot.borrow_mut().wait.as_mut() {
-            if *request_id != 0 && wait.token == *request_id {
-                wait.request = Some(op.clone());
-            }
-        }
-    });
-}
-
-/// Operator Pause: the host drops the live walk's route
-/// (`abort_script_walk`), so an open wait is owed one re-send of its request
-/// after Resume ([`take_owed_request`]). The isolate calls it only outside
-/// a reconnect hold: during one, the host carries the held walk and
-/// re-dispatches it itself. A debt recorded before a drop survives the
-/// reconnect: that Pause already ended the host route, so the host has no
-/// walk to carry.
-pub(crate) fn on_operator_pause() {
-    SLOT.with(|slot| {
-        if let Some(wait) = slot.borrow_mut().wait.as_mut() {
-            wait.resume_owed = wait.open() && wait.request.is_some();
-        }
-    });
-}
-
-/// The request an operator Resume owes, once: only while the wait is still
-/// open, so a route end or failure latched before the Pause is never
-/// walked again.
-pub(crate) fn take_owed_request() -> Option<InteractReq> {
-    SLOT.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        let wait = slot.wait.as_mut()?;
-        (std::mem::take(&mut wait.resume_owed) && wait.open())
-            .then(|| wait.request.clone())
-            .flatten()
-    })
-}
 
 pub(crate) fn on_hold(_held: bool) {}
 

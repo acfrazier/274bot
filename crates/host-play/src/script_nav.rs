@@ -124,12 +124,13 @@ pub(crate) struct NavBot {
     /// The game requests this slot's script sent, as dispatched here. Host
     /// data the catalog hunt watch reads; not an isolate wire.
     pub(crate) acts: crate::catalog_core::ScriptActLedger,
-    /// The script walk a reconnect interrupted, re-armed on the relogged
-    /// session ([`hold_script_nav`], [`take_carried_walk`]).
+    /// The script walk a reconnect or an operator Pause interrupted, re-sent
+    /// on the first dispatch after the relog or Resume ([`hold_script_nav`],
+    /// [`take_carried_walk`]).
     pub(crate) carried_walk: Option<CarriedWalk>,
 }
 
-/// A script walk held across a reconnect.
+/// A script walk held across a reconnect or an operator Pause.
 pub(crate) struct CarriedWalk {
     /// The script run it belongs to (`SlotScript::runtime_generation`): a
     /// Stop, Start or watchdog restart since the reconnect drops it.
@@ -1302,7 +1303,14 @@ pub(crate) fn hold_script_nav(
             || nav.route_worker.is_some()
             || nav.pending_route.is_some()
             || nav.bank_fetch.is_some();
-        if let (Some(runtime_generation), true, Some(requested)) =
+        let picking = nav.bank_pick.walking(nav.route_generation);
+        if let (Some(runtime_generation), true, true) = (carry, picking, !armed) {
+            // A nearest-bank walk still choosing its bank: re-ask for it.
+            nav.carried_walk = Some(CarriedWalk {
+                runtime_generation,
+                request: script::shim::InteractReq::WalkNearestBank,
+            });
+        } else if let (Some(runtime_generation), true, Some(requested)) =
             (carry, armed, nav.requested_route)
         {
             let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch) = requested;
