@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer;
-use ratatui::Terminal;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
 use nav::tile::Tile;
 use script::{RunState, ScriptKind, ScriptSel, ScriptSource};
 use vault::ProfileSettings;
 
+use crate::layout::Screen;
+use crate::overlay::Modal;
 use crate::script_shape::BrowseCard;
+use crate::test_support::{ch, draw, find, key, text};
 
 use host_play::walk_map::{
     ActionError, ActionKind, AuthenticatedServices, Catalogue, MapContext, WalkExclude,
@@ -38,10 +38,6 @@ fn bone_burier_card() -> BrowseCard {
         source: ScriptSource::Catalog,
         unloadable: None,
     }
-}
-
-fn key(code: KeyCode) -> KeyEvent {
-    KeyEvent::new(code, KeyModifiers::NONE)
 }
 
 fn tile(x: i32, z: i32) -> Tile {
@@ -216,9 +212,9 @@ fn bind_catalogue_map(app: &mut TuiApp, catalogue: std::sync::Arc<Catalogue>) {
 }
 
 fn search_and_jump(app: &mut TuiApp, query: &str) {
-    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
-    for ch in query.chars() {
-        app.on_key(key(KeyCode::Char(ch)));
+    assert_eq!(app.on_key(ch('/')), AppAction::None);
+    for c in query.chars() {
+        app.on_key(ch(c));
     }
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
 }
@@ -281,36 +277,47 @@ fn nature_crafter_paint() -> script::shim::ScriptPaint {
     }
 }
 
-fn buffer_position(buf: &Buffer, width: u16, needle: &str) -> Option<(u16, u16)> {
-    buf.content()
-        .chunks(usize::from(width))
-        .enumerate()
-        .find_map(|(row, cells)| {
-            let text: String = cells.iter().map(|cell| cell.symbol()).collect();
-            text.find(needle).map(|col| (col as u16, row as u16))
-        })
+/// A one-bot app on the Script tab (keyboard on the tab).
+fn script_app() -> TuiApp {
+    let mut app = crate::test_support::fleet_app(&["alice", "bob"]);
+    assert_eq!(app.show_screen(Screen::Script), AppAction::None);
+    app
 }
 
-/// Boot draws a neutral inactive Map pane and never requests catalogue work.
-#[test]
-fn draws_title_containing_274bot_without_map_demand() {
-    let mut app = TuiApp::new("274bot headless");
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
+fn thiever_schema() -> Vec<script::SettingDef> {
+    vec![script::SettingDef {
+        id: "target".into(),
+        ty: "string".into(),
+        default: Some("Man".into()),
+        label: None,
+        min: None,
+        max: None,
+        step: None,
+        options: Vec::new(),
+        option_labels: Vec::new(),
+        group: None,
+        show_if: None,
+        options_from: None,
+        csv_toggle: None,
+        help: None,
+        item_option_spec: None,
+    }]
+}
 
-    let buf = terminal.backend().buffer();
-    let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
+/// Boot shows the fleet and never requests catalogue work.
+#[test]
+fn boot_draws_the_fleet_without_map_demand() {
+    let mut app = TuiApp::new("274bot headless");
+    let rows = draw(&mut app, 80, 24);
+    let all = text(&rows);
+    assert!(rows[0].contains("274bot"), "title: {all}");
     assert!(
-        text.contains("274bot"),
-        "buffer does not contain title: {text:?}"
-    );
-    assert!(
-        text.contains("F4 activate"),
-        "map is explicit at boot: {text:?}"
+        all.contains("no bots loaded: m loads every vault profile"),
+        "an empty fleet says how to load: {all}"
     );
     assert_eq!(
         app.map_catalogue_status,
-        super::MapCatalogueStatus::Inactive,
+        MapCatalogueStatus::Inactive,
         "draw must not demand a catalogue"
     );
 }
@@ -328,16 +335,13 @@ fn draw_map_paints_walkable_dots_after_explicit_activation() {
         level: 0,
     });
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let buf = terminal.backend().buffer();
-    let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
-    assert!(text.contains('.'), "walkable tiles paint as dots: {text:?}");
+    let all = text(&draw(&mut app, 80, 24));
+    assert!(all.contains('.'), "walkable tiles paint as dots: {all:?}");
     assert!(
-        text.contains('@'),
-        "the here marker paints on the player tile: {text:?}"
+        all.contains('@'),
+        "the here marker paints on the player tile: {all:?}"
     );
-    assert!(text.contains("coverage:"), "coverage is visible: {text:?}");
+    assert!(all.contains("coverage:"), "coverage is visible: {all:?}");
 }
 
 /// The spec's WASD test: from (10,10) W steps north. +z is north on
@@ -369,30 +373,10 @@ fn wasd_w_from_10_10_walks_north_to_10_11() {
     assert_eq!(wasd_target(here, KeyCode::F(1)), None);
 }
 
+/// WASD walks only while Manual walk is armed, keeps the player's plane,
+/// and Esc disarms it. Outside Manual walk the letters are not walks.
 #[test]
-fn wasd_on_the_app_returns_a_walk_tile_action() {
-    let mut app = TuiApp::new("274bot headless");
-    app.names = vec!["test".into()];
-    app.focused = Some(0);
-    app.statuses = vec![host_play::SlotStatus {
-        username: "test".into(),
-        ingame: true,
-        scene_state: 2,
-        tile_x: 10,
-        tile_z: 10,
-        ..host_play::SlotStatus::default()
-    }];
-    app.refresh();
-    assert_eq!(
-        app.on_key(key(KeyCode::Char('w'))),
-        AppAction::WalkTile(tile(10, 11)),
-        "W on the app queues a one-tile north walk"
-    );
-}
-
-/// TASK-014 parity: upstairs origin must arm WASD on the player plane.
-#[test]
-fn player_at_plane_one_refresh_arms_wasd_with_level() {
+fn wasd_walks_only_while_manual_walk_is_armed() {
     let mut app = TuiApp::new("274bot headless");
     app.names = vec!["test".into()];
     app.focused = Some(0);
@@ -415,77 +399,51 @@ fn player_at_plane_one_refresh_arms_wasd_with_level() {
         }),
         "refresh must publish tile_level, not hardcoded ground"
     );
+    for c in ['w', 'a', 's', 'd'] {
+        assert!(
+            !matches!(app.on_key(ch(c)), AppAction::WalkTile(_)),
+            "{c} in the fleet pane is not a walk"
+        );
+    }
+    app.show_screen(Screen::Overview);
+    assert_eq!(app.on_key(ch('w')), AppAction::None, "w arms Manual walk");
+    assert_eq!(app.modal, Some(Modal::Manual));
+    let north = Tile {
+        x: 10,
+        z: 11,
+        level: 1,
+    };
+    assert_eq!(app.on_key(ch('w')), AppAction::WalkTile(north));
+    assert_eq!(app.on_key(key(KeyCode::Up)), AppAction::WalkTile(north));
     assert_eq!(
-        app.on_key(key(KeyCode::Char('w'))),
+        app.on_key(ch('d')),
         AppAction::WalkTile(Tile {
-            x: 10,
-            z: 11,
+            x: 11,
+            z: 10,
             level: 1,
-        }),
-        "W must keep the player plane when arming a one-tile walk"
+        })
     );
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+    assert_eq!(app.modal, None, "Esc disarms");
+    assert_eq!(app.on_key(ch('s')), AppAction::None, "s is not a walk now");
 }
 
+/// A chat modal is answered from the Chat tab only.
 #[test]
-fn lowercase_s_walks_south_when_settings_closed() {
-    let mut app = TuiApp::new("274bot headless");
-    app.names = vec!["test".into()];
-    app.focused = Some(0);
-    app.statuses = vec![host_play::SlotStatus {
-        username: "test".into(),
-        ingame: true,
-        scene_state: 2,
-        tile_x: 10,
-        tile_z: 10,
-        ..host_play::SlotStatus::default()
-    }];
-    app.refresh();
-    assert!(
-        !app.settings_state.open,
-        "settings must start closed so s is free for WASD"
-    );
-    assert_eq!(
-        app.on_key(key(KeyCode::Char('s'))),
-        AppAction::WalkTile(tile(10, 9)),
-        "lowercase s walks south when settings are closed"
-    );
-}
-
-#[test]
-fn q_quits_and_o_toggles_settings() {
-    let mut app = TuiApp::new("274bot headless");
-    assert_eq!(app.on_key(key(KeyCode::Char('o'))), AppAction::None);
-    assert!(app.settings_state.open, "o opens the settings popup");
-    assert_eq!(app.on_key(key(KeyCode::Char('q'))), AppAction::Quit);
-    assert!(app.quit);
-}
-
-#[test]
-fn m_spawns_the_rest_of_the_multibox_wall() {
-    let mut app = TuiApp::new("274bot headless");
-    assert_eq!(
-        app.on_key(key(KeyCode::Char('m'))),
-        AppAction::SpawnAll,
-        "m spawns every parked profile"
-    );
-}
-
-/// A chat modal on the focused snapshot routes Space/Enter to the
-/// chat pane instead of the map.
-#[test]
-fn chat_modal_open_routes_enter_to_continue() {
+fn chat_tab_routes_enter_to_continue() {
     let mut app = TuiApp::new("274bot headless");
     app.chat_data.modal_texts = vec!["The stranger waits.".into()];
     app.chat_data.has_continue = true;
+    app.show_screen(Screen::Chat);
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
         AppAction::Chat(super::ChatAction::Continue),
-        "Enter while a chat modal is up continues the dialog"
+        "Enter on the Chat tab continues the dialog"
     );
 }
 
 #[test]
-fn chat_modal_options_answer_on_space() {
+fn chat_tab_answers_options_on_space() {
     let mut app = TuiApp::new("274bot headless");
     app.chat_data.modal_texts = vec!["Which way?".into()];
     app.chat_data.options = vec![ChatOptionView {
@@ -493,8 +451,9 @@ fn chat_modal_options_answer_on_space() {
         text: "Yes".into(),
     }];
     app.chat_data.has_continue = true;
+    app.show_screen(Screen::Chat);
     assert_eq!(
-        app.on_key(key(KeyCode::Char(' '))),
+        app.on_key(ch(' ')),
         AppAction::Chat(super::ChatAction::Answer(1)),
         "Space answers the focused option"
     );
@@ -515,8 +474,9 @@ fn paint_showing_digit_routes_to_paint_button_not_wire() {
         canvas: Vec::new(),
         ..Default::default()
     }));
+    app.show_screen(Screen::Chat);
     assert_eq!(
-        app.on_key(key(KeyCode::Char('1'))),
+        app.on_key(ch('1')),
         AppAction::Chat(super::ChatAction::PaintButton(0)),
         "digit 1 dispatches the advertised paint button"
     );
@@ -531,19 +491,17 @@ fn paint_showing_digit_routes_to_paint_button_not_wire() {
 
 #[test]
 fn nature_crafter_button_is_rendered_and_only_its_row_is_clickable_at_140x40() {
-    const WIDTH: u16 = 140;
     let mut app = TuiApp::new("274bot headless");
     app.chat_data.script_paint = Some(std::sync::Arc::new(nature_crafter_paint()));
-    let mut terminal = Terminal::new(TestBackend::new(WIDTH, 40)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
+    app.show_screen(Screen::Chat);
+    let rows = draw(&mut app, 140, 40);
 
-    let buf = terminal.backend().buffer();
-    let (button_col, button_row) = buffer_position(buf, WIDTH, "[1] Go bank")
-        .expect("the advertised NatureCrafter button must be visible");
-    let (title_col, title_row) = buffer_position(buf, WIDTH, "NatureCrafter — Air")
-        .expect("the paint title must remain visible");
-    let (body_col, body_row) = buffer_position(buf, WIDTH, "Runtime: 1m")
-        .expect("the first paint status row must remain visible");
+    let (button_col, button_row) =
+        find(&rows, "[1] Go bank").expect("the advertised NatureCrafter button must be visible");
+    let (title_col, title_row) =
+        find(&rows, "NatureCrafter — Air").expect("the paint title must remain visible");
+    let (body_col, body_row) =
+        find(&rows, "Runtime: 1m").expect("the first paint status row must remain visible");
 
     assert_eq!(
         app.on_click(button_col, button_row),
@@ -566,15 +524,12 @@ fn nature_crafter_button_is_rendered_and_only_its_row_is_clickable_at_140x40() {
 
 #[test]
 fn nature_crafter_button_remains_visible_and_clickable_in_a_compact_terminal() {
-    const WIDTH: u16 = 48;
     let mut app = TuiApp::new("274bot headless");
     app.chat_data.script_paint = Some(std::sync::Arc::new(nature_crafter_paint()));
-    let mut terminal = Terminal::new(TestBackend::new(WIDTH, 18)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-
-    let (button_col, button_row) =
-        buffer_position(terminal.backend().buffer(), WIDTH, "[1] Go bank")
-            .expect("the focused paint button must survive compact layout clipping");
+    app.show_screen(Screen::Chat);
+    let rows = draw(&mut app, 48, 18);
+    let (button_col, button_row) = find(&rows, "[1] Go bank")
+        .expect("the focused paint button must survive compact layout clipping");
     assert_eq!(
         app.on_click(button_col, button_row),
         AppAction::Chat(super::ChatAction::PaintButton(0))
@@ -597,6 +552,26 @@ fn settings_enter_flips_random_events_and_marks_dirty() {
     assert!(app.settings_dirty, "the binary persists the change");
 }
 
+/// The settings popup owns the keyboard: global letters do not leak out
+/// (the old `q`/`x` in settings quit or removed the focused bot).
+#[test]
+fn settings_popup_keeps_letters_from_quitting_or_removing() {
+    let mut app = crate::test_support::fleet_app(&["alice"]);
+    app.show_screen(Screen::Overview);
+    assert_eq!(app.on_key(ch('o')), AppAction::None);
+    assert!(app.settings_state.open, "o opens the settings popup");
+    for c in ['q', 'x', 'i', 'm'] {
+        assert_eq!(app.on_key(ch(c)), AppAction::None, "{c} stays in settings");
+    }
+    assert!(!app.quit);
+    assert!(
+        app.modal.is_none(),
+        "no confirmation opened behind settings"
+    );
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+    assert!(!app.settings_state.open);
+}
+
 #[test]
 fn map_enter_confirms_a_walk_selection() {
     let mut app = TuiApp::new("274bot headless");
@@ -611,10 +586,9 @@ fn map_enter_confirms_a_walk_selection() {
         level: 0,
     });
     app.map.selection = Some(tile(2, 2));
-    assert_eq!(
-        app.on_key(key(KeyCode::Enter)),
-        AppAction::None,
-        "Enter must not confirm a map selection outside Map focus"
+    assert!(
+        !matches!(app.on_key(key(KeyCode::Enter)), AppAction::ArmWalk(_)),
+        "Enter must not confirm a map selection outside the Map tab"
     );
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
     assert!(app.map_model.pending().is_none());
@@ -633,23 +607,28 @@ fn map_enter_confirms_a_walk_selection() {
 
 #[test]
 fn map_focus_reserves_l_for_pan_and_esc_orders_search_before_close() {
-    let mut app = TuiApp::new("274bot headless");
-    assert_eq!(app.on_key(key(KeyCode::Char('l'))), AppAction::None);
-    assert!(app.loadouts_state.open, "l remains loadouts outside Map");
+    let mut app = crate::test_support::fleet_app(&["alice"]);
+    app.show_screen(Screen::Overview);
+    assert_eq!(app.on_key(ch('l')), AppAction::None);
+    assert!(
+        app.loadouts_state.open,
+        "l opens loadouts from the Overview"
+    );
     app.loadouts_state.open = false;
     app.world = Some(Arc::new(nav::world::NavWorld::from_grid(
         &nav::grid::StepGrid::fixture_open_3x3(),
     )));
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
     let before = app.map.pan;
-    assert_eq!(app.on_key(key(KeyCode::Char('l'))), AppAction::None);
-    assert_ne!(app.map.pan, before, "l pans only in Map focus");
+    assert_eq!(app.on_key(ch('l')), AppAction::None);
+    assert_ne!(app.map.pan, before, "l pans in the Map tab");
     assert!(!app.loadouts_state.open);
     app.map_search_open = true;
     assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
     assert!(app.map_active, "first Esc closes search only");
     assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::MapClose);
     assert!(!app.map_active);
+    assert_eq!(app.screen, Screen::Overview, "leaving the map goes back");
 }
 
 fn run_map_keyboard_walkthrough(width: u16, height: u16) {
@@ -659,17 +638,18 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
         MapCatalogueStatus::Inactive,
         "no catalogue demand before F4"
     );
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
+    draw(&mut app, width, height);
     assert_eq!(
         app.map_catalogue_status,
         MapCatalogueStatus::Inactive,
         "draw must not demand a catalogue"
     );
-    assert_eq!(
-        app.on_key(key(KeyCode::Enter)),
-        AppAction::None,
-        "Enter outside Map focus does not confirm"
+    assert!(
+        !matches!(
+            app.on_key(key(KeyCode::Enter)),
+            AppAction::ArmWalk(_) | AppAction::MapWalkGroup
+        ),
+        "Enter outside the Map tab does not confirm"
     );
 
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
@@ -698,24 +678,24 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
         },
     }];
 
-    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
+    assert_eq!(app.on_key(ch('/')), AppAction::None);
     assert!(app.map_search_open);
-    for ch in "varrock".chars() {
-        app.on_key(key(KeyCode::Char(ch)));
+    for c in "varrock".chars() {
+        app.on_key(ch(c));
     }
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert_eq!(app.map_poi_sel, Some(0), "search Enter jumps to the POI");
     assert!(app.map_model.pending().is_none());
 
-    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
-    for ch in "2,2,0".chars() {
-        app.on_key(key(KeyCode::Char(ch)));
+    assert_eq!(app.on_key(ch('/')), AppAction::None);
+    for c in "2,2,0".chars() {
+        app.on_key(ch(c));
     }
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert_eq!(app.map.selection, Some(tile(2, 2)));
     assert!(app.map_model.pending().is_some());
     assert_eq!(
-        app.on_key(key(KeyCode::Char('t'))),
+        app.on_key(ch('t')),
         AppAction::MapTeleport(tile(2, 2)),
         "t teleports the requested tile"
     );
@@ -727,24 +707,24 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
         "plane change clears pending selection"
     );
     let dots_before = app.map.layers.dots;
-    assert_eq!(app.on_key(key(KeyCode::Char('d'))), AppAction::None);
+    assert_eq!(app.on_key(ch('d')), AppAction::None);
     assert_ne!(app.map.layers.dots, dots_before);
     let collision_before = app.map.layers.collision;
-    assert_eq!(app.on_key(key(KeyCode::Char('c'))), AppAction::None);
+    assert_eq!(app.on_key(ch('c')), AppAction::None);
     assert_ne!(app.map.layers.collision, collision_before);
     let reach_before = app.map.layers.reach;
-    assert_eq!(app.on_key(key(KeyCode::Char('r'))), AppAction::None);
+    assert_eq!(app.on_key(ch('r')), AppAction::None);
     assert_ne!(app.map.layers.reach, reach_before);
-    assert_eq!(app.on_key(key(KeyCode::Char('R'))), AppAction::None);
+    assert_eq!(app.on_key(ch('R')), AppAction::None);
     assert_eq!(app.map.plane, 0);
     assert!(
         app.map_model.pending().is_none(),
         "recenter clears pending selection"
     );
 
-    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
-    for ch in "3,3,0".chars() {
-        app.on_key(key(KeyCode::Char(ch)));
+    assert_eq!(app.on_key(ch('/')), AppAction::None);
+    for c in "3,3,0".chars() {
+        app.on_key(ch(c));
     }
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert_eq!(
@@ -757,7 +737,7 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
         "blocked tiles remain selectable for Teleport"
     );
     assert_eq!(
-        app.on_key(key(KeyCode::Char('t'))),
+        app.on_key(ch('t')),
         AppAction::MapTeleport(Tile {
             x: 3,
             z: 3,
@@ -765,9 +745,9 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
         })
     );
 
-    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
-    for ch in "2,2,0".chars() {
-        app.on_key(key(KeyCode::Char(ch)));
+    assert_eq!(app.on_key(ch('/')), AppAction::None);
+    for c in "2,2,0".chars() {
+        app.on_key(ch(c));
     }
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert_eq!(
@@ -776,9 +756,13 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
     );
     assert!(app.map_model.pending().is_some());
 
-    assert_eq!(app.on_key(key(KeyCode::Char('g'))), AppAction::None);
+    assert_eq!(app.on_key(ch('g')), AppAction::None);
     assert_eq!(app.walk_send.mode, WalkSendMode::Group);
     assert_eq!(app.walk_send.walk_label(), "Walk 1 bots");
+    assert!(
+        app.table.is_marked("alice") && !app.table.is_marked("bob"),
+        "the group is the fleet's row selection: only eligible alice"
+    );
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
         AppAction::MapWalkGroup,
@@ -786,36 +770,31 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
     );
     assert!(!app.quit);
 
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let text: String = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect();
+    let all = text(&draw(&mut app, width, height));
+    assert!(all.contains("plane 0"), "{width}x{height} map title: {all}");
     assert!(
-        text.contains("plane 0"),
-        "{width}x{height} map title: {text:?}"
+        all.contains("legend:"),
+        "{width}x{height} map legend: {all}"
     );
     assert!(
-        text.contains("legend:"),
-        "{width}x{height} map legend: {text:?}"
+        all.contains("Walk 1 bots"),
+        "{width}x{height} group walk label: {all}"
     );
     assert!(
-        text.contains("Walk 1 bots"),
-        "{width}x{height} group walk label: {text:?}"
+        all.contains("no position yet"),
+        "{width}x{height} eligibility: {all}"
     );
     assert!(
-        text.contains("no position yet"),
-        "{width}x{height} eligibility: {text:?}"
-    );
-    assert!(
-        text.contains("obs:1"),
-        "{width}x{height} observed services: {text:?}"
+        all.contains("obs:1"),
+        "{width}x{height} observed services: {all}"
     );
 
-    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapClose);
+    assert_eq!(
+        app.on_key(key(KeyCode::Esc)),
+        AppAction::None,
+        "Esc clears the selection first"
+    );
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::MapClose);
     assert_eq!(app.map_catalogue_status, MapCatalogueStatus::Inactive);
     assert!(app.map_pois.is_empty(), "close releases the catalogue");
     assert!(app.map_observed.is_empty());
@@ -904,7 +883,7 @@ fn map_poi_confirm_keeps_catalogue_stand_and_blocks_view_only_labels() {
     app.map_model.clear_selection();
     app.map.selection = None;
     search_and_jump(&mut app, "booth");
-    assert_eq!(app.on_key(key(KeyCode::Char('g'))), AppAction::None);
+    assert_eq!(app.on_key(ch('g')), AppAction::None);
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::MapWalkGroup);
     assert_eq!(
         app.map_model.pending().expect("group").target,
@@ -920,18 +899,10 @@ fn map_status_shows_walk_refusal_at_120_and_80() {
     app.error = Some(ActionError::NoOrigin.to_string());
     app.walk_dest = None;
     for (width, height) in [(120, 40), (80, 24)] {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| app.draw(frame)).unwrap();
-        let text: String = terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let all = text(&draw(&mut app, width, height));
         assert!(
-            text.contains("status: Walk/Teleport unavailable: no observed player"),
-            "{width}x{height} missing refusal: {text:?}"
+            all.contains("status: Walk/Teleport unavailable: no observed player"),
+            "{width}x{height} missing refusal: {all}"
         );
     }
 }
@@ -945,9 +916,9 @@ fn map_search_types_j_and_k_and_navigates_with_arrows() {
         bank_poi("Bank kebab jewellery", 0, 0),
     ];
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
-    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
-    for ch in "bank kebab jewellery".chars() {
-        app.on_key(key(KeyCode::Char(ch)));
+    assert_eq!(app.on_key(ch('/')), AppAction::None);
+    for c in "bank kebab jewellery".chars() {
+        app.on_key(ch(c));
     }
     assert_eq!(
         app.map_search, "bank kebab jewellery",
@@ -957,8 +928,8 @@ fn map_search_types_j_and_k_and_navigates_with_arrows() {
 
     app.map_search.clear();
     app.map_search_sel = 0;
-    for ch in "varrock".chars() {
-        app.on_key(key(KeyCode::Char(ch)));
+    for c in "varrock".chars() {
+        app.on_key(ch(c));
     }
     assert_eq!(app.map_search_results.len(), 2);
     assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
@@ -972,9 +943,11 @@ fn map_search_types_j_and_k_and_navigates_with_arrows() {
     assert_eq!(app.map_search_sel, 1);
     assert_eq!(
         app.on_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
-        AppAction::None
+        AppAction::None,
+        "Ctrl-P in the map search moves the result cursor, not the palette"
     );
     assert_eq!(app.map_search_sel, 0);
+    assert!(app.modal.is_none());
     assert_eq!(app.map_search, "varrock");
 }
 
@@ -989,9 +962,9 @@ fn new_map_selection_clears_a_previous_blocked_status() {
         "a new view-centre selection must clear the leftover Blocked status"
     );
     app.error = Some(ActionError::Blocked.to_string());
-    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
-    for ch in "2,2,0".chars() {
-        app.on_key(key(KeyCode::Char(ch)));
+    assert_eq!(app.on_key(ch('/')), AppAction::None);
+    for c in "2,2,0".chars() {
+        app.on_key(ch(c));
     }
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert!(
@@ -1000,99 +973,8 @@ fn new_map_selection_clears_a_previous_blocked_status() {
     );
 }
 
-/// The review's focus test: Tab must produce an action that carries
-/// the newly focused name, so the binary can mirror it onto
-/// `Play::focus` (the app's index alone leaves the session on the
-/// boot slot's sample gate).
 #[test]
-fn tab_produces_a_focus_action_for_the_next_running_slot() {
-    let mut app = TuiApp::new("274bot headless");
-    app.names = vec!["a".into(), "b".into()];
-    app.focused = Some(0);
-    app.statuses = vec![
-        host_play::SlotStatus {
-            username: "a".into(),
-            ..host_play::SlotStatus::default()
-        },
-        host_play::SlotStatus {
-            username: "b".into(),
-            ..host_play::SlotStatus::default()
-        },
-    ];
-    assert_eq!(
-        app.on_key(key(KeyCode::Tab)),
-        AppAction::Focus("b".into()),
-        "Tab names the newly focused slot so Play::focus follows"
-    );
-    assert_eq!(app.focused, Some(1));
-    assert_eq!(
-        app.on_key(key(KeyCode::Tab)),
-        AppAction::Focus("a".into()),
-        "focus wraps around"
-    );
-    assert_eq!(app.focused, Some(0));
-}
-
-#[test]
-fn tab_with_no_running_slots_does_nothing() {
-    let mut app = TuiApp::new("274bot headless");
-    assert_eq!(app.on_key(key(KeyCode::Tab)), AppAction::None);
-}
-
-#[test]
-fn strip_click_selects_the_clicked_slot_name() {
-    let mut app = TuiApp::new("274bot headless");
-    app.names = vec!["a".into(), "b".into()];
-    // Strip text: `[a b]  focused: …`. Name spans: `a` at col 1,
-    // `b` at col 3.
-    assert_eq!(app.on_click(1, 0), AppAction::Focus("a".into()));
-    assert_eq!(
-        app.focused,
-        Some(0),
-        "the strip click updates the app focus, not only Play"
-    );
-    assert_eq!(app.on_click(3, 0), AppAction::Focus("b".into()));
-    assert_eq!(
-        app.focused,
-        Some(1),
-        "clicking slot B focuses B in the app too, so UI + input agree"
-    );
-    // Between the names is a miss.
-    assert_eq!(app.on_click(2, 0), AppAction::None);
-    assert_eq!(app.focused, Some(1), "a miss keeps the current focus");
-}
-
-#[test]
-fn full_draw_paints_all_panes() {
-    let mut app = TuiApp::new("274bot headless");
-    app.names = vec!["test".into()];
-    app.focused = Some(0);
-    app.statuses = vec![host_play::SlotStatus {
-        username: "test".into(),
-        ingame: true,
-        scene_state: 2,
-        tile_x: 10,
-        tile_z: 10,
-        ..host_play::SlotStatus::default()
-    }];
-    app.here = Some(api::snapshot::WorldTile {
-        x: 10,
-        z: 10,
-        level: 0,
-    });
-    app.script_state = RunState::Idle;
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let buf = terminal.backend().buffer();
-    let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
-    assert!(text.contains("focused: test"), "strip: {text:?}");
-    assert!(text.contains("ingame scene 2"), "status: {text:?}");
-    assert!(text.contains("[Start t]"), "script shape: {text:?}");
-    assert!(text.contains("script: idle"), "script state: {text:?}");
-}
-
-#[test]
-fn chat_pane_click_routes_to_answer() {
+fn chat_tab_click_routes_to_answer() {
     let mut app = TuiApp::new("274bot headless");
     app.chat_data.modal_texts = vec!["Which way?".into()];
     app.chat_data.options = vec![
@@ -1105,77 +987,61 @@ fn chat_pane_click_routes_to_answer() {
             text: "No thanks".into(),
         },
     ];
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
+    app.show_screen(Screen::Chat);
+    draw(&mut app, 100, 30);
     let chat_area = app.chat_area;
     assert!(chat_area.height >= 4, "chat pane has room for options");
-    // Option rows start after border + text + blank (see chat.rs):
-    // border row 0, text row 1, blank row 2, options from row 3.
-    let row = chat_area.y + 3;
+    // Option rows start after border + text + blank (see chat.rs).
     assert_eq!(
-        app.on_click(chat_area.x, row),
+        app.on_click(chat_area.x, chat_area.y + 3),
         AppAction::Chat(super::ChatAction::Answer(1)),
         "clicking the first option row answers option 1"
     );
 }
 
 #[test]
-fn chat_data_builds_from_snapshot_views() {
+fn chat_tab_paints_the_snapshot_ring() {
     let mut app = TuiApp::new("274bot headless");
     app.chat_data.lines = vec![line("welcome to 274")];
     assert!(!app.chat_data.is_modal_open());
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let buf = terminal.backend().buffer();
-    let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
-    assert!(
-        text.contains("welcome to 274"),
-        "chat ring paints: {text:?}"
-    );
+    app.show_screen(Screen::Chat);
+    let all = text(&draw(&mut app, 100, 30));
+    assert!(all.contains("welcome to 274"), "chat ring paints: {all:?}");
 }
 
-/// TR-TUI-001: when the focused script is Paused the pane shows
-/// `[Resume]` and clicking it dispatches the pause/resume toggle.
+/// TR-TUI-001: when the selected bot's script is Paused the pane shows
+/// `[Resume P]` and clicking it dispatches the pause/resume toggle.
 #[test]
 fn paused_script_shows_resume_and_click_dispatches_toggle() {
-    let mut app = TuiApp::new("274bot headless");
+    let mut app = script_app();
     app.script_state = RunState::Paused;
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let buf = terminal.backend().buffer();
-    let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
+    let rows = draw(&mut app, 100, 30);
+    let all = text(&rows);
     assert!(
-        text.contains("[Resume P]"),
-        "paused script paints Resume: {text:?}"
+        all.contains("[Resume P]"),
+        "paused script paints Resume: {all}"
     );
-    assert!(
-        !text.contains("[Pause P]"),
-        "paused script must not paint Pause: {text:?}"
-    );
-    let area = app.script_area;
-    // `[Browse b] ` + `[Start t] ` → `[Resume P]` at inner.x + 21 = area.x + 22.
+    assert!(!all.contains("[Pause P]"), "no Pause while paused: {all}");
+    let (col, row) = find(&rows, "[Resume P]").unwrap();
     assert_eq!(
-        app.on_click(area.x + 24, area.y + 2),
+        app.on_click(col + 2, row),
         AppAction::ScriptPause,
         "Resume click dispatches the pause/resume toggle"
     );
 }
 
-/// Task 13: with a Browse-selected JS card, clicking Start returns
-/// `AppAction::ScriptStart` carrying the card name (tui-play starts the
-/// load isolate on the focused slot).
+/// With a Browse-selected card, clicking Start carries that card.
 #[test]
 fn click_start_with_a_selected_card_returns_script_start() {
-    let mut app = TuiApp::new("274bot headless");
+    let mut app = script_app();
     app.script_sel = Some(ScriptSel::Loaded(
         ScriptSource::Catalog,
         "BoneBurier".into(),
     ));
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let area = app.script_area;
+    let rows = draw(&mut app, 100, 30);
+    let (col, row) = find(&rows, "[Start t]").unwrap();
     assert_eq!(
-        app.on_click(area.x + 14, area.y + 2),
+        app.on_click(col + 1, row),
         AppAction::ScriptStart(ScriptSel::Loaded(
             ScriptSource::Catalog,
             "BoneBurier".into(),
@@ -1186,7 +1052,7 @@ fn click_start_with_a_selected_card_returns_script_start() {
 
 #[test]
 fn browse_rows_select_a_card_for_start() {
-    let mut app = TuiApp::new("274bot headless");
+    let mut app = script_app();
     app.script_cards = vec![
         bone_burier_card(),
         BrowseCard {
@@ -1200,21 +1066,17 @@ fn browse_rows_select_a_card_for_start() {
         },
     ];
     app.script_category_order = vec!["Prayer".into(), "Skilling".into()];
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let area = app.script_area;
-    // The buttons row is the second inner line; `[Browse]` is first.
+    let rows = draw(&mut app, 100, 30);
+    let (col, row) = find(&rows, "[Browse b]").unwrap();
     assert_eq!(
-        app.on_click(area.x + 1, area.y + 2),
+        app.on_click(col + 1, row),
         AppAction::ScriptBrowse,
         "Browse opens the picker"
     );
     assert!(app.script_browse_open);
-    // Re-draw: the picker grows the pane and the card rows start at
-    // the third inner line (area.y + 3).
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let area = app.script_area;
-    assert_eq!(app.on_click(area.x + 2, area.y + 4), AppAction::None);
+    let rows = draw(&mut app, 100, 30);
+    let (col, row) = find(&rows, "BoneBurier").unwrap();
+    assert_eq!(app.on_click(col, row), AppAction::None);
     assert_eq!(
         app.script_sel,
         Some(ScriptSel::Loaded(
@@ -1224,17 +1086,17 @@ fn browse_rows_select_a_card_for_start() {
         "clicking the first card row selects it"
     );
     assert_eq!(
-        app.on_click(area.x + 14, area.y + 2),
+        app.on_key(ch('t')),
         AppAction::ScriptStart(ScriptSel::Loaded(
             ScriptSource::Catalog,
             "BoneBurier".into(),
         )),
-        "Start starts the card picked in Browse"
+        "t starts the card picked in Browse, with the picker still open"
     );
 }
 
-/// Task 7: the Load button opens the file browser; Enter on a file
-/// produces `AppAction::ScriptLoad` with that path.
+/// The Load button opens the file browser; Enter on a file produces
+/// `AppAction::ScriptLoad` with that path.
 #[test]
 fn load_browser_enter_returns_script_load() {
     let dir = std::env::temp_dir().join(format!("274bot-tui-load-browser-{}", std::process::id()));
@@ -1242,7 +1104,7 @@ fn load_browser_enter_returns_script_load() {
     let bot = dir.join("digbot.js");
     std::fs::write(&bot, "export function tick(api) { globalThis.__rs_n = 1 }").unwrap();
 
-    let mut app = TuiApp::new("274bot headless");
+    let mut app = script_app();
     app.script_load_dir = dir.clone();
     app.script_load_open = true;
     app.script_load_sel = 1; // [Up]=0, file=1
@@ -1260,8 +1122,8 @@ fn load_browser_enter_returns_script_load() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Task 5 fix: clicking `[Params]` opens the popup; Space toggles a
-/// bool into the bag Start would post.
+/// Clicking `[Params]` opens the popup; Space toggles a bool into the bag
+/// Start would post.
 #[test]
 fn script_params_click_and_space_toggle_persist_bool() {
     let dir = std::env::temp_dir().join(format!("274bot-tui-app-params-{}", std::process::id()));
@@ -1285,17 +1147,16 @@ fn script_params_click_and_space_toggle_persist_bool() {
         help: None,
         item_option_spec: None,
     }];
-    let mut app = TuiApp::new("274bot headless");
+    let mut app = script_app();
     app.script_sel = Some(ScriptSel::Loaded(
         ScriptSource::Catalog,
         "ChickenKiller".into(),
     ));
     app.params_schema = schema;
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let area = app.script_area;
+    let rows = draw(&mut app, 100, 30);
+    let (col, row) = find(&rows, "[Params v]").unwrap();
     assert_eq!(
-        app.on_click(area.x + 1, area.y + 3),
+        app.on_click(col + 1, row),
         AppAction::ScriptParams,
         "[Params] opens the popup"
     );
@@ -1309,7 +1170,7 @@ fn script_params_click_and_space_toggle_persist_bool() {
         commits.push((id.to_string(), value));
         Ok(())
     };
-    app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Char(' ')));
+    app.params_on_key(&mut commit, &loadouts, None, ch(' '));
     assert_eq!(
         app.params_bag.get("buryBones"),
         Some(&serde_json::json!(false))
@@ -1319,17 +1180,18 @@ fn script_params_click_and_space_toggle_persist_bool() {
         [("buryBones".to_string(), serde_json::json!(false))],
         "the toggle is committed to the profile"
     );
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
     terminal
         .draw(|frame| {
             app.draw(frame);
             app.draw_params_overlay(frame, &loadouts, None);
         })
         .unwrap();
-    let buf = terminal.backend().buffer();
-    let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
+    let all = text(&crate::test_support::rows(terminal.backend().buffer()));
+    assert!(all.contains("parameters"), "params overlay paints: {all}");
     assert!(
-        text.contains("parameters"),
-        "params overlay paints: {text:?}"
+        all.contains("KEYS Parameters"),
+        "the footer names the popup that has the keys: {all}"
     );
 }
 
@@ -1367,7 +1229,7 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
         help: None,
         item_option_spec: None,
     }];
-    let mut app = TuiApp::new("274bot headless");
+    let mut app = script_app();
     app.script_sel = Some(ScriptSel::Loaded(ScriptSource::Catalog, "Alcher".into()));
     app.params_schema = schema;
     app.open_script_params(script::merge_bag(
@@ -1376,14 +1238,19 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
         None,
     ));
     assert!(app.params_state.open);
-    assert_eq!(app.on_key(key(KeyCode::Char('q'))), AppAction::None);
+    assert_eq!(
+        app.on_key(ch('q')),
+        AppAction::ParamsKey(ch('q')),
+        "the params popup gets q, not the quit request"
+    );
     assert!(!app.quit, "params overlay must consume q");
+    assert!(app.modal.is_none());
     app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Enter));
     assert!(app.params_state.editing);
     while !app.params_state.scratch.is_empty() {
         app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Backspace));
     }
-    app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Char('5')));
+    app.params_on_key(&mut commit, &loadouts, None, ch('5'));
     app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Esc));
     assert!(!app.params_state.editing);
     assert_eq!(
@@ -1394,7 +1261,7 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
     while !app.params_state.scratch.is_empty() {
         app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Backspace));
     }
-    app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Char('5')));
+    app.params_on_key(&mut commit, &loadouts, None, ch('5'));
     app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Enter));
     assert_eq!(
         app.params_bag.get("alchs").and_then(|v| v.as_f64()),
@@ -1410,11 +1277,10 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Task 13: while the focused slot's script paints, the chat pane
-/// shows the paint title and rows instead of the game chat; the `p`
-/// key toggles back to the game chat.
+/// While the selected bot's script paints, the Chat tab shows the paint
+/// instead of the game chat; `p` there toggles back to the game chat.
 #[test]
-fn chat_pane_shows_script_paint_instead_of_the_game_chat() {
+fn chat_tab_shows_script_paint_instead_of_the_game_chat() {
     let mut app = TuiApp::new("274bot headless");
     app.chat_data.lines = vec![line("last game chat line")];
     app.chat_data.script_paint = Some(std::sync::Arc::new(script::shim::ScriptPaint {
@@ -1426,137 +1292,98 @@ fn chat_pane_shows_script_paint_instead_of_the_game_chat() {
         canvas: Vec::new(),
         ..Default::default()
     }));
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let buf = terminal.backend().buffer();
-    let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
+    app.show_screen(Screen::Chat);
+    let all = text(&draw(&mut app, 100, 30));
     assert!(
-        text.contains("BoneBurier — digging"),
-        "the paint title paints: {text:?}"
+        all.contains("BoneBurier — digging"),
+        "the paint title paints: {all:?}"
     );
     assert!(
-        text.contains("Runtime: 1.2m | Buried: 3"),
-        "paint rows paint: {text:?}"
+        all.contains("Runtime: 1.2m | Buried: 3"),
+        "paint rows paint: {all:?}"
     );
     assert!(
-        !text.contains("last game chat line"),
-        "the game chat is replaced by the paint: {text:?}"
+        !all.contains("last game chat line"),
+        "the game chat is replaced by the paint: {all:?}"
     );
-    // The toggle key brings the game chat back.
-    assert_eq!(app.on_key(key(KeyCode::Char('p'))), AppAction::None);
+    assert_eq!(app.on_key(ch('p')), AppAction::None);
     assert!(app.chat_data.show_game_chat);
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let buf = terminal.backend().buffer();
-    let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
+    let all = text(&draw(&mut app, 100, 30));
     assert!(
-        text.contains("last game chat line"),
-        "p toggles back to the game chat: {text:?}"
+        all.contains("last game chat line"),
+        "p toggles back to the game chat: {all:?}"
     );
     assert!(
-        !text.contains("BoneBurier — digging"),
-        "the paint is hidden while toggled off: {text:?}"
+        !all.contains("BoneBurier — digging"),
+        "the paint is hidden while toggled off: {all:?}"
     );
 }
 
+/// The background-bots notice is dismissed only by its explicit Got it
+/// (key `n` on the Overview, its button, or the palette); Esc never
+/// persists "don't show again" by accident.
 #[test]
-fn esc_acks_background_notice_when_map_has_no_selection() {
-    let mut app = TuiApp::new("274bot headless");
+fn background_notice_needs_an_explicit_got_it() {
+    let mut app = crate::test_support::fleet_app(&["alice"]);
     app.background_notice = Some("other profiles keep running".into());
-    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::AckBackground);
-    app.map.selection = Some(tile(1, 1));
-    app.background_notice = Some("other profiles keep running".into());
-    assert_ne!(
-        app.on_key(key(KeyCode::Esc)),
-        AppAction::AckBackground,
-        "Esc still clears a map selection first"
+    app.show_screen(Screen::Overview);
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+    let rows = draw(&mut app, 120, 40);
+    let (col, row) = find(&rows, "[Got it n]").expect("the notice has a visible Got it");
+    assert_eq!(app.on_click(col + 1, row), AppAction::AckBackground);
+    assert_eq!(app.on_key(ch('n')), AppAction::AckBackground);
+    app.background_notice = None;
+    assert_eq!(
+        app.on_key(ch('n')),
+        AppAction::None,
+        "no notice, nothing to dismiss"
     );
 }
 
-/// The strip is one row: a script report or warning comes before the title
-/// and key help, so an 80-column terminal still shows it.
-#[test]
-fn strip_message_is_visible_at_80_columns() {
-    let mut app = TuiApp::new("289bot headless · local-289 · 127.0.0.1:44594 · revision 289");
-    app.names = vec!["alice".into(), "bob".into()];
-    app.focused = Some(0);
-    app.error = Some("Start all: started 2, skipped 0".into());
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let strip: String = (0..80)
-        .map(|x| terminal.backend().buffer()[(x, 0)].symbol().to_string())
-        .collect();
-    assert!(
-        strip.contains("!! Start all: started 2, skipped 0"),
-        "{strip}"
-    );
-}
-
-/// At 80×24 with chat and status filled, both script command rows stay on
-/// screen and clickable, and every command also has its key.
+/// At 80×24 the Script tab keeps both command rows on screen and
+/// clickable; every command also has its key, and the fleet-wide ones ask
+/// to confirm their scope first.
 #[test]
 fn script_commands_are_reachable_at_80x24() {
-    let mut app = TuiApp::new("289bot headless · local-289 · 127.0.0.1:44594 · revision 289");
-    app.names = vec!["alice".into(), "bob".into()];
-    app.focused = Some(0);
+    let mut app = script_app();
     app.chat_data.lines = (0..8).map(|i| line(&format!("chat {i}"))).collect();
     app.script_state = RunState::Running;
     app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
-    app.params_schema = vec![script::SettingDef {
-        id: "target".into(),
-        ty: "string".into(),
-        default: Some("Man".into()),
-        label: None,
-        min: None,
-        max: None,
-        step: None,
-        options: Vec::new(),
-        option_labels: Vec::new(),
-        group: None,
-        show_if: None,
-        options_from: None,
-        csv_toggle: None,
-        help: None,
-        item_option_spec: None,
-    }];
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    let area = app.script_area;
-    let row_text = |y: u16| -> String {
-        (0..80)
-            .map(|x| terminal.backend().buffer()[(x, y)].symbol().to_string())
-            .collect()
-    };
-    let main = row_text(area.y + 2);
-    let bulk = row_text(area.y + 3);
-    assert!(
-        main.contains("[Browse b] [Start t] [Pause P] [Stop e] [Load f]"),
-        "{main}"
-    );
-    assert!(
-        bulk.contains("[Params v] [Reload R] [Start all T] [Stop all E]"),
-        "{bulk}"
-    );
-    let at = |row: &str, label: &str| row.find(label).unwrap() as u16 + 1;
+    app.params_schema = thiever_schema();
+    let rows = draw(&mut app, 80, 24);
+    let (main_x, main_y) =
+        find(&rows, "[Browse b] [Start t] [Pause P] [Stop e] [Load f]").expect("main script row");
+    let (bulk_x, bulk_y) =
+        find(&rows, "[Params v] [Reload R] [Start all T] [Stop all E]").expect("bulk script row");
+    let at = |x: u16, row: &str, label: &str| x + row.find(label).unwrap() as u16 + 1;
+    let main = "[Browse b] [Start t] [Pause P] [Stop e] [Load f]";
+    let bulk = "[Params v] [Reload R] [Start all T] [Stop all E]";
     let sel = app.script_sel.clone().unwrap();
     let clicks = [
         (
-            area.y + 2,
-            at(&main, "[Start"),
+            main_y,
+            at(main_x, main, "[Start"),
             AppAction::ScriptStart(sel.clone()),
         ),
-        (area.y + 2, at(&main, "[Pause"), AppAction::ScriptPause),
-        (area.y + 2, at(&main, "[Stop"), AppAction::ScriptStop),
-        (area.y + 3, at(&bulk, "[Params"), AppAction::ScriptParams),
-        (area.y + 3, at(&bulk, "[Reload"), AppAction::ScriptReload),
-        (
-            area.y + 3,
-            at(&bulk, "[Start all"),
-            AppAction::ScriptStartAll,
-        ),
-        (area.y + 3, at(&bulk, "[Stop all"), AppAction::ScriptStopAll),
+        (main_y, at(main_x, main, "[Pause"), AppAction::ScriptPause),
+        (main_y, at(main_x, main, "[Stop"), AppAction::ScriptStop),
+        (bulk_y, at(bulk_x, bulk, "[Params"), AppAction::ScriptParams),
+        (bulk_y, at(bulk_x, bulk, "[Reload"), AppAction::ScriptReload),
     ];
     for (y, x, want) in clicks {
         assert_eq!(app.on_click(x, y), want, "click at {x},{y}");
+    }
+    for (label, want) in [
+        ("[Start all", AppAction::ScriptStartAll),
+        ("[Stop all", AppAction::ScriptStopAll),
+    ] {
+        assert_eq!(
+            app.on_click(at(bulk_x, bulk, label), bulk_y),
+            AppAction::None,
+            "{label} asks first"
+        );
+        assert!(matches!(app.modal, Some(Modal::Confirm(_))), "{label}");
+        assert_eq!(app.on_key(key(KeyCode::Enter)), want, "{label} confirmed");
     }
     let keys = [
         ('t', AppAction::ScriptStart(sel)),
@@ -1564,23 +1391,25 @@ fn script_commands_are_reachable_at_80x24() {
         ('e', AppAction::ScriptStop),
         ('v', AppAction::ScriptParams),
         ('R', AppAction::ScriptReload),
-        ('T', AppAction::ScriptStartAll),
-        ('E', AppAction::ScriptStopAll),
     ];
     for (c, want) in keys {
-        assert_eq!(app.on_key(key(KeyCode::Char(c))), want, "key {c}");
+        assert_eq!(app.on_key(ch(c)), want, "key {c}");
+    }
+    for (c, want) in [
+        ('T', AppAction::ScriptStartAll),
+        ('E', AppAction::ScriptStopAll),
+    ] {
+        assert_eq!(app.on_key(ch(c)), AppAction::None, "{c} asks first");
+        assert_eq!(app.on_key(ch('y')), want, "{c} confirmed");
     }
     // `C` cancels only a shown reload warning.
-    assert_eq!(app.on_key(key(KeyCode::Char('C'))), AppAction::None);
+    assert_eq!(app.on_key(ch('C')), AppAction::None);
     app.reload_confirm = true;
-    assert_eq!(
-        app.on_key(key(KeyCode::Char('C'))),
-        AppAction::ScriptReloadCancel
-    );
-    // Browse and Load open in the pane.
-    assert_eq!(app.on_key(key(KeyCode::Char('b'))), AppAction::ScriptBrowse);
+    assert_eq!(app.on_key(ch('C')), AppAction::ScriptReloadCancel);
+    // Browse and Load open in the tab.
+    assert_eq!(app.on_key(ch('b')), AppAction::ScriptBrowse);
     assert!(app.script_browse_open);
     app.script_browse_open = false;
-    assert_eq!(app.on_key(key(KeyCode::Char('f'))), AppAction::None);
+    assert_eq!(app.on_key(ch('f')), AppAction::None);
     assert!(app.script_load_open);
 }

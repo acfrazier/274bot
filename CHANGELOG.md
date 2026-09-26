@@ -239,7 +239,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   The panel log section fills the leftover side-panel height (or is a
   resizable box when other sections follow it) with a timestamp column, level
   colours, level/source/scope filters, search, follow, **Copy** and **Save
-  log…**; the TUI opens the same view with **F7** (80×24 included). Status
+  log…**; the TUI shows the same view on its Logs tab (**F7**, 80×24 included) and its newest rows in the log drawer. Status
   transitions, script lines, audio and vault/profile errors moved onto it, and
   the TUI now drains script lines too instead of letting them pile up.
 - **Session log file** (off by default): the panel's General config
@@ -257,7 +257,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   don't show again** sets `background_bots_ack` in `~/.274bot/panel-ui.json`
   (the TUI uses the same key). A failed write keeps the notice visible and
   reports the error; a later successful write clears only that error. The TUI
-  shows the same sentence; Esc with no map selection dismisses it. Live/harness
+  shows the same sentence with a **Got it** button (`n` on the Overview). Live/harness
   boots do not show or persist the notice. The TUI pump reaps finished workers
   before counting background bots, matching the panel.
 - Interactive panel-play and tui-play take an OS advisory lock on
@@ -279,11 +279,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - The panel and the TUI now share one operator session (`frontend-core`):
   vault, fleet membership and the logout latch, the selected bot, Load, Log
   in / Log out (single and all), removal, script Start/Pause/Stop and Start
-  settlement run through the same code in both front ends. In the TUI, `m`
-  loads every profile and logs every member in (a loaded, logged-out member
-  is logged back in and a crashed worker recreated), and new keys act on the
-  focused bot: `i` Log in, `u` Log out, `U` Log out all, `x` Remove (clean
-  logout, then the worker stops; the neighbour becomes focused).
+  settlement run through the same code in both front ends. In the TUI,
+  Load+login all loads every profile and logs every member in (a loaded,
+  logged-out member is logged back in and a crashed worker recreated), and
+  the selected bot has Log in, Log out and Remove (clean logout, then the
+  worker stops; the neighbour becomes selected).
 - Script coordination is shared too (`frontend-core` `Scripts`): per-profile
   assignment and parameters, Start all / Stop all, Reload and catalog Refresh
   run through the same code in the panel and the TUI. The TUI now edits the
@@ -293,8 +293,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   all buttons under the script buttons. Every script command also has a key,
   shown in its button (`b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f`
   Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start all, `E` Stop
-  all), and the script rows stay on screen at 80×24 (map, chat and status
-  shrink first). A parameter edit reaches the running
+  all), and the script rows stay on screen at 80×24. A parameter edit reaches the running
   script only after it is saved; a failed save is never pushed.
 - Apply to all: from a profile's script parameters (panel Script prefs, TUI
   parameters `a` then `y`), copy that card's parameters to every wall member
@@ -317,12 +316,39 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   password it was started with until it was removed and loaded again.
 - Stop all now also stops a bot whose script is still shutting down for a
   Reload; before, the reloaded script started again after Stop all.
-- In the TUI, `x` removes the bot from the strip at once and Tab no longer
-  reaches it while it logs out.
+- In the TUI, Remove drops the bot from the fleet table at once and it can
+  no longer be selected while it logs out.
 - The TUI options popup now saves only the random-event and lamp fields it
   edits, and updates a running bot only after the vault write succeeded.
   Before, it replaced the whole profile settings from its draft, which could
   reset the profile's world pin or auto-login.
+- **Responsive TUI shell.** `tui-play` lays out for 80×24 (two header rows,
+  one main pane, a three-row message/log drawer, a footer), 120×40 (fleet
+  table beside the selected bot's tab, a log drawer) and large terminals
+  (queue and tile columns, status and chat beside the tab). The fleet table
+  has a cursor that never changes the selected bot (Enter or a click does),
+  a `[x]` row selection with "selected N of M" (Space; the map's group walk
+  uses it), and a filter by name, `wN` or state (`/`). The selected bot's
+  tabs are Overview, Map, Script, Chat and Logs (`F3`–`F7`, `F2` the
+  fleet); the footer always names where keys go, and the focused pane is
+  labelled `[keys]`. `F1`/`?` opens searchable help for the focused pane;
+  `Ctrl-P`/`:` opens a command palette listing every command with its
+  target and why it is unavailable (it also reaches every screen when an
+  SSH terminal swallows function keys). One routing model replaces the old
+  global letters: an open popup or overlay takes every key, typing wins in
+  text fields, and each pane's letters act only in that pane — so `q` no
+  longer quits from a popup and `x` no longer removes a bot from the
+  settings popup. `Tab` moves keyboard focus (it no longer cycles the bot);
+  WASD walks only in the armed Manual walk box; a dialogue is answered from
+  the Chat tab and flagged elsewhere (`Chat!`, `DIALOGUE`). Remove, Load+
+  login all, Log out all, Start all, Stop all and quitting with bots loaded
+  confirm first, naming their frozen target or members; a fleet that changed
+  since is shown again instead of run. Mouse: left click focuses and
+  selects or presses, right click opens a context menu (never a left
+  click), the wheel scrolls the list, log or map under the pointer, a map
+  click selects a tile (walking it is a second action), and the palette
+  turns mouse capture off for terminal copy. A resize re-lays out at once
+  and click targets always come from the current layout.
 
 ### Slot lifecycle
 

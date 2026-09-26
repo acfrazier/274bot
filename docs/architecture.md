@@ -438,15 +438,25 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | --- | --- | --- |
 | `lib.rs` | crate facade and re-exports | second view of `Play`, no GPU |
 | `main.rs` | `tui-play` entrypoint | flags and run modes |
-| `bin.rs` | headless session and dispatch | `OperatorSession<()>` + headless surface; key actions onto the core |
-| `app.rs` | view model and render root | polls statuses, routes keys and clicks |
-| `map.rs` | WalkTo map widget | dots, route polyline, selection |
+| `bin.rs` | headless session and dispatch | `OperatorSession<()>` + headless surface; hands every terminal event to the app and dispatches the returned action onto the core |
+| `app.rs` | view model and pane behaviour | app state; map, script and chat pane keys and clicks |
+| `layout.rs` | shell geometry | size classes (80x24 compact, 120x40 standard, large), pane rects, the last draw's hit regions |
+| `shell.rs` | shell drawing | header, fleet and detail panes, log drawer, footer naming the keyboard scope |
+| `input.rs` | key and mouse routing | one model: popup/overlay, then text field, then global chords, then the focused pane; mouse hit-tests the last draw |
+| `commands.rs` | operator command vocabulary | labels, target scope, availability and reason, per-pane shortcut tables shared by keys, buttons, palette and help |
+| `fleet.rs` | fleet table | cursor, row selection, filter, visible-window rows; the one reader of fleet rows |
+| `overlay.rs` | app overlays | help, palette, confirmations with frozen targets, context menus, message viewer, manual walk |
+| `palette.rs` | command palette | filtered commands with scope, key and unavailable reason |
+| `help.rs` | help overlay | focused pane's keys first, searchable |
+| `log_pane.rs` | log view | Logs tab and log drawer over the shared `frontend_core::log` |
+| `map.rs` | WalkTo map widget | dots, route polyline, selection, cell/tile mapping |
 | `chat.rs` | chat and dialogue pane | chat ring, modal continue and answer |
-| `status.rs` | status pane | focused slot rows plus guardian status |
+| `status.rs` | status pane | selected slot rows plus guardian status |
 | `script_params.rs` | script parameter editors | schema-driven editors |
 | `script_shape.rs` | script pane widgets | browse, start, pause, stop, load |
 | `loadouts.rs` | loadouts popup | worn gear and carry CRUD |
 | `settings.rs` | settings popup | random toggles and nav opt-ins |
+| `app_tests.rs`, `bin_tests.rs`, `fleet_tests.rs`, `input_tests.rs`, `log_pane_tests.rs`, `shell_tests.rs`, `test_support.rs` | test bodies and fixtures | grouped, not owners |
 
 ### e2e
 

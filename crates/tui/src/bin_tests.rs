@@ -1885,23 +1885,21 @@ fn removing_the_focused_member_focuses_its_neighbour() {
     app.focused = Some(1);
     dispatch(&mut session, &mut app, AppAction::Focus("bob".into()));
 
-    dispatch(&mut session, &mut app, AppAction::Remove);
+    dispatch(&mut session, &mut app, AppAction::Remove("bob".into()));
     session.pump(&mut app);
 
     assert_eq!(
         app.names,
         ["alice".to_string()],
-        "the strip drops the member"
+        "the fleet table drops the member"
     );
     assert_eq!(app.focused_name().as_deref(), Some("alice"));
-    let tab = crossterm::event::KeyEvent::new(
-        crossterm::event::KeyCode::Tab,
-        crossterm::event::KeyModifiers::NONE,
-    );
-    let action = app.on_key(tab);
     assert!(
-        !matches!(&action, AppAction::Focus(name) if name == "bob"),
-        "Tab must not reach a removed member still logging out: {action:?}"
+        !matches!(
+            app.run_command(crate::commands::Command::SelectNextBot),
+            AppAction::Focus(name) if name == "bob"
+        ),
+        "selecting the next bot must not reach a removed member still logging out"
     );
     assert_eq!(session.core.selected(), Some("alice"));
     assert_eq!(session.core.members(), ["alice".to_string()]);

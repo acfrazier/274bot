@@ -40,10 +40,7 @@ fn the_pane_filters_like_the_panel_and_fits_80x24() {
         "withdraw lobster: not in bank",
     );
     push(slot, Source::Login, Level::Error, "login code 3: invalid");
-    let mut state = LogPaneState {
-        open: true,
-        ..LogPaneState::default()
-    };
+    let mut state = LogPaneState::default();
     state.refresh(Some(slot));
     let lines = screen(&state, slot, 80, 23);
     let text = lines.join("\n");
@@ -57,7 +54,7 @@ fn the_pane_filters_like_the_panel_and_fits_80x24() {
         "{text}"
     );
     assert!(
-        lines[lines.len() - 2].contains("Esc close"),
+        lines[lines.len() - 2].contains("/ search v level"),
         "help sits above the border"
     );
     let clock = lines
@@ -98,8 +95,16 @@ fn the_pane_filters_like_the_panel_and_fits_80x24() {
     assert_eq!(state.view.len(), 1, "case-insensitive search");
     assert!(!state.editing);
 
-    state.on_key(key(KeyCode::Esc), Some(slot));
-    assert!(!state.open);
+    assert!(
+        !state.on_key(key(KeyCode::Esc), Some(slot)),
+        "Esc outside the search line is left to the router (back / close)"
+    );
+    state.on_key(key(KeyCode::Char('/')), Some(slot));
+    assert!(
+        state.on_key(key(KeyCode::Esc), Some(slot)),
+        "Esc inside the search line only ends the search"
+    );
+    assert!(!state.editing);
 }
 
 #[test]
@@ -122,4 +127,20 @@ fn scrolling_up_pauses_follow_and_end_resumes_it() {
     state.on_key(key(KeyCode::End), Some(slot));
     state.refresh(Some(slot));
     assert!(screen(&state, slot, 80, 24).join("\n").contains("hop 60"));
+}
+
+#[test]
+fn unread_counts_only_rows_newer_than_the_last_look() {
+    let slot = "tuilog-carol";
+    push(slot, Source::Script, Level::Info, "seen before");
+    let mut state = LogPaneState::default();
+    state.refresh(Some(slot));
+    state.mark_seen();
+    assert_eq!(state.unread(), (0, 0));
+    push(slot, Source::Script, Level::Info, "new info");
+    push(slot, Source::Bank, Level::Error, "new error");
+    state.refresh(Some(slot));
+    assert_eq!(state.unread(), (2, 1), "two new rows, one of them loud");
+    state.mark_seen();
+    assert_eq!(state.unread(), (0, 0));
 }

@@ -1,13 +1,15 @@
-//! Log pane (F7): the shared `frontend_core::log` store with the same
-//! level/source/scope filters, text search and follow as the panel, plus
-//! Save log and the shared session-file preference. Drawn straight into
-//! the frame buffer so a frame allocates nothing per row; fits 80×24.
+//! Log view (the Logs tab, F7, and the log drawer): the shared
+//! `frontend_core::log` store with the same level/source/scope filters,
+//! text search and follow as the panel, plus Save log and the shared
+//! session-file preference. Drawn straight into the frame buffer so a frame
+//! allocates nothing per row; fits 80×24. The router owns Esc: a key the
+//! view does not use is reported unconsumed.
 
 use std::io::Write as _;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use frontend_core::log::{
-    default_save_path, global, save_text, Level, LogScope, LogView, SaveTicket, Source,
+    default_save_path, global, save_text, Level, LogEntry, LogScope, LogView, SaveTicket, Source,
 };
 use frontend_core::log_file::{apply_session_log, persist_session_log_setting};
 use ratatui::buffer::Buffer;
@@ -15,7 +17,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Clear, Widget};
 
-/// Which rows the pane reads; `Bot` follows the focused bot.
+/// Which rows the view reads; `Bot` follows the selected bot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneScope {
     Bot,
@@ -34,7 +36,6 @@ impl PaneScope {
 }
 
 pub struct LogPaneState {
-    pub open: bool,
     pub view: LogView,
     pub scope: PaneScope,
     /// The search line is being edited (keys type into it).
@@ -45,12 +46,14 @@ pub struct LogPaneState {
     /// Last Save / session-file outcome.
     pub status: Option<String>,
     save: Option<SaveTicket>,
+    /// Newest sequence the operator has seen on the Logs tab; newer rows
+    /// count as unread in the compact drawer.
+    seen: u64,
 }
 
 impl Default for LogPaneState {
     fn default() -> Self {
         Self {
-            open: false,
             view: LogView::new(LogScope::Process),
             scope: PaneScope::Bot,
             editing: false,
@@ -58,6 +61,7 @@ impl Default for LogPaneState {
             scroll: 0,
             status: None,
             save: None,
+            seen: 0,
         }
     }
 }
@@ -82,7 +86,7 @@ fn next_source(source: Option<Source>) -> Option<Source> {
 }
 
 impl LogPaneState {
-    /// Point the view at the focused bot and pull new lines (one atomic
+    /// Point the view at the selected bot and pull new lines (one atomic
     /// load when nothing changed).
     pub fn refresh(&mut self, focused: Option<&str>) {
         match self.scope {
@@ -116,8 +120,37 @@ impl LogPaneState {
         }
     }
 
-    /// Keys while the pane is open; Esc/F7 closes it.
-    pub fn on_key(&mut self, key: KeyEvent, focused: Option<&str>) {
+    /// The operator is looking at the log: nothing shown is unread.
+    pub fn mark_seen(&mut self) {
+        if let Some(entry) = self.view.rows().back() {
+            self.seen = self.seen.max(entry.seq);
+        }
+    }
+
+    /// Rows newer than the last look: `(all, warnings and errors)`.
+    pub fn unread(&self) -> (usize, usize) {
+        let mut all = 0;
+        let mut loud = 0;
+        for entry in self.view.rows().iter().rev() {
+            if entry.seq <= self.seen {
+                break;
+            }
+            all += 1;
+            loud += usize::from(entry.level >= Level::Warn);
+        }
+        (all, loud)
+    }
+
+    pub fn newest(&self) -> Option<&LogEntry> {
+        self.view.rows().back()
+    }
+
+    /// One key while the view has keyboard focus. Returns whether the view
+    /// used it; Esc outside the search line is left to the router.
+    pub fn on_key(&mut self, key: KeyEvent, focused: Option<&str>) -> bool {
+        let text = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
         if self.editing {
             match key.code {
                 KeyCode::Enter | KeyCode::Esc => self.editing = false,
@@ -125,27 +158,26 @@ impl LogPaneState {
                     self.search.pop();
                     self.apply_search();
                 }
-                KeyCode::Char(c) => {
+                KeyCode::Char(c) if text => {
                     self.search.push(c);
                     self.apply_search();
                 }
-                _ => {}
+                _ => return false,
             }
-            return;
+            return true;
         }
         match key.code {
-            KeyCode::Esc | KeyCode::F(7) => self.open = false,
-            KeyCode::Char('/') => self.editing = true,
-            KeyCode::Char('v') => {
+            KeyCode::Char('/') if text => self.editing = true,
+            KeyCode::Char('v') if text => {
                 let next = next_level(self.view.filter().min_level);
                 self.view.edit_filter(|f| f.min_level = next);
             }
-            KeyCode::Char('s') => {
+            KeyCode::Char('s') if text => {
                 let next = next_source(self.view.filter().single_source());
                 self.view.edit_filter(|f| f.set_source(next));
             }
-            KeyCode::Char('b') => self.scope = self.scope.next(),
-            KeyCode::Char('f') => {
+            KeyCode::Char('b') if text => self.scope = self.scope.next(),
+            KeyCode::Char('f') if text => {
                 self.view.follow = !self.view.follow;
                 self.scroll = 0;
             }
@@ -158,26 +190,42 @@ impl LogPaneState {
                 self.scroll = 0;
                 self.view.follow = true;
             }
-            KeyCode::Char('w') => {
-                let label = match self.scope {
-                    PaneScope::Bot => focused.unwrap_or("process"),
-                    PaneScope::Process => "process",
-                    PaneScope::All => "all",
-                };
-                self.save = Some(save_text(default_save_path(label), self.view.to_text()));
-                self.status = Some("saving…".into());
-            }
-            KeyCode::Char('F') => {
-                let on = !global().file_open();
-                self.status = Some(match persist_session_log_setting(on) {
-                    Ok(()) => match apply_session_log(on) {
-                        Some(path) => format!("session file {}", path.display()),
-                        None => "session file off".into(),
-                    },
-                    Err(e) => format!("session file setting: {e}"),
-                });
-            }
-            _ => {}
+            KeyCode::Char('w') if text => self.save(focused),
+            KeyCode::Char('F') if text => self.toggle_session_file(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Save the rows the view shows (off the UI thread).
+    pub fn save(&mut self, focused: Option<&str>) {
+        let label = match self.scope {
+            PaneScope::Bot => focused.unwrap_or("process"),
+            PaneScope::Process => "process",
+            PaneScope::All => "all",
+        };
+        self.save = Some(save_text(default_save_path(label), self.view.to_text()));
+        self.status = Some("saving…".into());
+    }
+
+    /// Flip the shared session-file preference and apply it.
+    pub fn toggle_session_file(&mut self) {
+        let on = !global().file_open();
+        self.status = Some(match persist_session_log_setting(on) {
+            Ok(()) => match apply_session_log(on) {
+                Some(path) => format!("session file {}", path.display()),
+                None => "session file off".into(),
+            },
+            Err(e) => format!("session file setting: {e}"),
+        });
+    }
+
+    /// Wheel or keyboard scroll by `rows` (negative is up, toward older).
+    pub fn scroll_by(&mut self, rows: isize) {
+        if rows < 0 {
+            self.scroll_up(rows.unsigned_abs());
+        } else {
+            self.scroll_down(rows.unsigned_abs());
         }
     }
 
@@ -201,6 +249,24 @@ impl LogPaneState {
             self.view.follow = true;
         }
     }
+
+    /// Scope, level, source and follow as one short label.
+    pub fn header(&self, focused: Option<&str>) -> String {
+        let scope = match self.scope {
+            PaneScope::Bot => focused.unwrap_or("process"),
+            PaneScope::Process => "process",
+            PaneScope::All => "all bots",
+        };
+        format!(
+            "{scope} ≥{} src:{} {}",
+            self.view.filter().min_level.label(),
+            self.view
+                .filter()
+                .single_source()
+                .map_or("all", Source::label),
+            if self.view.follow { "follow" } else { "paused" }
+        )
+    }
 }
 
 fn level_style(level: Level) -> Style {
@@ -212,21 +278,101 @@ fn level_style(level: Level) -> Style {
     }
 }
 
-/// Draws the pane over `area` (call after the main panes).
+fn put(buf: &mut Buffer, right: u16, x: &mut u16, y: u16, text: &str, style: Style) {
+    if *x < right {
+        let (nx, _) = buf.set_stringn(*x, y, text, (right - *x) as usize, style);
+        *x = nx;
+    }
+}
+
+/// Draw the view's rows into `area`, newest at the bottom, `scroll` rows up
+/// from the newest. Wide areas get the game-tick column; the all-bots
+/// scope gets the slot column.
+pub fn render_rows(state: &LogPaneState, area: Rect, buf: &mut Buffer, scroll: usize) {
+    let dim = Style::default().fg(Color::DarkGray);
+    let accent = Style::default().fg(Color::Yellow);
+    let right = area.x + area.width;
+    let rows = state.view.rows();
+    let end = rows.len().saturating_sub(scroll);
+    let start = end.saturating_sub(usize::from(area.height));
+    let all = matches!(state.view.scope(), LogScope::All);
+    let ticks = area.width >= 100;
+    let mut tick = [0u8; 16];
+    for (i, entry) in rows.range(start..end).enumerate() {
+        let y = area.y + i as u16;
+        let mut x = area.x;
+        put(buf, right, &mut x, y, entry.clock.as_str(), dim);
+        x += 1;
+        if ticks {
+            let mut cursor = std::io::Cursor::new(&mut tick[..]);
+            let _ = match entry.tick {
+                Some(t) => write!(cursor, "t{t:<7}"),
+                None => write!(cursor, "t-      "),
+            };
+            let len = cursor.position() as usize;
+            put(
+                buf,
+                right,
+                &mut x,
+                y,
+                std::str::from_utf8(&tick[..len]).unwrap_or(""),
+                dim,
+            );
+            x += 1;
+        }
+        if all {
+            put(
+                buf,
+                right,
+                &mut x,
+                y,
+                entry.slot.as_deref().unwrap_or("*"),
+                accent,
+            );
+            x += 1;
+        }
+        put(buf, right, &mut x, y, entry.source.label(), dim);
+        x += 1;
+        put(
+            buf,
+            right,
+            &mut x,
+            y,
+            &entry.message,
+            level_style(entry.level),
+        );
+    }
+    if rows.is_empty() && area.height > 0 {
+        let mut x = area.x;
+        put(buf, right, &mut x, area.y, "(no lines match)", dim);
+    }
+}
+
+/// The full log view (the Logs tab). Returns nothing; the caller records
+/// [`LogPane::rows_area`] for wheel hits.
 pub struct LogPane<'a> {
     pub state: &'a LogPaneState,
     pub focused: Option<&'a str>,
+}
+
+impl LogPane<'_> {
+    /// Where the rows land inside `area` (below header and search, above
+    /// the help line).
+    pub fn rows_area(area: Rect) -> Rect {
+        let inner = Block::default().borders(Borders::ALL).inner(area);
+        Rect::new(
+            inner.x,
+            inner.y + 2,
+            inner.width,
+            inner.height.saturating_sub(3),
+        )
+    }
 }
 
 impl Widget for LogPane<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let state = self.state;
         Clear.render(area, buf);
-        let scope = match state.scope {
-            PaneScope::Bot => self.focused.unwrap_or("process"),
-            PaneScope::Process => "process",
-            PaneScope::All => "all bots",
-        };
         let block = Block::default().borders(Borders::ALL).title(" Log ");
         let inner = block.inner(area);
         block.render(area, buf);
@@ -235,110 +381,45 @@ impl Widget for LogPane<'_> {
         }
         let dim = Style::default().fg(Color::DarkGray);
         let accent = Style::default().fg(Color::Yellow);
+        let right = inner.x + inner.width;
         // Header: scope, level, source, follow, dropped.
         let mut x = inner.x;
-        let right = inner.x + inner.width;
-        let mut put = |x: &mut u16, y: u16, text: &str, style: Style| {
-            if *x < right {
-                let (nx, _) = buf.set_stringn(*x, y, text, (right - *x) as usize, style);
-                *x = nx;
-            }
-        };
         let y = inner.y;
-        put(&mut x, y, scope, accent);
-        put(&mut x, y, " ≥", dim);
-        put(
-            &mut x,
-            y,
-            state.view.filter().min_level.label(),
-            Style::default(),
-        );
-        put(&mut x, y, " src:", dim);
-        put(
-            &mut x,
-            y,
-            state
-                .view
-                .filter()
-                .single_source()
-                .map_or("all", Source::label),
-            Style::default(),
-        );
-        put(
-            &mut x,
-            y,
-            if state.view.follow {
-                " follow"
-            } else {
-                " paused"
-            },
-            dim,
-        );
+        put(buf, right, &mut x, y, &state.header(self.focused), accent);
         if state.view.dropped() > 0 {
-            put(&mut x, y, " +rolled off", dim);
+            put(buf, right, &mut x, y, " +rolled off", dim);
         }
         if global().file_open() {
-            put(&mut x, y, " file", dim);
+            put(buf, right, &mut x, y, " file", dim);
         }
         // Search line.
         let y = inner.y + 1;
         let mut x = inner.x;
-        put(&mut x, y, "/", if state.editing { accent } else { dim });
-        put(&mut x, y, &state.search, Style::default());
+        put(
+            buf,
+            right,
+            &mut x,
+            y,
+            "/",
+            if state.editing { accent } else { dim },
+        );
+        put(buf, right, &mut x, y, &state.search, Style::default());
         if state.editing {
-            put(&mut x, y, "_", accent);
+            put(buf, right, &mut x, y, "_", accent);
         }
         if let Some(status) = &state.status {
             let mut sx = x.saturating_add(2).max(inner.x + inner.width / 2);
-            put(&mut sx, y, status, dim);
+            put(buf, right, &mut sx, y, status, dim);
         }
-        // Rows, newest at the bottom, minus the help line.
-        let rows_top = inner.y + 2;
-        let rows_h = inner.height.saturating_sub(3) as usize;
-        let rows = state.view.rows();
-        let end = rows.len().saturating_sub(state.scroll);
-        let start = end.saturating_sub(rows_h);
-        let all = matches!(state.view.scope(), LogScope::All);
-        // Wide terminals also get the game-tick column.
-        let ticks = inner.width >= 100;
-        let mut tick = [0u8; 16];
-        for (i, entry) in rows.range(start..end).enumerate() {
-            let y = rows_top + i as u16;
-            let mut x = inner.x;
-            put(&mut x, y, entry.clock.as_str(), dim);
-            x += 1;
-            if ticks {
-                let mut cursor = std::io::Cursor::new(&mut tick[..]);
-                let _ = match entry.tick {
-                    Some(t) => write!(cursor, "t{t:<7}"),
-                    None => write!(cursor, "t-      "),
-                };
-                let len = cursor.position() as usize;
-                put(
-                    &mut x,
-                    y,
-                    std::str::from_utf8(&tick[..len]).unwrap_or(""),
-                    dim,
-                );
-                x += 1;
-            }
-            if all {
-                put(&mut x, y, entry.slot.as_deref().unwrap_or("*"), accent);
-                x += 1;
-            }
-            put(&mut x, y, entry.source.label(), dim);
-            x += 1;
-            put(&mut x, y, &entry.message, level_style(entry.level));
-        }
-        if rows.is_empty() {
-            put(&mut inner.x.clone(), rows_top, "(no lines match)", dim);
-        }
+        render_rows(state, Self::rows_area(area), buf, state.scroll);
         let help_y = inner.y + inner.height - 1;
         let mut x = inner.x;
         put(
+            buf,
+            right,
             &mut x,
             help_y,
-            "Esc close / search v level s source b scope f follow ↑↓ scroll w save F file",
+            "/ search v level s source b scope f follow ↑↓ scroll w save F file",
             dim,
         );
     }

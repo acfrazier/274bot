@@ -401,6 +401,24 @@ fn cell_of(x: i32, z: i32, centre: (i32, i32), step: i32, area: Rect) -> Option<
     Some((col as usize, row as usize))
 }
 
+/// The world `(x, z)` a buffer cell shows: the inverse of [`cell_of`] for
+/// the same centre, zoom step and area (a map click selects this tile).
+/// `None` outside `area`.
+pub fn cell_tile(
+    centre: (i32, i32),
+    step: i32,
+    area: Rect,
+    col: u16,
+    row: u16,
+) -> Option<(i32, i32)> {
+    if col < area.x || row < area.y || col >= area.x + area.width || row >= area.y + area.height {
+        return None;
+    }
+    let (w, h) = (i32::from(area.width), i32::from(area.height));
+    let (c, r) = (i32::from(col - area.x), i32::from(row - area.y));
+    Some((centre.0 + (c - w / 2) * step, centre.1 - (r - h / 2) * step))
+}
+
 /// Write `glyph` into the buffer cell unless it is outside `area`.
 fn put(buf: &mut Buffer, area: Rect, col: usize, row: usize, glyph: &str) {
     if col < area.width as usize && row < area.height as usize {

@@ -1,14 +1,17 @@
 //! `TuiApp`: view model for the headless panel. The binary (`tui-play`)
-//! polls slot statuses and the focused snapshot each frame, refreshes the
-//! app, routes keys/clicks, and dispatches the returned [`AppAction`] onto
-//! `host_play::Play`. The panes are plain widgets over owned view data
-//! (copied from the snapshot each pump), so CI renders them with
-//! `TestBackend` and no real terminal.
+//! polls slot statuses and the selected bot's snapshot each frame,
+//! refreshes the app, hands it keys and mouse events, and dispatches the
+//! returned [`AppAction`] onto the shared operator session. This module
+//! owns the app state and the per-pane behaviour (map, script, chat);
+//! `input` routes events to it, `shell` draws the responsive layout and
+//! `overlay` owns help, the palette and confirmations. The panes are plain
+//! widgets over owned view data, so CI renders them with `TestBackend` and
+//! no real terminal.
 
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::{Constraint, Layout, Position, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 use ratatui::Frame;
@@ -24,18 +27,18 @@ use nav::world::NavWorld;
 use script::{RunState, ScriptSel};
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
+use crate::commands::{script_command, Command};
+use crate::fleet::FleetState;
+use crate::layout::{Pane, Regions, Screen};
 use crate::loadouts::{LoadoutsPane, LoadoutsState};
-use crate::map::{Map, MapAction, MapView, ObservedMark};
+use crate::map::{Map, MapAction, MapView, ObservedMark, ZOOMS};
+use crate::overlay::Modal;
 use crate::script_params::{ParamsCommit, ParamsKey, ParamsPane, ParamsState};
 use crate::script_shape::{
-    browse_lines, browse_section_height, rs2b0t_root_has_index, script_command_for_key, BrowseCard,
-    BrowseLine, ScriptClick, ScriptPane,
+    browse_lines, rs2b0t_root_has_index, BrowseCard, BrowseLine, ScriptClick, ScriptPane,
 };
-use crate::settings::{SettingsKey, SettingsPane, SettingsState};
+use crate::settings::SettingsState;
 use crate::status::StatusPane;
-
-/// Cap Browse detail lines so a small terminal keeps map/status room.
-const MAX_BROWSE_LINES: u16 = 14;
 
 fn default_catalog_browse_dir() -> std::path::PathBuf {
     let home = script::bot_home();
@@ -128,7 +131,9 @@ impl WalkSendState {
 pub enum AppAction {
     /// Quit the app.
     Quit,
-    /// Switch the focused slot to `name` (mirror onto `Play::focus`).
+    /// Select `name` (mirrored onto the core `select`). Never a spawn or
+    /// login; only Enter or a click on a fleet row, a context menu or the
+    /// palette produce it.
     Focus(String),
     /// Activate the focused Map pane and request catalogue-only demand.
     MapOpen,
@@ -145,16 +150,18 @@ pub enum AppAction {
     MapTeleport(Tile),
     /// Chat modal advance: queue `WireCmd::Continue` / `Answer`.
     Chat(ChatAction),
-    /// MultiBox: load every vault profile and log every member in.
+    /// MultiBox: load every vault profile and log every member in (after
+    /// the scope confirmation).
     SpawnAll,
-    /// Log in the focused member (explicit handshake).
+    /// Log in the selected member (explicit handshake).
     Login,
-    /// Log out the focused member (it stays loaded, latched).
+    /// Log out the selected member (it stays loaded, latched).
     Logout,
-    /// Log out every member.
+    /// Log out every member (after the scope confirmation).
     LogoutAll,
-    /// Remove the focused member from the fleet (clean logout, then stop).
-    Remove,
+    /// Remove this member from the fleet (clean logout, then stop). The
+    /// name was frozen when the operator confirmed.
+    Remove(String),
     /// Start the Browse-selected JS card on the focused slot:
     /// `tui-play` dispatches `Play::script_start_load` with the card's
     /// source and shape.
@@ -192,8 +199,29 @@ pub enum AppAction {
     ScriptLoad(std::path::PathBuf),
     /// Persist the background-bots notice ("Got it, don't show again").
     AckBackground,
+    /// A key for the parameters popup: the binary owns the commit path.
+    ParamsKey(KeyEvent),
+    /// A key for the loadouts popup: the binary owns the store.
+    LoadoutsKey(KeyEvent),
+    /// Turn terminal mouse capture on or off (off lets the terminal
+    /// select and copy text).
+    MouseCapture(bool),
+    /// Two actions from one input, in order (for example leaving the Map
+    /// and opening Browse).
+    Batch(Vec<AppAction>),
     /// Nothing to dispatch.
     None,
+}
+
+impl AppAction {
+    /// `first` then `second`, dropping `None`s.
+    pub fn batch(first: AppAction, second: AppAction) -> AppAction {
+        match (first, second) {
+            (AppAction::None, second) => second,
+            (first, AppAction::None) => first,
+            (first, second) => AppAction::Batch(vec![first, second]),
+        }
+    }
 }
 
 /// Session nav find opt-ins (panel `NavSettings` parity for Walk-confirm).
@@ -278,7 +306,7 @@ impl ChatData {
         chat_modal_open(&self.view())
     }
 
-    fn view(&self) -> ChatView<'_> {
+    pub(crate) fn view(&self) -> ChatView<'_> {
         ChatView {
             lines: &self.lines,
             modal_texts: &self.modal_texts,
@@ -288,22 +316,13 @@ impl ChatData {
             show_game_chat: self.show_game_chat,
         }
     }
-
-    fn paint_buttons_active(&self) -> bool {
-        !self.is_modal_open()
-            && !self.show_game_chat
-            && self
-                .script_paint
-                .as_ref()
-                .is_some_and(|p| !p.buttons.is_empty())
-    }
 }
 
 /// Headless panel view model.
 pub struct TuiApp {
     title: String,
-    /// MultiBox slot list (vault profile names, plus running slots) and
-    /// the focused slot.
+    /// Fleet members (load order) and the selected bot's index: the core
+    /// `select`, not where the keyboard points (that is `key_focus`).
     pub names: Vec<String>,
     pub focused: Option<usize>,
     /// Polled slot statuses; the binary refreshes them each frame.
@@ -393,15 +412,28 @@ pub struct TuiApp {
     pub params_bag: serde_json::Map<String, serde_json::Value>,
     pub params_state: ParamsState,
     pub quit: bool,
-    /// The last walk/settings/map error shown in the strip.
+    /// The last report or error, shown on the message line.
     pub error: Option<String>,
     /// Process resource snapshot (same sampler as the panel resource card).
     pub resources: ResourceView,
     /// One-line background-bots notice until the operator acks it.
     pub background_notice: Option<String>,
-    /// F7 log pane over the shared structured log.
+    /// The shared structured log (Logs tab and the log drawer).
     pub log: crate::log_pane::LogPaneState,
-    /// Last draw rects for click hit-testing.
+    /// The detail tab shown for the selected bot.
+    pub screen: Screen,
+    /// Where keys go: the fleet, the detail tab or the log drawer.
+    pub key_focus: Pane,
+    /// Fleet table cursor, row selection and filter (renderer-local).
+    pub table: FleetState,
+    /// The open app overlay (help, palette, confirmation, menu, message,
+    /// manual walk); it takes every key and click while open.
+    pub modal: Option<Modal>,
+    /// Terminal mouse capture is on (the binary applies changes).
+    pub mouse_capture: bool,
+    /// Hit regions of the last draw.
+    pub regions: Regions,
+    /// Last draw rects for chat and script clicks (empty when not drawn).
     pub chat_area: Rect,
     pub script_area: Rect,
 }
@@ -467,9 +499,20 @@ impl TuiApp {
             resources: ResourceView::default(),
             background_notice: None,
             log: crate::log_pane::LogPaneState::default(),
+            screen: Screen::Overview,
+            key_focus: Pane::Fleet,
+            table: FleetState::default(),
+            modal: None,
+            mouse_capture: true,
+            regions: Regions::default(),
             chat_area: Rect::default(),
             script_area: Rect::default(),
         }
+    }
+
+    /// The header title (profile, server and revision).
+    pub fn title(&self) -> &str {
+        &self.title
     }
 
     /// The focused slot's status row, `None` when nothing is focused or
@@ -498,10 +541,10 @@ impl TuiApp {
         }
     }
 
-    /// The chat pane's keys, when a modal is open. Space/Enter/click →
-    /// `continue_dialog` / `answer_choice`; Up/Down (j/k) move the option
-    /// focus.
-    fn chat_on_key(&mut self, key: KeyEvent) -> Option<AppAction> {
+    /// The Chat tab's keys (only while it has keyboard focus): Space/Enter
+    /// → `continue_dialog` / `answer_choice`, Up/Down (j/k) move the option
+    /// focus; with script paint, digits and Enter press paint buttons.
+    pub(crate) fn chat_on_key(&mut self, key: KeyEvent) -> Option<AppAction> {
         let mut chat = Chat::new(self.chat_data.view(), &mut self.chat, |_| {});
         match chat.on_key(key) {
             action @ (ChatAction::Continue
@@ -509,6 +552,20 @@ impl TuiApp {
             | ChatAction::PaintButton(_)
             | ChatAction::PaintChrome(_)) => Some(AppAction::Chat(action)),
             ChatAction::None => None,
+        }
+    }
+
+    /// A click inside the drawn chat pane: answer, continue or a paint
+    /// button / chrome row.
+    pub(crate) fn chat_click(&mut self, col: u16, row: u16) -> AppAction {
+        let area = self.chat_area;
+        let mut chat = Chat::new(self.chat_data.view(), &mut self.chat, |_| {});
+        match chat.on_click(area, col, row) {
+            action @ (ChatAction::Continue
+            | ChatAction::Answer(_)
+            | ChatAction::PaintButton(_)
+            | ChatAction::PaintChrome(_)) => AppAction::Chat(action),
+            ChatAction::None => AppAction::None,
         }
     }
 
@@ -632,7 +689,7 @@ impl TuiApp {
         self.map_poi_sel = Some(index);
     }
 
-    fn map_search_on_key(&mut self, key: KeyEvent) -> AppAction {
+    pub(crate) fn map_search_on_key(&mut self, key: KeyEvent) -> AppAction {
         match key.code {
             KeyCode::Esc => {
                 self.map_search_open = false;
@@ -677,7 +734,7 @@ impl TuiApp {
         AppAction::None
     }
 
-    fn select_requested(&mut self, requested: Tile) {
+    pub(crate) fn select_requested(&mut self, requested: Tile) {
         self.map.selection = Some(requested);
         if (0..4).contains(&requested.level) {
             self.map.plane = requested.level as u8;
@@ -690,7 +747,7 @@ impl TuiApp {
 
     /// Enter confirms only an existing pending selection. With none, it selects
     /// the view-centre tile through the shared model and does not dispatch.
-    fn map_enter(&mut self) -> AppAction {
+    pub(crate) fn map_enter(&mut self) -> AppAction {
         if let Some(pending) = self.map_model.pending() {
             if self.walk_send.mode == WalkSendMode::Group {
                 return AppAction::MapWalkGroup;
@@ -729,7 +786,7 @@ impl TuiApp {
         self.map_poi_sel = None;
     }
 
-    fn set_map_plane(&mut self, plane: u8) {
+    pub(crate) fn set_map_plane(&mut self, plane: u8) {
         let plane = plane.min(3);
         self.map.plane = plane;
         self.map.selection = None;
@@ -738,7 +795,7 @@ impl TuiApp {
         self.map_model.clear_selection();
     }
 
-    fn recenter_map(&mut self) {
+    pub(crate) fn recenter_map(&mut self) {
         self.map.pan = (0, 0);
         self.map.selection = None;
         self.map_poi_sel = None;
@@ -754,23 +811,19 @@ impl TuiApp {
         self.map.plane = self.map_model.plane;
     }
 
+    /// Group-walk rows: every member with its host eligibility. The fleet's
+    /// row selection is the group checklist: a row is checked when its
+    /// member is selected in the fleet and eligible.
     pub fn refresh_walk_send(&mut self, eligibility: impl Fn(&str) -> WalkSlotStatus) {
         let names: Vec<String> = if !self.names.is_empty() {
             self.names.clone()
         } else {
             self.statuses.iter().map(|s| s.username.clone()).collect()
         };
-        let prev: std::collections::HashMap<String, bool> = self
-            .walk_send
-            .rows
-            .iter()
-            .map(|row| (row.name.clone(), row.checked))
-            .collect();
         let mut rows = Vec::with_capacity(names.len());
         for name in names {
             let status = eligibility(&name);
-            let checked =
-                status.is_eligible() && prev.get(&name).copied().unwrap_or(status.is_eligible());
+            let checked = status.is_eligible() && self.table.is_marked(&name);
             rows.push(WalkSendRow {
                 name,
                 status,
@@ -781,20 +834,26 @@ impl TuiApp {
         self.walk_send.sync_walk_label();
     }
 
-    fn toggle_walk_send_mode(&mut self) {
+    /// Focused ↔ Group. Entering Group with no eligible row selected
+    /// selects every eligible member (shown as `[x]` in the fleet).
+    pub(crate) fn toggle_walk_send_mode(&mut self) {
         self.walk_send.mode = match self.walk_send.mode {
             WalkSendMode::Focused => WalkSendMode::Group,
             WalkSendMode::Group => WalkSendMode::Focused,
         };
         if self.walk_send.mode == WalkSendMode::Group && self.walk_send.checked_count() == 0 {
             for row in &mut self.walk_send.rows {
-                row.checked = row.status.is_eligible();
+                if row.status.is_eligible() {
+                    row.checked = true;
+                    self.table.marks.insert(row.name.clone());
+                }
             }
         }
         self.walk_send.sync_walk_label();
     }
 
-    fn toggle_walk_send_focused(&mut self) {
+    /// Space on the map: select / unselect the selected bot for the group.
+    pub(crate) fn toggle_walk_send_focused(&mut self) {
         let Some(focused) = self.focused_name() else {
             return;
         };
@@ -806,6 +865,11 @@ impl TuiApp {
         {
             if row.status.is_eligible() {
                 row.checked = !row.checked;
+                if row.checked {
+                    self.table.marks.insert(focused);
+                } else {
+                    self.table.marks.remove(&focused);
+                }
             }
         }
         self.walk_send.sync_walk_label();
@@ -822,7 +886,7 @@ impl TuiApp {
             .collect()
     }
 
-    fn map_open(&mut self) -> AppAction {
+    pub(crate) fn map_open(&mut self) -> AppAction {
         self.map_active = true;
         if self.map_catalogue_status == MapCatalogueStatus::Inactive {
             self.map_catalogue_status = MapCatalogueStatus::Unavailable;
@@ -833,7 +897,7 @@ impl TuiApp {
         AppAction::MapOpen
     }
 
-    fn map_close(&mut self) -> AppAction {
+    pub(crate) fn map_close(&mut self) -> AppAction {
         self.map_active = false;
         self.map_search_open = false;
         self.map_search.clear();
@@ -893,272 +957,56 @@ impl TuiApp {
         self.map_search_results.clear();
     }
 
-    /// Cycle the focus to the next running slot (the strip's `[Tab]`).
-    /// Returns the newly focused name so the binary can mirror it onto
-    /// `Play::focus` — the app's index alone would leave the session on
-    /// the boot slot's sample gate.
-    fn cycle_focus(&mut self) -> Option<String> {
-        // Running members only: a removed slot still logging out is not in
-        // the strip and must not be focusable.
-        let running: Vec<&str> = self
-            .statuses
-            .iter()
-            .map(|s| s.username.as_str())
-            .filter(|name| self.names.iter().any(|n| n == name))
-            .collect();
-        if running.is_empty() {
-            return None;
-        }
-        let current = self.focused_name();
-        let pos = current
-            .as_deref()
-            .and_then(|c| running.iter().position(|r| *r == c))
-            .map(|p| p + 1)
-            .unwrap_or(0)
-            % running.len();
-        let name = running[pos];
-        if let Some(i) = self.names.iter().position(|n| n == name) {
-            self.focused = Some(i);
-            return Some(name.to_string());
-        }
-        None
-    }
-
-    /// The slot the strip click selects. The strip is
-    /// `[{names joined by " "}] …`, so name `i` starts one cell after the
-    /// leading `[` plus every earlier `len + 1` span. Sets `app.focused`
-    /// to the clicked name's index — the same bookkeeping [`cycle_focus`]
-    /// does — and returns the name so the binary can mirror it onto
-    /// `Play::focus`. Without the app-side update the UI would keep
-    /// driving the old slot while the session samples the new one.
-    fn strip_select(&mut self, col: u16) -> Option<String> {
-        let mut cursor = 1u16; // after the leading `[`
-        for (i, name) in self.names.iter().enumerate() {
-            let len = name.len() as u16;
-            if col >= cursor && col < cursor + len {
-                self.focused = Some(i);
-                return Some(name.clone());
-            }
-            cursor += len + 1;
-        }
-        None
-    }
-
-    /// One key event. Inputs opened by Map (search/coordinate) consume
-    /// typing before global shortcuts. Outside explicit Map focus, existing
-    /// direct WASD remains available for compatibility; map pan keys do not.
-    pub fn on_key(&mut self, key: KeyEvent) -> AppAction {
-        if self.quit {
-            return AppAction::None;
-        }
-        if key.code == KeyCode::F(7) && !self.log.open {
-            self.log.open = true;
-            return AppAction::None;
-        }
-        if self.log.open {
-            let focused = self.focused.and_then(|i| self.names.get(i));
-            self.log.on_key(key, focused.map(String::as_str));
-            return AppAction::None;
-        }
-        if self.params_state.open {
-            return AppAction::None;
-        }
-        if self.script_load_open {
-            return self.load_on_key(key);
-        }
-        if self.rs2b0t_catalog_open {
-            return self.catalog_on_key(key);
-        }
-        if self.script_browse_open {
-            return self.script_browse_on_key(key);
-        }
-
-        if key.code == KeyCode::F(4) {
-            return if self.map_active {
-                self.map_close()
-            } else {
-                self.map_open()
-            };
-        }
-        if self.map_active {
-            if self.map_search_open {
-                return self.map_search_on_key(key);
-            }
-            if self.settings_state.open || self.loadouts_state.open {
-                return AppAction::None;
-            }
-            if self.chat_data.is_modal_open() {
-                return self.chat_on_key(key).unwrap_or(AppAction::None);
-            }
-            match key.code {
-                KeyCode::Char('/') => {
-                    self.map_search_open = true;
-                    self.map_search.clear();
-                    self.map_search_results.clear();
-                    self.map_search_sel = 0;
-                    return AppAction::None;
-                }
-                KeyCode::Char('R') => {
-                    self.recenter_map();
-                    return AppAction::None;
-                }
-                KeyCode::Esc => {
-                    if self.map.selection.is_some() {
-                        return self.map_on_key(key);
-                    }
-                    return self.map_close();
-                }
-                KeyCode::PageUp => {
-                    self.set_map_plane(self.map.plane.saturating_add(1));
-                    return AppAction::None;
-                }
-                KeyCode::PageDown => {
-                    self.set_map_plane(self.map.plane.saturating_sub(1));
-                    return AppAction::None;
-                }
-                KeyCode::Char('0'..='3') => {
-                    if let KeyCode::Char(level) = key.code {
-                        self.set_map_plane(level as u8 - b'0');
-                    }
-                    return AppAction::None;
-                }
-                KeyCode::Char('d') => {
-                    self.map.layers.dots = !self.map.layers.dots;
-                    return AppAction::None;
-                }
-                KeyCode::Char('c') => {
-                    self.map.layers.collision = !self.map.layers.collision;
-                    return AppAction::None;
-                }
-                KeyCode::Char('r') => {
-                    self.map.layers.reach = !self.map.layers.reach;
-                    return AppAction::None;
-                }
-                KeyCode::Char('g') => {
-                    self.toggle_walk_send_mode();
-                    return AppAction::None;
-                }
-                KeyCode::Char(' ') => {
-                    self.toggle_walk_send_focused();
-                    return AppAction::None;
-                }
-                KeyCode::Tab => {
-                    return self
-                        .cycle_focus()
-                        .map(AppAction::Focus)
-                        .unwrap_or(AppAction::None);
-                }
-                KeyCode::Char('t') => {
-                    let Some(pending) = self.map_model.pending() else {
-                        return AppAction::None;
-                    };
-                    return AppAction::MapTeleport(pending.requested);
-                }
-                KeyCode::Enter => return self.map_enter(),
-                _ => {}
-            }
-            return self.map_on_key(key);
-        }
-
+    /// The Map tab's own keys (after the router tried the `MAP_KEYS`
+    /// commands and Esc-to-leave): plane, layers, the group toggle for the
+    /// selected bot, Enter select/confirm, pan and zoom.
+    pub(crate) fn map_pane_key(&mut self, key: KeyEvent) -> AppAction {
         match key.code {
-            KeyCode::Char('q') => {
-                self.quit = true;
-                return AppAction::Quit;
-            }
-            KeyCode::Char('o') => {
-                self.settings_state.open = !self.settings_state.open;
-                return AppAction::None;
-            }
-            // `l` is a loadouts key only outside Map focus. Inside Map it is
-            // the east-pan binding, eliminating the old global conflict.
-            KeyCode::Char('l') | KeyCode::Char('L') => {
-                self.loadouts_state.open = !self.loadouts_state.open;
-                if self.loadouts_state.open {
-                    self.loadouts_state.sel = 0;
-                    self.loadouts_state.name_scratch.clear();
-                    self.loadouts_state.worn_scratch.clear();
-                    self.loadouts_state.carry_scratch.clear();
-                }
-                return AppAction::None;
-            }
-            KeyCode::Char('m') => return AppAction::SpawnAll,
-            KeyCode::Char('i') => return AppAction::Login,
-            KeyCode::Char('u') => return AppAction::Logout,
-            KeyCode::Char('U') => return AppAction::LogoutAll,
-            KeyCode::Char('x') => return AppAction::Remove,
-            KeyCode::Char('p') => {
-                if self.chat_data.script_paint.is_some() {
-                    self.chat_data.show_game_chat = !self.chat_data.show_game_chat;
-                }
-                return AppAction::None;
-            }
-            KeyCode::Tab => {
-                return self
-                    .cycle_focus()
-                    .map(AppAction::Focus)
-                    .unwrap_or(AppAction::None)
-            }
-            _ => {}
-        }
-        if self.settings_state.open {
-            let mut pane = SettingsPane::new(
-                &mut self.settings,
-                &mut self.nav,
-                &mut self.map_bake,
-                &mut self.settings_state,
-            );
-            match pane.on_key(key) {
-                SettingsKey::Changed => self.settings_dirty = true,
-                SettingsKey::MapBake => self.map_bake_dirty = true,
-                SettingsKey::Consumed | SettingsKey::Ignored => {}
-            }
-            return AppAction::None;
-        }
-        if self.loadouts_state.open {
-            return AppAction::None;
-        }
-        if self.chat_data.is_modal_open() {
-            return self.chat_on_key(key).unwrap_or(AppAction::None);
-        }
-        if self.chat_data.paint_buttons_active() {
-            match key.code {
-                KeyCode::Up
-                | KeyCode::Down
-                | KeyCode::Enter
-                | KeyCode::Char(' ')
-                | KeyCode::Char('j')
-                | KeyCode::Char('k')
-                | KeyCode::Char('1')
-                | KeyCode::Char('2')
-                | KeyCode::Char('3')
-                | KeyCode::Char('4')
-                | KeyCode::Char('5')
-                | KeyCode::Char('6')
-                | KeyCode::Char('7')
-                | KeyCode::Char('8')
-                | KeyCode::Char('9') => {
-                    return self.chat_on_key(key).unwrap_or(AppAction::None);
-                }
-                _ => {}
-            }
-        }
-        if let KeyCode::Char(c) = key.code {
-            if let Some(command) = script_command_for_key(c) {
-                return self.script_command(command);
-            }
-        }
-        if let Some(here) = self.here {
-            if let Some((x, z, level)) = wasd_target((here.x, here.z, here.level), key.code) {
-                return AppAction::WalkTile(Tile { x, z, level });
-            }
-        }
-        if key.code == KeyCode::Esc
-            && self.background_notice.is_some()
-            && self.map.selection.is_none()
-        {
-            return AppAction::AckBackground;
+            KeyCode::PageUp => self.set_map_plane(self.map.plane.saturating_add(1)),
+            KeyCode::PageDown => self.set_map_plane(self.map.plane.saturating_sub(1)),
+            KeyCode::Char(level @ '0'..='3') => self.set_map_plane(level as u8 - b'0'),
+            KeyCode::Char('d') => self.map.layers.dots = !self.map.layers.dots,
+            KeyCode::Char('c') => self.map.layers.collision = !self.map.layers.collision,
+            KeyCode::Char('r') => self.map.layers.reach = !self.map.layers.reach,
+            KeyCode::Char(' ') => self.toggle_walk_send_focused(),
+            KeyCode::Enter => return self.map_enter(),
+            _ => return self.map_on_key(key),
         }
         AppAction::None
+    }
+
+    /// Open the map search line (name or `x,z,plane`).
+    pub(crate) fn open_map_search(&mut self) {
+        self.map_search_open = true;
+        self.map_search.clear();
+        self.map_search_results.clear();
+        self.map_search_sel = 0;
+    }
+
+    /// A click on the map cells selects that tile through the shared map
+    /// model; walking it stays a second, explicit action.
+    pub(crate) fn map_click(&mut self, col: u16, row: u16) {
+        let area = self.regions.map;
+        let step = ZOOMS[self.map.zoom.min(ZOOMS.len() - 1)] as i32;
+        let (bx, bz) = self
+            .here
+            .map(|h| (h.x, h.z))
+            .unwrap_or(crate::map::DEFAULT_CENTRE);
+        let centre = (bx + self.map.pan.0, bz + self.map.pan.1);
+        let Some((x, z)) = crate::map::cell_tile(centre, step, area, col, row) else {
+            return;
+        };
+        self.select_requested(Tile {
+            x,
+            z,
+            level: i32::from(self.map.plane),
+        });
+    }
+
+    /// Pan the map by whole zoom steps north (`rows > 0`) or south.
+    pub(crate) fn map_pan_rows(&mut self, rows: i32) {
+        let step = ZOOMS[self.map.zoom.min(ZOOMS.len() - 1)] as i32;
+        self.map.pan.1 += rows * step;
     }
 
     /// Route keys to the loadouts popup when it is open.
@@ -1263,7 +1111,7 @@ impl TuiApp {
         out
     }
 
-    fn load_on_key(&mut self, key: KeyEvent) -> AppAction {
+    pub(crate) fn load_on_key(&mut self, key: KeyEvent) -> AppAction {
         let entries = self.load_entries();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -1317,20 +1165,8 @@ impl TuiApp {
         self.script_load_open = true;
     }
 
-    /// The Browse picker's keys: Up/Down (j/k) cycle the card selection,
-    /// Enter/Esc close the picker (the selection stays for Start).
-    fn script_browse_on_key(&mut self, key: KeyEvent) -> AppAction {
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => self.move_script_sel(-1),
-            KeyCode::Down | KeyCode::Char('j') => self.move_script_sel(1),
-            KeyCode::Enter | KeyCode::Esc => self.script_browse_open = false,
-            _ => {}
-        }
-        AppAction::None
-    }
-
     /// First-run catalog folder browser keys.
-    fn catalog_on_key(&mut self, key: KeyEvent) -> AppAction {
+    pub(crate) fn catalog_on_key(&mut self, key: KeyEvent) -> AppAction {
         let entries = self.catalog_entries();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -1395,7 +1231,7 @@ impl TuiApp {
 
     /// Move the Browse selection `step` cards through the grouped list
     /// (wrapping).
-    fn move_script_sel(&mut self, step: i32) {
+    pub(crate) fn move_script_sel(&mut self, step: i32) {
         let deferred = script::rs2b0t_import_deferred();
         let lines = browse_lines(&self.script_cards, &self.script_category_order, deferred);
         let card_indices: Vec<usize> = lines
@@ -1426,45 +1262,9 @@ impl TuiApp {
         self.browse_changed = true;
     }
 
-    /// One mouse click (crossterm col/row). The strip selects a slot; the
-    /// chat pane answers options / continues; the script pane answers its
-    /// buttons and the Browse picker rows.
-    pub fn on_click(&mut self, col: u16, row: u16) -> AppAction {
-        if self.params_state.open || self.log.open {
-            return AppAction::None;
-        }
-        if self.settings_state.open {
-            return AppAction::None;
-        }
-        // The slot strip is the top row: clicking a name focuses that
-        // slot (mirrored onto `Play::focus` by the binary, like Tab).
-        if row == 0 {
-            return self
-                .strip_select(col)
-                .map(AppAction::Focus)
-                .unwrap_or(AppAction::None);
-        }
-        if self.chat_area.contains(Position::new(col, row)) {
-            let mut chat = Chat::new(self.chat_data.view(), &mut self.chat, |_| {});
-            match chat.on_click(self.chat_area, col, row) {
-                action @ (ChatAction::Continue
-                | ChatAction::Answer(_)
-                | ChatAction::PaintButton(_)
-                | ChatAction::PaintChrome(_)) => return AppAction::Chat(action),
-                ChatAction::None => {}
-            }
-        }
-        if self.script_area.contains(Position::new(col, row)) {
-            return self.script_click(col, row);
-        }
-        AppAction::None
-    }
-
-    /// The script pane's clicks: Browse toggles the picker, Start emits
-    /// [`AppAction::ScriptStart`] with the selected card (an error when
-    /// nothing is selected), Pause/Stop emit their actions, Load opens
-    /// the path input, and picker rows store the selection.
-    fn script_click(&mut self, col: u16, row: u16) -> AppAction {
+    /// The script pane's clicks: a button runs its command (the same path
+    /// as its key and the palette), picker rows store the selection.
+    pub(crate) fn script_click(&mut self, col: u16, row: u16) -> AppAction {
         if self.script_load_open {
             return self.load_click(col, row);
         }
@@ -1486,9 +1286,11 @@ impl TuiApp {
         )
         .with_reload_confirm(self.reload_confirm);
         match pane.on_click(self.script_area, col, row) {
-            ScriptClick::Button(label) => self.script_command(label),
-            ScriptClick::Params => self.script_command("Params"),
-            ScriptClick::ImportCatalog => AppAction::ScriptImportCatalog,
+            ScriptClick::Button(label) => {
+                script_command(label).map_or(AppAction::None, |command| self.run_command(command))
+            }
+            ScriptClick::Params => self.run_command(Command::ScriptParams),
+            ScriptClick::ImportCatalog => self.run_command(Command::ImportCatalog),
             ScriptClick::Pick(idx) => {
                 if let Some(card) = self.script_cards.get(idx) {
                     self.script_sel = Some(ScriptSel::Loaded(card.source, card.name.clone()));
@@ -1500,13 +1302,12 @@ impl TuiApp {
         }
     }
 
-    /// One script command, from its button or its key (`SCRIPT_KEYS`):
-    /// Browse toggles the picker, Start emits [`AppAction::ScriptStart`]
-    /// with the heading (an error when nothing is selected), Load opens the
-    /// file browser, and the rest map to their actions.
-    fn script_command(&mut self, command: &str) -> AppAction {
+    /// One script command after the router checked it is available:
+    /// Browse toggles the picker, Start carries the heading card, Load
+    /// opens the file browser, the rest map to their actions.
+    pub(crate) fn script_run(&mut self, command: Command) -> AppAction {
         match command {
-            "Browse" => {
+            Command::ScriptBrowse => {
                 let opening = !self.script_browse_open;
                 self.script_browse_open = opening;
                 if opening {
@@ -1515,29 +1316,24 @@ impl TuiApp {
                     AppAction::None
                 }
             }
-            "Start" => match self.script_sel.clone() {
+            Command::ScriptStart => match self.script_sel.clone() {
                 Some(sel) => AppAction::ScriptStart(sel),
                 None => {
                     self.error = Some("script: browse to pick one first".into());
                     AppAction::None
                 }
             },
-            "Pause" | "Resume" => AppAction::ScriptPause,
-            "Stop" => AppAction::ScriptStop,
-            "Load" => {
+            Command::ScriptPause => AppAction::ScriptPause,
+            Command::ScriptStop => AppAction::ScriptStop,
+            Command::ScriptLoad => {
                 let last = self.script_load_last_dir.clone();
                 self.open_script_load_browser(last.as_deref());
                 AppAction::None
             }
-            "Params" if self.params_schema.is_empty() => {
-                self.error = Some("parameters: the selected script has none".into());
-                AppAction::None
-            }
-            "Params" => AppAction::ScriptParams,
-            "Reload" | "Confirm" => AppAction::ScriptReload,
-            "Cancel" if self.reload_confirm => AppAction::ScriptReloadCancel,
-            "Start all" => AppAction::ScriptStartAll,
-            "Stop all" => AppAction::ScriptStopAll,
+            Command::ScriptParams => AppAction::ScriptParams,
+            Command::ScriptReload => AppAction::ScriptReload,
+            Command::ScriptReloadCancel => AppAction::ScriptReloadCancel,
+            Command::ImportCatalog => AppAction::ScriptImportCatalog,
             _ => AppAction::None,
         }
     }
@@ -1584,116 +1380,6 @@ impl TuiApp {
         AppAction::None
     }
 
-    /// Render the full layout (spec): slot strip, map, chat, status |
-    /// inv/stats/locs, script shape, then the settings popup overlay.
-    pub fn draw(&mut self, frame: &mut Frame<'_>) {
-        let area = frame.area();
-        // The script pane grows for the Browse picker rows and the Load
-        // path line (capped so a small terminal keeps map/status room).
-        let browse_lines = if self.script_browse_open && !self.rs2b0t_catalog_open {
-            browse_lines(
-                &self.script_cards,
-                &self.script_category_order,
-                script::rs2b0t_import_deferred(),
-            )
-        } else {
-            Vec::new()
-        };
-        let browse_h = if self.script_browse_open && !self.rs2b0t_catalog_open {
-            browse_section_height(&browse_lines, &self.script_cards).min(MAX_BROWSE_LINES)
-        } else {
-            0
-        };
-        let catalog_h = if self.rs2b0t_catalog_open {
-            (self.catalog_entries().len() as u16 + 3).min(16)
-        } else {
-            0
-        };
-        let load_h = if self.script_load_open {
-            (self.load_entries().len() as u16 + 3).min(16)
-        } else {
-            0
-        };
-        let script_h = 4
-            + browse_h
-            + catalog_h
-            + load_h
-            + u16::from(self.script_load_open && load_h == 0)
-            // The `[Params]` / Reload / Start all / Stop all row.
-            + u16::from(
-                !self.script_browse_open && !self.rs2b0t_catalog_open && !self.script_load_open,
-            );
-        let chat_h = self.chat_data.view().preferred_height();
-        // The script commands keep their rows on a short terminal: the
-        // strip and the script pane are placed first, and map, chat and
-        // status share (and shrink within) what is left, keeping at least
-        // `MIN_MIDDLE` rows for them.
-        const MIN_MIDDLE: u16 = 6;
-        let script_h = script_h.min(area.height.saturating_sub(1 + MIN_MIDDLE));
-        let outer = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Min(0),
-            Constraint::Length(script_h),
-        ])
-        .split(area);
-        // Tall enough: the map keeps its 8 rows. Otherwise the pane in use
-        // keeps room: an active map keeps 8 rows and status shrinks; else
-        // the idle map shrinks before chat (paint buttons) and status.
-        let (map_min, status_min) = if outer[1].height >= 8 + chat_h + 6 {
-            (8, 6)
-        } else if self.map_active {
-            (8, 3)
-        } else {
-            (3, 4)
-        };
-        let chunks = Layout::vertical([
-            Constraint::Min(map_min),
-            Constraint::Length(chat_h),
-            Constraint::Min(status_min),
-        ])
-        .split(outer[1]);
-
-        self.draw_strip(frame, outer[0]);
-        self.draw_map(frame, chunks[0]);
-        self.chat_area = chunks[1];
-        self.draw_chat(frame, chunks[1]);
-        let bottom = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[2]);
-        self.draw_status(frame, bottom[0]);
-        self.draw_inv_locs(frame, bottom[1]);
-        self.script_area = outer[2];
-        self.draw_script(frame, outer[2]);
-
-        if self.settings_state.open {
-            let pane = SettingsPane::new(
-                &mut self.settings,
-                &mut self.nav,
-                &mut self.map_bake,
-                &mut self.settings_state,
-            );
-            frame.render_widget(pane, area);
-        }
-        if self.log.open {
-            let focused = self
-                .focused
-                .and_then(|i| self.names.get(i))
-                .map(String::as_str);
-            self.log.refresh(focused);
-            let below_strip = Rect {
-                y: area.y + 1,
-                height: area.height.saturating_sub(1),
-                ..area
-            };
-            frame.render_widget(
-                crate::log_pane::LogPane {
-                    state: &self.log,
-                    focused,
-                },
-                below_strip,
-            );
-        }
-    }
-
     /// Render the loadouts popup overlay (call after [`Self::draw`]).
     pub fn draw_loadouts_overlay(
         &mut self,
@@ -1736,48 +1422,17 @@ impl TuiApp {
         frame.render_widget(pane, frame.area());
     }
 
-    fn draw_strip(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let focused = self.focused_name().unwrap_or_else(|| "_".into());
-        let mut members = String::new();
-        for name in &self.names {
-            if !members.is_empty() {
-                members.push(' ');
-            }
-            members.push_str(name);
-            if let Some(number) = self
-                .statuses
-                .iter()
-                .find(|s| &s.username == name)
-                .and_then(|s| s.world)
-            {
-                members.push_str(&format!("(w{number})"));
-            }
-        }
-        // The message comes before the title and key help: the strip is one
-        // row, and a report or warning past its width would be invisible.
-        let mut text = format!("[{members}]  focused: {focused}   ");
-        if let Some(err) = &self.error {
-            text.push_str(&format!("!! {err}   "));
-        }
-        text.push_str(&format!(
-            "{}   F4 map · F7 log · q quit · o options · l loadouts · Tab focus · m load+login all · i login · u logout · U logout all · x remove · script keys: letter in each [button]",
-            self.title
-        ));
-        let p = Paragraph::new(text).wrap(Wrap { trim: false });
-        frame.render_widget(p, area);
-    }
-
-    fn draw_map(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    pub(crate) fn draw_map(&mut self, frame: &mut Frame<'_>, area: Rect) {
         if !self.map_active {
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title("Map (F4 activate; no catalogue demand)");
+                .title("Map (F4 opens it; no catalogue demand until then)");
             frame.render_widget(block, area);
             return;
         }
 
         let title = format!(
-            "Map · plane {} · {:?} · {} · arrows/hjkl pan · +/- zoom · / search · g group · t teleport · Esc close",
+            "Map · plane {} · {:?} · {} · arrows/hjkl pan · +/- zoom · / search · g group · t teleport · Esc back",
             self.map.plane,
             self.map_catalogue_status,
             self.walk_send.walk_label()
@@ -1785,9 +1440,14 @@ impl TuiApp {
         let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let [map_area, info_area] =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(inner.height.min(4))])
-                .areas(inner);
+        let [map_area, button_area, info_area] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(inner.height.min(1)),
+            Constraint::Length(inner.height.saturating_sub(2).min(4)),
+        ])
+        .areas(inner);
+        self.regions.map = map_area;
+        self.draw_map_buttons(frame.buffer_mut(), button_area);
 
         let observed = self.observed_marks();
         let catalogue = self.map_host_catalogue.clone();
@@ -1893,12 +1553,12 @@ impl TuiApp {
             .render(info_area, frame.buffer_mut());
     }
 
-    fn draw_chat(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    pub(crate) fn draw_chat(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let chat = Chat::new(self.chat_data.view(), &mut self.chat, |_| {});
         frame.render_widget(chat, area);
     }
 
-    fn draw_status(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    pub(crate) fn draw_status(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let walk = self
             .walk_dest
             .map(|t| format!("{} {} {}", t.x, t.z, t.level))
@@ -1916,7 +1576,7 @@ impl TuiApp {
 
     /// inv / stats / locs pane: the focused snapshot's inventory item
     /// names, used skill rows, and nearest named locs (name + Chebyshev).
-    fn draw_inv_locs(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    pub(crate) fn draw_inv_locs(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
             .title("inv/stats/locs");
@@ -1972,7 +1632,7 @@ impl TuiApp {
             .render(inner, frame.buffer_mut());
     }
 
-    fn draw_script(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    pub(crate) fn draw_script(&mut self, frame: &mut Frame<'_>, area: Rect) {
         if self.script_load_open {
             let block = Block::default().borders(Borders::ALL).title("load script");
             let inner = block.inner(area);

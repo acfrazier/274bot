@@ -1,10 +1,11 @@
 //! Settings popup (spec `2026-09-01-headless-tui-design.md`): an overlay
-//! keyed `s` with the focused profile's `random_events`, `lamp_skill`, and
-//! `lamp_auto`, plus session nav find opt-ins (teleports / wilderness /
-//! BankBudget) and the remembered WalkTo terrain-bake choice shared with the
-//! panel. The random toggle flips [`ProfileSettings`] in place (the
-//! operator vault; `--live` still ephemeral, no persist). Not crowding the
-//! main view — a small centered box drawn after the panes.
+//! (`o` on the Overview, or the palette) with the selected profile's
+//! `random_events`, `lamp_skill`, and `lamp_auto`, plus session nav find
+//! opt-ins (teleports / wilderness / BankBudget) and the remembered WalkTo
+//! terrain-bake choice shared with the panel. The random toggle flips
+//! [`ProfileSettings`] in place (the operator vault; `--live` still
+//! ephemeral, no persist). Not crowding the main view — a small centered
+//! box drawn after the panes.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;

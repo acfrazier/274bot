@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyEventKind, MouseEventKind};
+use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -852,23 +852,20 @@ impl TuiSession {
         self.core.logout_all();
     }
 
-    /// Remove the focused member: clean logout, then its worker stops. The
-    /// neighbour becomes focused.
-    fn remove(&mut self, app: &mut TuiApp) {
-        let Some(name) = app.focused_name() else {
-            return;
-        };
+    /// Remove `name` (frozen when the operator confirmed): clean logout,
+    /// then its worker stops. The neighbour becomes selected when it was.
+    fn remove(&mut self, app: &mut TuiApp, name: &str) {
         let (core, mut surface) = self.core_and_surface();
-        let removal = core.remove(&name, Instant::now(), &mut surface);
+        let removal = core.remove(name, Instant::now(), &mut surface);
         if let Some(next) = removal.reselected {
             app.focused = app.names.iter().position(|n| n == &next);
         } else if removal.selection_cleared {
             app.focused = None;
         }
-        // The strip drops the member on the next pump.
+        // The fleet table drops the member on the next pump.
     }
 
-    /// Load every vault profile and log in every member (the `m` key). A
+    /// Load every vault profile and log in every member (Load+login all). A
     /// loaded, logged-out member is re-armed and a terminal worker
     /// recreated. Returns how many were newly loaded.
     fn load_and_login_all(&mut self) -> usize {
@@ -2563,25 +2560,17 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
                 .map_err(|e| e.to_string())?;
         }
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
-            match event::read().map_err(|e| e.to_string())? {
-                Event::Key(k) if k.kind == KeyEventKind::Press => {
-                    if app.params_state.open {
-                        let action = session.params_key(&mut app, k);
-                        dispatch(&mut session, &mut app, action);
-                    } else if app.loadouts_on_key(&mut session.loadouts, k) {
-                    } else {
-                        let action = app.on_key(k);
-                        dispatch(&mut session, &mut app, action);
-                    }
-                }
-                Event::Mouse(m) => {
-                    if let MouseEventKind::Down(_) = m.kind {
-                        let action = app.on_click(m.column, m.row);
-                        dispatch(&mut session, &mut app, action);
-                    }
-                }
-                _ => {}
-            }
+            // One routing model: the app decides which pane, popup or
+            // overlay an event reaches (params/loadouts come back as
+            // actions that need the session). A resize needs nothing here:
+            // the next draw lays out for the new size and re-records every
+            // hit region before another event is read.
+            let action = match event::read().map_err(|e| e.to_string())? {
+                Event::Key(k) if k.kind == KeyEventKind::Press => app.on_key(k),
+                Event::Mouse(m) => app.on_mouse(m),
+                _ => AppAction::None,
+            };
+            dispatch(&mut session, &mut app, action);
         }
         if app.quit {
             return Ok(0);
@@ -2595,8 +2584,8 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
 }
 
 /// Route one [`AppAction`] onto the session: map walks arm through
-/// `host_play::arm_walk_on`, chat and WASD go through [`WireCmd`], the
-/// script actions dispatch `Play::script_start_load` / pause / stop /
+/// `host_play::arm_walk_on`, chat and manual walks go through [`WireCmd`],
+/// the script actions dispatch `Play::script_start_load` / pause / stop /
 /// the JS library, and the settings popup persists on the next pump.
 fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     match action {
@@ -2619,7 +2608,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::Login => session.login(app),
         AppAction::Logout => session.logout(app),
         AppAction::LogoutAll => session.logout_all(),
-        AppAction::Remove => session.remove(app),
+        AppAction::Remove(name) => session.remove(app, &name),
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),
         AppAction::ScriptStop => session.script_stop(app),
@@ -2659,17 +2648,44 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptSyncApply => session.apply_settings_sync(app),
         AppAction::ScriptSyncCancel => session.scripts.cancel_settings_sync(),
         AppAction::AckBackground => session.ack_background_bots(app),
+        AppAction::ParamsKey(key) => {
+            let action = session.params_key(app, key);
+            dispatch(session, app, action);
+        }
+        AppAction::LoadoutsKey(key) => {
+            app.loadouts_on_key(&mut session.loadouts, key);
+        }
+        AppAction::MouseCapture(on) => set_mouse_capture(on),
+        AppAction::Batch(actions) => {
+            for action in actions {
+                dispatch(session, app, action);
+            }
+        }
         AppAction::None => {}
     }
 }
 
-/// The `m` key loads every profile and logs every member in.
+/// Load every profile and log every member in (confirmed in the app).
 fn multibox_key(session: &mut TuiSession, app: &mut TuiApp) {
     let loaded = session.load_and_login_all();
     app.error = session
         .error
         .take()
         .or_else(|| (loaded > 0).then(|| format!("loaded {loaded} member(s)")));
+}
+
+/// Apply the operator's mouse-capture choice to the live terminal. Off lets
+/// the terminal select and copy text; keyboard keeps working either way.
+fn set_mouse_capture(on: bool) {
+    if !ALT_SCREEN.load(Ordering::SeqCst) {
+        return;
+    }
+    let mut stdout = std::io::stdout();
+    let _ = if on {
+        crossterm::execute!(stdout, crossterm::event::EnableMouseCapture)
+    } else {
+        crossterm::execute!(stdout, crossterm::event::DisableMouseCapture)
+    };
 }
 
 pub fn main() -> ExitCode {
