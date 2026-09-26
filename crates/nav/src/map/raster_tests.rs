@@ -295,3 +295,63 @@ fn completed_from_disk_accepts_a_valid_png() {
     assert_eq!(unit.key, UnitKey::Terrain { tile: key });
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn resume_adopts_valid_disk_tiles_the_checkpoint_never_listed() {
+    // A close mid-bake checkpoints nothing, so resume must pick up every
+    // valid tile already written instead of rasterizing it again.
+    let root = std::env::temp_dir().join(format!("274bot-raster-adopt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let key = |x| TileKey {
+        plane: 0,
+        lod: 0,
+        x,
+        z: 7,
+    };
+    let (valid, corrupt, missing) = (key(1), key(2), key(3));
+    let png = encode_png(&vec![40u8; TILE_RGBA_BYTES]).unwrap();
+    for (tile, bytes) in [(valid, png.as_slice()), (corrupt, b"not a png".as_slice())] {
+        let path = root.join(tile.relative_path().unwrap());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+    }
+    let mut completed = Vec::new();
+    let mut completed_keys = BTreeSet::new();
+    let mut completed_bytes = 0;
+    adopt_existing_tiles(
+        &root,
+        [valid, corrupt, missing],
+        |_| false,
+        &mut completed,
+        &mut completed_keys,
+        &mut completed_bytes,
+    )
+    .unwrap();
+    assert_eq!(completed_keys, BTreeSet::from([valid]));
+    assert_eq!(
+        completed,
+        vec![CompletedUnit {
+            key: UnitKey::Terrain { tile: valid },
+            payload: PayloadReceipt {
+                bytes: png.len() as u32,
+                sha256: Digest::of(&png),
+            },
+        }]
+    );
+    assert_eq!(completed_bytes, png.len() as u64);
+
+    // A tile the checkpoint does list must still verify on disk.
+    let mut completed = Vec::new();
+    let mut completed_keys = BTreeSet::new();
+    let mut completed_bytes = 0;
+    assert!(adopt_existing_tiles(
+        &root,
+        [corrupt],
+        |tile| tile == corrupt,
+        &mut completed,
+        &mut completed_keys,
+        &mut completed_bytes,
+    )
+    .is_err());
+    std::fs::remove_dir_all(&root).unwrap();
+}
