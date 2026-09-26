@@ -261,10 +261,6 @@ impl<Io> OperatorSession<Io> {
         Selection::Changed { previous }
     }
 
-    pub fn clear_selection(&mut self) {
-        self.selected = None;
-    }
-
     /// Control arm for a vault profile: auto-login remains a saved policy,
     /// while a fleet logout latch starts the worker in an explicit
     /// logged-out hold.
@@ -979,9 +975,6 @@ impl<Io> OperatorSession<Io> {
         &mut self.fleet
     }
 
-    pub fn set_statuses(&mut self, statuses: Vec<SlotStatus>) {
-        self.statuses = statuses;
-    }
 }
 
 fn completed_or_failed(result: Result<(), String>) -> Outcome {
