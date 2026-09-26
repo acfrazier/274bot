@@ -126,6 +126,7 @@ impl ProgressWatchdog {
     /// Drop in-flight recovery without consuming cooldown. AbortWalk when a
     /// recovery walk was live, even if clocks are already frozen.
     pub fn abort_owned_recovery(&mut self) -> WatchdogAction {
+        self.rearm_walk = false;
         match self.state {
             WatchdogState::Recovering { .. } => {
                 self.state = WatchdogState::Armed;
@@ -339,6 +340,7 @@ impl ProgressWatchdog {
             .map(|p| chebyshev_xz(p, anchor.xz()) > ANCHOR_NEAR)
             .unwrap_or(true);
         if far {
+            self.rearm_walk = false;
             self.state = WatchdogState::Recovering {
                 anchor,
                 started: now,
@@ -359,6 +361,7 @@ impl ProgressWatchdog {
         }
         self.last_recovery = Some(now);
         self.stamp_gameplay(now);
+        self.rearm_walk = false;
         self.state = WatchdogState::Armed;
         WatchdogAction::None
     }
@@ -376,6 +379,7 @@ impl ProgressWatchdog {
         if !matches!(self.state, WatchdogState::Recovering { .. }) {
             return WatchdogAction::None;
         }
+        self.rearm_walk = false;
         self.state = WatchdogState::Armed;
         WatchdogAction::AbortWalk
     }
@@ -428,6 +432,7 @@ impl ProgressWatchdog {
     }
 
     fn enter_restart(&mut self, _now: Instant, reason: RestartReason) -> WatchdogAction {
+        self.rearm_walk = false;
         self.state = WatchdogState::RestartPending { reason };
         WatchdogAction::Restart { reason }
     }
@@ -908,6 +913,42 @@ mod tests {
         w.set_frozen(false, resumed);
         assert_eq!(w.observe(resumed, true), WatchdogAction::None);
         assert_eq!(w.state(), WatchdogState::Armed);
+    }
+
+    /// A guardian hold that aborts a resumed recovery before its owed walk
+    /// was sent drops that walk: the next recovery arms exactly once.
+    #[test]
+    fn an_abandoned_resumed_recovery_owes_no_walk_to_the_next_one() {
+        let mut w = ProgressWatchdog::new();
+        let t = t0();
+        w.arm_fresh(t);
+        w.observe(t + WEDGE, true);
+        let anchor = Tile {
+            x: 50,
+            z: 50,
+            level: 0,
+        };
+        w.on_anchor(t + WEDGE, Some((0, 0)), Some(anchor));
+        let paused = t + WEDGE + Duration::from_secs(1);
+        w.defer_recovery();
+        w.set_frozen(true, paused);
+        let resumed = paused + Duration::from_secs(60);
+        w.set_frozen(false, resumed);
+        assert!(w.rearm_pending());
+        assert_eq!(w.on_hold_during_walk(), WatchdogAction::AbortWalk);
+        assert!(!w.rearm_pending());
+
+        let wedged = resumed + WEDGE;
+        assert_eq!(w.observe(wedged, true), WatchdogAction::RequestAnchor);
+        assert_eq!(
+            w.on_anchor(wedged, Some((0, 0)), Some(anchor)),
+            WatchdogAction::ArmWalk {
+                x: 50,
+                z: 50,
+                level: 0
+            }
+        );
+        assert_eq!(w.observe(wedged, true), WatchdogAction::None, "once");
     }
 
     #[test]
