@@ -43,6 +43,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - The paired proofs (`nature_crafter_air`, `mule_crafter_air`,
   `flax_runner`, `duel_arena`) refuse to run without the pair gate instead
   of reporting their Start snapshot as PASS, in panel-play and tui-play.
+- Eleven v2 File-card cells no longer pass on their Start snapshot. Each
+  watch and terminal proof is now the card's own outcome, which the
+  pre-Start seed cannot satisfy, so the clean-stop grace starts after the
+  card's work, not at Start. Hold/retreat/walk-spot and enter/leave-lair
+  wait for the card's walk to its distance band from the mainland landing
+  (new `arrived_ring` proof). `bank_v2_ts` waits for arrival within 3 of
+  the Falador bank. The prayer v1/v2 cells wait for Protect from Melee on
+  (varp 97), not for the seeded prayer 43. The observing line-of-sight,
+  actor-observation and fight-field cells wait for the receipt row the card
+  paints (new `script_receipt` proof, fed from the driven slot's published
+  paint in both front ends and recorded in the evidence `receipt` field).
 
 ### Performance measurement
 

@@ -162,6 +162,12 @@ impl ScriptStartHandle {
     pub fn poll_start(&self, name: &str) -> script::StartPoll {
         poll_start(&self.scripts, name)
     }
+
+    /// `name`'s latest recorded paint frame (the frame its status row
+    /// publishes), for the live pump's File-card receipt watches.
+    pub fn paint(&self, name: &str) -> Option<Arc<script::shim::ScriptPaint>> {
+        script_runtime::script_paint_of(&self.scripts, name)
+    }
 }
 impl Play {
     /// Overlay handle for catalog `walk` / `ctx.walk` Traveller (Play's

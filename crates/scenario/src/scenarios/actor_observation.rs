@@ -7,18 +7,24 @@ pub(crate) const ACTOR_OBSERVATION_V2_STOP: &str = "actor observation qualificat
 const ACTOR_DEADLINE: Duration = Duration::from_secs(180);
 const ACTOR_WATCH: u32 = 240;
 
+/// The card only observes, so its outcome is the `actor-receipt:` row it
+/// paints once the v1 and v2 NPC readings agree; no seed paints it.
+pub(crate) const ACTOR_OBSERVATION_V2_RECEIPT: Proof = Proof::ScriptReceipt {
+    prefix: "actor-receipt:",
+};
+
 /// Headed File witness: real posted NPC size>=1 plus existing LOS helpers.
 pub(crate) fn actor_observation_v2_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());
     steps.push(Step {
-        name: "watch the File card reach its named helper stop",
+        name: "watch the File card paint its actor receipt",
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
             budget_ticks: ACTOR_WATCH,
-            arm: Proof::Stat { id: 16, min: 0 },
+            arm: ACTOR_OBSERVATION_V2_RECEIPT,
         },
     });
     Scenario {
@@ -28,7 +34,7 @@ pub(crate) fn actor_observation_v2_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: Proof::Stat { id: 16, min: 0 },
+        proof: ACTOR_OBSERVATION_V2_RECEIPT,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,

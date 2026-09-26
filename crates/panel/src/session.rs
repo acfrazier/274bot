@@ -2761,6 +2761,16 @@ impl Session {
             // same way `step_nav_bot` freezes (route stays latched).
             if let Some(runner) = scenario.lock().unwrap().as_mut() {
                 if runner.drives(name) {
+                    if runner.wants_script_paint() {
+                        let paint = script_start_handle
+                            .lock()
+                            .unwrap()
+                            .as_ref()
+                            .and_then(|handle| handle.paint(name));
+                        if let Some(paint) = paint {
+                            runner.observe_script_paint(paint.lines.iter().map(String::as_str));
+                        }
+                    }
                     if live_start::fire_pending_catalog_start(
                         &mut pending_script.lock().unwrap(),
                         runner.on_start_script(),

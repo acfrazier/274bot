@@ -34,6 +34,9 @@ pub struct Evidence {
     /// random event is readable without a screen.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub chat: Vec<ChatRow>,
+    /// The File card's painted receipt row a `script_receipt` watch latched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<String>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
 }
@@ -115,6 +118,7 @@ impl Evidence {
                     username: l.username.clone(),
                 })
                 .collect(),
+            receipt: None,
             scene: snap.scene_state(),
         }
     }

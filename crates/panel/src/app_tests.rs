@@ -2150,6 +2150,7 @@ fn native_failure_receipt_uses_inner_scenario_identity() {
         inv: Vec::new(),
         stat: None,
         chat: Vec::new(),
+        receipt: None,
         scene: 2,
     };
     assert_eq!(

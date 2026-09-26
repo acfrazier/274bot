@@ -18,6 +18,15 @@ pub(crate) const FALADOR_FOUNTAIN: WorldTile = WorldTile {
 const BANK_DEADLINE: Duration = Duration::from_secs(180);
 const BANK_WATCH: u32 = 240;
 
+/// `bank_v2.ts` ends its trip within its approach radius 3 of the site
+/// bank (2946,3369,0); the seeded fountain is Chebyshev 12 away.
+pub(crate) const BANK_V2_AT_BANK: Proof = Proof::ArrivedNear {
+    x: 2946,
+    z: 3369,
+    level: 0,
+    radius: 3,
+};
+
 /// Headed File witness: one bank trip from the Falador fountain. The gate
 /// needs the host's walk-near the bank at radius 3, the end tile within 3 of
 /// it and the settled `true` receipt.
@@ -29,13 +38,13 @@ pub(crate) fn bank_v2_scenario() -> Scenario {
     ));
     steps.push(start_catalog_step());
     steps.push(Step {
-        name: "watch the File card reach its named helper stop",
+        name: "watch the File card reach the Falador bank",
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
             budget_ticks: BANK_WATCH,
-            arm: Proof::Stat { id: 16, min: 0 },
+            arm: BANK_V2_AT_BANK,
         },
     });
     Scenario {
@@ -45,7 +54,7 @@ pub(crate) fn bank_v2_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: Proof::Stat { id: 16, min: 0 },
+        proof: BANK_V2_AT_BANK,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,

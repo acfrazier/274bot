@@ -672,6 +672,15 @@ fn insert_setstat_drain_before_hostile_tele(scenario: &mut Scenario) {
         .insert(tele, drain_setstat_levelups_before_hostile_tele());
 }
 
+/// Where `api::interact::mainland_hop` lands (`tele 0,50,50,20,20`). A
+/// mainland seed releases only on this exact tile, so it is also the Start
+/// tile of a mainland-seeded File card whose seed does not move it.
+pub(crate) const MAINLAND_LANDING: WorldTile = WorldTile {
+    x: 3220,
+    z: 3220,
+    level: 0,
+};
+
 /// Catalog Start after the last seed wait: live pumps call `script_start_load`
 /// once, then this one-tick arm (run energy, not XP) succeeds.
 fn start_catalog_step() -> Step {

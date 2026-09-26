@@ -11,6 +11,15 @@ const PRAYER_WATCH: u32 = 240;
 /// Protect from Melee selected-source level. Not run-energy `Proof::Stat` 16.
 const PRAYER_SKILL_ID: i32 = 5;
 const PRAYER_VARP0: i32 = 83;
+/// `prayer14`, Protect from Melee's overlay varp (`PRAYER_VARP0 + 14`).
+const PROTECT_FROM_MELEE_VARP: i32 = PRAYER_VARP0 + 14;
+/// Both cards switch Protect from Melee on before they clear it. The seed
+/// sets every prayer overlay off, so only the card's own `prayerSet`
+/// satisfies this; the clear and the stop reason follow in the grace.
+const PROTECT_FROM_MELEE_ON: Proof = Proof::VarpExact {
+    id: PROTECT_FROM_MELEE_VARP,
+    value: 1,
+};
 
 fn prayer_seed_steps() -> Vec<Step> {
     let mut steps = script_live_seed_steps();
@@ -65,16 +74,13 @@ fn prayer_file_scenario(
     let mut steps = prayer_seed_steps();
     steps.push(start_catalog_step());
     steps.push(Step {
-        name: "watch the File card reach its named helper stop",
+        name: "watch the File card switch Protect from Melee on",
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
             budget_ticks: PRAYER_WATCH,
-            arm: Proof::Stat {
-                id: PRAYER_SKILL_ID,
-                min: 1,
-            },
+            arm: PROTECT_FROM_MELEE_ON,
         },
     });
     Scenario {
@@ -84,10 +90,7 @@ fn prayer_file_scenario(
             mainland: true,
         },
         steps,
-        proof: Proof::Stat {
-            id: PRAYER_SKILL_ID,
-            min: 1,
-        },
+        proof: PROTECT_FROM_MELEE_ON,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,

@@ -57,6 +57,23 @@ pub enum Proof {
         level: i32,
         radius: i32,
     },
+    /// `arrived_ring(x, z, level, min..=max)`: on the level, Chebyshev
+    /// `min..=max` from the tile — where a File card's own walk from a
+    /// known Start tile ends when it picks a destination by distance.
+    ArrivedRing {
+        x: i32,
+        z: i32,
+        level: i32,
+        min: i32,
+        max: i32,
+    },
+    /// `script_receipt(prefix)`: the running File card painted a receipt
+    /// row starting with `prefix` after StartScript — the outcome of a card
+    /// that only observes. Host-fed: the live pump hands the runner the
+    /// driven slot's published paint
+    /// ([`crate::ScenarioRunner::observe_script_paint`]), so a bare
+    /// snapshot check fails closed.
+    ScriptReceipt { prefix: &'static str },
     /// `in_essence_mine`: standing inside the Rune Essence mine enclosure
     /// (m45_75) — the entry teleport lands at a random
     /// `essence_mine_teleports` coord, never the pad exactly.
@@ -199,6 +216,14 @@ impl Proof {
                 level,
                 radius,
             } => format!("arrived_near({x},{z},{level},{radius})"),
+            Proof::ArrivedRing {
+                x,
+                z,
+                level,
+                min,
+                max,
+            } => format!("arrived_ring({x},{z},{level},{min}..={max})"),
+            Proof::ScriptReceipt { prefix } => format!("script_receipt({prefix})"),
             Proof::EssenceMine => "in_essence_mine".to_string(),
             Proof::ChatChoice => "chat_choice".to_string(),
             Proof::QuestDone { name } => format!("quest_done({name})"),
@@ -434,6 +459,27 @@ impl Proof {
                         },
                     ) <= *radius
             }),
+            Proof::ArrivedRing {
+                x,
+                z,
+                level,
+                min,
+                max,
+            } => snap.tile().is_some_and(|(tx, tz, tl)| {
+                let here = Tile {
+                    x: tx,
+                    z: tz,
+                    level: tl,
+                };
+                let center = Tile {
+                    x: *x,
+                    z: *z,
+                    level: *level,
+                };
+                tl == *level && (*min..=*max).contains(&chebyshev(here, center))
+            }),
+            // The receipt is host-fed runner state, never snapshot state.
+            Proof::ScriptReceipt { .. } => false,
             Proof::EssenceMine => snap.tile().is_some_and(|(tx, tz, tl)| {
                 nav::essence::in_essence_mine(WorldTile {
                     x: tx,
@@ -1343,6 +1389,53 @@ mod tests {
             .name(),
             "arrived_near(3220,3212,0,2)"
         );
+    }
+
+    #[test]
+    fn arrived_ring_needs_the_distance_band_on_the_level() {
+        let s = snap(&mut seeded()); // player at (3220, 3212, 0)
+        let ring = |z, level, min, max| Proof::ArrivedRing {
+            x: 3220,
+            z,
+            level,
+            min,
+            max,
+        };
+        assert!(
+            !ring(3212, 0, 2, 6).check(&s, None),
+            "standing on the centre is not a walk away from it"
+        );
+        assert!(
+            !ring(3213, 0, 2, 6).check(&s, None),
+            "cheb 1 is inside the band"
+        );
+        assert!(
+            ring(3214, 0, 2, 6).check(&s, None),
+            "cheb 2 is the band's edge"
+        );
+        assert!(
+            ring(3218, 0, 2, 6).check(&s, None),
+            "cheb 6 is the far edge"
+        );
+        assert!(!ring(3219, 0, 2, 6).check(&s, None), "cheb 7 overshoots");
+        assert!(
+            !ring(3214, 1, 2, 6).check(&s, None),
+            "the band is per-level"
+        );
+        assert_eq!(
+            ring(3214, 0, 2, 6).name(),
+            "arrived_ring(3220,3214,0,2..=6)"
+        );
+    }
+
+    #[test]
+    fn script_receipt_fails_closed_on_a_bare_snapshot() {
+        let s = snap(&mut seeded());
+        let receipt = Proof::ScriptReceipt {
+            prefix: "los-receipt:",
+        };
+        assert!(!receipt.check(&s, None));
+        assert_eq!(receipt.name(), "script_receipt(los-receipt:)");
     }
 
     #[test]

@@ -181,6 +181,13 @@ pub struct ScenarioRunner {
     maze_episode: Option<MazeEpisodeObservation>,
     /// At most one catch-less stall session may be followed by a bank retry.
     stall_combat: Option<StallCombatObservation>,
+    /// StartScript has begun: paint published before it cannot belong to
+    /// this run's card.
+    script_started: bool,
+    /// File-card receipt rows [`Proof::ScriptReceipt`] watches latched from
+    /// the driven slot's published paint (first row per prefix). Host-fed
+    /// through [`ScenarioRunner::observe_script_paint`]; not snapshot state.
+    script_receipts: Vec<String>,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
     /// panel fills this with its window capture; the headless twin keeps
@@ -257,6 +264,8 @@ impl ScenarioRunner {
             lamp_episode: None,
             maze_episode: None,
             stall_combat: None,
+            script_started: false,
+            script_receipts: Vec::new(),
             shot_sink: None,
         }
     }
@@ -409,6 +418,46 @@ impl ScenarioRunner {
             && matches!(self.current_step().kind, StepKind::StartScript)
     }
 
+    /// Whether the live pump should hand this runner the driven slot's
+    /// published paint: the card has started and a
+    /// [`Proof::ScriptReceipt`] watch has not latched its row yet. False
+    /// for every scenario without a receipt watch, so ordinary runs never
+    /// read paint.
+    pub fn wants_script_paint(&self) -> bool {
+        self.script_started
+            && !matches!(self.phase, Phase::Done)
+            && receipt_prefixes(&self.scenario).any(|prefix| {
+                !self
+                    .script_receipts
+                    .iter()
+                    .any(|row| row.starts_with(prefix))
+            })
+    }
+
+    /// Latch the first published paint row that starts with each receipt
+    /// prefix the scenario watches. The live pump calls this with the
+    /// driven slot's current paint frame before [`Self::tick_with_hold`];
+    /// paint published before StartScript is ignored.
+    pub fn observe_script_paint<'a>(&mut self, lines: impl IntoIterator<Item = &'a str>) {
+        if !self.script_started || matches!(self.phase, Phase::Done) {
+            return;
+        }
+        for line in lines {
+            let Some(prefix) =
+                receipt_prefixes(&self.scenario).find(|prefix| line.starts_with(prefix))
+            else {
+                continue;
+            };
+            if !self
+                .script_receipts
+                .iter()
+                .any(|row| row.starts_with(prefix))
+            {
+                self.script_receipts.push(line.to_string());
+            }
+        }
+    }
+
     /// The terminal evidence record, `None` until PASS/FAIL.
     pub fn evidence(&self) -> Option<&Evidence> {
         self.evidence.as_ref()
@@ -488,7 +537,7 @@ impl ScenarioRunner {
             // mainlandAccount tele lands at this exact tile; checking it on
             // a later observation also handles a hop whose rebuild is too
             // fast to expose an intermediate scene_state.
-            if was_ready && self.snapshot.tile() == Some((3220, 3220, 0)) {
+            if was_ready && snapshot_tile(&self.snapshot) == Some(crate::MAINLAND_LANDING) {
                 self.seed_arrival_observed = true;
             }
         }
@@ -558,12 +607,7 @@ impl ScenarioRunner {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
             };
-            let arm_holds = arm.check_with_xp_context(
-                &self.snapshot,
-                self.obj_names.as_deref(),
-                Some(&self.xp_baselines),
-                self.fresh_xp_baseline,
-            );
+            let arm_holds = self.holds(arm);
             let stall_combat_holds = match self.observe_stall_combat(arm_holds) {
                 Ok(holds) => holds,
                 Err(message) => {
@@ -624,14 +668,7 @@ impl ScenarioRunner {
                 ));
             }
         }
-        if matches!(self.phase, Phase::Proving)
-            && self.scenario.proof.check_with_xp_context(
-                &self.snapshot,
-                self.obj_names.as_deref(),
-                Some(&self.xp_baselines),
-                self.fresh_xp_baseline,
-            )
-        {
+        if matches!(self.phase, Phase::Proving) && self.holds(self.scenario.proof) {
             self.finish_pass();
         }
         if !matches!(self.phase, Phase::Done) && self.started.elapsed() > self.deadline {
@@ -715,6 +752,8 @@ impl ScenarioRunner {
         )
         .then_some(StallCombatObservation::FirstSession);
         if matches!(self.current_step().kind, StepKind::StartScript) {
+            self.script_started = true;
+            self.script_receipts.clear();
             // Several skills can advance before their sequential watches
             // begin (a catching Guard can die before the first cake is stolen).
             // Seed XP is excluded; fresh return-trip watches stay step-local.
@@ -730,6 +769,23 @@ impl ScenarioRunner {
             }
         }
         self.capture_xp_baseline(self.current_step().wait.arm);
+    }
+
+    /// Whether `proof` holds on this tick: snapshot predicates against the
+    /// runner's XP baselines, File-card receipts against the host-fed latch.
+    fn holds(&self, proof: Proof) -> bool {
+        match proof {
+            Proof::ScriptReceipt { prefix } => self
+                .script_receipts
+                .iter()
+                .any(|row| row.starts_with(prefix)),
+            other => other.check_with_xp_context(
+                &self.snapshot,
+                self.obj_names.as_deref(),
+                Some(&self.xp_baselines),
+                self.fresh_xp_baseline,
+            ),
+        }
     }
 
     fn observe_stall_combat(&mut self, xp_gained: bool) -> Result<bool, &'static str> {
@@ -1239,7 +1295,7 @@ impl ScenarioRunner {
     fn finish_pass(&mut self) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
-        self.evidence = Some(Evidence::terminal(
+        let mut evidence = Evidence::terminal(
             self.scenario.name,
             "PASS",
             self.scenario.proof.name(),
@@ -1248,13 +1304,15 @@ impl ScenarioRunner {
             &self.snapshot,
             self.obj_names.as_deref(),
             self.started,
-        ));
+        );
+        evidence.receipt = self.script_receipts.first().cloned();
+        self.evidence = Some(evidence);
     }
 
     fn finish_fail(&mut self, msg: &str) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
-        self.evidence = Some(Evidence::terminal(
+        let mut evidence = Evidence::terminal(
             self.scenario.name,
             "FAIL",
             self.current_predicate_name(),
@@ -1263,8 +1321,23 @@ impl ScenarioRunner {
             &self.snapshot,
             self.obj_names.as_deref(),
             self.started,
-        ));
+        );
+        evidence.receipt = self.script_receipts.first().cloned();
+        self.evidence = Some(evidence);
     }
+}
+
+/// The receipt prefixes a scenario's [`Proof::ScriptReceipt`] watches name.
+fn receipt_prefixes(scenario: &Scenario) -> impl Iterator<Item = &'static str> + '_ {
+    scenario
+        .steps
+        .iter()
+        .map(|step| step.wait.arm)
+        .chain([scenario.proof])
+        .filter_map(|proof| match proof {
+            Proof::ScriptReceipt { prefix } => Some(prefix),
+            _ => None,
+        })
 }
 
 fn snapshot_tile(snapshot: &GameSnapshot) -> Option<WorldTile> {
