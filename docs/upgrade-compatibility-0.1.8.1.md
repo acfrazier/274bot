@@ -14,7 +14,8 @@ without loss. The release gate below is mandatory on each packaged platform.
   `c510ef2392b0c00a9532c3425c9d6deca474d711`.
 - Current client: `2ec306496cb27e327036aceb138face383ce222b`.
 - Upgrade audit/fixture/test: `decee70a653601c3d390a7f3c475f41f8bff3a1b`.
-- External-V9 compatibility fix: `78b10ee2b74693d104213efbe4ed069d4eb2c029`.
+- Older-external-pack compatibility fix:
+  `d931857cb7e91ab7f7f544899f9430416d630bf5`.
 
 The audit compared the old/current readers and writers, enumerated literal
 `~/.274bot` paths in panel, TUI, host, script, nav, and client-cache code, and
@@ -41,7 +42,7 @@ packaging data, not operator-authored state.
 | `js-cache/{manifest.json,objects/<sha>.js}` | Content-addressed generated transpilation cache | Layout and identity remain content-addressed. Missing/stale cache entries are regenerated from the referenced source. | **Derived; safe to reuse or rebuild.** Source: `crates/script/src/js_cache.rs`. |
 | `rs2b0t-path`, `rs2b0t-import` | Plain path to an imported checkout; or the first-run defer marker | Semantics and paths are unchanged. A successful explicit import replaces the path and clears the defer marker; ordinary startup does not rewrite it. | **Preserved.** Source comparison and registry tests. Source: `crates/script/src/rs2b0t_registry/`. |
 | `unpack` / `unpack-289`, including `<version>/versionlist` and `models.bin`, `anims.bin`, `midis.bin`, `maps.bin`, plus copied JAG files | Version-list-derived snapshot directories and fixed length-prefixed archive records | Existing snapshot/JAG readers and record encoding remain compatible. 0.1.9 may add `<version>/ondemand/<archive>/<file>` as a content-identity-bound download overlay. Old readers ignore that additional directory; it does not replace snapshot files. At startup, `sweep_runtime_staging` removes only `.runtime-<pid>-<n>` directories owned by dead processes; these are leaked temporary staging directories, not completed 0.1.8.1 snapshots. | **Derived; preserved and extended.** Source: `vendor/fr-client-rust/crates/client/src/unpack/`, including the deterministic dead/foreign staging sweep test, `content_identity.rs`, and `io/ondemand.rs`. |
-| Operator nav files (`274bot.navpack`, `.navflags`, `.navreach`, `.navcanlight`) and package `nav/<revision>/…` | Main pack `274V9`; sidecars `274F/1`, `274R/1`, `274L/1`; manifests/stamps bind digests | 0.1.9 uses `274V10`, retains the three sidecar wire versions, and adds `274bot.navpois` (`274P/1`). **Upgrade break found:** at campaign commit `76e9bb245`, an external V9 selected from the home, revision directory, `--nav-pack`, or `NAV_PACK` propagated `BadVersion(9)` and aborted profile binding, so panel/TUI could not start. The compatibility fix recognizes an external `274V9` header before manifest validation, leaves the file untouched, binds the profile with `NavAvailability::Unavailable`, and logs `navigation pack was built by an older 274bot; rebuild it with nav-pack`. Valid V10 and strict packaged-bundle validation are unchanged. | **High-severity upgrade break fixed and regression-tested.** `external_v9_pack_degrades_to_unavailable_without_deleting_user_file` uses a real `274V9` header, requires successful profile binding and the actionable status, and verifies byte-for-byte that the old file remains. A V9 resource inside the candidate package remains a release blocker; packages must carry the matching V10 bundle and navpois. Source: old/current `crates/nav/src/pack.rs`, current `crates/host-play/src/profile_binding.rs`, `bundle.rs`, and `map/formats.rs`. |
+| Operator nav files (`274bot.navpack`, `.navflags`, `.navreach`, `.navcanlight`) and package `nav/<revision>/…` | 0.1.8.1 shipped main pack `274V9`, while an upgraded home can still retain an earlier `274V8`; sidecars are `274F/1`, `274R/1`, `274L/1`, and manifests/stamps bind digests | 0.1.9 uses `274V10`, retains the three sidecar wire versions, and adds `274bot.navpois` (`274P/1`). **Upgrade break found:** at campaign commit `76e9bb245`, an older external pack selected from the home, revision directory, `--nav-pack`, or `NAV_PACK` propagated `BadVersion` and aborted profile binding, so panel/TUI could not start. The compatibility fix recognizes an external `274V` version byte lower than the current format before manifest validation, leaves the file untouched, binds the profile with `NavAvailability::Unavailable`, and logs `navigation pack was built by an older 274bot; rebuild it with nav-pack`. A newer version or garbage header remains a hard error. Bundled resources remain strict release artifacts: missing/stale/corrupt/wrong-version packaged files are blockers. | **Derived format replacement without startup or user-file loss after the fix.** Permanent V8 and V9 tests prove startup continues and bytes are unchanged; boundary coverage proves newer and garbage files still fail. Gate step 7 proves package provenance and the old-pack behavior. Source: `crates/nav/src/pack.rs`, `crates/host-play/src/profile_binding.rs`. |
 | `smoke/<run-id>/…`, `fixtures/<scenario>.json`, and e2e run directories/ledgers | Harness screenshots, identity receipts, and resumable test evidence | No operator settings or credentials are sourced from these paths. Existing receipts remain evidence; new runs use new run ids or validate their bound identity before resume. | **Preserved as evidence; not migrated.** Source: panel scenario and e2e ledger/identity code. |
 | `tui-stderr.log` | Current-run diagnostic log | TUI truncates it for each run exactly as before; it is not configuration or history state. | **Expected replacement; no user-state meaning.** Source: `crates/tui/src/stderr_capture.rs`. |
 | Files outside `~/.274bot` selected by `--vault`, `--cache`, `--unpack`, `--nav-pack`, `--nav-flags`, `--content`, `--catalog`, or environment equivalents | Same formats as their default-path counterparts | Selection remains explicit; no upgrade migration moves or deletes an override target. | **Same verdict as the corresponding artifact above.** Source: `crates/host-play/src/profile*`. |
@@ -174,11 +175,11 @@ For each macOS arm64, Windows x64, and Linux x64 release package:
    `host-play: navigation source: packaged 274V10 bundle: <path>`. The path
    must be inside the installed package resources; inspect its first five bytes
    as `274V` plus byte 10 and verify sibling `274bot.navpois` exists. Opening
-   WalkTo must show the map or an explicit cache-building state. Then make one
-   separate launch with `--nav-pack` pointing at the protected old V9 file:
-   startup must continue, stderr must contain
+   WalkTo must show the map or an explicit cache-building state. Then make
+   separate launches with `--nav-pack` pointing at protected old V8 and V9
+   files. Each startup must continue, stderr must contain
    `navigation pack was built by an older 274bot; rebuild it with nav-pack`,
-   navigation must be unavailable, and the old file's hash must not change.
+   navigation must be unavailable, and each old file's hash must not change.
 8. Compare the protected copy with the post-run home. Expected changes are
    encrypted vault/prefs bytes after the deliberate save, generated caches,
    current-run log, and transient/new lock files. Profile count, credentials,
@@ -187,9 +188,9 @@ For each macOS arm64, Windows x64, and Linux x64 release package:
    be semantically identical.
 9. Archive the source-audit output, VM harness stdout/stderr, and screenshots
    showing unlock, profiles/settings, loadouts/overrides, successful login,
-   packaged nav origin, stale-V9 degradation, and relaunch. Record package
+   packaged nav origin, old-V8/V9 degradation, and relaunch. Record package
    digest, OS image, candidate host/client commits, and expected file deltas.
 10. Stop/delete the scratch guest or account. A missing package, failed unlock,
-    reset-to-default old state, dropped item/setting, V9 packaged nav resource,
-    stale external V9 aborting startup, or inability to log in is a release
-    blocker.
+    reset-to-default old state, dropped item/setting, a non-V10 packaged nav
+    resource, an older external pack aborting startup, or inability to log in
+    is a release blocker.
