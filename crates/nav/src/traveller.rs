@@ -61,6 +61,10 @@ const GLIDER_ARRIVE_RADIUS: i32 = 1;
 /// around the packed pad (`gnome_glider.rs2`); looking up only cheb 3 of
 /// packed `at` misses them and Talk-to from the spawn is Unreachable.
 const NPC_SEARCH_RADIUS: i32 = 8;
+/// Frozen `CANDIDATE_SETTLE_TRIES` (`WalkExecutor.ts:100-101`).
+const SCENE_SETTLE_TRIES: u32 = 3;
+/// Frozen `delayTicks(2)` per settle (`WalkExecutor.ts:1182`).
+const SCENE_SETTLE_TICKS: u32 = 2;
 
 /// The traveller's state, reported by each [`Traveller::tick`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -393,6 +397,11 @@ struct FollowRun {
     budget: u32,
     /// Ticks the current transport leg has waited for its loc to appear.
     loc_wait: u32,
+    /// Refused clicks this follow may still sit out while nothing was
+    /// clicked yet (frozen `CANDIDATE_SETTLE_TRIES`, one budget per walk).
+    settle_left: u32,
+    /// The tick a sat-out refusal is retried at (frozen `delayTicks(2)`).
+    settle_until: Option<u32>,
     walk: Option<WalkHop>,
     transport: Option<TransportHop>,
 }
@@ -409,6 +418,8 @@ impl FollowRun {
             close_enough: options.close_enough,
             budget: options.budget_ticks_per_hop,
             loc_wait: 0,
+            settle_left: SCENE_SETTLE_TRIES,
+            settle_until: None,
             walk: None,
             transport: None,
         }
@@ -671,6 +682,14 @@ impl FollowRun {
                         edge.at
                     };
                     if cheb(here, approach_at) > 1 {
+                        if self
+                            .settle_until
+                            .is_some_and(|until| snapshot.tick() < until)
+                        {
+                            self.legs.push_front(leg);
+                            return None;
+                        }
+                        self.settle_until = None;
                         let Some(approach) = approach_tile(snapshot, approach_at, here) else {
                             // No standable tile adjacent to the target in
                             // the loaded scene: keep waiting, bounded by
@@ -720,6 +739,25 @@ impl FollowRun {
                                         retry_pending: false,
                                     }),
                                 });
+                                return None;
+                            }
+                            // Frozen `WalkExecutor.ts:1178-1184`: with nothing
+                            // clicked yet the scene may still be loading
+                            // (a region rebuild empties the client's local
+                            // route), so a refused click is sat out two ticks
+                            // at a time, `CANDIDATE_SETTLE_TRIES` per walk,
+                            // before it ends the follow.
+                            SendResult::Refused {
+                                reason:
+                                    SendReason::Unreachable
+                                    | SendReason::OffScene
+                                    | SendReason::SceneUnavailable,
+                                ..
+                            } if self.settle_left > 0 => {
+                                self.settle_left -= 1;
+                                self.settle_until =
+                                    Some(snapshot.tick().saturating_add(SCENE_SETTLE_TICKS));
+                                self.legs.push_front(leg);
                                 return None;
                             }
                             SendResult::Refused { reason, .. } => {

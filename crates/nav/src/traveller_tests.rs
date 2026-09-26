@@ -2481,6 +2481,98 @@ fn follow_approaches_an_npc_before_interacting() {
     ));
 }
 
+#[test]
+fn follow_sits_out_a_refused_npc_approach_right_after_a_scene_change() {
+    // Frozen WalkExecutor.ts:1178-1184: with nothing clicked yet the scene
+    // may still be loading, so a refused click is retried two ticks later
+    // (CANDIDATE_SETTLE_TRIES per walk) instead of failing the follow.
+    let mut c = scene_client();
+    plant_driver_npc(&mut c, 7, 1, 1);
+    let mut snap = snap_at(&mut c, 1, 4);
+    let mut rec = FollowRec {
+        route: Some((1, 4)),
+        reject_to: Some((1, 2)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let route = Route {
+        legs: vec![Leg::Transport { edge: cart_edge() }],
+        dest: WorldTile {
+            x: 3300,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    };
+    let mut options = TravelOptions::default();
+    assert!(
+        t.follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none(),
+        "a refused approach right after the rebuild is not terminal"
+    );
+    assert!(rec.walked.is_empty());
+    // The scene settles: the client accepts the same approach click.
+    rec.reject_to = None;
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert!(
+        rec.walked.is_empty(),
+        "the retry waits the frozen two ticks"
+    );
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.walked,
+        vec![(1, 2)],
+        "the approach goes out once settled"
+    );
+}
+
+#[test]
+fn follow_npc_approach_refused_past_the_settle_budget_ends_refused() {
+    let mut c = scene_client();
+    plant_driver_npc(&mut c, 7, 1, 1);
+    let mut snap = snap_at(&mut c, 1, 4);
+    let mut rec = FollowRec {
+        route: Some((1, 4)),
+        reject_to: Some((1, 2)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let route = Route {
+        legs: vec![Leg::Transport { edge: cart_edge() }],
+        dest: WorldTile {
+            x: 3300,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    };
+    let mut options = TravelOptions::default();
+    let mut outcome = None;
+    for _ in 0..20 {
+        outcome = t.follow(&mut rec, &snap, route.clone(), &mut options);
+        if outcome.is_some() {
+            break;
+        }
+        bump_rebuild(&mut c, &mut snap);
+    }
+    assert!(
+        matches!(
+            outcome,
+            Some(TravelOutcome::Refused {
+                reason: SendReason::Unreachable,
+                ..
+            })
+        ),
+        "three sat-out refusals, then the fourth ends the follow: {outcome:?}"
+    );
+}
+
 /// Packed `at` is the pier spawn, not a leash. Live Musa customs
 /// wander; talking from cheb-1 of the spawn while the officer is
 /// four tiles away is `I can't reach that!`. Approach the live tile.
