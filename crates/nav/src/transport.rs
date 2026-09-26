@@ -51,10 +51,12 @@ mod npc_hops;
 mod observable;
 mod quest_doors;
 mod ranging_guild;
+mod rs2_syntax;
 mod script_text;
 mod scripted_doors;
 mod shortcuts;
 mod spirit_trees;
+mod stage_doors;
 mod static_routes;
 mod teleports;
 mod toll;
@@ -87,6 +89,7 @@ use script_text::*;
 use scripted_doors::*;
 use shortcuts::*;
 use spirit_trees::*;
+use stage_doors::*;
 use static_routes::*;
 use teleports::*;
 use toll::*;
@@ -349,6 +352,18 @@ fn derive_transports_with_audit(
         &mut skipped,
     );
     zanaris_door_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
+    // After every other loc-backed producer: a named wall or ladder opener
+    // no producer above admitted is evaluated per crossing.
+    stage_door_edges(
+        content_root,
+        &ids,
+        &positions,
+        &mut graph,
+        collision,
+        &mut skipped,
+        &gates,
+        &mut audit,
+    );
     teleport_edges(content_root, &mut graph, &mut skipped);
 
     // The derivers visit hash sets and directory listings whose order varies
@@ -429,6 +444,14 @@ const SKIP_DOOR_MEMBER_STAGE: &str = "closed door member's next_loc_stage open l
 const SKIP_SWAP_DOOR_BLOCKS: &str = "in-place swap door's open loc still blocks walk";
 const SKIP_SCRIPTED_DOOR_SOURCE: &str =
     "scripted wall crossing opener is not the canonical form or its worn obj is unresolved";
+const SKIP_STAGE_DOOR_PROCS: &str =
+    "door open/check-axis procs differ from the modelled engine bodies (no stage doors)";
+const SKIP_STAGE_DOOR_CONFLICT: &str =
+    "named wall/ladder opener is declared more than once, unparsed, or split across aliases";
+const SKIP_STAGE_DOOR_UNPROVEN: &str =
+    "named wall/ladder opener never provably moves the player across (dialog, NPC, key, write, or unmodelled check)";
+const SKIP_STAGE_DOOR_UNOBSERVABLE: &str =
+    "named wall/ladder opener moves the player only behind a varp with no transmission or unique journal proof";
 const SKIP_GATE_MEMBER_STAGE: &str =
     "closed gate member's next_loc_stage open leaf is unresolved or mismatched";
 const SKIP_BRASS_KEY_SOURCE: &str =

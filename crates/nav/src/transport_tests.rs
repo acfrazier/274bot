@@ -8079,3 +8079,6 @@ fn west_ardougne_fence_climbs_both_ways() {
         .iter()
         .all(|e| e.skill_req.is_empty() && e.worn_req.is_empty() && e.open_loc_id.is_none()));
 }
+
+#[path = "transport/stage_doors_tests.rs"]
+mod stage_doors;
