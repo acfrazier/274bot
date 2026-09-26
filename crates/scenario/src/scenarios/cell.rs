@@ -4,8 +4,8 @@ use crate::*;
 /// Matches `cell_v2.ts` `STOP_OK`.
 pub(crate) const CELL_V2_STOP: &str = "cell qualification complete";
 
-/// A walk of about 108 tiles to the jail door, the unlock, Velrak's talk and
-/// the door back out.
+/// The dungeon walk to the jail door, the unlock, Velrak's talk and the
+/// door back out.
 const CELL_DEADLINE: Duration = Duration::from_secs(300);
 const CELL_WATCH: u32 = 460;
 
@@ -15,16 +15,18 @@ const CELL_WATCH: u32 = 460;
 /// the door opened from inside, the dusty key in the pack outside the cell
 /// and the settled `true` receipt.
 pub(crate) fn cell_v2_scenario() -> Scenario {
+    // The seeded jail key cannot end the watch; wait for Velrak's dusty key.
+    let dusty_key = Proof::ItemId { id: 1590, count: 1 };
     let mut steps = taverley_dungeon_seed_steps(true);
     steps.push(start_catalog_step());
     steps.push(Step {
-        name: "watch the File card reach its named helper stop",
+        name: "watch the File card obtain the dusty key",
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
             budget_ticks: CELL_WATCH,
-            arm: Proof::Stat { id: 16, min: 0 },
+            arm: dusty_key,
         },
     });
     Scenario {
@@ -34,7 +36,7 @@ pub(crate) fn cell_v2_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: Proof::Stat { id: 16, min: 0 },
+        proof: dusty_key,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,

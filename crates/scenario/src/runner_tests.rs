@@ -76,6 +76,59 @@ fn wait_script_stop_is_none_unless_the_scenario_sets_it() {
     );
 }
 
+fn jail_watch_waits_for_key(name: &str, key: i32, other_key: i32) {
+    let mut scenario = crate::get(name).unwrap();
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    scenario.steps.drain(..start);
+    scenario.seed.mainland = false;
+    scenario.settings.require_mainland_base = false;
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut c = seeded_client();
+    set_world_tile(
+        &mut c,
+        WorldTile {
+            x: 2884,
+            z: 9798,
+            level: 0,
+        },
+    );
+    set_inv(&mut c, &[]);
+    for _ in 0..80 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut c);
+        assert!(
+            matches!(runner.status(), RunnerStatus::Running { .. }),
+            "{name}: the dungeon walk must not start the clean-stop grace"
+        );
+    }
+    for stacks in [&[(other_key, 1)][..], &[(key, 0)][..]] {
+        set_inv(&mut c, stacks);
+        runner.tick(&mut c);
+        assert!(
+            matches!(runner.status(), RunnerStatus::Running { .. }),
+            "{name}: the wrong key or an empty stack is not completion"
+        );
+    }
+    set_inv(&mut c, &[(key, 1)]);
+    tick_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed, "{name}");
+}
+
+#[test]
+fn acquire_key_watch_waits_for_the_jail_key() {
+    jail_watch_waits_for_key("acquire_key_v2_ts", 1591, 1590);
+}
+
+#[test]
+fn cell_watch_waits_for_the_dusty_key_not_the_seeded_jail_key() {
+    jail_watch_waits_for_key("cell_v2_ts", 1590, 1591);
+}
+
 #[test]
 fn terminal_snapshot_is_released_after_shot_and_evidence() {
     for failed in [false, true] {

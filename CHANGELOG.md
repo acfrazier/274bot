@@ -25,6 +25,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   stall session through a bank return and renewed Guard readiness, within
   a 360-second deadline; a second unqualified bank visit fails. Real
   combat XP, Thieving XP and Cake requirements remain mandatory.
+- The Taverley jail v2 scenarios wait for the acquired jail/dusty key before
+  starting the clean-stop grace. Headless qualification no longer times out
+  during the dungeon walk; navigation and the scenario budgets are unchanged.
 
 ### Navigation
 
