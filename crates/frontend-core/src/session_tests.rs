@@ -504,3 +504,32 @@ fn transitions_report_each_change_once() {
         [Transition::Ingame, Transition::Scene(2)]
     );
 }
+
+#[test]
+fn a_row_published_before_log_in_does_not_cancel_it() {
+    let mut s = session("stale-latch-row", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    s.logout("alice");
+    // The worker last published while latched; it has not observed Log in yet.
+    push_status(
+        &s,
+        SlotStatus {
+            login_latched: true,
+            ..row("alice")
+        },
+    );
+    let login = s.login("alice", &mut surface);
+    s.poll();
+    assert_eq!(
+        s.operation(login).unwrap().outcome("alice"),
+        Some(&Outcome::Pending)
+    );
+    s.logout("alice");
+    s.poll();
+    assert_eq!(
+        s.operation(login).unwrap().outcome("alice"),
+        Some(&Outcome::Cancelled),
+        "a later Log out does cancel it"
+    );
+}

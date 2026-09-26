@@ -764,7 +764,9 @@ impl<Io> OperatorSession<Io> {
                         Some(Outcome::Failed(
                             row.error.clone().unwrap_or_else(|| "worker ended".into()),
                         ))
-                    } else if row.login_latched {
+                    } else if arm.as_ref().is_some_and(|arm| arm.login_latched()) {
+                        // The arm, not the row: a row published before the
+                        // Log in may still show the old latch.
                         Some(Outcome::Cancelled)
                     } else {
                         None
