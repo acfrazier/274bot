@@ -89,6 +89,12 @@ pub(crate) fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// Dear ImGui's context singleton is dropped before this guard during unwind;
 /// recovering poison is therefore safe once the failed test has unwound.
+/// Outermost in the test lock order (see `picker::lock_nav_statics`): taking
+/// it while holding a nav lock panics instead of deadlocking.
 pub(crate) fn imgui_context_guard() -> MutexGuard<'static, ()> {
+    assert!(
+        !crate::picker::holds_nav_locks(),
+        "lock order: imgui_context_guard taken while holding a picker nav lock"
+    );
     lock_unpoisoned(&crate::IMGUI_CTX_TEST_GUARD)
 }

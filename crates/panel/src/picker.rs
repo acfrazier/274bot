@@ -69,14 +69,14 @@ static PREV_OPEN: AtomicBool = AtomicBool::new(false);
 pub fn set_pack(world: Option<Arc<NavWorld>>) {
     let _nav = lock_nav_statics();
     let detaching = world.is_none();
-    *PACK.lock().unwrap() = world;
+    *lock_data(&PACK) = world;
     drop_flags_sidecar();
-    *REACH.lock().unwrap() = None;
+    *lock_data(&REACH) = None;
     // Map-owned flood leases clear here and on WalkTo close via release_map_leases.
     release_map_leases();
     if detaching {
         // Session/pack teardown must not leak the process-static bundled reach Arc.
-        *REACH_BINDING.lock().unwrap() = ReachBinding::Unbound;
+        *lock_data(&REACH_BINDING) = ReachBinding::Unbound;
     }
 }
 
@@ -84,7 +84,7 @@ pub fn set_pack(world: Option<Arc<NavWorld>>) {
 /// `Arc` keeps the world alive for the caller, so the picker and the
 /// session paint the same bake without a second decode.
 pub(crate) fn pack() -> Option<Arc<NavWorld>> {
-    PACK.lock().unwrap().clone()
+    lock_data(&PACK).clone()
 }
 
 /// The raw baked collision flags decoded from the `.navflags` sidecar,
@@ -128,6 +128,17 @@ static FLAGS_CONTENT_HASHES: AtomicU32 = AtomicU32::new(0);
 /// Drawing-gated activation tests assert boot prefs do not bump this.
 static FLAGS_LOADS: AtomicU32 = AtomicU32::new(0);
 
+// Test lock order, outermost first. Taking an earlier lock while this thread
+// holds a later one panics in tests instead of deadlocking another test:
+//   1. `crate::IMGUI_CTX_TEST_GUARD` (`test_support::imgui_context_guard`)
+//   2. `FLAGS_TEST_LOCK` (`lock_nav_statics`; reentrant)
+//   3. the picker nav data mutexes (`PACK`, `FLAGS`, `BOUND_NAV_FLAGS`,
+//      `EXPECTED_FLAGS_SHA256`, `REACH`, `REACH_BINDING`, `FLOOD_CACHE`,
+//      `FLOOD_REPORT`, `ROUTE_TILES`), always taken through `lock_data`.
+// A holder of a data mutex that goes on to call a nav-locking API must take
+// `lock_nav_statics` first (see `lock_route_path`). Production keeps only the
+// data mutexes; the nav lock and the order checks compile away.
+
 /// Serialize every test (and every cfg(test) mutator) that touches
 /// process-static picker nav debug state: flags binding/slot, reach binding,
 /// flood cache, pack. Reentrant so tests may hold the lock across ensure/drop
@@ -135,6 +146,19 @@ static FLAGS_LOADS: AtomicU32 = AtomicU32::new(0);
 #[cfg(test)]
 pub(crate) static FLAGS_TEST_LOCK: parking_lot::ReentrantMutex<()> =
     parking_lot::ReentrantMutex::new(());
+
+#[cfg(test)]
+thread_local! {
+    /// Picker nav data guards this thread currently holds.
+    static HELD_DATA_GUARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// True when this thread holds the nav-statics lock or a picker nav data
+/// mutex, so an outer-order lock (the ImGui context guard) would invert.
+#[cfg(test)]
+pub(crate) fn holds_nav_locks() -> bool {
+    FLAGS_TEST_LOCK.is_owned_by_current_thread() || HELD_DATA_GUARDS.with(|n| n.get()) > 0
+}
 
 /// RAII holder for the process-global nav-statics lock (tests only).
 /// The guard field is only held so Drop releases the mutex; it is never read.
@@ -144,9 +168,16 @@ pub(crate) struct NavStaticsGuard(
     parking_lot::ReentrantMutexGuard<'static, ()>,
 );
 
-/// Take the process-global nav-statics lock. No-op outside tests.
+/// Take the process-global nav-statics lock. No-op outside tests. Panics
+/// when this thread holds a picker data mutex without already owning the
+/// nav lock: that inversion deadlocks against a nav holder waiting on the
+/// same data mutex.
 #[cfg(test)]
 pub(crate) fn lock_nav_statics() -> NavStaticsGuard {
+    assert!(
+        FLAGS_TEST_LOCK.is_owned_by_current_thread() || HELD_DATA_GUARDS.with(|n| n.get()) == 0,
+        "lock order: lock_nav_statics taken while holding a picker nav data mutex"
+    );
     NavStaticsGuard(FLAGS_TEST_LOCK.lock())
 }
 
@@ -154,6 +185,51 @@ pub(crate) fn lock_nav_statics() -> NavStaticsGuard {
 #[inline]
 fn lock_nav_statics() -> NavStaticsGuard {
     NavStaticsGuard()
+}
+
+/// A held picker nav data mutex; tests count it per thread for the lock
+/// order check in [`lock_nav_statics`].
+#[cfg(test)]
+pub(crate) struct DataGuard<'a, T>(std::sync::MutexGuard<'a, T>);
+
+#[cfg(not(test))]
+type DataGuard<'a, T> = std::sync::MutexGuard<'a, T>;
+
+#[cfg(test)]
+impl<T> std::ops::Deref for DataGuard<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl<T> std::ops::DerefMut for DataGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
+#[cfg(test)]
+impl<T> Drop for DataGuard<'_, T> {
+    fn drop(&mut self) {
+        HELD_DATA_GUARDS.with(|n| n.set(n.get() - 1));
+    }
+}
+
+/// Lock one picker nav data mutex (lock order level 3).
+#[cfg(test)]
+pub(crate) fn lock_data<T>(mutex: &Mutex<T>) -> DataGuard<'_, T> {
+    let guard = mutex.lock().unwrap();
+    HELD_DATA_GUARDS.with(|n| n.set(n.get() + 1));
+    DataGuard(guard)
+}
+
+#[cfg(not(test))]
+#[inline]
+fn lock_data<T>(mutex: &Mutex<T>) -> DataGuard<'_, T> {
+    mutex.lock().unwrap()
 }
 
 /// Bind the process-profile flags path, expected digest, and provenance.
@@ -166,8 +242,8 @@ pub(crate) fn set_navflags_binding(
     trusted_bundled: bool,
 ) {
     let _nav = lock_nav_statics();
-    *BOUND_NAV_FLAGS.lock().unwrap() = Some(path);
-    *EXPECTED_FLAGS_SHA256.lock().unwrap() = flags_sha256;
+    *lock_data(&BOUND_NAV_FLAGS) = Some(path);
+    *lock_data(&EXPECTED_FLAGS_SHA256) = flags_sha256;
     FLAGS_TRUSTED_BUNDLED.store(trusted_bundled, Ordering::Relaxed);
     drop_flags_sidecar();
 }
@@ -175,7 +251,7 @@ pub(crate) fn set_navflags_binding(
 /// The flags sidecar path: `$NAV_FLAGS`, else the pack path with its
 /// extension swapped to `.navflags` (the `nav-pack` write target).
 pub(crate) fn navflags_path() -> PathBuf {
-    if let Some(path) = BOUND_NAV_FLAGS.lock().unwrap().clone() {
+    if let Some(path) = lock_data(&BOUND_NAV_FLAGS).clone() {
         return path;
     }
     match std::env::var("NAV_FLAGS") {
@@ -221,10 +297,10 @@ fn decode_sidecar_file(path: &std::path::Path) -> Option<FlagSidecar> {
 /// the raw file buffer is never retained beside the decoded words.
 pub(crate) fn ensure_flags_sidecar() {
     let _nav = lock_nav_statics();
-    if !matches!(*FLAGS.lock().unwrap(), FlagsSlot::Unloaded) {
+    if !matches!(*lock_data(&FLAGS), FlagsSlot::Unloaded) {
         return;
     }
-    let expected = EXPECTED_FLAGS_SHA256.lock().unwrap().clone();
+    let expected = lock_data(&EXPECTED_FLAGS_SHA256).clone();
     let path = navflags_path();
     let trusted_bundled = FLAGS_TRUSTED_BUNDLED.load(Ordering::Relaxed);
     FLAGS_LOADS.fetch_add(1, Ordering::Relaxed);
@@ -258,7 +334,7 @@ pub(crate) fn ensure_flags_sidecar() {
             }
         },
     };
-    let mut guard = FLAGS.lock().unwrap();
+    let mut guard = lock_data(&FLAGS);
     if matches!(*guard, FlagsSlot::Unloaded) {
         *guard = slot;
     }
@@ -268,7 +344,7 @@ pub(crate) fn ensure_flags_sidecar() {
 /// paint-on re-decodes.
 pub(crate) fn drop_flags_sidecar() {
     let _nav = lock_nav_statics();
-    *FLAGS.lock().unwrap() = FlagsSlot::Unloaded;
+    *lock_data(&FLAGS) = FlagsSlot::Unloaded;
 }
 
 #[cfg(test)]
@@ -307,7 +383,7 @@ pub(crate) enum FlagsSidecarState {
 #[cfg(test)]
 pub(crate) fn flags_sidecar_state() -> FlagsSidecarState {
     let _nav = lock_nav_statics();
-    match &*FLAGS.lock().unwrap() {
+    match &*lock_data(&FLAGS) {
         FlagsSlot::Unloaded => FlagsSidecarState::Unloaded,
         FlagsSlot::Missing => FlagsSidecarState::Missing,
         FlagsSlot::Refused(reason) => FlagsSidecarState::Refused(reason),
@@ -322,7 +398,7 @@ pub(crate) fn flags_sidecar_for(
     width: usize,
     height: usize,
 ) -> Option<Arc<Vec<u32>>> {
-    let guard = FLAGS.lock().unwrap();
+    let guard = lock_data(&FLAGS);
     match &*guard {
         FlagsSlot::Loaded(s) => sidecar_for_grid(s, origin, width, height),
         _ => None,
@@ -369,7 +445,7 @@ pub(crate) fn set_reach_binding(
     trusted_bundled: bool,
 ) {
     let _nav = lock_nav_statics();
-    *REACH_BINDING.lock().unwrap() = match (trusted_bundled, bits) {
+    *lock_data(&REACH_BINDING) = match (trusted_bundled, bits) {
         (true, Some(bits)) => ReachBinding::Bundled {
             bits,
             origin,
@@ -378,12 +454,12 @@ pub(crate) fn set_reach_binding(
         },
         _ => ReachBinding::Unbound,
     };
-    *REACH.lock().unwrap() = None;
+    *lock_data(&REACH) = None;
 }
 
 fn bound_reach(world: &NavWorld) -> Option<Arc<[u64]>> {
     let c = &world.collision;
-    let binding = REACH_BINDING.lock().unwrap();
+    let binding = lock_data(&REACH_BINDING);
     match &*binding {
         ReachBinding::Bundled {
             bits,
@@ -398,7 +474,7 @@ fn bound_reach(world: &NavWorld) -> Option<Arc<[u64]>> {
 }
 
 fn reach_binding_is_bundled() -> bool {
-    matches!(*REACH_BINDING.lock().unwrap(), ReachBinding::Bundled { .. })
+    matches!(*lock_data(&REACH_BINDING), ReachBinding::Bundled { .. })
 }
 
 /// Bound `.navreach` bits matching `world`, or `None` (the map then shows
@@ -421,7 +497,7 @@ pub(crate) fn reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
     }
     let c = &world.collision;
     let key = (c.origin.x, c.origin.z, c.width, c.height);
-    let mut guard = REACH.lock().unwrap();
+    let mut guard = lock_data(&REACH);
     let bits = match guard.as_ref() {
         Some(cache) if cache.key == key => cache.bits.clone(),
         _ => {
@@ -964,13 +1040,13 @@ struct FloodCache {
 static FLOOD_CACHE: Mutex<Option<FloodCache>> = Mutex::new(None);
 
 fn release_flood_cache() {
-    *FLOOD_CACHE.lock().unwrap() = None;
+    *lock_data(&FLOOD_CACHE) = None;
 }
 
 fn release_flood_leases() {
     let _nav = lock_nav_statics();
     release_flood_cache();
-    *FLOOD_REPORT.lock().unwrap() = None;
+    *lock_data(&FLOOD_REPORT) = None;
 }
 
 /// Drop this consumer's flood cache. Reach stays the bound `.navreach` sidecar
@@ -978,7 +1054,7 @@ fn release_flood_leases() {
 pub fn release_map_leases() {
     let _nav = lock_nav_statics();
     release_flood_leases();
-    *ROUTE_TILES.lock().unwrap() = None;
+    *lock_data(&ROUTE_TILES) = None;
 }
 
 /// The step-ok reachable sets for `seeds`, computed once per seed pair and
@@ -993,7 +1069,7 @@ fn flood_sets_for(world: &Arc<NavWorld>, seeds: &[WorldTile]) -> Vec<Arc<HashSet
     }
     let c = &world.collision;
     let key = (c.origin.x, c.origin.z, c.width, c.height);
-    let mut cache = FLOOD_CACHE.lock().unwrap();
+    let mut cache = lock_data(&FLOOD_CACHE);
     let fresh = cache.as_ref().is_some_and(|f| {
         f.world
             .upgrade()
@@ -1036,12 +1112,12 @@ fn flood_sets_for_ref(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<
 
 #[cfg(test)]
 pub(crate) fn flood_cache_occupied() -> bool {
-    FLOOD_CACHE.lock().unwrap().is_some()
+    lock_data(&FLOOD_CACHE).is_some()
 }
 
 #[cfg(test)]
 pub(crate) fn reach_binding_occupied() -> bool {
-    !matches!(*REACH_BINDING.lock().unwrap(), ReachBinding::Unbound)
+    !matches!(*lock_data(&REACH_BINDING), ReachBinding::Unbound)
 }
 
 /// Last `nav-flood` line reported on stderr, keyed by the arm generation
@@ -1087,7 +1163,7 @@ fn flood_report_sizes(comps: &[Arc<HashSet<WorldTile>>], dest: WorldTile) -> (us
 fn report_flood_sizes(world: &NavWorld, player: WorldTile, dest: WorldTile, arm_gen: u64) {
     let comps = flood_sets_for_ref(world, &[player, dest]);
     let (n, m) = flood_report_sizes(&comps, dest);
-    let mut last = FLOOD_REPORT.lock().unwrap();
+    let mut last = lock_data(&FLOOD_REPORT);
     if let Some(line) = flood_report_line(*last, arm_gen, player, dest, n, m) {
         eprintln!("{line}");
         *last = Some((arm_gen, player, dest, n, m));
@@ -1201,7 +1277,9 @@ fn remaining_start(
 }
 
 fn update_route_cache(computed: Option<(RouteSource, u64, &Route)>, here: Option<WorldTile>) {
-    let mut cache = ROUTE_TILES.lock().unwrap();
+    // Nav statics first (lock order); tests share one route cache.
+    let _nav = lock_nav_statics();
+    let mut cache = lock_data(&ROUTE_TILES);
     let Some((source, generation, route)) = computed else {
         *cache = None;
         return;
@@ -1278,11 +1356,18 @@ fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
     }
 }
 
-struct RoutePathGuard(std::sync::MutexGuard<'static, Option<RouteTileCache>>);
+/// The remaining route tiles, borrowed across the canvas draw. The draw floods
+/// and reads reach while holding it, and those take the nav-statics lock, so
+/// the guard takes that lock first (test lock order: nav, then `ROUTE_TILES`).
+/// Fields drop in order: the path unlocks before the nav lock.
+struct RoutePathGuard {
+    path: DataGuard<'static, Option<RouteTileCache>>,
+    _nav: NavStaticsGuard,
+}
 
 impl RoutePathGuard {
     fn as_slice(&self) -> &[(WorldTile, bool)] {
-        match &*self.0 {
+        match &*self.path {
             Some(cache) => {
                 let start = cache.start.min(cache.tiles.len());
                 &cache.tiles[start..]
@@ -1293,12 +1378,17 @@ impl RoutePathGuard {
 }
 
 fn lock_route_path() -> RoutePathGuard {
-    RoutePathGuard(ROUTE_TILES.lock().unwrap())
+    let nav = lock_nav_statics();
+    RoutePathGuard {
+        path: lock_data(&ROUTE_TILES),
+        _nav: nav,
+    }
 }
 
 #[cfg(test)]
 pub(crate) fn reset_route_cache() {
-    *ROUTE_TILES.lock().unwrap() = None;
+    let _nav = lock_nav_statics();
+    *lock_data(&ROUTE_TILES) = None;
     ROUTE_FLATTEN_COUNT.store(0, Ordering::Relaxed);
 }
 

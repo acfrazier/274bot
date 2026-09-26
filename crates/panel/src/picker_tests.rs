@@ -26,9 +26,48 @@ use crate::walk_map::{overlay_colors, WalkMapRenderer};
 use dear_imgui_rs::WindowFlags;
 use host_play::walk_map::{MapModel, RouteSource};
 
-// REACH/FLOOD/FLAGS/PACK share FLAGS_TEST_LOCK — one process-global lock for
-// every test that mutates picker statics (incl. Session drop → set_pack(None)).
-// Do not reintroduce separate REACH_TEST_LOCK / FLOOD_TEST_LOCK; they raced.
+// REACH/FLOOD/FLAGS/PACK/ROUTE_TILES share FLAGS_TEST_LOCK — one process-global
+// lock for every test that mutates picker statics (incl. Session drop →
+// set_pack(None)). Do not reintroduce separate REACH_TEST_LOCK /
+// FLOOD_TEST_LOCK; they raced. Lock order: see `picker::lock_nav_statics`.
+
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("")
+}
+
+#[test]
+fn inverted_test_lock_order_panics_instead_of_deadlocking() {
+    static INVERTED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static ORDERED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // Data mutex then nav lock: the canvas route-path hold that deadlocked
+    // against Session drop (nav lock, then ROUTE_TILES).
+    let data_then_nav = std::thread::spawn(|| {
+        let _data = super::lock_data(&INVERTED);
+        let _nav = super::lock_nav_statics();
+    })
+    .join();
+    // Nav lock then the ImGui context guard.
+    let nav_then_imgui = std::thread::spawn(|| {
+        let _nav = super::lock_nav_statics();
+        let _imgui = crate::test_support::imgui_context_guard();
+    })
+    .join();
+    for result in [data_then_nav, nav_then_imgui] {
+        let payload = result.expect_err("an inverted lock order must panic");
+        let text = panic_text(payload.as_ref());
+        assert!(text.starts_with("lock order:"), "{text}");
+    }
+    // The documented order nests, and a nav holder may re-enter the nav lock
+    // under a data mutex (the canvas draw floods while holding the path).
+    let _imgui = crate::test_support::imgui_context_guard();
+    let _nav = super::lock_nav_statics();
+    let _data = super::lock_data(&ORDERED);
+    let _again = super::lock_nav_statics();
+}
 
 /// A `w`×`h` all-walkable level-0 world at `origin`.
 fn open_world_at(origin: (i32, i32), w: usize, h: usize) -> NavWorld {
@@ -1050,6 +1089,8 @@ fn test_route() -> nav::router::Route {
 
 #[test]
 fn route_cache_skips_completed_legs_and_stays_allocation_free_on_hit() {
+    // Draws and Session drops rewrite the shared route cache under this lock.
+    let _guard = super::lock_nav_statics();
     reset_route_cache();
     let route = test_route();
     let tiles = cached_remaining_path(&route, RouteSource::Manual, 1, Some(wt(2, 0)));
