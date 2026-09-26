@@ -782,6 +782,15 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "animating", falsy)?;
     }
+    // The local player's primary animation id: frozen `reader.selfAnim()`,
+    // and `Game.animating()` is `selfAnim() !== -1`.
+    if snap.has_self_anim() {
+        let anim = num(&mut scope, f64::from(snap.self_anim()));
+        set(&mut scope, obj, "self_anim", anim)?;
+    } else if !had {
+        let idle = num(&mut scope, -1.0);
+        set(&mut scope, obj, "self_anim", idle)?;
+    }
     if snap.has_main_modal_id() {
         let main_modal_id = num(&mut scope, snap.main_modal_id() as f64);
         set(&mut scope, obj, "main_modal_id", main_modal_id)?;

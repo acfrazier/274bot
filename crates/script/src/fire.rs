@@ -152,7 +152,9 @@ impl NativeObservation {
                 z: tile.z,
                 level: tile.level,
             }),
-            animating: session.animating().unwrap_or(false),
+            // Frozen `Game.animating()`: the primary animation is not idle
+            // (`reader.selfAnim() !== -1`); walking alone is not a start.
+            animating: session.self_anim().unwrap_or(-1) != -1,
             firemaking_xp: session
                 .stats()
                 .and_then(|skills| skills.firemaking)

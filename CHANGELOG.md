@@ -318,6 +318,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   longer buries or eats on that tick, and a new attack animation that
   follows another without an idle tick counts as a new swing. Each
   `new AttackClock()` keeps its own state and observes only when called.
+- `reader.selfAnim()` returns the local player's animation id and
+  `Game.animating()` is true only while an animation plays, as in frozen
+  rs2b0t; walking alone no longer counts as animating (it did through the
+  host's walking-or-animating flag). Catalog scripts that wait on
+  `Game.animating()` (GnomeMagicChopper, AgilityBot and others) and the
+  `lightFire` start check follow.
 - v1 `foodHealAmount` answers every name like frozen `food.ts`: the exact
   selected heal, else the first selected food whose name contains the given
   name or is contained in it, else 8; an empty name is 8. Unknown, partial
