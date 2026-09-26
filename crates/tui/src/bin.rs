@@ -6,9 +6,10 @@
 //! publishes each slot's snapshot and steps the focused slot's walk arm,
 //! and the UI loop polls statuses, refreshes [`TuiApp`], routes
 //! keys/clicks, and dispatches the returned [`AppAction`] onto the play —
-//! map Walk-confirm routes through `host_play::arm_walk_on`, chat
-//! Continue/Answer and WASD walks go through `host_play::WireCmd`, and
-//! the settings popup writes `ProfileSettings` on the focused profile.
+//! map Walk-confirm consumes a revision-bound `MapCommand` through
+//! `host_play::Play::map_walk`, chat Continue/Answer and WASD walks go
+//! through `host_play::WireCmd`, and the settings popup writes
+//! `ProfileSettings` on the focused profile.
 //!
 //! **Raster Off:** every profile is spawned with `RasterMode::Off` and the
 //! TUI never attaches a `Renderer` (no `panel` / imgui / wgpu anywhere).
@@ -29,14 +30,23 @@ use crossterm::event::{self, Event, KeyEventKind, MouseEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use host_play::{
-    arm_walk_on, background_ack_text, background_bots_ack_error, background_bots_acked,
-    clear_background_bots_ack_error, live_vault_passphrase_for, mint_live_entries_for_target,
-    mint_live_names, open_vault, parse_profile_args, persist_background_bots_ack, player_here_tile,
-    profile_password_for, run_with_io, run_with_template, step_walk_arm_bank_fetch,
-    walk_arm_bank_fetch_freezes_follow, Play, PlayOptions, ProfileOptions, ResourceSampler,
-    ResourceView, ServerProfile, SharedClientTemplate, SlotArm, WalkArm, WireCmd,
+#[cfg(test)]
+use host_play::arm_walk_on;
+use host_play::walk_map::{
+    observed_services, ActionError, ActionKind, Catalogue, MapContext, WalkExclude,
+    WalkSlotRequest, WalkSlotStatus,
 };
+use host_play::{
+    background_ack_text, background_bots_ack_error, background_bots_acked,
+    clear_background_bots_ack_error, live_vault_passphrase_for, load_navpois, map_ready_catalogue,
+    mint_live_entries_for_target, mint_live_names, open_map_catalogue, open_vault,
+    parse_profile_args, peek_map_catalogue, persist_background_bots_ack, player_here_tile,
+    profile_password_for, run_with_io, run_with_template, step_walk_arm_bank_fetch,
+    walk_arm_bank_fetch_freezes_follow, MapDemandHandle, MapJobStatus, MapStage, Play, PlayOptions,
+    ProfileOptions, ReadyCatalogue, ResourceSampler, ResourceView, ServerProfile,
+    SharedClientTemplate, SlotArm, WalkArm, WireCmd,
+};
+use nav::map::identity::Digest;
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, TravelOutcome};
 use nav::WorldState;
@@ -44,7 +54,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use vault::{Profile, Vault};
 
-use crate::app::{AppAction, ChatData, TuiApp};
+use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
 use crate::script_shape::{
     categories_present, resolve_category_order, rs2b0t_root_has_index, BrowseCard,
@@ -429,6 +439,9 @@ pub struct TuiSession {
     /// Checked production assets and immutable server identity.
     template: Option<Arc<SharedClientTemplate>>,
     server_profile: Option<Arc<ServerProfile>>,
+    /// Catalogue-only demand lease. Dropped on MapClose; never requests PNGs.
+    map_demand: Option<MapDemandHandle>,
+    map_catalogue_named: bool,
     /// The username the settings popup currently edits; reload
     /// `ProfileSettings` into the app when it changes.
     last_focused: Option<String>,
@@ -535,6 +548,8 @@ impl TuiSession {
             options,
             template: None,
             server_profile: None,
+            map_demand: None,
+            map_catalogue_named: false,
             last_focused: None,
             snapshots: Arc::new(Mutex::new(HashMap::new())),
             frontend_gens: Arc::new(Mutex::new(HashMap::new())),
@@ -1018,13 +1033,246 @@ impl TuiSession {
             .unwrap_or_else(|| WorldState::empty().with_map_members(self.map_members()))
     }
 
-    /// Map Walk-confirm: store the picked dest, then route and arm the
-    /// focused slot's walk arm when the player tile and nav world are
-    /// known (`host_play::arm_walk_on`, the same shared arm the panel
-    /// uses — the two views cannot drift).
+    fn map_context(&self, app: &TuiApp) -> Result<MapContext, ActionError> {
+        let name = app.focused_name().ok_or(ActionError::NoFocus)?;
+        let focus = self.play.as_ref().and_then(|play| play.map_focus(&name));
+        let nav = self
+            .server_profile
+            .as_ref()
+            .and_then(|profile| profile.nav_identity())
+            .and_then(|manifest| Digest::from_hex(&manifest.nav_sha256).ok())
+            .ok_or(ActionError::NoNavigation)?;
+        Ok(MapContext {
+            focus,
+            nav,
+            overlay: app.map_host_catalogue.as_ref().map(|c| c.key()),
+            generation: 1,
+        })
+    }
+
+    fn bind_map_context(&self, app: &mut TuiApp) {
+        if !app.map_active {
+            app.map_model.close();
+            return;
+        }
+        match self.map_context(app) {
+            Ok(context) => {
+                app.map_model.bind(context);
+            }
+            Err(error) => {
+                app.map_model.close();
+                app.error = Some(format!("map: {error}"));
+            }
+        }
+    }
+
+    fn open_map_catalogue(&mut self, app: &mut TuiApp) {
+        let Some(profile) = self.server_profile.clone() else {
+            return;
+        };
+        if self.map_demand.is_none() {
+            match open_map_catalogue(profile.as_ref()) {
+                Ok(handle) => self.map_demand = Some(handle),
+                Err(error) => {
+                    app.set_map_unavailable(format!(
+                        "coverage: catalogue unavailable: {error}; terrain imagery unavailable"
+                    ));
+                    return;
+                }
+            }
+        }
+        if app.map_catalogue_status == MapCatalogueStatus::Unavailable
+            || app.map_catalogue_status == MapCatalogueStatus::Inactive
+        {
+            app.map_catalogue_status = MapCatalogueStatus::ReadingCache;
+            app.map_coverage = "coverage: reading cache".into();
+        }
+        self.poll_map_demand(app);
+    }
+
+    fn poll_map_demand(&mut self, app: &mut TuiApp) {
+        if !app.map_active {
+            return;
+        }
+        let Some(profile) = self.server_profile.clone() else {
+            return;
+        };
+        let status = match &self.map_demand {
+            Some(handle) => handle.status(),
+            None => return,
+        };
+        match status {
+            MapJobStatus::Ready => {
+                let ready = self
+                    .map_demand
+                    .as_ref()
+                    .and_then(|handle| map_ready_catalogue(handle).ok());
+                if let Some(ready) = ready {
+                    self.bind_ready_catalogue(app, ready);
+                }
+            }
+            MapJobStatus::Queued => {
+                app.map_catalogue_status = MapCatalogueStatus::ReadingCache;
+                app.map_coverage = "coverage: queued".into();
+                if let Some(ready) = peek_map_catalogue(profile.as_ref()) {
+                    self.bind_ready_catalogue(app, ready);
+                }
+            }
+            MapJobStatus::Running(progress) => {
+                app.map_catalogue_status = match progress.stage {
+                    MapStage::ReadingCache => MapCatalogueStatus::ReadingCache,
+                    _ => MapCatalogueStatus::DerivingPois,
+                };
+                let stage = match progress.stage {
+                    MapStage::ReadingCache => "reading cache",
+                    MapStage::DerivingPois => "deriving POIs",
+                    MapStage::BakingPlane => "baking plane",
+                    MapStage::BuildingZoomLevels => "building zoom levels",
+                    MapStage::Publishing => "publishing",
+                };
+                app.map_coverage = format!(
+                    "coverage: {stage} ({}/{}) {}",
+                    progress.completed, progress.total, progress.message
+                );
+                if let Some(ready) = peek_map_catalogue(profile.as_ref()) {
+                    self.bind_ready_catalogue(app, ready);
+                }
+            }
+            MapJobStatus::Failed(error) => {
+                app.set_map_unavailable(format!(
+                    "coverage: catalogue unavailable: {error}; terrain imagery unavailable"
+                ));
+            }
+            MapJobStatus::Paused | MapJobStatus::Cancelled => {
+                app.set_map_unavailable(
+                    "coverage: catalogue unavailable: demand paused; terrain imagery unavailable",
+                );
+            }
+        }
+    }
+
+    fn bind_ready_catalogue(&mut self, app: &mut TuiApp, ready: Arc<ReadyCatalogue>) {
+        let Some(world) = app.world.clone().or_else(|| {
+            self.play
+                .as_ref()
+                .and_then(|play| play.world())
+                .or_else(|| self.nav_world.lock().unwrap().clone())
+        }) else {
+            return;
+        };
+        let identity = ready.manifest().identity;
+        let Some(profile) = self.server_profile.as_ref() else {
+            return;
+        };
+        let Some(nav) = profile
+            .nav_identity()
+            .and_then(|manifest| Digest::from_hex(&manifest.nav_sha256).ok())
+        else {
+            return;
+        };
+        let data = profile
+            .game_data()
+            .or_else(|| self.play.as_ref().and_then(|play| play.game_data()));
+        let same = app.map_host_catalogue.as_ref().is_some_and(|catalogue| {
+            catalogue.identity() == identity && catalogue.nav_identity() == nav
+        });
+        if same && (self.map_catalogue_named || data.is_none()) {
+            return;
+        }
+        let services = load_navpois(profile, identity.content, nav);
+        let Ok(catalogue) = Catalogue::from_ready(world, identity, nav, Some(ready), services)
+        else {
+            return;
+        };
+        self.map_catalogue_named = false;
+        let catalogue = match data {
+            Some(data) => match catalogue.with_game_data(data) {
+                Ok(named) => {
+                    self.map_catalogue_named = true;
+                    named
+                }
+                Err(_) => return,
+            },
+            None => catalogue,
+        };
+        app.bind_host_catalogue(Arc::new(catalogue));
+    }
+
+    fn release_map_catalogue(&mut self) {
+        self.map_demand = None;
+        self.map_catalogue_named = false;
+    }
+
+    /// Map Walk-confirm consumes the shared, revision-bound command before
+    /// handing it to `Play`; the panel and TUI therefore share stale-focus,
+    /// origin and routing-option checks.
     fn arm_walk_on(&mut self, app: &mut TuiApp, dest: Tile) {
-        app.walk_dest = Some(dest);
         self.walk_clear.store(false, Ordering::Relaxed);
+        #[cfg(test)]
+        if self.play.is_none() && self.server_profile.is_none() {
+            // Headless arm tests have no Play/profile identity to capture.
+            self.arm_walk_without_host(app, dest);
+            return;
+        }
+        let _ = dest;
+        let context = match self.map_context(app) {
+            Ok(context) => context,
+            Err(error) => {
+                app.error = Some(format!("map: {error}"));
+                return;
+            }
+        };
+        let Some(from) = app.here.map(|h| Tile {
+            x: h.x,
+            z: h.z,
+            level: h.level,
+        }) else {
+            app.error = Some(ActionError::NoOrigin.to_string());
+            return;
+        };
+        let command = match app.map_model.confirm(
+            ActionKind::Walk,
+            &context,
+            Some(from),
+            app.nav.find_options(),
+        ) {
+            Ok(command) => command,
+            Err(error) => {
+                app.clear_consumed_map_selection();
+                app.error = Some(format!("map: {error}"));
+                return;
+            }
+        };
+        app.clear_consumed_map_selection();
+        let Some(play) = &self.play else {
+            app.error = Some(ActionError::NoFocus.to_string());
+            return;
+        };
+        let name = app.focused_name();
+        let state = self.focused_walk_state(&name);
+        let bank = name
+            .as_deref()
+            .and_then(|n| {
+                self.snapshots.lock().unwrap().get(n).map(|snap| {
+                    snap.bank()
+                        .iter()
+                        .map(|it| (it.def.id, it.count))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or_default();
+        let destination = command.destination();
+        match play.map_walk(command, &context, &state, &bank, &self.travellers) {
+            Ok(_) => {
+                app.walk_dest = Some(destination);
+                app.error = None;
+            }
+            Err(error) => app.error = Some(format!("map: {error}")),
+        }
+    }
+
+    #[cfg(test)]
+    fn arm_walk_without_host(&mut self, app: &mut TuiApp, dest: Tile) {
         let name = app.focused_name();
         let from = app.here.map(|h| Tile {
             x: h.x,
@@ -1033,7 +1281,8 @@ impl TuiSession {
         });
         let world = self.nav_world.lock().unwrap().clone();
         let (Some(world), Some(from)) = (world, from) else {
-            return; // no player tile / no pack: dest stored only
+            app.error = Some(ActionError::NoOrigin.to_string());
+            return;
         };
         let state = self.focused_walk_state(&name);
         let bank = name
@@ -1057,10 +1306,130 @@ impl TuiSession {
             &self.travellers,
             name.as_deref(),
         );
-        app.error = match routed {
-            Ok(_) => None,
-            Err(_) => Some(format!("no path to {} {} {}", dest.x, dest.z, dest.level)),
+        match routed {
+            Ok(_) => {
+                app.walk_dest = Some(dest);
+                app.error = None;
+            }
+            Err(_) => {
+                app.error = Some(format!("no path to {} {} {}", dest.x, dest.z, dest.level));
+            }
+        }
+    }
+
+    fn map_teleport(&mut self, app: &mut TuiApp, _dest: Tile) {
+        let Some(context) = self.map_context(app).ok() else {
+            app.error = Some("map: teleport unavailable: stale host context".into());
+            return;
         };
+        let from = app.here.map(|h| Tile {
+            x: h.x,
+            z: h.z,
+            level: h.level,
+        });
+        let command = match app.map_model.confirm(
+            ActionKind::Teleport,
+            &context,
+            from,
+            app.nav.find_options(),
+        ) {
+            Ok(command) => command,
+            Err(error) => {
+                app.clear_consumed_map_selection();
+                app.error = Some(format!("map: {error}"));
+                return;
+            }
+        };
+        app.clear_consumed_map_selection();
+        let Some(play) = &self.play else {
+            app.error = Some(ActionError::NoFocus.to_string());
+            return;
+        };
+        app.error = play
+            .map_teleport(command, &context)
+            .err()
+            .map(|error| format!("map: {error}"));
+    }
+
+    fn map_walk_group(&mut self, app: &mut TuiApp) {
+        use host_play::walk_map::WalkSlotOutcomeKind;
+        let names: Vec<String> = app
+            .walk_send
+            .rows()
+            .iter()
+            .filter(|row| row.checked)
+            .map(|row| row.name.clone())
+            .collect();
+        let context = match self.map_context(app) {
+            Ok(context) => context,
+            Err(error) => {
+                app.error = Some(format!("map: {error}"));
+                return;
+            }
+        };
+        let plan = match app
+            .map_model
+            .confirm_walk_plan(&context, app.nav.find_options())
+        {
+            Ok(plan) => plan,
+            Err(error) => {
+                app.clear_consumed_map_selection();
+                app.error = Some(format!("map: {error}"));
+                return;
+            }
+        };
+        app.clear_consumed_map_selection();
+        let Some(play) = &self.play else {
+            app.error = Some(ActionError::NoFocus.to_string());
+            return;
+        };
+        let states: Vec<_> = names
+            .iter()
+            .map(|name| self.focused_walk_state(&Some(name.clone())))
+            .collect();
+        let banks: Vec<Vec<(i32, i32)>> = names
+            .iter()
+            .map(|name| {
+                self.snapshots
+                    .lock()
+                    .unwrap()
+                    .get(name)
+                    .map(|snap| {
+                        snap.bank()
+                            .iter()
+                            .map(|it| (it.def.id, it.count))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
+        let reqs: Vec<WalkSlotRequest<'_>> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| WalkSlotRequest {
+                name,
+                state: &states[i],
+                bank: &banks[i],
+            })
+            .collect();
+        let report = play.map_walk_group(plan, &context, &reqs, &self.travellers);
+        {
+            let mut latch = self.tick_latch.lock().unwrap();
+            for outcome in &report.outcomes {
+                if matches!(outcome.kind, WalkSlotOutcomeKind::Walking) {
+                    latch.remove(&outcome.name);
+                }
+            }
+        }
+        self.walk_clear.store(false, Ordering::Relaxed);
+        if report
+            .outcomes
+            .iter()
+            .any(|outcome| matches!(outcome.kind, WalkSlotOutcomeKind::Walking))
+        {
+            app.walk_dest = Some(plan.destination());
+        }
+        app.error = Some(report.summary());
     }
 
     /// WASD one-tile walk: a direct `try_move` through the slot's wire
@@ -1469,6 +1838,16 @@ impl TuiSession {
         // so a loaded pack is not stuck behind the empty-state title.
         app.world = self.nav_world.lock().unwrap().clone();
         app.refresh();
+        self.bind_map_context(app);
+        if app.map_active {
+            self.poll_map_demand(app);
+            app.refresh_walk_send(|name| {
+                self.play
+                    .as_ref()
+                    .map(|p| p.walk_eligibility(name))
+                    .unwrap_or(WalkSlotStatus::Excluded(WalkExclude::NotLoggedIn))
+            });
+        }
 
         // The settings popup edits the focused profile: reload when the
         // focus changes (a fresh focus must not show the old slot's
@@ -1520,6 +1899,16 @@ impl TuiSession {
                         .collect();
                     app.locs_near.sort_by_key(|(d, _)| *d);
                     app.locs_near.truncate(3);
+                    if app.map_active {
+                        if let Ok(ctx) = self.map_context(app) {
+                            match observed_services(s, ctx, ctx) {
+                                Ok(records) => app.map_observed = records,
+                                Err(_) => app.map_observed.clear(),
+                            }
+                        } else {
+                            app.map_observed.clear();
+                        }
+                    }
                 }
                 None => {
                     // A slot with no published snapshot must not show the
@@ -1529,6 +1918,7 @@ impl TuiSession {
                     app.inv_items.clear();
                     app.stats_rows.clear();
                     app.locs_near.clear();
+                    app.map_observed.clear();
                 }
             }
             drop(snap);
@@ -1556,6 +1946,8 @@ impl TuiSession {
             if let Some(play) = &self.play {
                 app.script_state = play.script_state(name);
             }
+        } else if app.map_active {
+            app.map_observed.clear();
         }
         if app.settings_dirty {
             self.persist_settings(app);
@@ -1970,6 +2362,21 @@ fn restore_terminal() {
         );
         let _ = out.flush();
     }
+    crate::stderr_capture::restore();
+}
+
+pub(super) fn install_tui_panic_hook() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let main = std::thread::current().id();
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if std::thread::current().id() == main {
+                restore_terminal();
+            }
+            previous(info);
+        }));
+    });
 }
 
 struct TerminalGuard;
@@ -2008,6 +2415,8 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
     )
     .map_err(|e| format!("terminal setup: {e}"))?;
     ALT_SCREEN.store(true, Ordering::SeqCst);
+    install_tui_panic_hook();
+    crate::stderr_capture::capture();
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
 
@@ -2081,8 +2490,18 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     match action {
         AppAction::Quit => app.quit = true,
         AppAction::Focus(name) => session.focus(&name),
+        AppAction::MapOpen => {
+            session.bind_map_context(app);
+            session.open_map_catalogue(app);
+        }
+        AppAction::MapClose => {
+            session.release_map_catalogue();
+            app.map_model.close();
+        }
         AppAction::ArmWalk(tile) => session.arm_walk_on(app, tile),
+        AppAction::MapWalkGroup => session.map_walk_group(app),
         AppAction::WalkTile(tile) => session.wasd_walk(app, tile),
+        AppAction::MapTeleport(tile) => session.map_teleport(app, tile),
         AppAction::Chat(action) => session.chat_send(app, action),
         AppAction::SpawnAll => multibox_key(session, app),
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),

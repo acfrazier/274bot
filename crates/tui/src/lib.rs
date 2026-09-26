@@ -23,6 +23,7 @@ pub mod script_params;
 pub mod script_shape;
 pub mod settings;
 pub mod status;
+pub(crate) mod stderr_capture;
 
 pub use app::{AppAction, TuiApp};
 pub use bin::RunMode;

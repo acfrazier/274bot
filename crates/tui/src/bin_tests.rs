@@ -1392,6 +1392,62 @@ fn arm_walk_on_with_allow_bank_fetch_latches_bank_fetch() {
     );
 }
 
+#[test]
+fn refused_no_origin_walk_does_not_arm_destination() {
+    // Production `Play::map_walk` NoOrigin needs a bound ServerProfile nav
+    // identity before `map_context` succeeds. TUI tests do not construct that
+    // cheaply; this hits the same `app.here` refusal the production path uses
+    // before `map_walk` (`arm_walk_without_host` when Play/profile are absent).
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    app.map_active = true;
+    app.here = None;
+    session.arm_walk_on(
+        &mut app,
+        Tile {
+            x: 3222,
+            z: 3218,
+            level: 0,
+        },
+    );
+    assert!(
+        app.walk_dest.is_none(),
+        "a refused Walk must not look armed: {:?}",
+        app.walk_dest
+    );
+    let error = app.error.as_deref().unwrap_or("");
+    assert!(
+        error.contains("no observed player"),
+        "refusal must be visible: {error:?}"
+    );
+}
+
+#[test]
+fn worker_panic_does_not_restore_tui_terminal() {
+    let _iso = IsolatedEnv::enter("tui-worker-panic-hook");
+    super::install_tui_panic_hook();
+    crate::stderr_capture::capture();
+    assert!(
+        crate::stderr_capture::is_active(),
+        "capture must start for the probe"
+    );
+    let joined = std::thread::spawn(|| {
+        let _ = std::panic::catch_unwind(|| panic!("caught worker panic"));
+    })
+    .join();
+    assert!(
+        joined.is_ok(),
+        "worker panic must stay on the worker thread"
+    );
+    assert!(
+        crate::stderr_capture::is_active(),
+        "a caught worker panic must not restore fd 2 or the alternate screen"
+    );
+    crate::stderr_capture::restore();
+}
+
 /// Whole-branch fix: follow hook must pass minusedlevel, not plane 0.
 #[test]
 fn player_at_plane_one_follow_uses_level() {

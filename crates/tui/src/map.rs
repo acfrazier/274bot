@@ -1,24 +1,21 @@
-//! TUI classic picker: the WalkTo map as a ratatui widget. Consumes the
-//! shared [`NavWorld`], the player's tile, an optional routed [`Route`],
-//! the operator's [`MapView`] (pan/zoom/selection), and [`WALK_DESTINATIONS`]
-//! pins; paints the walkable dot field, the remaining-walk polyline, the
-//! here marker, and the selection crosshair. Keyboard: arrows/hjkl pan,
-//! `+`/`-` zoom, Enter selects the centre tile (snap to walkable) and
-//! confirms a walk on an existing selection, Esc clears the selection.
-//! Walk is a `FnMut(Tile)` hook — nothing is armed until Task 10 wires
-//! `Play`.
+//! TUI world-map widget. Consumes the shared [`NavWorld`], the player's
+//! tile, an optional routed [`Route`], the operator's [`MapView`] and
+//! catalogue POIs; paints the walkable dot field, remaining-walk polyline,
+//! here marker, POI glyphs and selection crosshair. Keyboard: arrows/hjkl
+//! pan, `+`/`-` zoom, `/` search, Enter selects/arms through the shared map
+//! model, and Esc clears or closes the map.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::widgets::Widget;
 
 use api::snapshot::WorldTile;
+use host_play::walk_map::Catalogue;
+use nav::map::poi::{PoiKind, PoiRecord};
 use nav::paint::remaining_path_tiles;
 use nav::router::Route;
 use nav::tile::Tile;
-use nav::walk_destinations::WALK_DESTINATIONS;
 use nav::world::NavWorld;
 
 /// Zoom steps in tiles per cell (coarse to fine): the TUI twin of the
@@ -29,16 +26,41 @@ pub const ZOOMS: [usize; 4] = [8, 4, 2, 1];
 /// courtyard, same default as the headed picker.
 pub const DEFAULT_CENTRE: (i32, i32) = (3220, 3220);
 
-/// Glyphs (spec `2026-09-01-headless-tui-design.md`): walkable `.`, here
-/// `@`, path `*`, selection `+`; dest pins draw their first letter, or
-/// their name at the finest zoom. Blocked tiles stay the buffer blank.
+/// Glyphs for the semantic terminal map. Collision dots are deliberately
+/// simple: terminal cells are navigation diagnostics, not terrain artwork.
 const WALKABLE_GLYPH: &str = ".";
+const BLOCKED_GLYPH: &str = "#";
 const HERE_GLYPH: &str = "@";
 const PATH_GLYPH: &str = "*";
 const SELECTION_GLYPH: &str = "+";
+const OBSERVED_GLYPH: &str = "N";
 
-/// Snap shell radius for Enter-select on an off-grid centre tile.
-const SNAP_RADIUS: i32 = 16;
+/// Optional map layers. The dot layer is the useful default; collision and
+/// reach are explicit diagnostics and never trigger a provider load here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapLayers {
+    pub dots: bool,
+    pub collision: bool,
+    pub reach: bool,
+}
+
+impl Default for MapLayers {
+    fn default() -> Self {
+        Self {
+            dots: true,
+            collision: false,
+            reach: false,
+        }
+    }
+}
+
+/// Compact observed-NPC marker. The TUI never retains snapshot NPC tables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObservedMark {
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+}
 
 /// One keyboard outcome from [`Map::on_key`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +82,11 @@ pub struct MapView {
     pub pan: (i32, i32),
     /// Index into [`ZOOMS`] (tiles per cell); higher zooms in.
     pub zoom: usize,
+    /// Navigation plane shown by this view. Plane selection is independent
+    /// of raster LOD (the TUI has no raster path).
+    pub plane: u8,
+    /// Optional semantic terminal layers.
+    pub layers: MapLayers,
     /// The operator's selected tile (`+` crosshair); `None` once Esc
     /// clears it.
     pub selection: Option<Tile>,
@@ -71,6 +98,8 @@ impl MapView {
         Self {
             pan: (0, 0),
             zoom: ZOOMS.len() - 1,
+            plane: 0,
+            layers: MapLayers::default(),
             selection: None,
         }
     }
@@ -82,30 +111,61 @@ impl Default for MapView {
     }
 }
 
-/// The classic-picker map widget. Cheap to rebuild each frame (borrows
-/// only); the walk hook is called from [`Map::on_key`], not `Play` yet.
 pub struct Map<'a, F> {
     pub world: &'a NavWorld,
     /// The player's observed tile; `None` before the first snapshot.
     pub here: Option<WorldTile>,
     /// The armed route whose remaining tiles paint `*` (optional).
     pub route: Option<&'a Route>,
+    /// Small shared catalogue projection. The TUI never owns one copy per
+    /// bot and never decodes terrain images.
+    pub pois: &'a [PoiRecord],
+    pub catalogue: Option<&'a Catalogue>,
+    pub selected_poi: Option<usize>,
+    /// Focused-bot live NPC services; dropped when the map closes.
+    pub observed: &'a [ObservedMark],
     pub view: &'a mut MapView,
     /// Walk-confirm hook: called with the selected tile.
     pub walk: F,
 }
 
 impl<'a, F: FnMut(Tile)> Map<'a, F> {
-    /// New map over `world` with the view state `view`; `walk` receives
-    /// the tile a confirmed selection walks to.
+    /// New map over the packed collision world with the view state `view`;
+    /// `walk` receives the tile a confirmed selection walks to.
     pub fn new(world: &'a NavWorld, view: &'a mut MapView, walk: F) -> Self {
         Self {
             world,
             here: None,
             route: None,
+            pois: &[],
+            catalogue: None,
+            selected_poi: None,
+            observed: &[],
             view,
             walk,
         }
+    }
+
+    /// Attach the shared POI projection. Records remain compact and
+    /// revision-bound; no name/coordinate roster is invented in this widget.
+    pub fn pois(mut self, pois: &'a [PoiRecord]) -> Self {
+        self.pois = pois;
+        self
+    }
+
+    pub fn catalogue(mut self, catalogue: &'a Catalogue) -> Self {
+        self.catalogue = Some(catalogue);
+        self
+    }
+
+    pub fn selected_poi(mut self, selected: Option<usize>) -> Self {
+        self.selected_poi = selected;
+        self
+    }
+
+    pub fn observed(mut self, observed: &'a [ObservedMark]) -> Self {
+        self.observed = observed;
+        self
     }
 
     /// Set the player's observed tile (the `@` marker).
@@ -121,24 +181,22 @@ impl<'a, F: FnMut(Tile)> Map<'a, F> {
     }
 
     /// The tile the view centres on: the player tile (or the picker
-    /// default) plus the pan offset.
+    /// default) plus the pan offset, on the explicitly selected plane.
     pub fn centre(&self) -> WorldTile {
-        let (bx, bz, lvl) = match self.here {
-            Some(h) => (h.x, h.z, h.level),
-            None => (DEFAULT_CENTRE.0, DEFAULT_CENTRE.1, 0),
+        let (bx, bz) = match self.here {
+            Some(h) => (h.x, h.z),
+            None => (DEFAULT_CENTRE.0, DEFAULT_CENTRE.1),
         };
         WorldTile {
             x: bx + self.view.pan.0,
             z: bz + self.view.pan.1,
-            level: lvl,
+            level: i32::from(self.view.plane),
         }
     }
 
-    /// Handle one key event. Pan keys move the view by one zoom step
-    /// (`h`/left west, `l`/right east, `k`/up north, `j`/down south);
-    /// Enter selects the centre tile (snapping to the nearest walkable)
-    /// or confirms a walk to an existing selection; Esc clears the
-    /// selection; `+`/`-` zoom.
+    /// Handle one key event. Pan keys are scoped to Map focus (h/l are not
+    /// global loadout shortcuts), Enter selects the centre or confirms a
+    /// walk, Esc clears the selection, and +/- changes terminal zoom.
     pub fn on_key(&mut self, key: KeyEvent) -> MapAction {
         match key.code {
             KeyCode::Left | KeyCode::Char('h') => self.pan_by(-1, 0),
@@ -176,14 +234,23 @@ impl<'a, F: FnMut(Tile)> Map<'a, F> {
         MapAction::Moved
     }
 
-    /// Enter: with a selection, call the walk hook; without one, select
-    /// the centre tile snapped to the nearest walkable.
+    /// Enter: with a selection, confirm Walk; without one, select the
+    /// view-centre tile as the requested destination. Blocked ground is
+    /// allowed — Walk still needs the shared radius-16 snap on the model.
     fn confirm(&mut self) -> MapAction {
         if let Some(sel) = self.view.selection {
             (self.walk)(sel);
             return MapAction::Walk(sel);
         }
-        self.view.selection = Some(snap_walkable(self.world, self.centre()));
+        let c = self.centre();
+        if !(0..4).contains(&c.level) {
+            return MapAction::Moved;
+        }
+        self.view.selection = Some(Tile {
+            x: c.x,
+            z: c.z,
+            level: c.level,
+        });
         MapAction::Moved
     }
 }
@@ -193,10 +260,9 @@ impl<'a, F: FnMut(Tile)> Widget for Map<'a, F> {
         let step = ZOOMS[self.view.zoom.min(ZOOMS.len() - 1)] as i32;
         let c = self.centre();
         let (w, h) = (area.width as i32, area.height as i32);
-
-        // Walkable dots: only tiles inside both the view and the world
-        // grid (the pad covers the cell-alignment rounding at coarse
-        // zoom; `cell_of` rejects anything that lands outside).
+        // Iterate only the visible bounded window. At coarse zoom, collision
+        // mode uses explicit mixed cells rather than claiming “walkable if
+        // any underlying tile happened to overwrite the cell”.
         let half_x = (w * step) / 2;
         let half_z = (h * step) / 2;
         let x_lo = (c.x - half_x - step).max(self.world.collision.origin.x);
@@ -207,53 +273,115 @@ impl<'a, F: FnMut(Tile)> Widget for Map<'a, F> {
             .min(self.world.collision.origin.z + self.world.collision.height as i32);
         for z in z_lo..z_hi {
             for x in x_lo..x_hi {
-                if self.world.collision.walkable(WorldTile {
+                let Some((col, row)) = cell_of(x, z, (c.x, c.z), step, area) else {
+                    continue;
+                };
+                let walkable = self.world.collision.walkable(WorldTile {
                     x,
                     z,
                     level: c.level,
-                }) {
-                    if let Some((col, row)) = cell_of(x, z, (c.x, c.z), step, area) {
-                        put(buf, area, col, row, WALKABLE_GLYPH);
+                });
+                let glyph = if self.view.layers.collision && step > 1 {
+                    if walkable {
+                        WALKABLE_GLYPH
+                    } else {
+                        BLOCKED_GLYPH
                     }
+                } else if walkable {
+                    WALKABLE_GLYPH
+                } else {
+                    " "
+                };
+                if self.view.layers.dots || self.view.layers.collision {
+                    put(buf, area, col, row, glyph);
                 }
             }
         }
 
-        // The remaining-walk polyline (spec glyph `*`).
         if let Some(route) = self.route {
             for pt in remaining_path_tiles(route, self.here) {
+                if pt.tile.level != c.level {
+                    continue;
+                }
                 if let Some((col, row)) = cell_of(pt.tile.x, pt.tile.z, (c.x, c.z), step, area) {
                     put(buf, area, col, row, PATH_GLYPH);
                 }
             }
         }
 
-        // Dest pins: first letter at coarse zoom, the full name when one
-        // tile fills one cell. `set_stringn` clips at the buffer edge.
-        for pin in WALK_DESTINATIONS {
-            let Some((col, row)) = cell_of(pin.x, pin.z, (c.x, c.z), step, area) else {
-                continue;
-            };
-            if step == 1 {
-                let y = area.y + row as u16;
-                if y < area.bottom() {
-                    buf.set_stringn(area.x + col as u16, y, pin.name, usize::MAX, Style::new());
+        // Shared catalogue POIs are semantic glyphs, not a frozen destination
+        // list. Full names and provenance stay in the inspector/list pane.
+        if let Some(catalogue) = self.catalogue {
+            for entry in catalogue.entries() {
+                let anchor = entry.anchor();
+                if anchor.level != i32::from(self.view.plane) {
+                    continue;
                 }
-            } else {
-                let letter = pin.name.chars().next().unwrap_or(' ');
-                put(buf, area, col, row, &letter.to_string());
+                let Some((col, row)) = cell_of(anchor.x, anchor.z, (c.x, c.z), step, area) else {
+                    continue;
+                };
+                put(
+                    buf,
+                    area,
+                    col,
+                    row,
+                    if self.selected_poi == Some(entry.index()) {
+                        "*"
+                    } else {
+                        poi_glyph(entry.kind())
+                    },
+                );
+            }
+        } else {
+            for (index, poi) in self.pois.iter().enumerate() {
+                if poi.effective_plane != self.view.plane {
+                    continue;
+                }
+                let Some((col, row)) = cell_of(
+                    poi.display.x.floor() as i32,
+                    poi.display.z.floor() as i32,
+                    (c.x, c.z),
+                    step,
+                    area,
+                ) else {
+                    continue;
+                };
+                put(
+                    buf,
+                    area,
+                    col,
+                    row,
+                    if self.selected_poi == Some(index) {
+                        "*"
+                    } else {
+                        poi_glyph(poi.kind)
+                    },
+                );
             }
         }
 
-        // The selection crosshair, then the here marker on top.
+        for mark in self.observed {
+            if mark.level != c.level {
+                continue;
+            }
+            let Some((col, row)) = cell_of(mark.x, mark.z, (c.x, c.z), step, area) else {
+                continue;
+            };
+            put(buf, area, col, row, OBSERVED_GLYPH);
+        }
+
         if let Some(sel) = self.view.selection {
-            if let Some((col, row)) = cell_of(sel.x, sel.z, (c.x, c.z), step, area) {
-                put(buf, area, col, row, SELECTION_GLYPH);
+            if sel.level == c.level {
+                if let Some((col, row)) = cell_of(sel.x, sel.z, (c.x, c.z), step, area) {
+                    put(buf, area, col, row, SELECTION_GLYPH);
+                }
             }
         }
         if let Some(here) = self.here {
-            if let Some((col, row)) = cell_of(here.x, here.z, (c.x, c.z), step, area) {
-                put(buf, area, col, row, HERE_GLYPH);
+            if here.level == c.level {
+                if let Some((col, row)) = cell_of(here.x, here.z, (c.x, c.z), step, area) {
+                    put(buf, area, col, row, HERE_GLYPH);
+                }
             }
         }
     }
@@ -280,43 +408,12 @@ fn put(buf: &mut Buffer, area: Rect, col: usize, row: usize, glyph: &str) {
     }
 }
 
-/// Snap `t` to the nearest walkable tile on its level, spiralling outward
-/// in Chebyshev shells (row-major within a shell for determinism); the
-/// tile itself when already walkable, unchanged when nothing is found in
-/// [`SNAP_RADIUS`]. Same contract as the headed picker's click snap.
-fn snap_walkable(world: &NavWorld, t: WorldTile) -> Tile {
-    if world.collision.walkable(t) {
-        return Tile {
-            x: t.x,
-            z: t.z,
-            level: t.level,
-        };
-    }
-    for radius in 1..=SNAP_RADIUS {
-        for dz in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx.abs().max(dz.abs()) != radius {
-                    continue;
-                }
-                let cand = WorldTile {
-                    x: t.x + dx,
-                    z: t.z + dz,
-                    level: t.level,
-                };
-                if world.collision.walkable(cand) {
-                    return Tile {
-                        x: cand.x,
-                        z: cand.z,
-                        level: cand.level,
-                    };
-                }
-            }
-        }
-    }
-    Tile {
-        x: t.x,
-        z: t.z,
-        level: t.level,
+fn poi_glyph(kind: PoiKind) -> &'static str {
+    match kind {
+        PoiKind::Bank => "B",
+        PoiKind::Transport => "T",
+        PoiKind::Teleport => "X",
+        _ => "·",
     }
 }
 
@@ -376,35 +473,6 @@ mod tests {
         assert_eq!(&buf_text[5 * 9 + 5..5 * 9 + 6], ".");
         // Blocked (off-grid) cells stay blank.
         assert_eq!(&buf_text[0..1], " ");
-    }
-
-    #[test]
-    fn catherby_pin_in_view_draws_its_name_at_fine_zoom() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
-        let mut view = MapView::new();
-        // Pan to Catherby (2809, 3441) from the default centre.
-        view.pan = (
-            2809 - super::DEFAULT_CENTRE.0,
-            3441 - super::DEFAULT_CENTRE.1,
-        );
-        let text = render(Map::new(&world, &mut view, |_| {}), 40, 10);
-        assert!(
-            text.contains("Catherby"),
-            "buffer does not contain Catherby label: {text:?}"
-        );
-    }
-
-    #[test]
-    fn catherby_pin_shows_first_letter_at_coarse_zoom() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
-        let mut view = MapView::new();
-        view.zoom = 0;
-        view.pan = (
-            2809 - super::DEFAULT_CENTRE.0,
-            3441 - super::DEFAULT_CENTRE.1,
-        );
-        let text = render(Map::new(&world, &mut view, |_| {}), 40, 10);
-        assert!(text.contains('C'), "buffer lacks Catherby letter: {text:?}");
     }
 
     #[test]
@@ -545,7 +613,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_select_snaps_an_off_grid_centre_to_walkable() {
+    fn enter_selects_the_requested_centre_even_when_blocked() {
         let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
         let mut view = MapView::new();
         view.pan = (2, 2); // centre (3,3): off the 3x3 grid at (0,0).
@@ -553,8 +621,8 @@ mod tests {
         assert_eq!(map.on_key(key(KeyCode::Enter)), MapAction::Moved);
         assert_eq!(
             map.view.selection,
-            Some(tile(2, 2, 0)),
-            "the nearest walkable corner wins the shell search"
+            Some(tile(3, 3, 0)),
+            "selection is destination-only; Walk snap lives in MapModel"
         );
     }
 

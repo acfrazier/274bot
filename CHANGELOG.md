@@ -87,6 +87,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   script to include it). Confirm reads Walk N bots; each eligible bot gets
   its own command, origin and routing options, then a Start-all-style
   summary (`4 walking, 1 no path: bot3`). Debug Teleport stays focused-only.
+- TUI Map (F4) uses that shared host model: destination-only selection,
+  radius-16 Walk snap, debug Teleport on any selected tile (Local+loopback
+  only), fleet group Walk with eligibility reasons and a Walk N bots
+  summary, and focused-bot observed NPC services in the POI list. Enter
+  confirms only while Map is focused; plane change and recenter clear the
+  pending destination. Catalogue demand is catalogue-only (no PNGs) and is
+  released on close.
 - The shared route projection borrows actual routes with driven-live, script,
   then manual precedence, matching the in-game overlay. Its generation changes
   across arm replacement, including a new path to the same destination.

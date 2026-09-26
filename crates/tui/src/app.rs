@@ -14,7 +14,9 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
+use host_play::walk_map::{Catalogue, MapModel, ObservedService, Search, WalkSlotStatus};
 use host_play::{ResourceView, SlotStatus};
+use nav::map::poi::{PoiKind, PoiRecord};
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
@@ -22,7 +24,7 @@ use script::{RunState, ScriptSel};
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
 use crate::loadouts::{LoadoutsPane, LoadoutsState};
-use crate::map::{Map, MapAction, MapView};
+use crate::map::{Map, MapAction, MapView, ObservedMark};
 use crate::script_params::{ParamsKey, ParamsPane, ParamsState};
 use crate::script_shape::{
     browse_lines, browse_section_height, rs2b0t_root_has_index, BrowseCard, BrowseLine,
@@ -57,16 +59,89 @@ enum LoadEntry {
     Cancel,
 }
 
+/// Catalogue demand state. Drawing an inactive map never changes this state;
+/// only the explicit Map pane transition may request the catalogue-only stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MapCatalogueStatus {
+    #[default]
+    Inactive,
+    ReadingCache,
+    DerivingPois,
+    Ready,
+    Unavailable,
+}
+
+/// WalkTo Send: focused bot or a Group checklist of fleet members.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkSendMode {
+    Focused,
+    Group,
+}
+
+#[derive(Debug, Clone)]
+pub struct WalkSendRow {
+    pub name: String,
+    pub status: WalkSlotStatus,
+    pub checked: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WalkSendState {
+    pub mode: WalkSendMode,
+    rows: Vec<WalkSendRow>,
+    walk_label: String,
+}
+
+impl Default for WalkSendState {
+    fn default() -> Self {
+        Self {
+            mode: WalkSendMode::Focused,
+            rows: Vec::new(),
+            walk_label: "Walk".into(),
+        }
+    }
+}
+
+impl WalkSendState {
+    pub fn rows(&self) -> &[WalkSendRow] {
+        &self.rows
+    }
+
+    pub fn walk_label(&self) -> &str {
+        &self.walk_label
+    }
+
+    pub fn checked_count(&self) -> usize {
+        self.rows.iter().filter(|row| row.checked).count()
+    }
+
+    fn sync_walk_label(&mut self) {
+        self.walk_label = match self.mode {
+            WalkSendMode::Focused => "Walk".into(),
+            WalkSendMode::Group => format!("Walk {} bots", self.checked_count()),
+        };
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppAction {
     /// Quit the app.
     Quit,
     /// Switch the focused slot to `name` (mirror onto `Play::focus`).
     Focus(String),
+    /// Activate the focused Map pane and request catalogue-only demand.
+    MapOpen,
+    /// Leave the Map pane and release map-owned resident state.
+    MapClose,
     /// Map Walk-confirm: route `from` → tile and arm via `arm_walk_on`.
     ArmWalk(Tile),
+    /// Group Walk-confirm: consume one destination plan for checked bots.
+    MapWalkGroup,
     /// WASD one-tile walk: queue a `host_play::WireCmd::Walk`.
     WalkTile(Tile),
+    /// Local debug teleport is intentionally a separate named action. The
+    /// binary/host must authorize it; the TUI never treats a pin as proof.
+    MapTeleport(Tile),
     /// Chat modal advance: queue `WireCmd::Continue` / `Answer`.
     Chat(ChatAction),
     /// MultiBox: spawn every vault profile that is not running yet.
@@ -76,7 +151,7 @@ pub enum AppAction {
     /// source and shape.
     ScriptStart(ScriptSel),
     /// Toggle pause/resume on the focused slot's script (`Play::script_pause`
-    /// / `Play::script_resume`, like the panel's `script_toggle_pause`).
+    /// / [`Play::script_resume`], like the panel's `script_toggle_pause`).
     ScriptPause,
     /// Stop the focused slot's script (`Play::script_stop`).
     ScriptStop,
@@ -116,6 +191,18 @@ impl NavFindSettings {
             ..FindOptions::default()
         }
     }
+}
+/// Parse the explicit `x,z,plane` form used by Map search/coordinate entry.
+/// It is deliberately the same selection path as a centre/POI target.
+fn parse_coordinate(value: &str) -> Option<Tile> {
+    let mut fields = value.split(',').map(str::trim);
+    let x = fields.next()?.parse().ok()?;
+    let z = fields.next()?.parse().ok()?;
+    let level = fields.next()?.parse().ok()?;
+    if fields.next().is_some() {
+        return None;
+    }
+    Some(Tile { x, z, level })
 }
 
 enum CatalogEntry {
@@ -208,14 +295,34 @@ pub struct TuiApp {
     pub locs_near: Vec<(i32, String)>,
     /// The shared nav world the map routes and paints over.
     pub world: Option<Arc<NavWorld>>,
-    /// Map view state (pan/zoom/selection).
+    /// Drawing state for the map widget (pan, plane and optional layers).
     pub map: MapView,
+    /// Shared host selection/action model. The TUI owns only this one
+    /// application view, never a model per bot.
+    pub map_model: MapModel,
+    pub map_active: bool,
+    /// Search editor and bounded result indices into `map_pois`.
+    pub map_search_open: bool,
+    pub map_search: String,
+    pub map_search_results: Vec<usize>,
+    pub map_search_sel: usize,
+    /// The shared compact catalogue projection. It is application-owned,
+    /// never copied into each bot slot.
+    pub map_pois: Vec<PoiRecord>,
+    pub map_host_catalogue: Option<Arc<Catalogue>>,
+    map_search_index: Search,
+    pub map_poi_sel: Option<usize>,
+    pub map_catalogue_status: MapCatalogueStatus,
+    pub map_coverage: String,
+    /// Focused-bot observed NPC services while the map is open.
+    pub map_observed: Vec<ObservedService>,
+    /// Fleet Walk send: Focused vs Group checklist.
+    pub walk_send: WalkSendState,
     /// The focused slot's observed world tile.
     pub here: Option<WorldTile>,
     /// The armed walk route whose remaining tiles paint `*`.
     pub route: Option<Route>,
-    /// The operator's picked walk dest (the status row shows it even when
-    /// no route could be found, like the panel's `walk_dest`).
+    /// Armed Walk dest after the host accepts. Refused Walks leave this unset.
     pub walk_dest: Option<Tile>,
     /// Chat pane state (focused option row).
     pub chat: ChatState,
@@ -254,7 +361,7 @@ pub struct TuiApp {
     pub params_bag: serde_json::Map<String, serde_json::Value>,
     pub params_state: ParamsState,
     pub quit: bool,
-    /// The last walk/settings error shown in the strip.
+    /// The last walk/settings/map error shown in the strip.
     pub error: Option<String>,
     /// Process resource snapshot (same sampler as the panel resource card).
     pub resources: ResourceView,
@@ -279,7 +386,21 @@ impl TuiApp {
             locs_near: Vec::new(),
             world: None,
             map: MapView::new(),
+            map_model: MapModel::default(),
+            map_active: false,
             here: None,
+            map_search_open: false,
+            map_search: String::new(),
+            map_search_results: Vec::new(),
+            map_search_sel: 0,
+            map_pois: Vec::new(),
+            map_host_catalogue: None,
+            map_search_index: Search::default(),
+            map_poi_sel: None,
+            map_catalogue_status: MapCatalogueStatus::Inactive,
+            map_coverage: "coverage: unavailable until Map is opened".into(),
+            map_observed: Vec::new(),
+            walk_send: WalkSendState::default(),
             route: None,
             walk_dest: None,
             chat: ChatState::default(),
@@ -331,6 +452,11 @@ impl TuiApp {
             .focused_status()
             .and_then(SlotStatus::ready_tile)
             .map(|(x, z, level)| WorldTile { x, z, level });
+        if !self.map_active {
+            if let Some(here) = self.here {
+                self.map.plane = here.level.clamp(0, 3) as u8;
+            }
+        }
     }
 
     /// The chat pane's keys, when a modal is open. Space/Enter/click →
@@ -353,17 +479,379 @@ impl TuiApp {
         let Some(world) = self.world.clone() else {
             return AppAction::None;
         };
-        let mut map = Map::new(&world, &mut self.map, |_| {});
+        let mut map = Map::new(&world, &mut self.map, |_| {})
+            .pois(&self.map_pois)
+            .selected_poi(self.map_poi_sel);
         if let Some(here) = self.here {
             map = map.here(here);
         }
         if let Some(route) = &self.route {
             map = map.route(route);
         }
-        match map.on_key(key) {
+        let outcome = map.on_key(key);
+        if key.code == KeyCode::Esc {
+            self.map_model.clear_selection();
+        }
+        match outcome {
             MapAction::Walk(tile) => AppAction::ArmWalk(tile),
             MapAction::Moved | MapAction::Ignored => AppAction::None,
         }
+    }
+
+    fn update_map_search(&mut self) {
+        if let Some(catalogue) = self.map_host_catalogue.clone() {
+            if self.map_search.is_empty() {
+                self.map_search_index.clear();
+                self.map_search_results.clear();
+            } else if self
+                .map_search_index
+                .update(&catalogue, &self.map_search)
+                .is_ok()
+            {
+                self.map_search_results = self.map_search_index.results().to_vec();
+            }
+        } else {
+            let needle = self.map_search.to_ascii_lowercase();
+            self.map_search_results.clear();
+            if !needle.is_empty() {
+                self.map_search_results.extend(
+                    self.map_pois
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, poi)| poi.name.as_str().to_ascii_lowercase().contains(&needle))
+                        .map(|(index, _)| index),
+                );
+            }
+        }
+        self.map_search_sel = self
+            .map_search_sel
+            .min(self.map_search_results.len().saturating_sub(1));
+    }
+
+    fn search_hit_label(&self, index: usize) -> Option<String> {
+        fn kind_glyph(kind: PoiKind) -> &'static str {
+            match kind {
+                PoiKind::Bank => "B",
+                PoiKind::Transport => "T",
+                PoiKind::Teleport => "X",
+                _ => "·",
+            }
+        }
+        if let Some(catalogue) = &self.map_host_catalogue {
+            let entry = catalogue.entry(index)?;
+            let anchor = entry.anchor();
+            return Some(format!(
+                "{} {} ({},{},{})",
+                kind_glyph(entry.kind()),
+                entry.name(),
+                anchor.x,
+                anchor.z,
+                anchor.level
+            ));
+        }
+        let poi = self.map_pois.get(index)?;
+        Some(format!(
+            "{} {} ({},{},{})",
+            kind_glyph(poi.kind),
+            poi.name.as_str(),
+            poi.display.x as i32,
+            poi.display.z as i32,
+            poi.effective_plane
+        ))
+    }
+
+    fn jump_to_poi(&mut self, index: usize) {
+        let (bx, bz) = self
+            .here
+            .map(|h| (h.x, h.z))
+            .unwrap_or(crate::map::DEFAULT_CENTRE);
+        if let Some(catalogue) = self.map_host_catalogue.clone() {
+            if self.map_model.select_poi(&catalogue, index).is_ok() {
+                if let Some(entry) = catalogue.entry(index) {
+                    let anchor = entry.anchor();
+                    self.map.pan = (anchor.x - bx, anchor.z - bz);
+                    if (0..4).contains(&anchor.level) {
+                        self.map.plane = anchor.level as u8;
+                    }
+                    self.map.selection = Some(anchor);
+                    self.map_poi_sel = Some(index);
+                    self.error = None;
+                }
+            }
+            return;
+        }
+        let Some(poi) = self.map_pois.get(index) else {
+            return;
+        };
+        self.map.pan = (
+            poi.display.x.floor() as i32 - bx,
+            poi.display.z.floor() as i32 - bz,
+        );
+        self.map.plane = poi.effective_plane;
+        self.map.selection = None;
+        self.map_model.clear_selection();
+        self.map_poi_sel = Some(index);
+    }
+
+    fn map_search_on_key(&mut self, key: KeyEvent) -> AppAction {
+        match key.code {
+            KeyCode::Esc => {
+                self.map_search_open = false;
+                self.map_search.clear();
+                self.map_search_results.clear();
+                self.map_search_sel = 0;
+            }
+            KeyCode::Backspace => {
+                self.map_search.pop();
+                self.update_map_search();
+            }
+            KeyCode::Up => {
+                self.map_search_sel = self.map_search_sel.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                if self.map_search_sel + 1 < self.map_search_results.len() {
+                    self.map_search_sel += 1;
+                }
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.map_search_sel = self.map_search_sel.saturating_sub(1);
+            }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if self.map_search_sel + 1 < self.map_search_results.len() {
+                    self.map_search_sel += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(&index) = self.map_search_results.get(self.map_search_sel) {
+                    self.jump_to_poi(index);
+                } else if let Some(tile) = parse_coordinate(&self.map_search) {
+                    self.select_requested(tile);
+                }
+                self.map_search_open = false;
+            }
+            KeyCode::Char(c) if !c.is_control() && self.map_search.len() < 256 => {
+                self.map_search.push(c);
+                self.update_map_search();
+            }
+            _ => {}
+        }
+        AppAction::None
+    }
+
+    fn select_requested(&mut self, requested: Tile) {
+        self.map.selection = Some(requested);
+        if (0..4).contains(&requested.level) {
+            self.map.plane = requested.level as u8;
+        }
+        if let Some(world) = self.world.clone() {
+            self.map_model.select_tile(&world, requested);
+        }
+        self.error = None;
+    }
+
+    /// Enter confirms only an existing pending selection. With none, it selects
+    /// the view-centre tile through the shared model and does not dispatch.
+    fn map_enter(&mut self) -> AppAction {
+        if let Some(pending) = self.map_model.pending() {
+            if self.walk_send.mode == WalkSendMode::Group {
+                return AppAction::MapWalkGroup;
+            }
+            return AppAction::ArmWalk(pending.requested);
+        }
+        self.select_view_centre();
+        AppAction::None
+    }
+
+    fn select_view_centre(&mut self) {
+        let Some(world) = self.world.clone() else {
+            return;
+        };
+        let (bx, bz) = self
+            .here
+            .map(|h| (h.x, h.z))
+            .unwrap_or(crate::map::DEFAULT_CENTRE);
+        let requested = Tile {
+            x: bx + self.map.pan.0,
+            z: bz + self.map.pan.1,
+            level: i32::from(self.map.plane),
+        };
+        if !(0..4).contains(&requested.level) {
+            return;
+        }
+        self.map.selection = Some(requested);
+        self.map_model.select_tile(&world, requested);
+        self.error = None;
+    }
+
+    /// Host confirm consumes the pending selection; drop the leftover crosshair
+    /// so a later Enter cannot radius-snap the old anchor in the same press.
+    pub(crate) fn clear_consumed_map_selection(&mut self) {
+        self.map.selection = None;
+        self.map_poi_sel = None;
+    }
+
+    fn set_map_plane(&mut self, plane: u8) {
+        let plane = plane.min(3);
+        self.map.plane = plane;
+        self.map.selection = None;
+        self.map_poi_sel = None;
+        let _ = self.map_model.set_plane(plane);
+        self.map_model.clear_selection();
+    }
+
+    fn recenter_map(&mut self) {
+        self.map.pan = (0, 0);
+        self.map.selection = None;
+        self.map_poi_sel = None;
+        let observed = self
+            .here
+            .filter(|h| (0..4).contains(&h.level))
+            .map(|h| Tile {
+                x: h.x,
+                z: h.z,
+                level: h.level,
+            });
+        self.map_model.recenter(observed);
+        self.map.plane = self.map_model.plane;
+    }
+
+    pub fn refresh_walk_send(&mut self, eligibility: impl Fn(&str) -> WalkSlotStatus) {
+        let names: Vec<String> = if !self.names.is_empty() {
+            self.names.clone()
+        } else {
+            self.statuses.iter().map(|s| s.username.clone()).collect()
+        };
+        let prev: std::collections::HashMap<String, bool> = self
+            .walk_send
+            .rows
+            .iter()
+            .map(|row| (row.name.clone(), row.checked))
+            .collect();
+        let mut rows = Vec::with_capacity(names.len());
+        for name in names {
+            let status = eligibility(&name);
+            let checked =
+                status.is_eligible() && prev.get(&name).copied().unwrap_or(status.is_eligible());
+            rows.push(WalkSendRow {
+                name,
+                status,
+                checked,
+            });
+        }
+        self.walk_send.rows = rows;
+        self.walk_send.sync_walk_label();
+    }
+
+    fn toggle_walk_send_mode(&mut self) {
+        self.walk_send.mode = match self.walk_send.mode {
+            WalkSendMode::Focused => WalkSendMode::Group,
+            WalkSendMode::Group => WalkSendMode::Focused,
+        };
+        if self.walk_send.mode == WalkSendMode::Group && self.walk_send.checked_count() == 0 {
+            for row in &mut self.walk_send.rows {
+                row.checked = row.status.is_eligible();
+            }
+        }
+        self.walk_send.sync_walk_label();
+    }
+
+    fn toggle_walk_send_focused(&mut self) {
+        let Some(focused) = self.focused_name() else {
+            return;
+        };
+        if let Some(row) = self
+            .walk_send
+            .rows
+            .iter_mut()
+            .find(|row| row.name == focused)
+        {
+            if row.status.is_eligible() {
+                row.checked = !row.checked;
+            }
+        }
+        self.walk_send.sync_walk_label();
+    }
+
+    fn observed_marks(&self) -> Vec<ObservedMark> {
+        self.map_observed
+            .iter()
+            .map(|obs| ObservedMark {
+                x: obs.tile.x,
+                z: obs.tile.z,
+                level: obs.tile.level,
+            })
+            .collect()
+    }
+
+    fn map_open(&mut self) -> AppAction {
+        self.map_active = true;
+        if self.map_catalogue_status == MapCatalogueStatus::Inactive {
+            self.map_catalogue_status = MapCatalogueStatus::Unavailable;
+            self.map_coverage =
+                "coverage: catalogue unavailable: cache demand manager is not bound; terrain imagery unavailable"
+                    .into();
+        }
+        AppAction::MapOpen
+    }
+
+    fn map_close(&mut self) -> AppAction {
+        self.map_active = false;
+        self.map_search_open = false;
+        self.map_search.clear();
+        self.map_search_results.clear();
+        self.map.selection = None;
+        self.map_model.close();
+        self.map_poi_sel = None;
+        self.map_pois.clear();
+        self.map_host_catalogue = None;
+        self.map_search_index.clear();
+        self.map_observed.clear();
+        self.walk_send = WalkSendState::default();
+        self.map_catalogue_status = MapCatalogueStatus::Inactive;
+        self.map_coverage = "coverage: unavailable until Map is opened".into();
+        AppAction::MapClose
+    }
+
+    /// Shared model adapters may publish a ready catalogue after activation.
+    /// This does not decode PNGs and is intentionally separate from `draw`.
+    pub fn set_map_catalogue(&mut self, pois: Vec<PoiRecord>, coverage: impl Into<String>) {
+        self.map_pois = pois;
+        self.map_coverage = coverage.into();
+        self.map_catalogue_status = MapCatalogueStatus::Ready;
+        self.update_map_search();
+    }
+
+    /// Retain E's catalogue owner. Search/draw borrow it; no POI payload copy.
+    pub fn bind_host_catalogue(&mut self, catalogue: Arc<Catalogue>) {
+        let messages: Vec<_> = catalogue.coverage_messages().collect();
+        let coverage = if messages.is_empty() {
+            format!(
+                "coverage: client {:?}  navpois {:?}",
+                catalogue.client_status(),
+                catalogue.service_status()
+            )
+        } else {
+            format!("coverage: {}", messages.join("; "))
+        };
+        if let Some(ctx) = self.map_model.context() {
+            let mut next = ctx;
+            next.overlay = Some(catalogue.key());
+            self.map_model.bind(next);
+        }
+        self.map_host_catalogue = Some(catalogue);
+        self.map_pois.clear();
+        self.map_coverage = coverage;
+        self.map_catalogue_status = MapCatalogueStatus::Ready;
+        self.update_map_search();
+    }
+
+    pub fn set_map_unavailable(&mut self, reason: impl Into<String>) {
+        self.map_catalogue_status = MapCatalogueStatus::Unavailable;
+        self.map_coverage = reason.into();
+        self.map_pois.clear();
+        self.map_host_catalogue = None;
+        self.map_search_index.clear();
+        self.map_search_results.clear();
     }
 
     /// Cycle the focus to the next running slot (the strip's `[Tab]`).
@@ -410,9 +898,9 @@ impl TuiApp {
         None
     }
 
-    /// One key event. Priority: script load input / browse picker,
-    /// global keys, the settings popup, the chat modal (when open), then
-    /// WASD + map keys.
+    /// One key event. Inputs opened by Map (search/coordinate) consume
+    /// typing before global shortcuts. Outside explicit Map focus, existing
+    /// direct WASD remains available for compatibility; map pan keys do not.
     pub fn on_key(&mut self, key: KeyEvent) -> AppAction {
         if self.quit {
             return AppAction::None;
@@ -420,8 +908,6 @@ impl TuiApp {
         if self.params_state.open {
             return AppAction::None;
         }
-        // The script pane's text inputs capture keys before the global
-        // shortcuts (typing a load path must not quit on `q`).
         if self.script_load_open {
             return self.load_on_key(key);
         }
@@ -431,6 +917,94 @@ impl TuiApp {
         if self.script_browse_open {
             return self.script_browse_on_key(key);
         }
+
+        if key.code == KeyCode::F(4) {
+            return if self.map_active {
+                self.map_close()
+            } else {
+                self.map_open()
+            };
+        }
+        if self.map_active {
+            if self.map_search_open {
+                return self.map_search_on_key(key);
+            }
+            if self.settings_state.open || self.loadouts_state.open {
+                return AppAction::None;
+            }
+            if self.chat_data.is_modal_open() {
+                return self.chat_on_key(key).unwrap_or(AppAction::None);
+            }
+            match key.code {
+                KeyCode::Char('/') => {
+                    self.map_search_open = true;
+                    self.map_search.clear();
+                    self.map_search_results.clear();
+                    self.map_search_sel = 0;
+                    return AppAction::None;
+                }
+                KeyCode::Char('R') => {
+                    self.recenter_map();
+                    return AppAction::None;
+                }
+                KeyCode::Esc => {
+                    if self.map.selection.is_some() {
+                        return self.map_on_key(key);
+                    }
+                    return self.map_close();
+                }
+                KeyCode::PageUp => {
+                    self.set_map_plane(self.map.plane.saturating_add(1));
+                    return AppAction::None;
+                }
+                KeyCode::PageDown => {
+                    self.set_map_plane(self.map.plane.saturating_sub(1));
+                    return AppAction::None;
+                }
+                KeyCode::Char('0'..='3') => {
+                    if let KeyCode::Char(level) = key.code {
+                        self.set_map_plane(level as u8 - b'0');
+                    }
+                    return AppAction::None;
+                }
+                KeyCode::Char('d') => {
+                    self.map.layers.dots = !self.map.layers.dots;
+                    return AppAction::None;
+                }
+                KeyCode::Char('c') => {
+                    self.map.layers.collision = !self.map.layers.collision;
+                    return AppAction::None;
+                }
+                KeyCode::Char('r') => {
+                    self.map.layers.reach = !self.map.layers.reach;
+                    return AppAction::None;
+                }
+                KeyCode::Char('g') => {
+                    self.toggle_walk_send_mode();
+                    return AppAction::None;
+                }
+                KeyCode::Char(' ') => {
+                    self.toggle_walk_send_focused();
+                    return AppAction::None;
+                }
+                KeyCode::Tab => {
+                    return self
+                        .cycle_focus()
+                        .map(AppAction::Focus)
+                        .unwrap_or(AppAction::None);
+                }
+                KeyCode::Char('t') => {
+                    let Some(pending) = self.map_model.pending() else {
+                        return AppAction::None;
+                    };
+                    return AppAction::MapTeleport(pending.requested);
+                }
+                KeyCode::Enter => return self.map_enter(),
+                _ => {}
+            }
+            return self.map_on_key(key);
+        }
+
         match key.code {
             KeyCode::Char('q') => {
                 self.quit = true;
@@ -440,6 +1014,8 @@ impl TuiApp {
                 self.settings_state.open = !self.settings_state.open;
                 return AppAction::None;
             }
+            // `l` is a loadouts key only outside Map focus. Inside Map it is
+            // the east-pan binding, eliminating the old global conflict.
             KeyCode::Char('l') | KeyCode::Char('L') => {
                 self.loadouts_state.open = !self.loadouts_state.open;
                 if self.loadouts_state.open {
@@ -452,9 +1028,6 @@ impl TuiApp {
             }
             KeyCode::Char('m') => return AppAction::SpawnAll,
             KeyCode::Char('p') => {
-                // Paint-as-chat toggle: `p` shows the game chat while the
-                // focused script paints (a second press brings the paint
-                // back). No-op when nothing is painted.
                 if self.chat_data.script_paint.is_some() {
                     self.chat_data.show_game_chat = !self.chat_data.show_game_chat;
                 }
@@ -515,7 +1088,7 @@ impl TuiApp {
         {
             return AppAction::AckBackground;
         }
-        self.map_on_key(key)
+        AppAction::None
     }
 
     /// Route keys to the loadouts popup when it is open.
@@ -1063,7 +1636,7 @@ impl TuiApp {
             }
         }
         let mut text = format!(
-            "[{members}]  focused: {focused}   {}   q quit · o options · l loadouts · Tab focus",
+            "[{members}]  focused: {focused}   {}   F4 map · q quit · o options · l loadouts · Tab focus",
             self.title
         );
         if let Some(err) = &self.error {
@@ -1074,24 +1647,129 @@ impl TuiApp {
     }
 
     fn draw_map(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        match self.world.clone() {
-            Some(world) => {
-                let mut map = Map::new(&world, &mut self.map, |_| {});
-                if let Some(here) = self.here {
-                    map = map.here(here);
-                }
-                if let Some(route) = &self.route {
-                    map = map.route(route);
-                }
-                frame.render_widget(map, area);
-            }
-            None => {
-                let block = Block::default()
-                    .borders(Borders::ALL)
-                    .title("map (no nav pack)");
-                frame.render_widget(block, area);
-            }
+        if !self.map_active {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title("Map (F4 activate; no catalogue demand)");
+            frame.render_widget(block, area);
+            return;
         }
+
+        let title = format!(
+            "Map · plane {} · {:?} · {} · arrows/hjkl pan · +/- zoom · / search · g group · t teleport · Esc close",
+            self.map.plane,
+            self.map_catalogue_status,
+            self.walk_send.walk_label()
+        );
+        let block = Block::default().borders(Borders::ALL).title(title);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let [map_area, info_area] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(inner.height.min(4))])
+                .areas(inner);
+
+        let observed = self.observed_marks();
+        let catalogue = self.map_host_catalogue.clone();
+        let poi_count = catalogue
+            .as_ref()
+            .map(|c| c.entries().len())
+            .unwrap_or(self.map_pois.len());
+        if let Some(world) = self.world.clone() {
+            let mut map = Map::new(&world, &mut self.map, |_| {})
+                .selected_poi(self.map_poi_sel)
+                .observed(&observed);
+            map = if let Some(catalogue) = catalogue.as_ref() {
+                map.catalogue(catalogue)
+            } else {
+                map.pois(&self.map_pois)
+            };
+            if let Some(here) = self.here {
+                map = map.here(here);
+            }
+            if let Some(route) = &self.route {
+                map = map.route(route);
+            }
+            frame.render_widget(map, map_area);
+        } else {
+            Paragraph::new("collision unavailable (nav pack not loaded)")
+                .render(map_area, frame.buffer_mut());
+        }
+
+        let send = match self.walk_send.mode {
+            WalkSendMode::Focused => "Send: Focused".to_string(),
+            WalkSendMode::Group => {
+                let rows = self
+                    .walk_send
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        let mark = if row.checked { "*" } else { " " };
+                        match row.status {
+                            WalkSlotStatus::Eligible(_) => {
+                                format!("{mark}{}", row.name)
+                            }
+                            WalkSlotStatus::Excluded(reason) => {
+                                format!("{mark}{} ({reason})", row.name)
+                            }
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("  ");
+                format!("Send: Group  {}  {rows}", self.walk_send.walk_label())
+            }
+        };
+        let mut info = vec![
+            Line::from(send),
+            Line::from(if let Some(err) = &self.error {
+                format!("status: {err}")
+            } else {
+                format!(
+                    "status: {:?}  {}",
+                    self.map_catalogue_status, self.map_coverage
+                )
+            }),
+            Line::from(format!(
+                "legend: @ * + B T X N#  POIs:{} obs:{} {}",
+                poi_count,
+                self.map_observed.len(),
+                if self.route.is_some() {
+                    "route"
+                } else {
+                    "none"
+                }
+            )),
+        ];
+        if self.map_search_open {
+            info.push(Line::from(format!("/{}", self.map_search)));
+        } else if !self.map_search_results.is_empty() {
+            let rows = self
+                .map_search_results
+                .iter()
+                .take(2)
+                .filter_map(|&index| self.search_hit_label(index))
+                .collect::<Vec<_>>()
+                .join("  ");
+            if !rows.is_empty() {
+                info.push(Line::from(format!("POI: {rows}")));
+            }
+        } else if !self.map_observed.is_empty() {
+            let rows = self
+                .map_observed
+                .iter()
+                .take(2)
+                .map(|obs| {
+                    format!(
+                        "N {:?} ({},{},{})",
+                        obs.kind, obs.tile.x, obs.tile.z, obs.tile.level
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("  ");
+            info.push(Line::from(format!("observed: {rows}")));
+        }
+        Paragraph::new(info)
+            .wrap(Wrap { trim: true })
+            .render(info_area, frame.buffer_mut());
     }
 
     fn draw_chat(&mut self, frame: &mut Frame<'_>, area: Rect) {

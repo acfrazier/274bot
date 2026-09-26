@@ -12,7 +12,21 @@ use vault::ProfileSettings;
 
 use crate::script_shape::BrowseCard;
 
-use super::{wasd_target, AppAction, TuiApp};
+use host_play::walk_map::{
+    ActionError, ActionKind, AuthenticatedServices, Catalogue, MapContext, WalkExclude,
+    WalkSlotReady, WalkSlotStatus,
+};
+use nav::map::formats::{
+    ClientPois, Coverage, CoverageLevel, ServiceIdentity, ServicePois, NAVPOIS_VERSION,
+};
+use nav::map::identity::{CatalogueIdentity, Digest};
+use nav::map::poi::{
+    CapabilityEvidence, DisplayAnchor, EntityKind, Footprint, PoiKey, PoiKind, PoiRecord,
+    SourceSpace,
+};
+use nav::map::{Rows, Text};
+
+use super::{wasd_target, AppAction, MapCatalogueStatus, TuiApp, WalkSendMode};
 
 fn bone_burier_card() -> BrowseCard {
     BrowseCard {
@@ -32,6 +46,211 @@ fn key(code: KeyCode) -> KeyEvent {
 
 fn tile(x: i32, z: i32) -> Tile {
     Tile { x, z, level: 0 }
+}
+
+fn bank_poi(name: &str, x: i32, z: i32) -> PoiRecord {
+    PoiRecord {
+        key: PoiKey {
+            entity: EntityKind::Loc,
+            id: 2213,
+            x,
+            z,
+            source: SourceSpace::Game { plane: 0 },
+            shape: 10,
+            rotation: 0,
+        },
+        name: Text::new(name).unwrap(),
+        kind: PoiKind::Bank,
+        effective_plane: 0,
+        footprint: Footprint {
+            width: 1,
+            length: 1,
+        },
+        display: DisplayAnchor {
+            x: f64::from(x) + 0.5,
+            z: f64::from(z) + 0.5,
+            plane: 0,
+        },
+        evidence: Rows::new(vec![CapabilityEvidence::ActiveQuickBooth]).unwrap(),
+        walk_target: None,
+    }
+}
+
+fn digest(n: u8) -> Digest {
+    Digest([n; 32])
+}
+
+fn coverage() -> Coverage {
+    Coverage {
+        npc_placements: CoverageLevel::Unavailable,
+        bank_services: CoverageLevel::Limited,
+        place_labels: CoverageLevel::Unavailable,
+        unresolved: Rows::new(vec![]).unwrap(),
+    }
+}
+
+fn poi_record(
+    entity: EntityKind,
+    x: i32,
+    z: i32,
+    source: SourceSpace,
+    kind: PoiKind,
+    name: &str,
+) -> PoiRecord {
+    let plane = source.game_plane().unwrap().unwrap();
+    PoiRecord {
+        key: PoiKey {
+            entity,
+            id: if entity == EntityKind::Loc { 2213 } else { 1 },
+            x,
+            z,
+            source,
+            shape: if entity == EntityKind::Loc { 10 } else { 0 },
+            rotation: 0,
+        },
+        name: Text::new(name).unwrap(),
+        kind,
+        effective_plane: plane,
+        footprint: Footprint {
+            width: 1,
+            length: 1,
+        },
+        display: DisplayAnchor {
+            x: f64::from(x) + 0.5,
+            z: f64::from(z) + 0.5,
+            plane,
+        },
+        evidence: Rows::new(vec![CapabilityEvidence::ActiveQuickBooth]).unwrap(),
+        walk_target: None,
+    }
+}
+
+fn map_poi_catalogue() -> (std::sync::Arc<Catalogue>, Tile, Tile) {
+    let world = std::sync::Arc::new(nav::world::NavWorld::from_grid(
+        &nav::grid::StepGrid::fixture_open_3x3(),
+    ));
+    let identity = CatalogueIdentity {
+        revision: 289,
+        content: digest(1),
+        policy: digest(2),
+    };
+    let nav = digest(8);
+    let booth = poi_record(
+        EntityKind::Loc,
+        1,
+        1,
+        SourceSpace::ClientVisual {
+            plane: 0,
+            link_below: false,
+        },
+        PoiKind::Bank,
+        "Bank booth",
+    );
+    let client = std::sync::Arc::new(ClientPois {
+        schema: 1,
+        identity,
+        coverage: coverage(),
+        records: Rows::new(vec![booth]).unwrap(),
+    });
+    let mut labels = vec![poi_record(
+        EntityKind::Label,
+        10,
+        10,
+        SourceSpace::ServerGame { plane: 0 },
+        PoiKind::Label { priority: 1 },
+        "Lumbridge",
+    )];
+    labels.sort_by_key(|r| r.key);
+    let doc = ServicePois {
+        schema: NAVPOIS_VERSION,
+        identity: ServiceIdentity {
+            revision: 289,
+            content: digest(1),
+            nav_sha256: nav,
+            source_sha256: digest(3),
+            generator_sha256: digest(4),
+            policy: digest(5),
+        },
+        coverage: coverage(),
+        records: Rows::new(labels).unwrap(),
+    };
+    let bytes = doc.encode_navpois().unwrap();
+    let services = AuthenticatedServices::decode(&bytes, doc.identity, Digest::of(&bytes)).unwrap();
+    let catalogue = Catalogue::new(world, identity, nav, Some(client), Some(services)).unwrap();
+    let booth = catalogue
+        .entries()
+        .find(|e| e.name() == "Bank booth")
+        .expect("booth");
+    let label = catalogue
+        .entries()
+        .find(|e| e.name() == "Lumbridge")
+        .expect("label");
+    let stand = booth.walk_target().expect("physical stand");
+    let label_anchor = label.anchor();
+    assert_ne!(
+        stand,
+        booth.anchor(),
+        "fixture must distinguish catalogue stand from the display snap"
+    );
+    assert_eq!(label.walk_target(), None, "view-only label has no stand");
+    (std::sync::Arc::new(catalogue), stand, label_anchor)
+}
+
+fn bind_catalogue_map(app: &mut TuiApp, catalogue: std::sync::Arc<Catalogue>) {
+    app.world = Some(std::sync::Arc::clone(catalogue.world()));
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    app.here = Some(WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    });
+    app.map_model.bind(MapContext {
+        focus: None,
+        nav: catalogue.nav_identity(),
+        overlay: None,
+        generation: 1,
+    });
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    app.bind_host_catalogue(catalogue);
+}
+
+fn search_and_jump(app: &mut TuiApp, query: &str) {
+    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
+    for ch in query.chars() {
+        app.on_key(key(KeyCode::Char(ch)));
+    }
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+}
+
+fn open_map_world() -> TuiApp {
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec!["alice".into(), "bob".into()];
+    app.focused = Some(0);
+    app.statuses = vec![
+        host_play::SlotStatus {
+            username: "alice".into(),
+            ingame: true,
+            scene_state: 2,
+            tile_x: 1,
+            tile_z: 1,
+            ..host_play::SlotStatus::default()
+        },
+        host_play::SlotStatus {
+            username: "bob".into(),
+            ..host_play::SlotStatus::default()
+        },
+    ];
+    app.world = Some(Arc::new(nav::world::NavWorld::from_grid(
+        &nav::grid::StepGrid::fixture_open_3x3(),
+    )));
+    app.here = Some(WorldTile {
+        x: 1,
+        z: 1,
+        level: 0,
+    });
+    app.map_pois = vec![bank_poi("Varrock East", 2, 2)];
+    app
 }
 
 fn line(text: &str) -> ChatLineView {
@@ -72,9 +291,9 @@ fn buffer_position(buf: &Buffer, width: u16, needle: &str) -> Option<(u16, u16)>
         })
 }
 
-/// The window title line survives the full chrome draw.
+/// Boot draws a neutral inactive Map pane and never requests catalogue work.
 #[test]
-fn draws_title_containing_274bot() {
+fn draws_title_containing_274bot_without_map_demand() {
     let mut app = TuiApp::new("274bot headless");
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal.draw(|frame| app.draw(frame)).unwrap();
@@ -83,18 +302,22 @@ fn draws_title_containing_274bot() {
     let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
     assert!(
         text.contains("274bot"),
-        "buffer does not contain 274bot: {text:?}"
+        "buffer does not contain title: {text:?}"
     );
     assert!(
-        text.contains("no nav pack"),
-        "empty world must title the map pane as missing the pack: {text:?}"
+        text.contains("F4 activate"),
+        "map is explicit at boot: {text:?}"
+    );
+    assert_eq!(
+        app.map_catalogue_status,
+        super::MapCatalogueStatus::Inactive,
+        "draw must not demand a catalogue"
     );
 }
 
-/// A loaded world drops the empty-state title; the map paints the
-/// walkable field instead of a hollow "no nav pack" block.
+/// Map activation is explicit; loaded collision/POIs then render in cells.
 #[test]
-fn draw_map_paints_walkable_dots_when_the_pack_is_loaded() {
+fn draw_map_paints_walkable_dots_after_explicit_activation() {
     let mut app = TuiApp::new("274bot headless");
     app.world = Some(Arc::new(nav::world::NavWorld::from_grid(
         &nav::grid::StepGrid::fixture_open_3x3(),
@@ -104,19 +327,17 @@ fn draw_map_paints_walkable_dots_when_the_pack_is_loaded() {
         z: 1,
         level: 0,
     });
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal.draw(|frame| app.draw(frame)).unwrap();
     let buf = terminal.backend().buffer();
     let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
-    assert!(
-        !text.contains("no nav pack"),
-        "loaded pack must not keep the empty-state title: {text:?}"
-    );
     assert!(text.contains('.'), "walkable tiles paint as dots: {text:?}");
     assert!(
         text.contains('@'),
         "the here marker paints on the player tile: {text:?}"
     );
+    assert!(text.contains("coverage:"), "coverage is visible: {text:?}");
 }
 
 /// The spec's WASD test: from (10,10) W steps north. +z is north on
@@ -392,8 +613,390 @@ fn map_enter_confirms_a_walk_selection() {
     app.map.selection = Some(tile(2, 2));
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
-        AppAction::ArmWalk(tile(2, 2)),
-        "Enter on a selection arms the walk"
+        AppAction::None,
+        "Enter must not confirm a map selection outside Map focus"
+    );
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    assert!(app.map_model.pending().is_none());
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::None,
+        "Enter with no pending selection only selects"
+    );
+    assert!(app.map_model.pending().is_some());
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::ArmWalk(tile(1, 1)),
+        "the next Enter confirms the pending centre selection"
+    );
+}
+
+#[test]
+fn map_focus_reserves_l_for_pan_and_esc_orders_search_before_close() {
+    let mut app = TuiApp::new("274bot headless");
+    assert_eq!(app.on_key(key(KeyCode::Char('l'))), AppAction::None);
+    assert!(app.loadouts_state.open, "l remains loadouts outside Map");
+    app.loadouts_state.open = false;
+    app.world = Some(Arc::new(nav::world::NavWorld::from_grid(
+        &nav::grid::StepGrid::fixture_open_3x3(),
+    )));
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    let before = app.map.pan;
+    assert_eq!(app.on_key(key(KeyCode::Char('l'))), AppAction::None);
+    assert_ne!(app.map.pan, before, "l pans only in Map focus");
+    assert!(!app.loadouts_state.open);
+    app.map_search_open = true;
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+    assert!(app.map_active, "first Esc closes search only");
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::MapClose);
+    assert!(!app.map_active);
+}
+
+fn run_map_keyboard_walkthrough(width: u16, height: u16) {
+    let mut app = open_map_world();
+    assert_eq!(
+        app.map_catalogue_status,
+        MapCatalogueStatus::Inactive,
+        "no catalogue demand before F4"
+    );
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    assert_eq!(
+        app.map_catalogue_status,
+        MapCatalogueStatus::Inactive,
+        "draw must not demand a catalogue"
+    );
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::None,
+        "Enter outside Map focus does not confirm"
+    );
+
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    assert_ne!(
+        app.map_catalogue_status,
+        MapCatalogueStatus::Inactive,
+        "F4 is the catalogue-demand transition"
+    );
+    app.refresh_walk_send(|name| {
+        if name == "alice" {
+            WalkSlotStatus::Eligible(WalkSlotReady { origin: tile(1, 1) })
+        } else {
+            WalkSlotStatus::Excluded(WalkExclude::NoPosition)
+        }
+    });
+    app.map_observed = vec![host_play::walk_map::ObservedService {
+        npc_index: 1,
+        kind: PoiKind::Bank,
+        tile: tile(1, 1),
+        evidence: CapabilityEvidence::ActiveQuickBooth,
+        context: host_play::walk_map::MapContext {
+            focus: None,
+            nav: nav::map::identity::Digest::of(b"walkthrough"),
+            overlay: None,
+            generation: 1,
+        },
+    }];
+
+    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
+    assert!(app.map_search_open);
+    for ch in "varrock".chars() {
+        app.on_key(key(KeyCode::Char(ch)));
+    }
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert_eq!(app.map_poi_sel, Some(0), "search Enter jumps to the POI");
+    assert!(app.map_model.pending().is_none());
+
+    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
+    for ch in "2,2,0".chars() {
+        app.on_key(key(KeyCode::Char(ch)));
+    }
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert_eq!(app.map.selection, Some(tile(2, 2)));
+    assert!(app.map_model.pending().is_some());
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('t'))),
+        AppAction::MapTeleport(tile(2, 2)),
+        "t teleports the requested tile"
+    );
+
+    assert_eq!(app.on_key(key(KeyCode::PageUp)), AppAction::None);
+    assert_eq!(app.map.plane, 1);
+    assert!(
+        app.map_model.pending().is_none(),
+        "plane change clears pending selection"
+    );
+    let dots_before = app.map.layers.dots;
+    assert_eq!(app.on_key(key(KeyCode::Char('d'))), AppAction::None);
+    assert_ne!(app.map.layers.dots, dots_before);
+    let collision_before = app.map.layers.collision;
+    assert_eq!(app.on_key(key(KeyCode::Char('c'))), AppAction::None);
+    assert_ne!(app.map.layers.collision, collision_before);
+    let reach_before = app.map.layers.reach;
+    assert_eq!(app.on_key(key(KeyCode::Char('r'))), AppAction::None);
+    assert_ne!(app.map.layers.reach, reach_before);
+    assert_eq!(app.on_key(key(KeyCode::Char('R'))), AppAction::None);
+    assert_eq!(app.map.plane, 0);
+    assert!(
+        app.map_model.pending().is_none(),
+        "recenter clears pending selection"
+    );
+
+    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
+    for ch in "3,3,0".chars() {
+        app.on_key(key(KeyCode::Char(ch)));
+    }
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert_eq!(
+        app.map.selection,
+        Some(Tile {
+            x: 3,
+            z: 3,
+            level: 0
+        }),
+        "blocked tiles remain selectable for Teleport"
+    );
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('t'))),
+        AppAction::MapTeleport(Tile {
+            x: 3,
+            z: 3,
+            level: 0
+        })
+    );
+
+    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
+    for ch in "2,2,0".chars() {
+        app.on_key(key(KeyCode::Char(ch)));
+    }
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::ArmWalk(tile(2, 2))
+    );
+    assert!(app.map_model.pending().is_some());
+
+    assert_eq!(app.on_key(key(KeyCode::Char('g'))), AppAction::None);
+    assert_eq!(app.walk_send.mode, WalkSendMode::Group);
+    assert_eq!(app.walk_send.walk_label(), "Walk 1 bots");
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::MapWalkGroup,
+        "group Enter walks the checked fleet"
+    );
+    assert!(!app.quit);
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(
+        text.contains("plane 0"),
+        "{width}x{height} map title: {text:?}"
+    );
+    assert!(
+        text.contains("legend:"),
+        "{width}x{height} map legend: {text:?}"
+    );
+    assert!(
+        text.contains("Walk 1 bots"),
+        "{width}x{height} group walk label: {text:?}"
+    );
+    assert!(
+        text.contains("no position yet"),
+        "{width}x{height} eligibility: {text:?}"
+    );
+    assert!(
+        text.contains("obs:1"),
+        "{width}x{height} observed services: {text:?}"
+    );
+
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapClose);
+    assert_eq!(app.map_catalogue_status, MapCatalogueStatus::Inactive);
+    assert!(app.map_pois.is_empty(), "close releases the catalogue");
+    assert!(app.map_observed.is_empty());
+    assert!(app.map_host_catalogue.is_none());
+}
+
+#[test]
+fn map_keyboard_walkthrough_120x40() {
+    run_map_keyboard_walkthrough(120, 40);
+}
+
+#[test]
+fn map_keyboard_walkthrough_80x24() {
+    run_map_keyboard_walkthrough(80, 24);
+}
+
+#[test]
+fn map_poi_confirm_keeps_catalogue_stand_and_blocks_view_only_labels() {
+    let (catalogue, stand, label_anchor) = map_poi_catalogue();
+    let ctx = MapContext {
+        focus: None,
+        nav: catalogue.nav_identity(),
+        overlay: Some(catalogue.key()),
+        generation: 1,
+    };
+    let mut app = TuiApp::new("274bot headless");
+    bind_catalogue_map(&mut app, Arc::clone(&catalogue));
+
+    search_and_jump(&mut app, "lumbridge");
+    let pending = app.map_model.pending().expect("label selection");
+    assert_eq!(pending.requested, label_anchor);
+    assert_eq!(pending.target, None, "view-only label is not a walk stand");
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::ArmWalk(label_anchor)
+    );
+    assert_eq!(
+        app.map_model
+            .confirm(ActionKind::Walk, &ctx, Some(tile(0, 0)), Default::default())
+            .expect_err("view-only label"),
+        ActionError::Blocked
+    );
+    assert!(app.map_model.pending().is_none());
+    assert_eq!(
+        app.map.selection,
+        Some(label_anchor),
+        "host consume leaves the leftover crosshair"
+    );
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::None,
+        "Enter after a consumed label must not walk"
+    );
+    assert!(app.walk_dest.is_none());
+
+    app.map_model.clear_selection();
+    app.map.selection = None;
+    search_and_jump(&mut app, "booth");
+    let pending = app.map_model.pending().expect("booth selection");
+    assert_eq!(pending.target, Some(stand));
+    assert_ne!(pending.requested, stand);
+    let requested = pending.requested;
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::ArmWalk(requested)
+    );
+    assert_eq!(
+        app.map_model.pending().map(|p| p.target),
+        Some(Some(stand)),
+        "confirm must keep the catalogue stand, not a radius snap"
+    );
+    assert_eq!(
+        app.map_model
+            .confirm(ActionKind::Walk, &ctx, Some(tile(0, 0)), Default::default())
+            .expect_err("no focus token in this headless bind"),
+        ActionError::NoFocus
+    );
+    assert!(app.map_model.pending().is_none());
+    assert_eq!(app.map.selection, Some(requested));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::None,
+        "Enter after a consumed POI walk must not snap a second walk"
+    );
+
+    app.map_model.clear_selection();
+    app.map.selection = None;
+    search_and_jump(&mut app, "booth");
+    assert_eq!(app.on_key(key(KeyCode::Char('g'))), AppAction::None);
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::MapWalkGroup);
+    assert_eq!(
+        app.map_model.pending().expect("group").target,
+        Some(stand),
+        "group confirm must not replace the POI stand with a snap"
+    );
+}
+
+#[test]
+fn map_status_shows_walk_refusal_at_120_and_80() {
+    let mut app = open_map_world();
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    app.error = Some(ActionError::NoOrigin.to_string());
+    app.walk_dest = None;
+    for (width, height) in [(120, 40), (80, 24)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            text.contains("status: Walk/Teleport unavailable: no observed player"),
+            "{width}x{height} missing refusal: {text:?}"
+        );
+    }
+}
+
+#[test]
+fn map_search_types_j_and_k_and_navigates_with_arrows() {
+    let mut app = open_map_world();
+    app.map_pois = vec![
+        bank_poi("Varrock East", 2, 2),
+        bank_poi("Varrock West", 1, 1),
+        bank_poi("Bank kebab jewellery", 0, 0),
+    ];
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
+    for ch in "bank kebab jewellery".chars() {
+        app.on_key(key(KeyCode::Char(ch)));
+    }
+    assert_eq!(
+        app.map_search, "bank kebab jewellery",
+        "j/k in the search editor must type, not move the result cursor"
+    );
+    assert_eq!(app.map_search_sel, 0);
+
+    app.map_search.clear();
+    app.map_search_sel = 0;
+    for ch in "varrock".chars() {
+        app.on_key(key(KeyCode::Char(ch)));
+    }
+    assert_eq!(app.map_search_results.len(), 2);
+    assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
+    assert_eq!(app.map_search_sel, 1);
+    assert_eq!(app.on_key(key(KeyCode::Up)), AppAction::None);
+    assert_eq!(app.map_search_sel, 0);
+    assert_eq!(
+        app.on_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    assert_eq!(app.map_search_sel, 1);
+    assert_eq!(
+        app.on_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    assert_eq!(app.map_search_sel, 0);
+    assert_eq!(app.map_search, "varrock");
+}
+
+#[test]
+fn new_map_selection_clears_a_previous_blocked_status() {
+    let mut app = open_map_world();
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    app.error = Some(ActionError::Blocked.to_string());
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert!(
+        app.error.is_none(),
+        "a new view-centre selection must clear the leftover Blocked status"
+    );
+    app.error = Some(ActionError::Blocked.to_string());
+    assert_eq!(app.on_key(key(KeyCode::Char('/'))), AppAction::None);
+    for ch in "2,2,0".chars() {
+        app.on_key(key(KeyCode::Char(ch)));
+    }
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert!(
+        app.error.is_none(),
+        "a new coordinate selection must clear the leftover Blocked status"
     );
 }
 

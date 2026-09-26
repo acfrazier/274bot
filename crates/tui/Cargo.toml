@@ -9,6 +9,7 @@ api = { path = "../api" }
 client = { workspace = true }
 crossterm = "0.29"
 host-play = { path = "../host-play" }
+libc = "0.2"
 nav = { path = "../nav" }
 ratatui = "0.30"
 scenario = { path = "../scenario" }
