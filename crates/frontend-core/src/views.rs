@@ -51,9 +51,10 @@ pub enum Phase {
     /// waited to retry: that error stays as the row's last error). Log in
     /// brings it back.
     LoggedOut,
-    /// The last login attempt failed and the host retries it, or the error
-    /// holds the login until the operator acts (a public world preference
-    /// failure).
+    /// The last login attempt failed. The host retries it after its backoff
+    /// while the slot still wants the login ([`FleetRow::retrying`]), or the
+    /// error withdrew the login and holds it until the operator acts (a
+    /// public world preference failure).
     LoginError,
     /// This worker lifetime ended (asset startup failure, exit or panic);
     /// only an explicit Log in recreates it.
@@ -152,6 +153,11 @@ pub struct FleetRow {
     /// Login-queue place while queued (also while a login error waits for
     /// its retry in the queue).
     pub queue: Option<QueuePlace>,
+    /// While [`Self::phase`] is [`Phase::LoginError`]: the slot still wants
+    /// the login, so the host retries it after its backoff. `false` for an
+    /// error that holds the login until the operator acts, and in every
+    /// other phase.
+    pub retrying: bool,
     /// Authenticated client session, independent of game readiness.
     pub connected: bool,
     pub script: RunState,
@@ -178,6 +184,7 @@ impl Default for FleetRow {
             world: None,
             phase: Phase::Offline,
             queue: None,
+            retrying: false,
             connected: false,
             script: RunState::Idle,
             walking: false,
@@ -195,6 +202,7 @@ impl Clone for FleetRow {
             world: self.world,
             phase: self.phase,
             queue: self.queue,
+            retrying: self.retrying,
             connected: self.connected,
             script: self.script,
             walking: self.walking,
@@ -211,6 +219,7 @@ impl Clone for FleetRow {
         self.world = source.world;
         self.phase = source.phase;
         self.queue = source.queue;
+        self.retrying = source.retrying;
         self.connected = source.connected;
         self.script = source.script;
         self.walking = source.walking;
@@ -306,7 +315,9 @@ pub struct FleetCounts {
     /// Fleet members.
     pub loaded: usize,
     pub ready: usize,
-    /// Members waiting for a login (queued or in a retry wait).
+    /// Members waiting for a login: queued, waiting to connect, or a failed
+    /// login waiting for its retry (which also counts as failed). An error
+    /// that holds the login for the operator is not waiting for a login.
     pub queued: usize,
     /// Members with [`FleetRow::has_failure`].
     pub failed: usize,
@@ -673,7 +684,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
     let arm = input.play.and_then(|play| play.arm(&row.name));
     let lifetime = arm.as_ref().map_or(0, |arm| arm.lifetime_id());
     let new_lifetime = std::mem::replace(&mut state.lifetime, lifetime) != lifetime;
-    let phase = phase_of(status, arm.as_deref());
+    let (phase, retrying) = phase_of(status, arm.as_deref());
     let queue = match phase {
         Phase::Queued | Phase::LoginError => status.and_then(QueuePlace::of),
         _ => None,
@@ -702,14 +713,16 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         row.world,
         row.phase,
         row.queue,
+        row.retrying,
         row.connected,
         row.script,
         row.walking,
-    ) != (world, phase, queue, connected, script, walking)
+    ) != (world, phase, queue, retrying, connected, script, walking)
     {
         row.world = world;
         row.phase = phase;
         row.queue = queue;
+        row.retrying = retrying;
         row.connected = connected;
         row.script = script;
         row.walking = walking;
@@ -731,29 +744,31 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
     changed
 }
 
-/// The single phase derivation. `arm` is the slot's live worker lifetime:
+/// The single phase derivation, with whether a login error is a retry
+/// wait ([`FleetRow::retrying`]). `arm` is the slot's live worker lifetime:
 /// its intent (not the row's last published latch) decides whether a
-/// disconnected worker is parked.
-fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> Phase {
+/// disconnected worker is parked, and whether a failed login is retried or
+/// held for the operator; both answers come from the same intent read.
+fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool) {
     let Some(s) = status else {
-        return Phase::Offline;
+        return (Phase::Offline, false);
     };
     if s.worker_terminal.is_some() || s.terminal_startup_error().is_some() {
-        return Phase::Failed;
+        return (Phase::Failed, false);
     }
     let Some(arm) = arm else {
-        return Phase::Offline;
+        return (Phase::Offline, false);
     };
     if s.ingame {
-        return Phase::Ready;
+        return (Phase::Ready, false);
     }
     if s.connected {
-        return Phase::Loading;
+        return (Phase::Loading, false);
     }
     if arm.login_latched() {
-        return Phase::LoggedOut;
+        return (Phase::LoggedOut, false);
     }
-    match s.startup_phase {
+    let phase = match s.startup_phase {
         StartupPhase::Preparing => Phase::Preparing,
         StartupPhase::Connecting => Phase::Connecting,
         StartupPhase::LoadingScene | StartupPhase::Ready => Phase::Loading,
@@ -769,14 +784,16 @@ fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> Phase {
                     Phase::LoggedOut
                 }
             } else if failed {
-                Phase::LoginError
+                // Still wanted: the host retries it after its backoff.
+                return (Phase::LoginError, true);
             } else if QueuePlace::of(s).is_some() {
                 Phase::Queued
             } else {
                 Phase::Waiting
             }
         }
-    }
+    };
+    (phase, false)
 }
 
 /// Refresh the selected slot's detail fields. Text is built into `scratch`
@@ -950,6 +967,9 @@ fn count(rows: &[FleetRow]) -> FleetCounts {
         match row.phase {
             Phase::Ready => counts.ready += 1,
             Phase::Queued | Phase::Waiting => counts.queued += 1,
+            // A failed login waiting for its retry; an error that holds
+            // the login waits for the operator instead.
+            Phase::LoginError if row.retrying => counts.queued += 1,
             _ => {}
         }
         if row.has_failure() {

@@ -293,6 +293,10 @@ fn auto_login_off_during_a_retry_wait_parks_the_slot_with_the_error_as_history()
     assert!(row(&s, "va-gus").has_failure());
 }
 
+/// A failed login stays visible until the slot is in game. While the slot
+/// still wants the login the error is a retry wait: the header counts it
+/// as waiting for a login as well as failed. An error that withdrew the
+/// login waits for the operator, not for a login.
 #[test]
 fn a_login_error_stays_visible_while_retrying_until_ready() {
     let mut s = fleet("error-retained", &["ve-bob"], true);
@@ -303,11 +307,25 @@ fn a_login_error_stays_visible_while_retrying_until_ready() {
     s.poll();
     let failed = row(&s, "ve-bob");
     assert_eq!(
-        (failed.phase, failed.light()),
-        (Phase::LoginError, Light::Red)
+        (failed.phase, failed.light(), failed.retrying),
+        (Phase::LoginError, Light::Red, true),
+        "auto-login still wants it: the host retries after its backoff"
     );
     assert!(failed.has_failure());
-    assert_eq!(s.fleet_view().counts().failed, 1);
+    let counts = s.fleet_view().counts();
+    assert_eq!((counts.queued, counts.failed), (1, 1), "{counts:?}");
+
+    // A public world preference error withdraws the login itself.
+    s.play()
+        .unwrap()
+        .arm("ve-bob")
+        .unwrap()
+        .hold_login_on_error_for_test();
+    s.poll();
+    let held = row(&s, "ve-bob");
+    assert_eq!((held.phase, held.retrying), (Phase::LoginError, false));
+    let counts = s.fleet_view().counts();
+    assert_eq!((counts.queued, counts.failed), (0, 1), "{counts:?}");
 
     // An explicit logout outranks the stale error, which stays as history.
     s.logout("ve-bob");
@@ -315,9 +333,16 @@ fn a_login_error_stays_visible_while_retrying_until_ready() {
     assert_eq!(row(&s, "ve-bob").phase, Phase::LoggedOut);
     assert!(row(&s, "ve-bob").error.is_some());
     assert_eq!(row(&s, "ve-bob").light(), Light::Grey);
+    assert_eq!(s.fleet_view().counts().queued, 0);
     s.login("ve-bob", &mut HeadlessSurface::new());
     s.poll();
-    assert_eq!(row(&s, "ve-bob").phase, Phase::LoginError);
+    let wanted = row(&s, "ve-bob");
+    assert_eq!(
+        (wanted.phase, wanted.retrying),
+        (Phase::LoginError, true),
+        "Log in wants it again: the next attempt is a retry"
+    );
+    assert_eq!(s.fleet_view().counts().queued, 1);
 
     // The host clears its error when the retry handshake starts.
     publish(&s, "ve-bob", |r| {

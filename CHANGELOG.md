@@ -281,11 +281,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   longer reads "logged out" on the rail; a bot parked with auto-login off no
   longer reads "waiting" in the TUI or "Waiting to connect" in the panel; an
   impossible queue place (3 of 2) is not shown. A login error stays visible
-  as **last error** while the bot retries, until it is in game. Each bot
-  shows its newest operation (`op#12 Start failed: …`), kept per bot however
-  many other operations follow, and the bot's log records each operation's
-  acceptance and outcome with its id (`op#12 Start accepted`, `op#12 Start
-  completed`).
+  as **last error** while the bot retries, until it is in game. In the TUI
+  header a bot waiting out a failed login's retry backoff counts as queued
+  (and failed); one whose error holds the login for the operator counts only
+  as failed. Each bot shows its newest operation (`op#12 Start failed: …`),
+  kept per bot however many other operations follow, and the bot's log
+  records each operation's acceptance and outcome with its id (`op#12 Start
+  accepted`, `op#12 Start completed`).
 - Switching profile in single-bot mode, or turning MultiBox off, still leaves
   other bots running. A one-time acknowledgement names how many live workers
   remain and the live meter cost, points at the resource section, and **Got it,
