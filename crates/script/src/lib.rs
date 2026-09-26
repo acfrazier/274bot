@@ -114,6 +114,8 @@ pub mod cake_stall;
 #[cfg(feature = "load")]
 mod clue;
 #[cfg(feature = "load")]
+mod cook_locations;
+#[cfg(feature = "load")]
 mod death_recovery;
 #[cfg(feature = "load")]
 mod dialog;

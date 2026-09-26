@@ -30,14 +30,6 @@ pub struct FirePlot {
     pub z1: i32,
 }
 
-/// Cook stand: bank tile plus the range loc's stand tile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CookStand {
-    pub name: &'static str,
-    pub bank: WorldTile,
-    pub range: WorldTile,
-}
-
 /// Lumbridge pen interior is the nav cow-pen tile. NW Lumbridge sits between
 /// the Draynor and Lumbridge walk pins, north of the river road. South of
 /// Falador is south of the Falador walk pin.
@@ -232,21 +224,6 @@ pub const FIRE_PLOTS: &[FirePlot] = &[
     },
 ];
 
-/// Catherby range-house inside stand (nav_door DEST) and Catherby walk pin.
-pub const COOK_STANDS: &[CookStand] = &[CookStand {
-    name: "Catherby",
-    bank: WorldTile {
-        x: 2809,
-        z: 3441,
-        level: 0,
-    },
-    range: WorldTile {
-        x: 2817,
-        z: 3443,
-        level: 0,
-    },
-}];
-
 /// East Ardougne market pickpocket stands (Thiever / ArdyThiever Start).
 /// Guard tile is the live-gold tele; other names share that plaza.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -407,15 +384,6 @@ mod tests {
     fn fire_plots_are_the_four_named_stands() {
         let names: Vec<_> = FIRE_PLOTS.iter().map(|p| p.name).collect();
         assert_eq!(names, ["Varrock East", "Varrock West", "Draynor", "Seers"]);
-    }
-
-    #[test]
-    fn cook_stands_include_catherby_range_house() {
-        assert_eq!(COOK_STANDS[0].name, "Catherby");
-        assert_eq!(
-            (COOK_STANDS[0].range.x, COOK_STANDS[0].range.z),
-            (2817, 3443)
-        );
     }
 
     #[test]

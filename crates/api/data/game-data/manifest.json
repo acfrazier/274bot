@@ -128,8 +128,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 3228428,
-      "sha256": "6c0a35decd3d504f6e777d6e1dac83a011fb32b4ed9667c297cff93d97ead98b",
+      "bytes": 3249136,
+      "sha256": "3b6906745eb53df91d4f552bbb4596c6704fb484a5a4687b7ae6346aebc8fbe6",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -586,7 +586,42 @@
         "missing": [
           "Canifis"
         ]
-      }
+      },
+      "cook_inputs": {
+        "catalog": [
+          {
+            "path": "rs2b0t-00d39a17e0/src/bot/data/cookLocations.ts",
+            "bytes": 4801,
+            "sha256": "be66672f04420d14690a0791677a92fb9079d5b440c367efafcbb771066d6e70"
+          },
+          {
+            "path": "rs2b0t-00d39a17e0/src/bot/data/cookingRanges.ts",
+            "bytes": 8683,
+            "sha256": "76733cbeee40d8d7468e2173ce665cb651f23aafd6f89c05a7ba9786d312d284"
+          },
+          {
+            "path": "rs2b0t-00d39a17e0/tools/cooking/gen-cooksurfaces.ts",
+            "bytes": 3849,
+            "sha256": "9f04b52e9f3f6c349f443d5429dc1ce3feeb8b76da72f585ca738d4d89773665"
+          }
+        ],
+        "loc_configs": {
+          "files": 128,
+          "bytes": 602628,
+          "sha256": "fb6d3385610e1f218cd8f254ba20f175c751de31666276f41c256a727392c23d"
+        },
+        "maps": {
+          "files": 483,
+          "bytes": 48704328,
+          "sha256": "ab7e905e85bf13e10fc78cd635abab1b1881a228268ce5c0182eda698fda35b3"
+        },
+        "loc_pack": {
+          "path": "pack/loc.pack",
+          "bytes": 105424,
+          "sha256": "326b4b80f62abcd4b81dd0c6f7af94e2ab49b5b915e1dfe64ffab312df00c291"
+        }
+      },
+      "cook_surfaces": 123
     },
     {
       "revision": 289,
@@ -714,8 +749,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 3330589,
-      "sha256": "a0bcae58095b414f046f0dd65a4a2a87b3e27fd42a88701f8ad6069b4cc116f8",
+      "bytes": 3351472,
+      "sha256": "c5faf76e5d8a57aafb2caf87de64deca83cc1bac70f2f1558196ca3fec37c604",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -1172,7 +1207,42 @@
         "missing": [
           "Canifis"
         ]
-      }
+      },
+      "cook_inputs": {
+        "catalog": [
+          {
+            "path": "rs2b0t-00d39a17e0/src/bot/data/cookLocations.ts",
+            "bytes": 4801,
+            "sha256": "be66672f04420d14690a0791677a92fb9079d5b440c367efafcbb771066d6e70"
+          },
+          {
+            "path": "rs2b0t-00d39a17e0/src/bot/data/cookingRanges.ts",
+            "bytes": 8683,
+            "sha256": "76733cbeee40d8d7468e2173ce665cb651f23aafd6f89c05a7ba9786d312d284"
+          },
+          {
+            "path": "rs2b0t-00d39a17e0/tools/cooking/gen-cooksurfaces.ts",
+            "bytes": 3849,
+            "sha256": "9f04b52e9f3f6c349f443d5429dc1ce3feeb8b76da72f585ca738d4d89773665"
+          }
+        ],
+        "loc_configs": {
+          "files": 131,
+          "bytes": 673664,
+          "sha256": "efa4c8260972ce2c03f0204964826d604e2267e808c0bb03dbc063c848ec9c33"
+        },
+        "maps": {
+          "files": 534,
+          "bytes": 55049838,
+          "sha256": "41a6bb259a87a851b0650db06ae2d26126086b4548f8d32368b99df41911f08d"
+        },
+        "loc_pack": {
+          "path": "pack/loc.pack",
+          "bytes": 117164,
+          "sha256": "64b0bb63190678077f7a6c6f353d3931a6f75eba0711023ff89275b07c438cb0"
+        }
+      },
+      "cook_surfaces": 124
     }
   ]
 }

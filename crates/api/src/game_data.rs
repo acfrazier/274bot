@@ -962,6 +962,8 @@ pub struct SelectedGameData {
     trio_givers: Option<TrioGiverFacts>,
     #[serde(default)]
     bank_placements: Option<crate::named_banks::BankPlacementFacts>,
+    #[serde(default)]
+    cook_surfaces: Option<crate::cook_locations::CookSurfaceFacts>,
     #[serde(skip)]
     item_id_index: Vec<Option<usize>>,
     #[serde(skip)]
@@ -988,6 +990,13 @@ impl SelectedGameData {
             {
                 return Err("bank_placements invalid access footprint".to_string());
             }
+        }
+        if data
+            .cook_surfaces
+            .as_ref()
+            .is_some_and(|facts| facts.rows.is_empty())
+        {
+            return Err("cook_surfaces present with no placed surfaces".to_string());
         }
         if let Some(facts) = &data.gather_methods {
             if facts.woods.is_empty() && facts.mining.is_empty() && facts.fishing.is_empty() {
@@ -1384,6 +1393,14 @@ impl SelectedGameData {
 
     pub fn bank_placements(&self) -> Option<&crate::named_banks::BankPlacementFacts> {
         self.bank_placements.as_ref()
+    }
+
+    /// Every cook surface placed in the selected map pack, in the frozen
+    /// generator's order (level, x, z); empty when not generated.
+    pub fn cook_surfaces(&self) -> &[crate::cook_locations::CookSurface] {
+        self.cook_surfaces
+            .as_ref()
+            .map_or(&[], |facts| facts.rows.as_slice())
     }
 
     pub fn herb_by_key(&self, key: &str) -> Option<&HerbFact> {

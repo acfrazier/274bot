@@ -15,13 +15,13 @@ export function cookLocation(name) {
 /**
  * `Custom`, unknown and locked names yield null; `Auto` takes the nearest
  * bank this account can open. Rust decides; a caller's `unlocked` gets the
- * `CookLocation` for each name Rust asks about.
+ * `CookLocation` for each index Rust asks about.
  */
 export function resolveCookLocation(setting, from, unlocked) {
-    const name = globalThis.__rs2b0t_resolve_cook_location(
+    const index = globalThis.__rs2b0t_resolve_cook_location(
         String(setting ?? ''),
         from,
-        unlocked === undefined ? undefined : (n) => unlocked(cookLocation(n)),
+        unlocked === undefined ? undefined : (i) => unlocked(COOK_LOCATIONS[i]),
     );
-    return name === null ? null : cookLocation(name);
+    return index === null ? null : COOK_LOCATIONS[index];
 }

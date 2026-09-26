@@ -2729,11 +2729,15 @@ function catalogBank(value: BankLiteral): CatalogBank {
     return bank;
 }
 
-/** Read the pinned literal AST, not a second curated copy or evaluated foreign module. */
-export async function extractBankCatalog(engine: string, source: string) {
+/**
+ * Named top-level literals of one pinned rs2b0t source, read from its AST:
+ * strings, numbers, arrays, object literals, `new Tile(x, z, level)` and
+ * references to other top-level constants. Nothing is evaluated.
+ */
+async function pinnedLiterals(engine: string, fileName: string, source: string, label: string) {
     // Engine path is selected per revision; a static import would bind the wrong installation.
     const ts = await import(pathToFileURL(path.join(engine, 'node_modules/typescript/lib/typescript.js')).href);
-    const ast = ts.createSourceFile('BankLocations.ts', source, ts.ScriptTarget.Latest, true);
+    const ast = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
     const constants = new Map<string, BankAstNode>();
     for (const statement of ast.statements) {
         if (ts.isVariableStatement(statement)) {
@@ -2743,29 +2747,190 @@ export async function extractBankCatalog(engine: string, source: string) {
         }
     }
     function literal(node: BankAstNode | undefined): BankLiteral {
-        if (!node) throw new Error('bank catalog: missing literal');
+        if (!node) throw new Error(`${label}: missing literal`);
         if (ts.isStringLiteral(node)) return node.text;
         if (ts.isNumericLiteral(node)) return Number(node.text);
         if (ts.isIdentifier(node) && constants.has(node.text)) return literal(constants.get(node.text));
         if (ts.isArrayLiteralExpression(node)) return node.elements.map(literal);
         if (ts.isObjectLiteralExpression(node)) {
             return Object.fromEntries(node.properties.map((property: BankAstNode) => {
-                if (!ts.isPropertyAssignment(property)) throw new Error('bank catalog: nonliteral property');
+                if (!ts.isPropertyAssignment(property)) throw new Error(`${label}: nonliteral property`);
                 return [property.name.text, literal(property.initializer)];
             }));
         }
         if (ts.isNewExpression(node) && node.expression.getText(ast) === 'Tile') {
             const [x, z, level] = node.arguments.map(literal);
-            if (![x, z, level].every(value => typeof value === 'number' && Number.isInteger(value))) throw new Error('bank catalog: invalid tile');
+            if (![x, z, level].every(value => typeof value === 'number' && Number.isInteger(value))) throw new Error(`${label}: invalid tile`);
             return { x, z, level };
         }
-        throw new Error(`bank catalog: unsupported AST ${node.getText(ast)}`);
+        throw new Error(`${label}: unsupported AST ${node.getText(ast)}`);
     }
-    const value = literal(constants.get('BANK_LOCATIONS'));
+    return (name: string) => literal(constants.get(name));
+}
+
+/** Read the pinned literal AST, not a second curated copy or evaluated foreign module. */
+export async function extractBankCatalog(engine: string, source: string) {
+    const literal = await pinnedLiterals(engine, 'BankLocations.ts', source, 'bank catalog');
+    const value = literal('BANK_LOCATIONS');
     if (!Array.isArray(value)) throw new Error('bank catalog: expected array');
     const rows = value.map(catalogBank);
     if (!rows.length || new Set(rows.map(row => row.name)).size !== rows.length) throw new Error('bank catalog: empty or duplicate names');
     return rows;
+}
+
+type CookTile = { x: number; z: number; level: number };
+type CookKind = 'oven' | 'fire';
+/** A frozen curated bank cook surface (`curatedPlan`, `data/cookLocations.ts:98-116`). */
+type CookCamp = { bank: string; stand: CookTile; approach?: CookTile; loc: CookTile; locName: string; kind: CookKind; label: string };
+export type CookCatalog = { camps: CookCamp[]; kinds: Record<string, CookKind>; maxSurfaceCheb: number; derivedArriveRadius: number; obstacles: string[] };
+
+/**
+ * The frozen cook pairing inputs, read from the pinned AST: the curated bank
+ * surfaces (`CURATED_CAMP` → `FISH_CAMP_COOK_PLANS[camp].bank ?? .pier`,
+ * `data/cookLocations.ts:92-116`, `data/cookingRanges.ts:98-181`), the
+ * surface loc kinds (`tools/cooking/gen-cooksurfaces.ts` `COOK_SURFACE_KINDS`)
+ * and the pairing constants (`MAX_SURFACE_CHEB`, `DERIVED_ARRIVE_RADIUS`,
+ * `DEFAULT_OBSTACLES`).
+ */
+export async function extractCookCatalog(engine: string, sources: { cookLocations: string; cookingRanges: string; genCookSurfaces: string }): Promise<CookCatalog> {
+    const label = 'cook catalog';
+    const record = (input: BankLiteral): { [key: string]: BankLiteral } => {
+        if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error(`${label}: expected object`);
+        return input;
+    };
+    const string = (input: BankLiteral) => {
+        if (typeof input !== 'string') throw new Error(`${label}: expected string`);
+        return input;
+    };
+    const integer = (input: BankLiteral) => {
+        if (typeof input !== 'number' || !Number.isInteger(input)) throw new Error(`${label}: expected integer`);
+        return input;
+    };
+    const tile = (input: BankLiteral): CookTile => {
+        const row = record(input);
+        return { x: integer(row.x), z: integer(row.z), level: integer(row.level) };
+    };
+    const locations = await pinnedLiterals(engine, 'cookLocations.ts', sources.cookLocations, label);
+    const ranges = await pinnedLiterals(engine, 'cookingRanges.ts', sources.cookingRanges, label);
+    const generator = await pinnedLiterals(engine, 'gen-cooksurfaces.ts', sources.genCookSurfaces, label);
+    const plans = record(ranges('FISH_CAMP_COOK_PLANS'));
+    const camps = Object.entries(record(locations('CURATED_CAMP'))).map(([bank, campName]) => {
+        // `cookSurfaceForFishCamp(camp, 'bank')`: the bank surface, else the pier one (`cookingRanges.ts:169-181`).
+        const plan = record(plans[string(campName)] ?? {});
+        const chosen = plan.bank ?? plan.pier;
+        if (chosen === undefined) throw new Error(`${label}: no plan for ${bank}`);
+        const surface = record(chosen);
+        const stand = tile(surface.stand);
+        const locName = string(surface.locName);
+        const camp: CookCamp = {
+            bank,
+            stand,
+            loc: surface.loc === undefined ? stand : tile(surface.loc),
+            locName,
+            // `curatedPlan`: a curated `range` is an oven, anything else a fire (`cookLocations.ts:111`).
+            kind: string(surface.kind) === 'range' ? 'oven' : 'fire',
+            label: surface.label === undefined ? locName : string(surface.label),
+        };
+        if (surface.approach !== undefined) camp.approach = tile(surface.approach);
+        return camp;
+    });
+    const kinds = Object.fromEntries(Object.entries(record(generator('COOK_SURFACE_KINDS'))).map(([debugname, kind]) => {
+        if (kind !== 'oven' && kind !== 'fire') throw new Error(`${label}: unknown kind ${String(kind)}`);
+        return [debugname, kind as CookKind];
+    }));
+    const obstacles = locations('DEFAULT_OBSTACLES');
+    if (!Array.isArray(obstacles)) throw new Error(`${label}: expected obstacle array`);
+    return {
+        camps,
+        kinds,
+        maxSurfaceCheb: integer(locations('MAX_SURFACE_CHEB')),
+        derivedArriveRadius: integer(locations('DERIVED_ARRIVE_RADIUS')),
+        obstacles: obstacles.map(string),
+    };
+}
+
+export function cookCatalogRust(catalog: CookCatalog) {
+    const str = (value: string) => JSON.stringify(value);
+    const tile = (value: CookTile) => `WorldTile { x: ${value.x}, z: ${value.z}, level: ${value.level} }`;
+    const kind = (value: CookKind) => (value === 'oven' ? 'CookSurfaceKind::Oven' : 'CookSurfaceKind::Fire');
+    return '// Generated by tools/game-data/generate.ts from pinned rs2b0t cook sources; do not curate.\n'
+        + `pub const MAX_SURFACE_CHEB: i32 = ${catalog.maxSurfaceCheb};\n`
+        + `pub const DERIVED_ARRIVE_RADIUS: i32 = ${catalog.derivedArriveRadius};\n`
+        + `pub const DEFAULT_OBSTACLES: &[&str] = &[${catalog.obstacles.map(str).join(', ')}];\n`
+        + 'pub const COOK_CAMPS: &[CookCamp] = &[\n'
+        + catalog.camps.map(camp => `    CookCamp { bank: ${str(camp.bank)}, stand: ${tile(camp.stand)}, approach: ${camp.approach ? `Some(${tile(camp.approach)})` : 'None'}, `
+            + `loc: ${tile(camp.loc)}, loc_name: ${str(camp.locName)}, kind: ${kind(camp.kind)}, label: ${str(camp.label)} },`).join('\n') + '\n];\n';
+}
+
+/** The level-1 MAP tiles whose flags carry LINK_BELOW (0x2), as `lx,lz`. */
+export function parseJm2LinkBelow(text: string) {
+    const tiles = new Set<string>();
+    let inMap = false;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        const section = jm2SectionName(line);
+        if (section !== null) {
+            inMap = section === 'MAP';
+            continue;
+        }
+        if (!inMap) continue;
+        const colon = line.indexOf(':');
+        if (colon <= 0) throw new Error(`jm2 MAP: malformed row ${line}`);
+        const [plane, lx, lz] = line.slice(0, colon).trim().split(/\s+/).map((token) => integer(token, line));
+        if (plane !== 1) continue;
+        const flags = line.slice(colon + 1).trim().split(/\s+/).find((token) => token.startsWith('f'));
+        if (flags !== undefined && (integer(flags.slice(1), line) & 0x2) !== 0) tiles.add(`${lx},${lz}`);
+    }
+    return tiles;
+}
+
+/**
+ * Every cook surface placed in the selected map pack: LOC placements whose
+ * type is one of the frozen surface kinds, named by their loc config, in the
+ * frozen generator's order (level, x, z). Each curated surface must be one of
+ * them, so a moved Range fails generation instead of pointing at nothing.
+ */
+export function extractCookSurfaces(content: string, catalog: CookCatalog) {
+    const locTree = contentTreeInputs(content, 'scripts', '.loc');
+    const maps = placementMapInputs(content);
+    const packed = parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'));
+    const names = new Map<string, string>();
+    for (const file of locTree.files) {
+        for (const [alias, config] of parseNpcConfigSections(fs.readFileSync(path.join(content, file), 'utf8'))) {
+            if (catalog.kinds[alias] !== undefined && config.name !== undefined) names.set(alias, config.name);
+        }
+    }
+    const wanted = new Map<number, { debugname: string; name: string; kind: CookKind }>();
+    for (const [alias, id] of packed) {
+        const kind = catalog.kinds[alias];
+        if (kind !== undefined) wanted.set(id, { debugname: alias, name: names.get(alias) ?? alias, kind });
+    }
+    if (wanted.size === 0) throw new Error('cook surfaces: no surface loc types in loc.pack');
+    const rows: { x: number; z: number; level: number; name: string; debugname: string; kind: CookKind }[] = [];
+    const ids = new Set(wanted.keys());
+    for (const input of maps) {
+        const { mx, mz } = parseMapsquarePath(input.path);
+        const text = fs.readFileSync(path.join(content, input.path), 'utf8');
+        const linkBelow = parseJm2LinkBelow(text);
+        for (const placement of parseJm2LocPlacements(text, ids)) {
+            // Frozen `bridgedLevel` (tools/nav/lib.ts:377-380): a LINK_BELOW
+            // level-1 tile moves the loc down a plane; the client drops one
+            // that would fall below level 0.
+            const level = linkBelow.has(`${placement.lx},${placement.lz}`) ? placement.plane - 1 : placement.plane;
+            if (level < 0) continue;
+            const tile = worldFromMapsquare(mx, mz, placement.lx, placement.lz, level);
+            const type = wanted.get(placement.loc_id)!;
+            rows.push({ x: tile.x, z: tile.z, level: tile.plane, name: type.name, debugname: type.debugname, kind: type.kind });
+        }
+    }
+    rows.sort((a, b) => a.level - b.level || a.x - b.x || a.z - b.z);
+    for (const camp of catalog.camps) {
+        if (!rows.some(row => row.x === camp.loc.x && row.z === camp.loc.z && row.level === camp.loc.level && row.name === camp.locName)) {
+            throw new Error(`cook surfaces: curated ${camp.bank} ${camp.locName} at ${camp.loc.x},${camp.loc.z},${camp.loc.level} is not in the selected content`);
+        }
+    }
+    return { facts: { rows }, inputs: { loc_configs: locTree.digest, maps: fileInventoryDigest(maps), loc_pack: sourceFile(content, 'pack/loc.pack') } };
 }
 
 export function bankCatalogRust(rows: CatalogBank[]) {
@@ -2858,7 +3023,17 @@ async function generate(spec: Revision) {
     const bankPlacements = extractBankPlacements(spec.content, bankCatalog);
     const bankInputs = { catalog: { path: 'rs2b0t-00d39a17e0/src/bot/api/bank/BankLocations.ts', ...sha256(bankSource) }, ...bankPlacements.inputs };
     fs.writeFileSync(path.join(root, 'crates/api/data/game-data/bank-catalog.rs'), bankCatalogRust(bankCatalog));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, placement_inputs: gatherPlacements.inputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, gather_placements: gatherPlacements.facts, quest_identity: questIdentity, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, gather_placements: { rows: gatherPlacements.facts.rows.length, maps: gatherPlacements.inputs.maps.files, published_loc_ids: gatherPlacements.inputs.published_loc_ids.count, coverage: gatherPlacements.facts.coverage.length, woods: gatherPlacements.woods }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') }, trio_givers: { rows: trioGivers.facts.rows.length, with_spawn: trioGivers.facts.rows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.facts.coverage.length, maps: trioGivers.inputs.maps.files, handlers: trioGivers.inputs.handlers.length, npc_configs: trioGivers.inputs.npc_configs.length, digest: crypto.createHash('sha256').update(JSON.stringify(trioGivers.facts)).digest('hex') }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing } };
+    const rs2b0tRoot = envPath('RS2B0T', path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0'));
+    const cookFiles = { cookLocations: 'src/bot/data/cookLocations.ts', cookingRanges: 'src/bot/data/cookingRanges.ts', genCookSurfaces: 'tools/cooking/gen-cooksurfaces.ts' };
+    const cookCatalog = await extractCookCatalog(spec.engine, {
+        cookLocations: fs.readFileSync(path.join(rs2b0tRoot, cookFiles.cookLocations), 'utf8'),
+        cookingRanges: fs.readFileSync(path.join(rs2b0tRoot, cookFiles.cookingRanges), 'utf8'),
+        genCookSurfaces: fs.readFileSync(path.join(rs2b0tRoot, cookFiles.genCookSurfaces), 'utf8'),
+    });
+    const cookSurfaces = extractCookSurfaces(spec.content, cookCatalog);
+    const cookInputs = { catalog: Object.values(cookFiles).map((file) => ({ path: `rs2b0t-00d39a17e0/${file}`, ...sha256(path.join(rs2b0tRoot, file)) })), ...cookSurfaces.inputs };
+    fs.writeFileSync(path.join(root, 'crates/api/data/game-data/cook-catalog.rs'), cookCatalogRust(cookCatalog));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, placement_inputs: gatherPlacements.inputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, gather_placements: gatherPlacements.facts, quest_identity: questIdentity, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, gather_placements: { rows: gatherPlacements.facts.rows.length, maps: gatherPlacements.inputs.maps.files, published_loc_ids: gatherPlacements.inputs.published_loc_ids.count, coverage: gatherPlacements.facts.coverage.length, woods: gatherPlacements.woods }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') }, trio_givers: { rows: trioGivers.facts.rows.length, with_spawn: trioGivers.facts.rows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.facts.coverage.length, maps: trioGivers.inputs.maps.files, handlers: trioGivers.inputs.handlers.length, npc_configs: trioGivers.inputs.npc_configs.length, digest: crypto.createHash('sha256').update(JSON.stringify(trioGivers.facts)).digest('hex') }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing }, cook_inputs: cookInputs, cook_surfaces: cookSurfaces.facts.rows.length };
 }
 
 /**

@@ -1,7 +1,7 @@
 /// Host-owned policy plus optional selected-revision generated facts, posted
 /// once onto `__rs2b0t_host.content` before catalog modules evaluate.
 pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> String {
-    use crate::content::{COOK_STANDS, FIRE_PLOTS, LOG_LEVELS, RUNE_ROUTES};
+    use crate::content::{FIRE_PLOTS, LOG_LEVELS, RUNE_ROUTES};
     use api::cake_stall::{BAKER_STALL, CAKE_ITEM_NAMES};
     use api::content::ROCK_TYPE_NAMES;
     let food_heals = game_data
@@ -72,13 +72,6 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
                 "name": p.name,
                 "bank": {"x": p.bank.x, "z": p.bank.z, "level": p.bank.level},
                 "x0": p.x0, "x1": p.x1, "z0": p.z0, "z1": p.z1
-            })
-        }).collect::<Vec<_>>(),
-        "cook_stands": COOK_STANDS.iter().map(|s| {
-            serde_json::json!({
-                "name": s.name,
-                "bank": {"x": s.bank.x, "z": s.bank.z, "level": s.bank.level},
-                "range": {"x": s.range.x, "z": s.range.z, "level": s.range.level}
             })
         }).collect::<Vec<_>>(),
         "rock_type_names": ROCK_TYPE_NAMES,

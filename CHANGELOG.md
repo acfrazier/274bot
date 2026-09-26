@@ -329,8 +329,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   nearest `from` among those the account can open (it was always `null`,
   so CookBot stopped with "no bank called 'Auto'"), a named location is
   returned only when its bank is unlocked, and a caller's `unlocked`
-  predicate replaces the bank requirement. The host cook table itself still
-  lists Catherby only.
+  predicate replaces the bank requirement.
 - `withdrawOp(ops, amount)` reads the label off the bank row's own ops for
   all six frozen amounts (`all`, `10`, `5`, `x`, `1`, `any`) instead of
   assuming `Withdraw All/10/1`; a row without the op answers `null`, so a
@@ -351,6 +350,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   forms as the whole food: a chocolate cake's `Chocolate slice`, a pizza's
   `1/2 … pizza` and a pie's `Half a/an … pie` (read from the selected item
   aliases; the cache spells the pineapple half `1/2pineapple pizza`).
+- CookBot's location list is frozen's: every bank in the roster, each paired
+  with its hand-walked camp surface (Catherby, Seers, Draynor) or the
+  nearest placed Range/Fireplace within 20 tiles of the bank, ovens first
+  (fire mode only when none is). The surfaces are selected content: the
+  game-data generator now publishes every cook surface in the 274 and 289
+  map packs (`cook_surfaces`, matching rs2b0t's generated table; 289 has one
+  more fireplace), and generation fails if a curated surface moves. Without
+  game data the list is empty and `resolveCookLocation` reports "game data
+  unavailable".
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 

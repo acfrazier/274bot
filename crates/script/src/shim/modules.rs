@@ -567,10 +567,6 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("mining_rocks.js"),
         ),
         Module::new(
-            "/rs2b0t/bot/data/cookLocations.js",
-            include_str!("cook_locations_data.js"),
-        ),
-        Module::new(
             "/rs2b0t/bot/data/runeCraftLocations.js",
             include_str!("rune_craft_locations.js"),
         ),
@@ -674,6 +670,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         Module::new(
             "/rs2b0t/bot/api/bank/BankLocations.js",
             include_str!("bank_locations.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/data/cookLocations.js",
+            include_str!("cook_locations_data.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/cooking/CookLocations.js",

@@ -2,14 +2,12 @@
 //! Rust loop; no route search or selection policy runs in JavaScript.
 use super::callback_v8;
 use crate::bank_select::{self, FromTile};
-use crate::content::{CookStand, COOK_STANDS};
+use crate::cook_locations::{self, CookLocation};
 use api::snapshot::WorldTile;
 use rustyscript::deno_core::serde_v8;
 use rustyscript::Runtime;
 use serde::Deserialize;
-
-/// Frozen `CUSTOM_LOCATION` (`data/cookLocations.ts:14`), lowercased.
-const CUSTOM_LOCATION: &str = "custom";
+use serde_json::json;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_bank_locations", catalog)?;
@@ -17,6 +15,7 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_nearest_bank", nearest)?;
     callback_v8::install(runtime, "__rs2b0t_nearest_banks", ranked)?;
     callback_v8::install(runtime, "__rs2b0t_nearest_usable_bank", usable)?;
+    callback_v8::install(runtime, "__rs2b0t_cook_locations", cook_catalog)?;
     callback_v8::install(runtime, "__rs2b0t_resolve_cook_location", resolve_cook)
 }
 
@@ -136,64 +135,99 @@ fn usable<'s>(
     callback_v8::finish(scope, rv, result);
 }
 
+/// The bank roster paired with its cook surfaces; `None` without selected
+/// game data.
+fn cook_roster() -> Option<(Vec<api::named_banks::NamedBank>, Vec<CookLocation>)> {
+    let data = crate::supply_v2::selected_data()?;
+    let banks = bank_select::banks();
+    let locations = cook_locations::build(&banks, data.cook_surfaces());
+    Some((banks, locations))
+}
+
+/// Frozen `COOK_LOCATIONS` (`api/cooking/CookLocations.ts:12`): one row per
+/// roster bank, `bank` its index in `BANK_LOCATIONS`. Every shim module
+/// evaluates at load, so without game data the table is empty (like
+/// `ITEM_DB`) and `resolveCookLocation` reports the missing data.
+fn cook_catalog<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    _args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let locations = cook_roster().map_or_else(Vec::new, |(_, locations)| locations);
+    let tile = |tile: WorldTile| json!({"x": tile.x, "z": tile.z, "level": tile.level});
+    let rows: Vec<_> = locations
+        .iter()
+        .map(|location| {
+            let surface = location.surface.as_ref().map(|plan| {
+                let mut surface = json!({
+                    "stand": tile(plan.stand),
+                    "locName": plan.loc_name,
+                    "kind": plan.kind.as_str(),
+                    "loc": tile(plan.loc),
+                    "arriveRadius": plan.arrive_radius,
+                    "label": plan.label,
+                });
+                if let Some(approach) = plan.approach {
+                    surface["approach"] = tile(approach);
+                }
+                surface
+            });
+            json!({
+                "bank": location.bank,
+                "name": location.name,
+                "surface": surface,
+                "obstacles": api::cook_locations::DEFAULT_OBSTACLES,
+                "verified": location.verified,
+            })
+        })
+        .collect();
+    let result = serde_v8::to_v8(scope, rows)
+        .map_err(|e| callback_v8::type_error(scope, &format!("cook locations: {e}")));
+    callback_v8::finish(scope, rv, result);
+}
+
 /// Frozen `resolveCookLocation(setting, from, unlocked?)`
-/// (`api/cooking/CookLocations.ts:25-49`) over the host cook stands: blank
-/// and `Custom` are `null` (`:30-33`); a named location only when unlocked
-/// (`:34-37`); `Auto` the unlocked location whose bank approach is nearest
-/// `from` in a straight x/z line, first on ties (`:38-48`, `bankDistance`
-/// `geometry/distance.ts:7-11`, `approachOf` `BankLocations.ts:115-117`).
+/// (`api/cooking/CookLocations.ts:25-49`, [`cook_locations::resolve`]).
 /// `unlocked` defaults to the bank's own requirement (`:28`); a caller's
-/// predicate is called with the location's name, which the shim maps to its
-/// `CookLocation`. Answers the chosen location's name or `null`.
+/// predicate is called with the location's index, which the shim maps to
+/// its `CookLocation`. Answers that index or `null`.
 fn resolve_cook<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
     let result = (|| {
-        let wanted = callback_v8::to_string(scope, args.get(0))?
-            .trim()
-            .to_lowercase();
-        if wanted.is_empty() || wanted == CUSTOM_LOCATION {
+        let setting = callback_v8::to_string(scope, args.get(0))?;
+        let Some(wanted) = cook_locations::wanted(&setting) else {
             return Ok(None);
-        }
+        };
+        let Some((banks, locations)) = cook_roster() else {
+            let message = v8::String::new(scope, crate::supply_v2::GAME_DATA_UNAVAILABLE)
+                .unwrap_or_else(|| v8::String::empty(scope));
+            return Err(callback_v8::Throw::Value(v8::Exception::error(
+                scope, message,
+            )));
+        };
         let predicate = args.get(2);
         let predicate = (!predicate.is_undefined())
             .then(|| callback_v8::Callback::plain(scope, predicate, "unlocked"));
-        let unlocked = |scope: &mut v8::HandleScope<'s>, stand: &CookStand| match &predicate {
-            Some(predicate) => {
-                let name = callback_v8::string(scope, stand.name);
-                predicate.truthy(scope, &[name])
-            }
-            None => Ok(bank_select::unlocked(stand.name, stand.bank)),
-        };
-        if wanted != "auto" {
-            let Some(stand) = COOK_STANDS
-                .iter()
-                .find(|stand| stand.name.to_lowercase() == wanted)
-            else {
-                return Ok(None);
-            };
-            return Ok(unlocked(scope, stand)?.then_some(stand.name));
-        }
-        let from = origin(scope, args.get(1))?;
-        let mut best: Option<(&CookStand, i64)> = None;
-        for stand in COOK_STANDS {
-            if !unlocked(scope, stand)? {
-                continue;
-            }
-            let distance = bank_select::air_distance_squared(
-                from,
-                bank_select::approach_of(stand.name, stand.bank),
-            );
-            if best.is_none_or(|(_, best)| distance < best) {
-                best = Some((stand, distance));
-            }
-        }
-        Ok(best.map(|(stand, _)| stand.name))
+        cook_locations::resolve(
+            &locations,
+            &banks,
+            wanted,
+            scope,
+            |scope| origin(scope, args.get(1)),
+            |scope, index| match &predicate {
+                Some(predicate) => {
+                    let index = callback_v8::num(scope, index as f64);
+                    predicate.truthy(scope, &[index])
+                }
+                None => Ok(bank_select::bank_unlocked(&banks[locations[index].bank])),
+            },
+        )
     })()
-    .map(|name| match name {
-        Some(name) => callback_v8::string(scope, name),
+    .map(|index| match index {
+        Some(index) => callback_v8::num(scope, index as f64),
         None => v8::null(scope).into(),
     });
     callback_v8::finish(scope, rv, result);

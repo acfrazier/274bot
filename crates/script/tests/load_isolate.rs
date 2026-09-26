@@ -9155,7 +9155,6 @@ export default class T extends LoopingBot {
             alBank: { x: AL_KHARID_BANK.x, z: AL_KHARID_BANK.z },
             air: { bank: RUNES['Air rune']?.bank, x: RUNES['Air rune']?.ruins.x, z: RUNES['Air rune']?.ruins.z },
             fires: (c.fire_plots || []).map((p) => p.name),
-            cooks: (c.cook_stands || []).map((s) => s.name),
             rocks: c.rock_type_names || [],
             hasItems: Object.prototype.hasOwnProperty.call(c, 'items'),
             ve_x: ((c.fire_plots || []).find((p) => p.name === 'Varrock East') || {}).bank?.x,
@@ -9169,10 +9168,6 @@ export default class T extends LoopingBot {
     let probe = iso.probe("__probe").unwrap();
     let cow_names: Vec<&str> = script::content::COW_FIELDS.iter().map(|f| f.name).collect();
     let fire_names: Vec<&str> = script::content::FIRE_PLOTS.iter().map(|p| p.name).collect();
-    let cook_names: Vec<&str> = script::content::COOK_STANDS
-        .iter()
-        .map(|s| s.name)
-        .collect();
     assert_eq!(
         probe
             .get("cows")
@@ -9200,14 +9195,6 @@ export default class T extends LoopingBot {
             .map(|a| { a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>() }),
         Some(fire_names),
         "handle.content.fire_plots must be the Rust table: {probe:?}"
-    );
-    assert_eq!(
-        probe
-            .get("cooks")
-            .and_then(|v| v.as_array())
-            .map(|a| { a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>() }),
-        Some(cook_names),
-        "handle.content.cook_stands must be the Rust table: {probe:?}"
     );
     assert_eq!(
         probe
