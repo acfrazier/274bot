@@ -715,14 +715,21 @@ impl TuiSession {
 
             // TUI owns mainland seeding so host-play cannot re-arm it when
             // an intentional scenario logout starts a new run_client stretch.
-            seed_mainland_on_ready(
+            if seed_mainland_on_ready(
                 c,
                 &mainland_sent,
                 name,
                 mainland,
                 c.ingame && c.scene_state == 2 && c.local_player.is_some(),
                 c.last_login_reconnect,
-            );
+            ) {
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Info,
+                    slot = name,
+                    "mainland hop queued"
+                );
+            }
 
             // The shared `--live script_*` runner: tick the driven
             // slot and its companions before the local-player gate

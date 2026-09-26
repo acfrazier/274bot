@@ -15,7 +15,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Once};
 use std::time::SystemTime;
 
@@ -33,10 +33,6 @@ pub const PROCESS_RING_CAP: usize = 500;
 pub const MESSAGE_CAP: usize = 512;
 /// Rows a [`LogScope::All`] view keeps (the newest across every ring).
 pub const ALL_VIEW_CAP: usize = 1_000;
-/// Shortest password the store redacts. Shorter secrets would blank out
-/// ordinary words; the vault never holds one that short for a real account.
-const MIN_SECRET_LEN: usize = 4;
-const REDACTED: &str = "***";
 
 /// Local wall time `HH:MM:SS.mmm`, stored inline so rendering allocates
 /// nothing.
@@ -329,7 +325,6 @@ struct Inner {
     next_seq: u64,
     process: Ring,
     slots: HashMap<Arc<str>, Ring>,
-    secrets: Vec<Box<str>>,
     file: Option<SessionLogFile>,
     /// Reused line buffer for the session file.
     line: String,
@@ -340,6 +335,8 @@ pub struct LogStore {
     inner: Mutex<Inner>,
     /// Bumped after every push; a view compares it before locking.
     generation: AtomicU64,
+    /// Whether a session file is open, readable without the lock.
+    file_open: AtomicBool,
 }
 
 impl Default for LogStore {
@@ -371,16 +368,21 @@ impl LogStore {
         Self {
             inner: Mutex::new(Inner::default()),
             generation: AtomicU64::new(0),
+            file_open: AtomicBool::new(false),
         }
     }
 
     /// Store one line: redact secrets, flatten control characters, cap the
-    /// length, stamp wall time and order, then forward it to the session
-    /// file when one is open. Never blocks on I/O.
+    /// length, stamp wall time, order and (when the record has none) the
+    /// slot's current game tick, then forward it to the session file when
+    /// one is open. Never blocks on I/O.
     pub fn push(&self, record: &Record<'_>) {
         let local = LocalTime::now();
+        let message = clean_message(record.message);
+        let tick = record
+            .tick
+            .or_else(|| record.slot.and_then(api::hostlog::slot_tick));
         let mut inner = self.inner.lock();
-        let message = clean_message(record.message, &inner.secrets);
         inner.next_seq += 1;
         let seq = inner.next_seq;
         let slot = record
@@ -392,7 +394,7 @@ impl LogStore {
         let entry = LogEntry {
             seq,
             clock: Clock::from_local(&local),
-            tick: record.tick,
+            tick,
             level: record.level,
             source: record.source,
             slot: slot.clone(),
@@ -440,18 +442,9 @@ impl LogStore {
         });
     }
 
-    /// Never store `password` in any log path. `username` guards the
-    /// harness profiles whose password equals the name (redacting it would
-    /// blank every line of that slot); secrets shorter than four bytes would
-    /// blank ordinary words and are skipped.
-    pub fn register_secret(&self, username: &str, password: &str) {
-        if password.len() < MIN_SECRET_LEN || password == username {
-            return;
-        }
-        let mut inner = self.inner.lock();
-        if !inner.secrets.iter().any(|s| &**s == password) {
-            inner.secrets.push(password.into());
-        }
+    /// Whether a per-session file is open (one atomic load).
+    pub fn file_open(&self) -> bool {
+        self.file_open.load(Ordering::Relaxed)
     }
 
     /// Current store generation; changes after every push.
@@ -540,7 +533,9 @@ impl LogStore {
     /// the sender; the writer thread flushes what it has and exits on its
     /// own, so neither direction blocks the caller on I/O.
     pub fn set_file(&self, file: Option<SessionLogFile>) {
+        let open = file.is_some();
         let old = std::mem::replace(&mut self.inner.lock().file, file);
+        self.file_open.store(open, Ordering::Relaxed);
         drop(old);
     }
 
@@ -567,20 +562,14 @@ fn append_ring(view: &mut LogView, ring: &Ring, after: u64) {
 }
 
 /// Redact secrets, flatten newlines/tabs to spaces and cap the length.
-fn clean_message(message: &str, secrets: &[Box<str>]) -> Box<str> {
-    let mut owned: Option<String> = None;
-    for secret in secrets {
-        let current = owned.as_deref().unwrap_or(message);
-        if current.contains(&**secret) {
-            owned = Some(current.replace(&**secret, REDACTED));
-        }
-    }
-    let current = owned.as_deref().unwrap_or(message);
+fn clean_message(message: &str) -> Box<str> {
+    let redacted = api::hostlog::redact(message);
+    let current = &*redacted;
     let needs_flatten = current.contains(['\n', '\r', '\t']);
     if !needs_flatten && current.len() <= MESSAGE_CAP {
-        return match owned {
-            Some(s) => s.into_boxed_str(),
-            None => current.into(),
+        return match redacted {
+            std::borrow::Cow::Owned(s) => s.into_boxed_str(),
+            std::borrow::Cow::Borrowed(s) => s.into(),
         };
     }
     let mut out = String::with_capacity(current.len().min(MESSAGE_CAP));

@@ -43,8 +43,7 @@ use crate::script_runtime::{
     ScriptWall,
 };
 use crate::{
-    catalog_core, debug_enabled, login_readiness, paired_core, public_worlds, Play, RandomClaim,
-    RandomStatus,
+    catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
 };
 
 /// Per-slot hook invoked by the slot thread after every mainloop pass.
@@ -514,6 +513,10 @@ pub(super) fn observe_slot_catalog_and_paired(
 
 /// Every profile spawns one slot thread; shared handles are threaded through
 /// because the closure moves most of them (allowed: see `script_observe`).
+// The worker body keeps its hand layout: rustfmt used to skip it (an
+// overlong literal), and reformatting ~650 lines belongs in its own
+// move-only change, not in a behavioural one.
+#[rustfmt::skip]
 #[allow(clippy::too_many_arguments)]
 fn spawn_slot_thread(
     connection: &PlayConnection,
@@ -900,6 +903,7 @@ fn spawn_slot_thread(
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
+                            api::hostlog::set_tick(nav_snapshot.tick());
                             // `script_observe_with_npc_boxes` below reaps the
                             // isolate and can publish a Stop receipt. The next
                             // frame attaches that bounded value here before
@@ -978,13 +982,10 @@ fn spawn_slot_thread(
                             if !mainland_sent && mainland && ready {
                                 api::interact::mainland_hop(c);
                                 mainland_sent = true;
-                                if debug_enabled() {
-                                    eprintln!("[host-play] slot {name}: queued mainland tele+setvar (scene 2)");
-                                }
+                                host_log!(Category::Lifecycle, Level::Info, "mainland hop queued");
                             }
                             let tick_edge = should_emit_tick(drain.player_info);
                             if tick_edge {
-                                api::hostlog::set_tick(nav_snapshot.tick());
                                 *script_tick = script_tick.wrapping_add(1);
                             }
                             // The slot's paint frame is read before the

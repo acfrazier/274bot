@@ -524,6 +524,30 @@ fn slot_log(slot: &str) -> Vec<(Source, Level, String)> {
 }
 
 #[test]
+fn lines_recorded_by_the_poll_carry_the_slots_current_tick() {
+    let mut s = session("log-tick", &[("logtick-gus", 5, false)]);
+    let mut surface = Recorder::default();
+    s.load("logtick-gus", &mut surface);
+    // The slot worker binds its thread and publishes the tick it observed.
+    std::thread::spawn(|| {
+        api::hostlog::bind_slot("logtick-gus");
+        api::hostlog::set_tick(4242);
+    })
+    .join()
+    .unwrap();
+    push_status(&s, row("logtick-gus"));
+    s.poll();
+    let mut view = crate::log::LogView::new(crate::log::LogScope::Slot("logtick-gus".into()));
+    crate::log::global().refresh(&mut view);
+    let up = view
+        .rows()
+        .iter()
+        .find(|e| &*e.message == "slot up")
+        .unwrap();
+    assert_eq!(up.tick, Some(4242));
+}
+
+#[test]
 fn a_poll_moves_transitions_onto_each_slots_log() {
     let mut s = session(
         "log-transitions",
@@ -547,8 +571,8 @@ fn a_poll_moves_transitions_onto_each_slots_log() {
         slot_log("logpoll-alice"),
         [
             (Source::Host, Level::Info, "slot up".to_string()),
-            (Source::Login, Level::Debug, "ingame".to_string()),
-            (Source::Host, Level::Debug, "scene 2".to_string()),
+            (Source::Login, Level::Info, "ingame".to_string()),
+            (Source::Host, Level::Info, "scene 2".to_string()),
         ]
     );
     assert_eq!(

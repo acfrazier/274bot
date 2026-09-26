@@ -211,7 +211,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   stderr under `BOT_DEBUG=1` / `--debug` as before. Each bot keeps its newest
   500 lines plus a 500-line process ring (measured ≈ 61 KiB per bot for
   typical lines, ≤ 282 KiB at the 512-byte line cap).
-  Passwords are redacted before a line is stored, copied, saved or written.
+  Every account password is redacted in the facade itself, before a line
+  reaches stderr, the log, Copy, Save or the session file. Lines recorded
+  off the slot thread (status transitions, script lines) carry the slot's
+  current game tick.
   The panel log section fills the leftover side-panel height (or is a
   resizable box when other sections follow it) with a timestamp column, level
   colours, level/source/scope filters, search, follow, **Copy** and **Save

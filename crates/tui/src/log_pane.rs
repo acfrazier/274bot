@@ -168,7 +168,7 @@ impl LogPaneState {
                 self.status = Some("saving…".into());
             }
             KeyCode::Char('F') => {
-                let on = global().file_path().is_none();
+                let on = !global().file_open();
                 self.status = Some(match persist_session_log_setting(on) {
                     Ok(()) => match apply_session_log(on) {
                         Some(path) => format!("session file {}", path.display()),
@@ -277,7 +277,7 @@ impl Widget for LogPane<'_> {
         if state.view.dropped() > 0 {
             put(&mut x, y, " +rolled off", dim);
         }
-        if global().file_path().is_some() {
+        if global().file_open() {
             put(&mut x, y, " file", dim);
         }
         // Search line.

@@ -189,9 +189,8 @@ impl<Io> OperatorSession<Io> {
     /// Adopt an unlocked vault and its freshly built [`Play`]. No slot is
     /// spawned here.
     pub fn start(&mut self, vault: Vault, play: Play) {
-        let log = crate::log::global();
         for profile in vault.profiles() {
-            log.register_secret(&profile.username, &profile.password);
+            api::hostlog::register_secret(&profile.password);
         }
         play.statuses_into(&mut self.statuses);
         self.play = Some(play);
@@ -750,11 +749,12 @@ impl<Io> OperatorSession<Io> {
                     Transition::LoginError(e) => {
                         (Source::Login, Level::Error, format!("login {e}").into())
                     }
-                    // Recurs after every scene reload; the login itself
-                    // shows as the host's "handshake ok".
-                    Transition::Ingame => (Source::Login, Level::Debug, "ingame".into()),
+                    // Visible by default: the operator reads a stuck bot's
+                    // story (logged in, which scene) at a glance. The host's
+                    // LoadingScene/Ready phase lines say the same at Debug.
+                    Transition::Ingame => (Source::Login, Level::Info, "ingame".into()),
                     Transition::Scene(scene) => {
-                        (Source::Host, Level::Debug, format!("scene {scene}").into())
+                        (Source::Host, Level::Info, format!("scene {scene}").into())
                     }
                     Transition::Welcome(line) => (Source::Login, Level::Info, line.into()),
                     Transition::WelcomeFailure(line) => (Source::Login, Level::Warn, line.into()),
@@ -1061,7 +1061,7 @@ impl<Io> OperatorSession<Io> {
         self.ensure_writer();
         self.hold_durable(&profile.username)
             .ok_or_else(|| format!("{label}: vault locked"))?;
-        crate::log::global().register_secret(&profile.username, &profile.password);
+        api::hostlog::register_secret(&profile.password);
         if let Some(vault) = self.vault.as_mut() {
             vault.stage_upsert(profile.clone());
         }
@@ -1087,7 +1087,7 @@ impl<Io> OperatorSession<Io> {
         self.hold_durable(&profile.username)
             .ok_or_else(|| format!("{label}: vault locked"))?;
         self.hold_durable(old);
-        crate::log::global().register_secret(&profile.username, &profile.password);
+        api::hostlog::register_secret(&profile.password);
         if let Some(vault) = self.vault.as_mut() {
             vault.stage_upsert(profile.clone());
             vault.stage_remove(old);

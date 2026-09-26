@@ -488,6 +488,8 @@ impl SlotArm {
 }
 
 pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
+    // Every password a slot may send stays out of stderr and every log sink.
+    api::hostlog::register_secret(&profile.password);
     arm.uid.store(profile.uid, Ordering::Relaxed);
     {
         let mut password = arm.password.lock();

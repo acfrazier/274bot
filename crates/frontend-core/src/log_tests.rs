@@ -189,12 +189,13 @@ fn scope_switches_between_slot_process_and_all_in_order() {
 #[test]
 fn registered_passwords_never_reach_a_row_a_copy_or_a_save() {
     let store = LogStore::new();
-    store.register_secret("alice", "hunter22");
-    store.register_secret("test", "test");
-    store.register_secret("carol", "abc");
+    // Shorter first, and one overlapping the other: neither leaves a
+    // fragment behind.
+    api::hostlog::register_secret("fcpass");
+    api::hostlog::register_secret("fcpass77");
     let profile = vault::Profile {
         username: "alice".into(),
-        password: "hunter22".into(),
+        password: "fcpass77".into(),
         uid: 1,
         settings: vault::ProfileSettings::default(),
     };
@@ -203,27 +204,13 @@ fn registered_passwords_never_reach_a_row_a_copy_or_a_save() {
         Some("alice"),
         Source::Login,
         Level::Error,
-        &format!("login failed for {profile:?} with hunter22"),
-    );
-    line(
-        &store,
-        Some("test"),
-        Source::Login,
-        Level::Info,
-        "test ingame",
+        &format!("login failed for {profile:?} with fcpass77 (old fcpass)"),
     );
     let mut view = LogView::new(LogScope::Slot("alice".into()));
     store.refresh(&mut view);
     let text = view.to_text();
-    assert!(!text.contains("hunter22"), "{text}");
-    assert!(text.contains("***"), "{text}");
-    let mut harness = LogView::new(LogScope::Slot("test".into()));
-    store.refresh(&mut harness);
-    assert_eq!(
-        messages(&harness),
-        ["test ingame"],
-        "a password equal to its username is not redacted"
-    );
+    assert!(!text.contains("fcpass") && !text.contains("77 "), "{text}");
+    assert!(text.contains("with *** (old ***)"), "{text}");
 }
 
 #[test]

@@ -52,7 +52,9 @@ fn the_session_file_is_off_unless_the_preference_says_on() {
 
 #[test]
 fn a_new_store_writes_no_file() {
-    assert_eq!(LogStore::new().file_path(), None);
+    let store = LogStore::new();
+    assert_eq!(store.file_path(), None);
+    assert!(!store.file_open());
 }
 
 #[test]
@@ -127,7 +129,7 @@ fn starting_a_session_prunes_all_but_the_newest_sessions() {
 fn the_session_file_never_receives_a_password() {
     let dir = scratch("secret");
     let store = LogStore::new();
-    store.register_secret("alice", "hunter22");
+    api::hostlog::register_secret("hunter22");
     let file = SessionLogFile::start(dir.clone(), DEFAULT_ROTATION);
     let path = file.path().to_path_buf();
     store.set_file(Some(file));

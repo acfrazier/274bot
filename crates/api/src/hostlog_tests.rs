@@ -1,4 +1,5 @@
 use super::*;
+use std::borrow::Cow;
 use std::sync::Mutex;
 
 type Captured = (Option<String>, Option<u32>, Source, Level, String);
@@ -114,4 +115,92 @@ fn trace_arguments_are_not_evaluated_while_debug_is_off() {
         !evaluated,
         "a stderr-only category must not format while off"
     );
+}
+
+#[test]
+fn overlapping_and_nested_secrets_never_leave_a_fragment() {
+    // Registered shortest first: a sequential replace would store "***22".
+    register_secret("sekret");
+    register_secret("sekret22");
+    register_secret("wxyz");
+    register_secret("yzab");
+    assert_eq!(
+        redact("login rejected password sekret22"),
+        "login rejected password ***"
+    );
+    assert_eq!(redact("sekret and sekret22."), "*** and ***.");
+    assert_eq!(
+        redact("key=wxyzab!"),
+        "key=***!",
+        "overlapping secrets merge"
+    );
+    assert!(matches!(redact("nothing here"), Cow::Borrowed(_)));
+}
+
+#[test]
+fn short_passwords_and_passwords_equal_to_the_name_are_redacted_too() {
+    register_secret("q7");
+    register_secret("route-dora");
+    assert_eq!(redact("pw=q7;"), "pw=***;");
+    assert_eq!(redact("route-dora logged in"), "*** logged in");
+}
+
+#[test]
+fn stderr_and_the_sink_only_ever_see_the_redacted_line() {
+    install();
+    register_secret("hunter2hunter");
+    std::thread::spawn(|| {
+        bind_slot("route-erin");
+        crate::host_log!(
+            stderr;
+            Category::Login,
+            Level::Error,
+            "handshake with hunter2hunter refused"
+        );
+        let stderr = STDERR.with(|lines| lines.borrow().clone());
+        assert_eq!(stderr, ["[login route-erin] handshake with *** refused"]);
+    })
+    .join()
+    .unwrap();
+    assert_eq!(
+        lines_for("route-erin")
+            .into_iter()
+            .map(|c| c.4)
+            .collect::<Vec<_>>(),
+        ["handshake with *** refused"]
+    );
+}
+
+#[test]
+fn any_thread_reads_a_slots_current_tick() {
+    install();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let worker = std::thread::spawn(move || {
+        bind_slot("route-fay");
+        tx.send(()).unwrap();
+        done_rx.recv().unwrap();
+        set_tick(314);
+        tx.send(()).unwrap();
+        done_rx.recv().unwrap();
+    });
+    rx.recv().unwrap();
+    assert_eq!(
+        slot_tick("route-fay"),
+        None,
+        "no tick before the first observation"
+    );
+    done_tx.send(()).unwrap();
+    rx.recv().unwrap();
+    assert_eq!(slot_tick("route-fay"), Some(314));
+    // A line for that slot logged on another thread carries its tick.
+    crate::host_log!(
+        Category::ScriptLifecycle,
+        Level::Info,
+        slot = "route-fay",
+        "start load"
+    );
+    assert_eq!(lines_for("route-fay")[0].1, Some(314));
+    done_tx.send(()).unwrap();
+    worker.join().unwrap();
 }

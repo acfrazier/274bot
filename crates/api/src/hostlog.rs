@@ -13,12 +13,21 @@
 //!
 //! Slot threads bind their slot name once ([`bind_slot`]) and publish the
 //! game tick they observe ([`set_tick`]); a line logged on that thread picks
-//! both up unless the call names a slot explicitly.
+//! both up unless the call names a slot explicitly. Any thread can read a
+//! slot's current tick ([`slot_tick`]), so lines recorded off the slot
+//! thread carry it too.
+//!
+//! Every registered secret ([`register_secret`], the account passwords) is
+//! redacted ([`redact`]) before a line reaches stderr or any sink.
 
-use std::cell::{Cell, RefCell};
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock};
+
+use parking_lot::{Mutex, RwLock};
 
 /// Severity, ordered so a minimum-level filter is `level >= min`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -197,11 +206,79 @@ pub fn install_sink(sink: &'static dyn Sink) -> bool {
 }
 
 /// Deliver a record straight to the installed sink (front-end sources that
-/// already know their slot, level and source).
+/// already know their slot, level and source), redacted like [`emit`].
 pub fn record(record: &Record<'_>) {
     if let Some(sink) = SINK.get() {
-        sink.record(record);
+        let message = redact(record.message);
+        sink.record(&Record {
+            message: &message,
+            ..*record
+        });
     }
+}
+
+/// Replacement for every redacted secret.
+pub const REDACTED: &str = "***";
+
+static SECRETS: RwLock<Vec<Box<str>>> = RwLock::new(Vec::new());
+static HAS_SECRETS: AtomicBool = AtomicBool::new(false);
+
+/// Never let `secret` reach stderr or a sink. Every non-empty password is
+/// registered, however short and even when it equals its username: a short
+/// password blanks those characters in messages (safety over readability),
+/// and the slot column still names the account, which is not a secret.
+pub fn register_secret(secret: &str) {
+    if secret.is_empty() {
+        return;
+    }
+    let mut secrets = SECRETS.write();
+    if !secrets.iter().any(|s| &**s == secret) {
+        secrets.push(secret.into());
+        HAS_SECRETS.store(true, Ordering::Release);
+    }
+}
+
+/// `message` with every occurrence of every registered secret replaced by
+/// [`REDACTED`]. Matches are found in the original text (overlapping ones
+/// included) and merged before replacing, so one secret containing or
+/// overlapping another never leaves part of either behind. Borrowed, with
+/// no allocation, when nothing matches.
+pub fn redact(message: &str) -> Cow<'_, str> {
+    if !HAS_SECRETS.load(Ordering::Acquire) {
+        return Cow::Borrowed(message);
+    }
+    let secrets = SECRETS.read();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for secret in secrets.iter() {
+        let mut from = 0;
+        while let Some(at) = message[from..].find(&**secret) {
+            let start = from + at;
+            spans.push((start, start + secret.len()));
+            // Step one character, not the whole match, to catch overlaps.
+            from = start + message[start..].chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    drop(secrets);
+    if spans.is_empty() {
+        return Cow::Borrowed(message);
+    }
+    spans.sort_unstable();
+    let mut out = String::with_capacity(message.len());
+    let mut copied = 0;
+    let mut i = 0;
+    while i < spans.len() {
+        let (start, mut end) = spans[i];
+        i += 1;
+        while i < spans.len() && spans[i].0 <= end {
+            end = end.max(spans[i].1);
+            i += 1;
+        }
+        out.push_str(&message[copied..start]);
+        out.push_str(REDACTED);
+        copied = end;
+    }
+    out.push_str(&message[copied..]);
+    Cow::Owned(out)
 }
 
 static DEBUG: AtomicBool = AtomicBool::new(false);
@@ -227,22 +304,61 @@ pub fn enabled(category: Category) -> bool {
     (category.slot_log() && SINK.get().is_some()) || debug_enabled()
 }
 
+/// A slot's published tick; [`NO_TICK`] until its thread observes one.
+type TickCell = Arc<AtomicU64>;
+const NO_TICK: u64 = u64::MAX;
+
+/// Current tick per slot name, shared with every thread. Bounded by the
+/// slot names this process ever bound.
+static TICKS: LazyLock<Mutex<HashMap<Arc<str>, TickCell>>> = LazyLock::new(Mutex::default);
+
+struct Bound {
+    slot: Arc<str>,
+    tick: TickCell,
+}
+
 thread_local! {
-    static SLOT: RefCell<Option<Arc<str>>> = const { RefCell::new(None) };
-    static TICK: Cell<Option<u32>> = const { Cell::new(None) };
+    static SLOT: RefCell<Option<Bound>> = const { RefCell::new(None) };
 }
 
 /// Bind this thread to `slot`: lines logged here without an explicit slot
-/// belong to it. Slot worker threads call this once at start.
+/// belong to it. Slot worker threads call this once at start; the slot's
+/// tick is unknown until the next [`set_tick`].
 pub fn bind_slot(slot: &str) {
-    SLOT.with(|s| *s.borrow_mut() = Some(Arc::from(slot)));
-    TICK.with(|t| t.set(None));
+    let (slot, tick) = {
+        let mut ticks = TICKS.lock();
+        match ticks.get_key_value(slot) {
+            Some((name, tick)) => (Arc::clone(name), Arc::clone(tick)),
+            None => {
+                let name: Arc<str> = Arc::from(slot);
+                let tick = Arc::new(AtomicU64::new(NO_TICK));
+                ticks.insert(Arc::clone(&name), Arc::clone(&tick));
+                (name, tick)
+            }
+        }
+    };
+    tick.store(NO_TICK, Ordering::Relaxed);
+    SLOT.with(|s| *s.borrow_mut() = Some(Bound { slot, tick }));
 }
 
-/// Publish the game tick this thread last observed.
+/// Publish the game tick this slot thread observes (one atomic store).
 #[inline]
 pub fn set_tick(tick: u32) {
-    TICK.with(|t| t.set(Some(tick)));
+    SLOT.with(|s| {
+        if let Some(bound) = s.borrow().as_ref() {
+            bound.tick.store(u64::from(tick), Ordering::Relaxed);
+        }
+    });
+}
+
+/// The tick `slot`'s thread last published, from any thread.
+pub fn slot_tick(slot: &str) -> Option<u32> {
+    let tick = TICKS.lock().get(slot)?.load(Ordering::Relaxed);
+    u32::try_from(tick).ok()
+}
+
+fn bound_tick(bound: &Bound) -> Option<u32> {
+    u32::try_from(bound.tick.load(Ordering::Relaxed)).ok()
 }
 
 /// Where a line goes regardless of debug (`always_stderr` keeps the few
@@ -264,34 +380,54 @@ pub fn emit(emit: Emit<'_>, args: fmt::Arguments<'_>) {
         return;
     }
     let owned;
-    let message = match args.as_str() {
+    let raw = match args.as_str() {
         Some(s) => s,
         None => {
             owned = args.to_string();
             owned.as_str()
         }
     };
-    let bound = if emit.slot.is_none() {
-        SLOT.with(|s| s.borrow().clone())
-    } else {
-        None
-    };
+    let message = redact(raw);
+    let message = &*message;
+    // The bound slot, and its tick when the line belongs to it.
+    let (bound, bound_tick) = SLOT.with(|s| match s.borrow().as_ref() {
+        Some(b) if emit.slot.is_none_or(|slot| slot == &*b.slot) => {
+            (Some(Arc::clone(&b.slot)), bound_tick(b))
+        }
+        _ => (None, None),
+    });
     let slot = emit.slot.or(bound.as_deref());
     if debug {
         match slot {
-            Some(slot) => eprintln!("[{} {slot}] {message}", emit.category.tag()),
-            None => eprintln!("[{}] {message}", emit.category.tag()),
+            Some(slot) => write_stderr(format_args!("[{} {slot}] {message}", emit.category.tag())),
+            None => write_stderr(format_args!("[{}] {message}", emit.category.tag())),
         }
     }
     if let Some(sink) = sink {
         sink.record(&Record {
             slot,
-            tick: TICK.with(Cell::get),
+            tick: bound_tick.or_else(|| slot.and_then(slot_tick)),
             source: emit.category.source(),
             level: emit.level,
             message,
         });
     }
+}
+
+#[cfg(not(test))]
+fn write_stderr(line: fmt::Arguments<'_>) {
+    eprintln!("{line}");
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Stderr lines this test thread emitted.
+    static STDERR: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn write_stderr(line: fmt::Arguments<'_>) {
+    STDERR.with(|lines| lines.borrow_mut().push(line.to_string()));
 }
 
 /// Log one host line through the routing facade.
