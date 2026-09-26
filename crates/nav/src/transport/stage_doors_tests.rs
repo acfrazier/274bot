@@ -82,6 +82,42 @@ if ($entering = true) {
 p_teleport($dest);
 ";
 
+/// `open_and_close_doors.rs2:129-160` (the metal gate's teleport) and
+/// `open_and_close_double_doors.rs2:118-160` (the double door that takes
+/// the loc explicitly), trimmed like [`OPEN_PROCS_RS2`].
+const MORE_OPEN_PROCS_RS2: &str = "\
+[proc,open_and_close_metal_gate](loc $replacement, boolean $entering, boolean $mirrored)
+def_coord $loc_coord = loc_coord;
+def_int $angle = loc_angle;
+if ($mirrored = true) {
+    $x, $z = ~door_open_mirrored($angle);
+} else {
+    $x, $z = ~door_open($angle, loc_shape);
+}
+$telex, $telez = ~door_open($angle, loc_shape);
+def_coord $dest = $loc_coord;
+if ($entering = true) {
+    if (coord ! $loc_coord) {
+        p_teleport($loc_coord);
+        p_delay(1);
+    }
+    $dest = movecoord($loc_coord, $telex, 0, $telez);
+}
+p_teleport($dest);
+
+[proc,open_and_close_double_door3](boolean $entering, loc $loc_type, locshape $shape, int $angle, coord $loc_coord, int $side, synth $sound)
+$x, $z = ~door_open($angle, $shape);
+def_coord $dest = $loc_coord;
+if ($entering = true) {
+    if (coord ! $loc_coord & coord ! $opposite_coord) {
+        p_teleport($loc_coord);
+        p_delay(1);
+    }
+    $dest = movecoord($loc_coord, $x, 0, $z);
+}
+p_teleport($dest);
+";
+
 /// `ladders+stairs/scripts/ladders.rs2:154-161`.
 const CLIMB_LADDER_RS2: &str = "\
 [proc,climb_ladder](coord $coord, boolean $up)
@@ -103,7 +139,7 @@ fn write_stage_engine(fx: &Fixture) {
     fx.write("scripts/doors/scripts/door_procs.rs2", DOOR_PROCS);
     fx.write(
         "scripts/doors/scripts/open_and_close_doors.rs2",
-        OPEN_PROCS_RS2,
+        &format!("{OPEN_PROCS_RS2}\n{MORE_OPEN_PROCS_RS2}"),
     );
     fx.write(
         "scripts/ladders+stairs/scripts/ladders.rs2",
@@ -542,4 +578,108 @@ if(map_members = ^true & inv_total(inv, holy_table_napkin) > 0 & inv_total(inv, 
     assert!(whistle
         .iter()
         .all(|e| e.item_req.is_empty() && e.skill_req.is_empty() && !e.members_req));
+}
+
+/// The other engine crossing procs cross the same way: Prince Ali's jail
+/// door (`quest_prince.rs2:46-51`, `~open_and_close_metal_gate2`-style
+/// metal gate opened with a literal `true` from the cell side only), the
+/// Mourner HQ gates (`quest_biohazard.rs2:118-144`: the loc handed to
+/// `~open_and_close_double_door3` explicitly; leaving is free, entering
+/// needs the key), and the Taverley jail door
+/// (`jail_doors.rs2:8-35`: a string bound before the gate; leaving only).
+/// A double door handed some other coord is not this loc's crossing.
+#[test]
+fn stage_door_crosses_through_every_modelled_open_proc() {
+    let fx = Fixture::new();
+    write_stage_engine(&fx);
+    fx.write(
+        "pack/loc.pack",
+        "2881=alidoor\n1541=loc_1541\n2058=mournerquaters_gatel\n2059=mournerquaters_gatel_open\n2623=deepdungeondoor\n37=ctratgatea\n950=stray_gate\n",
+    );
+    fx.write("pack/obj.pack", "423=mournerkeytw\n");
+    fx.write(
+        "scripts/quests/quest_biohazard/configs/quest_biohazard.loc",
+        "[mournerquaters_gatel]\nop1=Open\nparam=next_loc_stage,mournerquaters_gatel_open\n\n[stray_gate]\nop1=Open\nparam=next_loc_stage,mournerquaters_gatel_open\n",
+    );
+    fx.write(
+        "scripts/quests/quest_misc/scripts/procs_doors.rs2",
+        "\
+[oploc1,alidoor]
+if(coordz(coord) > coordz(loc_coord)) {
+    mes(\"The door is locked.\");
+    sound_synth(locked, 1, 0);
+    return;
+}
+~open_and_close_metal_gate(loc_1541, true, false);
+
+[oploc1,mournerquaters_gatel]
+@open_mournerhq_gate(^left, false);
+
+[label,open_mournerhq_gate](int $side, boolean $used_key)
+def_loc $loc_type = loc_type;
+def_locshape $loc_shape = loc_shape;
+def_int $loc_angle = loc_angle;
+def_coord $loc_coord = loc_coord;
+def_boolean $entering = ~check_axis(coord, loc_coord, loc_angle);
+if($entering = true & inv_total(inv, mournerkeytw) = 0 & $used_key = false) {
+    mes(\"The gate is locked.\");
+    p_delay(3);
+    mes(\"You need a key.\");
+    return;
+}
+if($used_key = true) {
+    mes(\"The key fits the gate.\");
+    p_delay(3);
+}
+~open_and_close_double_door3($entering, $loc_type, $loc_shape, $loc_angle, $loc_coord, $side, grate_open);
+
+[oploc1,deepdungeondoor]
+@unlock_taverley_jaildoor(false);
+
+[label,unlock_taverley_jaildoor](boolean $key_used)
+def_boolean $entering = ~check_axis(coord, loc_coord, loc_angle);
+def_string $name = lowercase(loc_name);
+if($entering = true & $key_used = false) {
+    mes(\"This <$name> is locked.\");
+    return;
+}
+if($key_used = true) {
+    mes(\"You unlock the <$name>.\");
+} else {
+    mes(\"The <$name> locks shut behind you.\");
+}
+~open_and_close_door2(ctratgatea, $entering, grate_open);
+
+[oploc1,stray_gate]
+~open_and_close_double_door3(~check_axis(coord, loc_coord, loc_angle), loc_type, loc_shape, loc_angle, movecoord(loc_coord, 0, 0, 1), ^left, grate_open);
+",
+    );
+    // Ali's cell door on its loc's south face (angle 3), the Mourner HQ
+    // gate on its east face (angle 2, the real gate's), the others west.
+    write_open_square(
+        &fx,
+        "0 5 20: 2881 0 3\n0 5 30: 2058 0 2\n0 5 40: 2623 0 0\n0 5 50: 950 0 0\n",
+    );
+    let (graph, _) = derive_stage(&fx, &[2881, 2058, 2623, 950]);
+    assert_eq!(
+        door_crossings(&graph, 2881),
+        vec![((2821, 3412), 'S', (2821, 3411))],
+        "out of the cell from the loc's own tile only"
+    );
+    let gate: Vec<_> = graph.edges.iter().filter(|e| e.loc_id == 2058).collect();
+    assert_eq!(gate.len(), 2);
+    for e in gate {
+        assert_eq!(e.open_loc_id, Some(2059), "{e:?}");
+        match e.dir {
+            Some(DoorDir::W) => assert!(e.item_req.is_empty(), "leaving is free: {e:?}"),
+            Some(DoorDir::E) => assert_eq!(e.item_req, [(423, 1)], "entering needs the key: {e:?}"),
+            _ => panic!("{e:?}"),
+        }
+    }
+    assert_eq!(
+        door_crossings(&graph, 2623),
+        vec![((2821, 3432), 'E', (2822, 3432))],
+        "the jail door lets its prisoner out only"
+    );
+    assert!(door_crossings(&graph, 950).is_empty());
 }

@@ -50,23 +50,99 @@ use super::*;
 // whose `$entering` is false onto `loc_coord`, so the crossing is real
 // only when `$entering` equals "the player stands on the loc's own tile".
 
-/// The procs a crossing may end in: `(name, index of the `$entering`
-/// argument, index of the replacement-loc argument when it has one)`.
-const OPEN_PROCS: [(&str, usize, Option<usize>); 5] = [
-    ("open_and_close_door", 1, Some(0)),
-    ("open_and_close_door2", 1, Some(0)),
-    ("open_and_close_door_fast", 1, Some(0)),
-    ("open_and_close_double_door", 0, None),
-    ("open_and_close_double_door2", 0, None),
-];
+/// One proc a crossing may end in: the index of its `$entering` argument,
+/// of its replacement-loc argument (single doors) or its `^left`/`^right`
+/// side (double doors, which swing `lc_param(loc_type, next_loc_stage)`),
+/// the `(loc_type, shape, angle, loc_coord)` arguments a proc takes
+/// explicitly instead of reading the active loc, and the normalized
+/// teleport sequence its body must carry.
+struct OpenProc {
+    name: &'static str,
+    entering: usize,
+    leaf: Option<usize>,
+    side: Option<usize>,
+    loc_args: Option<[usize; 4]>,
+    markers: &'static [&'static str],
+}
 
-/// The normalized teleport sequence every [`OPEN_PROCS`] body must carry
-/// for the crossing model above to hold (`scripts/doors/scripts/
-/// open_and_close_doors.rs2:17-35`, `open_and_close_double_doors.rs2:39-50`).
-const OPEN_PROC_MARKERS: [&str; 3] = [
+/// `$x, $z = ~door_open(…)`, then the entering branch and the teleport
+/// (`scripts/doors/scripts/open_and_close_doors.rs2:17-35`,
+/// `open_and_close_double_doors.rs2:39-50`).
+const ACTIVE_LOC_MARKERS: &[&str] = &[
     "$x,$z=~door_open($angle,loc_shape);",
     "if($entering=true){",
     "p_teleport($dest);",
+];
+/// The same sequence over the explicit shape argument
+/// (`open_and_close_double_doors.rs2:118-160`).
+const EXPLICIT_LOC_MARKERS: &[&str] = &[
+    "$x,$z=~door_open($angle,$shape);",
+    "if($entering=true){",
+    "p_teleport($dest);",
+];
+
+const fn single(name: &'static str) -> OpenProc {
+    OpenProc {
+        name,
+        entering: 1,
+        leaf: Some(0),
+        side: None,
+        loc_args: None,
+        markers: ACTIVE_LOC_MARKERS,
+    }
+}
+
+const OPEN_PROCS: [OpenProc; 10] = [
+    single("open_and_close_door"),
+    single("open_and_close_door2"),
+    single("open_and_close_door3"),
+    single("open_and_close_door_fast"),
+    single("open_and_close_door_dir"),
+    single("open_and_close_metal_gate"),
+    single("open_and_close_metal_gate2"),
+    OpenProc {
+        name: "open_and_close_double_door",
+        entering: 0,
+        leaf: None,
+        side: Some(1),
+        loc_args: None,
+        markers: ACTIVE_LOC_MARKERS,
+    },
+    OpenProc {
+        name: "open_and_close_double_door2",
+        entering: 0,
+        leaf: None,
+        side: Some(1),
+        loc_args: None,
+        markers: ACTIVE_LOC_MARKERS,
+    },
+    OpenProc {
+        name: "open_and_close_double_door3",
+        entering: 0,
+        leaf: None,
+        side: Some(5),
+        loc_args: Some([1, 2, 3, 4]),
+        markers: EXPLICIT_LOC_MARKERS,
+    },
+];
+
+/// Pure builtins an opener may bind or print (strings and arithmetic);
+/// their value is not modelled.
+const PURE_OPAQUE: [&str; 14] = [
+    "lowercase",
+    "uppercase",
+    "tostring",
+    "append",
+    "text_gender",
+    "displayname",
+    "loc_name",
+    "nc_name",
+    "string_length",
+    "add",
+    "sub",
+    "multiply",
+    "divide",
+    "modulo",
 ];
 
 /// `[proc,check_axis]` as `door_procs.rs2` defines it (normalized): true
@@ -197,10 +273,8 @@ impl Sources {
         }
         OPEN_PROCS
             .iter()
-            .map(|(name, _, _)| *name)
-            .filter(|name| {
-                one(name).is_some_and(|b| OPEN_PROC_MARKERS.iter().all(|m| b.contains(m)))
-            })
+            .filter(|p| one(p.name).is_some_and(|b| p.markers.iter().all(|m| b.contains(m))))
+            .map(|p| p.name)
             .collect()
     }
 
@@ -533,11 +607,10 @@ impl Eval<'_> {
         if proc == "climb_ladder" {
             return self.climb(args, env);
         }
-        let Some(&(name, entering_at, leaf_at)) = OPEN_PROCS.iter().find(|(n, _, _)| *n == proc)
-        else {
+        let Some(spec) = OPEN_PROCS.iter().find(|p| p.name == proc) else {
             return Flow::Refused;
         };
-        if !self.opens.contains(name) {
+        if !self.opens.contains(spec.name) {
             return Flow::Refused;
         }
         let mut vals = Vec::with_capacity(args.len());
@@ -547,30 +620,32 @@ impl Eval<'_> {
             };
             vals.push(v);
         }
-        if vals.len() <= entering_at {
-            return Flow::Refused;
-        }
         let Some(stand) = self.stand else {
             return Flow::Refused;
         };
-        let on_loc = stand == self.at;
-        if vals[entering_at] != Val::Bool(on_loc) {
+        if vals.get(spec.entering) != Some(&Val::Bool(stand == self.at)) {
             return Flow::Refused;
         }
-        if leaf_at.is_none() {
-            // Double doors take the side (`^left`/`^right`) and swing
-            // `lc_param(loc_type, next_loc_stage)`.
-            let side = vals.get(1);
+        // A proc handed the loc explicitly must be handed this loc.
+        if let Some([ty, _shape, angle, coord]) = spec.loc_args {
+            if vals.get(ty) != Some(&Val::Loc(LocRef::Itself))
+                || vals.get(angle) != Some(&Val::Int(self.angle))
+                || vals.get(coord) != Some(&Val::Coord(self.at))
+            {
+                return Flow::Refused;
+            }
+        }
+        if let Some(side) = spec.side {
             let left = self.src.constants.get("left").copied();
             let right = self.src.constants.get("right").copied();
-            let sided = matches!(side, Some(Val::Int(s)) if Some(*s) == left || Some(*s) == right);
+            let sided = matches!(vals.get(side), Some(Val::Int(s)) if Some(*s) == left || Some(*s) == right);
             return if sided {
                 Flow::Crossed(Arrival::Door(LocRef::NextStage), false)
             } else {
                 Flow::Refused
             };
         }
-        match leaf_at.and_then(|k| vals.get(k)) {
+        match spec.leaf.and_then(|k| vals.get(k)) {
             Some(Val::Loc(leaf)) => Flow::Crossed(Arrival::Door(*leaf), false),
             Some(Val::Name(name)) => match loc_pack_id(name, &self.src.ids) {
                 Some(id) => Flow::Crossed(Arrival::Door(LocRef::Id(id)), false),
@@ -674,6 +749,7 @@ impl Eval<'_> {
                 Some(Val::Loc(LocRef::NextStage))
             }
             ("~door_open", [_, _]) | ("loc_param", [_]) => Some(Val::Opaque),
+            _ if PURE_OPAQUE.contains(&name) => Some(Val::Opaque),
             _ => None,
         }
     }
@@ -889,7 +965,7 @@ fn moves_or_jumps(stmt: &Stmt) -> bool {
             || MOVES.contains(&c.as_str())
             || OPEN_PROCS
                 .iter()
-                .any(|(n, _, _)| c.strip_prefix('~') == Some(n))
+                .any(|p| c.strip_prefix('~') == Some(p.name))
     })
 }
 
@@ -956,7 +1032,7 @@ fn names_terminal(src: &Sources, block: &Block) -> bool {
             } else if c == "~climb_ladder"
                 || OPEN_PROCS
                     .iter()
-                    .any(|(n, _, _)| c.strip_prefix('~') == Some(n))
+                    .any(|p| c.strip_prefix('~') == Some(p.name))
             {
                 return true;
             }
