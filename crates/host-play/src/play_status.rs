@@ -6,7 +6,9 @@ use client::client::{Client, LoginError};
 use super::{debug_enabled, RandomStatus};
 
 /// Pollable per-slot view; the slot threads update it after each frame.
-#[derive(Debug, Clone)]
+/// `clone_from` reuses the destination's string buffers, so a poll that
+/// copies rows into a retained vector allocates nothing in steady state.
+#[derive(Debug)]
 pub struct SlotStatus {
     pub username: String,
     /// Active public world number, absent for local profiles.
@@ -81,6 +83,93 @@ pub struct SlotStatus {
     /// this shared frame; Stop or slot unload clears it from the lifecycle
     /// owner even when no online observe runs. `None` means no current paint.
     pub script_paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
+}
+
+impl Clone for SlotStatus {
+    fn clone(&self) -> Self {
+        Self {
+            username: self.username.clone(),
+            world: self.world,
+            startup_phase: self.startup_phase,
+            startup_phase_started: self.startup_phase_started,
+            startup_progress_percent: self.startup_progress_percent,
+            startup_progress_message: self.startup_progress_message.clone(),
+            login_started: self.login_started,
+            connected: self.connected,
+            ingame: self.ingame,
+            scene_state: self.scene_state,
+            error: self.error.clone(),
+            worker_terminal: self.worker_terminal,
+            runenergy: self.runenergy,
+            run_sends: self.run_sends,
+            tile_x: self.tile_x,
+            tile_z: self.tile_z,
+            tile_level: self.tile_level,
+            player: self.player.clone(),
+            main_modal_id: self.main_modal_id,
+            welcome_hold: self.welcome_hold,
+            welcome_failure: self.welcome_failure.clone(),
+            welcome_notice: self.welcome_notice.clone(),
+            walk_x: self.walk_x,
+            walk_z: self.walk_z,
+            walk_level: self.walk_level,
+            queue_position: self.queue_position,
+            queue_total: self.queue_total,
+            login_latched: self.login_latched,
+            bytes_in: self.bytes_in,
+            bytes_out: self.bytes_out,
+            chat_head: self.chat_head.clone(),
+            random: self.random.clone(),
+            script_paint: self.script_paint.clone(),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.username.clone_from(&source.username);
+        self.world.clone_from(&source.world);
+        self.startup_phase.clone_from(&source.startup_phase);
+        self.startup_phase_started
+            .clone_from(&source.startup_phase_started);
+        self.startup_progress_percent
+            .clone_from(&source.startup_progress_percent);
+        self.startup_progress_message
+            .clone_from(&source.startup_progress_message);
+        self.login_started.clone_from(&source.login_started);
+        self.connected.clone_from(&source.connected);
+        self.ingame.clone_from(&source.ingame);
+        self.scene_state.clone_from(&source.scene_state);
+        self.error.clone_from(&source.error);
+        self.worker_terminal.clone_from(&source.worker_terminal);
+        self.runenergy.clone_from(&source.runenergy);
+        self.run_sends.clone_from(&source.run_sends);
+        self.tile_x.clone_from(&source.tile_x);
+        self.tile_z.clone_from(&source.tile_z);
+        self.tile_level.clone_from(&source.tile_level);
+        self.player.clone_from(&source.player);
+        self.main_modal_id.clone_from(&source.main_modal_id);
+        self.welcome_hold.clone_from(&source.welcome_hold);
+        self.welcome_failure.clone_from(&source.welcome_failure);
+        self.welcome_notice.clone_from(&source.welcome_notice);
+        self.walk_x.clone_from(&source.walk_x);
+        self.walk_z.clone_from(&source.walk_z);
+        self.walk_level.clone_from(&source.walk_level);
+        self.queue_position.clone_from(&source.queue_position);
+        self.queue_total.clone_from(&source.queue_total);
+        self.login_latched.clone_from(&source.login_latched);
+        self.bytes_in.clone_from(&source.bytes_in);
+        self.bytes_out.clone_from(&source.bytes_out);
+        self.chat_head.clone_from(&source.chat_head);
+        self.script_paint.clone_from(&source.script_paint);
+        let (random, from) = (&mut self.random, &source.random);
+        random.kind.clone_from(&from.kind);
+        random.name.clone_from(&from.name);
+        random.ours = from.ours;
+        random.handling = from.handling;
+        random.hold = from.hold;
+        random.toggle = from.toggle;
+        random.claim.clone_from(&from.claim);
+        random.cooldown = from.cooldown;
+    }
 }
 
 /// Status rows are display observations, not a transactional data structure:

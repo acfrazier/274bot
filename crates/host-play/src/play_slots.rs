@@ -190,6 +190,19 @@ impl Play {
         }
     }
 
+    /// Copy every status row into `out`, reusing its rows' buffers (see
+    /// [`SlotStatus`]'s `clone_from`): no allocation when nothing grew.
+    pub fn statuses_into(&self, out: &mut Vec<SlotStatus>) {
+        out.clone_from(&lock_statuses(&self.statuses));
+    }
+
+    /// Whether `name`'s row reports a connected session, read in place.
+    pub fn slot_connected(&self, name: &str) -> bool {
+        lock_statuses(&self.statuses)
+            .iter()
+            .any(|status| status.username == name && status.connected)
+    }
+
     /// Whether `name`'s stopped worker ([`Play::begin_stop_slot`]) has not
     /// exited yet. A respawn of the same name is refused until it has.
     pub fn slot_stopping(&self, name: &str) -> bool {
