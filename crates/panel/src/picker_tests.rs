@@ -8,14 +8,15 @@ use nav::world::NavWorld;
 use std::sync::Arc;
 
 use super::{
-    available_levels, click_to_tile, decode_sidecar_file, drop_flags_sidecar, ensure_flags_sidecar,
-    flags_content_hash_count, flags_load_count, flags_sidecar_for, flags_sidecar_state,
-    flood_cache_occupied, format_walkto_status, last_picker_layout, map_reach_bitset, pack, pan_by,
-    picker_map_window, picker_nested_in_game, reach_binding_occupied, reach_bitset,
-    reset_flags_content_hash_count, reset_flags_load_count, right_align_x, set_navflags_binding,
-    set_pack, set_reach_binding, sidecar_for_grid, snap, walkto_actions_enabled,
-    walkto_canvas_flags, walkto_footer_labels, walkto_selection_caption, walkto_window_flags,
-    zoom_toward, FlagSidecar, FlagsSidecarState, WalktoCaption,
+    available_levels, cached_remaining_path, click_to_tile, decode_sidecar_file, dest_marker_tile,
+    drop_flags_sidecar, ensure_flags_sidecar, flags_content_hash_count, flags_load_count,
+    flags_sidecar_for, flags_sidecar_state, flood_cache_occupied, format_walkto_status,
+    last_picker_layout, map_reach_bitset, pack, pan_by, pending_highlight, picker_map_window,
+    picker_nested_in_game, reach_binding_occupied, reach_bitset, reset_flags_content_hash_count,
+    reset_flags_load_count, reset_route_cache, right_align_x, route_flatten_count,
+    set_navflags_binding, set_pack, set_reach_binding, sidecar_for_grid, snap,
+    walkto_actions_enabled, walkto_canvas_flags, walkto_footer_labels, walkto_selection_caption,
+    walkto_window_flags, zoom_toward, FlagSidecar, FlagsSidecarState, WalktoCaption,
 };
 use crate::rail::{BASE_WINDOW_H, BASE_WINDOW_W};
 use crate::session::Session;
@@ -23,7 +24,7 @@ use crate::test_support::TestDir;
 use crate::theme::PANEL_WIDTH;
 use crate::walk_map::WalkMapRenderer;
 use dear_imgui_rs::WindowFlags;
-use host_play::walk_map::MapModel;
+use host_play::walk_map::{MapModel, RouteSource};
 
 // REACH/FLOOD/FLAGS/PACK share FLAGS_TEST_LOCK — one process-global lock for
 // every test that mutates picker statics (incl. Session drop → set_pack(None)).
@@ -1004,5 +1005,85 @@ fn session_pack_detach_clears_flood_and_reach_binding() {
     assert!(
         !reach_binding_occupied(),
         "set_pack(None) must detach the bundled reach binding"
+    );
+}
+
+fn wt(x: i32, z: i32) -> WorldTile {
+    WorldTile { x, z, level: 0 }
+}
+
+fn test_route() -> nav::router::Route {
+    use nav::router::{Leg, Route};
+    use nav::transport::{TransportEdge, TransportKind};
+    Route {
+        legs: vec![
+            Leg::Walk {
+                tiles: vec![wt(0, 0), wt(1, 0), wt(2, 0)],
+            },
+            Leg::Transport {
+                edge: TransportEdge {
+                    kind: TransportKind::Door,
+                    at: wt(3, 0),
+                    to: wt(4, 0),
+                    loc_id: 1530,
+                    option: 1,
+                    ticks: 1,
+                    dir: None,
+                    open_loc_id: None,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                    members_req: false,
+                    wildy_cap: None,
+                },
+            },
+            Leg::Walk {
+                tiles: vec![wt(4, 0), wt(5, 0)],
+            },
+        ],
+        dest: wt(5, 0),
+        ticks: 1.0,
+    }
+}
+
+#[test]
+fn route_cache_skips_completed_legs_and_stays_allocation_free_on_hit() {
+    reset_route_cache();
+    let route = test_route();
+    let tiles = cached_remaining_path(&route, RouteSource::Manual, 1, Some(wt(2, 0)));
+    assert_eq!(
+        tiles.iter().map(|(t, _)| *t).collect::<Vec<_>>(),
+        vec![wt(3, 0), wt(4, 0), wt(5, 0)],
+        "here at a completed walk end must skip that leg"
+    );
+    assert_eq!(route_flatten_count(), 1);
+    let again = cached_remaining_path(&route, RouteSource::Manual, 1, Some(wt(2, 0)));
+    assert_eq!(again, tiles);
+    assert_eq!(route_flatten_count(), 1, "cache hit must not flatten again");
+    let off_route = cached_remaining_path(&route, RouteSource::Manual, 1, Some(wt(80, 80)));
+    assert_eq!(
+        off_route, tiles,
+        "off-route here must not re-show walked legs"
+    );
+    assert_eq!(route_flatten_count(), 1);
+}
+
+#[test]
+fn pending_selection_is_not_drawn_as_armed_dest() {
+    let world = open_world(3, 3);
+    let mut session = Session::new();
+    let hit = Tile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    assert_eq!(session.map_model.select_tile(&world, hit), Some(hit));
+    assert_eq!(pending_highlight(&session), Some(hit));
+    assert_eq!(
+        dest_marker_tile(&session),
+        None,
+        "pending selection must not become the armed dest marker"
     );
 }

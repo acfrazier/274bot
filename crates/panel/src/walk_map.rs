@@ -1,8 +1,8 @@
 //! Application-owned WalkTo map renderer. One instance, not per bot.
 //!
-//! Terrain uses A's `select_lod` (≤24 textures of 258×258). Until D binds a
-//! cache, the production map shows a grid and "map imagery unavailable — cache
-//! not bound" with no POIs. Optional map-owned grid/collision/NSEW/reach/flood
+//! Terrain uses A's `select_lod` (≤24 textures of 258×258). Until a ReadyImages
+//! handle is bound, the production map shows a grid and "map imagery unavailable — cache
+//! not bound". Catalogue POIs and observed services draw as soon as they exist. Optional map-owned grid/collision/NSEW/reach/flood
 //! layers composite into one viewport overlay. Route and destination are vector
 //! markers. Close unregisters GPU textures and drops CPU pixels; late decode
 //! results cannot resurrect a closed generation.
@@ -18,15 +18,17 @@ use std::thread::JoinHandle;
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{TextureId, Ui};
 use nav::map::identity::{Digest, ImageIdentity};
+use nav::map::poi::PoiKind;
 use nav::map::spatial::{
-    select_lod, snap_walkable, GameTile, TileKey, View, VisibleTiles, INTERIOR_UV, MAX_LOD,
-    TEXTURE_CAP, TILE_PIXELS, TILE_RGBA_BYTES,
+    select_lod, snap_walkable, GameTile, TileKey, View, VisibleTiles, INTERIOR_UV, TEXTURE_CAP,
+    TILE_PIXELS, TILE_RGBA_BYTES,
 };
 use nav::map::MapError;
 use nav::tile::Tile;
 use nav::world::NavWorld;
 
-use host_play::walk_map::Search;
+use host_play::map_cache::ReadyImages;
+use host_play::walk_map::{Catalogue, ObservedService, Search};
 
 use crate::game_view::FrameGpu;
 use crate::nav_settings::{parse_html_color, NavSettings};
@@ -122,6 +124,9 @@ pub struct WalkMapRenderer {
     generation: u64,
     open: bool,
     fixtures: fixtures::Store,
+    ready: Option<Arc<ReadyImages>>,
+    catalogue: Option<Arc<Catalogue>>,
+    observed: Vec<ObservedService>,
     slots: Vec<TerrainSlot>,
     overlay_gpu: Option<OverlayGpu>,
     overlay_cpu: Option<Vec<u8>>,
@@ -189,6 +194,9 @@ impl WalkMapRenderer {
             generation: 1,
             open: false,
             fixtures: fixtures::Store::empty(),
+            ready: None,
+            catalogue: None,
+            observed: Vec::new(),
             slots: Vec::new(),
             overlay_gpu: None,
             overlay_cpu: None,
@@ -226,11 +234,44 @@ impl WalkMapRenderer {
     }
 
     pub fn max_lod(&self) -> u8 {
-        self.fixtures.max_lod.max(MAX_LOD)
+        self.ready
+            .as_ref()
+            .map(|ready| ready.manifest().max_lod)
+            .unwrap_or(self.fixtures.max_lod)
     }
 
     pub fn identity(&self) -> ImageIdentity {
-        self.fixtures.identity
+        self.ready
+            .as_ref()
+            .map(|ready| ready.manifest().identity)
+            .unwrap_or(self.fixtures.identity)
+    }
+
+    pub fn has_terrain(&self) -> bool {
+        self.ready.is_some() || !self.fixtures.is_empty()
+    }
+
+    pub fn bind_ready_images(&mut self, images: Arc<ReadyImages>) {
+        let identity = images.manifest().identity;
+        let changed = self
+            .ready
+            .as_ref()
+            .is_none_or(|ready| ready.manifest().identity != identity);
+        self.ready = Some(images);
+        if changed {
+            self.slots.clear();
+            self.pending_upload = None;
+            self.in_flight = None;
+            self.in_flight_bytes = 0;
+        }
+    }
+
+    pub fn bind_catalogue(&mut self, catalogue: Option<Arc<Catalogue>>) {
+        self.catalogue = catalogue;
+    }
+
+    pub fn set_observed(&mut self, observed: Vec<ObservedService>) {
+        self.observed = observed;
     }
 
     pub fn nav_identity(&self) -> Digest {
@@ -277,6 +318,9 @@ impl WalkMapRenderer {
     /// Unregister textures and drop CPU pixels. Safe to call every closed frame.
     pub fn release(&mut self, gpu: Option<&mut dyn FrameGpu>) {
         self.open = false;
+        self.ready = None;
+        self.catalogue = None;
+        self.observed.clear();
         self.invalidate_buffers(gpu);
         self.phase = MapPhase::Pending;
         self.status.clear();
@@ -325,14 +369,34 @@ impl WalkMapRenderer {
             terrain_cpu_bytes: self.pending_upload.as_ref().map(|p| p.3.len()).unwrap_or(0),
             overlay_cpu_bytes: self.overlay_cpu.as_ref().map(Vec::len).unwrap_or(0),
             overlay_gpu_bytes,
-            decode_staging_bytes: (self.compressed.len()
+            decode_staging_bytes: self.compressed.len()
                 + self.in_flight_bytes
-                + self.pending_upload.as_ref().map(|p| p.3.len()).unwrap_or(0))
-            .min(DECODE_STAGING_CAP),
+                + self.pending_upload.as_ref().map(|p| p.3.len()).unwrap_or(0),
             in_flight: usize::from(self.in_flight.is_some()),
             pending_upload: usize::from(self.pending_upload.is_some()),
             vtx: self.last_vtx,
             idx: self.last_idx,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn force_staging_bytes(&mut self, compressed: usize, in_flight: usize, pending: usize) {
+        self.compressed.resize(compressed, 0);
+        self.in_flight_bytes = in_flight;
+        if pending == 0 {
+            self.pending_upload = None;
+        } else {
+            self.pending_upload = Some((
+                self.generation,
+                self.identity(),
+                TileKey {
+                    plane: 0,
+                    lod: 0,
+                    x: 0,
+                    z: 0,
+                },
+                vec![0; pending],
+            ));
         }
     }
 
@@ -410,7 +474,7 @@ impl WalkMapRenderer {
         )
         .filled(true)
         .build();
-        if self.show_basemap {
+        if self.show_basemap && self.has_terrain() {
             for slot in &self.slots {
                 let Some(gpu_tex) = slot.gpu.as_ref() else {
                     continue;
@@ -430,7 +494,7 @@ impl WalkMapRenderer {
                 );
             }
         }
-        if self.fixtures.is_empty() || !self.show_basemap {
+        if !self.has_terrain() || !self.show_basemap {
             draw_mapsquare_grid(&draw, origin, size, view);
         }
         if let Some(over) = &self.overlay_gpu {
@@ -461,7 +525,7 @@ impl WalkMapRenderer {
             }
         }
         let mut parts = Vec::new();
-        if self.fixtures.is_empty() {
+        if !self.has_terrain() {
             self.phase = MapPhase::Ready;
             parts.push(CACHE_UNBOUND.to_string());
         } else if !self.show_basemap {
@@ -540,32 +604,63 @@ impl WalkMapRenderer {
         };
         let mut labels = 0usize;
         let mut symbols = 0usize;
-        for poi in &self.fixtures.pois {
-            if poi.effective_plane != view.plane {
-                continue;
-            }
-            if poi.display.x < view.west
-                || poi.display.x > view.east
-                || poi.display.z < view.south
-                || poi.display.z > view.north
-            {
-                continue;
+        let mut mark = |x: f64, z: f64, kind: PoiKind, name: &str| -> bool {
+            if x < view.west || x > view.east || z < view.south || z > view.north {
+                return true;
             }
             if symbols >= MAX_SYMBOLS {
-                break;
+                return false;
             }
             symbols += 1;
-            let p = canvas_point(view, origin, size, poi.display.x, poi.display.z);
-            let color = match poi.kind {
-                nav::map::poi::PoiKind::Bank => [0.2, 0.7, 1.0, 1.0],
+            let p = canvas_point(view, origin, size, x, z);
+            let color = match kind {
+                PoiKind::Bank => [0.2, 0.7, 1.0, 1.0],
                 _ => ACCENT,
             };
             draw.add_rect([p[0] - 3.0, p[1] - 3.0], [p[0] + 3.0, p[1] + 3.0], color)
                 .filled(true)
                 .build();
-            if labels < MAX_LABELS && logical_ppt >= 4.0 {
-                draw.add_text([p[0] + 5.0, p[1] - 6.0], TEXT, poi.name.as_str());
+            if labels < MAX_LABELS && logical_ppt >= 4.0 && !name.is_empty() {
+                draw.add_text([p[0] + 5.0, p[1] - 6.0], TEXT, name);
                 labels += 1;
+            }
+            true
+        };
+        if let Some(catalogue) = &self.catalogue {
+            for entry in catalogue.entries() {
+                let tile = entry.anchor();
+                if tile.level != i32::from(view.plane) {
+                    continue;
+                }
+                if !mark(
+                    f64::from(tile.x) + 0.5,
+                    f64::from(tile.z) + 0.5,
+                    entry.kind(),
+                    entry.name(),
+                ) {
+                    break;
+                }
+            }
+        }
+        for service in &self.observed {
+            if service.tile.level != i32::from(view.plane) {
+                continue;
+            }
+            if !mark(
+                f64::from(service.tile.x) + 0.5,
+                f64::from(service.tile.z) + 0.5,
+                service.kind,
+                "",
+            ) {
+                break;
+            }
+        }
+        for poi in &self.fixtures.pois {
+            if poi.effective_plane != view.plane {
+                continue;
+            }
+            if !mark(poi.display.x, poi.display.z, poi.kind, poi.name.as_str()) {
+                break;
             }
         }
         if let Some(here) = here {
@@ -608,7 +703,7 @@ impl WalkMapRenderer {
             return;
         };
         self.last_vis = Some(vis);
-        if !self.show_basemap || self.fixtures.is_empty() {
+        if !self.show_basemap || !self.has_terrain() {
             return;
         }
         retain_visible(&mut self.slots, vis, &mut self.tex_pool, gpu);
@@ -632,16 +727,23 @@ impl WalkMapRenderer {
             if self.slots.iter().any(|s| s.key == key) {
                 continue;
             }
-            let Some(png) = self.fixtures.get(key) else {
-                continue;
-            };
-            if png.len() + TILE_RGBA_BYTES > DECODE_STAGING_CAP {
+            self.compressed.clear();
+            if take_png(
+                self.ready.as_deref(),
+                &self.fixtures,
+                key,
+                &mut self.compressed,
+            )
+            .is_none()
+            {
                 continue;
             }
-            self.compressed.clear();
-            self.compressed.extend_from_slice(png);
+            if self.compressed.len() + TILE_RGBA_BYTES > DECODE_STAGING_CAP {
+                self.compressed.clear();
+                continue;
+            }
             let gen = self.generation;
-            let identity = self.fixtures.identity;
+            let identity = self.identity();
             if self.sync_decode {
                 match decode_checked(&self.compressed) {
                     Ok(rgba) => {
@@ -688,7 +790,7 @@ impl WalkMapRenderer {
                 if done.generation != self.generation || !self.open {
                     return;
                 }
-                if done.identity != self.fixtures.identity {
+                if done.identity != self.identity() {
                     return;
                 }
                 match done.result {
@@ -712,7 +814,7 @@ impl WalkMapRenderer {
             let Some((gen, identity, key, rgba)) = self.pending_upload.take() else {
                 break;
             };
-            if gen != self.generation || !self.open || identity != self.fixtures.identity {
+            if gen != self.generation || !self.open || identity != self.identity() {
                 continue;
             }
             if self.slots.iter().any(|s| s.key == key) {
@@ -892,6 +994,24 @@ impl Drop for WalkMapRenderer {
     }
 }
 
+fn take_png(
+    ready: Option<&ReadyImages>,
+    fixtures: &fixtures::Store,
+    key: TileKey,
+    buffer: &mut Vec<u8>,
+) -> Option<()> {
+    if let Some(ready) = ready {
+        return match ready.read_tile_into(key, buffer) {
+            Ok(Some(_)) => Some(()),
+            _ => None,
+        };
+    }
+    let png = fixtures.get(key)?;
+    buffer.clear();
+    buffer.extend_from_slice(png);
+    Some(())
+}
+
 fn vis_contains(vis: VisibleTiles, key: TileKey) -> bool {
     key.plane == vis.plane
         && key.lod == vis.lod
@@ -923,9 +1043,7 @@ fn retain_visible(
 }
 
 fn select_visible(view: View) -> Option<VisibleTiles> {
-    let mut v = view;
-    v.max_lod = MAX_LOD;
-    select_lod(v, TEXTURE_CAP).ok()
+    select_lod(view, TEXTURE_CAP).ok()
 }
 
 /// Cheap flood identity: size plus one sample tile. Not a whole-set hash.

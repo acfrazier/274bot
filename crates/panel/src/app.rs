@@ -4816,7 +4816,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     state.walk_map.sync_identity(nav, geom, Some(gpu));
     if !state.session.walkto_open {
         picker::note_closed();
-        state.session.map_model.close();
+        state.session.release_walk_map();
         if state.walk_map.is_open() {
             state.walk_map.release(Some(gpu));
         }

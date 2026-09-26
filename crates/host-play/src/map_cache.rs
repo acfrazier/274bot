@@ -944,6 +944,13 @@ impl BakeWriter {
         }
     }
 
+    /// Partial directory this writer publishes into. Producers may write
+    /// intermediate child tiles here for downsample; `publish_unit` remains
+    /// the publication path.
+    pub fn directory(&self) -> &Path {
+        &self.partial
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.cancel.load(AtomicOrdering::Acquire)
     }
@@ -1084,11 +1091,28 @@ impl BakeWriter {
     }
 
     fn report(&self, stage: MapStage, message: String) {
+        self.report_progress(
+            stage,
+            self.checkpoint.completed.as_slice().len() as u32,
+            self.checkpoint.planned_units,
+            message,
+        );
+    }
+
+    /// Producer-facing stage update. `completed`/`total` are the raster
+    /// units, which may lead the published checkpoint during a neighborhood bake.
+    pub fn report_progress(
+        &self,
+        stage: MapStage,
+        completed: u32,
+        total: u32,
+        message: impl Into<String>,
+    ) {
         (self.progress)(MapProgress {
             stage,
-            completed: self.checkpoint.completed.as_slice().len() as u32,
-            total: self.checkpoint.planned_units,
-            message,
+            completed,
+            total,
+            message: message.into(),
         });
     }
 
@@ -1974,7 +1998,11 @@ impl MapDemandHandle {
         self.generation
     }
     pub fn status(&self) -> MapJobStatus {
-        self.status.lock().clone()
+        let status = self.status.lock().clone();
+        if is_terminal(&status) {
+            self.manager.reap();
+        }
+        status
     }
     pub fn cancel(&self) {
         if let Some(lease) = &self.lease {
@@ -2395,6 +2423,191 @@ mod tests {
         }
         let _ = fs::remove_dir_all(root.path());
     }
+
+    struct ResumeAdoptProducer {
+        rasterized: Arc<AtomicUsize>,
+        interrupt_once: AtomicBool,
+    }
+
+    impl ResumeAdoptProducer {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                rasterized: Arc::new(AtomicUsize::new(0)),
+                interrupt_once: AtomicBool::new(true),
+            })
+        }
+
+        fn keys() -> [nav::map::spatial::TileKey; 3] {
+            [
+                nav::map::spatial::TileKey {
+                    plane: 0,
+                    lod: 0,
+                    x: 50,
+                    z: 50,
+                },
+                nav::map::spatial::TileKey {
+                    plane: 0,
+                    lod: 0,
+                    x: 51,
+                    z: 50,
+                },
+                nav::map::spatial::TileKey {
+                    plane: 0,
+                    lod: 1,
+                    x: 25,
+                    z: 25,
+                },
+            ]
+        }
+    }
+
+    impl MapBakeProducer for ResumeAdoptProducer {
+        fn plan(&self, request: &BakeRequest) -> Result<BakePlan, MapCacheError> {
+            Ok(match request.artifact() {
+                ArtifactKind::Catalogue => BakePlan {
+                    planned_units: 1,
+                    stage: BakeStage::Catalogue,
+                },
+                ArtifactKind::Images => BakePlan {
+                    planned_units: 3,
+                    stage: BakeStage::BaseTerrain,
+                },
+            })
+        }
+
+        fn run(
+            &self,
+            request: &BakeRequest,
+            writer: &mut BakeWriter,
+        ) -> Result<BakeOutput, MapCacheError> {
+            match request.artifact() {
+                ArtifactKind::Catalogue => FixtureProducer::new(false).run(request, writer),
+                ArtifactKind::Images => {
+                    let keys = Self::keys();
+                    crate::map_producer::publish_existing_image_units(writer, &keys)?;
+                    for (index, key) in keys.into_iter().enumerate() {
+                        if writer.should_skip(UnitKey::Terrain { tile: key }) {
+                            continue;
+                        }
+                        self.rasterized.fetch_add(1, AtomicOrdering::Relaxed);
+                        writer.publish_unit(
+                            UnitKey::Terrain { tile: key },
+                            &FixtureProducer::fixture_png(index as u8 + 1),
+                        )?;
+                        if self.interrupt_once.swap(false, AtomicOrdering::AcqRel) {
+                            return crate::map_producer::finish_image_bake(
+                                writer,
+                                nav::map::raster::ImageBakeOutcome::Paused(
+                                    nav::map::raster::RasterMetrics {
+                                        plan: nav::map::raster::PlanStats::default(),
+                                        lods: Vec::new(),
+                                        total_compressed_bytes: 0,
+                                        peak_tracked_bytes: 0,
+                                        elapsed: Duration::ZERO,
+                                    },
+                                ),
+                            );
+                        }
+                    }
+                    let identity = request.descriptor().image_identity();
+                    let pngs = keys.map(|key| {
+                        let path = writer
+                            .directory()
+                            .join(unit_relative_path(UnitKey::Terrain { tile: key }).unwrap());
+                        let bytes = fs::read(path).unwrap();
+                        TileReceipt {
+                            key,
+                            payload: PayloadReceipt {
+                                bytes: bytes.len() as u32,
+                                sha256: Digest::of(&bytes),
+                            },
+                        }
+                    });
+                    Ok(BakeOutput::Images(ImageManifest {
+                        schema: IMAGE_SCHEMA,
+                        identity,
+                        key: identity.key()?,
+                        extent: WorldBounds {
+                            west: 3200,
+                            south: 3200,
+                            east: 3328,
+                            north: 3328,
+                        },
+                        planes: nav::map::Rows::new(vec![PlaneBounds {
+                            plane: 0,
+                            bounds: WorldBounds {
+                                west: 3200,
+                                south: 3200,
+                                east: 3328,
+                                north: 3328,
+                            },
+                        }])?,
+                        max_lod: 1,
+                        interior: TILE_INTERIOR,
+                        gutter: TILE_GUTTER,
+                        color: ColorFormat::Rgba8Unorm,
+                        tiles: nav::map::Rows::new(pngs.to_vec())?,
+                    }))
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn image_bake_interrupt_resumes_only_remaining_units() {
+        let root = temp_root("unit-interrupt-resume");
+        let descriptor = descriptor(&root);
+        let keys = ResumeAdoptProducer::keys();
+        let request = BakeRequest {
+            artifact: ArtifactKind::Images,
+            descriptor: descriptor.clone(),
+        };
+        let progress: Arc<dyn Fn(MapProgress) + Send + Sync> = Arc::new(|_| {});
+        let writer = BakeWriter::open(
+            root.clone(),
+            &request,
+            BakePlan {
+                planned_units: 3,
+                stage: BakeStage::BaseTerrain,
+            },
+            Arc::new(AtomicBool::new(false)),
+            progress,
+            BTreeSet::new(),
+        )
+        .unwrap();
+        // Parent 23fe73df9 left rastered files uncheckpointed on close.
+        let first = keys[0];
+        let path = writer.directory().join(first.relative_path().unwrap());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, FixtureProducer::fixture_png(1)).unwrap();
+        drop(writer);
+
+        let producer = ResumeAdoptProducer::new();
+        let manager = MapDemandManager::new(root.clone(), producer.clone());
+        let first = manager
+            .request(descriptor.clone(), MapDemand::Images)
+            .unwrap();
+        let start = Instant::now();
+        while !matches!(first.status(), MapJobStatus::Paused) {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "status: {:?}",
+                first.status()
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        // Adopted the on-disk unit; rasterized only the next one before pause.
+        assert_eq!(producer.rasterized.load(AtomicOrdering::Relaxed), 1);
+        let resumed = manager.request(descriptor, MapDemand::Images).unwrap();
+        wait_ready(&resumed);
+        assert_eq!(
+            producer.rasterized.load(AtomicOrdering::Relaxed),
+            2,
+            "resume must bake only the remaining unit"
+        );
+        let _ = fs::remove_dir_all(root.path());
+    }
+
     #[test]
     fn joining_image_requests_share_one_bake() {
         let root = temp_root("join");

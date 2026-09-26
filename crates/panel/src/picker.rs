@@ -12,6 +12,8 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -21,8 +23,8 @@ use host_play::walk_map::{
     select_route_source, ActionError, MapModel, RouteProjection, RouteSource, Selection,
 };
 use nav::map::spatial::GameTile;
-use nav::paint::{bake_reach, flood_components, remaining_path_tiles};
-use nav::router::Route;
+use nav::paint::{bake_reach, flood_components};
+use nav::router::{Leg, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
 
@@ -593,15 +595,15 @@ fn bind_map_model(session: &mut Session, world: &NavWorld) {
     session.map_model.bind(context);
 }
 
-fn pending_highlight(session: &Session) -> Option<Tile> {
+pub(crate) fn pending_highlight(session: &Session) -> Option<Tile> {
     session
         .map_model
         .pending()
         .map(|sel| sel.target.unwrap_or(sel.requested))
 }
 
-fn pending_walk_target(session: &Session) -> Option<Tile> {
-    session.map_model.pending().and_then(|sel| sel.target)
+pub(crate) fn dest_marker_tile(session: &Session) -> Option<Tile> {
+    session.walk_dest
 }
 
 fn poi_anchor(poi: &nav::map::poi::PoiRecord) -> Tile {
@@ -707,6 +709,42 @@ pub(crate) fn walkto_selection_caption(
             },
         },
     }
+}
+
+pub(crate) fn ellipsize_to_width(ui: &Ui, text: &str, max_w: f32) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    let font = ui.current_font();
+    let size = ui.current_font_size();
+    if font.calc_text_size(size, f32::MAX, 0.0, text)[0] <= max_w {
+        return text.to_string();
+    }
+    const ELLIPSIS: &str = "…";
+    let ellipsis_w = font.calc_text_size(size, f32::MAX, 0.0, ELLIPSIS)[0];
+    if ellipsis_w >= max_w {
+        return String::new();
+    }
+    let mut lo = 0usize;
+    let mut hi = text.len();
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let Some(prefix) = text.get(..mid).filter(|p| p.is_char_boundary(p.len())) else {
+            hi = mid.saturating_sub(1);
+            continue;
+        };
+        let width = font.calc_text_size(size, f32::MAX, 0.0, prefix)[0];
+        if width + ellipsis_w <= max_w {
+            lo = mid;
+        } else {
+            hi = mid.saturating_sub(1);
+        }
+    }
+    let mut end = lo.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{ELLIPSIS}", &text[..end])
 }
 
 pub(crate) fn format_walkto_status(caption: WalktoCaption, status: &str) -> String {
@@ -929,12 +967,22 @@ struct FloodCache {
 
 static FLOOD_CACHE: Mutex<Option<FloodCache>> = Mutex::new(None);
 
+fn release_flood_cache() {
+    *FLOOD_CACHE.lock().unwrap() = None;
+}
+
+fn release_flood_leases() {
+    let _nav = lock_nav_statics();
+    release_flood_cache();
+    *FLOOD_REPORT.lock().unwrap() = None;
+}
+
 /// Drop this consumer's flood cache. Reach stays the bound `.navreach` sidecar
 /// until pack detach clears `REACH_BINDING`.
 pub fn release_map_leases() {
     let _nav = lock_nav_statics();
-    *FLOOD_CACHE.lock().unwrap() = None;
-    *FLOOD_REPORT.lock().unwrap() = None;
+    release_flood_leases();
+    *ROUTE_TILES.lock().unwrap() = None;
 }
 
 /// The step-ok reachable sets for `seeds`, computed once per seed pair and
@@ -944,7 +992,7 @@ pub fn release_map_leases() {
 fn flood_sets_for(world: &Arc<NavWorld>, seeds: &[WorldTile]) -> Vec<Arc<HashSet<WorldTile>>> {
     let _nav = lock_nav_statics();
     if seeds.is_empty() {
-        release_map_leases();
+        release_flood_leases();
         return Vec::new();
     }
     let c = &world.collision;
@@ -981,7 +1029,7 @@ fn flood_sets_for_ref(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<
         return flood_sets_for(&arc, seeds);
     }
     if seeds.is_empty() {
-        release_map_leases();
+        release_flood_leases();
         return Vec::new();
     }
     flood_components(&world.collision, seeds)
@@ -1050,17 +1098,150 @@ fn report_flood_sizes(world: &NavWorld, player: WorldTile, dest: WorldTile, arm_
     }
 }
 
+type RouteTiles = Vec<(WorldTile, bool)>;
+
+struct LegSpan {
+    transport: bool,
+    start: usize,
+    end: usize,
+}
+
+struct RouteTileCache {
+    source: RouteSource,
+    generation: u64,
+    tiles: RouteTiles,
+    legs: Vec<LegSpan>,
+    start: usize,
+}
+
+static ROUTE_TILES: Mutex<Option<RouteTileCache>> = Mutex::new(None);
+#[cfg(test)]
+static ROUTE_FLATTEN_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+fn push_flat(tiles: &mut RouteTiles, tile: WorldTile, transport: bool) {
+    if let Some(last) = tiles.last_mut() {
+        if last.0 == tile {
+            last.1 |= transport;
+            return;
+        }
+    }
+    tiles.push((tile, transport));
+}
+
+fn flatten_route(route: &Route) -> (RouteTiles, Vec<LegSpan>) {
+    #[cfg(test)]
+    ROUTE_FLATTEN_COUNT.fetch_add(1, Ordering::Relaxed);
+    let mut tiles = Vec::new();
+    let mut legs = Vec::new();
+    for leg in &route.legs {
+        match leg {
+            Leg::Walk { tiles: walk } => {
+                if walk.is_empty() {
+                    continue;
+                }
+                let start_len = tiles.len();
+                for tile in walk {
+                    push_flat(&mut tiles, *tile, false);
+                }
+                let start = if tiles.len() > start_len {
+                    start_len
+                } else {
+                    start_len.saturating_sub(1)
+                };
+                if !tiles.is_empty() {
+                    legs.push(LegSpan {
+                        transport: false,
+                        start,
+                        end: tiles.len() - 1,
+                    });
+                }
+            }
+            Leg::Transport { edge } => {
+                push_flat(&mut tiles, edge.at, true);
+                let at_idx = tiles.len() - 1;
+                push_flat(&mut tiles, edge.to, true);
+                legs.push(LegSpan {
+                    transport: true,
+                    start: at_idx,
+                    end: tiles.len() - 1,
+                });
+            }
+        }
+    }
+    (tiles, legs)
+}
+
+fn remaining_start(
+    tiles: &[(WorldTile, bool)],
+    legs: &[LegSpan],
+    here: Option<WorldTile>,
+    floor: usize,
+) -> usize {
+    let Some(here) = here else {
+        return floor;
+    };
+    if tiles.is_empty() {
+        return 0;
+    }
+    let mut index = 0;
+    while index < legs.len() {
+        let span = &legs[index];
+        if tiles.get(span.end).is_some_and(|tile| tile.0 == here) {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+    let computed = match legs.get(index) {
+        Some(span) if !span.transport => tiles[span.start..=span.end]
+            .iter()
+            .position(|tile| tile.0 == here)
+            .map(|pos| span.start + pos)
+            .unwrap_or(span.start),
+        Some(span) => span.start,
+        None => tiles.len(),
+    };
+    computed.max(floor)
+}
+
+fn update_route_cache(computed: Option<(RouteSource, u64, &Route)>, here: Option<WorldTile>) {
+    let mut cache = ROUTE_TILES.lock().unwrap();
+    let Some((source, generation, route)) = computed else {
+        *cache = None;
+        return;
+    };
+    if cache
+        .as_ref()
+        .is_some_and(|row| row.source == source && row.generation == generation)
+    {
+        let start = remaining_start(
+            &cache.as_ref().unwrap().tiles,
+            &cache.as_ref().unwrap().legs,
+            here,
+            cache.as_ref().unwrap().start,
+        );
+        cache.as_mut().unwrap().start = start;
+        return;
+    }
+    let (tiles, legs) = flatten_route(route);
+    let start = remaining_start(&tiles, &legs, here, 0);
+    *cache = Some(RouteTileCache {
+        source,
+        generation,
+        tiles,
+        legs,
+        start,
+    });
+}
+
 /// Remaining path tiles for the focused slot, borrowed through
 /// [`host_play::Play::with_map_route`]: driven live, then script, then manual WalkTo.
-fn focused_remaining_path(session: &Session, here: Option<WorldTile>) -> Vec<(WorldTile, bool)> {
-    let tiles = |route: &Route| {
-        remaining_path_tiles(route, here)
-            .into_iter()
-            .map(|p| (p.tile, p.transport))
-            .collect()
-    };
+/// Cached by `(source, route generation)`; `here` advances a monotonic start
+/// index using [`remaining_path_tiles`] leg semantics without flattening again.
+fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
     let Some(name) = session.focused_name() else {
-        return Vec::new();
+        update_route_cache(None, here);
+        return;
     };
     let travellers = session.travellers.lock().unwrap();
     let manual_arc = travellers.get(&name).cloned();
@@ -1073,23 +1254,72 @@ fn focused_remaining_path(session: &Session, here: Option<WorldTile>) -> Vec<(Wo
     let live = live_route.map(|route| RouteProjection::live(route, session.route_gen(), None));
     if let Some(play) = session.play.as_ref() {
         play.with_map_route(&name, manual.as_deref(), live, |proj| {
-            proj.map(|p| tiles(p.route)).unwrap_or_default()
-        })
-    } else {
-        match select_route_source(
-            live.is_some(),
-            false,
-            manual.as_ref().is_some_and(|arm| arm.route.is_some()),
-        ) {
-            Some(RouteSource::Live) => live.map(|p| tiles(p.route)).unwrap_or_default(),
-            Some(RouteSource::Manual) => manual
-                .as_ref()
-                .and_then(|arm| arm.route.as_ref())
-                .map(tiles)
-                .unwrap_or_default(),
-            Some(RouteSource::Script) | None => Vec::new(),
+            update_route_cache(
+                proj.map(|p| (p.stamp.source, p.stamp.generation, p.route)),
+                here,
+            );
+        });
+        return;
+    }
+    match select_route_source(
+        live.is_some(),
+        false,
+        manual.as_ref().is_some_and(|arm| arm.route.is_some()),
+    ) {
+        Some(RouteSource::Live) => update_route_cache(
+            live.map(|p| (p.stamp.source, p.stamp.generation, p.route)),
+            here,
+        ),
+        Some(RouteSource::Manual) => {
+            let route = manual.as_ref().and_then(|arm| {
+                arm.route
+                    .as_ref()
+                    .map(|route| (RouteSource::Manual, arm.route_generation, route))
+            });
+            update_route_cache(route, here);
+        }
+        Some(RouteSource::Script) | None => update_route_cache(None, here),
+    }
+}
+
+struct RoutePathGuard(std::sync::MutexGuard<'static, Option<RouteTileCache>>);
+
+impl RoutePathGuard {
+    fn as_slice(&self) -> &[(WorldTile, bool)] {
+        match &*self.0 {
+            Some(cache) => {
+                let start = cache.start.min(cache.tiles.len());
+                &cache.tiles[start..]
+            }
+            None => &[],
         }
     }
+}
+
+fn lock_route_path() -> RoutePathGuard {
+    RoutePathGuard(ROUTE_TILES.lock().unwrap())
+}
+
+#[cfg(test)]
+pub(crate) fn reset_route_cache() {
+    *ROUTE_TILES.lock().unwrap() = None;
+    ROUTE_FLATTEN_COUNT.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn route_flatten_count() -> usize {
+    ROUTE_FLATTEN_COUNT.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn cached_remaining_path(
+    route: &Route,
+    source: RouteSource,
+    generation: u64,
+    here: Option<WorldTile>,
+) -> Vec<(WorldTile, bool)> {
+    update_route_cache(Some((source, generation, route)), here);
+    lock_route_path().as_slice().to_vec()
 }
 
 /// Call when the Game pane is not showing WalkTo so the next open resets
@@ -1194,6 +1424,12 @@ fn picker_map_body(
     world: &NavWorld,
 ) {
     map.note_open();
+    session.sync_walk_map(pack());
+    if let Some(images) = session.map_images.clone() {
+        map.bind_ready_images(images);
+    }
+    map.bind_catalogue(session.map_catalogue.clone());
+    map.set_observed(session.observed_map_services.clone());
     bind_map_model(session, world);
     // Reset the view when the picker opens fresh.
     if !PREV_OPEN.swap(true, Ordering::Relaxed) {
@@ -1224,16 +1460,20 @@ fn picker_map_body(
     let mut overlay_zoom_in = false;
     let canvas_inner = draw_canvas(ui, gpu, session, map, world, canvas_h, &mut overlay_zoom_in);
     let canvas_item_max = ui.item_rect_max();
-    let status = if overlay_zoom_in {
-        "zoom in for tile layers"
+    let mut status = if overlay_zoom_in {
+        String::from("zoom in for tile layers")
     } else {
-        map.status_line()
+        map.status_line().to_string()
+    };
+    if let Some(prefix) = session.map_bind_status() {
+        status = format!("{prefix} · {status}");
+    }
+    if let Some(catalogue) = &session.map_catalogue {
+        for message in catalogue.coverage_messages() {
+            status = format!("{status} · {message}");
+        }
     };
     let teleport = session.map_teleport_authorized();
-    ui.text_disabled(format_walkto_status(
-        walkto_selection_caption(session.map_model.pending(), teleport),
-        status,
-    ));
     let spacing = ui.clone_style().item_spacing()[0];
     let walk_label = session.walk_send.walk_label();
     let labels = walkto_footer_labels(teleport);
@@ -1242,6 +1482,12 @@ fn picker_map_body(
         .map(|label| button_w(ui, if *label == "Walk" { walk_label } else { label }))
         .sum::<f32>()
         + spacing * (labels.len().saturating_sub(1) as f32);
+    let status_text = format_walkto_status(
+        walkto_selection_caption(session.map_model.pending(), teleport),
+        &status,
+    );
+    let status_max = (ui.content_region_avail()[0] - cluster - spacing).max(0.0);
+    ui.text_disabled(ellipsize_to_width(ui, &status_text, status_max));
     let x = right_align_x(ui.cursor_pos()[0], ui.content_region_avail()[0], cluster);
     ui.same_line_with_pos(x);
     if ui.button("recentre") {
@@ -1492,13 +1738,14 @@ fn draw_canvas(
                 z: t.z,
                 level: t.level,
             });
-            let dest_tile = pending_walk_target(session).or(session.walk_dest);
+            let dest_tile = dest_marker_tile(session);
             let dest = dest_tile.map(|t| WorldTile {
                 x: t.x,
                 z: t.z,
                 level: t.level,
             });
-            let path = focused_remaining_path(session, here);
+            bind_focused_route_cache(session, here);
+            let path = lock_route_path();
             let seeds: Vec<WorldTile> = if layers.flood {
                 [here, dest].into_iter().flatten().collect()
             } else {
@@ -1526,7 +1773,7 @@ fn draw_canvas(
                 world,
                 layers,
                 colors,
-                &path,
+                path.as_slice(),
                 &floods,
                 reach_bits.as_deref(),
                 pending_highlight(session),

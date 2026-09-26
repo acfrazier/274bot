@@ -807,3 +807,163 @@ fn last_layer_off_unregisters_overlay_gpu() {
         "turning the last layer off must unregister the overlay texture"
     );
 }
+
+fn lod0(x: i32, z: i32) -> TileKey {
+    TileKey {
+        plane: 0,
+        lod: 0,
+        x,
+        z,
+    }
+}
+
+fn tile_view(x: i32, z: i32, scale: f32, size: f32, max_lod: u8) -> View {
+    view_from_canvas(
+        (x * 64 + 32, z * 64 + 32),
+        (0.0, 0.0),
+        scale,
+        [size, size],
+        0,
+        max_lod,
+        1.0,
+    )
+}
+
+#[test]
+fn decode_keeps_one_in_flight() {
+    let world = open_world(3, 3);
+    let keys: Vec<_> = (0..4)
+        .flat_map(|x| (0..4).map(move |z| lod0(x, z)))
+        .collect();
+    let mut map = WalkMapRenderer::with_sync(false);
+    map.bind_fixtures(FixtureStore::with_keys(keys).expect("fixtures"));
+    map.note_open();
+    let view = tile_view(1, 1, 16.0, 256.0, 0);
+    map.test_sync(
+        None,
+        view,
+        &world,
+        layers_none(),
+        OverlayColors::default(),
+        &[],
+        &[],
+        None,
+    );
+    let counters = map.counters();
+    assert!(
+        counters.in_flight + counters.pending_upload <= 1,
+        "only one decode may be in flight: {counters:?}"
+    );
+    assert!(
+        counters.in_flight == 1 || counters.pending_upload == 1 || !map.slot_keys().is_empty(),
+        "first visible tile must start a decode: {counters:?}"
+    );
+}
+
+#[test]
+fn terrain_slots_reuse_when_panning() {
+    let world = open_world(3, 3);
+    let keys = [
+        lod0(0, 0),
+        lod0(1, 0),
+        lod0(0, 1),
+        lod0(1, 1),
+        lod0(20, 20),
+        lod0(21, 20),
+        lod0(20, 21),
+        lod0(21, 21),
+    ];
+    let mut map = WalkMapRenderer::new();
+    map.bind_fixtures(FixtureStore::with_keys(keys).expect("fixtures"));
+    map.note_open();
+    let near = tile_view(0, 0, 16.0, 200.0, 0);
+    let far = tile_view(20, 20, 16.0, 200.0, 0);
+    for _ in 0..8 {
+        map.test_sync(
+            None,
+            near,
+            &world,
+            layers_none(),
+            OverlayColors::default(),
+            &[],
+            &[],
+            None,
+        );
+    }
+    let first = map.slot_keys();
+    assert!(!first.is_empty(), "near cluster must decode");
+    for _ in 0..8 {
+        map.test_sync(
+            None,
+            far,
+            &world,
+            layers_none(),
+            OverlayColors::default(),
+            &[],
+            &[],
+            None,
+        );
+    }
+    let second = map.slot_keys();
+    assert!(!second.is_empty(), "far cluster must decode");
+    assert!(
+        second.iter().all(|key| key.x >= 20 && key.z >= 20),
+        "panning must reuse slots instead of keeping the old cluster: {second:?}"
+    );
+}
+
+#[test]
+fn terrain_slots_cap_under_panning() {
+    let world = open_world(3, 3);
+    let keys: Vec<_> = (0..8)
+        .flat_map(|x| (0..8).map(move |z| lod0(x, z)))
+        .collect();
+    let mut map = WalkMapRenderer::new();
+    map.bind_fixtures(FixtureStore::with_keys(keys).expect("fixtures"));
+    map.note_open();
+    for (x, z) in [(2, 2), (5, 2), (5, 5), (2, 5), (3, 3)] {
+        let view = tile_view(x, z, 4.0, 1600.0, 0);
+        for _ in 0..12 {
+            map.test_sync(
+                None,
+                view,
+                &world,
+                layers_none(),
+                OverlayColors::default(),
+                &[],
+                &[],
+                None,
+            );
+        }
+        assert!(
+            map.slot_keys().len() <= TEXTURE_CAP,
+            "panning must keep at most {TEXTURE_CAP} slots, got {}",
+            map.slot_keys().len()
+        );
+        // Real byte count is asserted in decode_staging_bytes_is_unclamped_sum.
+    }
+}
+
+#[test]
+fn decode_staging_bytes_is_unclamped_sum() {
+    let mut map = WalkMapRenderer::new();
+    map.force_staging_bytes(600_000, 600_000, 600_000);
+    assert_eq!(
+        map.counters().decode_staging_bytes,
+        1_800_000,
+        "decode_staging_bytes must not clamp to DECODE_STAGING_CAP"
+    );
+}
+
+#[test]
+fn max_lod_follows_fixture_keys_not_global_max() {
+    let mut map = WalkMapRenderer::new();
+    map.bind_fixtures(FixtureStore::with_keys([lod0(0, 0)]).expect("fixtures"));
+    assert_eq!(
+        map.max_lod(),
+        0,
+        "lod-0 fixtures must not force spatial::MAX_LOD"
+    );
+    let view = tile_view(0, 0, 0.25, 200.0, map.max_lod());
+    assert_eq!(view.max_lod, 0);
+}

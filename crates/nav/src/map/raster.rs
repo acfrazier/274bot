@@ -452,6 +452,239 @@ pub fn bake_images_to_partial(
     }))
 }
 
+pub fn bake_images_into(
+    input: ClientMapInput<'_>,
+    tile_dir: &Path,
+    mut skip: impl FnMut(TileKey) -> bool,
+    mut keep_running: impl FnMut(RasterProgress) -> bool,
+) -> Result<ImageBakeOutcome, MapError> {
+    let started = Instant::now();
+    let identity = image_identity(input)?;
+    if !keep_running(RasterProgress {
+        stage: RasterStage::ReadingCache,
+        completed_tiles: 0,
+        total_tiles: 0,
+    }) {
+        return Ok(ImageBakeOutcome::Paused(metrics_from(
+            &[],
+            PlanStats::default(),
+            0,
+            started.elapsed(),
+        )));
+    }
+    fs::create_dir_all(tile_dir)?;
+    let mut context = RasterContext::open(input)?;
+    let (plan, plan_stats) = context.plan(identity)?;
+    let total_tiles = u32::try_from(plan.tiles.len()).map_err(|_| MapError::Limit("tile count"))?;
+    let mut completed = Vec::new();
+    let mut completed_keys = BTreeSet::new();
+    let mut completed_bytes = 0u64;
+    adopt_existing_tiles(
+        tile_dir,
+        plan.tiles.iter().copied(),
+        &mut skip,
+        &mut completed,
+        &mut completed_keys,
+        &mut completed_bytes,
+    )?;
+    completed.sort_unstable_by_key(|unit| unit.key);
+    if completed_bytes > MAX_IMAGE_BYTES {
+        return Err(MapError::Limit("image bytes"));
+    }
+    let mut tracker = MemoryTracker::default();
+    tracker.observe(context.tracked_bytes());
+
+    let mut groups: BTreeMap<(i32, i32), Vec<u8>> = BTreeMap::new();
+    for tile in &plan.base_tiles {
+        groups.entry((tile.x, tile.z)).or_default().push(tile.plane);
+    }
+    for ((square_x, square_z), planes) in groups {
+        let Some(next_plane) = planes.iter().copied().find(|plane| {
+            !completed_keys.contains(&TileKey {
+                plane: *plane,
+                lod: 0,
+                x: square_x,
+                z: square_z,
+            })
+        }) else {
+            continue;
+        };
+        let progress = RasterProgress {
+            stage: RasterStage::BaseTerrain { plane: next_plane },
+            completed_tiles: completed_keys.len() as u32,
+            total_tiles,
+        };
+        if !keep_running(progress) {
+            return Ok(ImageBakeOutcome::Paused(metrics_from(
+                &completed,
+                plan_stats,
+                tracker.peak,
+                started.elapsed(),
+            )));
+        }
+        let neighborhood = context.load_neighborhood(square_x, square_z)?;
+        tracker.observe(context.tracked_bytes() + neighborhood.tracked_bytes());
+        for plane in planes {
+            let key = TileKey {
+                plane,
+                lod: 0,
+                x: square_x,
+                z: square_z,
+            };
+            if completed_keys.contains(&key) {
+                continue;
+            }
+            let (rgba, scratch_bytes) = render_base(&context, &neighborhood, key)?;
+            tracker.observe(
+                context.tracked_bytes()
+                    + neighborhood.tracked_bytes()
+                    + rgba.capacity() as u64
+                    + scratch_bytes as u64,
+            );
+            let png = encode_png(&rgba)?;
+            tracker.observe(
+                context.tracked_bytes()
+                    + neighborhood.tracked_bytes()
+                    + rgba.capacity() as u64
+                    + png.capacity() as u64,
+            );
+            complete_tile(
+                tile_dir,
+                key,
+                &png,
+                &mut completed,
+                &mut completed_keys,
+                &mut completed_bytes,
+            )?;
+        }
+    }
+
+    let mut compressed = Vec::new();
+    for lod in 1..=plan.max_lod {
+        for key in plan.tiles.iter().copied().filter(|key| key.lod == lod) {
+            if completed_keys.contains(&key) {
+                continue;
+            }
+            let progress = RasterProgress {
+                stage: RasterStage::Downsample {
+                    plane: key.plane,
+                    lod,
+                },
+                completed_tiles: completed_keys.len() as u32,
+                total_tiles,
+            };
+            if !keep_running(progress) {
+                return Ok(ImageBakeOutcome::Paused(metrics_from(
+                    &completed,
+                    plan_stats,
+                    tracker.peak,
+                    started.elapsed(),
+                )));
+            }
+            let (rgba, child_bytes) =
+                render_parent(tile_dir, &plan, &completed, key, &mut compressed)?;
+            tracker.observe(context.tracked_bytes() + child_bytes + rgba.capacity() as u64);
+            let png = encode_png(&rgba)?;
+            tracker.observe(
+                context.tracked_bytes()
+                    + child_bytes
+                    + rgba.capacity() as u64
+                    + png.capacity() as u64,
+            );
+            complete_tile(
+                tile_dir,
+                key,
+                &png,
+                &mut completed,
+                &mut completed_keys,
+                &mut completed_bytes,
+            )?;
+        }
+    }
+
+    if completed.len() != plan.tiles.len() {
+        return Err(MapError::Invalid("incomplete image plan"));
+    }
+    let receipts: Vec<TileReceipt> = completed
+        .iter()
+        .map(|unit| match unit.key {
+            UnitKey::Terrain { tile } => Ok(TileReceipt {
+                key: tile,
+                payload: unit.payload,
+            }),
+            UnitKey::ClientPois => Err(MapError::Invalid("image checkpoint unit")),
+        })
+        .collect::<Result<_, _>>()?;
+    let manifest = ImageManifest {
+        schema: IMAGE_SCHEMA,
+        identity,
+        key: identity.key()?,
+        extent: plan.extent,
+        planes: Rows::new(plan.planes.clone())?,
+        max_lod: plan.max_lod,
+        interior: TILE_INTERIOR,
+        gutter: TILE_GUTTER,
+        color: ColorFormat::Rgba8Unorm,
+        tiles: Rows::new(receipts)?,
+    };
+    let progress = RasterProgress {
+        stage: RasterStage::Publishing,
+        completed_tiles: total_tiles,
+        total_tiles,
+    };
+    let _ = keep_running(progress);
+    Ok(ImageBakeOutcome::Complete(ImageBakeReport {
+        manifest,
+        metrics: metrics_from(&completed, plan_stats, tracker.peak, started.elapsed()),
+    }))
+}
+
+fn adopt_existing_tiles(
+    directory: &Path,
+    keys: impl IntoIterator<Item = TileKey>,
+    mut skip: impl FnMut(TileKey) -> bool,
+    completed: &mut Vec<CompletedUnit>,
+    completed_keys: &mut BTreeSet<TileKey>,
+    completed_bytes: &mut u64,
+) -> Result<(), MapError> {
+    for key in keys {
+        let required = skip(key);
+        match completed_from_disk(directory, key) {
+            Ok(unit) => {
+                *completed_bytes = completed_bytes
+                    .checked_add(u64::from(unit.payload.bytes))
+                    .ok_or(MapError::Limit("image bytes"))?;
+                if *completed_bytes > MAX_IMAGE_BYTES {
+                    return Err(MapError::Limit("image bytes"));
+                }
+                completed.push(unit);
+                completed_keys.insert(key);
+            }
+            Err(error) if required => return Err(error),
+            Err(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn completed_from_disk(directory: &Path, key: TileKey) -> Result<CompletedUnit, MapError> {
+    let mut buffer = Vec::new();
+    read_bounded(
+        &directory.join(key.relative_path()?),
+        MAX_PNG_BYTES as usize,
+        &mut buffer,
+    )?;
+    let payload = PayloadReceipt {
+        bytes: buffer.len() as u32,
+        sha256: Digest::of(&buffer),
+    };
+    TileReceipt { key, payload }.verify_png(&buffer)?;
+    Ok(CompletedUnit {
+        key: UnitKey::Terrain { tile: key },
+        payload,
+    })
+}
+
 fn effective_plane(raw_plane: u8, link_below: bool) -> Option<u8> {
     u8::try_from(crate::collision::game_plane(
         i32::from(raw_plane),

@@ -97,6 +97,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   not banking eligibility or the permitted interaction side (v1 POIs omit
   `forceapproach`). Live NPC service extraction borrows the focused snapshot,
   validates slot/world/nav context and returns at most 128 observed records.
+- WalkTo now opens a process-wide images demand (catalogue first) against
+  the bound profile's map cache. Real bake progress is shown; ReadyImages
+  terrain and `Catalogue::from_ready` (navpois + game-data names) replace
+  the fixture-only map. Observed services follow the focused bot. Close
+  drops the demand and GPU/CPU pixels. A mid-bake close parks at the latest
+  validated units; reopen resumes remaining tiles instead of re-rastering.
+  Route tiles are cached by `(source, generation)` and trimmed by a monotonic
+  start index (`remaining_path_tiles` leg semantics; an off-route `here` does
+  not re-show walked legs). Pending selection and the armed dest draw as
+  distinct markers; decode staging reports its real byte count; LOD selection
+  uses the bake/manifest `max_lod`.
 
 ### Rendering and client
 

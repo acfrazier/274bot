@@ -30,10 +30,13 @@ use host::{FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
 use host_play::profile::ProfileEnvironment;
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
+use host_play::walk_map::{observed_services, Catalogue, ObservedService, SourceStatus};
 use host_play::{
-    open_vault, run_prepared_template, run_with_io, run_with_template, Play, PlayOptions,
-    ProfileOptions, ScriptNavPaint, ServerProfile, SharedClientTemplate, SlotArm, SlotStatus,
-    ValidatedTemplate, WalkArm,
+    map_demand_manager, map_ready_catalogue, map_ready_images, open_map_images, open_vault,
+    peek_map_catalogue, run_prepared_template, run_with_io, run_with_template, MapDemandHandle,
+    MapJobStatus, MapStage, Play, PlayOptions, ProfileOptions, ReadyCatalogue, ReadyImages,
+    ScriptNavPaint, ServerProfile, SharedClientTemplate, SlotArm, SlotStatus, ValidatedTemplate,
+    WalkArm,
 };
 use nav::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
@@ -1112,6 +1115,10 @@ pub struct Session {
     /// One application-owned map view/catalogue, never a copy on each bot.
     pub map_model: host_play::walk_map::MapModel,
     pub map_catalogue: Option<Arc<host_play::walk_map::Catalogue>>,
+    pub map_demand: Option<MapDemandHandle>,
+    pub map_images: Option<Arc<ReadyImages>>,
+    pub observed_map_services: Vec<ObservedService>,
+    map_catalogue_named: bool,
     /// WalkTo Send: focused vs group checklist. Recomputed on open/refresh.
     pub walk_send: WalkSendState,
     /// Nav config window open flag (non-modal, same as General config).
@@ -1503,6 +1510,10 @@ impl Session {
             walkto_open: false,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
+            map_demand: None,
+            map_images: None,
+            observed_map_services: Vec::new(),
+            map_catalogue_named: false,
             walk_send: WalkSendState::default(),
             nav_settings_open: false,
             global_settings_open: false,
@@ -2014,8 +2025,7 @@ impl Session {
 
     fn install_prepared_template(&mut self, template: Arc<SharedClientTemplate>) {
         let profile = Arc::clone(template.profile());
-        self.map_model.close();
-        self.map_catalogue = None;
+        self.release_walk_map();
         crate::picker::set_navflags_binding(
             profile.nav_flags().to_path_buf(),
             profile
@@ -4430,6 +4440,148 @@ impl Session {
         .unwrap_or_default()
     }
 
+    pub fn sync_walk_map(&mut self, world: Option<Arc<NavWorld>>) {
+        let Some(profile) = self.server_profile.clone() else {
+            return;
+        };
+        if self.map_demand.is_none() {
+            match open_map_images(profile.as_ref()) {
+                Ok(handle) => self.map_demand = Some(handle),
+                Err(error) => {
+                    self.error = Some(error.to_string());
+                    return;
+                }
+            }
+        }
+        if let Some(handle) = &self.map_demand {
+            match handle.status() {
+                MapJobStatus::Ready => {
+                    if self.map_images.is_none() {
+                        if let Ok(Some(images)) = map_ready_images(handle) {
+                            self.map_images = Some(images);
+                        }
+                    }
+                    if let Ok(ready) = map_ready_catalogue(handle) {
+                        self.bind_ready_catalogue(world.clone(), ready);
+                    }
+                }
+                _ => {
+                    if let Some(ready) = peek_map_catalogue(profile.as_ref()) {
+                        self.bind_ready_catalogue(world.clone(), ready);
+                    }
+                }
+            }
+        }
+        self.refresh_observed_map_services(world);
+    }
+
+    pub fn release_walk_map(&mut self) {
+        self.map_demand = None;
+        self.map_images = None;
+        self.map_catalogue = None;
+        self.observed_map_services.clear();
+        self.map_catalogue_named = false;
+        self.map_model.close();
+        if let Ok(manager) = map_demand_manager() {
+            manager.reap();
+        }
+    }
+
+    pub fn map_bind_status(&self) -> Option<String> {
+        let handle = self.map_demand.as_ref()?;
+        match handle.status() {
+            MapJobStatus::Ready => None,
+            MapJobStatus::Queued => Some(String::from("map queued")),
+            MapJobStatus::Running(progress) => {
+                if !progress.message.is_empty() {
+                    Some(progress.message)
+                } else {
+                    let stage = match progress.stage {
+                        MapStage::ReadingCache => "reading cache",
+                        MapStage::DerivingPois => "deriving POIs",
+                        MapStage::BakingPlane => "baking terrain",
+                        MapStage::BuildingZoomLevels => "building zoom",
+                        MapStage::Publishing => "publishing",
+                    };
+                    Some(format!(
+                        "{stage} · {}/{}",
+                        progress.completed, progress.total
+                    ))
+                }
+            }
+            MapJobStatus::Paused => Some(String::from("map bake paused")),
+            MapJobStatus::Cancelled => Some(String::from("map bake cancelled")),
+            MapJobStatus::Failed(error) => Some(format!("map bake failed: {error}")),
+        }
+    }
+
+    fn bind_ready_catalogue(&mut self, world: Option<Arc<NavWorld>>, ready: Arc<ReadyCatalogue>) {
+        let Some(world) = world
+            .or_else(|| self.play.as_ref().and_then(|play| play.world()))
+            .or_else(|| {
+                self.server_profile
+                    .as_ref()
+                    .and_then(|profile| profile.world())
+            })
+            .or_else(crate::picker::pack)
+        else {
+            return;
+        };
+        let identity = ready.manifest().identity;
+        let nav = self.map_nav_digest_for(Some(world.as_ref()));
+        let data = self
+            .server_profile
+            .as_ref()
+            .and_then(|profile| profile.game_data())
+            .or_else(|| self.play.as_ref().and_then(|play| play.game_data()));
+        let same = self.map_catalogue.as_ref().is_some_and(|catalogue| {
+            catalogue.identity() == identity
+                && catalogue.nav_identity() == nav
+                && catalogue.client_status() == SourceStatus::Available
+        });
+        if same && (self.map_catalogue_named || data.is_none()) {
+            return;
+        }
+        let Some(profile) = self.server_profile.as_ref() else {
+            return;
+        };
+        let services = host_play::load_navpois(profile, identity.content, nav);
+        let Ok(catalogue) = Catalogue::from_ready(world, identity, nav, Some(ready), services)
+        else {
+            return;
+        };
+        self.map_catalogue_named = false;
+        let catalogue = match data {
+            Some(data) => match catalogue.with_game_data(data) {
+                Ok(named) => {
+                    self.map_catalogue_named = true;
+                    named
+                }
+                Err(_) => return,
+            },
+            None => catalogue,
+        };
+        self.map_catalogue = Some(Arc::new(catalogue));
+    }
+
+    fn refresh_observed_map_services(&mut self, world: Option<Arc<NavWorld>>) {
+        self.observed_map_services.clear();
+        let Some(world) = world.or_else(crate::picker::pack) else {
+            return;
+        };
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        let current = self.picker_context(world.as_ref());
+        let states = self.nav_states.lock().unwrap();
+        let Some((snapshot, _)) = states.get(&name) else {
+            return;
+        };
+        if let Ok(rows) = observed_services(snapshot, current, current) {
+            self.observed_map_services = rows;
+        }
+    }
+
     pub fn map_nav_digest(&self) -> nav::map::identity::Digest {
         self.map_nav_digest_for(None)
     }
@@ -5050,6 +5202,7 @@ fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
 /// joined, so no live observe can read a cleared `pack()`.
 impl Drop for Session {
     fn drop(&mut self) {
+        self.release_walk_map();
         self.play = None;
         crate::picker::set_pack(None);
     }

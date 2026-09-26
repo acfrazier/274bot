@@ -109,6 +109,23 @@ impl Store {
     pub fn get(&self, key: TileKey) -> Option<&[u8]> {
         self.tiles.get(&key).map(Vec::as_slice)
     }
+
+    #[cfg(test)]
+    pub fn with_keys(keys: impl IntoIterator<Item = TileKey>) -> Result<Self, MapError> {
+        let identity = image_identity();
+        let mut tiles = BTreeMap::new();
+        let mut max_lod = 0u8;
+        for key in keys {
+            max_lod = max_lod.max(key.lod);
+            tiles.insert(key, encode_tile(key)?);
+        }
+        Ok(Self {
+            identity,
+            max_lod,
+            tiles,
+            pois: Vec::new(),
+        })
+    }
 }
 
 /// Encode a 258×258 RGBA8 noninterlaced PNG. Tests only.

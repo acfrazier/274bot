@@ -325,10 +325,16 @@ is a live toggle), dim **build line** (`alpha 3 ·` git short SHA,
 commit + built time), banner, profile, **debug** (loopback), and status
 key/value rows (including **mem**: highmem/lowmem) fill out the strip.
 
-**WalkTo** (title row) fills the Game pane: north-up terrain tiles (or a
-grid and `map imagery unavailable — cache not bound` until D binds cache)
-plus optional map-owned overlay toggles (not per-tile quads), vector route
-and destination, wheel-zoom toward
+**WalkTo** (title row) fills the Game pane: north-up terrain from the
+process-wide map-cache images demand (catalogue first; real bake progress
+in the footer) or a grid and `map imagery unavailable — cache not bound`
+until that cache is ready. Opening WalkTo starts the demand against
+`~/.274bot/map-cache` for the bound profile; closing it releases the
+demand and GPU/CPU pixels. POIs come from `Catalogue::from_ready` (client
+records, authenticated `navpois`, game-data names) plus live
+`observed_services` for the focused bot. Search uses that catalogue.
+Optional map-owned overlay toggles (not per-tile quads), vector route
+and destination (pending selection vs armed dest are distinct), wheel-zoom toward
 the cursor, click-to-pick uses the canvas rect (`is_mouse_hovering_rect`),
 header plane/zoom/search/layer controls that wrap at the default Game pane
 and narrower widths, footer **Recentre** / **Walk** / **Send**, and

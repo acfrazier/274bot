@@ -276,3 +276,22 @@ fn resume_rewrites_uncheckpointed_tiles_byte_identically() {
     assert_eq!(published.completed.as_slice(), resumed.as_slice());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn completed_from_disk_accepts_a_valid_png() {
+    let root = std::env::temp_dir().join(format!("274bot-raster-disk-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let key = TileKey {
+        plane: 0,
+        lod: 0,
+        x: 3,
+        z: 4,
+    };
+    let png = encode_png(&vec![20u8; TILE_RGBA_BYTES]).unwrap();
+    let path = root.join(key.relative_path().unwrap());
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, &png).unwrap();
+    let unit = completed_from_disk(&root, key).unwrap();
+    assert_eq!(unit.key, UnitKey::Terrain { tile: key });
+    std::fs::remove_dir_all(&root).unwrap();
+}

@@ -9,7 +9,9 @@ pub mod cache;
 pub mod catalog_core;
 pub mod external_loader;
 pub mod login_readiness;
+pub mod map_bind;
 pub mod map_cache;
+mod map_producer;
 pub mod nav_identity;
 pub mod paired_core;
 pub mod profile;
@@ -65,6 +67,15 @@ mod scatter;
 mod script_runtime;
 mod walk_arm;
 mod walk_plan;
+pub use map_bind::{
+    load_navpois, map_demand_manager, map_profile_descriptor, map_ready, map_ready_catalogue,
+    map_ready_images, open_map_catalogue, open_map_images, peek_map_catalogue, poll_map_status,
+};
+pub use map_cache::{
+    MapCacheError, MapDemandHandle, MapJobStatus, MapProgress, MapStage, ReadyCatalogue,
+    ReadyImages, ReadyMap,
+};
+pub use map_producer::{map_artifact_policies, NativeMapProducer};
 pub use walk_arm::{
     arm_walk_on, step_walk_arm_bank_fetch, walk_arm_bank_fetch_freezes_follow, NoPath, WalkArm,
     WalkArms,
