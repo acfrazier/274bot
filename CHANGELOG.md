@@ -311,6 +311,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   attack cooldowns, and it answers true only once the backpack drops a slot
   within three ticks (a queued Bury is no longer a burial). One Rust
   `fight-bury` machine owns the gate, the click and the confirmation.
+- v1 `foodHealAmount` answers every name like frozen `food.ts`: the exact
+  selected heal, else the first selected food whose name contains the given
+  name or is contained in it, else 8; an empty name is 8. Unknown, partial
+  and ambiguous names (a configured `Cabbage`, `Swordf`) no longer throw
+  `not impl` mid-fight. Only missing game data still throws its explicit
+  "game data unavailable" error. `shouldEatToUseFood` now holds a heal of
+  zero or less above the eat floor, as frozen does, and runs in Rust.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 

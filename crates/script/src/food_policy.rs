@@ -56,6 +56,40 @@ pub enum FoodHealOutcome {
     MissingSelected,
 }
 
+/// Frozen `DEFAULT_FOOD_HEAL` (`api/combat/food.ts:67`).
+pub const DEFAULT_FOOD_HEAL: i32 = 8;
+
+/// Frozen `MIN_EAT_HP` (`api/combat/food.ts:64`): the #465 eat floor.
+pub const MIN_EAT_HP: i32 = 5;
+
+/// Frozen v1 `foodHealAmount` (`api/combat/food.ts:86-106`) over the
+/// selected facts: an empty name is the default (`:88-90`); then the exact
+/// fixed heal (`:91-94`); then the first fixed-heal food whose name contains
+/// the key or is contained in it (`:100-104`); else the default (`:105`).
+/// The heal table is the selected cache's, not the frozen hand-copied one.
+/// The frozen `FOOD_FORMS` step (`:95-99`) gives a partial form its parent's
+/// heal because the frozen table lacks some forms; every selected form row
+/// (274 and 289) carries its own fixed heal, so the exact step answers it.
+/// `None` only when the answer needs selected facts the host does not have.
+pub fn frozen_food_heal_amount(data: Option<&SelectedGameData>, food_name: &str) -> Option<i32> {
+    let key = string_food_key(food_name);
+    if key.is_empty() {
+        return Some(DEFAULT_FOOD_HEAL);
+    }
+    let data = data?;
+    if let Some(heal) = data.fixed_food_heal(&key) {
+        return Some(heal);
+    }
+    Some(
+        data.fixed_food_heals()
+            .find(|(name, _)| {
+                let name = name.to_lowercase();
+                key.contains(&name) || name.contains(&key)
+            })
+            .map_or(DEFAULT_FOOD_HEAL, |(_, heal)| heal),
+    )
+}
+
 fn string_food_key(food_name: &str) -> String {
     // Match v1 `String(foodName).trim().toLowerCase()` including odd coercions
     // handled at the JS marshal boundary before this runs.

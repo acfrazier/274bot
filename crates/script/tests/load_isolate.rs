@@ -8796,11 +8796,8 @@ import { shouldEat } from '../../api/inventory/packRules.js';
 import { shouldEatFood, shouldEatToUseFood, foodForms, eatAtHpThreshold } from '../../api/combat/food.js';
 export default class T extends LoopingBot {
     loop() {
-        let unknownErr = null;
         let formsErr = null;
         let threshErr = null;
-        try { shouldEatFood('NotARealFood', { hp: 3, maxHp: 10, foodCount: 1 }); }
-        catch (e) { unknownErr = String(e && e.message ? e.message : e); }
         try { globalThis.__forms = foodForms('Shark'); } catch (e) { formsErr = String(e && e.message ? e.message : e); }
         try { eatAtHpThreshold(10, 20, 5); } catch (e) { threshErr = String(e && e.message ? e.message : e); }
         const opts = { hp: 3, maxHp: 10, heal: 20, foodCount: 1 };
@@ -8810,7 +8807,6 @@ export default class T extends LoopingBot {
             shouldEatToUseFood: shouldEatToUseFood(opts),
             typeofShouldEat: typeof shouldEat(3, 10, 20, 1),
             typeofShouldEatFood: typeof shouldEatFood('Shark', { hp: 3, maxHp: 10, foodCount: 1 }),
-            unknownErr,
             formsErr,
             forms: globalThis.__forms || null,
             threshErr,
@@ -8867,11 +8863,6 @@ export default class T extends LoopingBot {
         parsed["shouldEatToUseFood"],
         serde_json::json!(true),
         "shouldEatToUseFood at floor: {parsed:?}"
-    );
-    let unknown = parsed["unknownErr"].as_str().unwrap_or("");
-    assert!(
-        unknown.contains("not impl") && unknown.contains("foodHealAmount"),
-        "unknown food still not impl foodHealAmount, got {unknown:?}"
     );
     assert_eq!(
         parsed["forms"],

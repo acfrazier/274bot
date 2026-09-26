@@ -436,10 +436,6 @@ import { foodHealAmount } from '../../api/combat/food.js';
 import { requiredThieving } from '../../api/thieving/targets.js';
 export default class T extends LoopingBot {
     loop() {
-        let unknownFood = null;
-        let ambiguousFood = null;
-        try { foodHealAmount('Not a food'); } catch (e) { unknownFood = String(e.message || e); }
-        try { foodHealAmount('Cabbage'); } catch (e) { ambiguousFood = String(e.message || e); }
         globalThis.__probe = {
             plate: ITEM_DB.find(r => r.obj === 'rune_platebody') || null,
             castlewars: ITEM_DB.find(r => r.obj === 'castlewars_armour_body') || null,
@@ -447,8 +443,6 @@ export default class T extends LoopingBot {
             bread: foodHealAmount('Bread'),
             anchovies: foodHealAmount('Anchovies'),
             guard: requiredThieving('Guard'),
-            unknownFood,
-            ambiguousFood,
         };
     }
 }
@@ -466,11 +460,6 @@ export default class T extends LoopingBot {
     assert_eq!(probe["bread"], 4);
     assert_eq!(probe["anchovies"], 3);
     assert_eq!(probe["guard"], 40);
-    assert!(probe["unknownFood"].as_str().unwrap().contains("not impl"));
-    assert!(probe["ambiguousFood"]
-        .as_str()
-        .unwrap()
-        .contains("not impl"));
     iso.join();
 
     let offline = LoadIsolate::spawn(
