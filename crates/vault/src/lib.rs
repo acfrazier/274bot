@@ -271,11 +271,109 @@ impl Vault {
     }
 
     fn persist_map(&self, profiles: &BTreeMap<String, Profile>) -> Result<(), VaultError> {
-        let data = serde_json::to_vec(profiles)
-            .map_err(|e| VaultError::Corrupt(format!("serialize profiles: {e}")))?;
-        let blob = build_blob(&self.salt, &self.key, &data, self.rounds)?;
-        atomic_write(&self.path, &blob)
+        persist(&self.path, &self.salt, &self.key, self.rounds, profiles)
     }
+
+    /// A detached durable copy of this vault (same file and key) for a
+    /// writer that persists off the caller's thread. Once one exists, every
+    /// write must go through it: [`Vault::stage_upsert`] /
+    /// [`Vault::stage_remove`] change only this in-memory view.
+    pub fn store(&self) -> VaultStore {
+        VaultStore {
+            path: self.path.clone(),
+            salt: self.salt,
+            key: Zeroizing::new(*self.key),
+            rounds: self.rounds,
+            profiles: self.profiles.clone(),
+        }
+    }
+
+    /// Replace a profile in memory only; its durable write is the store's.
+    pub fn stage_upsert(&mut self, profile: Profile) {
+        self.profiles.insert(profile.username.clone(), profile);
+    }
+
+    /// Remove a profile in memory only. Returns whether it existed.
+    pub fn stage_remove(&mut self, username: &str) -> bool {
+        self.profiles.remove(username).is_some()
+    }
+
+    /// Put back the durable value of one profile after its write failed.
+    pub fn restore(&mut self, username: &str, durable: Option<Profile>) {
+        match durable {
+            Some(profile) => {
+                self.profiles.insert(username.to_string(), profile);
+            }
+            None => {
+                self.profiles.remove(username);
+            }
+        }
+    }
+}
+
+/// One profile change for [`VaultStore::commit`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum VaultChange {
+    Upsert(Profile),
+    Remove(String),
+}
+
+impl VaultChange {
+    pub fn username(&self) -> &str {
+        match self {
+            Self::Upsert(profile) => &profile.username,
+            Self::Remove(username) => username,
+        }
+    }
+}
+
+/// The durable side of a [`Vault`]: the profiles last written to disk plus
+/// the key to write more. Owned by one writer; the key is zeroized on drop.
+pub struct VaultStore {
+    path: PathBuf,
+    salt: [u8; SALT_LEN],
+    key: Zeroizing<[u8; KEY_LEN]>,
+    rounds: u32,
+    profiles: BTreeMap<String, Profile>,
+}
+
+impl VaultStore {
+    /// The durable value of one profile.
+    pub fn get(&self, username: &str) -> Option<&Profile> {
+        self.profiles.get(username)
+    }
+
+    /// Apply `changes` in order and rewrite the encrypted file once. On error
+    /// the store is unchanged both on disk and in memory.
+    pub fn commit(&mut self, changes: &[VaultChange]) -> Result<(), VaultError> {
+        let mut next = self.profiles.clone();
+        for change in changes {
+            match change {
+                VaultChange::Upsert(profile) => {
+                    next.insert(profile.username.clone(), profile.clone());
+                }
+                VaultChange::Remove(username) => {
+                    next.remove(username);
+                }
+            }
+        }
+        persist(&self.path, &self.salt, &self.key, self.rounds, &next)?;
+        self.profiles = next;
+        Ok(())
+    }
+}
+
+fn persist(
+    path: &Path,
+    salt: &[u8; SALT_LEN],
+    key: &[u8; KEY_LEN],
+    rounds: u32,
+    profiles: &BTreeMap<String, Profile>,
+) -> Result<(), VaultError> {
+    let data = serde_json::to_vec(profiles)
+        .map_err(|e| VaultError::Corrupt(format!("serialize profiles: {e}")))?;
+    let blob = build_blob(salt, key, &data, rounds)?;
+    atomic_write(path, &blob)
 }
 
 fn require_passphrase(passphrase: &str) -> Result<(), VaultError> {
@@ -417,7 +515,7 @@ fn atomic_write(path: &Path, blob: &[u8]) -> Result<(), VaultError> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{Profile, ProfileSettings, Vault, VaultError};
+    use super::{Profile, ProfileSettings, Vault, VaultChange, VaultError};
 
     fn tmp_path(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("274bot-vault-test-{}", std::process::id()));
@@ -738,5 +836,42 @@ mod tests {
                 .and_then(|m| m.get("buryBones")),
             Some(&serde_json::json!(false))
         );
+    }
+
+    #[test]
+    fn store_commit_persists_changes_in_order_and_staging_stays_in_memory() {
+        let path = tmp_path("store-commit.vault");
+        let mut vault = Vault::create(&path, "pw").unwrap();
+        let mut store = vault.store();
+        vault.stage_upsert(profile("alice", "a"));
+        assert!(
+            Vault::unlock(&path, "pw").unwrap().get("alice").is_none(),
+            "staging never writes"
+        );
+        store
+            .commit(&[
+                VaultChange::Upsert(profile("alice", "a")),
+                VaultChange::Upsert(profile("bob", "b")),
+                VaultChange::Remove("bob".into()),
+            ])
+            .unwrap();
+        let reopened = Vault::unlock(&path, "pw").unwrap();
+        assert_eq!(reopened.get("alice").unwrap().password, "a");
+        assert!(reopened.get("bob").is_none());
+        assert_eq!(store.get("alice").unwrap().password, "a");
+    }
+
+    #[test]
+    fn a_failed_store_commit_leaves_the_durable_copy_unchanged() {
+        let path = tmp_path("store-fail.vault");
+        let vault = Vault::create(&path, "pw").unwrap();
+        let mut store = vault.store();
+        // The temp file cannot be created where a directory sits.
+        std::fs::create_dir_all(path.with_extension("tmp")).unwrap();
+        assert!(store
+            .commit(&[VaultChange::Upsert(profile("alice", "a"))])
+            .is_err());
+        assert!(store.get("alice").is_none());
+        std::fs::remove_dir_all(path.with_extension("tmp")).unwrap();
     }
 }
