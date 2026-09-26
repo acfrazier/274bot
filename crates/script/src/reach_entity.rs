@@ -622,14 +622,271 @@ impl EntityOp {
     }
 
     fn unreachable(&mut self, toward: Option<Tile>) -> Next {
-        let (x, z) = toward.map_or(("undefined".into(), "undefined".into()), |t| {
-            (t.x.to_string(), t.z.to_string())
-        });
-        self.logger.lines.push_back(format!(
-            "reach: '{}' at ({x},{z}): server can't reach it and no door in front to open or close (unreachable)",
-            self.what
-        ));
+        self.logger
+            .lines
+            .push_back(unreachable_line(&self.what, toward));
         Next::Done("unreachable")
+    }
+}
+
+/// Frozen `reachThroughDoors`' unreachable log (`Reach.ts:195`).
+fn unreachable_line(what: &str, toward: Option<Tile>) -> String {
+    let (x, z) = toward.map_or(("undefined".into(), "undefined".into()), |t| {
+        (t.x.to_string(), t.z.to_string())
+    });
+    format!(
+        "reach: '{what}' at ({x},{z}): server can't reach it and no door in front to open or close (unreachable)"
+    )
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
+/// What an [`NpcReach`] waits for after its Talk click.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TalkExpect {
+    /// Frozen `ChatDialog.isOpen() || ChatDialog.canContinue()`
+    /// (`primitives.ts:228`, `Reach.ts:295`).
+    DialogReady,
+    /// A dialogue the click produced: ready, and the chat modal differs from
+    /// the one posted at the click, or opened from none, or Continue
+    /// appeared. Armed at every click (reach-npc-dialog's `fresh_ready`).
+    FreshDialog,
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
+/// Frozen `reachThroughDoors` parameters (`Reach.ts:156–166`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NpcReachOpts {
+    pub(crate) expect: TalkExpect,
+    pub(crate) expect_ms: u64,
+    /// Frozen `retryAfterTimeout`: `Reach.entityOp` passes false,
+    /// `Reach.npcDialog` true.
+    pub(crate) retry_after_timeout: bool,
+    /// Frozen `probeUnreachable` (`openWhenUnreachable`).
+    pub(crate) probe_unreachable: bool,
+    /// Frozen `Reach.entityOp`'s attempt answers dispatched without a click
+    /// when `expect()` already holds (`Reach.ts:218–220`); `npcDialog`'s
+    /// attempt always clicks (`Reach.ts:289–292`).
+    pub(crate) skip_click_when_expected: bool,
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
+enum NpcReachPhase {
+    Top,
+    Watch,
+    Clearing {
+        clear: Clear,
+        cant_reach: bool,
+    },
+    /// Frozen `delayTicks(1)` before the next round (`retryAfterTimeout`).
+    NextRound,
+    /// Frozen `delayTicks(1)` after an undispatched attempt, then `retry`.
+    RetryTick,
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
+/// One NPC's Talk op through frozen `reachThroughDoors` (`Reach.ts:156–211`):
+/// up to [`DOOR_ATTEMPTS`] rounds of the optional scene probe (a target
+/// within [`PROBE_RADIUS`] the scene cannot reach clears a blocking door
+/// first), the click on the nearest `npc` row with a talk op, the expect /
+/// "I can't reach that" wait, and the door clear after a can't-reach.
+/// Embeddable: `step` once per tick until it answers `done`, `retry` or
+/// `unreachable`; log lines queue for [`NpcReach::pop_log`].
+pub(crate) struct NpcReach {
+    npc: String,
+    opts: NpcReachOpts,
+    phase: NpcReachPhase,
+    round: u32,
+    mark: i32,
+    armed_modal: i32,
+    armed_continue: bool,
+    logs: VecDeque<String>,
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
+/// The nearest posted `npc` row with a talk op (frozen
+/// `Npcs.query().name(n).where(talkOp !== null).nearest()`).
+struct TalkRow {
+    name: String,
+    action: String,
+    index: i32,
+    tile: Tile,
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
+fn talk_row(npc: &str) -> Option<TalkRow> {
+    let want = npc.trim();
+    if want.is_empty() {
+        return None;
+    }
+    observed::with(|scene| {
+        let rows = scene.since_login().npcs()?;
+        rows.iter()
+            .filter(|row| {
+                row.name
+                    .as_deref()
+                    .is_some_and(|name| name.trim().eq_ignore_ascii_case(want))
+            })
+            .filter_map(|row| crate::dialog::talk_op(&row.actions).map(|op| (row, op)))
+            .min_by_key(|(row, _)| row.distance)
+            .map(|(row, op)| TalkRow {
+                name: row.name.as_deref().unwrap_or_default().to_string(),
+                action: op.to_string(),
+                index: row.index,
+                tile: Tile {
+                    x: row.x,
+                    z: row.z,
+                    level: row.level,
+                },
+            })
+    })
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
+/// The posted chat modal id and Continue flag.
+fn chat_state() -> (i32, bool) {
+    observed::with(|scene| {
+        let session = scene.since_login();
+        (
+            session.chat_modal_id().unwrap_or(-1),
+            session.chat_continue().unwrap_or(false),
+        )
+    })
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // consumed by the next commits (boat fare, reach-npc-dialog)
+impl NpcReach {
+    pub(crate) fn new(npc: &str, opts: NpcReachOpts) -> Self {
+        Self {
+            npc: npc.to_string(),
+            opts,
+            phase: NpcReachPhase::Top,
+            round: 0,
+            mark: 0,
+            armed_modal: -1,
+            armed_continue: false,
+            logs: VecDeque::new(),
+        }
+    }
+
+    pub(crate) fn pop_log(&mut self) -> Option<String> {
+        self.logs.pop_front()
+    }
+
+    fn expect(&self) -> bool {
+        let (modal, cont) = chat_state();
+        let ready = modal != -1 || cont;
+        match self.opts.expect {
+            TalkExpect::DialogReady => ready,
+            TalkExpect::FreshDialog => {
+                ready
+                    && (modal != self.armed_modal
+                        || (modal != -1 && self.armed_modal == -1)
+                        || (cont && !self.armed_continue))
+            }
+        }
+    }
+
+    /// `Some(status)` once done: `done`, `retry` or `unreachable`.
+    pub(crate) fn step(&mut self, cx: &mut Cx<'_>) -> Option<&'static str> {
+        loop {
+            match std::mem::replace(&mut self.phase, NpcReachPhase::Top) {
+                NpcReachPhase::Top => {
+                    if self.round >= DOOR_ATTEMPTS {
+                        return Some("retry");
+                    }
+                    if self.opts.probe_unreachable && !self.expect() {
+                        let blocked = talk_row(&self.npc).map(|row| row.tile).filter(|blocked| {
+                            here().is_some_and(|here| {
+                                blocked.level == here.level
+                                    && here.cheb(*blocked) <= PROBE_RADIUS
+                                    && !can_reach(*blocked, true)
+                            })
+                        });
+                        if let Some(blocked) = blocked {
+                            self.phase = NpcReachPhase::Clearing {
+                                clear: Clear::new(blocked),
+                                cant_reach: false,
+                            };
+                            continue;
+                        }
+                    }
+                    return self.attempt(cx);
+                }
+                NpcReachPhase::Clearing {
+                    mut clear,
+                    cant_reach,
+                } => match clear.step(cx, &mut self.logs) {
+                    None => {
+                        self.phase = NpcReachPhase::Clearing { clear, cant_reach };
+                        return None;
+                    }
+                    Some(true) => self.round += 1,
+                    Some(false) if cant_reach => {
+                        self.logs
+                            .push_back(unreachable_line(&self.npc, Some(clear.toward)));
+                        return Some("unreachable");
+                    }
+                    Some(false) => return self.attempt(cx),
+                },
+                NpcReachPhase::Watch => {
+                    let cant_reach = saw_cant_reach(self.mark);
+                    if !(self.expect() || cant_reach || cx.clock().bound_reached()) {
+                        self.phase = NpcReachPhase::Watch;
+                        return None;
+                    }
+                    if self.expect() {
+                        return Some("done");
+                    }
+                    if cant_reach {
+                        let Some(toward) = talk_row(&self.npc).map(|row| row.tile) else {
+                            self.logs.push_back(unreachable_line(&self.npc, None));
+                            return Some("unreachable");
+                        };
+                        self.phase = NpcReachPhase::Clearing {
+                            clear: Clear::new(toward),
+                            cant_reach: true,
+                        };
+                        continue;
+                    }
+                    return self.after_round(true);
+                }
+                NpcReachPhase::NextRound => self.round += 1,
+                NpcReachPhase::RetryTick => return Some("retry"),
+            }
+        }
+    }
+
+    /// Frozen `mark` + `attempt()` + the dispatched wait's arm.
+    fn attempt(&mut self, cx: &mut Cx<'_>) -> Option<&'static str> {
+        self.mark = chat_mark();
+        if self.opts.skip_click_when_expected && self.expect() {
+            return Some("done");
+        }
+        let Some(row) = talk_row(&self.npc) else {
+            return self.after_round(false);
+        };
+        (self.armed_modal, self.armed_continue) = chat_state();
+        cx.emit(InteractReq::Npc {
+            name: row.name,
+            action: row.action,
+            index: Some(row.index),
+        });
+        cx.clock().arm(self.opts.expect_ms);
+        self.phase = NpcReachPhase::Watch;
+        None
+    }
+
+    /// The end of a round that neither answered nor hit a can't-reach.
+    fn after_round(&mut self, dispatched: bool) -> Option<&'static str> {
+        if !self.opts.retry_after_timeout {
+            if dispatched {
+                return Some("retry");
+            }
+            self.phase = NpcReachPhase::RetryTick;
+            return None;
+        }
+        self.phase = NpcReachPhase::NextRound;
+        None
     }
 }
 
@@ -1063,5 +1320,191 @@ mod tests {
             1_000_003,
             "Chebyshev 3 plus the level penalty"
         );
+    }
+
+    fn reach_opts(
+        expect: TalkExpect,
+        retry_after_timeout: bool,
+        skip_click_when_expected: bool,
+    ) -> NpcReachOpts {
+        NpcReachOpts {
+            expect,
+            expect_ms: 8_000,
+            retry_after_timeout,
+            probe_unreachable: true,
+            skip_click_when_expected,
+        }
+    }
+
+    /// A fresh session at (0,0) with Luthas (Talk-to) one tile away, chat as
+    /// given. No reach view: the probe finds no door to clear and clicks.
+    fn post_talk(tick: u64, modal: i32, cont: bool, lines: &[(i32, &str)]) {
+        observed::post(tick, |post| {
+            post.session(true)
+                .here(observed::Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                })
+                .chat_modal_id(modal)
+                .chat_continue(cont)
+                .chat_lines(
+                    lines
+                        .iter()
+                        .map(|(seq, text)| observed::ChatLine {
+                            seq: *seq,
+                            text: (*text).into(),
+                        })
+                        .collect(),
+                )
+                .npcs(vec![observed::EntityRow {
+                    index: 7,
+                    name: Some("Luthas".into()),
+                    x: 1,
+                    z: 0,
+                    level: 0,
+                    distance: 1,
+                    actions: vec!["Talk-to".into(), "Examine".into()].into(),
+                    ..observed::EntityRow::default()
+                }]);
+        });
+    }
+
+    fn fresh() {
+        observed::on_reset();
+        crate::load::reach_query::on_reset();
+    }
+
+    struct Driver {
+        reach: NpcReach,
+        clock: crate::task_clock::InstantTaskClock,
+    }
+
+    impl Driver {
+        fn new(opts: NpcReachOpts) -> Self {
+            Self {
+                reach: NpcReach::new("Luthas", opts),
+                clock: crate::task_clock::InstantTaskClock::new(),
+            }
+        }
+
+        fn step(&mut self) -> (Option<&'static str>, Vec<InteractReq>) {
+            let mut ops = Vec::new();
+            let out = {
+                let mut cx = Cx::test(&mut ops, &mut self.clock, None);
+                self.reach.step(&mut cx)
+            };
+            (out, ops)
+        }
+
+        fn expire(&mut self) {
+            self.clock.deadline =
+                Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+        }
+    }
+
+    fn talk_click() -> InteractReq {
+        InteractReq::Npc {
+            name: "Luthas".into(),
+            action: "Talk-to".into(),
+            index: Some(7),
+        }
+    }
+
+    #[test]
+    fn entity_op_reach_clicks_once_and_is_done_when_the_dialogue_opens() {
+        fresh();
+        post_talk(1, -1, false, &[]);
+        let mut d = Driver::new(reach_opts(TalkExpect::DialogReady, false, true));
+        assert_eq!(d.step(), (None, vec![talk_click()]));
+        assert_eq!(d.step(), (None, vec![]), "no second click while waiting");
+        post_talk(2, 4882, true, &[]);
+        assert_eq!(d.step(), (Some("done"), vec![]));
+    }
+
+    #[test]
+    fn entity_op_reach_is_retry_after_one_timed_out_click() {
+        fresh();
+        post_talk(1, -1, false, &[]);
+        let mut d = Driver::new(reach_opts(TalkExpect::DialogReady, false, true));
+        assert_eq!(d.step(), (None, vec![talk_click()]));
+        d.expire();
+        assert_eq!(
+            d.step(),
+            (Some("retry"), vec![]),
+            "retryAfterTimeout false: the caller decides after one click"
+        );
+    }
+
+    #[test]
+    fn npc_dialog_reach_reclicks_each_tick_after_a_timeout_for_eight_rounds() {
+        fresh();
+        post_talk(1, -1, false, &[]);
+        let mut d = Driver::new(reach_opts(TalkExpect::FreshDialog, true, false));
+        for round in 0..DOOR_ATTEMPTS {
+            assert_eq!(d.step(), (None, vec![talk_click()]), "round {round} clicks");
+            d.expire();
+            assert_eq!(
+                d.step(),
+                (None, vec![]),
+                "frozen delayTicks(1) after a timeout"
+            );
+        }
+        assert_eq!(d.step(), (Some("retry"), vec![]));
+    }
+
+    #[test]
+    fn fresh_dialog_expect_ignores_the_dialogue_already_up_at_the_click() {
+        fresh();
+        post_talk(1, 100, false, &[]);
+        let mut d = Driver::new(reach_opts(TalkExpect::FreshDialog, true, false));
+        assert_eq!(
+            d.step(),
+            (None, vec![talk_click()]),
+            "npcDialog's attempt clicks even with a dialogue up"
+        );
+        assert_eq!(d.step(), (None, vec![]), "the armed modal is not fresh");
+        post_talk(2, 200, false, &[]);
+        assert_eq!(d.step(), (Some("done"), vec![]));
+
+        fresh();
+        post_talk(1, 100, false, &[]);
+        let mut ready = Driver::new(reach_opts(TalkExpect::DialogReady, false, true));
+        assert_eq!(
+            ready.step(),
+            (Some("done"), vec![]),
+            "entityOp answers an expect that already holds without a click"
+        );
+    }
+
+    #[test]
+    fn cant_reach_with_no_door_to_clear_is_unreachable_with_the_frozen_line() {
+        fresh();
+        post_talk(1, -1, false, &[(3, "Welcome")]);
+        let mut d = Driver::new(reach_opts(TalkExpect::DialogReady, true, false));
+        assert_eq!(d.step(), (None, vec![talk_click()]));
+        post_talk(2, -1, false, &[(3, "Welcome"), (4, "I can't reach that!")]);
+        assert_eq!(d.step(), (Some("unreachable"), vec![]));
+        assert_eq!(
+            d.reach.pop_log().as_deref(),
+            Some(
+                "reach: 'Luthas' at (1,0): server can't reach it and no door in front to open or close (unreachable)"
+            )
+        );
+    }
+
+    #[test]
+    fn an_absent_npc_waits_one_tick_then_retries_without_a_click() {
+        fresh();
+        observed::post(1, |post| {
+            post.session(true).here(observed::Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            });
+        });
+        let mut d = Driver::new(reach_opts(TalkExpect::DialogReady, false, true));
+        assert_eq!(d.step(), (None, vec![]));
+        assert_eq!(d.step(), (Some("retry"), vec![]));
     }
 }
