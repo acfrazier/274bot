@@ -148,8 +148,10 @@ pub(super) fn derive_client_pois(
                 i32::from(entry.square_x) * i32::from(MAP_SQUARE_SIZE) + i32::from(placement.x);
             let world_z =
                 i32::from(entry.square_z) * i32::from(MAP_SQUARE_SIZE) + i32::from(placement.z);
-            let name = match poi_name(definition, placement.id) {
-                Ok(name) => name,
+            let name = match poi_name(definition) {
+                Ok(Some(name)) => name,
+                // Nameless and off the Key legend: no picker label exists.
+                Ok(None) => return,
                 Err(error) => {
                     placement_error = Some(error);
                     return;
@@ -307,12 +309,84 @@ fn borrowed(definition: &LocDefinition) -> Definition<'_> {
     }
 }
 
-fn poi_name(definition: &LocDefinition, id: u32) -> Result<Text, MapError> {
-    if definition.name.is_empty() {
-        Text::new(&format!("Location {id}"))
-    } else {
-        Text::new(&definition.name)
+/// Classic worldmap Key legend names; index = client mapfunction sprite id.
+/// Verbatim `WORLDMAP_KEY_NAMES` from the frozen rs2b0t pin
+/// (`src/client/mapview/worldmapKeyNames.ts`), the list its world map Key and
+/// WalkTo picker (`src/bot/panel/mapPickerTheme.ts` `keyNameToTypeId`) share.
+const WORLDMAP_KEY_NAMES: [&str; 49] = [
+    "General Store",
+    "Sword Shop",
+    "Magic Shop",
+    "Axe Shop",
+    "Helmet Shop",
+    "Bank",
+    "Quest Start",
+    "Amulet Shop",
+    "Mining Site",
+    "Furnace",
+    "Anvil",
+    "Combat Training",
+    "Dungeon",
+    "Staff Shop",
+    "Platebody Shop",
+    "Platelegs Shop",
+    "Scimitar Shop",
+    "Archery Shop",
+    "Shield Shop",
+    "Altar",
+    "Herbalist",
+    "Jewelery",
+    "Gem Shop",
+    "Crafting Shop",
+    "Candle Shop",
+    "Fishing Shop",
+    "Fishing Spot",
+    "Clothes Shop",
+    "Apothecary",
+    "Silk Trader",
+    "Kebab Seller",
+    "Pub/Bar",
+    "Mace Shop",
+    "Tannery",
+    "Rare Trees",
+    "Spinning Wheel",
+    "Food Shop",
+    "Cookery Shop",
+    "???",
+    "Water Source",
+    "Cooking Range",
+    "Skirt Shop",
+    "Potters Wheel",
+    "Windmill",
+    "Mining Shop",
+    "Chainmail Shop",
+    "Silver Shop",
+    "Fur Trader",
+    "Spice Shop",
+];
+
+/// The Key legend name rs2b0t shows for a mapfunction. Jagex's `???` row (38)
+/// is shown as "Minigames" (rs2b0t `src/bot/runtime/Settings.ts`
+/// `keyIconTypes.optionLabels`). Ids past the legend have no name there.
+fn mapfunction_key_name(symbol: u16) -> Option<&'static str> {
+    match *WORLDMAP_KEY_NAMES.get(usize::from(symbol))? {
+        "???" => Some("Minigames"),
+        name => Some(name),
     }
+}
+
+/// The loc's own name, else its mapfunction's Key legend name: invisible
+/// marker locs carry only a mapfunction. `None` when neither exists; rs2b0t
+/// labels no such place, so it is not a POI.
+fn poi_name(definition: &LocDefinition) -> Result<Option<Text>, MapError> {
+    if !definition.name.is_empty() {
+        return Text::new(&definition.name).map(Some);
+    }
+    definition
+        .mapfunction
+        .and_then(mapfunction_key_name)
+        .map(Text::new)
+        .transpose()
 }
 
 fn poi_priority(kind: PoiKind) -> u8 {
@@ -336,3 +410,7 @@ fn optional_u16(value: i32, what: &'static str) -> Result<Option<u16>, MapError>
             .map_err(|_| MapError::Invalid(what))
     }
 }
+
+#[cfg(test)]
+#[path = "catalogue_tests.rs"]
+mod tests;

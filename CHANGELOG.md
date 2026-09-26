@@ -157,6 +157,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   creates the map-cache manager at boot; the first WalkTo open does, and a
   closed map's finished job is dropped on reap. The terrain bake policy
   changed, so an existing terrain cache is baked again once.
+- WalkTo map-symbol places (anvils, furnaces, shops, water sources, …) are
+  named by their world map Key entry, as in rs2b0t's world map and picker,
+  instead of `Location ####`. Minigame symbols read "Minigames". A nameless
+  place that has no Key entry is left out: the 289 agility-training (4) and
+  vegetable-store (2) symbols, which rs2b0t's picker does not show either.
+  On 289 the catalogue drops from 745 to 739 places, and none is labelled
+  `Location`. The catalogue policy changed, so an existing catalogue is
+  baked again once.
 
 ### Rendering and client
 
