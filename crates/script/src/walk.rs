@@ -59,9 +59,10 @@
 //!   walk). `avoidZones` has no host walk wire: a non-empty list is refused
 //!   loud, not dropped. `bankItemCounts` is only the bank-plan input; the
 //!   host bank fetch reads the bank itself (FENCE 2026-09-18). `maxBudget`
-//!   counts frozen `PathFinder` expansions on another graph; the host
-//!   router has its own bound and no `budget` outcome, so there is no
-//!   big-budget rebake (`walkLadder.ts:73–75`).
+//!   caps the frozen probe and big-budget rebake; the host router searches
+//!   every walk and the probe to one fixed bound and has no `budget`
+//!   outcome, so there is no big-budget rebake (`walkLadder.ts:73–75`) and a
+//!   `maxBudget` above that bound is logged ([`max_budget_note`]).
 
 //! - Frozen `WalkExecutor.lastOutcome === 'blocked'` returns true
 //!   (`Traversal.ts:171–174`): the host follow ends `EndBlocked` next to a
@@ -202,6 +203,9 @@ struct WalkResilientOpts {
     /// How many `avoidZones` the caller passed (the zones have no host wire).
     #[serde(default)]
     avoid_zones: usize,
+    /// Frozen `maxBudget` (`Traversal.ts:24, 106`).
+    #[serde(default)]
+    max_budget: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -209,6 +213,25 @@ pub(crate) struct WalkResilientArgs {
     tile: Tile,
     #[serde(default)]
     opts: WalkResilientOpts,
+}
+
+/// The host router's fixed search bound, `nav::router::NODE_BUDGET`: every
+/// baked walk and the verify probe search this far.
+pub(crate) const HOST_SEARCH_BOUND: u64 = 4_000_000;
+
+/// Frozen `maxBudget` caps the verify probe and the big-budget rebake
+/// (`Traversal.ts:106, 169, 194`; default 1_200_000). The host router has
+/// one fixed bound for both ([`HOST_SEARCH_BOUND`]) and no `budget`
+/// outcome to rebake on, so a request at or under it is searched at least
+/// that far (JiveKQ's 120_000, `route.ts:17`). A request above it is logged,
+/// not refused.
+fn max_budget_note(max_budget: u64) -> Option<String> {
+    (max_budget > HOST_SEARCH_BOUND).then(|| {
+        format!(
+            "walkResilient: maxBudget {max_budget} is above the host search bound \
+             {HOST_SEARCH_BOUND}; routes search {HOST_SEARCH_BOUND}"
+        )
+    })
 }
 
 /// Frozen `resolveWalkUseTeleports` (`WalkExecutor.ts:165–177`): an explicit
@@ -1350,6 +1373,10 @@ impl Family for WalkResilient {
         )
         .with_scene_radius(opts.scene_radius.unwrap_or(radius.saturating_add(1)))
         .with_teleport_min_span(opts.policy.distance_before_teleport.unwrap_or(0));
+        let mut drive = drive;
+        if let Some(line) = opts.max_budget.and_then(max_budget_note) {
+            drive.logs.push_back(line);
+        }
         Begin::Run(Self {
             drive,
             pumped: false,
@@ -2262,6 +2289,13 @@ pub(crate) mod tests {
                 .any(|op| matches!(op, InteractReq::WalkTo { x: 10, z: 0, .. })),
             "within sceneRadius 12 the scene step does not click toward dest"
         );
+    }
+
+    #[test]
+    fn the_host_search_bound_is_the_nav_router_budget() {
+        // `max_budget_note` explains requests against this bound; it must
+        // stay the router's own.
+        assert_eq!(HOST_SEARCH_BOUND, nav::router::NODE_BUDGET as u64);
     }
 
     #[test]

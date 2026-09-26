@@ -138,6 +138,9 @@ required-features = ["load"]
 name = "return_to_anchor"
 required-features = ["load"]
 [[test]]
+name = "walk_options"
+required-features = ["load"]
+[[test]]
 name = "quest_journal"
 required-features = ["load"]
 [[test]]

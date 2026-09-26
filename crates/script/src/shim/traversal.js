@@ -77,6 +77,9 @@ export const Traversal = proxy('Traversal', {
                             : {}),
                     },
                     avoidZones: Array.isArray(opts.avoidZones) ? opts.avoidZones.length : 0,
+                    ...(typeof opts.maxBudget === 'number' && opts.maxBudget >= 0
+                        ? { maxBudget: Math.floor(opts.maxBudget) }
+                        : {}),
                 },
             },
             { log: typeof opts.log === 'function' ? opts.log : undefined, sustain: () => Sustain.run() },

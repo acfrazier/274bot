@@ -166,7 +166,7 @@ impl From<RouteError> for TargetError {
 /// Node-expansion budget bounding a [`find`] search — the m8aq route-cutoff
 /// concept. The whole 2004 world is ~16M tiles, so any real route stays far
 /// under this; it only stops pathological floods.
-const NODE_BUDGET: usize = 4_000_000;
+pub const NODE_BUDGET: usize = 4_000_000;
 
 /// The interact radius (chebyshev) a transport edge is usable from: any
 /// standable tile within this distance of the edge's `at` is a valid
