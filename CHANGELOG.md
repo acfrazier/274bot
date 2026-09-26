@@ -250,6 +250,22 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   forever.
 
 ### Script host
+- Catalog walking and recovery follow frozen rs2b0t more closely
+  (`docs/api/script.md`, "Catalog walking and recovery"): `walkResilient`
+  verifies with a route probe before giving up and honours `sceneRadius`,
+  the teleport toggles and `distanceBeforeTeleport`; `avoidZones` now fails
+  loudly instead of being ignored, and `maxBudget` is mapped to the host
+  search bound. `createReturnToAnchorTask` keys off the leash and walks the
+  frozen legs (long-range leg, `obstacles`, 90 s). `DirectNavigator` clamps
+  and re-clicks. `Reach.npcDialog` walks with the resilient ladder, clears
+  doors in front of the NPC over up to eight rounds, and stops its walk when
+  a random event interrupts it. `RecoveryHints.takeAnchor()` returns the
+  anchor across a watchdog restart.
+- The traveller ends a follow as `EndBlocked` when the route's last tile,
+  one step away, refuses every click, instead of waiting out the caller's
+  timeout; script walks treat it as arrival as frozen `'blocked'` does. A
+  transport approach refused right after a region rebuild is retried while
+  the scene settles instead of failing the walk.
 - The FlourCollector catalog card now loads its four Murder Mystery area facts
   through the shim; EssMiner stays visibly dimmed until native Gatherer support
   replaces its pickaxe-acquisition dependency.

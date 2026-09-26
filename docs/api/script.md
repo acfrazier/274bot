@@ -145,6 +145,44 @@ pump drives `nav::traveller::Traveller::follow`; `SlotStatus.walk_{x,z,level}`
 mirrors the armed dest and clears on arrival. The nav `find` runs off-pump
 (a short-lived worker); `follow` steps on the slot pump, one send per tick.
 
+## Catalog walking and recovery (compat v1)
+
+The rs2b0t walk and reach helpers are Rust step machines; the shim passes
+arguments and awaits one completion.
+
+- **`Traversal.walkResilient`** runs the frozen ladder: baked walk, scene
+  step (`sceneRadius`, default `radius + 1`), door-or-step unstick, backoff,
+  and after three no-progress passes a verify probe (one route preview from
+  here, 30 s). A probe with no route, or the same end as the last probe,
+  ends the walk as unreachable; a fresh one resets the passes. Teleports
+  follow `useTeleportCatalog` / `policy.useTeleports` (an explicit false
+  wins; unset is off) and `policy.distanceBeforeTeleport` (the route span
+  must reach it). A settled blocked route end returns true. `maxBudget` is
+  received: the host searches every walk and the probe to its fixed
+  4,000,000-node bound, and logs a request above it. A non-empty
+  `avoidZones` fails with `not impl` (the host walk has no avoid-zone
+  field); `bankItemCounts` is not an input (the host bank fetch reads the
+  bank).
+- **`createReturnToAnchorTask`:** `validate` is beyond the bot's leash plus
+  slack. `execute` does nothing inside the arrive disk, walks a resilient leg
+  first when farther than `longRangeTiles`, opens `obstacles` on the way
+  with `walkOpening`, else walks once; `timeoutMs` defaults to 90 s.
+- **`DirectNavigator.walk`** clamps the click to 48 tiles, clicks on the
+  player's plane and returns false with no player tile or a target outside
+  the loaded scene. **`walkTo`** re-checks every two ticks and re-clicks
+  after 2400 ms or when the player did not move.
+- **`Reach.npcDialog`** walks with the resilient ladder (close-in radius 3,
+  stand radius 1, 4 attempts) and answers `unreachable` when that ladder
+  proves the tile unreachable. The talk runs up to eight rounds: it opens or
+  closes a door in front of an NPC the scene cannot reach, clears the door
+  after "I can't reach that" (no door is `unreachable`), and talks again one
+  tick after an unanswered round. A door approach is itself a resilient walk
+  (radius 1, 3 attempts, 30 s). A random-event interrupt or a newer reach
+  stops the walk the reach armed.
+- **`RecoveryHints`** outlive a watchdog restart: the restarted script's
+  `takeAnchor()` returns the anchor the stalled run latched; an unused hint
+  clears once the new `onStart` succeeds.
+
 ## Hard no
 
 No dummy tick-end opcode. No `Arc<World>` on extras. No bot action API in

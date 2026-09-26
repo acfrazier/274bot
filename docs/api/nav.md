@@ -212,6 +212,19 @@ progress and `Some(TravelOutcome)` at a terminal state
 call. `TravelOptions { close_enough, budget_ticks_per_hop, max_hops,
 on_leg, troll_doors }`.
 
+- **`Stalled { why: EndBlocked }`:** no walk of the follow was accepted,
+  the player stands within one tile of the route's last tile on its level,
+  and the client refused the click onto it on five distinct ticks (frozen
+  `'blocked'`, `WalkExecutor.ts:1039-1094`). The player is as close as the
+  live scene allows. Script walks publish it as a settled route end flagged
+  blocked (`walk_outcome_blocked`), and `walkResilient` returns true on it;
+  other callers end the follow as for any stall.
+- **Scene settle:** a transport's approach click the client refuses
+  (unreachable, off scene, scene unavailable) is retried two ticks later,
+  three times per follow, before the follow ends `Refused` — a region
+  rebuild briefly empties the client's local route (frozen
+  `CANDIDATE_SETTLE_TRIES`, `WalkExecutor.ts:1178-1184`).
+
 - **Default door leg:** interact the door transport's menu option, then
   settle `arrived(to, close_enough)` — cheap, no per-tick door polling.
 - **`troll_doors = true` (non-default, expensive):** per tick, read the
