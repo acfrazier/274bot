@@ -6,7 +6,8 @@
 //! count-dialog latch, send one Answer-Count, wait the dialog closed, then
 //! wait the make-menu to drop. `ChatDialog.make` presses the largest fixed
 //! quantity and waits the modal to change; `chooseOption` answers the
-//! matching option and waits the page to move. The anvil panel is a
+//! matching option and `continue` presses Continue, each waiting the page to
+//! move. The anvil panel is a
 //! distinct main-modal TYPE_INV with Make-N ops: `makeFromPanelMax` presses
 //! the largest posted Make-N on the matched row and `makeFromPanel` the named
 //! op (else the first posted one). JavaScript starts one
@@ -58,6 +59,7 @@ pub(crate) enum Kind {
     MakeFromPanel,
     MakeFromPanelMax,
     ChooseOption,
+    Continue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +75,8 @@ enum Phase {
     WaitPanel { before: i32 },
     /// Make-N button sent; waiting the chat (else main) modal to change.
     WaitModal { chat: bool, before: i32 },
-    /// Option answered; waiting the chat modal to change or offer Continue.
+    /// Option answered or Continue pressed; waiting the chat modal to change
+    /// or offer Continue.
     WaitChoice { before: Option<i32> },
 }
 
@@ -111,6 +114,7 @@ impl Family for ChatDialog {
             match args.kind {
                 Kind::Make => begin_make(&probe, &match_name, cx),
                 Kind::ChooseOption => begin_choose(&probe, &match_name, cx),
+                Kind::Continue => begin_continue(&probe, cx),
                 // Make-X and the anvil panel stop at once when not in game.
                 _ if !probe.ingame => Begin::Done(false),
                 Kind::MakeX => begin_make_x(&probe, match_name.trim(), &args.count, cx),
@@ -223,6 +227,19 @@ fn begin_choose(probe: &Probe<'_>, match_name: &str, cx: &mut Cx<'_>) -> Begin<C
     };
     cx.emit(InteractReq::Answer { option });
     let before = probe.chat_modal_id;
+    run(Phase::WaitChoice { before }, MODAL_WAIT_MS, cx)
+}
+
+/// Frozen `ChatDialog.continue` (`api/ui/dialogue/ChatDialog.ts:175-182`):
+/// no posted Continue button sends nothing and answers false (`:177`, the
+/// adapter's `continueDialog`, `ClientAdapter.ts:1747-1754`); else press it
+/// and wait the chat modal to change or offer Continue again (`:181`).
+fn begin_continue(probe: &Probe<'_>, cx: &mut Cx<'_>) -> Begin<ChatDialog> {
+    if !probe.chat_continue {
+        return Begin::Done(false);
+    }
+    let before = probe.chat_modal_id;
+    cx.emit(InteractReq::ContinueDialog);
     run(Phase::WaitChoice { before }, MODAL_WAIT_MS, cx)
 }
 

@@ -318,6 +318,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   `not impl` mid-fight. Only missing game data still throws its explicit
   "game data unavailable" error. `shouldEatToUseFood` now holds a heal of
   zero or less above the eat floor, as frozen does, and runs in Rust.
+- `ChatDialog.continue()` resolves like frozen: true once the chat modal
+  changes or the next page offers Continue again, false with no Continue
+  posted or after 3 s. It waited on the inverted condition, so a multi-page
+  dialog reported false to callers that branch on it (GatheringBot's desert
+  camp route) and a vanished Continue on the same page reported true. The
+  press and wait now run in the Rust `chat-dialog` machine.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 
