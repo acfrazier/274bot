@@ -304,6 +304,37 @@ export default class T extends LoopingBot {
     assert_eq!(value["noFood"], false);
 }
 
+/// Frozen `eatAtHpThreshold(maxHp, heal, minHp = 5)` (`food.ts:112-118`):
+/// the HP a full heal fits under, never at max HP and never below the floor;
+/// the floor itself when max HP is unknown.
+#[test]
+fn v1_eat_at_hp_threshold_is_the_full_heal_line() {
+    let value = probe_compat(
+        r#"
+import { eatAtHpThreshold } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = JSON.stringify({
+            fits: eatAtHpThreshold(20, 5),
+            zeroHeal: eatAtHpThreshold(20, 0),
+            bigHeal: eatAtHpThreshold(10, 20, 5),
+            customFloor: eatAtHpThreshold(20, 5, 17),
+            noMax: eatAtHpThreshold(0, 7),
+            noMaxNullFloor: eatAtHpThreshold(0, 7, null),
+        });
+    }
+}
+"#,
+        ClientRevision::R289,
+    );
+    assert_eq!(value["fits"], 15);
+    assert_eq!(value["zeroHeal"], 19);
+    assert_eq!(value["bigHeal"], 5);
+    assert_eq!(value["customFloor"], 17);
+    assert_eq!(value["noMax"], 5);
+    assert_eq!(value["noMaxNullFloor"], serde_json::Value::Null);
+}
+
 #[test]
 fn v2_food_and_runes_contracts() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {

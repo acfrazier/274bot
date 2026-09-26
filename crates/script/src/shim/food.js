@@ -31,8 +31,8 @@ export function foodCount(items, foodName) {
     return fn(items, foodName);
 }
 
-export function eatAtHpThreshold(_maxHp, _heal, _minHp) {
-    throw notImpl('eatAtHpThreshold');
+export function eatAtHpThreshold(maxHp, heal, minHp) {
+    return globalThis.__rs2b0t_eat_at_hp_threshold(maxHp, heal, minHp);
 }
 
 /** Eat when a full heal fits, or HP is at/below the safety floor. */

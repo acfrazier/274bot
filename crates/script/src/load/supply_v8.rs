@@ -40,7 +40,73 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         runtime,
         "__rs2b0t_should_eat_to_use_food",
         should_eat_to_use_food,
-    )
+    )?;
+    callback_v8::install(runtime, "__rs2b0t_eat_at_hp_threshold", eat_at_hp_threshold)
+}
+
+/// JS `Math.max(a, b)`: NaN wins, and `+0` beats `-0`.
+fn js_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a == b {
+        if a.is_sign_positive() {
+            a
+        } else {
+            b
+        }
+    } else {
+        a.max(b)
+    }
+}
+
+/// JS `Math.min(a, b)`: NaN wins, and `-0` beats `+0`.
+fn js_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a == b {
+        if a.is_sign_negative() {
+            a
+        } else {
+            b
+        }
+    } else {
+        a.min(b)
+    }
+}
+
+/// Frozen `eatAtHpThreshold(maxHp, heal, minHp = MIN_EAT_HP)`
+/// (`api/combat/food.ts:112-118`): `minHp` as given when `maxHp <= 0`; else
+/// the HP a full heal fits under, kept below `maxHp` and at least `minHp`.
+fn eat_at_hp_threshold<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let max_hp = args.get(0);
+        let heal = args.get(1);
+        let min_hp = match args.get(2) {
+            min_hp if min_hp.is_undefined() => {
+                callback_v8::num(scope, f64::from(food_policy::MIN_EAT_HP))
+            }
+            min_hp => min_hp,
+        };
+        let zero = callback_v8::num(scope, 0.0);
+        if callback_v8::le(scope, max_hp, zero)? {
+            return Ok(min_hp);
+        }
+        let heal = js_max(0.0, callback_v8::number(scope, heal)?);
+        let heal = callback_v8::num(scope, heal);
+        let full_use = callback_v8::sub(scope, max_hp, heal)?;
+        let one = callback_v8::num(scope, 1.0);
+        let below_max = callback_v8::sub(scope, max_hp, one)?;
+        let below_max = callback_v8::number(scope, below_max)?;
+        let full_use = callback_v8::number(scope, full_use)?;
+        let capped = js_min(below_max, full_use);
+        let floor = callback_v8::number(scope, min_hp)?;
+        Ok(callback_v8::num(scope, js_max(floor, capped)))
+    })();
+    callback_v8::finish(scope, rv, result);
 }
 
 /// Frozen `shouldEatToUseFood` (`api/combat/food.ts:124-143`) with the
@@ -79,8 +145,7 @@ fn should_eat_to_use_food<'s>(
         }
         let heal = callback_v8::get(scope, opts, "heal")?;
         // `Math.max(0, heal)`: NaN stays NaN, which is not `<= 0`.
-        let heal = callback_v8::number(scope, heal)?;
-        let heal = if heal.is_nan() { heal } else { heal.max(0.0) };
+        let heal = js_max(0.0, callback_v8::number(scope, heal)?);
         if heal <= 0.0 {
             return Ok(false);
         }

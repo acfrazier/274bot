@@ -344,6 +344,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   unknown setting (`strength`, rapid mode 1) instead of throwing `not impl`,
   and `parseRangeStyle` accepts `long range` / `long-range`. The style tables
   are Rust's.
+- `eatAtHpThreshold(maxHp, heal, minHp)` is implemented as frozen: the HP
+  at which a full heal fits, kept below max HP and at least the floor
+  (default 5); it threw `not impl`.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 

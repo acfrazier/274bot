@@ -8791,13 +8791,11 @@ export default class T extends LoopingBot {
 fn eat_predicates() {
     let src = r#"
 import { shouldEat } from '../../api/inventory/packRules.js';
-import { shouldEatFood, shouldEatToUseFood, foodForms, eatAtHpThreshold } from '../../api/combat/food.js';
+import { shouldEatFood, shouldEatToUseFood, foodForms } from '../../api/combat/food.js';
 export default class T extends LoopingBot {
     loop() {
         let formsErr = null;
-        let threshErr = null;
         try { globalThis.__forms = foodForms('Shark'); } catch (e) { formsErr = String(e && e.message ? e.message : e); }
-        try { eatAtHpThreshold(10, 20, 5); } catch (e) { threshErr = String(e && e.message ? e.message : e); }
         const opts = { hp: 3, maxHp: 10, heal: 20, foodCount: 1 };
         globalThis.__probe = JSON.stringify({
             shouldEat: shouldEat(3, 10, 20, 1),
@@ -8807,7 +8805,6 @@ export default class T extends LoopingBot {
             typeofShouldEatFood: typeof shouldEatFood('Shark', { hp: 3, maxHp: 10, foodCount: 1 }),
             formsErr,
             forms: globalThis.__forms || null,
-            threshErr,
         });
     }
 }
@@ -8871,11 +8868,6 @@ export default class T extends LoopingBot {
         parsed["formsErr"],
         serde_json::Value::Null,
         "foodForms does not throw: {parsed:?}"
-    );
-    let thresh = parsed["threshErr"].as_str().unwrap_or("");
-    assert!(
-        thresh.contains("not impl") && thresh.contains("eatAtHpThreshold"),
-        "eatAtHpThreshold stays not impl, got {thresh:?}"
     );
     iso.join();
 }
