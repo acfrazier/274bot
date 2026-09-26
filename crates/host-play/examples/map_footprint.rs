@@ -84,12 +84,13 @@ fn settled() -> Sample {
         }
     }
 }
+
 fn emit(phase: &str, base: Sample, now: Sample, extra: &str) {
     println!(
-        "{{\"phase\":\"{phase}\",\"footprint_mib\":{:.2},\"footprint_delta_mib\":{:.2},\"malloc_in_use_delta_mib\":{:.2},\"malloc_allocated_delta_mib\":{:.2}{extra}}}",
+        "{{\"phase\":\"{phase}\",\"footprint_mib\":{:.2},\"footprint_delta_mib\":{:.2},\"malloc_in_use_delta_bytes\":{},\"malloc_allocated_delta_mib\":{:.2}{extra}}}",
         mib(i128::from(now.footprint)),
         mib(i128::from(now.footprint) - i128::from(base.footprint)),
-        mib(i128::from(now.malloc_in_use) - i128::from(base.malloc_in_use)),
+        i128::from(now.malloc_in_use) - i128::from(base.malloc_in_use),
         mib(i128::from(now.malloc_allocated) - i128::from(base.malloc_allocated)),
     );
 }
@@ -136,6 +137,9 @@ fn run() -> Result<(), String> {
             let _ = std::io::stdin().read_line(&mut String::new());
         }
     };
+    // stdout allocates its line buffer on the first print; do that before the
+    // baseline so it doesn't read as a map allocation.
+    println!("{{\"phase\":\"start\",\"pid\":{}}}", std::process::id());
     let base = settled();
     emit("baseline", base, base, "");
     pause("baseline");
