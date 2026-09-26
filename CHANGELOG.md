@@ -142,13 +142,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   the bound profile's map cache. Real bake progress is shown; ReadyImages
   terrain and `Catalogue::from_ready` (navpois + game-data names) replace
   the fixture-only map. Observed services follow the focused bot. Close
-  drops the demand and GPU/CPU pixels. A mid-bake close parks at the latest
-  validated units; reopen resumes remaining tiles instead of re-rastering.
+  drops the demand and GPU/CPU pixels. A mid-bake close keeps the tiles already
+  written; reopen verifies and adopts them from disk and bakes only the rest.
   Route tiles are cached by `(source, generation)` and trimmed by a monotonic
   start index (`remaining_path_tiles` leg semantics; an off-route `here` does
   not re-show walked legs). Pending selection and the armed dest draw as
   distinct markers; decode staging reports its real byte count; LOD selection
   uses the bake/manifest `max_lod`.
+- A cold WalkTo terrain bake no longer writes and fsyncs every tile a second
+  time when it publishes: the finished tiles' receipts are checkpointed as
+  written, so the 289 cold bake takes about 15 s instead of about 24 s, and a
+  resumed bake no longer spends ~9 s re-publishing. The panel no longer
+  creates the map-cache manager at boot; the first WalkTo open does.
 
 ### Rendering and client
 
