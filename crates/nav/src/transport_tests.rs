@@ -20,46 +20,7 @@ if ($progress = 0) {
 }
 ";
 
-/// The real Server content root this machine bakes against (the same
-/// path `nav-pack` defaults to); `None` when the checkout is absent,
-/// so the content-backed tests skip with a message instead of faking
-/// coordinates.
-fn real_content_root() -> Option<PathBuf> {
-    let root = PathBuf::from("/Users/acfrazier/experiments/Server/content");
-    if root.join("maps").is_dir() && root.join("pack").join("loc.pack").is_file() {
-        Some(root)
-    } else {
-        eprintln!(
-            "SKIP: Server content not found at {} (content-backed tests skipped)",
-            root.display()
-        );
-        None
-    }
-}
-
-/// The real client-cache loc defs (`nav-pack`'s collision table), or
-/// `None` when the cache jag is absent.
-fn real_loc_defs() -> Option<LocDefs> {
-    let jag = PathBuf::from("/Users/acfrazier/experiments/Server/engine/data/pack/config");
-    let bytes = std::fs::read(&jag).ok()?;
-    let cache = Cache::unpack(&JagFile::new(bytes));
-    Some(LocDefs::from_locs(&cache.locs))
-}
-
-/// Derive the transport graph from the real Server content (the
-/// collision bake the graph's doors walk against); `None` when the
-/// content root or client cache is absent, so the content-backed
-/// tests skip with a message instead of faking coordinates.
-fn derive_from_real_content() -> Option<(TransportGraph, WorldCollision)> {
-    let root = real_content_root()?;
-    let defs = real_loc_defs()?;
-    let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
-        .expect("real Server content bakes");
-    let graph = derive_transports(&root, &defs, &wc);
-    Some((graph, wc))
-}
-
-/// The real content must derive the Rune Mysteries essence-mine
+/// The derived graph carries the Rune Mysteries essence-mine
 /// entries — one `TransportKind::Npc` edge per wizard who knows the
 /// teleport (Aubury, Sedridor, Distentor, Cromperty, Brimstail), each
 /// carrying the Rune Mysteries quest name and landing on the mine pad
@@ -67,14 +28,10 @@ fn derive_from_real_content() -> Option<(TransportGraph, WorldCollision)> {
 /// landing is randomised among the `essence_mine_teleports` enum
 /// coords, so the executor accepts any landing in the mine). The gate
 /// is the script's `%runemysteries >= ^runemysteries_complete` — the
-/// `teleport_to_essence_mine` proc refuses below it. Skips with a
-/// message when the Server content tree or the client cache is absent;
-/// never fakes coordinates.
+/// `teleport_to_essence_mine` proc refuses below it.
 #[test]
 fn derive_transports_emits_essence_mine_entries() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
-    };
+    let graph = derive_static_routes();
     let ess: Vec<_> = graph
         .edges
         .iter()
@@ -156,18 +113,15 @@ fn derive_transports_emits_essence_mine_entries() {
     }
 }
 
-/// The real content must derive Elkoy's two Tree Gnome Village maze
+/// The derived graph carries Elkoy's two Tree Gnome Village maze
 /// escorts (`elkoy_edges`): the maze-side Elkoy (npc 473) escorts into
 /// the village (`p_telejump(^elkoy_maze_coord)` → (2515,3159)) and the
 /// village Elkoy (npc 474) escorts out (`p_telejump(^elkoy_entrance_coord)`
 /// → (2504,3192)), each `Talk-to` op 1 carrying the Tree Gnome Village
-/// quest name. Skips with a message when the Server content tree or the
-/// client cache is absent; never fakes coordinates.
+/// quest name.
 #[test]
 fn derive_transports_emits_elkoy_escort_both_ways() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
-    };
+    let graph = derive_static_routes();
     let elk: Vec<_> = graph
         .edges
         .iter()
@@ -236,28 +190,74 @@ fn derive_transports_emits_elkoy_escort_both_ways() {
     );
 }
 
-/// The real content must derive the Zanaris shed door: the
-/// `[oploc1,zanarisdoor]` block's Open channel teleports through to
-/// Zanaris (`0_50_149_20_56` = (3220,9592)) when the Dramen staff is
-/// worn, so the door edge carries the staff's obj id as `worn_req`
-/// and the Lost City quest name. Skips with a message when the Server
-/// content tree or the client cache is absent; never fakes
-/// coordinates.
+/// The Zanaris shed door (`quest_zanaris.rs2:89-100`
+/// `[oploc1,zanarisdoor]`): its Open channel teleports through to Zanaris
+/// (`0_50_149_20_56` = (3220,9592)) when the Dramen staff is worn, so the
+/// door edge carries the staff's obj id as `worn_req` and the Lost City
+/// quest name, and names the `loc_1532` leaf it swings.
 #[test]
 fn derive_transports_emits_zanaris_shed_door_with_worn_dramen() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
-    };
-    let e = graph
-        .edges
-        .iter()
-        .find(|e| e.kind == TransportKind::Door && e.worn_req == [772])
-        .expect("shed door");
-    assert!(!e.worn_req.is_empty());
-    assert!(
-        e.to.x > 3000 && e.to.z > 9000,
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "2406=zanarisdoor\n1532=loc_1532\n");
+    fx.write("pack/obj.pack", "772=dramen_staff\n");
+    fx.write(
+        "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
+        "\
+[oploc1,zanarisdoor]
+def_boolean $entering = ~check_axis(coord, loc_coord, loc_angle);
+~open_and_close_door2(loc_1532, $entering, door_open);
+if($entering = false) {
+    if(inv_total(worn, dramen_staff) > 0 & map_members = ^true) {
+        mes(\"The world starts to shimmer...\");
+        if(%zanaris = ^zanaris_staff_made) {
+            queue(zanaris_quest_complete, 0, 0);
+        }
+        p_delay(1);
+        ~player_teleport_normal(0_50_149_20_56);
+    }
+}
+",
+    );
+    fx.write(
+        "maps/m50_49.jm2",
+        "==== MAP ====\n0 20 56: h1 u50\n==== LOC ====\n0 20 56: 2406 0 0\n",
+    );
+    let defs = loc_defs(&[(2406, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::from([2406]));
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    let shed: Vec<_> = graph.edges.iter().filter(|e| e.loc_id == 2406).collect();
+    assert_eq!(shed.len(), 1, "{shed:?}");
+    let e = shed[0];
+    assert_eq!(
+        e.at,
+        WorldTile {
+            x: 3220,
+            z: 3192,
+            level: 0
+        }
+    );
+    assert_eq!(
+        e.to,
+        WorldTile {
+            x: 3220,
+            z: 9592,
+            level: 0
+        },
         "Zanaris landing, not Lumbridge swamp"
     );
+    assert_eq!(e.worn_req, [772]);
+    assert_eq!(e.quest_req, ["Lost City"]);
+    assert_eq!(e.open_loc_id, Some(1532));
+    assert_eq!(e.ticks, ZANARIS_DOOR_TICKS);
+}
+
+/// The graph derived from an empty content root: only the explicit route
+/// tables (boats, carts, essence-mine wizards, Elkoy) that read no content.
+fn derive_static_routes() -> TransportGraph {
+    let fx = Fixture::new();
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    derive_transports(fx.path(), &defs, &wc)
 }
 
 /// A throwaway content root written on demand, removed on drop.
@@ -562,6 +562,7 @@ fn brass_key_door_fails_closed_when_alias_or_handler_changes() {
 }
 
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn selected_274_and_289_content_derives_the_keyed_hut_crossing() {
     use crate::router::{find_with, FindOptions, Leg};
 
@@ -648,27 +649,16 @@ fn selected_274_and_289_content_derives_the_keyed_hut_crossing() {
         );
     }
 
-    if let Some((graph, wc)) = derive_from_real_content() {
-        let root = real_content_root().expect("274 root already selected");
-        let ids = loc_ids_by_name(&root);
-        assert!(brass_key_handler_matches(&root), "274 handler shape");
+    for (root, graph, wc) in qualification_worlds() {
+        let label = root.display().to_string();
+        let ids = loc_ids_by_name(root);
+        assert!(brass_key_handler_matches(root), "{label} handler shape");
         assert_eq!(
-            brass_key_open_loc_id(&root, &ids, ids[BRASS_KEY_DOOR_NAME]),
+            brass_key_open_loc_id(root, &ids, ids[BRASS_KEY_DOOR_NAME]),
             Some(1535),
-            "274 replacement leaf"
+            "{label} replacement leaf"
         );
-        assert_selected("274", &graph, &wc);
-    }
-    if let Some((graph, wc)) = derive_from_lostcity_content() {
-        let root = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
-        let ids = loc_ids_by_name(&root);
-        assert!(brass_key_handler_matches(&root), "289 handler shape");
-        assert_eq!(
-            brass_key_open_loc_id(&root, &ids, ids[BRASS_KEY_DOOR_NAME]),
-            Some(1535),
-            "289 replacement leaf"
-        );
-        assert_selected("289", graph, wc);
+        assert_selected(&label, graph, wc);
     }
 }
 
@@ -877,56 +867,181 @@ fn derive_transports_packs_identically_across_runs() {
     }
 }
 
-/// The real content must derive at least one `TransportKind::Door`
-/// edge for the Sinclair wooden fence gates (loc 1551 / 1553):
-/// `door_edges` reads `scripts/general_use/configs/gates.loc` into the
-/// door set, not only `scripts/doors/configs/*.loc`. Skips with a
-/// message when the Server content tree or the client cache is absent;
-/// never fakes coordinates.
+/// Fence gates declared in `scripts/general_use/configs/gates.loc` (the
+/// Sinclair wooden gates `loc_1551`/`loc_1553`: `op1=Open` with the closed
+/// gate categories) join the door set like the door configs, not only
+/// `scripts/doors/configs/*.loc`: each placement crosses both ways.
 #[test]
 fn derive_transports_content_emits_sinclair_gate_edges() {
-    let Some(root) = real_content_root() else {
-        return;
-    };
-    let Some(defs) = real_loc_defs() else {
-        eprintln!("SKIP: client cache config jag missing");
-        return;
-    };
-    let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
-        .expect("real Server content bakes");
-    let graph = derive_transports(&root, &defs, &wc);
-    let gates: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|e| e.kind == TransportKind::Door && (e.loc_id == 1551 || e.loc_id == 1553))
-        .collect();
-    assert!(
-        !gates.is_empty(),
-        "no Door edges for the Sinclair wooden gates (loc 1551/1553) from the real content"
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "1551=loc_1551\n1553=loc_1553\n");
+    fx.write(
+        "scripts/general_use/configs/gates.loc",
+        "\
+[loc_1551]
+name=Gate
+op1=Open
+active=yes
+category=gate_main_closed
+param=next_loc_stage,loc_1552
+
+[loc_1553]
+name=Gate
+mirror=yes
+op1=Open
+active=yes
+category=gate_outer_closed
+param=next_loc_stage,loc_1556
+",
+    );
+    fx.write(
+        "maps/m44_53.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 5 46: 1551 0 0\n0 5 47: 1553 0 0\n",
+    );
+    let defs = loc_defs(&[(1551, 1, 1), (1553, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::from([1551, 1553]));
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    assert_eq!(
+        door_crossings(&graph, 1551),
+        vec![
+            ((2821, 3438), 'E', (2822, 3438)),
+            ((2821, 3438), 'W', (2820, 3438)),
+        ]
+    );
+    assert_eq!(
+        door_crossings(&graph, 1553),
+        vec![
+            ((2821, 3439), 'E', (2822, 3439)),
+            ((2821, 3439), 'W', (2820, 3439)),
+        ]
     );
 }
 
-/// The real content must derive the spirit-tree network: the stronghold
-/// tree (ent) flies to village/varrock/khazard, the village tree
-/// (stronghold_ent) back to khazard/varrock/stronghold, and each young
-/// tree (loc_1317, placed twice) to the village — 8 directed hops, the
-/// same count the rs2b0t catalog carries. Skips with a message when the
-/// Server content tree or the client cache is absent; never fakes
-/// coordinates.
+/// The spirit-tree network from `area_gnome/scripts/spirit_tree.rs2` (the
+/// three `[oploc1]` blocks and `[label,spirit_tree_tele]`, verbatim but for
+/// dialog lines) and `spirit_tree.constant`: the stronghold tree (ent)
+/// flies to village/varrock/khazard, the village tree (stronghold_ent)
+/// back to khazard/varrock/stronghold, and each young tree (loc_1317,
+/// placed twice) to the village — 8 directed hops. Neither quest varp is
+/// transmitted, so each hop carries its completed journal row, and the
+/// helper's members abort puts `members_req` on all of them.
 #[test]
 fn derive_transports_emits_spirit_tree_edges() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
+    let fx = Fixture::new();
+    fx.write(
+        "scripts/areas/area_gnome/configs/spirit_tree.constant",
+        "\
+^khazard_tree = 0_39_50_59_59
+^varrock_tree = 0_49_54_43_51
+^village_tree = 0_39_49_46_33
+^stronghold_tree = 0_38_53_29_52
+",
+    );
+    fx.write(
+        "scripts/areas/area_gnome/scripts/spirit_tree.rs2",
+        "\
+[oploc1,ent] // gnome stronghold tree
+if(%grandtree ! ^grandtree_complete) {
+    ~mesbox(\"The tree doesn't feel like talking.\");
+    return;
+}
+def_coord $end_pos = ^stronghold_tree;
+switch_int(~p_choice3(\"Tree Gnome Village.\", 1, \"Forest north of Varrock.\", 2, \"Battlefield of Khazard.\", 3)) {
+    case 1 : $end_pos = ^village_tree;
+    case 2 : $end_pos = ^varrock_tree;
+    case 3 : $end_pos = ^khazard_tree;
+}
+@spirit_tree_tele($end_pos);
+
+[oploc1,stronghold_ent] // gnome village tree
+if(%treequest ! ^tree_complete) {
+    ~mesbox(\"The tree doesn't feel like talking.\");
+    return;
+}
+def_coord $end_pos = ^village_tree;
+switch_int(~p_choice3(\"Battlefield of Khazard.\", 1, \"Forest north of Varrock.\", 2, \"Gnome stronghold.\", 3)) {
+    case 1 : $end_pos = ^khazard_tree;
+    case 2 : $end_pos = ^varrock_tree;
+    case 3 : $end_pos = ^stronghold_tree;
+}
+@spirit_tree_tele($end_pos);
+
+[oploc1,loc_1317] // young tree
+if(%treequest ! ^tree_complete) {
+    ~mesbox(\"The tree doesn't feel like talking.\");
+    return;
+}
+switch_int(~p_choice2(\"Yes please.\", 1, \"No thank you.\", 2)) {
+    case 1 :
+        ~chatplayer(\"<p,neutral>Yes please.\");
+        @spirit_tree_tele(^village_tree);
+    case 2 :
+        ~chatplayer(\"<p,neutral>No thank you.\");
+}
+
+[label,spirit_tree_tele](coord $dest)
+if(map_members = ^false) {
+    if_close;
+    mes(^mes_members_feature);
+    return;
+}
+if_close;
+anim(human_reachforladder, 0);
+p_delay(0);
+p_telejump($dest);
+",
+    );
+    fx.write("pack/varp.pack", "150=grandtree\n111=treequest\n");
+    fx.write(
+        "scripts/general/scripts/quests.rs2",
+        &format!("{JOURNAL_GREEN_SOURCE}~send_quest_progress_colour(questlist:grandtree, %grandtree, ^grandtree_complete);\n~send_quest_progress_colour(questlist:tree, %treequest, ^tree_complete);\n"),
+    );
+    fx.write(
+        "scripts/general/configs/quest.constant",
+        "^grandtree_complete = 160\n^tree_complete = 9\n",
+    );
+    fx.write(
+        "scripts/player/interfaces/questlist.if",
+        "[grandtree]\ntext=The Grand Tree\n[tree]\ntext=Tree Gnome Village\n",
+    );
+    let ids = HashMap::from([
+        ("ent".to_string(), 1293),
+        ("stronghold_ent".to_string(), 1294),
+        ("loc_1317".to_string(), 1317),
+    ]);
+    let placement = |id, x, z| Placement {
+        id,
+        shape: 10,
+        angle: 0,
+        level: 0,
+        x,
+        z,
     };
+    let positions = HashMap::from([
+        (1293, vec![placement(1293, 2461, 3444)]),
+        (1294, vec![placement(1294, 2542, 3169)]),
+        (
+            1317,
+            vec![placement(1317, 3179, 3507), placement(1317, 2555, 3259)],
+        ),
+    ]);
+    let mut graph = TransportGraph::default();
+    let gates = ObservableGates::from_content(fx.path());
+    spirit_tree_edges(
+        fx.path(),
+        &ids,
+        &positions,
+        &mut graph,
+        &mut HashMap::new(),
+        &gates,
+        &mut VarpGateAudit::default(),
+    );
     let trees: Vec<_> = graph
         .edges
         .iter()
         .filter(|e| e.kind == TransportKind::SpiritTree)
         .collect();
-    let n = trees.len();
-    assert!(n >= 8, "rs2b0t catalog is 8 directed hops, got {n}");
-    // Neither quest varp is transmitted; the producer binds the
-    // completed journal row and the shared teleport helper's members guard.
+    assert_eq!(trees.len(), 8, "{trees:?}");
     for e in &trees {
         assert_eq!(e.option, 1, "Talk-to");
         assert_eq!(e.ticks, SPIRIT_TREE_TICKS);
@@ -939,8 +1054,8 @@ fn derive_transports_emits_spirit_tree_edges() {
             other => panic!("unexpected spirit-tree loc id {other}"),
         }
     }
-    // The young tree near Varrock occupies F2P-world geometry. Its
-    // completed journal row alone cannot override the script's members abort.
+    // The young tree near Varrock stands in F2P-world geometry; its
+    // completed journal row alone cannot override the members abort.
     let young_near_varrock = trees
         .iter()
         .find(|e| e.loc_id == 1317 && e.at.x > 3000)
@@ -950,9 +1065,7 @@ fn derive_transports_emits_spirit_tree_edges() {
     assert!(!journal.allows(young_near_varrock));
     journal.map_members = true;
     assert!(journal.allows(young_near_varrock));
-    // The stronghold tree (ent, loc 1293) reaches the village, varrock,
-    // and khazard trees; the village tree (stronghold_ent, loc 1294)
-    // reaches back to khazard, varrock, and the stronghold.
+    let tile = |x, z| WorldTile { x, z, level: 0 };
     let dests = |loc_id: i32| -> Vec<WorldTile> {
         let mut v: Vec<WorldTile> = trees
             .iter()
@@ -963,56 +1076,17 @@ fn derive_transports_emits_spirit_tree_edges() {
         v.dedup();
         v
     };
+    // ^village_tree, ^khazard_tree, ^varrock_tree / ^stronghold_tree.
     assert_eq!(
         dests(1293),
-        vec![
-            WorldTile {
-                x: 2542,
-                z: 3169,
-                level: 0
-            }, // ^village_tree
-            WorldTile {
-                x: 2555,
-                z: 3259,
-                level: 0
-            }, // ^khazard_tree
-            WorldTile {
-                x: 3179,
-                z: 3507,
-                level: 0
-            }, // ^varrock_tree
-        ]
+        vec![tile(2542, 3169), tile(2555, 3259), tile(3179, 3507)]
     );
     assert_eq!(
         dests(1294),
-        vec![
-            WorldTile {
-                x: 2461,
-                z: 3444,
-                level: 0
-            }, // ^stronghold_tree
-            WorldTile {
-                x: 2555,
-                z: 3259,
-                level: 0
-            }, // ^khazard_tree
-            WorldTile {
-                x: 3179,
-                z: 3507,
-                level: 0
-            }, // ^varrock_tree
-        ]
+        vec![tile(2461, 3444), tile(2555, 3259), tile(3179, 3507)]
     );
-    // The young tree (loc_1317) is placed twice and only reaches the
-    // village.
-    let young: Vec<_> = trees.iter().filter(|e| e.loc_id == 1317).collect();
-    assert_eq!(young.len(), 2);
-    assert!(young.iter().all(|e| e.to
-        == WorldTile {
-            x: 2542,
-            z: 3169,
-            level: 0
-        }));
+    assert_eq!(dests(1317), vec![tile(2542, 3169)]);
+    assert_eq!(trees.iter().filter(|e| e.loc_id == 1317).count(), 2);
 }
 
 #[test]
@@ -1075,17 +1149,13 @@ p_telejump($dest);\n";
     );
 }
 
-/// The real content must derive at least one `TransportKind::Npc` edge
+/// The derived graph carries the `TransportKind::Npc` edges
 /// for the Shilo↔Brimhaven cart (`cart_edges`, the `hajedy.rs2` /
 /// `vigroy.rs2` route pair): coins on the fare and the Shilo Village
-/// journal name on the Brim→Shilo hop. Skips with a message when the
-/// Server content tree or the client cache is absent; never fakes
-/// coordinates.
+/// journal name on the Brim→Shilo hop.
 #[test]
 fn derive_transports_emits_shilo_brimhaven_cart() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
-    };
+    let graph = derive_static_routes();
     let carts: Vec<_> = graph
         .edges
         .iter()
@@ -1107,34 +1177,89 @@ fn derive_transports_emits_shilo_brimhaven_cart() {
     );
 }
 
-/// The real content must derive the two wilderness lever hops
-/// (`wilderness_lever.rs2` locs 1814/1815): the Ardougne lever's `to`
-/// is inside the wilderness zone and the wilderness lever's `to` is
-/// not. Skips with a message when the Server content tree or the
-/// client cache is absent; never fakes coordinates.
+/// Both wilderness levers (`wilderness_lever.rs2` `[oploc1,wildinlever]` /
+/// `[oploc1,wildoutlever]`, locs 1814/1815) teleport through their
+/// `wilderness_lever.constant` coords: the Ardougne lever lands inside the
+/// wilderness zone and the wilderness lever outside it.
 #[test]
 fn derive_transports_emits_wildy_ardougne_levers() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "1814=wildinlever\n1815=wildoutlever\n");
+    fx.write(
+        "scripts/areas/area_ardougne_east/configs/wilderness_lever.constant",
+        "^ardougne_to_wilderness_coord = 0_49_61_18_20\n^wilderness_to_ardougne_coord = 0_40_51_2_47\n",
+    );
+    fx.write(
+        "scripts/areas/area_ardougne_east/scripts/wilderness_lever.rs2",
+        "\
+[oploc1,wildinlever]
+p_arrivedelay;
+anim(human_leverdown, 0);
+sound_synth(lever, 1, 0);
+loc_change(hauntedleverdown, 7);
+if_close;
+p_delay(1);
+mes(\"You pull the lever...\");
+p_delay(0);
+~player_teleport_normal(^ardougne_to_wilderness_coord);
+mes(\"...And teleport into the wilderness.\");
+
+[oploc1,wildoutlever]
+p_arrivedelay;
+anim(human_leverdown, 0);
+sound_synth(lever, 1, 0);
+loc_change(hauntedleverdown, 7);
+if_close;
+p_delay(0);
+mes(\"You pull the lever...\");
+p_delay(0);
+~player_teleport_normal(^wilderness_to_ardougne_coord);
+mes(\"...And teleport out of the wilderness.\");
+",
+    );
+    // (2561,3311) in Ardougne and (3153,3923) in the wilderness.
+    fx.write(
+        "maps/m40_51.jm2",
+        "==== MAP ====\n0 1 47: h1 o6 u50\n==== LOC ====\n0 1 47: 1814 4\n",
+    );
+    fx.write(
+        "maps/m49_61.jm2",
+        "==== MAP ====\n0 17 19: h1 o6 u50\n==== LOC ====\n0 17 19: 1815 4\n",
+    );
+    let defs = loc_defs(&[(1814, 1, 1), (1815, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let mut graph = derive_transports(fx.path(), &defs, &wc);
+    graph.wilderness = surface_wildy_rules();
+    let lever = |id| {
+        let found: Vec<_> = graph.edges.iter().filter(|e| e.loc_id == id).collect();
+        assert_eq!(found.len(), 1, "{id}: {found:?}");
+        found[0].clone()
     };
-    let levers: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|e| e.loc_id == 1814 || e.loc_id == 1815)
-        .cloned()
-        .collect();
-    assert!(
-        levers.len() >= 2,
-        "both lever directions derive, got {}",
-        levers.len()
+    let into = lever(1814);
+    let out = lever(1815);
+    assert_eq!(
+        into.to,
+        WorldTile {
+            x: 3154,
+            z: 3924,
+            level: 0
+        }
+    );
+    assert_eq!(
+        out.to,
+        WorldTile {
+            x: 2562,
+            z: 3311,
+            level: 0
+        }
     );
     assert!(
-        levers.iter().any(|e| graph.wilderness.contains(e.to)),
-        "the Ardougne→wildy lever must land inside the wilderness"
+        graph.wilderness.contains(into.to),
+        "the Ardougne→wildy lever lands inside the wilderness"
     );
     assert!(
-        levers.iter().any(|e| !graph.wilderness.contains(e.to)),
-        "the wildy→Ardougne lever must land outside the wilderness"
+        !graph.wilderness.contains(out.to),
+        "the wildy→Ardougne lever lands outside the wilderness"
     );
 }
 
@@ -1153,144 +1278,143 @@ fn derive_transports_emits_wildy_ardougne_levers() {
 /// (`at` (3302,3115) one tile south of the placement, `to`
 /// (3303,3118), the `coordz(coord) <= coordz(loc_coord)`
 /// `p_telejump(movecoord(coord,0,0,3))` landing, **no** `item_req`).
-/// Only the northbound hop carries the pass. Skips with a message
-/// when the Server content tree or the client cache is absent; never
-/// fakes coordinates.
+/// Only the northbound hop carries the pass.
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn derive_transports_emits_alkharid_toll_and_shantay_north() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
-    };
-    // Each gate has two crossing directions, each with paid and
-    // journal-completed alternatives derived from the border guard script.
-    let tolls: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|e| e.kind == TransportKind::Door && (e.loc_id == 2882 || e.loc_id == 2883))
-        .cloned()
-        .collect();
-    assert!(
-        !tolls.is_empty(),
-        "no Door edges for the Al Kharid toll gates (loc 2882/2883)"
-    );
-    assert_eq!(
-        tolls.iter().filter(|e| e.loc_id == 2882).count(),
-        4,
-        "left toll gate derives both crossings"
-    );
-    assert_eq!(
-        tolls.iter().filter(|e| e.loc_id == 2883).count(),
-        4,
-        "right toll gate derives both crossings"
-    );
-    for e in &tolls {
+    for (root, graph, _wc) in qualification_worlds() {
+        let _ = root;
+        // Each gate has two crossing directions, each with paid and
+        // journal-completed alternatives derived from the border guard script.
+        let tolls: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && (e.loc_id == 2882 || e.loc_id == 2883))
+            .cloned()
+            .collect();
+        assert!(
+            !tolls.is_empty(),
+            "no Door edges for the Al Kharid toll gates (loc 2882/2883)"
+        );
         assert_eq!(
-            e.at,
-            if e.loc_id == 2882 {
-                WorldTile {
-                    x: 3268,
-                    z: 3227,
-                    level: 0,
+            tolls.iter().filter(|e| e.loc_id == 2882).count(),
+            4,
+            "left toll gate derives both crossings"
+        );
+        assert_eq!(
+            tolls.iter().filter(|e| e.loc_id == 2883).count(),
+            4,
+            "right toll gate derives both crossings"
+        );
+        for e in &tolls {
+            assert_eq!(
+                e.at,
+                if e.loc_id == 2882 {
+                    WorldTile {
+                        x: 3268,
+                        z: 3227,
+                        level: 0,
+                    }
+                } else {
+                    WorldTile {
+                        x: 3268,
+                        z: 3228,
+                        level: 0,
+                    }
                 }
-            } else {
-                WorldTile {
-                    x: 3268,
-                    z: 3228,
-                    level: 0,
-                }
+            );
+            assert!(
+                (e.item_req == vec![(995, 10)] && e.quest_req.is_empty())
+                    || (e.item_req.is_empty() && e.quest_req == ["Prince Ali Rescue"]),
+                "each crossing is either paid or waived by the completed quest journal: {e:?}"
+            );
+            assert!(e.varp_req.is_empty(), "princequest is not transmitted");
+            assert_eq!(e.option, 1, "Open op");
+            assert_eq!(
+                e.open_loc_id,
+                Some(if e.loc_id == 2882 { 1562 } else { 1563 })
+            );
+        }
+        for gate in [2882, 2883] {
+            for eastbound in [false, true] {
+                let crossing: Vec<_> = tolls
+                    .iter()
+                    .filter(|e| e.loc_id == gate && (e.to.x > e.at.x) == eastbound)
+                    .collect();
+                assert_eq!(crossing.len(), 2);
+                assert_eq!(crossing.iter().filter(|e| e.item_req.is_empty()).count(), 1);
+                assert_eq!(
+                    crossing.iter().filter(|e| e.quest_req.is_empty()).count(),
+                    1
+                );
+            }
+        }
+        // The Shantay henge carries exactly two edges, one per
+        // `[oploc1,shantay_pass_henge_doorway]` branch: the gated hop
+        // into the desert and the free desert exit.
+        let henge: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.loc_id == 4031)
+            .cloned()
+            .collect();
+        assert_eq!(
+            henge.len(),
+            2,
+            "exactly two Shantay henge edges derive (the gated desert hop \
+                 and the free desert exit), got {}",
+            henge.len()
+        );
+        let gated = henge
+            .iter()
+            .find(|e| !e.item_req.is_empty())
+            .expect("one Shantay henge edge carries the pass");
+        let free = henge
+            .iter()
+            .find(|e| e.item_req.is_empty())
+            .expect("one Shantay henge edge is free");
+        assert_eq!(
+            gated.at,
+            WorldTile {
+                x: 3302,
+                z: 3116,
+                level: 0,
+            }
+        );
+        assert_eq!(
+            gated.to,
+            WorldTile {
+                x: 3304,
+                z: 3115,
+                level: 0,
             }
         );
         assert!(
-            (e.item_req == vec![(995, 10)] && e.quest_req.is_empty())
-                || (e.item_req.is_empty() && e.quest_req == ["Prince Ali Rescue"]),
-            "each crossing is either paid or waived by the completed quest journal: {e:?}"
+            gated.item_req.iter().any(|(id, n)| *id == 1854 && *n >= 1),
+            "Shantay pass on the gated desert hop"
         );
-        assert!(e.varp_req.is_empty(), "princequest is not transmitted");
-        assert_eq!(e.option, 1, "Open op");
+        assert_eq!(gated.option, 1, "Go-through op");
+        assert_eq!(gated.dir, None);
         assert_eq!(
-            e.open_loc_id,
-            Some(if e.loc_id == 2882 { 1562 } else { 1563 })
+            free.at,
+            WorldTile {
+                x: 3302,
+                z: 3115,
+                level: 0,
+            }
         );
+        assert_eq!(
+            free.to,
+            WorldTile {
+                x: 3303,
+                z: 3118,
+                level: 0,
+            }
+        );
+        assert!(free.item_req.is_empty(), "the desert exit is free");
+        assert_eq!(free.option, 1, "Go-through op");
+        assert_eq!(free.dir, None);
     }
-    for gate in [2882, 2883] {
-        for eastbound in [false, true] {
-            let crossing: Vec<_> = tolls
-                .iter()
-                .filter(|e| e.loc_id == gate && (e.to.x > e.at.x) == eastbound)
-                .collect();
-            assert_eq!(crossing.len(), 2);
-            assert_eq!(crossing.iter().filter(|e| e.item_req.is_empty()).count(), 1);
-            assert_eq!(
-                crossing.iter().filter(|e| e.quest_req.is_empty()).count(),
-                1
-            );
-        }
-    }
-    // The Shantay henge carries exactly two edges, one per
-    // `[oploc1,shantay_pass_henge_doorway]` branch: the gated hop
-    // into the desert and the free desert exit.
-    let henge: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|e| e.loc_id == 4031)
-        .cloned()
-        .collect();
-    assert_eq!(
-        henge.len(),
-        2,
-        "exactly two Shantay henge edges derive (the gated desert hop \
-             and the free desert exit), got {}",
-        henge.len()
-    );
-    let gated = henge
-        .iter()
-        .find(|e| !e.item_req.is_empty())
-        .expect("one Shantay henge edge carries the pass");
-    let free = henge
-        .iter()
-        .find(|e| e.item_req.is_empty())
-        .expect("one Shantay henge edge is free");
-    assert_eq!(
-        gated.at,
-        WorldTile {
-            x: 3302,
-            z: 3116,
-            level: 0,
-        }
-    );
-    assert_eq!(
-        gated.to,
-        WorldTile {
-            x: 3304,
-            z: 3115,
-            level: 0,
-        }
-    );
-    assert!(
-        gated.item_req.iter().any(|(id, n)| *id == 1854 && *n >= 1),
-        "Shantay pass on the gated desert hop"
-    );
-    assert_eq!(gated.option, 1, "Go-through op");
-    assert_eq!(gated.dir, None);
-    assert_eq!(
-        free.at,
-        WorldTile {
-            x: 3302,
-            z: 3115,
-            level: 0,
-        }
-    );
-    assert_eq!(
-        free.to,
-        WorldTile {
-            x: 3303,
-            z: 3118,
-            level: 0,
-        }
-    );
-    assert!(free.item_req.is_empty(), "the desert exit is free");
-    assert_eq!(free.option, 1, "Go-through op");
-    assert_eq!(free.dir, None);
 }
 
 /// The Ardougne→wilderness lever is an enter-wildy hop: default
@@ -1413,13 +1537,11 @@ fn surface_wildy_rules() -> WildernessRules {
 
 /// The gates seam: a route must now exist from Seers street
 /// (2725,3485,0) to the rock-crab shore (2710,3720,0) once the fence
-/// gates join the door set. Loads the baked process pack if present,
-/// else bakes from Server content. GitHub has neither — skip, do not
-/// panic. A `NoPath` with a pack is the honest two-component signal.
+/// gates join the door set, on the real map.
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn seers_street_reaches_rock_crabs_after_gates() {
     use crate::router::find;
-    use crate::world::NavWorld;
 
     let from = WorldTile {
         x: 2725,
@@ -1431,23 +1553,12 @@ fn seers_street_reaches_rock_crabs_after_gates() {
         z: 3720,
         level: 0,
     };
-    let (collision, graph) = if let Some(world) = NavWorld::load_default_pack_or_skip() {
-        (world.collision, world.graph)
-    } else {
-        let Some(root) = real_content_root() else {
-            return;
-        };
-        let Some(defs) = real_loc_defs() else {
-            return;
-        };
-        let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
-            .expect("real Server content bakes");
-        let graph = derive_transports(&root, &defs, &wc);
-        (wc, graph)
-    };
-    let route = find(&collision, &graph, from, to)
-        .unwrap_or_else(|e| panic!("Seers street -> rock crabs must route once gates join: {e:?}"));
-    assert_eq!(route.dest, to);
+    for (_, graph, collision) in qualification_worlds() {
+        let route = find(collision, graph, from, to).unwrap_or_else(|e| {
+            panic!("Seers street -> rock crabs must route once gates join: {e:?}")
+        });
+        assert_eq!(route.dest, to);
+    }
 }
 
 #[test]
@@ -2050,37 +2161,12 @@ fn assert_real_island_ropes(graph: &TransportGraph, content_root: &Path) {
     }
 }
 
+/// The real island rope swings sit where `shortcuts.loc` places them.
 #[test]
-fn derive_transports_island_ropes_from_real_274_content() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
-    };
-    let root = real_content_root().expect("root present when derive succeeded");
-    assert_real_island_ropes(&graph, &root);
-}
-
-#[test]
-fn derive_transports_island_ropes_from_real_289_content() {
-    let Some((graph, _)) = derive_from_lostcity_content() else {
-        return;
-    };
-    let root = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
-    assert_real_island_ropes(graph, &root);
-}
-
-fn staged_289_world() -> Option<crate::world::NavWorld> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
-            "../../docs/superpowers/qualification/Inspect Qualification.app/Contents/Resources/nav/289/274bot.navpack",
-        );
-    match crate::world::NavWorld::load_pack(&path) {
-        Ok(world) => Some(world),
-        Err(e) => {
-            eprintln!(
-                "SKIP: staged 289 navpack missing at {} ({e:?})",
-                path.display()
-            );
-            None
-        }
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
+fn derive_transports_island_ropes_from_real_content() {
+    for (root, graph, _) in qualification_worlds() {
+        assert_real_island_ropes(graph, root);
     }
 }
 
@@ -2113,125 +2199,112 @@ fn pier_field_state(coins: i32, agility: i32) -> crate::world_state::WorldState 
 }
 
 #[test]
-fn derived_graph_plus_staged_collision_pier_reaches_field() {
-    let Some(world) = staged_289_world() else {
-        return;
-    };
-    let Some((graph, _)) = derive_from_lostcity_content() else {
-        return;
-    };
-    let root = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
-    let swing1 = pack_id_by_name(&root, "tree_ropeswing1").expect("pack tree_ropeswing1");
-    let inbound = island_rope_edge(graph, swing1).expect("derived inbound swing");
-    assert_eq!(
-        inbound.at,
-        WorldTile {
-            x: 2709,
-            z: 3209,
-            level: 0
-        }
-    );
-    assert!(
-        world
-            .graph
-            .edges
-            .iter()
-            .all(|e| e.kind != TransportKind::AgilityShortcut || e.loc_id != swing1),
-        "staged pack still lacks the swing; proof is the derived graph"
-    );
-
-    let pier = WorldTile {
-        x: 2683,
-        z: 3272,
-        level: 0,
-    };
-    let field = WorldTile {
-        x: 2698,
-        z: 3206,
-        level: 0,
-    };
-    let opts = inspect_opts();
-    let avoid = inspect_avoid();
-    assert!(
-        matches!(
-            crate::router::find_with_avoid(
-                &world.collision,
-                graph,
-                pier,
-                field,
-                opts,
-                &pier_field_state(0, 10),
-                &avoid,
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
+fn derived_graph_pier_reaches_field() {
+    for (root, graph, collision) in qualification_worlds() {
+        let swing1 = pack_id_by_name(root, "tree_ropeswing1").expect("pack tree_ropeswing1");
+        let inbound = island_rope_edge(graph, swing1).expect("derived inbound swing");
+        assert_eq!(
+            inbound.at,
+            WorldTile {
+                x: 2709,
+                z: 3209,
+                level: 0
+            }
+        );
+        let pier = WorldTile {
+            x: 2683,
+            z: 3272,
+            level: 0,
+        };
+        let field = WorldTile {
+            x: 2698,
+            z: 3206,
+            level: 0,
+        };
+        let opts = inspect_opts();
+        let avoid = inspect_avoid();
+        assert!(
+            matches!(
+                crate::router::find_with_avoid(
+                    collision,
+                    graph,
+                    pier,
+                    field,
+                    opts,
+                    &pier_field_state(0, 10),
+                    &avoid,
+                ),
+                Err(crate::router::RouteError::NoPath)
             ),
-            Err(crate::router::RouteError::NoPath)
-        ),
-        "missing coins stay NoPath"
-    );
-    assert!(
-        matches!(
-            crate::router::find_with_avoid(
-                &world.collision,
-                graph,
-                pier,
-                field,
-                opts,
-                &pier_field_state(30, 9),
-                &avoid,
+            "missing coins stay NoPath"
+        );
+        assert!(
+            matches!(
+                crate::router::find_with_avoid(
+                    collision,
+                    graph,
+                    pier,
+                    field,
+                    opts,
+                    &pier_field_state(30, 9),
+                    &avoid,
+                ),
+                Err(crate::router::RouteError::NoPath)
             ),
-            Err(crate::router::RouteError::NoPath)
-        ),
-        "agility 9 stays NoPath"
-    );
-    let ok = crate::router::find_with_avoid(
-        &world.collision,
-        graph,
-        pier,
-        field,
-        opts,
-        &pier_field_state(30, 10),
-        &avoid,
-    )
-    .unwrap_or_else(|e| panic!("coins30 agility10 must reach FIELD ({e:?})"));
-    assert!(
-        ok.legs.iter().any(|l| matches!(
-            l,
-            crate::router::Leg::Transport { edge } if edge.loc_id == 381
-        )),
-        "Barnaby 381 must be on the route: {ok:?}"
-    );
-    assert!(
-        ok.legs.iter().any(|l| matches!(
-            l,
-            crate::router::Leg::Transport { edge }
-                if edge.loc_id == swing1
-                    && edge.at
-                        == WorldTile {
-                            x: 2709,
-                            z: 3209,
-                            level: 0
-                        }
-        )),
-        "derived inbound swing must be on the route: {ok:?}"
-    );
+            "agility 9 stays NoPath"
+        );
+        let ok = crate::router::find_with_avoid(
+            collision,
+            graph,
+            pier,
+            field,
+            opts,
+            &pier_field_state(30, 10),
+            &avoid,
+        )
+        .unwrap_or_else(|e| panic!("coins30 agility10 must reach FIELD ({e:?})"));
+        assert!(
+            ok.legs.iter().any(|l| matches!(
+                l,
+                crate::router::Leg::Transport { edge } if edge.loc_id == 381
+            )),
+            "Barnaby 381 must be on the route: {ok:?}"
+        );
+        assert!(
+            ok.legs.iter().any(|l| matches!(
+                l,
+                crate::router::Leg::Transport { edge }
+                    if edge.loc_id == swing1
+                        && edge.at
+                            == WorldTile {
+                                x: 2709,
+                                z: 3209,
+                                level: 0
+                            }
+            )),
+            "derived inbound swing must be on the route: {ok:?}"
+        );
 
-    let ret_id = pack_id_by_name(&root, "tree_ropeswing2").expect("pack tree_ropeswing2");
-    let back = crate::router::find_with_avoid(
-        &world.collision,
-        graph,
-        field,
-        pier,
-        opts,
-        &pier_field_state(30, 1),
-        &avoid,
-    )
-    .unwrap_or_else(|e| panic!("return must allow low agility ({e:?})"));
-    assert!(
-        back.legs.iter().any(|l| matches!(
-            l,
-            crate::router::Leg::Transport { edge } if edge.loc_id == ret_id
-        )),
-        "low-agility return uses tree_ropeswing2: {back:?}"
-    );
+        let ret_id = pack_id_by_name(root, "tree_ropeswing2").expect("pack tree_ropeswing2");
+        let back = crate::router::find_with_avoid(
+            collision,
+            graph,
+            field,
+            pier,
+            opts,
+            &pier_field_state(30, 1),
+            &avoid,
+        )
+        .unwrap_or_else(|e| panic!("return must allow low agility ({e:?})"));
+        assert!(
+            back.legs.iter().any(|l| matches!(
+                l,
+                crate::router::Leg::Transport { edge } if edge.loc_id == ret_id
+            )),
+            "low-agility return uses tree_ropeswing2: {back:?}"
+        );
+    }
 }
 
 #[test]
@@ -2601,32 +2674,56 @@ fn derive_transports_emits_boat_edges_from_npc_tile_to_dock_tile() {
     assert_eq!(shanks_sarim.ticks, 15);
 }
 
-/// Slashable webs pack two edges per crossing: knife `oplocu`
-/// (`option` 0, `item_req` knife — the knife is unequippable) and
-/// `oploc1` Slash (`option` 1, `worn_req` every slash-anim blade).
-/// Wilderness placements (z ≥ 3520) are included; `find` still gates wildy.
+/// Slashable webs (`bigweb_slashable`) pack two edges per crossing: knife
+/// `oplocu` (`option` 0, `item_req` knife — the knife is unequippable) and
+/// `oploc1` Slash (`option` 1, `worn_req` every obj whose `.obj` block sets a
+/// `slashattack_anim` other than the unarmed punch). Wilderness placements
+/// pack too; `find` still gates wildy.
 #[test]
 fn derive_transports_emits_slashable_web_knife_edges() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
-    };
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "733=bigweb_slashable\n734=bigweb_slashed\n",
+    );
+    fx.write(
+        "pack/obj.pack",
+        "946=knife\n1277=bronze_sword\n1321=bronze_scimitar\n1265=bronze_pickaxe\n",
+    );
+    fx.write(
+        "scripts/_unpack/225/all.obj",
+        "\
+[knife]
+param=slashattack_anim,human_stab
+[bronze_sword]
+param=slashattack_anim,human_sword_slash
+[bronze_scimitar]
+param=slashattack_anim,human_scimitar_slash
+[bronze_pickaxe]
+param=slashattack_anim,human_unarmedpunch
+",
+    );
+    // A Yanille web (m40_48) and a wilderness one (m47_56).
+    fx.write(
+        "maps/m40_48.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 10 50: 733 0 0\n",
+    );
+    fx.write(
+        "maps/m47_56.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 20 20: 733 0 1\n",
+    );
+    let defs = loc_defs(&[(733, 1, 1), (734, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::from([733]));
+    let graph = derive_transports(fx.path(), &defs, &wc);
     let webs: Vec<_> = graph
         .edges
         .iter()
         .filter(|e| e.kind == TransportKind::Door && e.loc_id == 733)
         .collect();
-    assert!(
-        !webs.is_empty(),
-        "bigweb_slashable placements must pack (Yanille + wilderness)"
-    );
     let knife: Vec<_> = webs.iter().filter(|w| w.option == 0).collect();
     let slash: Vec<_> = webs.iter().filter(|w| w.option == 1).collect();
-    assert_eq!(
-        knife.len(),
-        slash.len(),
-        "one knife use + one Slash per dir"
-    );
-    assert!(!knife.is_empty());
+    assert_eq!(knife.len(), 4, "two placements, two crossings each");
+    assert_eq!(slash.len(), 4, "one Slash per knife crossing");
     for w in &knife {
         assert_eq!(w.item_req, vec![(946, 1)], "unequippable knife: {w:?}");
         assert!(w.worn_req.is_empty(), "{w:?}");
@@ -2636,193 +2733,190 @@ fn derive_transports_emits_slashable_web_knife_edges() {
     }
     for w in &slash {
         assert!(w.item_req.is_empty(), "Slash is worn-blade, not inv: {w:?}");
-        assert!(
-            w.worn_req.contains(&1277),
-            "bronze_sword is a slash blade: {w:?}"
-        );
-        assert!(!w.worn_req.contains(&946), "knife is unequippable");
+        assert_eq!(w.worn_req, vec![1277, 1321], "slash blades only: {w:?}");
         assert_eq!(w.open_loc_id, Some(734), "{w:?}");
         assert_eq!(w.ticks, WEB_TICKS);
         assert!(w.dir.is_some());
     }
     assert!(
-        webs.iter()
-            .any(|e| e.at.z >= 3520 && e.at.x >= 2944 && e.at.x <= 3391),
-        "wilderness webs pack too (surface band z≥3520)"
-    );
-    // Yanille dungeon mouth (m40_48).
-    assert!(
-        webs.iter()
-            .any(|e| e.at.x >= 2560 && e.at.x < 2624 && e.at.z >= 3072 && e.at.z < 3136),
-        "Yanille webs pack (m40_48)"
+        webs.iter().any(|e| e.at.z >= 3520),
+        "wilderness webs pack too"
     );
 }
 
-/// The Yanille dungeon balancing ledge (`balancing_ledge3` / loc 2303)
-/// is the hop that connects the cellar landing to the chaos-druid
-/// warrior field. `agility_dungeon.rs2` `oploc1` Walk-across, Agility
-/// 40, start tiles `0_40_148_20_48` / `_20_40`.
+/// The Yanille dungeon balancing ledge (`balancing_ledge3` / loc 2303,
+/// `area_yanille/scripts/agility_dungeon.rs2:30-34` `if(stat(agility) <
+/// 40)`) packs one Walk-across hop per placement: the northern placement
+/// (`coordz(loc_coord) > 9518`) walks south to `0_40_148_20_40`
+/// (2580,9512), the southern one north to `0_40_148_20_48` (2580,9520).
 #[test]
 fn derive_transports_emits_yanille_balancing_ledge() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
-    };
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "2303=balancing_ledge3\n");
+    fx.write(
+        "scripts/areas/area_yanille/scripts/agility_dungeon.rs2",
+        "\
+[oploc1,balancing_ledge3]
+if(stat(agility) < 40) {
+    ~mesbox(\"You need an Agility level of 40 to cross the ledge.\");
+    return;
+}
+",
+    );
+    fx.write(
+        "maps/m40_148.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 20 47: 2303 10 0\n0 20 42: 2303 10 2\n",
+    );
+    let defs = loc_defs(&[(2303, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &wc);
     let ledges: Vec<_> = graph
         .edges
         .iter()
         .filter(|e| e.kind == TransportKind::AgilityShortcut && e.loc_id == 2303)
         .collect();
-    assert_eq!(
-        ledges.len(),
-        2,
-        "balancing_ledge3 dual placements (N→S and S→N)"
-    );
+    assert_eq!(ledges.len(), 2, "one hop per placement: {ledges:?}");
     for e in &ledges {
         assert_eq!(e.option, 1, "Walk-across: {e:?}");
         assert_eq!(e.skill_req, vec![(SKILL_AGILITY, 40)], "{e:?}");
-        assert_eq!(e.at.x, 2580);
-        assert_eq!(e.to.x, 2580);
+        assert_eq!((e.at.x, e.to.x), (2580, 2580));
         assert!(e.item_req.is_empty());
     }
-    assert!(
-        ledges.iter().any(|e| e.to.z == 9512),
-        "N→S lands 0_40_148_20_40: {ledges:?}"
-    );
-    assert!(
-        ledges.iter().any(|e| e.to.z == 9520),
-        "S→N lands 0_40_148_20_48: {ledges:?}"
-    );
+    let hop = |at_z| ledges.iter().find(|e| e.at.z == at_z).map(|e| e.to.z);
+    assert_eq!(hop(9514), Some(9520), "the southern placement walks north");
+    assert_eq!(hop(9519), Some(9512), "the northern placement walks south");
 }
 
 /// Live step 27: Yanille bank → dungeon warriors. Knife (web) +
 /// Agility 40 (ledge). Empty WorldState stays NoPath.
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn yanille_bank_reaches_dungeon_warriors_with_knife_and_agility() {
-    let Some((graph, collision)) = derive_from_real_content() else {
-        return;
-    };
-    let bank = WorldTile {
-        x: 2612,
-        z: 3092,
-        level: 0,
-    };
-    let warriors = WorldTile {
-        x: 2580,
-        z: 9501,
-        level: 0,
-    };
-    assert!(
-        crate::router::find_with(
-            &collision,
-            &graph,
+    for (root, graph, collision) in qualification_worlds() {
+        let _ = root;
+        let bank = WorldTile {
+            x: 2612,
+            z: 3092,
+            level: 0,
+        };
+        let warriors = WorldTile {
+            x: 2580,
+            z: 9501,
+            level: 0,
+        };
+        assert!(
+            crate::router::find_with(
+                collision,
+                graph,
+                bank,
+                warriors,
+                crate::router::FindOptions::default(),
+                &crate::world_state::WorldState::empty(),
+            )
+            .is_err(),
+            "empty WorldState cannot take the knife web or the Agility-40 ledge"
+        );
+        let mut state = crate::world_state::WorldState::empty();
+        state.inv.insert(946, 1);
+        state.stats.insert(SKILL_AGILITY, 40);
+        let route = crate::router::find_with(
+            collision,
+            graph,
             bank,
             warriors,
             crate::router::FindOptions::default(),
-            &crate::world_state::WorldState::empty(),
+            &state,
         )
-        .is_err(),
-        "empty WorldState cannot take the knife web or the Agility-40 ledge"
-    );
-    let mut state = crate::world_state::WorldState::empty();
-    state.inv.insert(946, 1);
-    state.stats.insert(SKILL_AGILITY, 40);
-    let route = crate::router::find_with(
-        &collision,
-        &graph,
-        bank,
-        warriors,
-        crate::router::FindOptions::default(),
-        &state,
-    )
-    .expect("Yanille bank → dungeon warriors with knife + Agility 40");
-    let hops: Vec<_> = route
-        .legs
-        .iter()
-        .filter_map(|l| match l {
-            crate::router::Leg::Transport { edge } => {
-                Some((edge.kind, edge.loc_id, edge.at, edge.to, edge.option))
-            }
-            crate::router::Leg::Walk { .. } => None,
-        })
-        .collect();
-    assert!(
-        hops.iter()
-            .any(|(_, loc_id, _, _, option)| *loc_id == 733 && *option == 0),
-        "knife in inv takes the oplocu hop: {hops:?}"
-    );
-    let mut worn = crate::world_state::WorldState::empty();
-    worn.stats.insert(SKILL_AGILITY, 40);
-    worn.worn.insert(1277);
-    let worn_route = crate::router::find_with(
-        &collision,
-        &graph,
-        bank,
-        warriors,
-        crate::router::FindOptions::default(),
-        &worn,
-    )
-    .expect("Yanille bank → dungeon warriors with a worn bronze sword");
-    assert!(
-        worn_route.legs.iter().any(|l| match l {
-            crate::router::Leg::Transport { edge } => {
-                edge.loc_id == 733 && edge.option == 1
-            }
+        .expect("Yanille bank → dungeon warriors with knife + Agility 40");
+        let hops: Vec<_> = route
+            .legs
+            .iter()
+            .filter_map(|l| match l {
+                crate::router::Leg::Transport { edge } => {
+                    Some((edge.kind, edge.loc_id, edge.at, edge.to, edge.option))
+                }
+                crate::router::Leg::Walk { .. } => None,
+            })
+            .collect();
+        assert!(
+            hops.iter()
+                .any(|(_, loc_id, _, _, option)| *loc_id == 733 && *option == 0),
+            "knife in inv takes the oplocu hop: {hops:?}"
+        );
+        let mut worn = crate::world_state::WorldState::empty();
+        worn.stats.insert(SKILL_AGILITY, 40);
+        worn.worn.insert(1277);
+        let worn_route = crate::router::find_with(
+            collision,
+            graph,
+            bank,
+            warriors,
+            crate::router::FindOptions::default(),
+            &worn,
+        )
+        .expect("Yanille bank → dungeon warriors with a worn bronze sword");
+        assert!(
+            worn_route.legs.iter().any(|l| match l {
+                crate::router::Leg::Transport { edge } => {
+                    edge.loc_id == 733 && edge.option == 1
+                }
+                _ => false,
+            }),
+            "worn slash blade takes oploc1 Slash"
+        );
+        let walked_web = route.legs.iter().any(|l| match l {
+            crate::router::Leg::Walk { tiles } => tiles.iter().any(|t| {
+                t.level == 0
+                    && t.x >= 2568
+                    && t.x <= 2578
+                    && t.z >= 3120
+                    && t.z <= 3128
+                    && graph.edges.iter().any(|e| {
+                        e.loc_id == 733 && e.at.x == t.x && e.at.z == t.z && e.at.level == 0
+                    })
+            }),
             _ => false,
-        }),
-        "worn slash blade takes oploc1 Slash"
-    );
-    let walked_web = route.legs.iter().any(|l| match l {
-        crate::router::Leg::Walk { tiles } => tiles.iter().any(|t| {
-            t.level == 0
-                && t.x >= 2568
-                && t.x <= 2578
-                && t.z >= 3120
-                && t.z <= 3128
-                && graph
-                    .edges
-                    .iter()
-                    .any(|e| e.loc_id == 733 && e.at.x == t.x && e.at.z == t.z && e.at.level == 0)
-        }),
-        _ => false,
-    });
-    assert!(
-        !walked_web,
-        "walk must not step onto the web loc tile: {hops:?}"
-    );
+        });
+        assert!(
+            !walked_web,
+            "walk must not step onto the web loc tile: {hops:?}"
+        );
+    }
 }
 
 /// The Yanille cellar stairs pack (in-town and outside-town mouths).
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn yanille_cellar_stairs_pack_to_the_dungeon() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
-    };
-    assert!(
-        graph.edges.iter().any(|e| {
-            e.kind == TransportKind::Stairs
-                && e.at
-                    == WorldTile {
-                        x: 2569,
-                        z: 3122,
-                        level: 0,
-                    }
-                && e.to.z >= 9472
-        }),
-        "outside-town cellar stairs 2569,3122 → dungeon"
-    );
-    assert!(
-        graph.edges.iter().any(|e| {
-            e.kind == TransportKind::Stairs
-                && e.at
-                    == WorldTile {
-                        x: 2603,
-                        z: 3078,
-                        level: 0,
-                    }
-                && e.to.z >= 9472
-        }),
-        "in-town cellar stairs 2603,3078 → dungeon"
-    );
+    for (root, graph, _wc) in qualification_worlds() {
+        let _ = root;
+        assert!(
+            graph.edges.iter().any(|e| {
+                e.kind == TransportKind::Stairs
+                    && e.at
+                        == WorldTile {
+                            x: 2569,
+                            z: 3122,
+                            level: 0,
+                        }
+                    && e.to.z >= 9472
+            }),
+            "outside-town cellar stairs 2569,3122 → dungeon"
+        );
+        assert!(
+            graph.edges.iter().any(|e| {
+                e.kind == TransportKind::Stairs
+                    && e.at
+                        == WorldTile {
+                            x: 2603,
+                            z: 3078,
+                            level: 0,
+                        }
+                    && e.to.z >= 9472
+            }),
+            "in-town cellar stairs 2603,3078 → dungeon"
+        );
+    }
 }
 
 #[test]
@@ -3842,55 +3936,56 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
 /// castle's non-transmitted threshold is implied by the completed
 /// Death Plateau journal row.
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn derive_transports_tenzing_free_arms_from_real_content() {
-    let Some((graph, _)) = derive_from_real_content() else {
-        return;
-    };
-    assert_eq!(
-        door_crossings(&graph, 3745),
-        vec![
-            ((2822, 3555), 'E', (2823, 3555)),
-            ((2822, 3555), 'W', (2821, 3555)),
-        ],
-        "3745 free exit E and gated front entry W"
-    );
-    assert_eq!(
-        door_crossings(&graph, 3746),
-        vec![
-            ((2820, 3557), 'N', (2820, 3558)),
-            ((2820, 3557), 'S', (2820, 3556)),
-        ],
-        "3746 gated garden exit N and free garden-to-hut S"
-    );
-    for e in graph.edges.iter().filter(|e| e.loc_id == 3745) {
-        match e.dir {
-            Some(DoorDir::E) => assert!(e.quest_req.is_empty() && e.varp_req.is_empty()),
-            Some(DoorDir::W) => {
-                assert_eq!(e.quest_req, vec!["Death Plateau".to_string()]);
-                assert!(e.varp_req.is_empty());
+    for (root, graph, _wc) in qualification_worlds() {
+        let _ = root;
+        assert_eq!(
+            door_crossings(graph, 3745),
+            vec![
+                ((2822, 3555), 'E', (2823, 3555)),
+                ((2822, 3555), 'W', (2821, 3555)),
+            ],
+            "3745 free exit E and gated front entry W"
+        );
+        assert_eq!(
+            door_crossings(graph, 3746),
+            vec![
+                ((2820, 3557), 'N', (2820, 3558)),
+                ((2820, 3557), 'S', (2820, 3556)),
+            ],
+            "3746 gated garden exit N and free garden-to-hut S"
+        );
+        for e in graph.edges.iter().filter(|e| e.loc_id == 3745) {
+            match e.dir {
+                Some(DoorDir::E) => assert!(e.quest_req.is_empty() && e.varp_req.is_empty()),
+                Some(DoorDir::W) => {
+                    assert_eq!(e.quest_req, vec!["Death Plateau".to_string()]);
+                    assert!(e.varp_req.is_empty());
+                }
+                other => panic!("unexpected 3745 dir {other:?}"),
             }
-            other => panic!("unexpected 3745 dir {other:?}"),
         }
-    }
-    for e in graph.edges.iter().filter(|e| e.loc_id == 3746) {
-        match e.dir {
-            Some(DoorDir::S) => assert!(e.quest_req.is_empty() && e.varp_req.is_empty()),
-            Some(DoorDir::N) => {
-                assert_eq!(e.quest_req, vec!["Death Plateau".to_string()]);
-                assert!(e.varp_req.is_empty());
+        for e in graph.edges.iter().filter(|e| e.loc_id == 3746) {
+            match e.dir {
+                Some(DoorDir::S) => assert!(e.quest_req.is_empty() && e.varp_req.is_empty()),
+                Some(DoorDir::N) => {
+                    assert_eq!(e.quest_req, vec!["Death Plateau".to_string()]);
+                    assert!(e.varp_req.is_empty());
+                }
+                other => panic!("unexpected 3746 dir {other:?}"),
             }
-            other => panic!("unexpected 3746 dir {other:?}"),
         }
+        let castle: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == 3743)
+            .collect();
+        assert_eq!(castle.len(), 2);
+        assert!(castle
+            .iter()
+            .all(|e| { e.varp_req.is_empty() && e.quest_req == ["Death Plateau"] }));
     }
-    let castle: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|e| e.kind == TransportKind::Door && e.loc_id == 3743)
-        .collect();
-    assert_eq!(castle.len(), 2);
-    assert!(castle
-        .iter()
-        .all(|e| { e.varp_req.is_empty() && e.quest_req == ["Death Plateau"] }));
 }
 
 #[test]
@@ -3983,70 +4078,71 @@ fn derive_transports_emits_glider_edges_from_platform_to_platform() {
 /// Gandius pad → Grand Tree hub admits the visible quest journal row,
 /// not the untransmitted `%grandtree` varp.
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn gandius_glider_reaches_grand_tree_hub_from_journal() {
-    let Some((graph, collision)) = derive_from_real_content() else {
-        return;
-    };
-    let pad = WorldTile {
-        x: 2971,
-        z: 2969,
-        level: 0,
-    };
-    let hub = WorldTile {
-        x: 2465,
-        z: 3501,
-        level: 3,
-    };
-    assert!(
+    for (root, graph, collision) in qualification_worlds() {
+        let _ = root;
+        let pad = WorldTile {
+            x: 2971,
+            z: 2969,
+            level: 0,
+        };
+        let hub = WorldTile {
+            x: 2465,
+            z: 3501,
+            level: 3,
+        };
+        assert!(
+            crate::router::find_with(
+                collision,
+                graph,
+                pad,
+                hub,
+                crate::router::FindOptions::default(),
+                &crate::world_state::WorldState::empty(),
+            )
+            .is_err(),
+            "empty WorldState cannot take the Grand Tree glider"
+        );
+        let mut state = crate::world_state::WorldState::empty();
+        state.varps.insert(150, 160);
+        assert!(
+            crate::router::find_with(
+                collision,
+                graph,
+                pad,
+                hub,
+                crate::router::FindOptions::default(),
+                &state,
+            )
+            .is_err(),
+            "non-transmitted grandtree varp is not a live route proof"
+        );
+        let mut journal = crate::world_state::WorldState::empty();
+        journal.quests.insert("The Grand Tree".into());
+        assert!(
+            crate::router::find_with(
+                collision,
+                graph,
+                pad,
+                hub,
+                crate::router::FindOptions::default(),
+                &journal,
+            )
+            .is_err(),
+            "Gandius is F2P-world geometry, but the pilot still denies F2P"
+        );
+        journal.map_members = true;
         crate::router::find_with(
-            &collision,
-            &graph,
-            pad,
-            hub,
-            crate::router::FindOptions::default(),
-            &crate::world_state::WorldState::empty(),
-        )
-        .is_err(),
-        "empty WorldState cannot take the Grand Tree glider"
-    );
-    let mut state = crate::world_state::WorldState::empty();
-    state.varps.insert(150, 160);
-    assert!(
-        crate::router::find_with(
-            &collision,
-            &graph,
-            pad,
-            hub,
-            crate::router::FindOptions::default(),
-            &state,
-        )
-        .is_err(),
-        "non-transmitted grandtree varp is not a live route proof"
-    );
-    let mut journal = crate::world_state::WorldState::empty();
-    journal.quests.insert("The Grand Tree".into());
-    assert!(
-        crate::router::find_with(
-            &collision,
-            &graph,
+            collision,
+            graph,
             pad,
             hub,
             crate::router::FindOptions::default(),
             &journal,
         )
-        .is_err(),
-        "Gandius is F2P-world geometry, but the pilot still denies F2P"
-    );
-    journal.map_members = true;
-    crate::router::find_with(
-        &collision,
-        &graph,
-        pad,
-        hub,
-        crate::router::FindOptions::default(),
-        &journal,
-    )
-    .expect("Gandius → Grand Tree hub with members and journal complete");
+        .expect("Gandius → Grand Tree hub with members and journal complete");
+    }
 }
 
 #[test]
@@ -4224,11 +4320,14 @@ p_delay(1);
     assert!(!graph.at.contains_key(&TELEPORT_PLACEHOLDER_AT));
 }
 
-/// Explicit real-content qualification inputs. Ordinary `cargo test -p nav`
-/// does not call this; the ignored tests below fail closed when the env
-/// is missing or a named path is absent. Does not scan default
-/// HOME/experiments layouts or unrelated worktrees.
-fn required_qualification_inputs() -> (Vec<PathBuf>, LocDefs) {
+/// Explicit real-content qualification inputs: `NAV_CONTENT_ROOT` names
+/// one or more content roots (colon-separated) and `NAV_CACHE` the client
+/// config jag of each (one entry for all roots, or one per root in the
+/// same order). Ordinary `cargo test -p nav` never reads them; the ignored
+/// tests below fail closed when the env is missing or a named path is
+/// absent. Does not scan default HOME/experiments layouts or unrelated
+/// worktrees.
+fn required_qualification_roots() -> Vec<(PathBuf, LocDefs)> {
     let roots_raw = std::env::var("NAV_CONTENT_ROOT").unwrap_or_else(|_| {
         panic!(
             "NAV_CONTENT_ROOT is required (colon-separated content roots); \
@@ -4237,30 +4336,66 @@ fn required_qualification_inputs() -> (Vec<PathBuf>, LocDefs) {
     });
     let cache_raw = std::env::var("NAV_CACHE").unwrap_or_else(|_| {
         panic!(
-            "NAV_CACHE is required (client config jag); \
+            "NAV_CACHE is required (client config jag per root); \
                  this ignored qualification must not skip"
         )
     });
-    let mut roots = Vec::new();
-    for raw in roots_raw.split(':').filter(|s| !s.is_empty()) {
-        let root = PathBuf::from(raw);
-        assert!(
-            root.join("maps").is_dir() && root.join("pack").join("loc.pack").is_file(),
-            "NAV_CONTENT_ROOT entry {} is missing maps/ or pack/loc.pack",
-            root.display()
-        );
-        roots.push(root);
-    }
+    let roots: Vec<PathBuf> = roots_raw
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    let caches: Vec<PathBuf> = cache_raw
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .collect();
     assert!(
         !roots.is_empty(),
         "NAV_CONTENT_ROOT did not name any content root"
     );
-    let cache_path = PathBuf::from(&cache_raw);
-    let bytes = std::fs::read(&cache_path).unwrap_or_else(|e| {
-        panic!("NAV_CACHE {} is unreadable: {e}", cache_path.display());
-    });
-    let cache = Cache::unpack(&JagFile::new(bytes));
-    (roots, LocDefs::from_locs(&cache.locs))
+    assert!(
+        caches.len() == 1 || caches.len() == roots.len(),
+        "NAV_CACHE names {} jags for {} roots",
+        caches.len(),
+        roots.len()
+    );
+    roots
+        .into_iter()
+        .enumerate()
+        .map(|(k, root)| {
+            assert!(
+                root.join("maps").is_dir() && root.join("pack").join("loc.pack").is_file(),
+                "NAV_CONTENT_ROOT entry {} is missing maps/ or pack/loc.pack",
+                root.display()
+            );
+            let cache_path = &caches[k.min(caches.len() - 1)];
+            let bytes = std::fs::read(cache_path).unwrap_or_else(|e| {
+                panic!("NAV_CACHE {} is unreadable: {e}", cache_path.display());
+            });
+            let cache = Cache::unpack(&JagFile::new(bytes));
+            (root, LocDefs::from_locs(&cache.locs))
+        })
+        .collect()
+}
+
+/// Every qualification root derived once with its loc defs, for the
+/// `#[ignore]` tests that pin real-map geometry. They qualify the
+/// production 289 tree (`NAV_CONTENT_ROOT=<lostcity-289>/content`,
+/// `NAV_CACHE=<lostcity-289>/engine/data/pack/client/config`); the Tenzing,
+/// membergate and keyed-hut ones also hold on the 274 tree.
+type QualificationWorld = (PathBuf, TransportGraph, WorldCollision);
+fn qualification_worlds() -> &'static [QualificationWorld] {
+    static WORLDS: std::sync::OnceLock<Vec<QualificationWorld>> = std::sync::OnceLock::new();
+    WORLDS.get_or_init(|| {
+        required_qualification_roots()
+            .into_iter()
+            .map(|(root, defs)| {
+                let (graph, wc) = derive_from_root_with(&root, &defs);
+                (root, graph, wc)
+            })
+            .collect()
+    })
 }
 
 fn derive_from_root_with(root: &Path, defs: &LocDefs) -> (TransportGraph, WorldCollision) {
@@ -4268,6 +4403,59 @@ fn derive_from_root_with(root: &Path, defs: &LocDefs) -> (TransportGraph, WorldC
         .unwrap_or_else(|e| panic!("qualification content bakes ({e:?}) {}", root.display()));
     let graph = derive_transports(root, defs, &wc);
     (graph, wc)
+}
+
+/// The Wilderness wolf pit on the real `m46_61` mapsquare alone: the pit
+/// (3001,3923) walks round the east railings to the ridge approach
+/// (2998,3916), while the ridge corridor (2998,3924) cannot walk south
+/// through the `loc_2309` railings (recovery is from the pit after the
+/// fall).
+#[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
+fn packed_wildy_wolf_pit_reaches_ridge_approach() {
+    use crate::router::{find_with, FindOptions, RouteError};
+    use crate::world_state::WorldState;
+    for (root, defs) in required_qualification_roots() {
+        let tmp = std::env::temp_dir().join(format!("wildy-pit-maps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::copy(root.join("maps/m46_61.jm2"), tmp.join("m46_61.jm2")).unwrap();
+        let collision = bake_from_maps(&tmp, &defs, &HashSet::new()).expect("bake m46_61");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let graph = derive_transports(&root, &defs, &collision);
+        let pit = WorldTile {
+            x: 3001,
+            z: 3923,
+            level: 0,
+        };
+        let ridge = WorldTile {
+            x: 2998,
+            z: 3924,
+            level: 0,
+        };
+        let approach = WorldTile {
+            x: 2998,
+            z: 3916,
+            level: 0,
+        };
+        let opts = FindOptions {
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        };
+        let state = WorldState::empty().with_map_members(true);
+        find_with(&collision, &graph, pit, approach, opts, &state).unwrap_or_else(|e| {
+            panic!("wolf pit (3001,3923) -> ridge approach (2998,3916) must walk around the east railings: {e:?}")
+        });
+        assert!(
+            matches!(
+                find_with(&collision, &graph, ridge, approach, opts, &state),
+                Err(RouteError::NoPath)
+            ),
+            "the ridge corridor cannot walk south through loc_2309; recovery is from the pit after the fall"
+        );
+    }
 }
 
 /// The real 289 and 274 content must derive the closed fence-gate pair
@@ -4283,14 +4471,13 @@ fn derive_from_root_with(root: &Path, defs: &LocDefs) -> (TransportGraph, WorldC
 /// (memberfencegate_l/_r, loc 1598/1599) carries the same categories and
 /// `op1=Open` but has loc-specific open scripts
 /// (`scripts/areas/area_paterdomus/scripts/paterdomus_members_gate.rs2`,
-/// the members gate), so it must never be inherited. The previously
-/// supported `gates.loc` members keep their crossings.
+/// the members gate), so it is never inherited as a free gate: only the
+/// canonical members-check override admits it, members-only. The
+/// previously supported `gates.loc` members keep their crossings.
 #[test]
 #[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn derive_transports_tenzing_gate_pair_from_real_content() {
-    let (roots, defs) = required_qualification_inputs();
-    for root in roots {
-        let (graph, _) = derive_from_root_with(&root, &defs);
+    for (root, graph, _) in qualification_worlds() {
         let doors = graph
             .edges
             .iter()
@@ -4303,7 +4490,7 @@ fn derive_transports_tenzing_gate_pair_from_real_content() {
             doors
         );
         assert_eq!(
-            door_crossings(&graph, 3725),
+            door_crossings(graph, 3725),
             vec![
                 ((2824, 3555), 'E', (2825, 3555)),
                 ((2824, 3555), 'W', (2823, 3555)),
@@ -4312,7 +4499,7 @@ fn derive_transports_tenzing_gate_pair_from_real_content() {
             root.display()
         );
         assert_eq!(
-            door_crossings(&graph, 3726),
+            door_crossings(graph, 3726),
             vec![((2824, 3554), 'E', (2825, 3554))],
             "3726 keeps only its standable east crossing ({})",
             root.display()
@@ -4341,19 +4528,23 @@ fn derive_transports_tenzing_gate_pair_from_real_content() {
                 root.display()
             );
         }
-        // The named-override members stay out of the pack entirely.
+        // The named-override members are not inherited as free gates: their
+        // canonical members-check override admits them members-only.
         for id in [1598, 1599] {
             assert!(
-                door_crossings(&graph, id).is_empty(),
-                "Paterdomus loc {id} has a loc-specific open script and must not \
-                     be inherited ({})",
+                graph
+                    .edges
+                    .iter()
+                    .filter(|e| e.loc_id == id)
+                    .all(|e| e.members_req),
+                "Paterdomus loc {id} crosses only on a members world ({})",
                 root.display()
             );
         }
         // The generic `gates.loc` members keep their existing crossings.
         for id in [1551, 1553] {
             assert!(
-                !door_crossings(&graph, id).is_empty(),
+                !door_crossings(graph, id).is_empty(),
                 "generic fence gate loc {id} lost its crossings ({})",
                 root.display()
             );
@@ -4372,9 +4563,7 @@ fn derive_transports_tenzing_gate_pair_from_real_content() {
 #[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn tenzing_passage_and_road_route_through_the_inherited_gate() {
     use crate::router::{find_with, FindOptions, Leg};
-    let (roots, defs) = required_qualification_inputs();
-    for root in roots {
-        let (graph, wc) = derive_from_root_with(&root, &defs);
+    for (root, graph, wc) in qualification_worlds() {
         let state = crate::world_state::WorldState::empty();
         let passage = WorldTile {
             x: 2823,
@@ -4390,7 +4579,7 @@ fn tenzing_passage_and_road_route_through_the_inherited_gate() {
             ("passage -> road", passage, road, DoorDir::E),
             ("road -> passage", road, passage, DoorDir::W),
         ] {
-            let route = find_with(&wc, &graph, from, to, FindOptions::default(), &state)
+            let route = find_with(wc, graph, from, to, FindOptions::default(), &state)
                 .unwrap_or_else(|e| panic!("{label} must route ({e:?})"));
             assert_eq!(route.dest, to, "{label} ({})", root.display());
             let hop = route
@@ -4426,7 +4615,7 @@ fn tenzing_passage_and_road_route_through_the_inherited_gate() {
             level: 0,
         };
         assert!(
-            find_with(&wc, &graph, passage, hut, FindOptions::default(), &state).is_err(),
+            find_with(wc, graph, passage, hut, FindOptions::default(), &state).is_err(),
             "passage -> hut stays NoPath without completed Death Plateau ({})",
             root.display()
         );
@@ -4435,15 +4624,7 @@ fn tenzing_passage_and_road_route_through_the_inherited_gate() {
             ..crate::world_state::WorldState::empty()
         };
         assert!(
-            find_with(
-                &wc,
-                &graph,
-                passage,
-                hut,
-                FindOptions::default(),
-                &high_bits
-            )
-            .is_err(),
+            find_with(wc, graph, passage, hut, FindOptions::default(), &high_bits).is_err(),
             "high raw 315 bits do not open 3745 W ({})",
             root.display()
         );
@@ -4451,7 +4632,7 @@ fn tenzing_passage_and_road_route_through_the_inherited_gate() {
             quests: HashSet::from(["Death Plateau".to_string()]),
             ..crate::world_state::WorldState::empty()
         };
-        let entry = find_with(&wc, &graph, passage, hut, FindOptions::default(), &done)
+        let entry = find_with(wc, graph, passage, hut, FindOptions::default(), &done)
             .unwrap_or_else(|e| {
                 panic!(
                     "passage -> hut must route with completed Death Plateau ({e:?}) ({})",
@@ -4480,8 +4661,8 @@ fn tenzing_passage_and_road_route_through_the_inherited_gate() {
             root.display()
         );
         // Hut -> road does not need the quest: free 3745 E then 3725 E.
-        let exit = find_with(&wc, &graph, hut, road, FindOptions::default(), &state)
-            .unwrap_or_else(|e| {
+        let exit =
+            find_with(wc, graph, hut, road, FindOptions::default(), &state).unwrap_or_else(|e| {
                 panic!(
                     "hut -> road must route without a quest ({e:?}) ({})",
                     root.display()
@@ -4513,8 +4694,8 @@ fn tenzing_passage_and_road_route_through_the_inherited_gate() {
             level: 0,
         };
         find_with(
-                &wc,
-                &graph,
+                wc,
+                graph,
                 passage,
                 taverley,
                 FindOptions::default(),
@@ -4526,20 +4707,20 @@ fn tenzing_passage_and_road_route_through_the_inherited_gate() {
                     root.display()
                 )
             });
-        find_with(&wc, &graph, taverley, hut, FindOptions::default(), &done).unwrap_or_else(|e| {
+        find_with(wc, graph, taverley, hut, FindOptions::default(), &done).unwrap_or_else(|e| {
             panic!(
                 "Taverley -> hut with completed Death Plateau ({e:?}) ({})",
                 root.display()
             )
         });
         assert!(
-            find_with(&wc, &graph, taverley, hut, FindOptions::default(), &state).is_err(),
+            find_with(wc, graph, taverley, hut, FindOptions::default(), &state).is_err(),
             "Taverley -> hut stays NoPath without the quest ({})",
             root.display()
         );
         // 3746 S remains the garden return; N is the gated reverse.
         assert_eq!(
-            door_crossings(&graph, 3746),
+            door_crossings(graph, 3746),
             vec![
                 ((2820, 3557), 'N', (2820, 3558)),
                 ((2820, 3557), 'S', (2820, 3556)),
@@ -4553,7 +4734,7 @@ fn tenzing_passage_and_road_route_through_the_inherited_gate() {
             level: 0,
         };
         for (label, from) in [("passage", passage), ("Taverley", taverley)] {
-            match find_with(&wc, &graph, from, bank, FindOptions::default(), &state) {
+            match find_with(wc, graph, from, bank, FindOptions::default(), &state) {
                 Ok(route) => eprintln!(
                     "{label} -> BANK_STAND(2946,3369) ok dest=({},{},{}) legs={} ({})",
                     route.dest.x,
@@ -5067,7 +5248,6 @@ fn find_radius3(
 #[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn membergate_taverley_bank_from_real_content() {
     use crate::router::{Leg, RouteError};
-    let (roots, defs) = required_qualification_inputs();
     let taverley = WorldTile {
         x: 2895,
         z: 3435,
@@ -5083,10 +5263,9 @@ fn membergate_taverley_bank_from_real_content() {
         z: 3369,
         level: 0,
     };
-    for root in roots {
-        let (graph, wc) = derive_from_root_with(&root, &defs);
+    for (root, graph, wc) in qualification_worlds() {
         let crossings_at = |id, x, z| {
-            door_crossings(&graph, id)
+            door_crossings(graph, id)
                 .into_iter()
                 .filter(|((at_x, at_z), _, _)| *at_x == x && *at_z == z)
                 .collect::<Vec<_>>()
@@ -5137,8 +5316,12 @@ fn membergate_taverley_bank_from_real_content() {
         }
         for id in [1598, 1599] {
             assert!(
-                door_crossings(&graph, id).is_empty(),
-                "Paterdomus {id} must stay out ({})",
+                graph
+                    .edges
+                    .iter()
+                    .filter(|e| e.loc_id == id)
+                    .all(|e| e.members_req),
+                "Paterdomus {id} crosses only on a members world ({})",
                 root.display()
             );
         }
@@ -5151,7 +5334,7 @@ fn membergate_taverley_bank_from_real_content() {
         ] {
             assert!(
                 matches!(
-                    find_radius3(&wc, &graph, from, to, &empty),
+                    find_radius3(wc, graph, from, to, &empty),
                     Err(RouteError::NoPath)
                 ),
                 "{label} unknown/false membership remains NoPath ({})",
@@ -5164,7 +5347,7 @@ fn membergate_taverley_bank_from_real_content() {
             map_members: true,
             ..crate::world_state::WorldState::default()
         };
-        let there = find_radius3(&wc, &graph, taverley, bank, &agility1)
+        let there = find_radius3(wc, graph, taverley, bank, &agility1)
             .unwrap_or_else(|e| panic!("members Taverley -> bank ({e:?}) ({})", root.display()));
         assert!(
             there.legs.iter().any(|l| matches!(
@@ -5193,7 +5376,7 @@ fn membergate_taverley_bank_from_real_content() {
             );
         };
         route_fact("members Taverley -> bank radius3", &there);
-        let back = find_radius3(&wc, &graph, bank, taverley, &members)
+        let back = find_radius3(wc, graph, bank, taverley, &members)
             .unwrap_or_else(|e| panic!("members bank -> Taverley ({e:?}) ({})", root.display()));
         route_fact("members bank -> Taverley radius3", &back);
         let done = crate::world_state::WorldState {
@@ -5202,7 +5385,7 @@ fn membergate_taverley_bank_from_real_content() {
             map_members: true,
             ..crate::world_state::WorldState::default()
         };
-        let passage_to_bank = find_radius3(&wc, &graph, passage, bank, &done).unwrap_or_else(|e| {
+        let passage_to_bank = find_radius3(wc, graph, passage, bank, &done).unwrap_or_else(|e| {
             panic!(
                 "passage -> bank with Death Plateau ({e:?}) ({})",
                 root.display()
@@ -5212,7 +5395,7 @@ fn membergate_taverley_bank_from_real_content() {
             "members passage -> bank radius3 Death Plateau",
             &passage_to_bank,
         );
-        let bank_to_passage = find_radius3(&wc, &graph, bank, passage, &done).unwrap_or_else(|e| {
+        let bank_to_passage = find_radius3(wc, graph, bank, passage, &done).unwrap_or_else(|e| {
             panic!(
                 "bank -> passage with Death Plateau ({e:?}) ({})",
                 root.display()
@@ -5929,80 +6112,60 @@ fn magic_state(level: i32) -> crate::world_state::WorldState {
     }
 }
 
-fn derive_from_lostcity_content() -> Option<&'static (TransportGraph, WorldCollision)> {
-    static CELL: std::sync::OnceLock<Option<(TransportGraph, WorldCollision)>> =
-        std::sync::OnceLock::new();
-    CELL.get_or_init(|| {
-        let root = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
-        if !root.join("maps").is_dir() || !root.join("pack").join("loc.pack").is_file() {
-            eprintln!(
-                "SKIP: lostcity-289 content not found at {} (content-backed tests skipped)",
-                root.display()
-            );
-            return None;
-        }
-        let defs = real_loc_defs()?;
-        let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
-            .expect("lostcity-289 content bakes");
-        let graph = derive_transports(&root, &defs, &wc);
-        Some((graph, wc))
-    })
-    .as_ref()
-}
-
 /// Wizard Guild stairs from `stairs.rs2` + `m40_48.jm2` must already be
 /// packed. If this fails, the Magic shop→bank hole is not door-only.
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn yanille_wizard_guild_stair_pairs_exist() {
-    let Some((graph, _)) = derive_from_lostcity_content() else {
-        return;
-    };
-    let down = graph
-        .edges
-        .iter()
-        .find(|e| {
-            e.kind == TransportKind::Stairs
-                && e.loc_id == 1723
-                && e.at
-                    == WorldTile {
-                        x: 2590,
-                        z: 3090,
-                        level: 1,
-                    }
-        })
-        .expect("1723 Climb-down at 2590,3090,1");
-    assert_eq!(
-        down.to,
-        WorldTile {
-            x: 2590,
-            z: 3088,
-            level: 0
-        },
-        "0_40_48_30_16 landing"
-    );
-    let up = graph
-        .edges
-        .iter()
-        .find(|e| {
-            e.kind == TransportKind::Stairs
-                && e.loc_id == 1722
-                && e.at
-                    == WorldTile {
-                        x: 2590,
-                        z: 3089,
-                        level: 0,
-                    }
-        })
-        .expect("1722 Climb-up at 2590,3089,0");
-    assert_eq!(
-        up.to,
-        WorldTile {
-            x: 2590,
-            z: 3092,
-            level: 1
-        },
-        "1_40_48_30_20 landing"
-    );
+    for (root, graph, _wc) in qualification_worlds() {
+        let _ = root;
+        let down = graph
+            .edges
+            .iter()
+            .find(|e| {
+                e.kind == TransportKind::Stairs
+                    && e.loc_id == 1723
+                    && e.at
+                        == WorldTile {
+                            x: 2590,
+                            z: 3090,
+                            level: 1,
+                        }
+            })
+            .expect("1723 Climb-down at 2590,3090,1");
+        assert_eq!(
+            down.to,
+            WorldTile {
+                x: 2590,
+                z: 3088,
+                level: 0
+            },
+            "0_40_48_30_16 landing"
+        );
+        let up = graph
+            .edges
+            .iter()
+            .find(|e| {
+                e.kind == TransportKind::Stairs
+                    && e.loc_id == 1722
+                    && e.at
+                        == WorldTile {
+                            x: 2590,
+                            z: 3089,
+                            level: 0,
+                        }
+            })
+            .expect("1722 Climb-up at 2590,3089,0");
+        assert_eq!(
+            up.to,
+            WorldTile {
+                x: 2590,
+                z: 3092,
+                level: 1
+            },
+            "1_40_48_30_20 landing"
+        );
+    }
 }
 
 /// Named-override guild doors are not inherited gates. The opener in
@@ -6160,85 +6323,86 @@ fn magicguild_door_eligibility_follows_entering_axis() {
 /// doors join. After import, exiting stays eligible without magic;
 /// entering the shop from the bank requires magic 66.
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn magic_guild_shop_bank_route_uses_derived_doors() {
     use crate::router::{find_with, FindOptions, Leg, RouteError};
-    let Some((graph, wc)) = derive_from_lostcity_content() else {
-        return;
-    };
-    let shop = WorldTile {
-        x: 2594,
-        z: 3090,
-        level: 1,
-    };
-    let bank = WorldTile {
-        x: 2613,
-        z: 3092,
-        level: 0,
-    };
-    let doors: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|e| e.kind == TransportKind::Door && matches!(e.loc_id, 1600 | 1601))
-        .collect();
-    assert_eq!(
-        doors.len(),
-        8,
-        "four guild door tiles × two crossings, got {doors:?}"
-    );
-    let empty = crate::world_state::WorldState::empty();
-    let low = magic_state(65);
-    let ok = magic_state(66);
-    let leave = find_with(wc, graph, shop, bank, FindOptions::default(), &empty)
-        .unwrap_or_else(|e| panic!("shop → bank must exit without a magic gate ({e:?})"));
-    assert_eq!(leave.dest, bank);
-    assert!(
-        leave.legs.iter().any(|l| matches!(
-            l,
-            Leg::Transport { edge } if edge.loc_id == 1723
-        )),
-        "shop → bank climbs down 1723: {leave:?}"
-    );
-    assert!(
-        leave.legs.iter().any(|l| matches!(
-            l,
-            Leg::Transport { edge }
-                if matches!(edge.loc_id, 1600 | 1601) && edge.skill_req.is_empty()
-        )),
-        "shop → bank exits an ungated guild door: {leave:?}"
-    );
-    assert!(
-        matches!(
-            find_with(wc, graph, bank, shop, FindOptions::default(), &empty),
-            Err(RouteError::NoPath)
-        ),
-        "empty stats cannot enter the guild"
-    );
-    assert!(
-        matches!(
-            find_with(wc, graph, bank, shop, FindOptions::default(), &low),
-            Err(RouteError::NoPath)
-        ),
-        "magic 65 cannot enter the guild"
-    );
-    let enter = find_with(wc, graph, bank, shop, FindOptions::default(), &ok)
-        .unwrap_or_else(|e| panic!("bank → shop with magic 66 ({e:?})"));
-    assert_eq!(enter.dest, shop);
-    assert!(
-        enter.legs.iter().any(|l| matches!(
-            l,
-            Leg::Transport { edge }
-                if matches!(edge.loc_id, 1600 | 1601)
-                    && edge.skill_req == vec![(SKILL_MAGIC, 66)]
-        )),
-        "bank → shop enters a magic-gated door: {enter:?}"
-    );
-    assert!(
-        enter.legs.iter().any(|l| matches!(
-            l,
-            Leg::Transport { edge } if edge.loc_id == 1722
-        )),
-        "bank → shop climbs 1722: {enter:?}"
-    );
+    for (root, graph, wc) in qualification_worlds() {
+        let _ = root;
+        let shop = WorldTile {
+            x: 2594,
+            z: 3090,
+            level: 1,
+        };
+        let bank = WorldTile {
+            x: 2613,
+            z: 3092,
+            level: 0,
+        };
+        let doors: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && matches!(e.loc_id, 1600 | 1601))
+            .collect();
+        assert_eq!(
+            doors.len(),
+            8,
+            "four guild door tiles × two crossings, got {doors:?}"
+        );
+        let empty = crate::world_state::WorldState::empty();
+        let low = magic_state(65);
+        let ok = magic_state(66);
+        let leave = find_with(wc, graph, shop, bank, FindOptions::default(), &empty)
+            .unwrap_or_else(|e| panic!("shop → bank must exit without a magic gate ({e:?})"));
+        assert_eq!(leave.dest, bank);
+        assert!(
+            leave.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge } if edge.loc_id == 1723
+            )),
+            "shop → bank climbs down 1723: {leave:?}"
+        );
+        assert!(
+            leave.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if matches!(edge.loc_id, 1600 | 1601) && edge.skill_req.is_empty()
+            )),
+            "shop → bank exits an ungated guild door: {leave:?}"
+        );
+        assert!(
+            matches!(
+                find_with(wc, graph, bank, shop, FindOptions::default(), &empty),
+                Err(RouteError::NoPath)
+            ),
+            "empty stats cannot enter the guild"
+        );
+        assert!(
+            matches!(
+                find_with(wc, graph, bank, shop, FindOptions::default(), &low),
+                Err(RouteError::NoPath)
+            ),
+            "magic 65 cannot enter the guild"
+        );
+        let enter = find_with(wc, graph, bank, shop, FindOptions::default(), &ok)
+            .unwrap_or_else(|e| panic!("bank → shop with magic 66 ({e:?})"));
+        assert_eq!(enter.dest, shop);
+        assert!(
+            enter.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if matches!(edge.loc_id, 1600 | 1601)
+                        && edge.skill_req == vec![(SKILL_MAGIC, 66)]
+            )),
+            "bank → shop enters a magic-gated door: {enter:?}"
+        );
+        assert!(
+            enter.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge } if edge.loc_id == 1722
+            )),
+            "bank → shop climbs 1722: {enter:?}"
+        );
+    }
 }
 
 const RANGINGGUILD_OUTSIDE: WorldTile = WorldTile {
@@ -6630,75 +6794,77 @@ fn rangingguild_door_radius1_admits_only_the_reciprocal_stand() {
 }
 
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn derive_transports_rangingguild_door_pair_from_real_content() {
-    let Some((graph, _)) = derive_from_lostcity_content() else {
-        return;
-    };
-    assert_rangingguild_records(graph);
-    let from_outside = rangingguild_usable_from(graph, RANGINGGUILD_OUTSIDE);
-    assert_eq!(from_outside.len(), 1, "{from_outside:?}");
-    assert_eq!(from_outside[0].skill_req, vec![(SKILL_RANGED, 40)]);
-    let from_inside = rangingguild_usable_from(graph, RANGINGGUILD_INSIDE);
-    assert_eq!(from_inside.len(), 1, "{from_inside:?}");
-    assert!(from_inside[0].skill_req.is_empty());
+    for (root, graph, _wc) in qualification_worlds() {
+        let _ = root;
+        assert_rangingguild_records(graph);
+        let from_outside = rangingguild_usable_from(graph, RANGINGGUILD_OUTSIDE);
+        assert_eq!(from_outside.len(), 1, "{from_outside:?}");
+        assert_eq!(from_outside[0].skill_req, vec![(SKILL_RANGED, 40)]);
+        let from_inside = rangingguild_usable_from(graph, RANGINGGUILD_INSIDE);
+        assert_eq!(from_inside.len(), 1, "{from_inside:?}");
+        assert!(from_inside[0].skill_req.is_empty());
+    }
 }
 
 /// Graph evidence only: Seers → JUDGE_STAND enters through 2514 at
 /// the outside stand when Ranged is 70; empty / 39 stay NoPath.
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn ranging_guild_seers_judge_route_uses_derived_door() {
     use crate::router::{find_with, FindOptions, Leg, RouteError};
-    let Some((graph, wc)) = derive_from_lostcity_content() else {
-        return;
-    };
-    let seers = WorldTile {
-        x: 2722,
-        z: 3493,
-        level: 0,
-    };
-    let judge = WorldTile {
-        x: 2670,
-        z: 3418,
-        level: 0,
-    };
-    let opts = FindOptions {
-        allow_wilderness: true,
-        allow_teleports: false,
-        ..FindOptions::default()
-    };
-    let empty = crate::world_state::WorldState::empty();
-    let low = ranging_state(39);
-    let ok = ranging_state(70);
-    assert!(
-        matches!(
-            find_with(wc, graph, seers, judge, opts, &empty),
-            Err(RouteError::NoPath)
-        ),
-        "empty stats cannot enter"
-    );
-    assert!(
-        matches!(
-            find_with(wc, graph, seers, judge, opts, &low),
-            Err(RouteError::NoPath)
-        ),
-        "ranged 39 cannot enter"
-    );
-    let enter = find_with(wc, graph, seers, judge, opts, &ok)
-        .unwrap_or_else(|e| panic!("ranged 70 Seers → judge ({e:?})"));
-    assert_eq!(enter.dest, judge);
-    assert!(
-        enter.legs.iter().any(|l| matches!(
-            l,
-            Leg::Transport { edge }
-                if edge.loc_id == 2514
-                    && edge.at == RANGINGGUILD_OUTSIDE
-                    && edge.to == RANGINGGUILD_INSIDE
-                    && edge.skill_req == vec![(SKILL_RANGED, 40)]
-                    && edge.dir.is_none()
-                    && edge.open_loc_id.is_none()
-        )),
-        "enter hops 2514 at the outside stand: {enter:?}"
-    );
+    for (root, graph, wc) in qualification_worlds() {
+        let _ = root;
+        let seers = WorldTile {
+            x: 2722,
+            z: 3493,
+            level: 0,
+        };
+        let judge = WorldTile {
+            x: 2670,
+            z: 3418,
+            level: 0,
+        };
+        let opts = FindOptions {
+            allow_wilderness: true,
+            allow_teleports: false,
+            ..FindOptions::default()
+        };
+        let empty = crate::world_state::WorldState::empty();
+        let low = ranging_state(39);
+        let ok = ranging_state(70);
+        assert!(
+            matches!(
+                find_with(wc, graph, seers, judge, opts, &empty),
+                Err(RouteError::NoPath)
+            ),
+            "empty stats cannot enter"
+        );
+        assert!(
+            matches!(
+                find_with(wc, graph, seers, judge, opts, &low),
+                Err(RouteError::NoPath)
+            ),
+            "ranged 39 cannot enter"
+        );
+        let enter = find_with(wc, graph, seers, judge, opts, &ok)
+            .unwrap_or_else(|e| panic!("ranged 70 Seers → judge ({e:?})"));
+        assert_eq!(enter.dest, judge);
+        assert!(
+            enter.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if edge.loc_id == 2514
+                        && edge.at == RANGINGGUILD_OUTSIDE
+                        && edge.to == RANGINGGUILD_INSIDE
+                        && edge.skill_req == vec![(SKILL_RANGED, 40)]
+                        && edge.dir.is_none()
+                        && edge.open_loc_id.is_none()
+            )),
+            "enter hops 2514 at the outside stand: {enter:?}"
+        );
+    }
 }
 
 fn skip_total(skipped: &HashMap<&'static str, usize>, reason: &str) -> usize {
@@ -6840,6 +7006,69 @@ fn n1_zanaris_missing_script_increments_skip_without_shed_edge() {
         skip_total(&skipped, SKIP_ZANARIS_SOURCE),
         ZANARIS_DECLARED_ROUTES
     );
+}
+
+/// The Shantay henge doorway (loc 4031, the `shantay_pass.rs2`
+/// `[oploc1,shantay_pass_henge_doorway]` branches) packs exactly two edges
+/// per placement next to the Al Kharid toll gates: the gated hop into the
+/// desert `at` the placement (one Shantay pass) and the free desert exit
+/// `at` one tile south of it.
+#[test]
+fn shantay_henge_packs_the_paid_entry_and_the_free_exit() {
+    let fx = Fixture::new();
+    fx.write("pack/obj.pack", "995=coins\n1854=shantay_pass\n");
+    fx.write(
+        "pack/loc.pack",
+        "4031=shantay_pass_henge_doorway\n2882=border_gate_toll_left\n1562=loc_1562\n",
+    );
+    fx.write(
+        "scripts/areas/area_alkharid/configs/border_gate.loc",
+        "[border_gate_toll_left]\nname=Gate\nop1=Open\ncategory=border_gate_toll_left\nparam=next_loc_stage,loc_1562\n",
+    );
+    fx.write(
+        "maps/m51_48.jm2",
+        "==== MAP ====\n0 38 44: h1 u50\n==== LOC ====\n0 38 44: 4031 10 0\n",
+    );
+    let defs = loc_defs(&[(4031, 1, 1), (2882, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::from([4031]));
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    let henge: Vec<_> = graph.edges.iter().filter(|e| e.loc_id == 4031).collect();
+    assert_eq!(henge.len(), 2, "{henge:?}");
+    let gated = henge
+        .iter()
+        .find(|e| !e.item_req.is_empty())
+        .expect("one Shantay henge edge carries the pass");
+    let free = henge
+        .iter()
+        .find(|e| e.item_req.is_empty())
+        .expect("one Shantay henge edge is free");
+    assert_eq!(
+        (gated.at, gated.to),
+        (
+            WorldTile {
+                x: 3302,
+                z: 3116,
+                level: 0
+            },
+            SHANTAY_NORTH_TO
+        )
+    );
+    assert_eq!(gated.item_req, [(1854, 1)]);
+    assert_eq!(
+        (free.at, free.to),
+        (
+            WorldTile {
+                x: 3302,
+                z: 3115,
+                level: 0
+            },
+            SHANTAY_SOUTH_TO
+        )
+    );
+    for e in henge {
+        assert_eq!(e.option, 1, "Go-through op");
+        assert_eq!(e.dir, None);
+    }
 }
 
 #[test]
@@ -7442,142 +7671,139 @@ fn bake_fails_when_teleport_gates_exist_without_wilderness_zones() {
 }
 
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn real_289_content_derives_wilderness_teleport_caps() {
-    let Some((graph, _)) = derive_from_lostcity_content() else {
-        return;
-    };
-    require_wilderness_teleport_legality(
-        Path::new("/Users/acfrazier/experiments/lostcity-289/content"),
-        graph,
-    )
-    .expect("289 content must derive wilderness teleport caps");
-    assert_eq!(graph.wilderness.divisor, 8);
-    assert_eq!(graph.wilderness.offset, 1);
-    let t = |z| WorldTile {
-        x: 3100,
-        z,
-        level: 0,
-    };
-    assert_eq!(graph.wilderness.level(t(3679)), 20);
-    assert_eq!(graph.wilderness.level(t(3680)), 21);
-    assert_eq!(graph.wilderness.level(t(3759)), 30);
-    assert_eq!(graph.wilderness.level(t(3760)), 31);
-    let spell = graph
-        .teleports
-        .iter()
-        .find(|e| e.loc_id == 0)
-        .and_then(|e| e.wildy_cap)
-        .expect("spell cap");
-    assert_eq!(spell, 20);
-    assert!(graph
-        .teleports
-        .iter()
-        .any(|e| e.loc_id > 0 && e.wildy_cap == Some(20)));
-    let glory = graph
-        .teleports
-        .iter()
-        .filter(|e| e.loc_id > 0)
-        .filter_map(|e| e.wildy_cap)
-        .max()
-        .unwrap();
-    assert_eq!(glory, 30);
+    for (root, graph, _wc) in qualification_worlds() {
+        let _ = root;
+        require_wilderness_teleport_legality(root, graph)
+            .expect("289 content must derive wilderness teleport caps");
+        assert_eq!(graph.wilderness.divisor, 8);
+        assert_eq!(graph.wilderness.offset, 1);
+        let t = |z| WorldTile {
+            x: 3100,
+            z,
+            level: 0,
+        };
+        assert_eq!(graph.wilderness.level(t(3679)), 20);
+        assert_eq!(graph.wilderness.level(t(3680)), 21);
+        assert_eq!(graph.wilderness.level(t(3759)), 30);
+        assert_eq!(graph.wilderness.level(t(3760)), 31);
+        let spell = graph
+            .teleports
+            .iter()
+            .find(|e| e.loc_id == 0)
+            .and_then(|e| e.wildy_cap)
+            .expect("spell cap");
+        assert_eq!(spell, 20);
+        assert!(graph
+            .teleports
+            .iter()
+            .any(|e| e.loc_id > 0 && e.wildy_cap == Some(20)));
+        let glory = graph
+            .teleports
+            .iter()
+            .filter(|e| e.loc_id > 0)
+            .filter_map(|e| e.wildy_cap)
+            .max()
+            .unwrap();
+        assert_eq!(glory, 30);
+    }
 }
 
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn real_289_routes_respect_wilderness_teleport_caps() {
     use crate::router::{find_with, FindOptions, Leg};
-    let Some((graph, wc)) = derive_from_lostcity_content() else {
-        return;
-    };
-    require_wilderness_teleport_legality(
-        Path::new("/Users/acfrazier/experiments/lostcity-289/content"),
-        graph,
-    )
-    .expect("caps");
-    let spell = graph
-        .teleports
-        .iter()
-        .find(|e| e.loc_id == 0 && e.wildy_cap.is_some())
-        .expect("spell");
-    let spell_cap = spell.wildy_cap.unwrap();
-    assert_eq!(spell_cap, 20);
-    let dest = spell.to;
-    let mut inv = HashMap::new();
-    for &(id, n) in &spell.item_req {
-        inv.insert(id, n.max(5));
-    }
-    let magic = spell
-        .skill_req
-        .iter()
-        .find(|(id, _)| *id == 6)
-        .map(|(_, lvl)| *lvl)
-        .unwrap_or(99);
-    let state = crate::world_state::WorldState {
-        stats: HashMap::from([(6, magic)]),
-        inv,
-        ..crate::world_state::WorldState::default()
-    };
-    let opts = FindOptions {
-        allow_teleports: true,
-        allow_wilderness: true,
-        ..FindOptions::default()
-    };
-    let below = standable_wildy_on(wc, graph, 20, true).expect("standable last tile of level 20");
-    let above = standable_wildy_on(wc, graph, 21, false).expect("standable first tile of level 21");
-    assert_eq!(below.z, 3679, "level 20 ends at z 3679");
-    assert_eq!(above.z, 3680, "level 21 starts at z 3680");
-    let r_below = find_with(wc, graph, below, dest, opts, &state)
-        .unwrap_or_else(|e| panic!("from level {spell_cap} {below:?} -> {dest:?}: {e:?}"));
-    assert!(
-        r_below
+    for (root, graph, wc) in qualification_worlds() {
+        let _ = root;
+        require_wilderness_teleport_legality(root, graph).expect("caps");
+        let spell = graph
+            .teleports
+            .iter()
+            .find(|e| e.loc_id == 0 && e.wildy_cap.is_some())
+            .expect("spell");
+        let spell_cap = spell.wildy_cap.unwrap();
+        assert_eq!(spell_cap, 20);
+        let dest = spell.to;
+        let mut inv = HashMap::new();
+        for &(id, n) in &spell.item_req {
+            inv.insert(id, n.max(5));
+        }
+        let magic = spell
+            .skill_req
+            .iter()
+            .find(|(id, _)| *id == 6)
+            .map(|(_, lvl)| *lvl)
+            .unwrap_or(99);
+        let state = crate::world_state::WorldState {
+            stats: HashMap::from([(6, magic)]),
+            inv,
+            ..crate::world_state::WorldState::default()
+        };
+        let opts = FindOptions {
+            allow_teleports: true,
+            allow_wilderness: true,
+            ..FindOptions::default()
+        };
+        let below =
+            standable_wildy_on(wc, graph, 20, true).expect("standable last tile of level 20");
+        let above =
+            standable_wildy_on(wc, graph, 21, false).expect("standable first tile of level 21");
+        assert_eq!(below.z, 3679, "level 20 ends at z 3679");
+        assert_eq!(above.z, 3680, "level 21 starts at z 3680");
+        let r_below = find_with(wc, graph, below, dest, opts, &state)
+            .unwrap_or_else(|e| panic!("from level {spell_cap} {below:?} -> {dest:?}: {e:?}"));
+        assert!(
+            r_below.legs.iter().any(
+                |l| matches!(l, Leg::Transport { edge } if edge.kind == TransportKind::Teleport)
+            ),
+            "from below the cap the route still teleports"
+        );
+        assert_legal_teleports(graph, below, &r_below);
+        if let Ok(route) = find_with(wc, graph, above, dest, opts, &state) {
+            assert_legal_teleports(graph, above, &route);
+            for (from, _) in teleport_takeoffs(above, &route) {
+                assert_ne!(
+                    from, above,
+                    "must not teleport from above-cap origin {above:?}"
+                );
+            }
+        }
+        let glory_cap = graph
+            .teleports
+            .iter()
+            .filter(|e| e.loc_id > 0)
+            .filter_map(|e| e.wildy_cap)
+            .max()
+            .expect("jewellery cap");
+        assert_eq!(glory_cap, 30);
+        let glory = graph
+            .teleports
+            .iter()
+            .find(|e| e.wildy_cap == Some(glory_cap))
+            .unwrap();
+        let gstate = crate::world_state::WorldState {
+            inv: HashMap::from([(glory.item_req[0].0, 1)]),
+            ..crate::world_state::WorldState::default()
+        };
+        let g_below =
+            standable_wildy_on(wc, graph, 30, true).expect("standable last tile of level 30");
+        let g_above =
+            standable_wildy_on(wc, graph, 31, false).expect("standable first tile of level 31");
+        assert_eq!(g_below.z, 3759, "level 30 ends at z 3759");
+        assert_eq!(g_above.z, 3760, "level 31 starts at z 3760");
+        let ok = find_with(wc, graph, g_below, glory.to, opts, &gstate)
+            .unwrap_or_else(|e| panic!("glory from level {glory_cap}: {e:?}"));
+        assert!(ok
             .legs
             .iter()
-            .any(|l| matches!(l, Leg::Transport { edge } if edge.kind == TransportKind::Teleport)),
-        "from below the cap the route still teleports"
-    );
-    assert_legal_teleports(graph, below, &r_below);
-    if let Ok(route) = find_with(wc, graph, above, dest, opts, &state) {
-        assert_legal_teleports(graph, above, &route);
-        for (from, _) in teleport_takeoffs(above, &route) {
-            assert_ne!(
-                from, above,
-                "must not teleport from above-cap origin {above:?}"
-            );
-        }
-    }
-    let glory_cap = graph
-        .teleports
-        .iter()
-        .filter(|e| e.loc_id > 0)
-        .filter_map(|e| e.wildy_cap)
-        .max()
-        .expect("jewellery cap");
-    assert_eq!(glory_cap, 30);
-    let glory = graph
-        .teleports
-        .iter()
-        .find(|e| e.wildy_cap == Some(glory_cap))
-        .unwrap();
-    let gstate = crate::world_state::WorldState {
-        inv: HashMap::from([(glory.item_req[0].0, 1)]),
-        ..crate::world_state::WorldState::default()
-    };
-    let g_below = standable_wildy_on(wc, graph, 30, true).expect("standable last tile of level 30");
-    let g_above =
-        standable_wildy_on(wc, graph, 31, false).expect("standable first tile of level 31");
-    assert_eq!(g_below.z, 3759, "level 30 ends at z 3759");
-    assert_eq!(g_above.z, 3760, "level 31 starts at z 3760");
-    let ok = find_with(wc, graph, g_below, glory.to, opts, &gstate)
-        .unwrap_or_else(|e| panic!("glory from level {glory_cap}: {e:?}"));
-    assert!(ok
-        .legs
-        .iter()
-        .any(|l| matches!(l, Leg::Transport { edge } if edge.kind == TransportKind::Teleport)));
-    assert_legal_teleports(graph, g_below, &ok);
-    if let Ok(route) = find_with(wc, graph, g_above, glory.to, opts, &gstate) {
-        assert_legal_teleports(graph, g_above, &route);
-        for (from, _) in teleport_takeoffs(g_above, &route) {
-            assert_ne!(from, g_above);
+            .any(|l| matches!(l, Leg::Transport { edge } if edge.kind == TransportKind::Teleport)));
+        assert_legal_teleports(graph, g_below, &ok);
+        if let Ok(route) = find_with(wc, graph, g_above, glory.to, opts, &gstate) {
+            assert_legal_teleports(graph, g_above, &route);
+            for (from, _) in teleport_takeoffs(g_above, &route) {
+                assert_ne!(from, g_above);
+            }
         }
     }
 }
@@ -7894,69 +8120,181 @@ fn swap_door_crosses_only_when_the_open_loc_frees_the_wall() {
 /// (2669,3316). The pack had no crossing, so the bank walk was `NoPath`
 /// both ways; the real 289 content now crosses it.
 #[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn ardougne_diagonal_door_room_routes_to_the_south_bank() {
     use crate::router::{find, Leg};
-    let Some((graph, wc)) = derive_from_lostcity_content() else {
-        return;
-    };
-    let room = WorldTile {
-        x: 2671,
-        z: 3316,
-        level: 0,
-    };
-    let bank = WorldTile {
-        x: 2655,
-        z: 3286,
-        level: 0,
-    };
-    let door = WorldTile {
-        x: 2669,
-        z: 3316,
-        level: 0,
-    };
-    for (from, to) in [(room, bank), (bank, room)] {
-        let route = find(wc, graph, from, to)
-            .unwrap_or_else(|e| panic!("{from:?} -> {to:?} must route: {e:?}"));
-        assert!(
-            route.legs.iter().any(|l| matches!(
-                l,
-                Leg::Transport { edge } if edge.loc_id == 1530 && edge.at == door
-            )),
-            "{from:?} -> {to:?} crosses the diagonal door: {route:?}"
-        );
+    for (root, graph, wc) in qualification_worlds() {
+        let _ = root;
+        let room = WorldTile {
+            x: 2671,
+            z: 3316,
+            level: 0,
+        };
+        let bank = WorldTile {
+            x: 2655,
+            z: 3286,
+            level: 0,
+        };
+        let door = WorldTile {
+            x: 2669,
+            z: 3316,
+            level: 0,
+        };
+        for (from, to) in [(room, bank), (bank, room)] {
+            let route = find(wc, graph, from, to)
+                .unwrap_or_else(|e| panic!("{from:?} -> {to:?} must route: {e:?}"));
+            assert!(
+                route.legs.iter().any(|l| matches!(
+                    l,
+                    Leg::Transport { edge } if edge.loc_id == 1530 && edge.at == door
+                )),
+                "{from:?} -> {to:?} crosses the diagonal door: {route:?}"
+            );
+        }
     }
 }
 
-/// The Brimhaven `laddertop` at (2784,3286) is placed on raw plane 2 over
-/// a LINK_BELOW tile, so the engine loads it on plane 1; its Climb-down
-/// must start there (it was packed on plane 2, unreachable).
+/// A `laddertop` placed on raw plane 2 over a LINK_BELOW tile (the
+/// Brimhaven laddertop at (2784,3286): `m43_51` MAP row `1 32 22: … f2`) is
+/// loaded on game plane 1, so its Climb-down (`ladders.rs2:42-47`,
+/// `~climb_ladder(movecoord(coord(), 0, -1, 0), false)`) starts on plane 1
+/// and lands on plane 0; the raw plane 2 is unreachable.
 #[test]
 fn bridged_laddertop_sits_on_its_game_plane() {
-    let Some((graph, _)) = derive_from_lostcity_content() else {
-        return;
-    };
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "1746=laddertop\n");
+    fx.write(
+        "scripts/ladders+stairs/scripts/ladders.rs2",
+        "\
+[oploc1,laddertop]
+p_arrivedelay;
+switch_coord (loc_coord) {
+    case 2_47_54_17_57 : ~climb_ladder(1_47_54_17_58, false); // black knights fortress ladder
+    case default : ~climb_ladder(movecoord(coord(), 0, -1, 0), false);
+}
+",
+    );
+    fx.write(
+        "maps/m43_51.jm2",
+        "\
+==== MAP ====
+0 32 22: h1 o6 f5 u48
+1 32 22: h20 o42 f2
+2 32 22: o42
+==== LOC ====
+2 32 22: 1746 10
+",
+    );
+    let defs = loc_defs(&[(1746, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &wc);
     let edges: Vec<_> = graph
         .edges
         .iter()
-        .filter(|e| e.loc_id == 1746 && e.at.x == 2784 && e.at.z == 3286)
-        .map(|e| (e.at.level, e.to.level))
+        .filter(|e| e.loc_id == 1746)
+        .map(|e| (e.at, e.to.level))
         .collect();
-    assert_eq!(edges, vec![(1, 0)]);
+    assert_eq!(
+        edges,
+        vec![(
+            WorldTile {
+                x: 2784,
+                z: 3286,
+                level: 1
+            },
+            0
+        )]
+    );
 }
 
-/// Paterdomus' fence gate (`memberfencegate_l/_r`, (3320,3467–3468)) runs
-/// its own `[oploc1]` block: the `map_members` refusal, then the generic
+/// Paterdomus' fence gate (`memberfencegate_l/_r`,
+/// `area_paterdomus/scripts/paterdomus_members_gate.rs2`) runs its own
+/// `[oploc1]` block: the `map_members` refusal, then the generic
 /// `~open_gate` / `~open_outer_gate`. It crosses on a members world and
-/// never on a free one; before, the named override hid it entirely.
+/// never on a free one; a named override used to hide it entirely.
 #[test]
 fn paterdomus_members_fence_gate_crosses_only_on_a_members_world() {
     use crate::router::{find_with, FindOptions, Leg, RouteError};
     use crate::world_state::WorldState;
-    let Some((graph, wc)) = derive_from_lostcity_content() else {
-        return;
-    };
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "1598=memberfencegate_l\n1599=memberfencegate_r\n1552=loc_1552\n1556=loc_1556\n",
+    );
+    fx.write(
+        "scripts/general_use/scripts/gates.rs2",
+        "\
+[proc,open_gate]
+def_coord $main_open = ~movecoord_loc_return(~gate_set_close(loc_angle, 1));
+return;
+
+[proc,open_outer_gate]
+loc_findallzone(~get_pair_coord(loc_coord, loc_angle, true));
+return;
+
+[oploc1,_gate_main_closed] ~open_gate;
+[oploc1,_gate_outer_closed] ~open_outer_gate;
+",
+    );
+    fx.write(
+        "scripts/areas/area_paterdomus/configs/paterdomus.loc",
+        "\
+[memberfencegate_l]
+name=Gate
+op1=Open
+active=yes
+category=gate_main_closed
+// todo: what is the intended next state?
+param=next_loc_stage,loc_1552
+
+[memberfencegate_r]
+name=Gate
+mirror=yes
+op1=Open
+active=yes
+category=gate_outer_closed
+param=next_loc_stage,loc_1556
+",
+    );
+    fx.write(
+        "scripts/general_use/configs/gates.loc",
+        "[loc_1552]\nname=Gate\nop1=Close\ncategory=gate_main_open\n\n[loc_1556]\nname=Gate\nop1=Close\ncategory=gate_outer_open\n",
+    );
+    fx.write(
+        "scripts/areas/area_paterdomus/scripts/paterdomus_members_gate.rs2",
+        "\
+[oploc1,memberfencegate_l]
+if(map_members = ^false) {
+    mes(^mes_members_gate);
+    return;
+}
+~open_gate;
+
+[oploc1,memberfencegate_r]
+if(map_members = ^false) {
+    mes(^mes_members_gate);
+    return;
+}
+~open_outer_gate;
+",
+    );
+    // The m51_54 pair (3320,3467)/(3320,3468), angle 0, in a fence column
+    // that is solid everywhere else.
+    let mut map = String::from("==== MAP ====\n0 0 0: h1\n");
+    for z in 0..64 {
+        if z != 11 && z != 12 {
+            map.push_str(&format!("0 55 {z}: f1\n"));
+        }
+    }
+    fx.write(
+        "maps/m51_54.jm2",
+        &(map + "==== LOC ====\n0 56 11: 1598 0 0\n0 56 12: 1599 0 0\n"),
+    );
+    let defs = loc_defs(&[(1598, 1, 1), (1599, 1, 1), (1552, 1, 1), (1556, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::from([1598, 1599]));
+    let graph = derive_transports(fx.path(), &defs, &wc);
     let west = WorldTile {
-        x: 3318,
+        x: 3317,
         z: 3467,
         level: 0,
     };
@@ -7970,7 +8308,7 @@ fn paterdomus_members_fence_gate_crosses_only_on_a_members_world() {
         ..WorldState::empty()
     };
     for (from, to) in [(west, east), (east, west)] {
-        let route = find_with(wc, graph, from, to, FindOptions::default(), &members)
+        let route = find_with(&wc, &graph, from, to, FindOptions::default(), &members)
             .unwrap_or_else(|e| panic!("{from:?} -> {to:?} on a members world: {e:?}"));
         assert!(route.legs.iter().any(|l| matches!(
             l,
@@ -7978,8 +8316,8 @@ fn paterdomus_members_fence_gate_crosses_only_on_a_members_world() {
         )));
         assert_eq!(
             find_with(
-                wc,
-                graph,
+                &wc,
+                &graph,
                 from,
                 to,
                 FindOptions::default(),
@@ -7992,25 +8330,68 @@ fn paterdomus_members_fence_gate_crosses_only_on_a_members_world() {
     }
 }
 
-/// The Cooking Guild door (`chefdoor`, (3143,3444)) runs its own
-/// `~check_axis` opener: from outside it refuses below cooking 32 or
-/// without a worn chef's hat, from inside it lets anyone out. The guild
-/// had no edge at all before (a named opener).
+/// The Cooking Guild door (`chefdoor`, `skill_cooking/scripts/
+/// cooking_guild.rs2`) runs its own `~check_axis` opener: from outside it
+/// refuses below cooking 32 or without a worn chef's hat, from inside it
+/// lets anyone out. The guild had no edge at all before (a named opener).
 #[test]
 fn cooking_guild_door_gates_entry_on_level_and_worn_hat() {
     use crate::router::{find_with, FindOptions, Leg, RouteError};
     use crate::world_state::WorldState;
-    let Some((graph, wc)) = derive_from_lostcity_content() else {
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "2712=chefdoor\n1535=loc_1535\n");
+    fx.write("pack/obj.pack", "1949=chefs_hat\n");
+    fx.write(
+        "scripts/skill_cooking/configs/cooking_guild.loc",
+        "[chefdoor]\nname=Door\nop1=Open\nparam=next_loc_stage,loc_1535\n",
+    );
+    fx.write(
+        "scripts/skill_cooking/scripts/cooking_guild.rs2",
+        "\
+[oploc1,chefdoor]
+def_boolean $is_inside = ~check_axis(coord, loc_coord, loc_angle);
+if ($is_inside = false) {
+    if (stat(cooking) < 32) {
+        mes(\"You need a cooking level of 32 to enter the Chef's Guild.\");
+        def_string $fail_message = \"<p,neutral>Sorry. Only the finest chefs are allowed in here. Get your cooking level up to 32\";
+        if (inv_total(worn, chefs_hat) < 1) {
+            $fail_message = append($fail_message, \" and come back wearing a chef's hat\");
+        }
+        $fail_message = append($fail_message, \".\");
+        ~chatnpc_specific(\"Head chef\", head_chef, $fail_message);
         return;
-    };
+    }
+    if (inv_total(worn, chefs_hat) < 1) {
+        ~chatnpc_specific(\"Head chef\", head_chef, \"<p,neutral>You can't come in here unless you're wearing a chef's hat, or something like that.\");
+        return;
+    }
+}
+~open_and_close_door(loc_param(next_loc_stage), $is_inside, false);
+",
+    );
+    // The guild's south wall door (angle 3) in a row that is solid
+    // everywhere else: the guild is the north side, the loc's own tile.
+    let mut map = String::from("==== MAP ====\n0 0 0: h1\n");
+    for x in 0..64 {
+        if x != 5 {
+            map.push_str(&format!("0 {x} 45: f1\n"));
+        }
+    }
+    fx.write(
+        "maps/m44_53.jm2",
+        &(map + "==== LOC ====\n0 5 46: 2712 0 3\n"),
+    );
+    let defs = loc_defs(&[(2712, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::from([2712]));
+    let graph = derive_transports(fx.path(), &defs, &wc);
     let outside = WorldTile {
-        x: 3143,
-        z: 3440,
+        x: 2821,
+        z: 3434,
         level: 0,
     };
     let inside = WorldTile {
-        x: 3143,
-        z: 3446,
+        x: 2821,
+        z: 3442,
         level: 0,
     };
     let chef = WorldState {
@@ -8018,7 +8399,7 @@ fn cooking_guild_door_gates_entry_on_level_and_worn_hat() {
         worn: HashSet::from([1949]),
         ..WorldState::empty()
     };
-    let enter = find_with(wc, graph, outside, inside, FindOptions::default(), &chef)
+    let enter = find_with(&wc, &graph, outside, inside, FindOptions::default(), &chef)
         .unwrap_or_else(|e| panic!("a level-32 chef in a hat enters: {e:?}"));
     assert!(enter.legs.iter().any(|l| matches!(
         l,
@@ -8038,13 +8419,13 @@ fn cooking_guild_door_gates_entry_on_level_and_worn_hat() {
         },
     ] {
         assert_eq!(
-            find_with(wc, graph, outside, inside, FindOptions::default(), &short).err(),
+            find_with(&wc, &graph, outside, inside, FindOptions::default(), &short).err(),
             Some(RouteError::NoPath)
         );
     }
     find_with(
-        wc,
-        graph,
+        &wc,
+        &graph,
         inside,
         outside,
         FindOptions::default(),
@@ -8053,30 +8434,66 @@ fn cooking_guild_door_gates_entry_on_level_and_worn_hat() {
     .unwrap_or_else(|e| panic!("anyone leaves the guild: {e:?}"));
 }
 
-/// The West Ardougne fence (`mournerstewfence`, (2541,3331)) climbs over
-/// with `~agility_exactmove` either way and no check, so both crossings are
-/// ungated edges; it had none before (a named opener).
+/// The West Ardougne fence (`mournerstewfence`, `general_use/scripts/
+/// fence.rs2`) climbs over with `~agility_exactmove` either way and no
+/// check, so both crossings are ungated edges with no open leaf; it had
+/// none before (a named opener).
 #[test]
 fn west_ardougne_fence_climbs_both_ways() {
-    let Some((graph, _)) = derive_from_lostcity_content() else {
-        return;
-    };
-    let fence: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|e| e.loc_id == 2068 && e.at.x == 2541 && e.at.z == 3331 && e.at.level == 0)
-        .collect();
-    let mut dirs: Vec<_> = fence.iter().map(|e| (e.dir, e.to.x, e.to.z)).collect();
-    dirs.sort_by_key(|&(_, x, z)| (x, z));
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "2068=mournerstewfence\n");
+    fx.write(
+        "scripts/general_use/scripts/fence.rs2",
+        "\
+[oploc1,mournerstewfence]
+def_coord $start = loc_coord;
+def_coord $end = ~movecoord_loc_return(~door_open(loc_angle, loc_shape));
+def_int $dir;
+switch_int(loc_angle) {
+    case ^loc_west : $dir = ^exact_west;
+    case ^loc_north : $dir = ^exact_north;
+    case ^loc_east : $dir = ^exact_east;
+    case ^loc_south : $dir = ^exact_south;
+}
+if(~check_axis(coord, loc_coord, loc_angle) = false) {
+    $start = ~movecoord_loc_return(~door_open(loc_angle, loc_shape));
+    $end = loc_coord;
+    switch_int(loc_angle) {
+        case ^loc_west : $dir = ^exact_east;
+        case ^loc_north : $dir = ^exact_south;
+        case ^loc_east : $dir = ^exact_west;
+        case ^loc_south : $dir = ^exact_north;
+    }
+}
+if (coord ! $start) {
+    p_teleport($start);
+    p_delay(1);
+}
+facesquare($end);
+p_delay(0);
+~agility_exactmove(human_walk_style, 0, 2, $start, $end, 0, 76, $dir, true);
+p_teleport($end);
+",
+    );
+    // (2541,3331): m39_52 local (45,3), angle 0.
+    fx.write(
+        "maps/m39_52.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 45 3: 2068 0 0\n",
+    );
+    let defs = loc_defs(&[(2068, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::from([2068]));
+    let graph = derive_transports(fx.path(), &defs, &wc);
     assert_eq!(
-        dirs,
+        door_crossings(&graph, 2068),
         vec![
-            (Some(DoorDir::W), 2540, 3331),
-            (Some(DoorDir::E), 2542, 3331)
+            ((2541, 3331), 'E', (2542, 3331)),
+            ((2541, 3331), 'W', (2540, 3331)),
         ]
     );
-    assert!(fence
+    assert!(graph
+        .edges
         .iter()
+        .filter(|e| e.loc_id == 2068)
         .all(|e| e.skill_req.is_empty() && e.worn_req.is_empty() && e.open_loc_id.is_none()));
 }
 

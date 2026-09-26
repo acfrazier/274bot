@@ -1,8 +1,7 @@
 use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
-use client::config::{Cache, LocType};
+use client::config::LocType;
 use client::dash3d::CollisionFlag;
-use client::io::JagFile;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
@@ -23,8 +22,7 @@ use crate::router::{
 };
 use crate::tile::Tile;
 use crate::transport::{
-    derive_transports, TransportEdge, TransportGraph, TransportKind, WildernessRules,
-    WildernessZone,
+    TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
 };
 use crate::world_state::WorldState;
 
@@ -3204,60 +3202,6 @@ fn packed_edgeville_bank_return_to_eggs_uses_the_surface_trapdoor() {
             })
             .collect::<Vec<_>>()
     );
-}
-
-#[test]
-fn packed_wildy_wolf_pit_reaches_ridge_approach() {
-    let content = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
-    let jag = PathBuf::from("/Users/acfrazier/.274bot/unpack-289/config");
-    if !content.join("maps/m46_61.jm2").is_file() {
-        eprintln!("SKIP: no 289 wilderness mapsquare at {}", content.display());
-        return;
-    }
-    let Ok(bytes) = fs::read(&jag) else {
-        eprintln!("SKIP: no 289 config jag at {}", jag.display());
-        return;
-    };
-    let defs = LocDefs::from_locs(&Cache::unpack(&JagFile::new(bytes)).locs);
-    let tmp = std::env::temp_dir().join(format!("wildy-pit-maps-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&tmp);
-    fs::create_dir_all(&tmp).unwrap();
-    fs::copy(content.join("maps/m46_61.jm2"), tmp.join("m46_61.jm2")).unwrap();
-    let collision = bake_from_maps(&tmp, &defs, &HashSet::new()).expect("bake m46_61");
-    let _ = fs::remove_dir_all(&tmp);
-    let graph = derive_transports(&content, &defs, &collision);
-    let pit = WorldTile {
-        x: 3001,
-        z: 3923,
-        level: 0,
-    };
-    let ridge = WorldTile {
-        x: 2998,
-        z: 3924,
-        level: 0,
-    };
-    let approach = WorldTile {
-        x: 2998,
-        z: 3916,
-        level: 0,
-    };
-    let opts = FindOptions {
-        allow_teleports: false,
-        allow_wilderness: true,
-        allow_bank_fetch: true,
-        ..FindOptions::default()
-    };
-    let state = WorldState::empty().with_map_members(true);
-    find_with(&collision, &graph, pit, approach, opts, &state).unwrap_or_else(|e| {
-            panic!("wolf pit (3001,3923) -> ridge approach (2998,3916) must walk around the east railings: {e:?}")
-        });
-    assert!(
-            matches!(
-                find_with(&collision, &graph, ridge, approach, opts, &state),
-                Err(RouteError::NoPath)
-            ),
-            "the ridge corridor cannot walk south through loc_2309; recovery is from the pit after the fall"
-        );
 }
 
 fn surface_wildy_rules() -> WildernessRules {
