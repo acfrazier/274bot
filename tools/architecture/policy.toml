@@ -10,6 +10,7 @@
 members = [
     "api",
     "e2e",
+    "frontend-core",
     "host",
     "host-play",
     "nav",
@@ -148,6 +149,44 @@ from = "scenario"
 to = "nav"
 kinds = ["normal"]
 reason = "nav-family scenarios share the packed world/router, not script isolate internals."
+
+# --- shared operator lifecycle ---
+
+[[allow]]
+from = "frontend-core"
+to = "host-play"
+kinds = ["normal", "dev"]
+reason = "frontend-core owns the operator lifecycle above Play (vault, fleet, selection, removals, operation results); host-play stays authoritative for workers, login queue and script execution. dev: test-support Play fixtures."
+
+[[allow]]
+from = "frontend-core"
+to = "host"
+kinds = ["normal"]
+reason = "the slot surface hands host SlotInput/FrameBuf handles to Play::try_spawn_slot; no host API is called directly."
+
+[[allow]]
+from = "frontend-core"
+to = "script"
+kinds = ["normal"]
+reason = "script Start/Pause/Stop settlement uses the kernel's run-state and start-outcome types."
+
+[[allow]]
+from = "frontend-core"
+to = "vault"
+kinds = ["normal"]
+reason = "the core owns the unlocked vault and profile setting writes for both front ends."
+
+[[allow]]
+from = "panel"
+to = "frontend-core"
+kinds = ["normal", "dev"]
+reason = "panel is the native adapter over the shared operator session. dev: arm-only spawn fixtures."
+
+[[allow]]
+from = "tui"
+to = "frontend-core"
+kinds = ["normal", "dev"]
+reason = "tui is the headless adapter over the shared operator session. dev: arm-only spawn fixtures."
 
 [[allow]]
 from = "panel"

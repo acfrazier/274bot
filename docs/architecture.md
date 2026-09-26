@@ -63,9 +63,10 @@ punishment.
 | `nav` | Packed world, router, Traveller | Script isolate or operator UI |
 | `script` | Compiled cards, Load isolate, thin JS shim | A production dependant of `client` or `nav` |
 | `host-play` | Shared `Play` lifecycle over host/script/nav/vault | A second panel or client renderer |
+| `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries |
 | `scenario` | Shared headed/headless live scenario runner | Panel/TUI chrome |
 | `panel` | Native ImGui UI, winit/wgpu window, game blit | The client 3D renderer or isolate runtime |
-| `tui` | Headless operator view of the same `Play` | A second kernel or GPU loop |
+| `tui` | Headless operator view over the same `frontend-core` session | A second kernel or GPU loop |
 | `e2e` | Wide **test orchestration** (library + suite binaries) | Production UI or script-kernel ownership |
 | `client` (external) | 274/289 client lib, GPU/CPU raster, last-FBO | Bot action API or 274bot crates in its repo |
 
@@ -78,8 +79,9 @@ intentional graph, derived from the manifests:
 - `script` → `api`, `vault` (runtime); `client`, `nav` **dev-only**
 - `host-play` → `api`, `client`, `host`, `nav`, `script`, `vault`; `scenario` **optional**; `nav` also **build**
 - `scenario` → `api`, `client`, `nav`
-- `panel` → `api`, `client`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`
-- `tui` → `api`, `client`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host` **dev-only**
+- `frontend-core` → `host`, `host-play`, `script`, `vault`
+- `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`
+- `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host` **dev-only**
 - `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `scenario`, `vault`
 
 `e2e` does **not** Cargo-depend on `script`, `panel`, or `tui`. The suite
@@ -93,7 +95,9 @@ claim that `e2e` owns those crates' production behavior.
 - **`script` → `client` / `nav`** are `[dev-dependencies]` only. Promoting
   either to a normal/optional/target dependency fails the checker.
 - **`tui` → `host`** is `[dev-dependencies]` only. Production TUI composes
-  through `host-play`.
+  through `frontend-core` and `host-play`.
+- **`frontend-core` → `host`** carries only the `SlotInput`/`FrameBuf`
+  handles a surface passes to `Play::try_spawn_slot`.
 - **`host-play` → `scenario`** is optional (feature-gated harness), not a
   default required edge. A required `[target.*.dependencies]` edge does
   **not** satisfy an optional-only allow. `optional = true` on a target
@@ -370,6 +374,17 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `scenarios/acquire_key.rs`, `scenarios/bank.rs`, `scenarios/cell.rs`, `scenarios/clue.rs`, `scenarios/enter_lair.rs`, `scenarios/fight_field.rs`, `scenarios/hold_spot.rs`, `scenarios/leave_lair.rs`, `scenarios/line_of_sight.rs`, `scenarios/prayer.rs`, `scenarios/ranging_guild.rs`, `scenarios/render.rs`, `scenarios/retreat_spot.rs`, `scenarios/route_inspect.rs`, `scenarios/script_basics.rs`, `scenarios/walk_spot.rs`, `scenarios/actor_observation.rs` | single-scenario probes | one probe each |
 | `runner_tests.rs`, `scenario_tests.rs` | test bodies | grouped, not owners |
 
+### frontend-core
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | crate facade | re-exports the session vocabulary |
+| `session.rs` | operator lifecycle over `Play` | vault, play, selection, slot IO, Load/Log in/Log out/Remove, poll, script Start/Stop settlement |
+| `fleet.rs` | fleet membership | ordered members, logout latch, focus neighbour |
+| `operations.rs` | operation results | ids, per-member outcomes, bounded book |
+| `surface.rs` | front-end slot adapter | `SlotSurface`, `HeadlessSurface` |
+| `session_tests.rs` | test bodies | real `Play` seam, no server |
+
 ### panel
 
 | module | owns (one reason to change) | notes |
@@ -377,7 +392,7 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `lib.rs` | crate facade and re-exports | declares every module below |
 | `main.rs` | `panel-play` entrypoint | flag parsing, window loop |
 | `app.rs` | panel shell and frame composition | docking shell on the owned window loop |
-| `session.rs` | session state and Play orchestration | vault, slots, focus, channels |
+| `session.rs` | native adapter over `frontend_core::OperatorSession` | `PanelSurface` (slot IO, draw/audio policy), render `Focus` mirror, nav paint, harness state |
 | `session/chooser.rs` | chooser credential scratch | edit buffers and vault helpers |
 | `session_catalog.rs` | catalog discovery and warmup | loading and transpile warmup |
 | `profile_script.rs` | per-profile script controls | assignment, start, reload, refresh |
@@ -404,7 +419,7 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `ui_state.rs` | persisted UI prefs | focused profile and collapsed maps |
 | `theme.rs` | theme tokens | colors and metrics |
 | `resource.rs` | resource formatters and sampler | pure formatters plus sampler |
-| `wall.rs` | wall membership model | chooser, logout latch, bulk login state |
+| `wall.rs` | wall UI state | chooser, grid, render-all warning (membership is `frontend_core::Fleet`) |
 | `srgb_present.rs` | present-path test helper | test-only |
 | `app_tests.rs`, `session_tests.rs`, `input_capture_tests.rs`, `picker_tests.rs`, `walk_map_tests.rs` | test bodies | grouped, logical `<owner>::tests` |
 
@@ -414,7 +429,7 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | --- | --- | --- |
 | `lib.rs` | crate facade and re-exports | second view of `Play`, no GPU |
 | `main.rs` | `tui-play` entrypoint | flags and run modes |
-| `bin.rs` | headless session and dispatch lifecycle | owns the `Play` session |
+| `bin.rs` | headless session and dispatch | `OperatorSession<()>` + headless surface; key actions onto the core |
 | `app.rs` | view model and render root | polls statuses, routes keys and clicks |
 | `map.rs` | WalkTo map widget | dots, route polyline, selection |
 | `chat.rs` | chat and dialogue pane | chat ring, modal continue and answer |
@@ -451,7 +466,8 @@ These are product boundaries. The crate checker does not prove them.
 | --- | --- | --- |
 | Operator window, ImGui chrome, MultiBox, game blit, input into slots | `panel` | client applet UI, script isolate |
 | Headless operator view (raster Off) | `tui` | GPU renderer, a second `Play` |
-| Session lifecycle: unlock vault, spawn/park slots, login FIFO, tick pump, script start/pause/stop/load as one transaction | `host-play` (`Play`) | panel/tui chrome, `e2e` |
+| Operator lifecycle: vault, fleet membership and latch, selected bot, Load/Log in/Log out/Remove intent, removal settlement, operation results | `frontend-core` | panel/tui chrome, a second login queue or script runtime |
+| Slot workers: spawn/stop/reap, connection and readiness, login FIFO, tick pump, script start/pause/stop/load execution | `host-play` (`Play`) | panel/tui chrome, `frontend-core`, `e2e` |
 | Native per-slot host APIs, snapshot/think, random-event guardian | `host` | nav internals, JS |
 | Script kernel, isolate thread, shim coerce/marshal only | `script` | JS policy/routers, a foreign runtime |
 | GPU 3D / CpuPix3D (`BOT_CPU=1`), packet/doAction Java shape | `client` | host bot-action API, 274bot crates in the client repo |

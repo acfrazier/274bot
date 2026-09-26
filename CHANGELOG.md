@@ -219,6 +219,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   saved on the profile. Before, Start failed with `unavailable: <name>` until
   Browse or Load had filled the catalog, although the script section already
   showed the saved name.
+- The panel and the TUI now share one operator session (`frontend-core`):
+  vault, fleet membership and the logout latch, the selected bot, Load, Log
+  in / Log out (single and all), removal, script Start/Pause/Stop and Start
+  settlement run through the same code in both front ends. In the TUI, `m`
+  loads every profile and logs every member in (a loaded, logged-out member
+  is logged back in and a crashed worker recreated), and new keys act on the
+  focused bot: `i` Log in, `u` Log out, `U` Log out all, `x` Remove (clean
+  logout, then the worker stops; the neighbour becomes focused).
+- The TUI options popup now saves only the random-event and lamp fields it
+  edits, and updates a running bot only after the vault write succeeded.
+  Before, it replaced the whole profile settings from its draft, which could
+  reset the profile's world pin or auto-login.
 
 ### Slot lifecycle
 
