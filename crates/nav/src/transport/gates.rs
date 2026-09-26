@@ -23,6 +23,45 @@ pub(super) const GATE_OUTER_HANDLER: &str = "~open_outer_gate;";
 pub(super) const GATE_MAIN_PROC: &str = "open_gate";
 pub(super) const GATE_OUTER_PROC: &str = "open_outer_gate";
 
+/// The members check a members fence gate's own `[oploc1,<name>]` block
+/// runs before the generic open call (Paterdomus `memberfencegate_l/_r`,
+/// whitespace removed): on a free world it refuses, on a members world the
+/// body is exactly the category handler.
+pub(super) const GATE_MEMBERS_CHECK: &str =
+    "if(map_members=^false){mes(^mes_members_gate);return;}";
+
+/// Loc names whose every `[oploc1,<name>]` block is exactly
+/// [`GATE_MEMBERS_CHECK`] followed by one generic gate call, `name → outer`
+/// (the flavor the call opens). Such an override is the generic handler
+/// behind `MAP_MEMBERS`, so its gate inherits with `members_req`; any other
+/// override body is not this shape.
+pub(super) fn members_gate_handlers(content_root: &Path) -> HashMap<String, bool> {
+    let mut bodies: HashMap<String, Vec<Option<bool>>> = HashMap::new();
+    visit_rs2(&content_root.join("scripts"), &mut |text| {
+        for (op, name, body) in script_blocks(text) {
+            if op != "oploc1" {
+                continue;
+            }
+            let flat = normalized_body(&body);
+            let outer = flat
+                .strip_prefix(GATE_MEMBERS_CHECK)
+                .and_then(|call| match call {
+                    GATE_MAIN_HANDLER => Some(false),
+                    GATE_OUTER_HANDLER => Some(true),
+                    _ => None,
+                });
+            bodies.entry(name).or_default().push(outer);
+        }
+    });
+    bodies
+        .into_iter()
+        .filter_map(|(name, outers)| match outers.as_slice() {
+            [Some(outer)] => Some((name, *outer)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// A closed-gate `category=` value → the flavor (`false` main, `true`
 /// outer). Every other category is `None`: an unknown category has no
 /// verified handler and is never inherited.
@@ -45,43 +84,13 @@ pub(super) fn open_gate_category(outer: bool) -> &'static str {
 }
 
 /// The `[oploc1,_gate_main_closed]` / `[oploc1,_gate_outer_closed]`
-/// category handlers in a script text → `(outer, body)`. `gates.rs2`
-/// writes them as one line (`[oploc1,_gate_main_closed] ~open_gate;`), a
-/// shape [`script_blocks`] cannot see (its header must be alone on the
-/// line), so both the inline and the next-line body forms are read here.
-/// Any other header closes the previous body.
+/// category handlers in a script text → `(outer, body)`, read by
+/// [`oploc1_category_bodies`] (inline and next-line bodies alike).
 pub(super) fn gate_category_handlers(text: &str) -> Vec<(bool, String)> {
-    let mut out = Vec::new();
-    let mut cur: Option<(bool, String)> = None;
-    for raw in text.lines() {
-        let line = match raw.find("//") {
-            Some(i) => &raw[..i],
-            None => raw,
-        };
-        let line = line.trim();
-        if let Some((header, body)) = line.strip_prefix('[').and_then(|l| l.split_once(']')) {
-            if let Some(done) = cur.take() {
-                out.push(done);
-            }
-            let (op, name) = match header.split_once(',') {
-                Some(parts) => parts,
-                None => continue,
-            };
-            let outer = match name.trim() {
-                "_gate_main_closed" if op.trim() == "oploc1" => false,
-                "_gate_outer_closed" if op.trim() == "oploc1" => true,
-                _ => continue,
-            };
-            cur = Some((outer, body.to_string()));
-        } else if let Some((_, body)) = cur.as_mut() {
-            body.push('\n');
-            body.push_str(line);
-        }
-    }
-    if let Some(done) = cur {
-        out.push(done);
-    }
-    out
+    oploc1_category_bodies(text)
+        .into_iter()
+        .filter_map(|(category, body)| Some((closed_gate_category(&category)?, body)))
+        .collect()
 }
 
 /// Loc names targeted by `[oploc1,<name>]` in a script text, including
@@ -271,7 +280,9 @@ pub(super) fn gate_pair_tile(at: WorldTile, angle_dir: DoorDir, outer: bool) -> 
 ///   `gate_*_open` category;
 /// - no loc-specific `[oploc1,<name>]` block exists anywhere under
 ///   `scripts` (the resolver's first priority — a named override, gated or
-///   denied, is never promoted);
+///   denied, is never promoted), unless every override is the canonical
+///   members check in front of this flavor's generic call (`members`,
+///   [`members_gate_handlers`]): that member crosses with `members_req`;
 /// - every level-0 placement resolves its paired counterpart
 ///   ([`gate_pair_tile`]) to a placement of the complementary closed
 ///   category, so the pair the generic handler walks is really there;
@@ -284,6 +295,7 @@ pub(super) fn inherited_closed_gates(
     ids: &HashMap<String, i32>,
     positions: &HashMap<i32, Vec<Placement>>,
     supported: &HashSet<bool>,
+    members: &HashMap<String, bool>,
     skipped: &mut HashMap<&'static str, usize>,
 ) -> HashMap<i32, i32> {
     let mut defs: HashMap<i32, InheritedGate> = HashMap::new();
@@ -397,10 +409,10 @@ pub(super) fn inherited_closed_gates(
             bump(skipped, SKIP_GATE_MEMBER_HANDLER, 1);
             continue;
         }
-        if names
-            .get(&id)
-            .is_some_and(|ns| ns.iter().any(|n| overridden.contains(n)))
-        {
+        if names.get(&id).is_some_and(|ns| {
+            ns.iter()
+                .any(|n| overridden.contains(n) && members.get(n) != Some(&outer))
+        }) {
             bump(skipped, SKIP_GATE_MEMBER_OVERRIDE, 1);
             continue;
         }

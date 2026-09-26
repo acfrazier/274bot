@@ -33,11 +33,13 @@ use std::path::Path;
 
 use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
+use client::dash3d::{CollisionFlag, LocShape};
 
 use crate::collision::WorldCollision;
 use crate::pack::{parse_door_config, parse_door_config_ids, parse_door_open_ids};
 mod brass_key;
 mod condparse;
+mod door_members;
 mod doors;
 mod gates;
 mod gliders;
@@ -50,6 +52,7 @@ mod observable;
 mod quest_doors;
 mod ranging_guild;
 mod script_text;
+mod scripted_doors;
 mod shortcuts;
 mod spirit_trees;
 mod static_routes;
@@ -66,6 +69,7 @@ use condparse::{
     proc_bitfield_varp, proc_bodies, script_blocks, script_header, script_varp_gate,
     top_level_statements,
 };
+use door_members::*;
 use doors::*;
 use gates::*;
 use gliders::*;
@@ -80,6 +84,7 @@ use observable::{JournalLinks, ObservableGates};
 use quest_doors::*;
 use ranging_guild::*;
 use script_text::*;
+use scripted_doors::*;
 use shortcuts::*;
 use spirit_trees::*;
 use static_routes::*;
@@ -253,6 +258,8 @@ fn derive_transports_with_audit(
     door_edges(
         content_root,
         &ids,
+        &positions,
+        loc_defs,
         &mut graph,
         &mut skipped,
         collision,
@@ -277,6 +284,14 @@ fn derive_transports_with_audit(
         &mut skipped,
     );
     rangingguild_door_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
+    scripted_door_edges(
+        content_root,
+        &ids,
+        &positions,
+        &mut graph,
+        collision,
+        &mut skipped,
+    );
     ladder_stair_edges(
         content_root,
         &ids,
@@ -403,6 +418,17 @@ const SKIP_GATE_MEMBER_OVERRIDE: &str =
     "closed gate member has a loc-specific open script (named override wins)";
 const SKIP_GATE_MEMBER_HANDLER: &str = "closed gate category has no verified generic open handler";
 const SKIP_GATE_MEMBER_SHAPE: &str = "closed gate member declares no Open op (unsupported shape)";
+const SKIP_DOOR_SHAPE: &str =
+    "door placement shape has no ~door_open crossing (wall corner/L, or a non-generic diagonal)";
+const SKIP_DOOR_MEMBER_CONFLICT: &str = "closed door member is defined twice with different data";
+const SKIP_DOOR_MEMBER_SHAPE: &str = "closed door member declares no Open op";
+const SKIP_DOOR_MEMBER_HANDLER: &str = "closed door category has no verified generic open handler";
+const SKIP_DOOR_MEMBER_OVERRIDE: &str =
+    "closed door member has a loc-specific open script (named override wins)";
+const SKIP_DOOR_MEMBER_STAGE: &str = "closed door member's next_loc_stage open leaf is unresolved";
+const SKIP_SWAP_DOOR_BLOCKS: &str = "in-place swap door's open loc still blocks walk";
+const SKIP_SCRIPTED_DOOR_SOURCE: &str =
+    "scripted wall crossing opener is not the canonical form or its worn obj is unresolved";
 const SKIP_GATE_MEMBER_STAGE: &str =
     "closed gate member's next_loc_stage open leaf is unresolved or mismatched";
 const SKIP_BRASS_KEY_SOURCE: &str =
@@ -464,6 +490,10 @@ pub(crate) const CELLAR_SHIFT: i32 = 6400;
 const SKILL_AGILITY: i32 = 16;
 /// Standard RS2 skill id for Magic (Server `PlayerStat`).
 const SKILL_MAGIC: i32 = 6;
+/// Standard RS2 skill ids for the guild doors (Server `PlayerStat`).
+const SKILL_COOKING: i32 = 7;
+const SKILL_FISHING: i32 = 10;
+const SKILL_CRAFTING: i32 = 12;
 /// Standard RS2 skill id for Ranged (Server `PlayerStat`).
 const SKILL_RANGED: i32 = 4;
 /// Teleport edges have no origin tile (cast/rubbed from anywhere); `at` is
@@ -550,6 +580,9 @@ const EXTRA_TICKS: &[(&str, i32)] = &[
     ("spiralstairsmiddle", 0),
     ("spiralstairstop", 0),
     ("spiralstairs_wooden", 0),
+    // Miscellania castle: the same `p_arrivedelay; p_telejump(movecoord(
+    // coord, 0, ±1, 0))` Climb-up/-down bodies as `spiralstairsmiddle`.
+    ("spiralstairsmiddle_wooden", 0),
     ("spiralstairstop_wooden", 0),
     ("balance40up", 0),
     ("woodenstairs", 0),
@@ -683,14 +716,19 @@ fn opposite(dir: DoorDir) -> DoorDir {
     }
 }
 
-/// A wall door can expose the adjacent tile, not erase intervening scenery.
-fn door_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Option<WorldTile> {
-    let (dx, dz) = match dir {
+/// The `(dx, dz)` tile step of a crossing direction.
+fn dir_delta(dir: DoorDir) -> (i32, i32) {
+    match dir {
         DoorDir::N => (0, 1),
         DoorDir::S => (0, -1),
         DoorDir::E => (1, 0),
         DoorDir::W => (-1, 0),
-    };
+    }
+}
+
+/// A wall door can expose the adjacent tile, not erase intervening scenery.
+fn door_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Option<WorldTile> {
+    let (dx, dz) = dir_delta(dir);
     let to = WorldTile {
         x: at.x + dx,
         z: at.z + dz,

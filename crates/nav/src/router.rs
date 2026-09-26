@@ -1934,12 +1934,11 @@ pub(crate) fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32))
         return false;
     }
     let f = |x: i32, z: i32| collision.walkable_word(x, z, nb.level);
-    match (d.0, d.1) {
+    if let Some(mask) = cardinal_entry_mask(d) {
         // Cardinal: the destination's face toward `cur`.
-        (0, 1) => f(nb.x, nb.z) & MASK_S == 0,
-        (0, -1) => f(nb.x, nb.z) & MASK_N == 0,
-        (1, 0) => f(nb.x, nb.z) & MASK_W == 0,
-        (-1, 0) => f(nb.x, nb.z) & MASK_E == 0,
+        return f(nb.x, nb.z) & mask == 0;
+    }
+    match (d.0, d.1) {
         // Diagonal: the destination's corner mask plus both orthogonals.
         (-1, -1) => {
             f(nb.x, nb.z) & MASK_NE == 0
@@ -1962,6 +1961,18 @@ pub(crate) fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32))
                 && f(cur.x, cur.z + 1) & MASK_S == 0
         }
         _ => false,
+    }
+}
+
+/// The `PL_WALK_*` mask a cardinal step by `d` tests on the tile it enters
+/// (the face toward the tile it leaves); `None` for any other delta.
+pub(crate) fn cardinal_entry_mask(d: (i32, i32)) -> Option<u32> {
+    match d {
+        (0, 1) => Some(MASK_S),
+        (0, -1) => Some(MASK_N),
+        (1, 0) => Some(MASK_W),
+        (-1, 0) => Some(MASK_E),
+        _ => None,
     }
 }
 

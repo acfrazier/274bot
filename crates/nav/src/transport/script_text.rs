@@ -16,6 +16,45 @@ pub(super) fn normalized_body(body: &str) -> String {
     out
 }
 
+/// Every `[oploc1,_<category>]` category handler in a script text →
+/// `(category, body)` (the category without its `_`). `gates.rs2` and
+/// `doors.rs2` write some as one line (`[oploc1,_gate_main_closed]
+/// ~open_gate;`), a shape [`script_blocks`] cannot see (its header must be
+/// alone on the line), so both the inline and the next-line body forms are
+/// read here. Any other header closes the previous body.
+pub(super) fn oploc1_category_bodies(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut cur: Option<(String, String)> = None;
+    for raw in text.lines() {
+        let line = match raw.find("//") {
+            Some(i) => &raw[..i],
+            None => raw,
+        };
+        let line = line.trim();
+        if let Some((header, body)) = line.strip_prefix('[').and_then(|l| l.split_once(']')) {
+            if let Some(done) = cur.take() {
+                out.push(done);
+            }
+            let Some((op, name)) = header.split_once(',') else {
+                continue;
+            };
+            let Some(category) = name.trim().strip_prefix('_') else {
+                continue;
+            };
+            if op.trim() == "oploc1" && !category.is_empty() {
+                cur = Some((category.to_string(), body.to_string()));
+            }
+        } else if let Some((_, body)) = cur.as_mut() {
+            body.push('\n');
+            body.push_str(line);
+        }
+    }
+    if let Some(done) = cur {
+        out.push(done);
+    }
+    out
+}
+
 /// `[<name>]` config block header → the name.
 pub(super) fn config_header(line: &str) -> Option<&str> {
     let name = line.strip_prefix('[')?.strip_suffix(']')?;

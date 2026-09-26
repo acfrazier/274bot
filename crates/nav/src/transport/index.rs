@@ -4,7 +4,8 @@ use super::*;
 // Content reads.
 // ---------------------------------------------------------------------------
 
-/// One loc placement read from a jm2 file (all levels).
+/// One loc placement read from a jm2 file (all levels). `level` is the
+/// engine's game plane, not the raw LOC plane (see [`parse_jm2_locs`]).
 pub(crate) struct Placement {
     pub(crate) id: i32,
     pub(crate) shape: i32,
@@ -77,20 +78,35 @@ pub(super) fn mapsquare_coords(name: &str) -> Option<(i32, i32)> {
     Some((x.parse().ok()?, z.parse().ok()?))
 }
 
-/// Every `LOC` placement in a jm2 text (all levels), in absolute coords.
+/// Every `LOC` placement in a jm2 text (all levels), in absolute coords, on
+/// the engine's game plane: like the server's `GameMap.loadLocations`, a
+/// loc whose tile carries LINK_BELOW on the level-1 MAP flags sits one
+/// plane down, and one that would land below plane 0 is not loaded at all
+/// ([`crate::collision::game_plane`], the rule the collision bake stamps
+/// by). `loc_coord` in the loc's scripts and the collision plane its
+/// footprint blocks are both that game plane.
 pub(super) fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
     let mut out = Vec::new();
-    let mut in_loc = false;
+    let mut link_below: HashSet<(usize, usize)> = HashSet::new();
+    let mut section: Option<&str> = None;
     for raw in text.lines() {
         let line = raw.trim();
         if line.is_empty() {
             continue;
         }
         if let Some(name) = crate::pack::section(line) {
-            in_loc = name == "LOC";
+            section = Some(name);
             continue;
         }
-        if !in_loc {
+        if section == Some("MAP") {
+            if let Some((1, x, z, flags)) = crate::pack::parse_map_line(line) {
+                if flags & 2 != 0 {
+                    link_below.insert((x, z));
+                }
+            }
+            continue;
+        }
+        if section != Some("LOC") {
             continue;
         }
         let Some((coords, data)) = line.split_once(':') else {
@@ -115,6 +131,7 @@ pub(super) fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
         // token is the shape, the third the angle.
         let shape: i32 = d.next().and_then(|t| t.parse().ok()).unwrap_or(0);
         let angle: i32 = d.next().and_then(|t| t.parse().ok()).unwrap_or(0);
+        // `level` stays the raw plane until every MAP row is known.
         out.push(Placement {
             id,
             shape,
@@ -124,6 +141,23 @@ pub(super) fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
             z: mz * 64 + z,
         });
     }
+    out.retain_mut(|p| {
+        let local = (
+            usize::try_from(p.x - mx * 64).ok(),
+            usize::try_from(p.z - mz * 64).ok(),
+        );
+        let bridged = match local {
+            (Some(x), Some(z)) => link_below.contains(&(x, z)),
+            _ => false,
+        };
+        match crate::collision::game_plane(p.level, bridged) {
+            Some(plane) => {
+                p.level = plane;
+                true
+            }
+            None => false,
+        }
+    });
     out
 }
 

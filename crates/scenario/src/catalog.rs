@@ -58,6 +58,7 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("nav_full", scenarios::nav_full_scenario),
     Entry::new("nav_door", scenarios::nav_door_scenario),
+    Entry::new("nav_diagonal_door", scenarios::nav_diagonal_door_scenario),
     Entry::new("nav_cart", scenarios::nav_cart_scenario),
     Entry::new("nav_essence", scenarios::nav_essence_scenario),
     Entry::new("nav_elkoy", scenarios::nav_elkoy_scenario),

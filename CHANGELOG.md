@@ -56,6 +56,24 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   path-scoped hints apply only when a published route exists. The native wait
   intentionally does not dismiss the
   frozen quest-lock mesbox, so a locked door costs the full five-second bound.
+- The 289 nav bake now has an edge for every engine-openable generic door,
+  not only straight level-0 ones (274V10 unchanged). A closed diagonal
+  (shape-9) `door_closed` door crosses its own tile to the free cardinal on
+  each side, never onto the tile its opened leaf swings to; this is the
+  East Ardougne house door (2669,3316) that sealed the 0.1.8.1 Thiever in
+  (`NoPath` to the south bank before, a door crossing now). Doors on upper
+  floors cross on their plane, and every loc placement (ladders included)
+  now sits on the engine's bridge-corrected game plane. Closed doors of a
+  generic door category declared outside the door configs (West Ardougne
+  `loc_2997`, Rellekka, Troll Stronghold, games room), the Al Kharid
+  curtains and Rellekka fur doors (in-place `loc_change` to a non-blocking
+  loc), the Paterdomus members fence gate (`members_req`), the Cooking,
+  Crafting and Fishing guild doors (their own skill-level and worn
+  hat/apron checks on the way in, free on the way out), the West Ardougne
+  fence climb and the Miscellania castle stairs are now edges. 2,240 →
+  2,758 edges (+510 door, +8 stairs), pack +34,776 bytes; bakes stay
+  byte-identical. Quest-stage named doors, bespoke quest/area handlers and
+  player-relative or randomised landings are not edges yet.
 - Added shared native-map data contracts: independently keyed image/POI caches,
   checked manifests and data-only service records, resumable partial-entry
   validation, bounded map-record reads and 24-texture LOD selection. Raw visual

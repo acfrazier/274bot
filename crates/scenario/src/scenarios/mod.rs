@@ -55,9 +55,9 @@ pub(crate) use hold_spot::hold_spot_v2_scenario;
 pub(crate) use leave_lair::leave_lair_v2_scenario;
 pub(crate) use line_of_sight::line_of_sight_v2_scenario;
 pub(crate) use navigation::{
-    nav_cart_scenario, nav_door_scenario, nav_elkoy_scenario, nav_essence_scenario,
-    nav_paint_path_scenario, nav_routes_scenario, nav_shantay_scenario, nav_tele_scenario,
-    walk_scenario,
+    nav_cart_scenario, nav_diagonal_door_scenario, nav_door_scenario, nav_elkoy_scenario,
+    nav_essence_scenario, nav_paint_path_scenario, nav_routes_scenario, nav_shantay_scenario,
+    nav_tele_scenario, walk_scenario,
 };
 pub(crate) use pair::{
     duel_arena_scenario, flax_runner_scenario, mule_crafter_air_scenario,

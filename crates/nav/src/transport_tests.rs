@@ -5813,8 +5813,14 @@ category=gate_main_open
 
     let supported = generic_gate_handlers(fx.path());
     let mut skipped = HashMap::new();
-    let inherited =
-        inherited_closed_gates(fx.path(), &ids, &HashMap::new(), &supported, &mut skipped);
+    let inherited = inherited_closed_gates(
+        fx.path(),
+        &ids,
+        &HashMap::new(),
+        &supported,
+        &HashMap::new(),
+        &mut skipped,
+    );
 
     assert_eq!(inherited.get(&6001), Some(&6002), "valid control");
     assert_eq!(
@@ -7637,4 +7643,439 @@ fn assert_legal_teleports(graph: &TransportGraph, start: WorldTile, route: &crat
             "teleport from {from:?} wilderness level {level} > cap {cap}"
         );
     }
+}
+
+/// The generic `[oploc1,_door_closed]` handler and the proc it forwards to,
+/// as `scripts/doors/scripts/doors.rs2` writes them (same-line body).
+const GENERIC_DOOR_RS2: &str = "\
+[oploc1,_door_closed] ~open_door(500);
+
+[proc,open_door](int $duration)
+loc_del($duration);
+";
+
+/// A `loc_1530`/`loc_1531` generic door fixture: the door config, the
+/// category handler, and a mapsquare (m44_53, origin (2816,3392)) whose
+/// MAP rows block every listed local tile with `f1` ground.
+fn write_generic_door_fixture(fx: &Fixture, blocked: &[(i32, i32)], locs: &str) {
+    fx.write("pack/loc.pack", "1530=loc_1530\n1531=loc_1531\n");
+    fx.write(
+        "scripts/doors/configs/doors.loc",
+        "[loc_1530]\nname=Door\nop1=Open\ncategory=door_closed\nparam=next_loc_stage,loc_1531\n",
+    );
+    fx.write("scripts/doors/scripts/doors.rs2", GENERIC_DOOR_RS2);
+    let mut map = String::from("==== MAP ====\n0 0 0: h1\n");
+    for (x, z) in blocked {
+        map.push_str(&format!("0 {x} {z}: f1\n"));
+    }
+    fx.write("maps/m44_53.jm2", &(map + "==== LOC ====\n" + locs));
+}
+
+fn derive_generic_door_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
+    let defs = loc_defs(&[(1530, 1, 1), (1531, 1, 1)]);
+    let wc = bake_collision(fx, &defs, &HashSet::from([1530]));
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    (graph, wc)
+}
+
+/// A closed diagonal (`wall_diagonal`, shape 9) generic door blocks its own
+/// tile, and `~open_door` frees it while swinging the leaf onto
+/// `door_dir(angle + 1)`. In the open, each angle crosses to
+/// `door_dir(angle)` on its own side and to the opposite cardinal on the
+/// other — the old extractor skipped every non-straight door.
+#[test]
+fn diagonal_door_crosses_its_tile_for_every_angle() {
+    let door = (2821, 3438);
+    for (angle, a, b) in [
+        (0, ('W', (2820, 3438)), ('E', (2822, 3438))),
+        (1, ('N', (2821, 3439)), ('S', (2821, 3437))),
+        (2, ('E', (2822, 3438)), ('W', (2820, 3438))),
+        (3, ('S', (2821, 3437)), ('N', (2821, 3439))),
+    ] {
+        let fx = Fixture::new();
+        write_generic_door_fixture(&fx, &[], &format!("0 5 46: 1530 9 {angle}\n"));
+        let (graph, wc) = derive_generic_door_fixture(&fx);
+        assert!(
+            !wc.standable(WorldTile {
+                x: door.0,
+                z: door.1,
+                level: 0
+            }),
+            "the closed diagonal door blocks its own tile"
+        );
+        let mut expected = vec![(door, a.0, a.1), (door, b.0, b.1)];
+        expected.sort();
+        assert_eq!(door_crossings(&graph, 1530), expected, "angle {angle}");
+        assert!(graph
+            .edges
+            .iter()
+            .filter(|e| e.loc_id == 1530)
+            .all(|e| e.open_loc_id == Some(1531)));
+    }
+}
+
+/// The swung leaf's tile is never a landing: with an angle-1 door's north
+/// and south cardinals blocked, the only crossing into the north-east side
+/// would be the east tile the leaf now covers, so none is emitted; the
+/// south-west side still lands on its free west cardinal.
+#[test]
+fn diagonal_door_never_lands_on_its_swung_leaf() {
+    let fx = Fixture::new();
+    write_generic_door_fixture(&fx, &[(5, 47), (5, 45)], "0 5 46: 1530 9 1\n");
+    let (graph, _) = derive_generic_door_fixture(&fx);
+    assert_eq!(
+        door_crossings(&graph, 1530),
+        vec![((2821, 3438), 'W', (2820, 3438))]
+    );
+}
+
+/// A one-wide corridor sealed by a closed diagonal door routes through it
+/// (the East Ardougne house room shape); before the fix it was `NoPath`.
+#[test]
+fn diagonal_door_opens_a_sealed_corridor() {
+    use crate::router::{find, Leg};
+    let fx = Fixture::new();
+    let walls: Vec<(i32, i32)> = (0..12)
+        .flat_map(|x| (38..56).map(move |z| (x, z)))
+        .filter(|&(x, _)| x != 5)
+        .collect();
+    write_generic_door_fixture(&fx, &walls, "0 5 46: 1530 9 1\n");
+    let (graph, wc) = derive_generic_door_fixture(&fx);
+    let tile = |z| WorldTile {
+        x: 2821,
+        z,
+        level: 0,
+    };
+    for (from, to) in [(tile(3432), tile(3444)), (tile(3444), tile(3432))] {
+        let route = find(&wc, &graph, from, to)
+            .unwrap_or_else(|e| panic!("{from:?} -> {to:?} must cross the door: {e:?}"));
+        assert!(route.legs.iter().any(|l| matches!(
+            l,
+            Leg::Transport { edge } if edge.loc_id == 1530 && edge.at == tile(3438)
+        )));
+    }
+}
+
+/// Door placements sit on the engine's game plane on every level: a door
+/// on raw plane 2 crosses on level 2, and one on raw plane 1 over a
+/// LINK_BELOW tile (the server's `loadLocations` bridge rule) crosses on
+/// level 0. The old extractor kept only raw level 0.
+#[test]
+fn door_edges_sit_on_the_game_plane_of_upper_levels() {
+    let fx = Fixture::new();
+    write_generic_door_fixture(&fx, &[], "");
+    fx.write(
+        "maps/m44_53.jm2",
+        "\
+==== MAP ====
+0 0 0: h1
+1 9 46: f2
+==== LOC ====
+2 5 46: 1530 0 1
+1 9 46: 1530 0 0
+",
+    );
+    let (graph, _) = derive_generic_door_fixture(&fx);
+    let mut levels: Vec<(i32, i32, i32, i32)> = graph
+        .edges
+        .iter()
+        .filter(|e| e.loc_id == 1530)
+        .map(|e| (e.at.x, e.at.z, e.at.level, e.to.level))
+        .collect();
+    levels.sort();
+    assert_eq!(
+        levels,
+        vec![
+            (2821, 3438, 2, 2),
+            (2821, 3438, 2, 2),
+            (2825, 3438, 0, 0),
+            (2825, 3438, 0, 0),
+        ]
+    );
+}
+
+/// A closed door declared outside the door configs (West Ardougne's
+/// `loc_2997` lives in `areas/area_ardougne_west/configs/doors.loc`) runs
+/// the verified generic category handler and crosses like any door; a
+/// member with its own `[oploc1,<name>]` script does not inherit it.
+#[test]
+fn generic_door_members_outside_the_door_configs_cross() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "2997=loc_2997\n2998=loc_2998\n3000=locked_door\n3001=locked_door_open\n",
+    );
+    fx.write("scripts/doors/scripts/doors.rs2", GENERIC_DOOR_RS2);
+    fx.write(
+        "scripts/areas/area_ardougne_west/configs/doors.loc",
+        "\
+[loc_2997]
+op1=Open
+category=door_closed
+param=next_loc_stage,loc_2998
+
+[locked_door]
+op1=Open
+category=door_closed
+param=next_loc_stage,locked_door_open
+",
+    );
+    fx.write(
+        "scripts/areas/area_ardougne_west/scripts/locked.rs2",
+        "[oploc1,locked_door]\nmes(\"The door is locked.\");\n",
+    );
+    fx.write(
+        "maps/m44_53.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 5 46: 2997 0 1\n0 9 46: 3000 0 1\n",
+    );
+    let defs = loc_defs(&[(2997, 1, 1), (3000, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    assert_eq!(
+        door_crossings(&graph, 2997),
+        vec![
+            ((2821, 3438), 'N', (2821, 3439)),
+            ((2821, 3438), 'S', (2821, 3437)),
+        ]
+    );
+    assert!(door_crossings(&graph, 3000).is_empty());
+    assert!(graph
+        .edges
+        .iter()
+        .filter(|e| e.loc_id == 2997)
+        .all(|e| e.open_loc_id == Some(2998)));
+}
+
+/// A curtain whose own open script only `loc_change`s it into a loc that
+/// does not block walk (Al Kharid `loc_1528` → `loc_1529`) crosses like a
+/// straight door; the same script into a still-blocking loc does not.
+#[test]
+fn swap_door_crosses_only_when_the_open_loc_frees_the_wall() {
+    for (open_blocks, expected) in [(false, 2), (true, 0)] {
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "1528=loc_1528\n1529=loc_1529\n");
+        fx.write(
+            "scripts/areas/area_alkharid/configs/curtains.loc",
+            "[loc_1528]\nname=Curtain\nop1=Open\n\n[loc_1529]\nname=Curtain\nop1=Close\n",
+        );
+        fx.write(
+            "scripts/areas/area_alkharid/scripts/misc_locs.rs2",
+            "[oploc1,loc_1528]\n// Temp note\nloc_change(loc_1529, 200);\n",
+        );
+        fx.write(
+            "maps/m44_53.jm2",
+            "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 5 46: 1528 0 0\n",
+        );
+        let defs = LocDefs::from_locs(&[
+            LocType {
+                id: 1528,
+                width: 1,
+                length: 1,
+                ..Default::default()
+            },
+            LocType {
+                id: 1529,
+                width: 1,
+                length: 1,
+                blockwalk: open_blocks,
+                ..Default::default()
+            },
+        ]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        let curtains: Vec<_> = graph.edges.iter().filter(|e| e.loc_id == 1528).collect();
+        assert_eq!(curtains.len(), expected, "open loc blocks: {open_blocks}");
+        assert!(curtains.iter().all(|e| e.open_loc_id == Some(1529)));
+    }
+}
+
+/// The 0.1.8.1 Thiever trap: the East Ardougne house room (2668–2674,
+/// 3315–3319) is sealed by the closed diagonal door `loc_1530` at
+/// (2669,3316). The pack had no crossing, so the bank walk was `NoPath`
+/// both ways; the real 289 content now crosses it.
+#[test]
+fn ardougne_diagonal_door_room_routes_to_the_south_bank() {
+    use crate::router::{find, Leg};
+    let Some((graph, wc)) = derive_from_lostcity_content() else {
+        return;
+    };
+    let room = WorldTile {
+        x: 2671,
+        z: 3316,
+        level: 0,
+    };
+    let bank = WorldTile {
+        x: 2655,
+        z: 3286,
+        level: 0,
+    };
+    let door = WorldTile {
+        x: 2669,
+        z: 3316,
+        level: 0,
+    };
+    for (from, to) in [(room, bank), (bank, room)] {
+        let route = find(wc, graph, from, to)
+            .unwrap_or_else(|e| panic!("{from:?} -> {to:?} must route: {e:?}"));
+        assert!(
+            route.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge } if edge.loc_id == 1530 && edge.at == door
+            )),
+            "{from:?} -> {to:?} crosses the diagonal door: {route:?}"
+        );
+    }
+}
+
+/// The Brimhaven `laddertop` at (2784,3286) is placed on raw plane 2 over
+/// a LINK_BELOW tile, so the engine loads it on plane 1; its Climb-down
+/// must start there (it was packed on plane 2, unreachable).
+#[test]
+fn bridged_laddertop_sits_on_its_game_plane() {
+    let Some((graph, _)) = derive_from_lostcity_content() else {
+        return;
+    };
+    let edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|e| e.loc_id == 1746 && e.at.x == 2784 && e.at.z == 3286)
+        .map(|e| (e.at.level, e.to.level))
+        .collect();
+    assert_eq!(edges, vec![(1, 0)]);
+}
+
+/// Paterdomus' fence gate (`memberfencegate_l/_r`, (3320,3467–3468)) runs
+/// its own `[oploc1]` block: the `map_members` refusal, then the generic
+/// `~open_gate` / `~open_outer_gate`. It crosses on a members world and
+/// never on a free one; before, the named override hid it entirely.
+#[test]
+fn paterdomus_members_fence_gate_crosses_only_on_a_members_world() {
+    use crate::router::{find_with, FindOptions, Leg, RouteError};
+    use crate::world_state::WorldState;
+    let Some((graph, wc)) = derive_from_lostcity_content() else {
+        return;
+    };
+    let west = WorldTile {
+        x: 3318,
+        z: 3467,
+        level: 0,
+    };
+    let east = WorldTile {
+        x: 3322,
+        z: 3467,
+        level: 0,
+    };
+    let members = WorldState {
+        map_members: true,
+        ..WorldState::empty()
+    };
+    for (from, to) in [(west, east), (east, west)] {
+        let route = find_with(wc, graph, from, to, FindOptions::default(), &members)
+            .unwrap_or_else(|e| panic!("{from:?} -> {to:?} on a members world: {e:?}"));
+        assert!(route.legs.iter().any(|l| matches!(
+            l,
+            Leg::Transport { edge } if matches!(edge.loc_id, 1598 | 1599) && edge.members_req
+        )));
+        assert_eq!(
+            find_with(
+                wc,
+                graph,
+                from,
+                to,
+                FindOptions::default(),
+                &WorldState::empty()
+            )
+            .err(),
+            Some(RouteError::NoPath),
+            "{from:?} -> {to:?} on a free world"
+        );
+    }
+}
+
+/// The Cooking Guild door (`chefdoor`, (3143,3444)) runs its own
+/// `~check_axis` opener: from outside it refuses below cooking 32 or
+/// without a worn chef's hat, from inside it lets anyone out. The guild
+/// had no edge at all before (a named opener).
+#[test]
+fn cooking_guild_door_gates_entry_on_level_and_worn_hat() {
+    use crate::router::{find_with, FindOptions, Leg, RouteError};
+    use crate::world_state::WorldState;
+    let Some((graph, wc)) = derive_from_lostcity_content() else {
+        return;
+    };
+    let outside = WorldTile {
+        x: 3143,
+        z: 3440,
+        level: 0,
+    };
+    let inside = WorldTile {
+        x: 3143,
+        z: 3446,
+        level: 0,
+    };
+    let chef = WorldState {
+        stats: HashMap::from([(SKILL_COOKING, 32)]),
+        worn: HashSet::from([1949]),
+        ..WorldState::empty()
+    };
+    let enter = find_with(wc, graph, outside, inside, FindOptions::default(), &chef)
+        .unwrap_or_else(|e| panic!("a level-32 chef in a hat enters: {e:?}"));
+    assert!(enter.legs.iter().any(|l| matches!(
+        l,
+        Leg::Transport { edge }
+            if edge.loc_id == 2712
+                && edge.skill_req == vec![(SKILL_COOKING, 32)]
+                && edge.worn_req == vec![1949]
+    )));
+    for short in [
+        WorldState {
+            stats: HashMap::from([(SKILL_COOKING, 31)]),
+            ..chef.clone()
+        },
+        WorldState {
+            worn: HashSet::new(),
+            ..chef.clone()
+        },
+    ] {
+        assert_eq!(
+            find_with(wc, graph, outside, inside, FindOptions::default(), &short).err(),
+            Some(RouteError::NoPath)
+        );
+    }
+    find_with(
+        wc,
+        graph,
+        inside,
+        outside,
+        FindOptions::default(),
+        &WorldState::empty(),
+    )
+    .unwrap_or_else(|e| panic!("anyone leaves the guild: {e:?}"));
+}
+
+/// The West Ardougne fence (`mournerstewfence`, (2541,3331)) climbs over
+/// with `~agility_exactmove` either way and no check, so both crossings are
+/// ungated edges; it had none before (a named opener).
+#[test]
+fn west_ardougne_fence_climbs_both_ways() {
+    let Some((graph, _)) = derive_from_lostcity_content() else {
+        return;
+    };
+    let fence: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|e| e.loc_id == 2068 && e.at.x == 2541 && e.at.z == 3331 && e.at.level == 0)
+        .collect();
+    let mut dirs: Vec<_> = fence.iter().map(|e| (e.dir, e.to.x, e.to.z)).collect();
+    dirs.sort_by_key(|&(_, x, z)| (x, z));
+    assert_eq!(
+        dirs,
+        vec![
+            (Some(DoorDir::W), 2540, 3331),
+            (Some(DoorDir::E), 2542, 3331)
+        ]
+    );
+    assert!(fence
+        .iter()
+        .all(|e| e.skill_req.is_empty() && e.worn_req.is_empty() && e.open_loc_id.is_none()));
 }

@@ -45,7 +45,7 @@ pub use crate::map::services::{pois_generator_identity, POIS_GENERATOR_SOURCES};
 /// bytes. Pack/flags come from bake/collision/pack/transport; reach bits also
 /// depend on `paint.rs` (`bake_reach`) and `router.rs` (`step_ok`). Traveller
 /// and grid-search changes do not decide those bytes.
-pub const GENERATOR_SOURCES: [&str; 34] = [
+pub const GENERATOR_SOURCES: [&str; 36] = [
     "src/bake.rs",
     "src/canlight.rs",
     "src/collision.rs",
@@ -63,6 +63,7 @@ pub const GENERATOR_SOURCES: [&str; 34] = [
     "src/transport/gates.rs",
     "src/transport/quest_doors.rs",
     "src/transport/doors.rs",
+    "src/transport/door_members.rs",
     "src/transport/brass_key.rs",
     "src/transport/membergate.rs",
     "src/transport/webs.rs",
@@ -72,6 +73,7 @@ pub const GENERATOR_SOURCES: [&str; 34] = [
     "src/transport/npc_hops.rs",
     "src/transport/observable.rs",
     "src/transport/gliders.rs",
+    "src/transport/scripted_doors.rs",
     "src/transport/spirit_trees.rs",
     "src/transport/levers.rs",
     "src/transport/toll.rs",
