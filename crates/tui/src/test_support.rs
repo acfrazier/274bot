@@ -6,7 +6,7 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::Terminal;
 
-use host_play::{SlotStatus, StartupPhase};
+use frontend_core::{FleetCounts, FleetRow, Phase, SlotDetail};
 
 use crate::app::TuiApp;
 
@@ -37,18 +37,19 @@ pub fn right_click(column: u16, row: u16) -> MouseEvent {
     mouse(MouseEventKind::Down(MouseButton::Right), column, row)
 }
 
-/// A logged-in, ready member on `world`.
-pub fn ready(name: &str, world: u16) -> SlotStatus {
-    SlotStatus {
-        username: name.into(),
-        world: Some(world),
-        startup_phase: StartupPhase::Ready,
-        connected: true,
-        ingame: true,
-        scene_state: 2,
-        tile_x: 3200,
-        tile_z: 3201,
-        ..SlotStatus::default()
+/// A logged-in, ready member's projected row on `world`.
+pub fn ready(name: &str, world: u16) -> FleetRow {
+    FleetRow::fixture(name, Phase::Ready, Some(world), None)
+}
+
+/// The selected member's projected detail: in game on w2 at 3200,3201.
+pub fn ready_detail(name: &str) -> SlotDetail {
+    SlotDetail {
+        row: ready(name, 2),
+        state: "ingame scene 2".into(),
+        tile: (3200, 3201, 0),
+        ready_tile: Some((3200, 3201, 0)),
+        ..SlotDetail::default()
     }
 }
 
@@ -56,8 +57,14 @@ pub fn ready(name: &str, world: u16) -> SlotStatus {
 pub fn fleet_app(names: &[&str]) -> TuiApp {
     let mut app = TuiApp::new(TITLE);
     app.names = names.iter().map(|n| n.to_string()).collect();
-    app.statuses = names.iter().map(|n| ready(n, 2)).collect();
+    app.fleet = names.iter().map(|n| ready(n, 2)).collect();
+    app.counts = FleetCounts {
+        loaded: names.len(),
+        ready: names.len(),
+        ..FleetCounts::default()
+    };
     app.focused = (!names.is_empty()).then_some(0);
+    app.detail = names.first().map(|name| ready_detail(name));
     app.refresh();
     app
 }

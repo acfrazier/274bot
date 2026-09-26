@@ -5,7 +5,9 @@
 //! membership and the logout latch, the selected bot, per-slot surface IO,
 //! non-blocking removals, polled status rows and operation results. Front
 //! ends supply a small [`SlotSurface`] (the panel's input/framebuffer
-//! adapter, or [`HeadlessSurface`]) and render what the session exposes.
+//! adapter, or [`HeadlessSurface`]) and render what the session exposes:
+//! the fleet rows and selected-slot detail ([`FleetView`]) and the process
+//! resource meter ([`ResourceView`]), both refreshed by its poll.
 //! [`Scripts`] coordinates scripts over that session: the card library,
 //! per-profile assignment and parameters, Start all / Stop all, reload and
 //! Apply to all.
@@ -20,9 +22,11 @@ pub mod log_file;
 pub mod map_bake;
 pub mod operations;
 mod profiles;
+pub mod resources;
 pub mod scripts;
 pub mod session;
 pub mod surface;
+pub mod views;
 
 pub use fleet::Fleet;
 pub use map_bake::{
@@ -30,9 +34,11 @@ pub use map_bake::{
     MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
+pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use session::{
     ArmMirror, OperatorSession, Removal, ScriptStart, Selection, SlotTransition, StartSettled,
     Transition, SLOT_REMOVE_TIMEOUT,
 };
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface};
+pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};

@@ -10,14 +10,14 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Widget};
 use ratatui::Frame;
 
-use host_play::metric_text;
+use frontend_core::views::run_state_label;
+use frontend_core::Phase;
 
 use crate::app::TuiApp;
 use crate::commands::{shortcut, Command};
-use crate::fleet::{fleet_counts, fleet_line, FleetTable};
+use crate::fleet::{member_row, state_label, FleetTable};
 use crate::layout::{shell_rects, Pane, Screen, SizeClass, Tab};
 use crate::log_pane::{render_rows, LogPane};
-use crate::script_shape::run_state_text;
 use crate::settings::SettingsPane;
 
 const OVERVIEW_BUTTONS: [Command; 7] = [
@@ -118,21 +118,24 @@ impl TuiApp {
         self.draw_modal(frame);
     }
 
-    /// `BOT <name> | world | state | script …`, the line above the detail.
+    /// `BOT <name> | world | phase | script …`, the line above the detail
+    /// (compact: `BOT <name> @world <status>`).
     pub(crate) fn bot_line(&self, compact: bool) -> String {
         let Some(index) = self.focused.filter(|&i| i < self.names.len()) else {
             return "BOT none: select one in the Fleet (F2, Enter)".into();
         };
-        let row = fleet_line(&self.names, &self.statuses, index);
-        let world = row.world.map_or("local".to_string(), |w| format!("w{w}"));
+        let name = &self.names[index];
+        let row = member_row(&self.names, &self.fleet, index);
+        let world = row
+            .and_then(|row| row.world)
+            .map_or("local".to_string(), |w| format!("w{w}"));
         let mut line = if compact {
-            format!("BOT {} @{world} {}", row.name, row.state)
+            format!("BOT {name} @{world} {}", state_label(row))
         } else {
             format!(
-                "BOT {} │ {world} │ {} │ script {}",
-                row.name,
-                row.state,
-                run_state_text(self.script_state)
+                "BOT {name} │ {world} │ {} │ script {}",
+                row.map_or(Phase::Offline, |row| row.phase).label(),
+                run_state_label(self.script_state)
             )
         };
         if self.chat_data.is_modal_open() {
@@ -150,7 +153,7 @@ impl TuiApp {
             return;
         }
         let right = area.x + area.width;
-        let counts = fleet_counts(&self.names, &self.statuses);
+        let counts = self.counts;
         let compact = class == SizeClass::Compact;
         let tail = if compact {
             format!(
@@ -159,8 +162,8 @@ impl TuiApp {
                 counts.loaded,
                 counts.queued,
                 counts.failed,
-                metric_text(&self.resources.cpu),
-                metric_text(&self.resources.ram)
+                self.resources.cpu.text(),
+                self.resources.ram.text()
             )
         } else {
             format!(
@@ -169,9 +172,9 @@ impl TuiApp {
                 counts.ready,
                 counts.queued,
                 counts.failed,
-                metric_text(&self.resources.cpu),
-                metric_text(&self.resources.ram),
-                metric_text(&self.resources.traffic)
+                self.resources.cpu.text(),
+                self.resources.ram.text(),
+                self.resources.traffic.text()
             )
         };
         let tail_w = tail.chars().count() as u16;
@@ -320,7 +323,7 @@ impl TuiApp {
             .min(inner.height);
         let hits = FleetTable {
             names: &self.names,
-            statuses: &self.statuses,
+            rows: &self.fleet,
             state: &mut self.table,
             selected: self.focused,
             keys,

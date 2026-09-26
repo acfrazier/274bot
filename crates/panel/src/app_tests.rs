@@ -9,11 +9,10 @@ use super::{
     chooser_should_open_popup, clamp_hop_label_px, debug_caption, drive_startup,
     edit_parameters_enabled, game_window_flags, hold_script_terminal_shot, live_null_tick,
     live_script_tick, live_smoke_tick, live_stress_tick, loading_text, logout_enabled,
-    manual_shot_label, parse_args, parse_live_args, progress_channel, random_status_text,
-    request_clean_stop_capture, request_native_failure_capture, runner_config,
-    script_failure_scenario, slot_startup_banner_line, smoke_settled, smoke_should_fire,
-    startup_progress, Boot, CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress,
-    PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
+    manual_shot_label, parse_args, parse_live_args, progress_channel, request_clean_stop_capture,
+    request_native_failure_capture, runner_config, script_failure_scenario, smoke_settled,
+    smoke_should_fire, startup_progress, Boot, CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke,
+    LiveStress, PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
     StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
     SMOKE_DEADLINE, SMOKE_SETTLE,
 };
@@ -2887,91 +2886,6 @@ fn st(name: &str, ingame: bool, scene: i32) -> host_play::SlotStatus {
     }
 }
 
-#[test]
-fn latched_title_banner_does_not_promise_automatic_connect() {
-    let status = host_play::SlotStatus {
-        username: "alice".into(),
-        startup_phase: host_play::StartupPhase::Queueing,
-        login_latched: true,
-        ..Default::default()
-    };
-    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("latched banner");
-    assert_eq!(message, "Logged out — select Log in to reconnect");
-    assert!(!show_elapsed);
-}
-
-#[test]
-fn unlatched_queue_banner_keeps_position_and_elapsed() {
-    let status = host_play::SlotStatus {
-        username: "alice".into(),
-        startup_phase: host_play::StartupPhase::Queueing,
-        queue_position: 2,
-        queue_total: 5,
-        login_latched: false,
-        ..Default::default()
-    };
-    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("queue banner");
-    assert!(message.contains("2/5"));
-    assert!(show_elapsed);
-}
-
-#[test]
-fn login_rearm_clears_latched_display_for_connect_wait() {
-    let status = host_play::SlotStatus {
-        username: "alice".into(),
-        startup_phase: host_play::StartupPhase::Queueing,
-        login_latched: false,
-        ..Default::default()
-    };
-    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("connect banner");
-    assert_eq!(message, "Waiting to connect");
-    assert!(show_elapsed);
-}
-
-#[test]
-fn transfer_cooldown_is_a_connecting_banner_not_an_error() {
-    let status = host_play::SlotStatus {
-        username: "alice".into(),
-        startup_phase: host_play::StartupPhase::Connecting,
-        startup_progress_message: "Your profile will be transferred in: 3 seconds".into(),
-        error: None,
-        ..Default::default()
-    };
-    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("transfer banner");
-    assert_eq!(message, "Your profile will be transferred in: 3 seconds");
-    assert!(
-        !show_elapsed,
-        "the server countdown must not sit beside a rising elapsed timer"
-    );
-}
-
-#[test]
-fn preparing_startup_banner_keeps_elapsed_timer() {
-    let status = host_play::SlotStatus {
-        username: "alice".into(),
-        startup_phase: host_play::StartupPhase::Preparing,
-        login_latched: false,
-        ..Default::default()
-    };
-    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("preparing banner");
-    assert_eq!(message, "Preparing client");
-    assert!(show_elapsed);
-}
-
-#[test]
-fn latched_logout_overrides_stale_retry_error() {
-    let status = host_play::SlotStatus {
-        username: "alice".into(),
-        startup_phase: host_play::StartupPhase::Queueing,
-        login_latched: true,
-        error: Some("old retry error".into()),
-        ..Default::default()
-    };
-    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("latched overrides");
-    assert_eq!(message, "Logged out — select Log in to reconnect");
-    assert!(!show_elapsed);
-}
-
 fn live_at(started: Instant) -> LiveNull {
     LiveNull {
         started,
@@ -3089,56 +3003,6 @@ fn live_stress_tick_counts_full_clients_up() {
     assert_eq!(live_stress_tick(&mut live, &rows), None);
     assert!(live.passed, "50 scene-2 Clients pass");
     assert_eq!(live.last_announced, 50);
-}
-
-#[test]
-fn random_status_text_names_kind_hold_and_off() {
-    let r = host::RandomStatus {
-        kind: Some(api::RandomKind::Dialog),
-        name: Some("mysterious old man".into()),
-        toggle: true,
-        hold: true,
-        ..Default::default()
-    };
-    assert_eq!(
-        random_status_text(&r).as_deref(),
-        Some("dialog: mysterious old man (hold)")
-    );
-    let r = host::RandomStatus {
-        kind: Some(api::RandomKind::Dialog),
-        name: Some("mysterious old man".into()),
-        toggle: false,
-        ..Default::default()
-    };
-    assert_eq!(
-        random_status_text(&r).as_deref(),
-        Some("dialog: mysterious old man (off)")
-    );
-    let r = host::RandomStatus {
-        kind: Some(api::RandomKind::Lamp),
-        name: Some("genie".into()),
-        toggle: true,
-        ..Default::default()
-    };
-    assert_eq!(random_status_text(&r).as_deref(), Some("lamp: genie"));
-    let r = host::RandomStatus::default();
-    assert_eq!(random_status_text(&r), None, "no event, no row");
-}
-
-#[test]
-fn random_status_text_kebab_cases_lost_kinds() {
-    let r = host::RandomStatus {
-        kind: Some(api::RandomKind::LostTool),
-        toggle: true,
-        ..Default::default()
-    };
-    assert_eq!(random_status_text(&r).as_deref(), Some("lost-tool: ?"));
-    let r = host::RandomStatus {
-        kind: Some(api::RandomKind::LostGear),
-        toggle: true,
-        ..Default::default()
-    };
-    assert_eq!(random_status_text(&r).as_deref(), Some("lost-gear: ?"));
 }
 
 #[test]

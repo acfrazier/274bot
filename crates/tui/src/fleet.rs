@@ -12,106 +12,31 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
-use host_play::{SlotStatus, StartupPhase};
+use frontend_core::views::run_state_label;
+use frontend_core::{FleetRow, Phase};
+use script::RunState;
 
 use crate::layout::SizeClass;
 
-/// One fleet row as the table shows it. Built from the members and the
-/// polled status rows until the shared fleet projection lands in
-/// `frontend-core`; [`fleet_line`] is the only place that reads them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FleetLine<'a> {
-    pub name: &'a str,
-    pub world: Option<u16>,
-    pub state: &'static str,
-    /// Login FIFO place `(position, total)` while queued.
-    pub queue: Option<(i32, i32)>,
-    pub tile: Option<(i32, i32, i32)>,
-    pub failure: bool,
-}
-
-/// The status row for member `index`. Status rows usually follow load
-/// order, so the common case is one comparison, not a scan.
-pub fn member_status<'a>(
+/// Member `index`'s row in the core's fleet projection. Rows follow load
+/// order, so the common case is one comparison, not a scan; `None` for a
+/// member the core has not projected yet.
+pub fn member_row<'a>(
     names: &[String],
-    statuses: &'a [SlotStatus],
+    rows: &'a [FleetRow],
     index: usize,
-) -> Option<&'a SlotStatus> {
+) -> Option<&'a FleetRow> {
     let name = names.get(index)?;
-    match statuses.get(index) {
-        Some(status) if status.username == *name => Some(status),
-        _ => statuses.iter().find(|status| status.username == *name),
+    match rows.get(index) {
+        Some(row) if row.name == *name => Some(row),
+        _ => rows.iter().find(|row| row.name == *name),
     }
 }
 
-/// Short lifecycle label (fits the 11-column state cell).
-pub fn phase_label(status: Option<&SlotStatus>) -> &'static str {
-    let Some(s) = status else {
-        return "offline";
-    };
-    if s.worker_terminal.is_some() || s.terminal_startup_error().is_some() {
-        return "failed";
-    }
-    if s.ingame {
-        return "ready";
-    }
-    if s.error.is_some() {
-        return "login error";
-    }
-    if s.login_latched && !s.connected {
-        return "logged out";
-    }
-    if s.queue_position > 0 {
-        return "queued";
-    }
-    match s.startup_phase {
-        StartupPhase::Preparing => "preparing",
-        StartupPhase::Queueing => "waiting",
-        StartupPhase::Connecting => "logging in",
-        StartupPhase::LoadingScene | StartupPhase::Ready => "loading",
-        StartupPhase::Error => "login error",
-    }
-}
-
-pub fn fleet_line<'a>(
-    names: &'a [String],
-    statuses: &'a [SlotStatus],
-    index: usize,
-) -> FleetLine<'a> {
-    let status = member_status(names, statuses, index);
-    FleetLine {
-        name: names.get(index).map_or("", String::as_str),
-        world: status.and_then(|s| s.world),
-        state: phase_label(status),
-        queue: status
-            .filter(|s| s.queue_position > 0 && s.queue_total > 0)
-            .map(|s| (s.queue_position, s.queue_total)),
-        tile: status.and_then(SlotStatus::ready_tile),
-        failure: status.is_some_and(|s| s.error.is_some() || s.worker_terminal.is_some()),
-    }
-}
-
-/// Header counts: loaded members, ready, queued and failed.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct FleetCounts {
-    pub loaded: usize,
-    pub ready: usize,
-    pub queued: usize,
-    pub failed: usize,
-}
-
-pub fn fleet_counts(names: &[String], statuses: &[SlotStatus]) -> FleetCounts {
-    let mut counts = FleetCounts {
-        loaded: names.len(),
-        ..FleetCounts::default()
-    };
-    for index in 0..names.len() {
-        let row = fleet_line(names, statuses, index);
-        counts.ready += usize::from(row.state == "ready");
-        counts.queued += usize::from(row.queue.is_some());
-        counts.failed += usize::from(row.failure);
-    }
-    counts
+/// The row's status label (the one the panel's caps show); a member not
+/// projected yet is offline.
+pub fn state_label(row: Option<&FleetRow>) -> &str {
+    row.map_or(Phase::Offline.label(), |row| row.brief.as_str())
 }
 
 /// ASCII case-insensitive substring test without allocating.
@@ -124,9 +49,14 @@ fn contains_ci(hay: &str, needle: &str) -> bool {
 }
 
 /// Whether one filter term matches: a name substring, `wN` / `world:N`,
-/// or a lifecycle label substring (`ready`, `queued`, `error`, …).
-fn term_matches(row: &FleetLine<'_>, term: &str) -> bool {
-    if contains_ci(row.name, term) || contains_ci(row.state, term) {
+/// or a status substring: the phase (`ready`, `queued`, `login error`, …)
+/// or the row's label (`running`, `idle`, …).
+fn term_matches(name: &str, row: Option<&FleetRow>, term: &str) -> bool {
+    let phase = row.map_or(Phase::Offline, |row| row.phase);
+    if contains_ci(name, term)
+        || contains_ci(phase.label(), term)
+        || contains_ci(state_label(row), term)
+    {
         return true;
     }
     let bytes = term.as_bytes();
@@ -139,14 +69,14 @@ fn term_matches(row: &FleetLine<'_>, term: &str) -> bool {
     };
     number
         .parse::<u16>()
-        .is_ok_and(|world| row.world == Some(world))
+        .is_ok_and(|world| row.and_then(|row| row.world) == Some(world))
 }
 
 /// Every whitespace-separated filter term must match.
-pub fn row_matches(row: &FleetLine<'_>, filter: &str) -> bool {
+pub fn row_matches(name: &str, row: Option<&FleetRow>, filter: &str) -> bool {
     filter
         .split_whitespace()
-        .all(|term| term_matches(row, term))
+        .all(|term| term_matches(name, row, term))
 }
 
 /// Renderer-local fleet state. Marks are the explicit row selection
@@ -170,14 +100,14 @@ pub struct FleetState {
 }
 
 impl FleetState {
-    /// Recompute the shown rows for `names`/`statuses`, keep the cursor on
-    /// the same member when possible and drop marks of departed members.
-    /// Reuses its buffers: no allocation in steady state.
-    pub fn sync(&mut self, names: &[String], statuses: &[SlotStatus]) {
+    /// Recompute the shown rows for `names` (their projected `rows`), keep
+    /// the cursor on the same member when possible and drop marks of
+    /// departed members. Reuses its buffers: no allocation in steady state.
+    pub fn sync(&mut self, names: &[String], rows: &[FleetRow]) {
         self.shown.clear();
-        for index in 0..names.len() {
+        for (index, name) in names.iter().enumerate() {
             if self.filter.is_empty()
-                || row_matches(&fleet_line(names, statuses, index), &self.filter)
+                || row_matches(name, member_row(names, rows, index), &self.filter)
             {
                 self.shown.push(index);
             }
@@ -274,12 +204,13 @@ impl FleetState {
     }
 }
 
-/// The table widget. `selected` is the selected bot's member index; `keys`
-/// is whether the fleet pane has keyboard focus (the cursor row is drawn
-/// reversed only then, so the operator sees where keys go).
+/// The table widget over the fleet `names` and the core's projected `rows`.
+/// `selected` is the selected bot's member index; `keys` is whether the
+/// fleet pane has keyboard focus (the cursor row is drawn reversed only
+/// then, so the operator sees where keys go).
 pub struct FleetTable<'a> {
     pub names: &'a [String],
-    pub statuses: &'a [SlotStatus],
+    pub rows: &'a [FleetRow],
     pub state: &'a mut FleetState,
     pub selected: Option<usize>,
     pub keys: bool,
@@ -300,6 +231,8 @@ const PREFIX: u16 = 6;
 const WORLD: usize = 4;
 const STATE: usize = 11;
 const QUEUE: usize = 7;
+/// Widest script state (`starting`, `stopping`).
+const SCRIPT: usize = 8;
 
 fn put(buf: &mut Buffer, x: &mut u16, y: u16, right: u16, text: &str, style: Style) {
     if *x < right {
@@ -329,13 +262,13 @@ impl FleetTable<'_> {
     pub fn render(self, area: Rect, buf: &mut Buffer, reserve: u16) -> FleetHits {
         let Self {
             names,
-            statuses,
+            rows: fleet,
             state,
             selected,
             keys,
             class,
         } = self;
-        state.sync(names, statuses);
+        state.sync(names, fleet);
         if area.height == 0 || area.width < 12 {
             return FleetHits::default();
         }
@@ -360,8 +293,12 @@ impl FleetTable<'_> {
             y += 1;
         }
         let wide = class == SizeClass::Large;
-        let fixed =
-            usize::from(PREFIX) + 1 + WORLD + 1 + STATE + if wide { 1 + QUEUE + 1 + 15 } else { 0 };
+        let fixed = usize::from(PREFIX)
+            + 1
+            + WORLD
+            + 1
+            + STATE
+            + if wide { 1 + QUEUE + 1 + SCRIPT } else { 0 };
         let name_w = usize::from(area.width).saturating_sub(fixed).max(4);
         let mut cell = String::with_capacity(usize::from(area.width) + 8);
         if y < bottom {
@@ -374,7 +311,7 @@ impl FleetTable<'_> {
             if wide {
                 cell.push(' ');
                 push_fitted(&mut cell, "queue", QUEUE);
-                cell.push_str(" tile");
+                cell.push_str(" script");
             }
             let mut x = area.x;
             put(buf, &mut x, y, right, &cell, dim);
@@ -409,7 +346,8 @@ impl FleetTable<'_> {
             let Some(&member) = state.shown().get(position) else {
                 break;
             };
-            let row = fleet_line(names, statuses, member);
+            let name = names[member].as_str();
+            let row = member_row(names, fleet, member);
             let is_cursor = position == state.cursor;
             let is_selected = selected == Some(member);
             let mut style = Style::default();
@@ -420,17 +358,13 @@ impl FleetTable<'_> {
                 style = style.add_modifier(Modifier::REVERSED);
             }
             cell.clear();
-            cell.push_str(if state.is_marked(row.name) {
-                "[x]"
-            } else {
-                "[ ]"
-            });
+            cell.push_str(if state.is_marked(name) { "[x]" } else { "[ ]" });
             cell.push_str(if is_cursor { " >" } else { "  " });
             cell.push(if is_selected { '*' } else { ' ' });
-            push_fitted(&mut cell, row.name, name_w);
+            push_fitted(&mut cell, name, name_w);
             cell.push(' ');
             let world_at = cell.len();
-            match row.world {
+            match row.and_then(|row| row.world) {
                 Some(world) => {
                     let _ = write!(cell, "w{world}");
                 }
@@ -439,25 +373,20 @@ impl FleetTable<'_> {
             let world_len = cell.len() - world_at;
             cell.extend(std::iter::repeat_n(' ', WORLD.saturating_sub(world_len)));
             cell.push(' ');
-            push_fitted(&mut cell, row.state, STATE);
+            push_fitted(&mut cell, state_label(row), STATE);
             if wide {
                 cell.push(' ');
                 let queue_at = cell.len();
-                match row.queue {
-                    Some((position, total)) => {
-                        let _ = write!(cell, "{position}/{total}");
+                match row.and_then(|row| row.queue) {
+                    Some(place) => {
+                        let _ = write!(cell, "{}/{}", place.position, place.total);
                     }
                     None => cell.push('-'),
                 }
                 let queue_len = cell.len() - queue_at;
                 cell.extend(std::iter::repeat_n(' ', QUEUE.saturating_sub(queue_len)));
                 cell.push(' ');
-                match row.tile {
-                    Some((tx, tz, tl)) => {
-                        let _ = write!(cell, "{tx},{tz},{tl}");
-                    }
-                    None => cell.push('-'),
-                }
+                cell.push_str(run_state_label(row.map_or(RunState::Idle, |row| row.script)));
             }
             if is_cursor && keys {
                 let used = cell.chars().count();

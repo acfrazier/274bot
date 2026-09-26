@@ -2,7 +2,7 @@ use crossterm::event::KeyCode;
 
 use crate::app::AppAction;
 use crate::layout::{Pane, Screen};
-use crate::test_support::{ch, draw, find, fleet_app, key, text};
+use crate::test_support::{ch, draw, find, fleet_app, key, ready_detail, text};
 
 /// 80x24: two header rows, one main pane (the fleet drawer or the bot's
 /// tab), a three-row message/log drawer and the one-row footer.
@@ -13,7 +13,7 @@ fn compact_80x24_keeps_one_main_pane_between_header_drawer_and_footer() {
     let rows = draw(&mut app, 80, 24);
     assert!(rows[0].contains("289bot"), "{}", rows[0]);
     assert!(rows[0].contains("2/2 ready Q:0 Err:0"), "{}", rows[0]);
-    assert!(rows[1].starts_with("BOT alice @w2 ready"), "{}", rows[1]);
+    assert!(rows[1].starts_with("BOT alice @w2 idle"), "{}", rows[1]);
     assert!(
         rows[1].contains("[Fleet]"),
         "the fleet drawer holds the main pane: {}",
@@ -38,8 +38,10 @@ fn compact_80x24_keeps_one_main_pane_between_header_drawer_and_footer() {
         app.on_key(key(KeyCode::Enter)),
         AppAction::Focus("bob".into())
     );
+    // The next pump copies the newly selected bot's detail.
+    app.detail = Some(ready_detail("bob"));
     let rows = draw(&mut app, 80, 24);
-    assert!(rows[1].starts_with("BOT bob @w2 ready"), "{}", rows[1]);
+    assert!(rows[1].starts_with("BOT bob @w2 idle"), "{}", rows[1]);
     assert!(
         rows[1].contains("[Overview]"),
         "the drawer closed on Enter: {}",
@@ -115,15 +117,11 @@ fn large_layout_adds_status_and_chat_beside_the_tab() {
     assert!(side.contains("status"), "status beside Script: {side}");
     assert!(side.contains("state: ingame scene 2"), "{side}");
     assert!(side.contains("chat"), "chat beside Script: {side}");
+    let (_, header_y) = find(&rows, "sel   name").expect("fleet column header");
+    let header = &rows[usize::from(header_y)];
     assert!(
-        text(&rows).contains("queue"),
-        "wide fleet columns: {}",
-        text(&rows)
-    );
-    assert!(
-        text(&rows).contains("3200,3201,0"),
-        "tile column: {}",
-        text(&rows)
+        header.contains("queue") && header.contains("script"),
+        "wide fleet columns: {header}"
     );
 }
 
@@ -148,7 +146,7 @@ fn a_resize_recomputes_every_click_target() {
     let names: Vec<String> = (0..50).map(|i| format!("bot{i:02}")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut app = fleet_app(&refs);
-    app.table.sync(&app.names, &app.statuses);
+    app.table.sync(&app.names, &app.fleet);
     app.table.cursor_to(40, &app.names);
     let wide = draw(&mut app, 120, 40);
     let (_, wide_y) = find(&wide, "> bot40").expect("cursor row at 120x40");

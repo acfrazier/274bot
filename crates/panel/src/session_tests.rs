@@ -3,9 +3,9 @@ use super::{
     live_client_trail, live_or_walk_paint, load_live_example_card, nav_snapshot_for_follow,
     null_raster_live_entries_for_target, parse_getvar_line, publish_frontend_slot,
     publish_nav_debug, reset_frontend_slot_lifetime, script_active, script_pause_enabled,
-    script_self_stop_observed, script_status_text, script_stop_enabled, seed_on_first_world,
-    start_catalog_with_core, stress_live_entries_for_target, temp_live_vault_from,
-    ProfilePreparationCompletion, Session, SlotIo, WalkArm,
+    script_self_stop_observed, script_stop_enabled, seed_on_first_world, start_catalog_with_core,
+    stress_live_entries_for_target, temp_live_vault_from, ProfilePreparationCompletion, Session,
+    SlotIo, WalkArm,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -4237,18 +4237,6 @@ fn live_full_rate_sync_raises_focus_and_members() {
 }
 
 #[test]
-fn queue_for_rejects_invalid_queue_tuple() {
-    let mut s = Session::new();
-    s.statuses.push(SlotStatus {
-        username: "s00".into(),
-        queue_position: 3,
-        queue_total: 0,
-        ..SlotStatus::default()
-    });
-    assert_eq!(s.queue_for("s00"), None);
-}
-
-#[test]
 fn focus_first_profile_noop_when_empty() {
     let path = tmp_vault("focus-empty.vault");
     let mut s = Session::new();
@@ -5482,29 +5470,45 @@ fn focused_connection_is_distinct_from_game_readiness() {
     assert!(!s.focused_ingame());
 }
 
+/// The queue card reads each bot's own place from the shared fleet rows,
+/// whichever bot is focused.
 #[test]
-fn queue_for_tracks_each_named_status_independent_of_focus() {
+fn queue_for_tracks_each_named_row_independent_of_focus() {
     let mut s = Session::new();
+    let mut play = empty_play();
+    for (name, uid) in [("alice", 1), ("bob", 2)] {
+        play.attach_arm(name, SlotArm::new(uid, true));
+        s.core.fleet_mut().add(name);
+    }
+    s.core.set_play(Some(play));
     s.set_focus_for_test("alice");
-    assert_eq!(s.queue_for("alice"), None, "not queued by default");
-    s.statuses.push(SlotStatus {
-        username: "alice".into(),
-        queue_position: 2,
-        queue_total: 3,
+    s.core.poll_host();
+    assert_eq!(s.queue_for("alice"), None, "no row published yet");
+    let queued = |position, total| SlotStatus {
+        startup_phase: StartupPhase::Queueing,
+        queue_position: position,
+        queue_total: total,
         ..SlotStatus::default()
-    });
-    s.statuses.push(SlotStatus {
-        username: "bob".into(),
-        queue_position: 1,
-        queue_total: 2,
-        ..SlotStatus::default()
-    });
-    assert_eq!(s.queue_for("alice"), Some((2, 3)));
-    assert_eq!(s.queue_for("bob"), Some((1, 2)));
+    };
+    s.core.play().unwrap().statuses.lock().unwrap().extend([
+        SlotStatus {
+            username: "alice".into(),
+            ..queued(2, 3)
+        },
+        SlotStatus {
+            username: "bob".into(),
+            ..queued(1, 2)
+        },
+    ]);
+    s.core.poll_host();
+    let place = |position, total| Some(frontend_core::QueuePlace { position, total });
+    assert_eq!(s.queue_for("alice"), place(2, 3));
+    assert_eq!(s.queue_for("bob"), place(1, 2));
 
     s.set_focus_for_test("bob");
-    assert_eq!(s.queue_for("alice"), Some((2, 3)));
-    assert_eq!(s.queue_for("bob"), Some((1, 2)));
+    s.core.poll_host();
+    assert_eq!(s.queue_for("alice"), place(2, 3));
+    assert_eq!(s.queue_for("bob"), place(1, 2));
 }
 
 #[test]
@@ -5883,16 +5887,6 @@ fn script_pause_resume_stop_enable_rules() {
     assert!(!script_stop_enabled(script::RunState::Stopping));
     assert!(!script_stop_enabled(script::RunState::Idle));
     assert!(!script_stop_enabled(script::RunState::Error));
-}
-
-#[test]
-fn script_status_text_matches_rs2b0t_labels() {
-    assert_eq!(script_status_text(script::RunState::Idle), "idle");
-    assert_eq!(script_status_text(script::RunState::Starting), "starting");
-    assert_eq!(script_status_text(script::RunState::Running), "running");
-    assert_eq!(script_status_text(script::RunState::Paused), "paused");
-    assert_eq!(script_status_text(script::RunState::Stopping), "stopping");
-    assert_eq!(script_status_text(script::RunState::Error), "error");
 }
 
 #[test]

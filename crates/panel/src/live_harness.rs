@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::resource::sample_process;
 use crate::session::Session;
 use crate::window::{ShotState, ShotStatus};
+use host_play::sample_process;
 
 /// Headed live harness: null_raster (2 slots), stress50 / stress50_full
 /// (50 slots), a shared scenario (`script_<name>`), or `--smoke` (one

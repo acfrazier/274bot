@@ -40,13 +40,13 @@ use host_play::walk_map::{
     WalkSlotRequest, WalkSlotStatus,
 };
 use host_play::{
-    background_ack_text, background_bots_ack_error, background_bots_acked,
-    clear_background_bots_ack_error, live_vault_passphrase_for, load_navpois, map_ready_catalogue,
-    mint_live_entries_for_target, mint_live_names, open_vault, parse_profile_args,
-    peek_map_catalogue, persist_background_bots_ack, player_here_tile, profile_password_for,
-    run_with_io, run_with_template, step_walk_arm_bank_fetch, walk_arm_bank_fetch_freezes_follow,
+    background_bots_ack_error, background_bots_acked, clear_background_bots_ack_error,
+    live_vault_passphrase_for, load_navpois, map_ready_catalogue, mint_live_entries_for_target,
+    mint_live_names, open_vault, parse_profile_args, peek_map_catalogue,
+    persist_background_bots_ack, player_here_tile, profile_password_for, run_with_io,
+    run_with_template, step_walk_arm_bank_fetch, walk_arm_bank_fetch_freezes_follow,
     MapDemandHandle, MapJobStatus, MapStage, PlayOptions, ProfileOptions, ReadyCatalogue,
-    ResourceSampler, ResourceView, ServerProfile, SharedClientTemplate, WalkArm, WireCmd,
+    ServerProfile, SharedClientTemplate, WalkArm, WireCmd,
 };
 use nav::map::identity::Digest;
 use nav::tile::Tile;
@@ -56,6 +56,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use vault::{Profile, Vault};
 
+use frontend_core::resources::background_ack_text;
 use frontend_core::{
     load_map_bake_choice, persist_map_bake_choice, HeadlessSurface, MapBakeGate, OperatorSession,
 };
@@ -501,11 +502,16 @@ pub struct TuiSession {
     loadouts: script::LoadoutsStore,
     /// Last directory visited in the out-of-tree Load file browser.
     script_load_last_dir: Option<PathBuf>,
-    resource_sampler: ResourceSampler,
+    /// Core projection generations the app last copied (fleet rows, the
+    /// whole view, the resource meter): a pump copies only what moved.
+    copied_rows: Option<u64>,
+    copied_view: Option<u64>,
+    copied_meter: Option<u64>,
     persist_ui: bool,
     background_bots_acked: bool,
     ack_checked_at: Option<Instant>,
-    notice_sig: Option<(usize, ResourceView)>,
+    /// Background count and resource generation the notice was built for.
+    notice_sig: Option<(usize, u64)>,
 }
 
 #[cfg(test)]
@@ -570,7 +576,9 @@ impl TuiSession {
             script_category_order: Vec::new(),
             loadouts: script::LoadoutsStore::with_default_path(),
             script_load_last_dir: None,
-            resource_sampler: ResourceSampler::default(),
+            copied_rows: None,
+            copied_view: None,
+            copied_meter: None,
             persist_ui: true,
             background_bots_acked: background_bots_acked(),
             ack_checked_at: Some(Instant::now()),
@@ -1868,7 +1876,7 @@ impl TuiSession {
             .core
             .selected()
             .and_then(|selected| app.names.iter().position(|n| n == selected));
-        self.core.copy_statuses_into(&mut app.statuses);
+        self.copy_projection(app);
         // A Browse pick is the pending selection of the profile whose
         // heading it replaced.
         if std::mem::take(&mut app.browse_changed) {
@@ -1904,21 +1912,7 @@ impl TuiSession {
             // A failed write rolled the profile back: show what is saved.
             self.refresh_params_bag(app);
         }
-        let now = Instant::now();
-        let sampled = self.resource_sampler.due(now);
-        if sampled {
-            let focused = app.focused_name();
-            match self.core.play() {
-                Some(play) => self
-                    .resource_sampler
-                    .sample_play(now, play, focused.as_deref()),
-                None => self
-                    .resource_sampler
-                    .sample(now, focused.as_deref(), std::iter::empty()),
-            }
-            app.resources.clone_from(self.resource_sampler.view());
-        }
-        self.refresh_background_notice(app, now);
+        self.refresh_background_notice(app, Instant::now());
         // The script pane's Browse picker lists library cards with registry fields.
         app.script_cards = self
             .scripts
@@ -2030,8 +2024,10 @@ impl TuiSession {
             // The script's paint frame rides the status row (copied from
             // the isolate each observe); the chat pane shows it in place
             // of the game chat while it is non-empty.
-            app.chat_data.script_paint =
-                app.focused_status().and_then(|st| st.script_paint.clone());
+            app.chat_data.script_paint = self
+                .core
+                .status(name)
+                .and_then(|st| st.script_paint.clone());
             // Stop drops the isolate (and its paint with it); reset the
             // operator's game-chat toggle when no paint is showing so a
             // fresh Start shows the new paint by default instead of
@@ -2195,13 +2191,29 @@ impl TuiSession {
             app.background_notice = None;
             return;
         }
-        let view = self.resource_sampler.view();
-        match &self.notice_sig {
-            Some((n, v)) if *n == background && v == view => {}
-            _ => {
-                app.background_notice = Some(background_ack_text(background, view));
-                self.notice_sig = Some((background, view.clone()));
-            }
+        let generation = self.core.resource_generation();
+        if self.notice_sig != Some((background, generation)) {
+            app.background_notice = Some(background_ack_text(background, self.core.resources()));
+            self.notice_sig = Some((background, generation));
+        }
+    }
+
+    /// Copy the core's shared projection into the app: fleet rows and
+    /// their counts, the selected slot's detail and the resource meter, each
+    /// only when it moved since the last copy (and into the app's own
+    /// buffers).
+    fn copy_projection(&mut self, app: &mut TuiApp) {
+        let view = self.core.fleet_view();
+        if self.copied_rows.replace(view.rows_generation()) != Some(view.rows_generation()) {
+            view.copy_rows_into(&mut app.fleet);
+            app.counts = view.counts();
+        }
+        if self.copied_view.replace(view.generation()) != Some(view.generation()) {
+            view.copy_detail_into(&mut app.detail);
+        }
+        let meter = self.core.resource_generation();
+        if self.copied_meter.replace(meter) != Some(meter) {
+            app.resources.clone_from(self.core.resources());
         }
     }
 }

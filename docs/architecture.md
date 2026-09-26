@@ -63,7 +63,7 @@ punishment.
 | `nav` | Packed world, router, Traveller | Script isolate or operator UI |
 | `script` | Compiled cards, Load isolate, thin JS shim | A production dependant of `client` or `nav` |
 | `host-play` | Shared `Play` lifecycle over host/script/nav/vault | A second panel or client renderer |
-| `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results, the structured operator log; script coordination (catalog, per-profile assignment and parameters, Start all/Stop all, reload, Apply to all) | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries |
+| `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results, the structured operator log; script coordination (catalog, per-profile assignment and parameters, Start all/Stop all, reload, Apply to all); the fleet/detail projections (phase, queue place, retained errors, newest operation) and the one process resource sampler both front ends render | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries; a per-row or per-bot sampler |
 | `scenario` | Shared headed/headless live scenario runner | Panel/TUI chrome |
 | `panel` | Native ImGui UI, winit/wgpu window, game blit | The client 3D renderer or isolate runtime |
 | `tui` | Headless operator view over the same `frontend-core` session | A second kernel or GPU loop |
@@ -349,7 +349,8 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `memory.rs` | opt-in memory harness | `BOT_MEMORY_N` only |
 | `memory_diagnostics.rs` | memory-run diagnostics | bounded, never drains logs |
 | `audio.rs` | focused-slot speaker gate | at most one speaker |
-| `rss.rs` | process RSS and CPU sample | harness and resource card |
+| `rss.rs` | process RSS and CPU sample | harness and the core's resource meter |
+| `resource_view.rs` | live-slot facts and panel-ui prefs | live worker count/traffic the core meter samples, background count, `panel-ui.json` |
 | `scatter.rs` | seed tiles for the wall | nav world, else Lumbridge |
 | `progress.rs` | preparation progress values | small, copy-free |
 | `lib_tests.rs` | test body | grouped, not an owner |
@@ -382,9 +383,11 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
 | `lib.rs` | crate facade | re-exports the session vocabulary |
-| `session.rs` | operator lifecycle over `Play` | vault (staged view), play, selection, slot IO, Load/Log in/Log out/Remove, poll, script Start/Stop settlement, profile write settlement |
+| `session.rs` | operator lifecycle over `Play` | vault (staged view), play, selection, slot IO, Load/Log in/Log out/Remove, poll (also refreshes the projections and runs the meter), script Start/Stop settlement, profile write settlement |
 | `fleet.rs` | fleet membership | ordered members, logout latch, focus neighbour |
-| `operations.rs` | operation results | ids, per-member outcomes, bounded book |
+| `operations.rs` | operation results | ids, per-member outcomes, bounded book, outcome journal the poll logs as `op#<id>` lines |
+| `views.rs` | fleet and detail projections | one row per member (phase, queue place, script state, retained error, newest operation, narrow label) and the selected slot's detail; rows re-derived only when their facts change, generations for dirty copies; text capped per slot |
+| `resources.rs` | process resource meter | one sampler run by the poll at 1 Hz; CPU, current and peak process RSS, summed traffic; measuring / unavailable / error values |
 | `profiles.rs` | durable profile writes | one writer thread, ordered, last write per profile wins; results settle in `poll` |
 | `surface.rs` | front-end slot adapter | `SlotSurface`, `HeadlessSurface` |
 | `log.rs` | structured operator log | per-slot and process rings (500 each), redaction, filtered `LogView`, Save log… |
@@ -392,7 +395,7 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `scripts/mod.rs` | script coordination | card library and catalog fill, per-profile assignment and pending Browse, parameter bags (legacy claim, typed edits pushed live once durable), Start / Start all / Stop all, Start settlement (assignment on Ready), notices |
 | `scripts/reload.rs` | reload and catalog-refresh transaction | worker validation, warning with exact runs and generations, confirm/cancel, fenced replacement |
 | `scripts/sync.rs` | Apply to all (bulk parameter sync) | frozen same-card scope, per-profile writes, generation-fenced live push, separate persistence/live counts |
-| `session_tests.rs`, `scripts/tests.rs` | test bodies | real `Play` seam, no server |
+| `session_tests.rs`, `scripts/tests.rs`, `views_tests.rs`, `resources_tests.rs` | test bodies | real `Play` seam, no server |
 
 ### panel
 
@@ -413,11 +416,10 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `walk_map/overlay.rs` | viewport grid/collision overlay | one RGBA image, 768×512 / 1.5 MiB cap, never per-tile quads |
 | `walk_map/fixtures.rs` | small PNG/POI fixtures | Lumbridge stand-in until image cache |
 | `grid.rs` | MultiBox grid layout | cell geometry |
-| `rail.rs` | sidecar rail chrome | geometry and status dot |
+| `rail.rs` | sidecar rail chrome | geometry and the status-dot colour of a row's light |
 | `chrome.rs` | app chrome | menus and banners |
-| `overlay.rs` | queue-card overlay | focused queue card over the image |
+| `overlay.rs` | queue-card overlay | each image's own queue card from its fleet row (rs2b0t copy) |
 | `paint.rs` | script-paint overlay | structured paint over the chatbox rect |
-| `queue_card.rs` | queue-card labels | pure label helpers, no ImGui |
 | `focus.rs` | focus tracking | focused slot and pane |
 | `clipboard.rs` | native clipboard backend | OS pasteboard bridge |
 | `build_info.rs` | deploy fingerprint | release label and git stamp |
@@ -427,7 +429,6 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `live_harness.rs` | headed live and smoke watch | tick and capture qualification |
 | `ui_state.rs` | persisted UI prefs | focused profile and collapsed maps |
 | `theme.rs` | theme tokens | colors and metrics |
-| `resource.rs` | resource formatters and sampler | pure formatters plus sampler |
 | `wall.rs` | wall UI state | chooser, grid, render-all warning (membership is `frontend_core::Fleet`) |
 | `srgb_present.rs` | present-path test helper | test-only |
 | `app_tests.rs`, `session_tests.rs`, `input_capture_tests.rs`, `picker_tests.rs`, `walk_map_tests.rs` | test bodies | grouped, logical `<owner>::tests` |
@@ -438,20 +439,20 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | --- | --- | --- |
 | `lib.rs` | crate facade and re-exports | second view of `Play`, no GPU |
 | `main.rs` | `tui-play` entrypoint | flags and run modes |
-| `bin.rs` | headless session and dispatch | `OperatorSession<()>` + headless surface; hands every terminal event to the app and dispatches the returned action onto the core |
-| `app.rs` | view model and pane behaviour | app state; map, script and chat pane keys and clicks |
+| `bin.rs` | headless session and dispatch | `OperatorSession<()>` + headless surface; copies the core projection into the app when it moved; hands every terminal event to the app and dispatches the returned action onto the core |
+| `app.rs` | view model and pane behaviour | app state, including copies of the core projection (fleet rows and counts, selected detail, meter); map, script and chat pane keys and clicks |
 | `layout.rs` | shell geometry | size classes (80x24 compact, 120x40 standard, large), pane rects, the last draw's hit regions |
-| `shell.rs` | shell drawing | header, fleet and detail panes, log drawer, footer naming the keyboard scope |
+| `shell.rs` | shell drawing | header (fleet counts, compact meter), fleet and detail panes, log drawer, footer naming the keyboard scope |
 | `input.rs` | key and mouse routing | one model: popup/overlay, then text field, then global chords, then the focused pane; mouse hit-tests the last draw |
 | `commands.rs` | operator command vocabulary | labels, target scope, availability and reason, per-pane shortcut tables shared by keys, buttons, palette and help |
-| `fleet.rs` | fleet table | cursor, row selection, filter, visible-window rows; the one reader of fleet rows |
+| `fleet.rs` | fleet table | cursor, row selection, filter, visible-window rows over the core's fleet rows |
 | `overlay.rs` | app overlays | help, palette, confirmations with frozen targets, context menus, message viewer, manual walk |
 | `palette.rs` | command palette | filtered commands with scope, key and unavailable reason |
 | `help.rs` | help overlay | focused pane's keys first, searchable |
 | `log_pane.rs` | log view | Logs tab and log drawer over the shared `frontend_core::log` |
 | `map.rs` | WalkTo map widget | dots, route polyline, selection, cell/tile mapping |
 | `chat.rs` | chat and dialogue pane | chat ring, modal continue and answer |
-| `status.rs` | status pane | selected slot rows plus guardian status |
+| `status.rs` | status pane | the selected slot's projected detail and the full meter |
 | `script_params.rs` | script parameter editors | schema-driven editors |
 | `script_shape.rs` | script pane widgets | browse, start, pause, stop, load |
 | `loadouts.rs` | loadouts popup | worn gear and carry CRUD |
@@ -485,7 +486,7 @@ These are product boundaries. The crate checker does not prove them.
 | --- | --- | --- |
 | Operator window, ImGui chrome, MultiBox, game blit, input into slots | `panel` | client applet UI, script isolate |
 | Headless operator view (raster Off) | `tui` | GPU renderer, a second `Play` |
-| Operator lifecycle: vault, fleet membership and latch, selected bot, Load/Log in/Log out/Remove intent, removal settlement, operation results, script assignment/parameters/reload/bulk coordination | `frontend-core` | panel/tui chrome, a second login queue or script runtime |
+| Operator lifecycle: vault, fleet membership and latch, selected bot, Load/Log in/Log out/Remove intent, removal settlement, operation results, script assignment/parameters/reload/bulk coordination; fleet/detail projections and the process resource meter | `frontend-core` | panel/tui chrome, a second login queue or script runtime, per-row samplers |
 | Slot workers: spawn/stop/reap, connection and readiness, login FIFO, tick pump, script start/pause/stop/load execution | `host-play` (`Play`) | panel/tui chrome, `frontend-core`, `e2e` |
 | Native per-slot host APIs, snapshot/think, random-event guardian | `host` | nav internals, JS |
 | Script kernel, isolate thread, shim coerce/marshal only | `script` | JS policy/routers, a foreign runtime |

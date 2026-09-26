@@ -104,11 +104,41 @@ impl OperationReport {
     }
 }
 
-/// Bounded operation history with id allocation.
+/// One member outcome that changed: what the log and the fleet rows see.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OpChange {
+    pub id: OperationId,
+    pub action: ActionKind,
+    pub slot: String,
+    pub outcome: Outcome,
+}
+
+/// `op#41 Start completed`, `op#42 Log in failed: <reason>`: how the log
+/// and the fleet rows name one member's operation outcome.
+pub(crate) fn write_op(
+    out: &mut impl std::fmt::Write,
+    id: OperationId,
+    action: ActionKind,
+    outcome: &Outcome,
+) -> std::fmt::Result {
+    write!(out, "op#{} {} ", id.0, action.label())?;
+    match outcome {
+        Outcome::Pending => out.write_str("accepted"),
+        Outcome::Completed => out.write_str("completed"),
+        Outcome::Skipped(reason) => write!(out, "skipped: {reason}"),
+        Outcome::Failed(reason) => write!(out, "failed: {reason}"),
+        Outcome::Cancelled => out.write_str("cancelled"),
+    }
+}
+
+/// Bounded operation history with id allocation. Every member outcome that
+/// changes is also journaled until the next [`Self::append_changes`] (each
+/// poll), so settlement is observed in order.
 #[derive(Debug, Default)]
 pub(crate) struct OperationBook {
     next: u64,
     reports: VecDeque<OperationReport>,
+    changes: Vec<OpChange>,
 }
 
 impl OperationBook {
@@ -134,38 +164,50 @@ impl OperationBook {
         self.reports.get(index)
     }
 
-    fn get_mut(&mut self, id: OperationId) -> Option<&mut OperationReport> {
-        let index = self.reports.binary_search_by_key(&id, |r| r.id).ok()?;
-        self.reports.get_mut(index)
-    }
-
     pub(crate) fn last(&self) -> Option<&OperationReport> {
         self.reports.back()
     }
 
     /// Record (or replace) one member's outcome.
     pub(crate) fn set(&mut self, id: OperationId, slot: &str, outcome: Outcome) {
-        let Some(report) = self.get_mut(id) else {
+        let Ok(index) = self.reports.binary_search_by_key(&id, |r| r.id) else {
             return;
         };
+        let report = &mut self.reports[index];
         match report.members.iter_mut().find(|m| m.slot == slot) {
-            Some(member) => member.outcome = outcome,
+            Some(member) if member.outcome == outcome => return,
+            Some(member) => member.outcome = outcome.clone(),
             None => report.members.push(MemberOutcome {
                 slot: slot.to_string(),
-                outcome,
+                outcome: outcome.clone(),
             }),
         }
+        self.changes.push(OpChange {
+            id,
+            action: report.action,
+            slot: slot.to_string(),
+            outcome,
+        });
     }
 
     /// Settle every pending member of the given action kinds with `decide`.
     /// `decide` returns `None` to keep a member pending.
     pub(crate) fn settle(&mut self, mut decide: impl FnMut(ActionKind, &str) -> Option<Outcome>) {
-        for report in self.reports.iter_mut() {
+        let Self {
+            reports, changes, ..
+        } = self;
+        for report in reports.iter_mut() {
             let action = report.action;
             for member in report.members.iter_mut() {
                 if member.outcome.is_pending() {
                     if let Some(outcome) = decide(action, &member.slot) {
                         member.outcome = outcome;
+                        changes.push(OpChange {
+                            id: report.id,
+                            action,
+                            slot: member.slot.clone(),
+                            outcome: member.outcome.clone(),
+                        });
                     }
                 }
             }
@@ -175,13 +217,28 @@ impl OperationBook {
     /// Cancel pending members of `action` for `slot` (a newer command
     /// superseded them).
     pub(crate) fn cancel_pending(&mut self, action: ActionKind, slot: &str) {
-        for report in self.reports.iter_mut().filter(|r| r.action == action) {
+        let Self {
+            reports, changes, ..
+        } = self;
+        for report in reports.iter_mut().filter(|r| r.action == action) {
             for member in report.members.iter_mut() {
                 if member.slot == slot && member.outcome.is_pending() {
                     member.outcome = Outcome::Cancelled;
+                    changes.push(OpChange {
+                        id: report.id,
+                        action,
+                        slot: member.slot.clone(),
+                        outcome: Outcome::Cancelled,
+                    });
                 }
             }
         }
+    }
+
+    /// Move the changes journaled since the last call onto the end of
+    /// `out`, in order (the journal keeps its capacity).
+    pub(crate) fn append_changes(&mut self, out: &mut Vec<OpChange>) {
+        out.append(&mut self.changes);
     }
 }
 

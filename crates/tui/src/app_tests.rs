@@ -27,6 +27,23 @@ use nav::map::poi::{
 use nav::map::{Rows, Text};
 
 use super::{wasd_target, AppAction, MapCatalogueStatus, TuiApp, WalkSendMode};
+use frontend_core::{FleetRow, Phase, SlotDetail};
+
+/// A projected member row (what the core publishes).
+fn member(name: &str, phase: Phase) -> FleetRow {
+    FleetRow::fixture(name, phase, None, None)
+}
+
+/// The selected slot's projected detail while it is in game on `tile`.
+fn ready_detail(name: &str, tile: (i32, i32, i32)) -> SlotDetail {
+    SlotDetail {
+        row: member(name, Phase::Ready),
+        state: "ingame scene 2".into(),
+        tile,
+        ready_tile: Some(tile),
+        ..SlotDetail::default()
+    }
+}
 
 fn bone_burier_card() -> BrowseCard {
     BrowseCard {
@@ -223,20 +240,8 @@ fn open_map_world() -> TuiApp {
     let mut app = TuiApp::new("274bot headless");
     app.names = vec!["alice".into(), "bob".into()];
     app.focused = Some(0);
-    app.statuses = vec![
-        host_play::SlotStatus {
-            username: "alice".into(),
-            ingame: true,
-            scene_state: 2,
-            tile_x: 1,
-            tile_z: 1,
-            ..host_play::SlotStatus::default()
-        },
-        host_play::SlotStatus {
-            username: "bob".into(),
-            ..host_play::SlotStatus::default()
-        },
-    ];
+    app.fleet = vec![member("alice", Phase::Ready), member("bob", Phase::Offline)];
+    app.detail = Some(ready_detail("alice", (1, 1, 0)));
     app.world = Some(Arc::new(nav::world::NavWorld::from_grid(
         &nav::grid::StepGrid::fixture_open_3x3(),
     )));
@@ -380,15 +385,7 @@ fn wasd_walks_only_while_manual_walk_is_armed() {
     let mut app = TuiApp::new("274bot headless");
     app.names = vec!["test".into()];
     app.focused = Some(0);
-    app.statuses = vec![host_play::SlotStatus {
-        username: "test".into(),
-        ingame: true,
-        scene_state: 2,
-        tile_x: 10,
-        tile_z: 10,
-        tile_level: 1,
-        ..host_play::SlotStatus::default()
-    }];
+    app.detail = Some(ready_detail("test", (10, 10, 1)));
     app.refresh();
     assert_eq!(
         app.here,

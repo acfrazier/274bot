@@ -295,6 +295,14 @@ impl SlotArm {
         self.intent.lock().login_latched
     }
 
+    /// Whether the slot wants to be logged in right now: not latched off,
+    /// and a login intent or an active script (the want the handshake loop
+    /// follows). `false` means it parks on the title screen.
+    pub fn login_wanted(&self) -> bool {
+        let intent = self.intent.lock();
+        self.wanted(&intent)
+    }
+
     /// Apply the live auto-login policy. Disabling it withdraws only an
     /// auto-derived intent; enabling it arms an unlatched parked slot.
     pub fn set_auto_login(&self, enabled: bool) {

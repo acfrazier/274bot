@@ -1,4 +1,4 @@
-use host_play::{SlotStatus, StartupPhase};
+use frontend_core::{FleetRow, Phase, QueuePlace};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
@@ -8,37 +8,27 @@ fn names(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| s.to_string()).collect()
 }
 
-fn ready(name: &str, world: u16) -> SlotStatus {
-    SlotStatus {
-        username: name.into(),
-        world: Some(world),
-        ingame: true,
-        scene_state: 2,
-        connected: true,
-        startup_phase: StartupPhase::Ready,
-        ..SlotStatus::default()
-    }
+fn ready(name: &str, world: u16) -> FleetRow {
+    FleetRow::fixture(name, Phase::Ready, Some(world), None)
 }
 
-fn queued(name: &str, position: i32, total: i32) -> SlotStatus {
-    SlotStatus {
-        username: name.into(),
-        world: Some(1),
-        startup_phase: StartupPhase::Queueing,
-        queue_position: position,
-        queue_total: total,
-        ..SlotStatus::default()
-    }
+fn queued(name: &str, position: u32, total: u32) -> FleetRow {
+    FleetRow::fixture(
+        name,
+        Phase::Queued,
+        Some(1),
+        Some(QueuePlace { position, total }),
+    )
 }
 
 #[test]
 fn filter_terms_match_name_world_and_state() {
     let members = names(&["alice", "bob", "carol"]);
-    let statuses = vec![ready("alice", 2), queued("bob", 2, 5), ready("carol", 1)];
+    let rows = vec![ready("alice", 2), queued("bob", 2, 5), ready("carol", 1)];
     let mut state = FleetState::default();
     let shown = |state: &mut FleetState, filter: &str| {
         state.filter = filter.into();
-        state.sync(&members, &statuses);
+        state.sync(&members, &rows);
         state
             .shown()
             .iter()
@@ -48,7 +38,8 @@ fn filter_terms_match_name_world_and_state() {
     assert_eq!(shown(&mut state, "AL"), ["alice"], "name, case-insensitive");
     assert_eq!(shown(&mut state, "w2"), ["alice"], "world term");
     assert_eq!(shown(&mut state, "world:1"), ["bob", "carol"]);
-    assert_eq!(shown(&mut state, "queued"), ["bob"], "state term");
+    assert_eq!(shown(&mut state, "queued"), ["bob"], "phase term");
+    assert_eq!(shown(&mut state, "idle"), ["alice", "carol"], "status term");
     assert_eq!(
         shown(&mut state, "ready w1"),
         ["carol"],
@@ -60,20 +51,20 @@ fn filter_terms_match_name_world_and_state() {
 #[test]
 fn the_cursor_stays_on_its_member_when_the_filter_or_fleet_changes() {
     let mut members = names(&["alice", "bob", "carol"]);
-    let statuses = Vec::new();
+    let rows = Vec::new();
     let mut state = FleetState::default();
-    state.sync(&members, &statuses);
+    state.sync(&members, &rows);
     state.move_cursor(2, &members);
     assert_eq!(state.cursor_member(), Some(2), "cursor on carol");
     state.filter = "o".into(); // bob, carol
-    state.sync(&members, &statuses);
+    state.sync(&members, &rows);
     assert_eq!(
         state.cursor_member().map(|i| members[i].as_str()),
         Some("carol")
     );
     state.filter.clear();
     members.remove(0); // alice leaves: carol moves up one row
-    state.sync(&members, &statuses);
+    state.sync(&members, &rows);
     assert_eq!(
         state.cursor_member().map(|i| members[i].as_str()),
         Some("carol")
@@ -110,15 +101,15 @@ fn render(table: FleetTable<'_>, w: u16, h: u16) -> (Vec<String>, FleetHits) {
 #[test]
 fn rows_show_selection_cursor_and_selected_bot_as_plain_text() {
     let members = names(&["alice", "bob", "carol"]);
-    let statuses = vec![ready("alice", 2), queued("bob", 2, 5)];
+    let rows = vec![ready("alice", 2), queued("bob", 2, 5)];
     let mut state = FleetState::default();
-    state.sync(&members, &statuses);
+    state.sync(&members, &rows);
     state.toggle_mark(&members, 2);
     state.move_cursor(1, &members);
     let (rows, hits) = render(
         FleetTable {
             names: &members,
-            statuses: &statuses,
+            rows: &rows,
             state: &mut state,
             selected: Some(0),
             keys: true,
@@ -129,11 +120,11 @@ fn rows_show_selection_cursor_and_selected_bot_as_plain_text() {
     );
     assert!(rows[1].starts_with("[ ]  *alice"), "{rows:?}");
     assert!(
-        rows[1].contains("w2") && rows[1].contains("ready"),
-        "{rows:?}"
+        rows[1].contains("w2") && rows[1].contains("idle"),
+        "the panel's status label: {rows:?}"
     );
     assert!(rows[2].starts_with("[ ] > bob"), "cursor row: {rows:?}");
-    assert!(rows[2].contains("queued"), "{rows:?}");
+    assert!(rows[2].contains("queued 2/5"), "{rows:?}");
     assert!(rows[3].starts_with("[x]   carol"), "selected row: {rows:?}");
     assert!(rows[3].contains("offline"), "no status row yet: {rows:?}");
     assert_eq!(
@@ -154,7 +145,7 @@ fn a_long_fleet_scrolls_to_keep_the_cursor_visible() {
     let (rows, hits) = render(
         FleetTable {
             names: &members,
-            statuses: &[],
+            rows: &[],
             state: &mut state,
             selected: None,
             keys: true,

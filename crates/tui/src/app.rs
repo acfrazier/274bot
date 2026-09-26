@@ -1,12 +1,13 @@
 //! `TuiApp`: view model for the headless panel. The binary (`tui-play`)
-//! polls slot statuses and the selected bot's snapshot each frame,
-//! refreshes the app, hands it keys and mouse events, and dispatches the
-//! returned [`AppAction`] onto the shared operator session. This module
-//! owns the app state and the per-pane behaviour (map, script, chat);
-//! `input` routes events to it, `shell` draws the responsive layout and
-//! `overlay` owns help, the palette and confirmations. The panes are plain
-//! widgets over owned view data, so CI renders them with `TestBackend` and
-//! no real terminal.
+//! copies the shared projection (fleet rows, selected detail, resource
+//! meter) and the selected bot's snapshot each frame, refreshes the app,
+//! hands it keys and mouse events, and dispatches the returned
+//! [`AppAction`] onto the shared operator session. This module owns the app
+//! state and the per-pane behaviour (map, script, chat); `input` routes
+//! events to it, `shell` draws the responsive layout and `overlay` owns
+//! help, the palette and confirmations. The panes are plain widgets over
+//! owned view data, so CI renders them with `TestBackend` and no real
+//! terminal.
 
 use std::sync::Arc;
 
@@ -18,8 +19,8 @@ use ratatui::Frame;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
 use frontend_core::MapBakeChoice;
+use frontend_core::{FleetCounts, FleetRow, ResourceView, SlotDetail};
 use host_play::walk_map::{Catalogue, MapModel, ObservedService, Search, WalkSlotStatus};
-use host_play::{ResourceView, SlotStatus};
 use nav::map::poi::{PoiKind, PoiRecord};
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
@@ -325,8 +326,14 @@ pub struct TuiApp {
     /// `select`, not where the keyboard points (that is `key_focus`).
     pub names: Vec<String>,
     pub focused: Option<usize>,
-    /// Polled slot statuses; the binary refreshes them each frame.
-    pub statuses: Vec<SlotStatus>,
+    /// The fleet rows (one per member) and their totals from the shared
+    /// `frontend-core` projection; the binary copies them when the core's
+    /// rows move.
+    pub fleet: Vec<FleetRow>,
+    pub counts: FleetCounts,
+    /// The selected slot's projected detail (the panel's status section
+    /// shows the same).
+    pub detail: Option<SlotDetail>,
     /// The focused slot's chat ring / dialogue, from the snapshot.
     pub chat_data: ChatData,
     /// The focused slot's inventory (name, count), from the snapshot.
@@ -414,7 +421,8 @@ pub struct TuiApp {
     pub quit: bool,
     /// The last report or error, shown on the message line.
     pub error: Option<String>,
-    /// Process resource snapshot (same sampler as the panel resource card).
+    /// The process resource meter (the core's one sampler, as the panel's
+    /// resource card shows it).
     pub resources: ResourceView,
     /// One-line background-bots notice until the operator acks it.
     pub background_notice: Option<String>,
@@ -445,7 +453,9 @@ impl TuiApp {
             title: title.into(),
             names: Vec::new(),
             focused: None,
-            statuses: Vec::new(),
+            fleet: Vec::new(),
+            counts: FleetCounts::default(),
+            detail: None,
             chat_data: ChatData::default(),
             inv_items: Vec::new(),
             stats_rows: Vec::new(),
@@ -515,11 +525,13 @@ impl TuiApp {
         &self.title
     }
 
-    /// The focused slot's status row, `None` when nothing is focused or
-    /// the slot has not published a row yet.
-    pub fn focused_status(&self) -> Option<&SlotStatus> {
+    /// The selected slot's projected detail, `None` when nothing is
+    /// selected (or the projection has not caught up with the selection).
+    pub fn focused_detail(&self) -> Option<&SlotDetail> {
         let name = self.focused_name()?;
-        self.statuses.iter().find(|s| s.username == name)
+        self.detail
+            .as_ref()
+            .filter(|detail| detail.row.name == name)
     }
 
     /// The focused slot's username.
@@ -527,12 +539,12 @@ impl TuiApp {
         self.focused.and_then(|i| self.names.get(i)).cloned()
     }
 
-    /// Re-sync the view from freshly polled statuses: the focused slot's
+    /// Re-sync the view from the fresh projection: the selected slot's
     /// `here` tile (the map re-centres on it when the view is not panned).
     pub fn refresh(&mut self) {
         self.here = self
-            .focused_status()
-            .and_then(SlotStatus::ready_tile)
+            .focused_detail()
+            .and_then(|detail| detail.ready_tile)
             .map(|(x, z, level)| WorldTile { x, z, level });
         if !self.map_active {
             if let Some(here) = self.here {
@@ -818,7 +830,7 @@ impl TuiApp {
         let names: Vec<String> = if !self.names.is_empty() {
             self.names.clone()
         } else {
-            self.statuses.iter().map(|s| s.username.clone()).collect()
+            self.fleet.iter().map(|row| row.name.clone()).collect()
         };
         let mut rows = Vec::with_capacity(names.len());
         for name in names {
@@ -1633,7 +1645,7 @@ impl TuiApp {
         } else {
             "highmem"
         };
-        let pane = StatusPane::new(self.focused_status(), &walk, mem)
+        let pane = StatusPane::new(self.focused_detail(), &walk, mem)
             .resources(&self.resources)
             .notice(self.background_notice.as_deref());
         frame.render_widget(pane, area);

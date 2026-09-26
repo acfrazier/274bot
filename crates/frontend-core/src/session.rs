@@ -20,10 +20,14 @@ use host_play::{InstancePermit, Play, SlotArm, SlotStatus};
 use vault::{Profile, Vault, VaultChange};
 
 use crate::fleet::Fleet;
-use crate::operations::{ActionKind, OperationBook, OperationId, OperationReport, Outcome};
+use crate::operations::{
+    write_op, ActionKind, OpChange, OperationBook, OperationId, OperationReport, Outcome,
+};
 use crate::profiles::{ProfileWriter, Written};
+use crate::resources::{ResourceView, Resources};
 use crate::scripts::{LiveDelivery, LiveSettings, SettingsResult, SettingsWrite};
 use crate::surface::SlotSurface;
+use crate::views::{FleetView, Inputs, Views};
 
 /// Clean-logout window a connected member gets on removal before its worker
 /// is stopped regardless.
@@ -157,6 +161,14 @@ pub struct OperatorSession<Io> {
     spawn_workers: bool,
     #[cfg(any(test, feature = "test-support"))]
     bypass_asset_startup: bool,
+    /// Fleet rows and the selected slot's detail, refreshed by each poll.
+    views: Views,
+    /// Operation outcomes taken by the last poll (reused buffer).
+    op_changes: Vec<OpChange>,
+    /// Reused buffer for operation log lines.
+    op_line: String,
+    /// The one process resource sampler, run by the poll at 1 Hz.
+    resources: Resources,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
 }
@@ -189,6 +201,10 @@ impl<Io> OperatorSession<Io> {
             spawn_workers: true,
             #[cfg(any(test, feature = "test-support"))]
             bypass_asset_startup: false,
+            views: Views::default(),
+            op_changes: Vec::new(),
+            op_line: String::new(),
+            resources: Resources::default(),
             _instance: instance,
         }
     }
@@ -277,6 +293,22 @@ impl<Io> OperatorSession<Io> {
 
     pub fn last_operation(&self) -> Option<&OperationReport> {
         self.operations.last()
+    }
+
+    /// Fleet rows, counts and the selected slot's detail as of the last
+    /// poll. Both front ends render these instead of deriving their own.
+    pub fn fleet_view(&self) -> FleetView<'_> {
+        self.views.view(self.operations.last())
+    }
+
+    /// The process resource meter as of its last 1 Hz sample.
+    pub fn resources(&self) -> &ResourceView {
+        self.resources.view()
+    }
+
+    /// Moves whenever a sample changed [`Self::resources`].
+    pub fn resource_generation(&self) -> u64 {
+        self.resources.generation()
     }
 
     /// Open an operation for a coordinator in this crate (scripts).
@@ -724,33 +756,89 @@ impl<Io> OperatorSession<Io> {
 
     /// Advance removals, reap finished workers, resolve script Start/Stop
     /// for every slot (an offline or queued slot has no observe of its own),
-    /// refresh status rows, record transitions and settle operations. Call
-    /// once per UI frame or headless tick.
+    /// refresh status rows, record transitions, settle operations and
+    /// refresh the projections ([`Self::fleet_view`]) and, once a second,
+    /// the resource meter. Call once per UI frame or headless tick.
     pub fn poll(&mut self) {
         self.poll_at(Instant::now());
     }
 
     pub fn poll_at(&mut self, now: Instant) {
         self.advance_removals(now);
-        self.poll_host();
+        self.poll_host_at(now);
     }
 
     /// Second half of [`Self::poll`]: resolve script Start/Stop, refresh
-    /// rows and transitions, settle operations. Front ends that must run
-    /// their own work between the phases call the halves directly.
+    /// rows and transitions, settle operations, then the projections and
+    /// the meter. Front ends that must run their own work between the
+    /// phases call the halves directly.
     pub fn poll_host(&mut self) {
+        self.poll_host_at(Instant::now());
+    }
+
+    fn poll_host_at(&mut self, now: Instant) {
         self.transitions.clear();
+        self.op_changes.clear();
         self.take_writes();
-        let Some(play) = self.play.as_ref() else {
+        // Commands dispatched since the last poll come before the status
+        // changes they caused; settlements follow them.
+        self.log_operations();
+        if let Some(play) = self.play.as_ref() {
+            play.pump_script_lifecycles();
+            play.statuses_into(&mut self.polled);
+            self.poll_starts();
+            record_transitions(&self.statuses, &self.polled, &mut self.transitions);
+            std::mem::swap(&mut self.statuses, &mut self.polled);
+            self.log_poll();
+            self.settle_operations();
+            self.log_operations();
+        }
+        self.refresh_views();
+        self.resources
+            .poll(now, self.play.as_ref(), self.selected.as_deref());
+    }
+
+    /// Move the operation outcomes recorded since the last take onto each
+    /// slot's log (`op#<id> <action> <outcome>`) and keep them for the
+    /// rows.
+    fn log_operations(&mut self) {
+        let start = self.op_changes.len();
+        self.operations.append_changes(&mut self.op_changes);
+        if self.op_changes.len() == start {
             return;
+        }
+        let log = crate::log::global();
+        for change in self.op_changes[start..]
+            .iter()
+            .filter(|c| crate::views::tracked(c))
+        {
+            self.op_line.clear();
+            let _ = write_op(&mut self.op_line, change.id, change.action, &change.outcome);
+            let (source, level) = crate::views::log_class(change);
+            log.slot_line(&change.slot, source, level, &self.op_line);
+        }
+    }
+
+    fn refresh_views(&mut self) {
+        let selected = self.selected.as_deref();
+        let card = selected
+            .and_then(|name| self.vault.as_ref()?.get(name))
+            .and_then(|profile| profile.settings.script_assignment.as_ref())
+            .map(|assignment| {
+                if assignment.display_name.is_empty() {
+                    assignment.identity.as_str()
+                } else {
+                    assignment.display_name.as_str()
+                }
+            });
+        let input = Inputs {
+            members: self.fleet.members(),
+            selected,
+            statuses: &self.statuses,
+            play: self.play.as_ref(),
+            card,
         };
-        play.pump_script_lifecycles();
-        play.statuses_into(&mut self.polled);
-        self.poll_starts();
-        record_transitions(&self.statuses, &self.polled, &mut self.transitions);
-        std::mem::swap(&mut self.statuses, &mut self.polled);
-        self.log_poll();
-        self.settle_operations();
+        self.views.refresh(&input, &self.op_changes);
     }
 
     /// Move this poll's transitions and every slot's staged script lines
@@ -1417,6 +1505,18 @@ impl<Io> OperatorSession<Io> {
         self.bypass_asset_startup = on;
     }
 
+    /// Fixture seam: the meter reads its process counters from `probe`
+    /// (a failing, unsupported or counting probe) instead of the OS.
+    pub fn set_resource_probe(&mut self, probe: fn() -> crate::resources::ProcessProbe) {
+        self.resources = Resources::with_probe(probe);
+    }
+
+    /// Rows re-derived since the session started (their facts changed).
+    #[cfg(test)]
+    pub(crate) fn rows_rebuilt(&self) -> u64 {
+        self.views.rebuilt
+    }
+
     /// Direct vault access for fixture setup. Settles queued writes first
     /// and lets the next write snapshot whatever the fixture persisted.
     pub fn vault_mut(&mut self) -> Option<&mut Vault> {
@@ -1469,9 +1569,14 @@ fn record_transitions(
             transition,
         })
     };
-    for s in current {
+    for (index, s) in current.iter().enumerate() {
         let name = s.username.as_str();
-        match previous.iter().find(|p| p.username == s.username) {
+        // Rows keep their order between polls: check the same index first.
+        let before = previous
+            .get(index)
+            .filter(|p| p.username == s.username)
+            .or_else(|| previous.iter().find(|p| p.username == s.username));
+        match before {
             None => {
                 push(name, Transition::SlotUp);
                 if let Some(e) = &s.error {

@@ -11,6 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
+use frontend_core::views::run_state_label;
 use script::{JsCard, RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
 
 /// The script button labels, left to right (Pause slot is dynamic — see
@@ -81,18 +82,6 @@ pub fn pause_button_label(state: RunState) -> &'static str {
         "Resume"
     } else {
         "Pause"
-    }
-}
-
-/// The lifecycle text for a [`RunState`].
-pub fn run_state_text(state: RunState) -> &'static str {
-    match state {
-        RunState::Idle => "idle",
-        RunState::Starting => "starting",
-        RunState::Running => "running",
-        RunState::Paused => "paused",
-        RunState::Stopping => "stopping",
-        RunState::Error => "error",
     }
 }
 
@@ -480,7 +469,7 @@ impl Widget for ScriptPane<'_> {
         let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(area);
         block.render(area, buf);
-        let state = run_state_text(self.state);
+        let state = run_state_label(self.state);
         let sel = self.sel.map(|s| s.label()).unwrap_or_else(|| "—".into());
         let mut buttons = String::new();
         for label in self.main_buttons() {
@@ -542,7 +531,7 @@ mod tests {
 
     use super::{
         browse_lines, card_category, card_detail_lines, categories_present, resolve_category_order,
-        run_state_text, BrowseCard, BrowseLine, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
+        BrowseCard, BrowseLine, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
     };
 
     fn sample_file_card() -> BrowseCard {
@@ -622,7 +611,6 @@ mod tests {
         );
         assert_eq!(slot.state(), script::RunState::Idle, "state unchanged");
         assert!(!slot.want_run, "want_run unchanged");
-        assert_eq!(run_state_text(slot.state()), "idle");
     }
 
     /// The bulk row under the buttons: Reload / Start all / Stop all after

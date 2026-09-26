@@ -567,9 +567,12 @@ fn a_poll_moves_transitions_onto_each_slots_log() {
         rows[1].error = Some("code 3: invalid username or password".into());
     }
     s.poll();
+    // The Load each member got is logged (with its operation id) before
+    // the status changes it caused.
     assert_eq!(
         slot_log("logpoll-alice"),
         [
+            (Source::Host, Level::Info, "op#1 Load completed".to_string()),
             (Source::Host, Level::Info, "slot up".to_string()),
             (Source::Login, Level::Info, "ingame".to_string()),
             (Source::Host, Level::Info, "scene 2".to_string()),
@@ -578,6 +581,7 @@ fn a_poll_moves_transitions_onto_each_slots_log() {
     assert_eq!(
         slot_log("logpoll-bob"),
         [
+            (Source::Host, Level::Info, "op#2 Load completed".to_string()),
             (Source::Host, Level::Info, "slot up".to_string()),
             (
                 Source::Login,

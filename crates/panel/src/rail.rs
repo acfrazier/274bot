@@ -1,5 +1,7 @@
-//! Sidecar rail chrome: window geometry, the tile size, and the traffic
-//! light that colours each member's cap dot.
+//! Sidecar rail chrome: window geometry, the tile size, and the colour of
+//! each member's status dot (its [`Light`] comes from the shared fleet row).
+
+use frontend_core::Light;
 
 /// Width of the MultiBox sidecar rail (rs2b0t's 264px strip).
 pub const RAIL_W: f32 = 264.0;
@@ -51,64 +53,14 @@ pub const FOLD_GLYPH: &str = "\u{2582}";
 /// Unfold the rail blit (raise the head).
 pub const UNFOLD_GLYPH: &str = "\u{2585}";
 
-/// Cap dot state: error red wins, then disconnected grey, then running
-/// green, else connected-idle yellow. A FIFO-queued or preparing slot is
-/// disconnected and grey; an authenticated slot stays yellow while its
-/// scene is still loading.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Light {
-    /// Unknown / logged out / reconnecting — disconnected and no error.
-    Grey,
-    /// Login or runtime error.
-    Red,
-    /// Connected but not running a script or nav task. This includes scene
-    /// loading plus paused/stopping scripts and the run orb.
-    Yellow,
-    /// Connected with a Running script or queued nav task.
-    Green,
-}
-
-impl Light {
-    /// The cap dot's fill color (amber CRT palette).
-    pub fn rgb(&self) -> [f32; 4] {
-        match self {
-            Light::Grey => crate::theme::TEXT_DIM,
-            Light::Red => crate::theme::ERROR,
-            Light::Yellow => crate::theme::ACCENT,
-            Light::Green => crate::theme::GREEN,
-        }
+/// The cap dot's fill colour for a row's light (amber CRT palette).
+pub fn light_rgb(light: Light) -> [f32; 4] {
+    match light {
+        Light::Grey => crate::theme::TEXT_DIM,
+        Light::Red => crate::theme::ERROR,
+        Light::Yellow => crate::theme::ACCENT,
+        Light::Green => crate::theme::GREEN,
     }
-
-    /// Short status label for the cap head title (`"{name}: {brief}"`).
-    pub fn brief(&self) -> &'static str {
-        match self {
-            Light::Grey => "logged out",
-            Light::Red => "error",
-            Light::Yellow => "idle",
-            Light::Green => "running",
-        }
-    }
-}
-
-/// The cap head title: member name plus a brief status. A non-error member
-/// that is not game-ready names the login step it is in, independently of
-/// whether its authenticated connection makes the traffic light yellow.
-pub fn cap_title(name: &str, light: Light, status: Option<&host_play::SlotStatus>) -> String {
-    use host_play::StartupPhase;
-    let step = status
-        .filter(|s| light != Light::Red && !s.ingame)
-        .and_then(|s| match s.startup_phase {
-            StartupPhase::Preparing => Some("starting".to_string()),
-            StartupPhase::Queueing
-                if s.queue_position >= 1 && s.queue_position <= s.queue_total =>
-            {
-                Some(format!("queued {}/{}", s.queue_position, s.queue_total))
-            }
-            StartupPhase::Connecting => Some("logging in".to_string()),
-            StartupPhase::LoadingScene => Some("loading".to_string()),
-            _ => None,
-        });
-    format!("{name}: {}", step.as_deref().unwrap_or(light.brief()))
 }
 
 /// Whether this rail/grid tile shows its blit. Sidecar + `only_selected` stays
@@ -137,26 +89,11 @@ pub fn rail_preview_open(
         .unwrap_or(grid || focused != Some(name))
 }
 
-/// Map a slot's status to its tile's traffic light: error red wins, then
-/// disconnected → grey, then running → green, else connected-idle yellow.
-pub fn traffic_light(connected: bool, error: bool, running: bool) -> Light {
-    if error {
-        Light::Red
-    } else if !connected {
-        Light::Grey
-    } else if running {
-        Light::Green
-    } else {
-        Light::Yellow
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        cap_title, os_window_size, rail_preview_open, rail_split_ratio, traffic_light, Light,
-        BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, STATUS_GLYPH, TILE_H,
-        TILE_W, UNFOLD_GLYPH,
+        os_window_size, rail_preview_open, rail_split_ratio, BASE_WINDOW_H, BASE_WINDOW_W,
+        FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, STATUS_GLYPH, TILE_H, TILE_W, UNFOLD_GLYPH,
     };
 
     #[test]
@@ -275,107 +212,6 @@ mod tests {
             super::next_os_window_size(stretched, false, false),
             stretched,
             "already-closed must not keep subtracting RAIL_W every frame"
-        );
-    }
-
-    #[test]
-    fn traffic_light_maps_all_four_states() {
-        // Unknown / logged out: disconnected, no error.
-        assert_eq!(traffic_light(false, false, false), Light::Grey);
-        // A FIFO-queued login slot is disconnected, so it is grey, not running.
-        assert_eq!(traffic_light(false, false, true), Light::Grey);
-        // Error red wins over connection and running.
-        assert_eq!(traffic_light(false, true, false), Light::Red);
-        assert_eq!(traffic_light(true, true, true), Light::Red);
-        assert_eq!(traffic_light(false, true, true), Light::Red);
-        // Idle yellow: connected and nothing running.
-        assert_eq!(traffic_light(true, false, false), Light::Yellow);
-        // Running green: connected and (script running or nav queued).
-        assert_eq!(traffic_light(true, false, true), Light::Green);
-    }
-
-    #[test]
-    fn idle_is_not_running() {
-        // Paused / Stopping scripts and the run orb are not running.
-        assert_ne!(
-            traffic_light(true, false, false),
-            traffic_light(true, false, true)
-        );
-        // A queued-login (title screen) slot is not running either.
-        assert_eq!(traffic_light(false, false, true), Light::Grey);
-    }
-
-    #[test]
-    fn brief_labels_each_state() {
-        assert_eq!(Light::Grey.brief(), "logged out");
-        assert_eq!(Light::Red.brief(), "error");
-        assert_eq!(Light::Yellow.brief(), "idle");
-        assert_eq!(Light::Green.brief(), "running");
-    }
-
-    #[test]
-    fn cap_title_renders_name_and_brief() {
-        assert_eq!(cap_title("bob", Light::Grey, None), "bob: logged out");
-        assert_eq!(cap_title("bob", Light::Red, None), "bob: error");
-        assert_eq!(cap_title("bob", Light::Yellow, None), "bob: idle");
-        assert_eq!(cap_title("bob", Light::Green, None), "bob: running");
-    }
-
-    #[test]
-    fn cap_names_the_login_step_until_ready() {
-        use host_play::{SlotStatus, StartupPhase};
-        let at = |phase, queue: (i32, i32)| SlotStatus {
-            username: "bob".into(),
-            startup_phase: phase,
-            queue_position: queue.0,
-            queue_total: queue.1,
-            ..Default::default()
-        };
-        let title = |s: &SlotStatus| cap_title("bob", Light::Grey, Some(s));
-        assert_eq!(
-            title(&at(StartupPhase::Preparing, (-1, -1))),
-            "bob: starting"
-        );
-        assert_eq!(
-            title(&at(StartupPhase::Queueing, (2, 5))),
-            "bob: queued 2/5"
-        );
-        assert_eq!(
-            title(&at(StartupPhase::Queueing, (-1, -1))),
-            "bob: logged out",
-            "a parked title-screen slot with no queue place is logged out"
-        );
-        assert_eq!(
-            title(&at(StartupPhase::Connecting, (-1, -1))),
-            "bob: logging in"
-        );
-        assert_eq!(
-            title(&at(StartupPhase::LoadingScene, (-1, -1))),
-            "bob: loading"
-        );
-        let connected_loading = SlotStatus {
-            connected: true,
-            ..at(StartupPhase::LoadingScene, (-1, -1))
-        };
-        let connected_light = traffic_light(
-            connected_loading.connected,
-            connected_loading.error.is_some(),
-            false,
-        );
-        assert_eq!(connected_light, Light::Yellow);
-        assert_eq!(
-            cap_title("bob", connected_light, Some(&connected_loading)),
-            "bob: loading",
-            "connection color must not hide the lifecycle phase"
-        );
-        assert_eq!(
-            cap_title(
-                "bob",
-                Light::Red,
-                Some(&at(StartupPhase::Connecting, (-1, -1)))
-            ),
-            "bob: error",
-            "an error outranks the login step"
         );
     }
 

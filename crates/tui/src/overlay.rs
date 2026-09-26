@@ -151,7 +151,7 @@ impl Confirm {
                 "The vault profile is kept: this is not Delete profile.".into(),
             ],
             ConfirmKind::Quit => {
-                let counts = crate::fleet::fleet_counts(&app.names, &app.statuses);
+                let counts = app.counts;
                 vec![
                     "Quit tui-play?".into(),
                     format!(

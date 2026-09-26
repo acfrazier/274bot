@@ -731,18 +731,6 @@ pub fn script_stop_enabled(state: script::RunState) -> bool {
     script_active(state) && state != script::RunState::Stopping
 }
 
-/// The script status-row text for a lifecycle state.
-pub fn script_status_text(state: script::RunState) -> &'static str {
-    match state {
-        script::RunState::Idle => "idle",
-        script::RunState::Starting => "starting",
-        script::RunState::Running => "running",
-        script::RunState::Paused => "paused",
-        script::RunState::Stopping => "stopping",
-        script::RunState::Error => "error",
-    }
-}
-
 /// The loaded scene's tile count per side (the client's `BUILD_AREA_SIZE`):
 /// the collision paint only covers the region the client has built,
 /// `[base_x, base_x+104) × [base_z, base_z+104)` in world tiles.
@@ -4578,17 +4566,11 @@ impl Session {
             .and_then(SlotStatus::ready_tile)
     }
 
-    /// The named slot's valid login-FIFO place `(position, total)` while
-    /// it waits for a permit, else `None`. A grant, missing row, or malformed
-    /// producer tuple clears that slot's overlay.
-    pub fn queue_for(&self, name: &str) -> Option<(i32, i32)> {
-        self.statuses
-            .iter()
-            .find(|s| s.username == name)
-            .filter(|s| {
-                s.queue_position >= 1 && s.queue_total >= 1 && s.queue_position <= s.queue_total
-            })
-            .map(|s| (s.queue_position, s.queue_total))
+    /// The named slot's login-queue place from the shared fleet row (a
+    /// member's, or the selected slot's), else `None`: a grant, a missing
+    /// row or an invalid published place clears that slot's card.
+    pub fn queue_for(&self, name: &str) -> Option<frontend_core::QueuePlace> {
+        self.core.fleet_view().row(name).and_then(|row| row.queue)
     }
 
     /// Whether the focused slot has an authenticated client session. Control

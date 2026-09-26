@@ -8,7 +8,7 @@ use crate::commands::Command;
 use crate::help::help_rows;
 use crate::layout::{Pane, Screen};
 use crate::overlay::{ConfirmKind, Modal};
-use crate::test_support::{ch, ctrl, draw, find, fleet_app, key, mouse, ready, right_click, text};
+use crate::test_support::{ch, ctrl, draw, find, fleet_app, key, mouse, right_click, text};
 
 fn names(app: &TuiApp) -> Vec<&str> {
     app.names.iter().map(String::as_str).collect()
@@ -469,21 +469,6 @@ fn switching_tabs_and_selecting_is_always_safe() {
         "{seen:?}"
     );
     assert_eq!(names(&app), ["alice", "bob"]);
-}
-
-/// A member that has not published a status yet reads "offline"; the
-/// header counts only what the rows say.
-#[test]
-fn header_counts_follow_the_rows() {
-    let mut app = fleet_app(&["alice", "bob", "carol"]);
-    app.statuses = vec![ready("alice", 2)];
-    let rows = draw(&mut app, 120, 40);
-    assert!(
-        rows[0].contains("loaded 3 ready 1 queued 0 failed 0"),
-        "{}",
-        rows[0]
-    );
-    assert!(text(&rows).contains("offline"));
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

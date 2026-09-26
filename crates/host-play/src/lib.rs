@@ -145,11 +145,9 @@ pub use play_status::{
 use play_wires::dispatch_wires;
 pub use play_wires::WireCmd;
 pub use resource_view::{
-    background_ack_text, background_bot_count, background_bots_ack_error, background_bots_acked,
-    clear_background_bots_ack_error, cpu_from_delta, format_background, format_bots, format_rss,
-    format_rss_caption, metric_text, panel_ui_path, panel_ui_value, persist_background_bots_ack,
-    persist_panel_ui_value, traffic_from_delta, traffic_from_samples, LiveSlot, Metric,
-    ResourceSampler, ResourceView,
+    background_bot_count, background_bots_ack_error, background_bots_acked,
+    clear_background_bots_ack_error, panel_ui_path, panel_ui_value, persist_background_bots_ack,
+    persist_panel_ui_value, LiveSlot,
 };
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};

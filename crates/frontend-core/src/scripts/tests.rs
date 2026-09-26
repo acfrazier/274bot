@@ -538,3 +538,79 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
         f.core.play().unwrap().script_stop("alice");
     }
 }
+
+/// Each Start's operation id reaches its member's fleet row and slot log
+/// from acceptance to settlement; a failed setup stays on the row as that
+/// operation's failure.
+#[test]
+fn a_start_carries_its_operation_to_the_row_and_the_log() {
+    let mut f = fixture("start-op-ids", &["opid-alice", "opid-bob"]);
+    let good = f.card("good.ts", LOOPING);
+    let bad = f.card(
+        "bad.ts",
+        "export const apiVersion = 2;\nthrow new Error('setup-fails');\nexport function tick(api) {}\n",
+    );
+    let sel = |card: &script::JsCard| script::ScriptSel::Loaded(card.source, card.identity_id());
+    f.scripts.set_pending_browse("opid-alice", sel(&good));
+    f.scripts.set_pending_browse("opid-bob", sel(&bad));
+    let op_of = |f: &Fixture, name: &str| {
+        f.core
+            .fleet_view()
+            .row(name)
+            .and_then(|row| row.last_op.clone())
+            .expect(name)
+    };
+
+    f.scripts
+        .start_selected(&mut f.core, "opid-alice", None, None)
+        .unwrap();
+    f.scripts
+        .start_selected(&mut f.core, "opid-bob", None, None)
+        .unwrap();
+    f.core.poll();
+    let accepted = op_of(&f, "opid-alice");
+    // Accepted (it may already have settled if the isolate was quick).
+    assert_eq!(accepted.action, crate::ActionKind::ScriptStart);
+    f.settle();
+    f.core.poll();
+
+    let alice = op_of(&f, "opid-alice");
+    assert_eq!(
+        (alice.id, &alice.outcome),
+        (accepted.id, &Outcome::Completed)
+    );
+    let bob = op_of(&f, "opid-bob");
+    assert!(
+        matches!(&bob.outcome, Outcome::Failed(reason) if reason.contains("setup-fails")),
+        "{bob:?}"
+    );
+    let failed = f.core.fleet_view().row("opid-bob").unwrap().has_failure();
+    assert!(failed, "a failed Start is a visible row failure");
+
+    let lines = |slot: &str| {
+        let mut view = crate::log::LogView::new(crate::log::LogScope::Slot(slot.into()));
+        crate::log::global().refresh(&mut view);
+        view.rows()
+            .iter()
+            .map(|e| (e.level, e.message.to_string()))
+            .collect::<Vec<_>>()
+    };
+    let alice_log = lines("opid-alice");
+    let at = |text: String| alice_log.iter().position(|(_, line)| *line == text);
+    let (start, done) = (
+        at(format!("op#{} Start accepted", alice.id.0)),
+        at(format!("op#{} Start completed", alice.id.0)),
+    );
+    assert!(start.is_some() && start < done, "{alice_log:?}");
+    let prefix = format!("op#{} Start failed: ", bob.id.0);
+    assert!(
+        lines("opid-bob").iter().any(|(level, line)| {
+            *level == api::hostlog::Level::Error
+                && line.starts_with(&prefix)
+                && line.contains("setup-fails")
+        }),
+        "{:?}",
+        lines("opid-bob")
+    );
+    f.core.play().unwrap().script_stop("opid-alice");
+}

@@ -19,11 +19,10 @@ use crate::grid::grid_cells;
 use crate::overlay::{draw_queue_card_for, PathOverlay};
 use crate::paint::PaintOverlay;
 use crate::picker;
-use crate::queue_card::queue_k_of_n;
 use crate::rail::{
-    cap_title, next_os_window_size, os_window_size, rail_preview_open, rail_split_ratio,
-    traffic_light, Light, BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH,
-    STATUS_GLYPH, TILE_H, TILE_W, UNFOLD_GLYPH,
+    light_rgb, next_os_window_size, os_window_size, rail_preview_open, rail_split_ratio,
+    BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, STATUS_GLYPH, TILE_H, TILE_W,
+    UNFOLD_GLYPH,
 };
 use crate::script_picker::{
     self, card_columns, card_desc_height, card_kind_source, card_rect_activated,
@@ -47,19 +46,18 @@ use host_play::progress::{
 };
 
 use crate::input_capture::{capture_keys, discard_unconsumed_native_capture, stream_capture};
-use crate::resource::{
-    background_ack_text, format_background, format_bots, metric_text, ResourceSampler, ResourceView,
-};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
-    script_pause_enabled, script_status_text, script_stop_enabled, ProfilePreparationCompletion,
-    Session,
+    script_pause_enabled, script_stop_enabled, ProfilePreparationCompletion, Session,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
     integer_ui_scale, native_applet, panel_split_ratio, ACCENT, ACCENT_HOVER, BG, ERROR,
     PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM,
 };
+use frontend_core::resources::{background_ack_text, format_background, format_bots};
+use frontend_core::views::run_state_label;
+use frontend_core::{FleetRow, Phase, ResourceView};
 
 #[path = "live_harness.rs"]
 mod live_harness;
@@ -138,8 +136,12 @@ struct PanelState {
     paint: PaintOverlay,
     /// One cached tile texture per wall member (blitted at TILE_W×TILE_H).
     views: HashMap<String, TileView>,
-    /// Shared 1 Hz process/traffic sampler (rail + main-panel resource section).
-    resource_sampler: ResourceSampler,
+    /// The fleet rows the rail and the grid draw: a copy of the core's
+    /// projection, refreshed only when its rows generation moves.
+    fleet: Vec<FleetRow>,
+    fleet_generation: Option<u64>,
+    /// Last resource sample reported under `BOT_DEBUG`.
+    debug_resources: u64,
     /// Headed `--live` watch (`null_raster`, `stress50`, `stress50_full`,
     /// `script_<name>`) or `--smoke`; `None` interactive.
     live: Option<LiveHarness>,
@@ -526,7 +528,9 @@ impl PanelState {
             overlay: PathOverlay::new(),
             paint: PaintOverlay::new(),
             views: HashMap::new(),
-            resource_sampler: ResourceSampler::default(),
+            fleet: Vec::new(),
+            fleet_generation: None,
+            debug_resources: 0,
             live: None,
             dock_size: None,
             os_window: None,
@@ -536,35 +540,32 @@ impl PanelState {
         }
     }
 
-    /// 1 Hz process + stream-byte sample. The due check does not clone
-    /// statuses; the cached view is borrowed by both panel surfaces.
-    fn sample_resources(&mut self) {
-        let now = Instant::now();
-        if !self.resource_sampler.due(now) {
+    /// Copy the core's fleet rows for the rail and the grid when (and only
+    /// when) they changed; the copy reuses its buffers.
+    fn sync_fleet(&mut self) {
+        let view = self.session.core.fleet_view();
+        if self.fleet_generation != Some(view.rows_generation()) {
+            self.fleet_generation = Some(view.rows_generation());
+            view.copy_rows_into(&mut self.fleet);
+        }
+    }
+
+    /// Under `BOT_DEBUG`, report each new resource sample (1 Hz) with the
+    /// game image's present counters.
+    fn debug_resources(&mut self) {
+        let generation = self.session.core.resource_generation();
+        if !debug_enabled() || generation == self.debug_resources {
             return;
         }
-        let focused = self.session.focused_name();
-        match self.session.core.play() {
-            Some(play) => self
-                .resource_sampler
-                .sample_play(now, play, focused.as_deref()),
-            None => self
-                .resource_sampler
-                .sample(now, focused.as_deref(), std::iter::empty()),
-        }
-        if debug_enabled() {
+        self.debug_resources = generation;
+        let view = self.session.core.resources();
+        eprintln!("[panel] ram={} bots={}", view.ram.text(), view.bots);
+        if let Some(view) = self.game_view.as_ref() {
+            let s = view.present_stats;
             eprintln!(
-                "[panel] rss={} bots={}",
-                self.resource_sampler.last_rss(),
-                self.resource_sampler.view().bots
+                "[panel] present pixmap={} tex={} bind_noop={} bind_rereg={}",
+                s.pixmap, s.tex, s.bind_noop, s.bind_rereg
             );
-            if let Some(view) = self.game_view.as_ref() {
-                let s = view.present_stats;
-                eprintln!(
-                    "[panel] present pixmap={} tex={} bind_noop={} bind_rereg={}",
-                    s.pixmap, s.tex, s.bind_noop, s.bind_rereg
-                );
-            }
         }
     }
 }
@@ -1187,15 +1188,8 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         state.overlay.frame(ui, queue, min, size);
         // Script-paint overlay: the focused slot's paint renders in an
         // ImGui window over the chatbox rect — never on the game texture.
-        let statuses = state.session.statuses().to_vec();
-        overlay_script_paint(
-            ui,
-            gpu,
-            state,
-            focused_slot(&state.session, &statuses),
-            min,
-            size,
-        );
+        let slot = focused_slot(&state.session, state.session.statuses()).cloned();
+        overlay_script_paint(ui, gpu, state, slot.as_ref(), min, size);
         // Capture: only map/enqueue while on and hovered;
         // capture off skips the coord math entirely (tx is
         // also None).
@@ -1226,13 +1220,14 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
 /// 330px panel collapsed. `only_render_selected` / fold hide the blit
 /// only. Capture reaches the focused cell's body.
 fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
-    let members = state.session.core.members().to_vec();
-    if members.is_empty() {
+    state.sync_fleet();
+    if state.fleet.is_empty() {
         ui.text_disabled("no wall members");
         state.paint.release_canvas(gpu);
         return;
     }
-    let cells = grid_cells(members.len(), avail);
+    let rows = std::mem::take(&mut state.fleet);
+    let cells = grid_cells(rows.len(), avail);
     let (focused, capture) = {
         let focus = state.session.focus.lock().unwrap();
         (focus.focused.clone(), should_capture(&focus))
@@ -1241,26 +1236,22 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     {
         let focus = state.session.focus.lock().unwrap();
         dispose_idle_views(&mut state.views, gpu, |name| {
-            members.iter().any(|m| m == name) && draw_for_slot(&focus, name)
+            rows.iter().any(|row| row.name == name) && draw_for_slot(&focus, name)
         });
     }
-    let statuses = state.session.statuses().to_vec();
-    for (i, name) in members.iter().enumerate() {
-        let [cx, cy, cw, ch] = cells[i];
+    // Only the focused cell paints the script overlay: copy that one row.
+    let focused_slot = focused.as_deref().and_then(|name| {
+        state
+            .session
+            .statuses()
+            .iter()
+            .find(|s| s.username == name)
+            .cloned()
+    });
+    for (row, [cx, cy, cw, ch]) in rows.iter().zip(cells) {
+        let name = &row.name;
         let is_focused = focused.as_deref() == Some(name.as_str());
         ui.set_cursor_pos([cx, cy]);
-        let status = statuses.iter().find(|s| &s.username == name);
-        let running = status.is_some_and(|s| s.walk_x != -1)
-            || state
-                .session
-                .core
-                .play()
-                .is_some_and(|p| p.script_state(name) == script::RunState::Running);
-        let light = traffic_light(
-            status.is_some_and(|s| s.connected),
-            status.is_some_and(|s| s.error.is_some()),
-            running,
-        );
         let preview = rail_preview_open(
             name,
             focused.as_deref(),
@@ -1268,8 +1259,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             true,
             &state.session.ui.rail_preview,
         );
-        let (cap_select, cap_remove, cap_fold) =
-            rail_cap(ui, name, status, light, focused.as_deref(), cw, preview);
+        let (cap_select, cap_remove, cap_fold) = rail_cap(ui, row, focused.as_deref(), cw, preview);
         let mut body_clicked = false;
         if preview {
             let after = ui.cursor_pos();
@@ -1298,13 +1288,13 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                     &capture_keys(ui),
                 );
             }
-            draw_queue_card_for(ui, state.session.queue_for(name), image_min);
+            draw_queue_card_for(ui, row.queue, image_min);
             if is_focused {
                 overlay_script_paint(
                     ui,
                     gpu,
                     state,
-                    statuses.iter().find(|s| s.username == *name),
+                    focused_slot.as_ref(),
                     ui.item_rect_min(),
                     size,
                 );
@@ -1322,16 +1312,12 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             state.session.select(name);
         }
     }
+    state.fleet = rows;
 }
 
 /// Right panel: rs2b0t chrome squished into the 330px strip. Vertical scroll
 /// only — wrap/clip, never a horizontal bar.
-fn panel_window(
-    ui: &Ui,
-    session: &mut Session,
-    progress: Option<StartupProgressView>,
-    resources: &ResourceView,
-) {
+fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgressView>) {
     // The ### suffix preserves the existing docking identity across revisions.
     ui.window(format!("{}###{PANEL_WINDOW}", session.app_title()))
         .flags(WindowFlags::NO_RESIZE | WindowFlags::NO_COLLAPSE)
@@ -1361,7 +1347,7 @@ fn panel_window(
                     "status" => status_section(ui, session),
                     "resource" => {
                         if !session.multibox {
-                            resource_section(ui, session, resources);
+                            resource_section(ui, session);
                         }
                     }
                     "profile" => profile_section(ui, session),
@@ -1457,62 +1443,6 @@ fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText
     }
 }
 
-/// Startup banner text for one slot row. The second flag is whether to append
-/// an elapsed timer (Preparing and in-flight login phases; not errors/latched).
-pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option<(String, bool)> {
-    if status.login_latched && !status.connected && status.worker_terminal.is_none() {
-        return Some(("Logged out — select Log in to reconnect".to_string(), false));
-    }
-    if let Some(error) = status.error.as_deref() {
-        return Some((error.to_string(), false));
-    }
-    let message = match status.startup_phase {
-        host_play::StartupPhase::Preparing => {
-            if status.startup_progress_message.is_empty() {
-                "Preparing client".to_string()
-            } else if let Some(percent) = status.startup_progress_percent {
-                format!("{} — {}%", status.startup_progress_message, percent)
-            } else {
-                status.startup_progress_message.clone()
-            }
-        }
-        host_play::StartupPhase::Queueing => {
-            if status.queue_position > 0 && status.queue_total > 0 {
-                format!(
-                    "Waiting in login queue ({}/{})",
-                    status.queue_position, status.queue_total
-                )
-            } else {
-                "Waiting to connect".to_string()
-            }
-        }
-        host_play::StartupPhase::Connecting => {
-            if status.startup_progress_message.is_empty() {
-                "Logging in".to_string()
-            } else {
-                status.startup_progress_message.clone()
-            }
-        }
-        host_play::StartupPhase::LoadingScene => "Loading scene".to_string(),
-        host_play::StartupPhase::Ready | host_play::StartupPhase::Error => String::new(),
-    };
-    if message.is_empty() {
-        None
-    } else {
-        // A host-published Connecting message is the server's own countdown
-        // (response 21 transfer), so a rising elapsed timer beside it would
-        // contradict it.
-        let show_elapsed = match status.startup_phase {
-            host_play::StartupPhase::Connecting => status.startup_progress_message.is_empty(),
-            host_play::StartupPhase::Preparing
-            | host_play::StartupPhase::Queueing
-            | host_play::StartupPhase::LoadingScene => true,
-            host_play::StartupPhase::Ready | host_play::StartupPhase::Error => false,
-        };
-        Some((message, show_elapsed))
-    }
-}
-
 fn loading_banner(ui: &Ui, phase: ProgressPhase, progress: &ProfileProgress) {
     let text = loading_text(phase, progress);
     ui.text_colored(ACCENT, &text.description);
@@ -1535,24 +1465,37 @@ fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
                 &ProfileProgress::steps(ProfileProgressStage::SelectingServerProfile, 0, 1),
             );
         }
+    } else if let Some(detail) = session.core.fleet_view().detail() {
+        slot_banner(ui, detail);
+    }
+}
+
+/// The selected bot's state line while it is on its way in (with an
+/// elapsed timer when one applies), parked, or failing. Nothing while it is
+/// in game or not started.
+fn slot_banner(ui: &Ui, detail: &frontend_core::SlotDetail) {
+    let phase = detail.row.phase;
+    if matches!(phase, Phase::Ready | Phase::Offline) {
+        return;
+    }
+    let text = sentence_case(&detail.state);
+    if phase.is_error() {
+        ui.text_colored(ERROR, &text);
+    } else if let Some(since) = detail.since {
+        let elapsed = since.elapsed().as_secs_f64();
+        let text = text.trim_end_matches('…');
+        ui.text_colored(ACCENT, format!("{text} — {elapsed:.1}s"));
     } else {
-        let statuses = session.statuses();
-        let status = statuses
-            .iter()
-            .find(|status| session.focused_name().as_deref() == Some(status.username.as_str()))
-            .or_else(|| statuses.first());
-        if let Some(status) = status {
-            if let Some((message, show_elapsed)) = slot_startup_banner_line(status) {
-                if status.error.is_some() {
-                    ui.text_colored(ERROR, &message);
-                } else if show_elapsed {
-                    let elapsed = status.startup_phase_started.elapsed().as_secs_f64();
-                    ui.text_colored(ACCENT, format!("{message} — {elapsed:.1}s"));
-                } else {
-                    ui.text_colored(ACCENT, &message);
-                }
-            }
-        }
+        ui.text_colored(ACCENT, &text);
+    }
+}
+
+/// `text` with its first letter upper-cased (banner headline style).
+fn sentence_case(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 
@@ -1632,9 +1575,9 @@ fn draw_resource_rows(ui: &Ui, view: &ResourceView, show_background: bool) {
     if show_background && view.background > 0 {
         kv_row(ui, "background", &format_background(view.background));
     }
-    kv_row(ui, "cpu", metric_text(&view.cpu));
-    kv_row(ui, "ram", metric_text(&view.ram));
-    kv_row(ui, "traffic", metric_text(&view.traffic));
+    kv_row(ui, "cpu", view.cpu.text());
+    kv_row(ui, "ram", view.ram.text());
+    kv_row(ui, "traffic", view.traffic.text());
 }
 
 /// Same-line gap that matches [`equal_button_width`]'s `BUTTON_GAP`.
@@ -2078,7 +2021,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             session.script_stop();
         }
     }
-    let status = script_status_text(state);
+    let status = run_state_label(state);
     match session.focused_script_last_error() {
         Some(err) => kv_row(ui, "status", &format!("{status}: {err}")),
         None => kv_row(ui, "status", status),
@@ -3173,134 +3116,60 @@ fn edit_parameters_enabled() -> bool {
     true
 }
 
-/// `random` status-row value: `dialog: mysterious old man`, plus `(hold)`
-/// while the slot freezes on the event and `(off)` when the profile toggle
-/// is off (toggle-off still detects + publishes). `None` when nothing is
-/// detected — the caller skips the row then.
-fn random_status_text(r: &host::RandomStatus) -> Option<String> {
-    let kind = r.kind?;
-    let mut text = format!(
-        "{}: {}",
-        random_kind_name(kind),
-        r.name.as_deref().unwrap_or("?")
-    );
-    if r.hold {
-        text.push_str(" (hold)");
-    }
-    if !r.toggle {
-        text.push_str(" (off)");
-    }
-    Some(text)
-}
-
-/// Status-row names for the guardian kinds (kebab-case, like the spec's
-/// `evade: swarm` / `lost-tool` rows).
-fn random_kind_name(kind: api::RandomKind) -> &'static str {
-    use api::RandomKind::*;
-    match kind {
-        Dialog => "dialog",
-        Pick => "pick",
-        Evade => "evade",
-        Maze => "maze",
-        Mime => "mime",
-        Box => "box",
-        Lamp => "lamp",
-        Hazard => "hazard",
-        LostTool => "lost-tool",
-        LostGear => "lost-gear",
-    }
-}
-
-/// status: rs2b0t key/value rows (state, player, tile, modals, random),
-/// wrapped.
+/// status: the selected bot's rows from the shared detail projection
+/// (state, player, world, tile, walk, queue, modals, welcome, random, the
+/// last login error while retrying, the newest operation, mem), wrapped.
 fn status_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "status") {
         return;
     }
-    let statuses = session.statuses();
-    if statuses.is_empty() {
-        kv_row(ui, "state", "no slots");
-        kv_row(ui, "player", "—");
-        kv_row(ui, "tile", "—");
-        kv_row(ui, "walk", &session.walk_status_text());
-        kv_row(ui, "queue", "—");
-        kv_row(ui, "modals", "—");
-        kv_row(
-            ui,
-            "mem",
-            Session::mem_status_text(session.focused_lowmem()),
-        );
+    let walk = session.walk_status_text();
+    let mem = Session::mem_status_text(session.focused_lowmem());
+    let Some(d) = session.core.fleet_view().detail() else {
+        kv_row(ui, "state", "no bot selected");
+        kv_row(ui, "walk", &walk);
+        kv_row(ui, "mem", mem);
         return;
-    }
-    // Focused slot if present, else the first runner. One bot's rows, not a
-    // concatenated line that overflows the 330px strip.
-    let focused = session.focused_name();
-    let s = statuses
-        .iter()
-        .find(|s| focused.as_deref() == Some(s.username.as_str()))
-        .unwrap_or(&statuses[0]);
-    let state = if s.ingame {
-        format!("ingame scene {}", s.scene_state)
-    } else if let Some(err) = &s.error {
-        format!("login {err}")
-    } else if !s.startup_progress_message.is_empty() || s.startup_progress_percent.is_some() {
-        if let Some(percent) = s.startup_progress_percent {
-            format!(
-                "{} ({}%)",
-                if s.startup_progress_message.is_empty() {
-                    "starting client"
-                } else {
-                    s.startup_progress_message.as_str()
-                },
-                percent
-            )
-        } else {
-            s.startup_progress_message.clone()
-        }
-    } else if s.startup_phase == host_play::StartupPhase::Connecting {
-        "logging in…".to_string()
-    } else if s.startup_phase == host_play::StartupPhase::LoadingScene {
-        "loading scene…".to_string()
-    } else if s.login_latched {
-        "logged out".to_string()
-    } else {
-        "waiting".to_string()
     };
-    let player = if s.player.is_empty() {
-        "?"
-    } else {
-        s.player.as_str()
-    };
-    kv_row(ui, "state", &state);
-    kv_row(ui, "player", player);
-    if let Some(world) = s.world {
-        kv_row(ui, "world", &format!("w{world}"));
-    }
-    kv_row(ui, "tile", &format!("{} {}", s.tile_x, s.tile_z));
-    kv_row(ui, "walk", &session.walk_status_text());
-    let queue = queue_k_of_n(s.queue_position, s.queue_total).unwrap_or_else(|| "—".into());
-    kv_row(ui, "queue", &queue);
-    kv_row(ui, "modals", &format!("{}", s.main_modal_id));
-    if let Some(failure) = s.welcome_failure.as_deref() {
-        kv_row(ui, "welcome", failure);
-    } else if s.welcome_hold {
-        kv_row(ui, "welcome", "holding");
-    }
-    if let Some(random) = random_status_text(&s.random) {
-        kv_row(ui, "random", &random);
-    }
+    kv_row(ui, "state", &d.state);
     kv_row(
         ui,
-        "mem",
-        Session::mem_status_text(session.focused_lowmem()),
+        "player",
+        if d.player.is_empty() { "?" } else { &d.player },
     );
+    if let Some(world) = d.row.world {
+        kv_row(ui, "world", &format!("w{world}"));
+    }
+    kv_row(ui, "tile", &format!("{} {}", d.tile.0, d.tile.1));
+    kv_row(ui, "walk", &walk);
+    let queue = d
+        .row
+        .queue
+        .map_or_else(|| "—".to_string(), |q| q.to_string());
+    kv_row(ui, "queue", &queue);
+    kv_row(ui, "modals", &d.modal.to_string());
+    if let Some(welcome) = d.welcome.as_deref() {
+        kv_row(ui, "welcome", welcome);
+    }
+    if let Some(random) = d.random.as_deref() {
+        kv_row(ui, "random", random);
+    }
+    if !d.row.phase.is_error() {
+        if let Some(error) = d.row.error.as_deref() {
+            kv_row(ui, "last error", error);
+        }
+    }
+    if let Some(op) = d.row.last_op.as_ref() {
+        kv_row(ui, "operation", &op.to_string());
+    }
+    kv_row(ui, "mem", mem);
 }
 
-fn resource_section(ui: &Ui, session: &mut Session, view: &ResourceView) {
+fn resource_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "resource") {
         return;
     }
-    draw_resource_rows(ui, view, true);
+    draw_resource_rows(ui, session.core.resources(), true);
 }
 
 /// log: the shared structured log (see [`crate::log_pane`]).
@@ -3606,7 +3475,7 @@ fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         rail_bulk_row(ui, state);
         rail_tiles(ui, gpu, state);
         add_bot_button(ui, state);
-        resource_card(ui, state.resource_sampler.view());
+        resource_card(ui, state.session.core.resources());
     });
     if !open {
         state.session.set_multibox(false);
@@ -3777,7 +3646,7 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
     }
 }
 
-fn background_ack_window(ui: &Ui, session: &mut Session, view: &ResourceView) {
+fn background_ack_window(ui: &Ui, session: &mut Session) {
     if session.background_ack_open && session.background_bot_count() == 0 {
         session.dismiss_background_ack();
     }
@@ -3786,7 +3655,7 @@ fn background_ack_window(ui: &Ui, session: &mut Session, view: &ResourceView) {
     }
     let mut open = true;
     let others = session.background_bot_count();
-    let body = background_ack_text(others, view);
+    let body = background_ack_text(others, session.core.resources());
     ui.window("Other profiles keep running")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
@@ -3814,28 +3683,17 @@ fn background_ack_window(ui: &Ui, session: &mut Session, view: &ResourceView) {
 /// (a sibling button, never part of the name click) removes it.
 fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
-    let members = state.session.core.members().to_vec();
-    let statuses = state.session.statuses().to_vec();
+    state.sync_fleet();
+    let rows = std::mem::take(&mut state.fleet);
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     {
         let focus = state.session.focus.lock().unwrap();
         dispose_idle_views(&mut state.views, gpu, |name| {
-            members.iter().any(|m| m == name) && draw_for_slot(&focus, name)
+            rows.iter().any(|row| row.name == name) && draw_for_slot(&focus, name)
         });
     }
-    for name in &members {
-        let status = statuses.iter().find(|s| &s.username == name);
-        let running = status.is_some_and(|s| s.walk_x != -1)
-            || state
-                .session
-                .core
-                .play()
-                .is_some_and(|p| p.script_state(name) == script::RunState::Running);
-        let light = traffic_light(
-            status.is_some_and(|s| s.connected),
-            status.is_some_and(|s| s.error.is_some()),
-            running,
-        );
+    for row in &rows {
+        let name = &row.name;
         let (focused, draw) = {
             let focus = state.session.focus.lock().unwrap();
             (focus.focused.clone(), draw_for_slot(&focus, name))
@@ -3849,7 +3707,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             &state.session.ui.rail_preview,
         );
         let (cap_select, cap_remove, cap_fold) =
-            rail_cap(ui, name, status, light, focused.as_deref(), avail, preview);
+            rail_cap(ui, row, focused.as_deref(), avail, preview);
         let body_clicked = if preview {
             rail_body(ui, gpu, state, name, draw)
         } else {
@@ -3866,36 +3724,38 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         }
         ui.spacing();
     }
+    state.fleet = rows;
 }
 
-/// Cap row: the active public-world number (or a traffic-light dot for local
-/// profiles), the member's name plus brief status (click selects), and a small
-/// red ✗ (rail remove: logout arm then `stop_slot`, never `vault`). `width` is
-/// the strip the row must fit (rail avail or grid cell width).
+/// Cap row: the active public-world number (or a status dot for local
+/// profiles) in the row's light, the member's name plus its brief status
+/// (click selects), and a small red ✗ (rail remove: logout arm then
+/// `stop_slot`, never `vault`). `width` is the strip the row must fit (rail
+/// avail or grid cell width).
 fn rail_cap(
     ui: &Ui,
-    name: &str,
-    status: Option<&host_play::SlotStatus>,
-    light: Light,
+    row: &FleetRow,
     focused: Option<&str>,
     width: f32,
     preview: bool,
 ) -> (bool, bool, bool) {
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
+    let name = row.name.as_str();
+    let colour = light_rgb(row.light());
     let marker_x = ui.cursor_pos_x();
-    match status.and_then(|s| s.world) {
+    match row.world {
         Some(number) => {
-            world_marker(ui, number, light, DOT_W);
-            ui.set_item_tooltip(format!("w{number} · {}", light.brief()));
+            world_marker(ui, number, colour, DOT_W);
+            ui.set_item_tooltip(format!("w{number} · {}", row.brief));
         }
-        None => ui.text_colored(light.rgb(), STATUS_GLYPH),
+        None => ui.text_colored(colour, STATUS_GLYPH),
     }
     ui.same_line_with_pos(marker_x + DOT_W + BUTTON_GAP);
     let selected = focused == Some(name);
     let name_w = (width - BTN * 2.0 - DOT_W - BUTTON_GAP * 3.0).max(10.0);
     let clicked = ui
-        .selectable_config(cap_title(name, light, status))
+        .selectable_config(format!("{name}: {}", row.brief))
         .selected(selected)
         .size([name_w, 0.0])
         .build();
@@ -3920,7 +3780,7 @@ fn rail_cap(
 /// knocked out in the background colour. Drawn as geometry so the digit is
 /// the rail's own font and the disc size does not depend on glyph metrics.
 /// Occupies one text line, like the status glyph it replaces.
-fn world_marker(ui: &Ui, number: u16, light: Light, width: f32) {
+fn world_marker(ui: &Ui, number: u16, colour: [f32; 4], width: f32) {
     let line_h = ui.text_line_height();
     let [x, y] = ui.cursor_screen_pos();
     let center = [x + width * 0.5, y + line_h * 0.5];
@@ -3930,9 +3790,7 @@ fn world_marker(ui: &Ui, number: u16, light: Light, width: f32) {
         ui.current_font()
             .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, &label);
     let dl = ui.get_window_draw_list();
-    dl.add_circle(center, radius, light.rgb())
-        .filled(true)
-        .build();
+    dl.add_circle(center, radius, colour).filled(true).build();
     dl.add_text(
         [
             (center[0] - text_w * 0.5).round(),
@@ -4020,11 +3878,9 @@ fn add_bot_button(ui: &Ui, state: &mut PanelState) {
     }
 }
 
-/// Resource card at the rail bottom: bots, CPU/RAM, and traffic from
-/// ClientStream byte counters (1 Hz). First CPU/traffic sample reads
-/// "measuring…"; a failed process sampler shows error for CPU/RAM only.
-/// The draw/paint counters moved off the slot status row (M2 Task 1), so
-/// the draw row is gone until Task 4's per-slot renderer metrics.
+/// Resource card at the rail bottom: the operator session's 1 Hz meter
+/// (bots, CPU, process RAM, traffic). A rate still measuring, a value the
+/// platform cannot measure and a failed sample each say so.
 fn resource_card(ui: &Ui, view: &ResourceView) {
     ui.spacing();
     ui.text_disabled("resource");
@@ -4837,14 +4693,11 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     }
     let title = game_window_title(state.session.focused_name().as_deref());
     dock_host(ui, state, &title);
-    state.sample_resources();
+    state.debug_resources();
     let game_class = game_window_class();
     let panel_class = panel_window_class();
     ui.set_next_window_class(&panel_class);
-    {
-        let resources = state.resource_sampler.view();
-        panel_window(ui, &mut state.session, progress, resources);
-    }
+    panel_window(ui, &mut state.session, progress);
     ui.set_next_window_class(&game_class);
     // Frame owner: identity replacement and close-release happen outside
     // the Game window build closure so a rebind cannot keep stale buffers.
@@ -4879,10 +4732,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     script_prefs_window(ui, &mut state.session, state.panel_dock_node);
     crate::loadouts::window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
-    {
-        let resources = state.resource_sampler.view();
-        background_ack_window(ui, &mut state.session, resources);
-    }
+    background_ack_window(ui, &mut state.session);
     discard_unconsumed_native_capture();
 }
 
