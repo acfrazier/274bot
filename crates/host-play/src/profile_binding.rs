@@ -8,6 +8,49 @@ struct LoadedNav {
     canlight: Option<Arc<[u64]>>,
     counters: NavLoadCounters,
 }
+/// One pinned generator source file: length plus SHA-256 is the identity.
+/// Length alone is not: same-size different bytes must not verify.
+fn verify_game_data_source(
+    path: &Path,
+    expected: &api::game_data::SourceInput,
+) -> Result<(), String> {
+    let actual_len = std::fs::metadata(path)
+        .map_err(|error| format!("game data source {}: {error}", path.display()))?
+        .len();
+    if actual_len != expected.bytes {
+        return Err(format!(
+            "game data source {} length mismatch: expected {} bytes, found {actual_len}",
+            path.display(),
+            expected.bytes
+        ));
+    }
+    let actual = nav::manifest::hash_file(path)
+        .map_err(|error| format!("game data source {}: {error}", path.display()))?;
+    if actual != expected.sha256 {
+        return Err(format!(
+            "game data source {} content mismatch: expected sha256 {}, found {actual}",
+            path.display(),
+            expected.sha256
+        ));
+    }
+    Ok(())
+}
+
+/// Every pinned generator source must verify: engine and decoder inputs
+/// under the engine dir, content inputs under the content dir. Any mismatch
+/// (missing file, length, or bytes) keeps generated facts closed.
+fn verify_game_data_sources(
+    data: &api::game_data::SelectedGameData,
+    engine_dir: &Path,
+    content_dir: &Path,
+) -> Result<(), String> {
+    for (is_content, input) in data.source_inputs() {
+        let base = if is_content { content_dir } else { engine_dir };
+        verify_game_data_source(&base.join(&input.path), input)?;
+    }
+    Ok(())
+}
+
 impl ProfileSelection {
     pub fn selection(&self) -> ServerSelection {
         self.selection
@@ -408,17 +451,7 @@ impl ProfileSelection {
         let game_data = if self.supported_server || (runtime && self.target() == BotTarget::Prod) {
             api::game_data::for_optional_profile(self.revision(), &cache_id)?.filter(|data| {
                 self.target() == BotTarget::Prod
-                    || data.source_inputs().all(|(content, input)| {
-                        let base = if content {
-                            &self.content_dir
-                        } else {
-                            &self.engine_dir
-                        };
-                        let path = base.join(&input.path);
-                        std::fs::metadata(&path).is_ok_and(|m| m.len() == input.bytes)
-                            && nav::manifest::hash_file(&path)
-                                .is_ok_and(|hash| hash == input.sha256)
-                    })
+                    || verify_game_data_sources(data, &self.engine_dir, &self.content_dir).is_ok()
             })
         } else {
             None
@@ -712,4 +745,59 @@ fn decode_nav_world(
         1,
     ));
     Ok(Arc::new(world))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verify_game_data_source;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    /// Length-plus-SHA-256 source binding, with no real engine or content.
+    ///
+    /// `bind` attaches generated facts only when every pinned generator source
+    /// verifies by exact bytes, through this predicate. The pinned SHA-256
+    /// values have no synthetic preimage, so the expected identity comes from
+    /// the probe's own bytes via the same `nav::manifest::hash_file` the
+    /// binding uses; one flipped byte at the same length must be refused.
+    #[test]
+    fn equal_size_different_bytes_sources_do_not_attach_game_data() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-verify-sources-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Exact bytes verify through the predicate `bind` uses.
+        let probe = dir.join("probe.bin");
+        let bytes: Vec<u8> = (0..512).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&probe, &bytes).unwrap();
+        let expected = api::game_data::SourceInput {
+            path: "probe.bin".to_string(),
+            bytes: bytes.len() as u64,
+            sha256: nav::manifest::hash_file(&probe).unwrap(),
+        };
+        verify_game_data_source(&probe, &expected).expect("exact source bytes must verify");
+
+        // One flipped byte keeps the length: the size-only shortcut this guards
+        // against would accept this file, so it must be refused for content.
+        let mut mutated = bytes.clone();
+        mutated[0] ^= 0xff;
+        std::fs::write(&probe, &mutated).unwrap();
+        assert_eq!(
+            std::fs::metadata(&probe).unwrap().len(),
+            expected.bytes,
+            "the mutation must keep the length so only bytes differ"
+        );
+        let reason = verify_game_data_source(&probe, &expected)
+            .expect_err("equal-size different-bytes sources must keep facts closed");
+        assert!(
+            reason.contains("content mismatch") && reason.contains("probe.bin"),
+            "refusal must name a content mismatch, got: {reason}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
