@@ -1,27 +1,39 @@
 //! Rust-owned `Reach.npcDialog` sequencing, the `reach-npc-dialog`
 //! [`crate::machine`] family.
 //!
-//! JavaScript passes name/stand/`openMs` and awaits the status. The
-//! `walk-near` / `npc` ops, matching, clocks, freshness marks, one Clear
-//! recovery and `done`/`retry`/`unreachable` stay here. Game actions reuse
-//! the existing FlatBuffer walk and npc verbs.
+//! JavaScript passes name/stand/`openMs` and the `log` / `sustain` hooks and
+//! awaits the status. The close-in and stand walks are the frozen
+//! `walkResilient` ladder (`Reach.ts:61–68, 283–287`: radius 3 / 1,
+//! `attempts: 4`, 90 s), whose `unreachable` ending (a dead verify probe)
+//! is the reach's `unreachable`; any other walk ending keeps the frozen
+//! `retry` (close-in) or goes on to the talk (stand). The `npc` op,
+//! matching, clocks, freshness marks, one Clear recovery and
+//! `done`/`retry`/`unreachable` stay here. Game actions reuse the existing
+//! FlatBuffer walk and npc verbs.
 
 use crate::isolate_fb::SnapshotReader;
-use crate::machine::{Begin, Cx, Family, Step};
+use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, Ops, Scene, Text};
 use crate::shim::InteractReq;
+use crate::walk::Resilient;
 use crate::walk_wait;
+use api::snapshot::WorldTile;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::Cell;
+use std::collections::VecDeque;
 
 /// Frozen close-in / stand / Clear walk bound.
 pub const WALK_BOUND_MS: u64 = 90_000;
 /// Frozen `openMs` default.
 pub const OPEN_MS: u64 = 15_000;
+/// Frozen close-in and stand `walkResilient` `attempts` (`Reach.ts:62, 283`).
+const WALK_ATTEMPTS: u32 = 4;
 const CLOSE_IN_RADIUS: i32 = 3;
 const STAND_RADIUS: i32 = 1;
 const ADJACENT: i32 = 1;
+const LOG: usize = 0;
+const SUSTAIN: usize = 1;
 
 thread_local! {
     /// Posts that carried the `hold || ours` cooperative interrupt.
@@ -33,6 +45,16 @@ struct Tile {
     x: i32,
     z: i32,
     level: i32,
+}
+
+impl Tile {
+    fn world(self) -> WorldTile {
+        WorldTile {
+            x: self.x,
+            z: self.z,
+            level: self.level,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,10 +155,11 @@ impl Observation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
-    CloseIn,
-    WalkStand,
+    /// Frozen `closeIn` (`Reach.ts:61–68`).
+    CloseIn(Resilient),
+    /// Frozen stand walk before the talk (`Reach.ts:283–287`).
+    WalkStand(Resilient),
     WaitOpen,
     Clear,
 }
@@ -204,12 +227,22 @@ pub(crate) struct NpcDialog {
     npc_tile: Tile,
     /// [`pending_posts`] when the reach began.
     pending_mark: u64,
+    logs: VecDeque<String>,
+    result: Option<&'static str>,
+    /// This tick's advance already ended waiting (a log was written after).
+    waiting: bool,
+    /// `Sustain.run()` already ran for this ladder pass.
+    pumped: bool,
 }
 
 impl Family for NpcDialog {
     const NAME: &'static str = "reach-npc-dialog";
     /// A new reach replaces the one in flight.
     const EXCLUSIVE: bool = true;
+    const CALLBACKS: &'static [&'static str] = &["log", "sustain"];
+    /// Frozen `log(...)` is not awaited; the ladder's `await Sustain.run()`
+    /// (`Traversal.ts:130`) is.
+    const SYNC_HOOKS: &'static [usize] = &[LOG];
     type Args = NpcDialogArgs;
     /// `done`, `retry` or `unreachable`.
     type Output = &'static str;
@@ -251,21 +284,65 @@ impl Family for NpcDialog {
                 level: 0,
             },
             pending_mark: pending_posts(),
+            logs: VecDeque::new(),
+            result: None,
+            waiting: false,
+            pumped: false,
         };
         match reach.start(&obs, cx) {
+            // A start that settles at once has written no ladder log.
             Step::Done(status) => Begin::Done(status),
             _ => Begin::Run(reach),
         }
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<&'static str> {
-        let obs = observed::with(Observation::from_scene);
-        if !obs.ingame || pending_posts() != self.pending_mark || obs.pending() {
-            return Step::Done("retry");
+        if let Some(Reply::Threw(thrown)) = cx.reply() {
+            return Step::Fail(thrown);
         }
-        match self.phase {
-            Phase::CloseIn | Phase::WalkStand | Phase::Clear => self.walk_step(&obs, cx),
-            Phase::WaitOpen => self.wait_open(&obs, cx),
+        loop {
+            if let Some(line) = self.logs.pop_front() {
+                if cx.has(LOG) {
+                    return Step::Call(Call {
+                        hook: LOG,
+                        args: vec![json!(line)],
+                    });
+                }
+                continue;
+            }
+            if let Some(status) = self.result {
+                return Step::Done(status);
+            }
+            if std::mem::take(&mut self.waiting) {
+                self.pumped = false;
+                return Step::Wait;
+            }
+            let obs = observed::with(Observation::from_scene);
+            if !obs.ingame || pending_posts() != self.pending_mark || obs.pending() {
+                return Step::Done("retry");
+            }
+            let walking = matches!(self.phase, Phase::CloseIn(_) | Phase::WalkStand(_));
+            if walking && !self.pumped && cx.has(SUSTAIN) {
+                self.pumped = true;
+                return Step::Call(Call {
+                    hook: SUSTAIN,
+                    args: Vec::new(),
+                });
+            }
+            let out = match self.phase {
+                Phase::CloseIn(_) | Phase::WalkStand(_) => self.ladder_step(&obs, cx),
+                Phase::Clear => self.clear_step(&obs, cx),
+                Phase::WaitOpen => self.wait_open(&obs, cx),
+            };
+            match out {
+                Step::Done(status) => self.result = Some(status),
+                Step::Wait if self.logs.is_empty() => {
+                    self.pumped = false;
+                    return Step::Wait;
+                }
+                Step::Wait => self.waiting = true,
+                other => return other,
+            }
         }
     }
 }
@@ -284,33 +361,101 @@ impl NpcDialog {
                 if within(obs.here, self.near, CLOSE_IN_RADIUS) {
                     return Step::Done("retry");
                 }
-                self.emit_walk(Phase::CloseIn, self.near, CLOSE_IN_RADIUS, cx)
+                match self.ladder(CLOSE_IN_RADIUS, cx) {
+                    Ok(walk) => {
+                        self.phase = Phase::CloseIn(walk);
+                        Step::Wait
+                    }
+                    // `closeIn` is `retry` unless the ladder said unreachable.
+                    Err(_) => Step::Done("retry"),
+                }
             }
             Some(npc) => {
                 self.remember_npc(npc);
                 if within(obs.here, self.near, STAND_RADIUS) {
-                    self.emit_talk(obs, cx)
-                } else {
-                    self.emit_walk(Phase::WalkStand, self.near, STAND_RADIUS, cx)
+                    return self.emit_talk(obs, cx);
+                }
+                match self.ladder(STAND_RADIUS, cx) {
+                    Ok(walk) => {
+                        self.phase = Phase::WalkStand(walk);
+                        Step::Wait
+                    }
+                    Err(_) => self.emit_talk(obs, cx),
                 }
             }
         }
     }
 
-    fn walk_step(&mut self, obs: &Observation, cx: &mut Cx<'_>) -> Step<&'static str> {
-        match self.walk_settle(cx) {
-            WalkSettle::Pending => Step::Wait,
-            WalkSettle::Failed if self.phase == Phase::Clear => Step::Done("unreachable"),
-            WalkSettle::Arrived | WalkSettle::Failed | WalkSettle::Timeout => match self.phase {
-                Phase::WalkStand | Phase::Clear => match talk_target(&obs.npcs, &self.npc_name) {
+    /// Frozen `Traversal.walkResilient(near, { radius, attempts: 4,
+    /// timeoutMs: 90_000, log })` (`Reach.ts:62, 283`). `Err` when it ended
+    /// before a walk (arrived, or no posted tile).
+    fn ladder(&self, radius: i32, cx: &mut Cx<'_>) -> Result<Resilient, bool> {
+        Resilient::new(
+            self.near.world(),
+            radius,
+            WALK_BOUND_MS,
+            Some(WALK_ATTEMPTS),
+            false,
+        )
+        .start(cx)
+    }
+
+    fn ladder_step(&mut self, obs: &Observation, cx: &mut Cx<'_>) -> Step<&'static str> {
+        let (Phase::CloseIn(walk) | Phase::WalkStand(walk)) = &mut self.phase else {
+            return Step::Wait;
+        };
+        let out = walk.step(cx);
+        let unreachable = walk.unreachable();
+        while let Some(line) = walk.pop_log() {
+            self.logs.push_back(line);
+        }
+        let Some(arrived) = out else {
+            return Step::Wait;
+        };
+        let near = self.near;
+        match std::mem::replace(&mut self.phase, Phase::WaitOpen) {
+            Phase::CloseIn(_) => {
+                if !arrived && unreachable {
+                    self.logs.push_back(format!(
+                        "reach: hint ({},{},{}) is unreachable",
+                        near.x, near.z, near.level
+                    ));
+                    return Step::Done("unreachable");
+                }
+                Step::Done("retry")
+            }
+            _ => {
+                if !arrived && unreachable {
+                    self.logs.push_back(format!(
+                        "reach: stand ({},{},{}) unreachable",
+                        near.x, near.z, near.level
+                    ));
+                    return Step::Done("unreachable");
+                }
+                match talk_target(&obs.npcs, &self.npc_name) {
                     Some(npc) => {
                         self.remember_npc(npc);
                         self.emit_talk(obs, cx)
                     }
                     None => Step::Done("retry"),
-                },
-                Phase::CloseIn | Phase::WaitOpen => Step::Done("retry"),
-            },
+                }
+            }
+        }
+    }
+
+    fn clear_step(&mut self, obs: &Observation, cx: &mut Cx<'_>) -> Step<&'static str> {
+        match self.walk_settle(cx) {
+            WalkSettle::Pending => Step::Wait,
+            WalkSettle::Failed => Step::Done("unreachable"),
+            WalkSettle::Arrived | WalkSettle::Timeout => {
+                match talk_target(&obs.npcs, &self.npc_name) {
+                    Some(npc) => {
+                        self.remember_npc(npc);
+                        self.emit_talk(obs, cx)
+                    }
+                    None => Step::Done("retry"),
+                }
+            }
         }
     }
 
@@ -339,7 +484,7 @@ impl NpcDialog {
             }
             self.remember_npc(npc);
             self.cleared = true;
-            return self.emit_walk(Phase::Clear, self.npc_tile, STAND_RADIUS, cx);
+            return self.emit_clear_walk(self.npc_tile, cx);
         }
         if cx.clock().bound_reached() {
             return Step::Done("retry");
@@ -361,21 +506,15 @@ impl NpcDialog {
         Step::Wait
     }
 
-    fn emit_walk(
-        &mut self,
-        phase: Phase,
-        dest: Tile,
-        radius: i32,
-        cx: &mut Cx<'_>,
-    ) -> Step<&'static str> {
-        self.phase = phase;
+    fn emit_clear_walk(&mut self, dest: Tile, cx: &mut Cx<'_>) -> Step<&'static str> {
+        self.phase = Phase::Clear;
         cx.clock().arm(WALK_BOUND_MS);
         self.walk_token = walk_wait::dispatch(&json!({
             "op": "begin",
             "x": dest.x,
             "z": dest.z,
             "level": dest.level,
-            "radius": radius,
+            "radius": STAND_RADIUS,
             "allow_teleports": false,
         }))
         .as_u64()
@@ -384,7 +523,7 @@ impl NpcDialog {
             x: dest.x,
             z: dest.z,
             level: dest.level,
-            radius,
+            radius: STAND_RADIUS,
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
@@ -700,6 +839,12 @@ mod tests {
                 "radius": radius,
                 "request_id": request_id,
             }),
+            (None, Some(InteractReq::WalkTo { x, z, level })) => {
+                json!({ "kind": "walk-to", "x": x, "z": z, "level": level })
+            }
+            (None, Some(InteractReq::InspectRoute { request_id, .. })) => {
+                json!({ "kind": "probe", "request_id": request_id })
+            }
             (None, None) => json!({ "kind": "wait" }),
             other => panic!("unexpected reach page {other:?}"),
         };
@@ -730,8 +875,18 @@ mod tests {
     }
 
     fn fail_native(request_id: u64, x: i32, z: i32, radius: i32) -> NativeFactsInput<'static> {
+        fail_native_at(1, request_id, x, z, radius)
+    }
+
+    fn fail_native_at(
+        seq: u64,
+        request_id: u64,
+        x: i32,
+        z: i32,
+        radius: i32,
+    ) -> NativeFactsInput<'static> {
         NativeFactsInput {
-            walk_outcome_seq: 1,
+            walk_outcome_seq: seq,
             walk_outcome_generation: 1,
             walk_outcome_request_id: request_id,
             walk_outcome_failed: true,
@@ -747,6 +902,7 @@ mod tests {
     fn reset() {
         machine::on_reset();
         walk_wait::on_reset();
+        crate::inspect_wait::on_reset();
         observed::on_reset();
         let bytes = encode_snapshot(&base());
         let snap = SnapshotReader::from_bytes(&bytes).expect("base");
@@ -845,7 +1001,7 @@ mod tests {
     }
 
     #[test]
-    fn stand_generic_fail_still_talks() {
+    fn stand_walk_failure_takes_the_scene_step_before_the_talk() {
         reset();
         let actions = ["Talk-to".to_string()];
         let npcs = [npc("Traiborn", &actions, 9, 8, 5, 2, false)];
@@ -863,10 +1019,9 @@ mod tests {
         let request_id = walk["request_id"].as_u64().unwrap();
         snap.tick = 2;
         observe(&snap, fail_native(request_id, 5, 5, 1));
-        let talk = next_token(&walk);
-        assert_eq!(talk["kind"], "npc");
-        assert_eq!(talk["index"], 9);
-        assert_ne!(talk["status"], "unreachable");
+        let scene = next_token(&walk);
+        assert_eq!(scene["kind"], "walk-to");
+        assert!(scene["status"].is_null(), "the ladder walks on");
     }
 
     #[test]
@@ -1141,8 +1296,56 @@ mod tests {
         assert_eq!(second["kind"], "npc");
     }
 
+    /// One no-progress ladder pass from a pending baked `walk` page: the
+    /// walk fails, the scene step runs out, the unstick finds no door or
+    /// step. Returns the page after the pass.
+    fn ladder_pass(walk: &Value, snap: &mut SnapshotInput<'_>, seq: u64) -> Value {
+        assert_eq!(walk["kind"], "walk-near", "a pass starts on the baked walk");
+        let request_id = walk["request_id"].as_u64().unwrap();
+        let (x, z) = (walk["x"].as_i64().unwrap(), walk["z"].as_i64().unwrap());
+        let radius = walk["radius"].as_i64().unwrap();
+        snap.tick += 1;
+        observe(
+            snap,
+            fail_native_at(seq, request_id, x as i32, z as i32, radius as i32),
+        );
+        let scene = next_token(walk);
+        assert_eq!(
+            scene["kind"], "walk-to",
+            "a failed baked walk takes the ladder's scene step"
+        );
+        machine::tests::expire_deadlines();
+        next_token(&scene)
+    }
+
+    /// Steps through a backoff until the next baked walk goes out.
+    fn until_walk(page: Value) -> Value {
+        let mut page = page;
+        for _ in 0..16 {
+            if page["kind"] == "walk-near" {
+                return page;
+            }
+            assert_eq!(page["kind"], "wait", "backoff sends nothing");
+            page = next_token(&page);
+        }
+        panic!("the backoff never re-walked: {page}");
+    }
+
+    /// The ladder's three no-progress passes; returns the verify probe page.
+    fn passes_to_probe(walk: Value, snap: &mut SnapshotInput<'_>) -> Value {
+        let mut page = walk;
+        for seq in 1..=3 {
+            page = ladder_pass(&page, snap, seq);
+            if seq < 3 {
+                page = until_walk(page);
+            }
+        }
+        assert_eq!(page["kind"], "probe", "the third pass verifies");
+        page
+    }
+
     #[test]
-    fn close_in_generic_fail_is_retry_not_unreachable() {
+    fn close_in_walk_failure_keeps_the_ladder_going() {
         reset();
         let mut far = base();
         far.here = Some(TileInput {
@@ -1152,9 +1355,69 @@ mod tests {
         });
         observe(&far, NativeFactsInput::default());
         let walk = begin_named("Traiborn", 20, 20, None);
-        let request_id = walk["request_id"].as_u64().unwrap();
-        far.tick = 2;
-        observe(&far, fail_native(request_id, 20, 20, 3));
-        assert_eq!(next_token(&walk)["status"], "retry");
+        let after = ladder_pass(&walk, &mut far, 1);
+        assert_eq!(
+            after["kind"], "wait",
+            "one failed pass backs off, it does not end the reach"
+        );
+    }
+
+    #[test]
+    fn close_in_dead_probe_is_unreachable() {
+        reset();
+        let mut far = base();
+        far.here = Some(TileInput {
+            x: 0,
+            z: 0,
+            level: 0,
+        });
+        observe(&far, NativeFactsInput::default());
+        let walk = begin_named("Traiborn", 20, 20, None);
+        let probe = passes_to_probe(walk, &mut far);
+        crate::inspect_wait::settle_for_tests(probe["request_id"].as_u64().unwrap(), false);
+        assert_eq!(next_token(&probe)["status"], "unreachable");
+    }
+
+    #[test]
+    fn close_in_fresh_probe_is_not_unreachable() {
+        reset();
+        let mut far = base();
+        far.here = Some(TileInput {
+            x: 0,
+            z: 0,
+            level: 0,
+        });
+        observe(&far, NativeFactsInput::default());
+        let walk = begin_named("Traiborn", 20, 20, None);
+        let probe = passes_to_probe(walk, &mut far);
+        crate::inspect_wait::settle_for_tests(probe["request_id"].as_u64().unwrap(), true);
+        let after = next_token(&probe);
+        assert_eq!(
+            after["kind"], "wait",
+            "a fresh probe backs off and walks on"
+        );
+        assert!(after["status"].is_null());
+    }
+
+    #[test]
+    fn stand_dead_probe_is_unreachable_without_a_talk() {
+        reset();
+        let actions = ["Talk-to".to_string()];
+        let npcs = [npc("Traiborn", &actions, 9, 30, 30, 30, false)];
+        let mut snap = base();
+        snap.here = Some(TileInput {
+            x: 0,
+            z: 0,
+            level: 0,
+        });
+        snap.npcs = &npcs;
+        observe(&snap, NativeFactsInput::default());
+        let walk = begin_named("Traiborn", 20, 20, None);
+        assert_eq!(walk["radius"], 1);
+        let probe = passes_to_probe(walk, &mut snap);
+        crate::inspect_wait::settle_for_tests(probe["request_id"].as_u64().unwrap(), false);
+        let done = next_token(&probe);
+        assert_eq!(done["status"], "unreachable");
+        assert_ne!(done["kind"], "npc");
     }
 }

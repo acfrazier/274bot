@@ -35,16 +35,37 @@
 //!   step still runs before the pass is counted. Unlike frozen, the native
 //!   wait does not dismiss a quest-lock mesbox, and a locked door remains
 //!   shut for the full 5-second bound.
-//! - `UNREACHABLE_PASSES` (3) then verify (`walkLadder.ts:33, 83–84`). No
-//!   `WalkExecutor.probeDest` here, so verify is fail-closed as probe-dead
-//!   (`walkLadder.ts:66–68`).
+//! - `UNREACHABLE_PASSES` (3) then verify (`walkLadder.ts:33, 83–84`):
+//!   frozen `WalkExecutor.probeDest` (`WalkExecutor.ts:799–816`) is one
+//!   host `inspect-route` from here to `dest` with the default policy (no
+//!   teleports: the frozen global `navTeleports` default, no bank leg) and
+//!   the frozen 30 s path-request bound (`WalkExecutor.ts:95`).
+//!   `judgeProbe` (`walkLadder.ts:111–119`): no route is dead; a route whose
+//!   terminal repeats the previous probe's is dead; otherwise fresh, which
+//!   resets the passes and backs off `backoffTicks(1)` (`walkLadder.ts:
+//!   66–70`). The host router settles on `dest` itself, so a routed
+//!   probe's terminal is `dest`. Dead is `unreachable` (`Traversal.ts:
+//!   201–204`), which [`Resilient::unreachable`] reports to callers that
+//!   branch on it (`Reach.ts:61–68`).
 //! - Backoff 2–16 ticks (`walkLadder.ts:30–31, 39–40`).
+//! - Options (`Traversal.ts:19–35, 102–112, 160–170`): `sceneRadius`
+//!   (default `radius + 1`) bounds the scene step; the teleport choice is
+//!   frozen `resolveWalkUseTeleports` (`WalkExecutor.ts:165–177`: an
+//!   explicit false wins, then an explicit true; the host has no global
+//!   `navTeleports` toggle, whose frozen default is off), and
+//!   `policy.distanceBeforeTeleport` admits teleports only when the planar
+//!   Chebyshev span from here to `dest` reaches it (`policy.ts:61–67,
+//!   72–74`; the span is fixed per search, so it gates the whole baked
+//!   walk). `avoidZones` has no host walk wire: a non-empty list is refused
+//!   loud, not dropped. `bankItemCounts` is only the bank-plan input; the
+//!   host bank fetch reads the bank itself (FENCE 2026-09-18). `maxBudget`
+//!   counts frozen `PathFinder` expansions on another graph; the host
+//!   router has its own bound and no `budget` outcome, so there is no
+//!   big-budget rebake (`walkLadder.ts:73–75`).
 
 //! - Frozen `WalkExecutor.lastOutcome === 'blocked'` returns true
 //!   (`Traversal.ts:172–174`). This host's walk wait is arrived-or-failed;
 //!   there is no blocked, so a settled walk is re-checked with `isArrived`.
-//! - Frozen `budget` rebakes once with `bigBudget` (`walkLadder.ts:73–75`).
-//!   The wait is a bool; there is no budget vs failed, so no big-budget rebake.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, SceneRow};
@@ -70,6 +91,9 @@ const SCENE_CLAMP_TILES: i32 = 48;
 pub(crate) const HOP_ATTEMPTS: u32 = 3;
 /// Frozen `UNREACHABLE_PASSES` (`walkLadder.ts:33`).
 const UNREACHABLE_PASSES: u32 = 3;
+/// Frozen `PATH_REQUEST_TIMEOUT_MS` (`WalkExecutor.ts:95`), the bound of
+/// the verify probe's path request.
+const PROBE_TIMEOUT_MS: u64 = 30_000;
 const BACKOFF_MIN: u32 = 2;
 const BACKOFF_MAX: u32 = 16;
 /// Frozen `tryNearbyDoor` wait (`doorCrossing.ts:369–380`).
@@ -148,6 +172,16 @@ impl Tile {
     }
 }
 
+/// Frozen `WalkOptions.policy` fields the host walk reads (`types.ts:154`).
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WalkPolicy {
+    #[serde(default)]
+    use_teleports: Option<bool>,
+    #[serde(default)]
+    distance_before_teleport: Option<i32>,
+}
+
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WalkResilientOpts {
@@ -158,7 +192,14 @@ struct WalkResilientOpts {
     #[serde(default)]
     timeout_ms: Option<u64>,
     #[serde(default)]
-    use_teleport_catalog: bool,
+    scene_radius: Option<i32>,
+    #[serde(default)]
+    use_teleport_catalog: Option<bool>,
+    #[serde(default)]
+    policy: WalkPolicy,
+    /// How many `avoidZones` the caller passed (the zones have no host wire).
+    #[serde(default)]
+    avoid_zones: usize,
 }
 
 #[derive(Deserialize)]
@@ -166,6 +207,23 @@ pub(crate) struct WalkResilientArgs {
     tile: Tile,
     #[serde(default)]
     opts: WalkResilientOpts,
+}
+
+/// Frozen `resolveWalkUseTeleports` (`WalkExecutor.ts:165–177`): an explicit
+/// false wins, then an explicit true. Unset falls to the global
+/// `navTeleports` toggle, which the host does not have; its frozen default
+/// is off.
+fn resolve_teleports(catalog: Option<bool>, policy: Option<bool>) -> bool {
+    if catalog == Some(false) || policy == Some(false) {
+        return false;
+    }
+    catalog == Some(true) || policy == Some(true)
+}
+
+/// Frozen `teleportAllowedByPolicy`'s span gate (`policy.ts:61–67`) with
+/// `routeSpanChebyshev` (`policy.ts:72–74`, levels ignored).
+fn teleport_span_allows(min_span: i32, from: WorldTile, to: WorldTile) -> bool {
+    min_span <= 0 || (from.x - to.x).abs().max((from.z - to.z).abs()) >= min_span
 }
 
 /// Frozen `walkChebyshev`: Chebyshev on the plane, never close across a floor.
@@ -721,23 +779,36 @@ enum Phase {
     NeedWalk,
     Walking(Walk),
     Scene(SceneStep),
-    UnstickDoor { tile: WorldTile, name: String },
+    UnstickDoor {
+        tile: WorldTile,
+        name: String,
+    },
     UnstickStep(UnstickStep),
     Backoff,
+    /// The verify probe's `inspect-route` token.
+    Verify {
+        token: u64,
+    },
 }
 
 /// Frozen walkResilient ladder over baked [`Walk`]s. Shared by `walk-hops`.
 pub(crate) struct Resilient {
     dest: WorldTile,
     radius: i32,
+    scene_radius: i32,
     timeout_ms: u64,
     attempts: Option<u32>,
     allow_teleports: bool,
+    teleport_min_span: i32,
     phase: Phase,
     best_dist: i32,
     no_progress: u32,
     delay_left: u32,
     unstick_dir: u8,
+    /// Frozen `lastProbeTerminal` (`Traversal.ts:126, 196–198`).
+    last_probe_terminal: Option<WorldTile>,
+    /// The ladder ended on the frozen `unreachable` action.
+    unreachable: bool,
     logs: VecDeque<String>,
 }
 
@@ -753,16 +824,38 @@ impl Resilient {
         Self {
             dest,
             radius,
+            scene_radius: radius.saturating_add(1),
             timeout_ms,
             attempts,
             allow_teleports,
+            teleport_min_span: 0,
             phase: Phase::NeedWalk,
             best_dist,
             no_progress: 0,
             delay_left: 0,
             unstick_dir: 0,
+            last_probe_terminal: None,
+            unreachable: false,
             logs: VecDeque::new(),
         }
+    }
+
+    /// Frozen `opts.sceneRadius` (`Traversal.ts:105`).
+    fn with_scene_radius(mut self, scene_radius: i32) -> Self {
+        self.scene_radius = scene_radius;
+        self
+    }
+
+    /// Frozen `policy.distanceBeforeTeleport` (`policy.ts:61–67`).
+    fn with_teleport_min_span(mut self, min_span: i32) -> Self {
+        self.teleport_min_span = min_span;
+        self
+    }
+
+    /// Whether the ladder ended as frozen `WalkExecutor.lastOutcome ===
+    /// 'unreachable'` (`Traversal.ts:201–204`): a dead verify probe.
+    pub(crate) fn unreachable(&self) -> bool {
+        self.unreachable
     }
 
     /// Issue the first baked walk. `Err(done)` if no walk was needed.
@@ -814,7 +907,7 @@ impl Resilient {
         match std::mem::replace(&mut self.phase, Phase::NeedWalk) {
             Phase::NeedWalk => self.kick_walk(cx),
             Phase::Scene(mut scene) => {
-                if arrived(self.dest, self.radius.saturating_add(1)) || cx.clock().bound_reached() {
+                if arrived(self.dest, self.scene_radius) || cx.clock().bound_reached() {
                     self.after_scene(cx)
                 } else if scene.delay_left > 1 {
                     scene.delay_left -= 1;
@@ -895,20 +988,36 @@ impl Resilient {
                         None
                     }
                     Some(_) if owns_wait => self.after_baked(cx),
-                    Some(_) => self.after_displaced_walk(),
+                    Some(_) => self.after_displaced_walk(cx),
                 }
+            }
+            Phase::Verify { token } => {
+                let settled = crate::inspect_wait::dispatch(&json!({
+                    "op": "settled",
+                    "token": token,
+                }))
+                .as_bool()
+                .unwrap_or(false);
+                if !settled {
+                    self.phase = Phase::Verify { token };
+                    return None;
+                }
+                let routed = crate::inspect_wait::dispatch(&json!({
+                    "op": "value",
+                    "token": token,
+                }))
+                .get("ok")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+                self.after_verify(routed, cx)
             }
         }
     }
 
     fn kick_walk(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
-        match Walk::begin(
-            self.dest,
-            self.radius,
-            self.timeout_ms,
-            self.allow_teleports,
-            cx,
-        ) {
+        let allow_teleports = self.allow_teleports
+            && here().is_some_and(|me| teleport_span_allows(self.teleport_min_span, me, self.dest));
+        match Walk::begin(self.dest, self.radius, self.timeout_ms, allow_teleports, cx) {
             Ok(walk) => {
                 self.phase = Phase::Walking(walk);
                 None
@@ -941,8 +1050,7 @@ impl Resilient {
     }
 
     fn kick_scene(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
-        let scene_radius = self.radius.saturating_add(1);
-        if arrived(self.dest, scene_radius) {
+        if arrived(self.dest, self.scene_radius) {
             return self.after_scene(cx);
         }
         let Some(current) = here() else {
@@ -1028,7 +1136,7 @@ impl Resilient {
 
     fn kick_unstick_step(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         let Some(me) = here() else {
-            return self.after_no_progress_pass();
+            return self.after_no_progress_pass(cx);
         };
         let step = pick_unstick_step(me, self.unstick_dir);
         self.unstick_dir = (self.unstick_dir + 3) % 8;
@@ -1066,19 +1174,19 @@ impl Resilient {
             self.no_progress = 0;
             self.kick_walk(cx)
         } else {
-            self.after_no_progress_pass()
+            self.after_no_progress_pass(cx)
         }
     }
 
-    fn after_displaced_walk(&mut self) -> Option<bool> {
+    fn after_displaced_walk(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         // Another native walk replaced this wait before its deadline. The
         // timed-out Walk emitted only its fenced AbortWalk; skip the unfenced
         // scene click for this pass. The legacy pass/backoff behavior below
         // may later re-arm, exactly as it did before this scene phase existed.
-        self.after_no_progress_pass()
+        self.after_no_progress_pass(cx)
     }
 
-    fn after_no_progress_pass(&mut self) -> Option<bool> {
+    fn after_no_progress_pass(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         self.no_progress += 1;
         if let Some(max) = self.attempts {
             if self.no_progress >= max {
@@ -1089,15 +1197,85 @@ impl Resilient {
             }
         }
         if self.no_progress >= UNREACHABLE_PASSES {
-            // Frozen verify then probe-dead → unreachable (walkLadder.ts:66–68,
-            // 83–84). No probeDest: fail-closed as dead.
+            return self.kick_verify(cx);
+        }
+        self.delay_left = backoff_ticks(self.no_progress);
+        self.phase = Phase::Backoff;
+        None
+    }
+
+    /// Frozen `WalkExecutor.probeDest(dest, maxBudget)`
+    /// (`Traversal.ts:193–194`, `WalkExecutor.ts:799–816`): one path request
+    /// from here with the default policy.
+    fn kick_verify(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
+        let Some(me) = here() else {
+            return self.after_verify(false, cx);
+        };
+        let token = crate::inspect_wait::dispatch(&json!({
+            "op": "begin",
+            "from": { "x": me.x, "z": me.z, "level": me.level },
+            "to": { "x": self.dest.x, "z": self.dest.z, "level": self.dest.level },
+            "allow_teleports": false,
+            "allow_wilderness": true,
+            "allow_bank_fetch": false,
+            "timeout_ms": PROBE_TIMEOUT_MS,
+        }))
+        .as_u64()
+        .unwrap_or(0);
+        cx.emit(InteractReq::InspectRoute {
+            x: self.dest.x,
+            z: self.dest.z,
+            level: self.dest.level,
+            from_x: me.x,
+            from_z: me.z,
+            from_level: me.level,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: false,
+            avoid: Vec::new(),
+            request_id: token,
+        });
+        self.phase = Phase::Verify { token };
+        None
+    }
+
+    /// Frozen `judgeProbe` (`walkLadder.ts:111–119`), its log
+    /// (`Traversal.ts:195–200`), then the next `advance` (`walkLadder.ts:
+    /// 55–59, 66–70`): progress rebakes, a dead probe is unreachable, a
+    /// fresh one backs off `backoffTicks(1)` with the passes reset.
+    fn after_verify(&mut self, routed: bool, cx: &mut Cx<'_>) -> Option<bool> {
+        // The host router settles on `dest` itself: a routed probe's
+        // terminal is `dest`.
+        let terminal = routed.then_some(self.dest);
+        let fresh = terminal.is_some() && terminal != self.last_probe_terminal;
+        if let Some(terminal) = terminal {
+            self.last_probe_terminal = Some(terminal);
+        }
+        self.logs.push_back(match terminal {
+            Some(terminal) if fresh => format!(
+                "walkResilient: verify probe fresh (terminal {},{})",
+                terminal.x, terminal.z
+            ),
+            _ => "walkResilient: verify probe dead".to_string(),
+        });
+        if let Some(me) = here() {
+            let cur = walk_chebyshev(me, self.dest);
+            if cur < self.best_dist {
+                self.best_dist = cur;
+                self.no_progress = 0;
+                return self.kick_walk(cx);
+            }
+        }
+        if !fresh {
             self.logs.push_back(format!(
                 "walkResilient: ({},{},{}) unreachable from here — stopping (best {} tiles)",
                 self.dest.x, self.dest.z, self.dest.level, self.best_dist
             ));
+            self.unreachable = true;
             return Some(false);
         }
-        self.delay_left = backoff_ticks(self.no_progress);
+        self.no_progress = 0;
+        self.delay_left = backoff_ticks(1);
         self.phase = Phase::Backoff;
         None
     }
@@ -1122,25 +1300,32 @@ impl Family for WalkResilient {
     type Output = bool;
 
     fn begin(args: WalkResilientArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+        let opts = args.opts;
+        if opts.avoid_zones > 0 {
+            return Begin::Refuse("avoidZones: the host walk has no avoid-zone wire".into());
+        }
         if interrupted() {
             return Begin::Done(false);
         }
         let dest = args.tile.world();
-        let radius = args.opts.radius;
+        let radius = opts.radius;
         let Some(_) = here() else {
             return Begin::Done(false);
         };
         if arrived(dest, radius) {
             return Begin::Done(true);
         }
+        let drive = Resilient::new(
+            dest,
+            radius,
+            opts.timeout_ms.unwrap_or(BAKED_TIMEOUT_MS),
+            opts.attempts,
+            resolve_teleports(opts.use_teleport_catalog, opts.policy.use_teleports),
+        )
+        .with_scene_radius(opts.scene_radius.unwrap_or(radius.saturating_add(1)))
+        .with_teleport_min_span(opts.policy.distance_before_teleport.unwrap_or(0));
         Begin::Run(Self {
-            drive: Resilient::new(
-                dest,
-                radius,
-                args.opts.timeout_ms.unwrap_or(BAKED_TIMEOUT_MS),
-                args.opts.attempts,
-                args.opts.use_teleport_catalog,
-            ),
+            drive,
             pumped: false,
             result: None,
             waiting: false,
@@ -1438,6 +1623,7 @@ mod tests {
         observed::on_reset();
         machine::on_reset();
         walk_wait::on_reset();
+        crate::inspect_wait::on_reset();
         crate::load::reach_query::on_reset();
         machine::on_hold(false);
         reset_scene_time();
@@ -1725,15 +1911,14 @@ mod tests {
         assert_eq!(machine::take(h), Take::Pending);
     }
 
-    #[test]
-    fn three_no_progress_passes_stop_as_unreachable() {
-        reset();
-        post_here(0, 0);
-        let h = start(None);
-        for (seq, pass) in (1..).zip(0..UNREACHABLE_PASSES) {
+    /// `passes` no-progress ladder passes (baked fail, scene, unstick),
+    /// with the backoff between them. Returns the next walk-outcome seq.
+    fn no_progress_passes(h: machine::Handle, mut seq: u64, passes: u32) -> u64 {
+        for pass in 0..passes {
             machine::step(&mut NoJs);
             let token = walk_token();
             fail_walk(seq, token, 0, 0, true);
+            seq += 1;
             machine::step(&mut NoJs);
             assert_eq!(
                 machine::merge_ops(Vec::new()),
@@ -1745,14 +1930,166 @@ mod tests {
             );
             machine::age(h, SCENE_TIMEOUT_MS + 1);
             machine::step(&mut NoJs);
-            if pass + 1 < UNREACHABLE_PASSES {
-                let ticks = backoff_ticks(pass + 1);
-                for _ in 0..ticks {
+            if pass + 1 < passes {
+                for _ in 0..backoff_ticks(pass + 1) {
                     machine::step(&mut NoJs);
                 }
             }
         }
+        seq
+    }
+
+    fn probe_token() -> u64 {
+        match machine::merge_ops(Vec::new()).as_slice() {
+            [InteractReq::InspectRoute {
+                x: 10,
+                z: 0,
+                level: 0,
+                from_x: 0,
+                from_z: 0,
+                from_level: 0,
+                allow_teleports: false,
+                allow_bank_fetch: false,
+                request_id,
+                ..
+            }] => *request_id,
+            other => panic!("expected the verify probe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_routed_verify_probe_keeps_walking_until_its_terminal_repeats() {
+        reset();
+        post_here(0, 0);
+        let h = start(None);
+        let seq = no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        let first = probe_token();
+        assert_eq!(machine::take(h), Take::Pending, "verify waits on the probe");
+        crate::inspect_wait::settle_for_tests(first, true);
+        machine::step(&mut NoJs);
+        assert_eq!(
+            machine::take(h),
+            Take::Pending,
+            "a fresh probe is not unreachable"
+        );
+        machine::step(&mut NoJs);
+        no_progress_passes(h, seq, UNREACHABLE_PASSES);
+        let second = probe_token();
+        crate::inspect_wait::settle_for_tests(second, true);
+        machine::step(&mut NoJs);
+        assert_eq!(
+            machine::take(h),
+            Take::Settled(Outcome::Done(json!(false))),
+            "the same terminal again is a dead probe"
+        );
+    }
+
+    #[test]
+    fn a_dead_verify_probe_is_unreachable() {
+        reset();
+        post_here(0, 0);
+        let h = start(None);
+        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        let probe = probe_token();
+        crate::inspect_wait::settle_for_tests(probe, false);
+        machine::step(&mut NoJs);
         assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+    }
+
+    #[test]
+    fn a_bounded_ladder_stops_before_its_verify_probe() {
+        reset();
+        post_here(0, 0);
+        let h = start(Some(UNREACHABLE_PASSES));
+        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        assert!(
+            machine::merge_ops(Vec::new()).is_empty(),
+            "attempts <= 3 ends before verify (Traversal.ts:149–153)"
+        );
+        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+    }
+
+    fn start_with(opts: Value) -> machine::Handle {
+        let args = json!({ "tile": { "x": 10, "z": 0, "level": 0 }, "opts": opts });
+        let Started::Running(h) = machine::start("walk-resilient", args, Vec::new(), 0) else {
+            panic!("walk-resilient runs");
+        };
+        h
+    }
+
+    fn baked_allows_teleports() -> bool {
+        match machine::merge_ops(Vec::new()).as_slice() {
+            [InteractReq::Walk {
+                allow_teleports, ..
+            }] => *allow_teleports,
+            other => panic!("expected the baked walk, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distance_before_teleport_gates_teleports_on_the_route_span() {
+        reset();
+        post_here(0, 0);
+        let policy = json!({ "radius": 0, "policy": { "useTeleports": true, "distanceBeforeTeleport": 40 } });
+        start_with(policy.clone());
+        machine::step(&mut NoJs);
+        assert!(
+            !baked_allows_teleports(),
+            "a 10-tile span is under distanceBeforeTeleport 40"
+        );
+
+        reset();
+        post_here(-40, 30);
+        start_with(policy);
+        machine::step(&mut NoJs);
+        assert!(
+            baked_allows_teleports(),
+            "a 50-tile span admits the teleports the policy enables"
+        );
+    }
+
+    #[test]
+    fn an_explicit_false_teleport_toggle_wins() {
+        reset();
+        post_here(0, 0);
+        start_with(json!({
+            "radius": 0,
+            "useTeleportCatalog": true,
+            "policy": { "useTeleports": false },
+        }));
+        machine::step(&mut NoJs);
+        assert!(!baked_allows_teleports());
+    }
+
+    #[test]
+    fn scene_radius_bounds_the_scene_step() {
+        reset();
+        post_here(0, 0);
+        start_with(json!({ "radius": 0, "sceneRadius": 12 }));
+        machine::step(&mut NoJs);
+        let token = walk_token();
+        fail_walk(1, token, 0, 0, true);
+        machine::step(&mut NoJs);
+        assert!(
+            !machine::merge_ops(Vec::new())
+                .iter()
+                .any(|op| matches!(op, InteractReq::WalkTo { x: 10, z: 0, .. })),
+            "within sceneRadius 12 the scene step does not click toward dest"
+        );
+    }
+
+    #[test]
+    fn avoid_zones_are_refused_not_dropped() {
+        reset();
+        post_here(0, 0);
+        let args = json!({
+            "tile": { "x": 10, "z": 0, "level": 0 },
+            "opts": { "radius": 0, "avoidZones": 1 },
+        });
+        assert!(matches!(
+            machine::start("walk-resilient", args, Vec::new(), 0),
+            Started::Refused(_)
+        ));
     }
 
     #[test]

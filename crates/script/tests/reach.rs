@@ -233,7 +233,7 @@ fn open_chat_adjacent_name_without_talk_is_done_and_emits_nothing() {
 }
 
 #[test]
-fn missing_npc_queues_close_in_walk_near_with_request_id() {
+fn missing_npc_close_in_failure_keeps_the_resilient_ladder_going() {
     let iso = spawn(NPC_DIALOG);
     let mut snap = base(TileInput {
         x: 0,
@@ -262,12 +262,25 @@ fn missing_npc_queues_close_in_walk_near_with_request_id() {
     snap.tick = 2;
     post_native(&iso, &snap, fail_native(request_id, 5, 5, 3));
     tick(&iso, 2);
-    assert_eq!(iso.probe("__ok").unwrap(), "retry");
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        Value::Null,
+        "frozen closeIn is a walkResilient ladder: one failed walk does not end it"
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkTo {
+            x: 5,
+            z: 5,
+            level: 0
+        }],
+        "the ladder's scene step follows the failed baked walk"
+    );
     iso.join();
 }
 
 #[test]
-fn stand_generic_fail_still_queues_npc_talk() {
+fn stand_walk_failure_takes_the_ladder_scene_step_before_the_talk() {
     let iso = spawn(NPC_DIALOG);
     let actions = ["Talk-to".to_string()];
     let npcs = [npc("Traiborn", &actions, 9, 8, 5, 3, false)];
@@ -295,10 +308,10 @@ fn stand_generic_fail_still_queues_npc_talk() {
     assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::Npc {
-            name: "Traiborn".into(),
-            action: "Talk-to".into(),
-            index: Some(9),
+        vec![InteractReq::WalkTo {
+            x: 5,
+            z: 5,
+            level: 0
         }]
     );
     iso.join();
