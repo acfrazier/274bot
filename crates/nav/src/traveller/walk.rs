@@ -7,6 +7,8 @@ use super::*;
 /// window (Bind ~3 ticks); matches the canonical WalkExecutor stallTicks
 /// default of 5. Not a second hop budget.
 pub(super) const WALK_STALL_RECOVER_IDLE_TICKS: u32 = 5;
+/// Frozen `DEFAULT_PATH_STALL_TICKS` (`pathFollowPolicy.ts:6`).
+const END_BLOCKED_STALL_TICKS: u32 = 5;
 
 pub(super) fn report_walk(
     options: &mut TravelOptions<'_>,
@@ -307,6 +309,35 @@ impl FollowRun {
         }
     }
 
+    /// Frozen `'blocked'` (`WalkExecutor.ts:990–991, 1039–1040, 1092–1094`):
+    /// credit one distinct tick while the client refuses the click onto the
+    /// route's last tile `end` one step away and no walk of this follow was
+    /// accepted (frozen `clicks === 0`); `true` once the frozen stall window
+    /// ran out. Any other refusal restarts the window.
+    fn end_blocked(
+        &self,
+        end: Option<WorldTile>,
+        here: WorldTile,
+        tick: u32,
+        refused: &mut (u32, Option<u32>),
+    ) -> bool {
+        let adjacent = self.hops == 0
+            && self.legs.is_empty()
+            && end.is_some_and(|end| {
+                end != here
+                    && end.level == here.level
+                    && (end.x - here.x).abs().max((end.z - here.z).abs()) <= 1
+            });
+        if !adjacent {
+            *refused = (0, None);
+            return false;
+        }
+        if refused.1 != Some(tick) {
+            *refused = (refused.0.saturating_add(1), Some(tick));
+        }
+        refused.0 >= END_BLOCKED_STALL_TICKS
+    }
+
     pub(super) fn send_walk_hop<D: Driver>(
         &mut self,
         d: &mut D,
@@ -331,6 +362,8 @@ impl FollowRun {
                 hops: self.hops,
             });
         }
+        let end = hop.tiles().last().copied();
+        let mut refused = (hop.end_refused_ticks, hop.end_refused_last_tick);
         let tiles = hop.tiles();
         let here_i = tiles
             .iter()
@@ -340,6 +373,7 @@ impl FollowRun {
         let (mut aim, mut idx) = pick_aim_in_scene(tiles, here, hop.cursor, snapshot.scene());
         loop {
             if aim == here {
+                (hop.end_refused_ticks, hop.end_refused_last_tick) = refused;
                 self.walk = Some(hop);
                 return Poll::Watching;
             }
@@ -363,6 +397,19 @@ impl FollowRun {
                     return Poll::Watching;
                 }
                 SendResult::Refused {
+                    reason: SendReason::Unreachable,
+                    ..
+                } if self.end_blocked(end, here, snapshot.tick(), &mut refused) => {
+                    // Frozen `'blocked'`: as close as the live scene allows.
+                    fire_leg(options, &hop.leg(), LegPhase::Failed);
+                    return Poll::Terminal(TravelOutcome::Stalled {
+                        at: here,
+                        aiming: aim,
+                        why: HopFailure::EndBlocked,
+                        tries: hop.tries,
+                    });
+                }
+                SendResult::Refused {
                     reason: SendReason::OffScene | SendReason::Unreachable,
                     ..
                 } if idx > here_i + 1 => {
@@ -379,6 +426,7 @@ impl FollowRun {
                 } => {
                     // Rebuild (`scene_state != 2`) refuses the walk before
                     // a packet goes out — wait, do not fail the follow.
+                    (hop.end_refused_ticks, hop.end_refused_last_tick) = refused;
                     self.walk = Some(hop);
                     return Poll::Watching;
                 }

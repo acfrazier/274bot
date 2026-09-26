@@ -5935,6 +5935,8 @@ struct FollowRec {
     if_button_components: Vec<i32>,
     pause_buttons: usize,
     reject_far: bool,
+    /// A scene tile the client cannot path onto (blocked live).
+    reject_to: Option<(i32, i32)>,
     route: Option<(i32, i32)>,
     build_base: Option<(i32, i32)>,
     sink: Sink,
@@ -5985,6 +5987,9 @@ impl Driver for FollowRec {
         if self.reject_far && (src_x - dx).abs().max((src_z - dz).abs()) > 1 {
             return false;
         }
+        if self.reject_to == Some((dx, dz)) {
+            return false;
+        }
         self.walked.push((dx, dz));
         true
     }
@@ -6008,6 +6013,66 @@ impl Driver for FollowRec {
     fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
         true
     }
+}
+
+#[test]
+fn follow_ends_blocked_when_the_adjacent_route_end_refuses_every_click() {
+    // Frozen `'blocked'` (WalkExecutor.ts:1039-1040, 1092-1094): no click of
+    // this follow was accepted and the route's last tile, one step away, is
+    // blocked live. After the frozen five idle ticks the follow ends as
+    // close as reachable instead of watching forever.
+    let mut c = scene_client();
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        reject_to: Some((0, 1)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let route = Route {
+        legs: vec![walk_leg(&[(3200, 3200), (3200, 3201)])],
+        dest: WorldTile {
+            x: 3200,
+            z: 3201,
+            level: 0,
+        },
+        ticks: 0.5,
+    };
+    let mut options = TravelOptions::default();
+    // Repeated polls of one tick count once.
+    for _ in 0..3 {
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+    }
+    for _ in 0..3 {
+        bump_rebuild(&mut c, &mut snap);
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "inside the stall window the follow keeps watching"
+        );
+    }
+    bump_rebuild(&mut c, &mut snap);
+    assert_eq!(
+        t.follow(&mut rec, &snap, route.clone(), &mut options),
+        Some(TravelOutcome::Stalled {
+            at: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0
+            },
+            aiming: WorldTile {
+                x: 3200,
+                z: 3201,
+                level: 0
+            },
+            why: HopFailure::EndBlocked,
+            tries: 0,
+        }),
+        "the fifth distinct refused tick ends the follow"
+    );
+    assert!(rec.walked.is_empty(), "no walk was ever accepted");
 }
 
 #[test]

@@ -84,13 +84,21 @@ pub enum NavStatus {
 }
 
 /// Why a [`Traveller::follow`] hop failed: the per-hop tick budget lapsed
-/// while the player was making progress (`Expired`), or the player never
+/// while the player was making progress (`Expired`), the player never
 /// left the tile the hop was sent from (`Dropped` — the walk or transport
-/// interaction was dropped by the game).
+/// interaction was dropped by the game), or the route's end is blocked
+/// live next to the player (`EndBlocked`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HopFailure {
     Expired,
     Dropped,
+    /// Frozen `WalkExecutor` `'blocked'` (`WalkExecutor.ts:990–991,
+    /// 1039–1040, 1092–1094`): no walk of this follow was accepted, the
+    /// player stands within one tile of the route's last tile on its level,
+    /// and the client refused the click onto it for the frozen stall
+    /// window (`DEFAULT_PATH_STALL_TICKS`, `pathFollowPolicy.ts:6`) of
+    /// distinct ticks. The player is as close as the live scene allows.
+    EndBlocked,
 }
 
 /// The terminal outcome of a [`Traveller::follow`] run.
@@ -524,6 +532,8 @@ impl FollowRun {
                         stall_idle_last_tick: None,
                         stall_idle_at: None,
                         stall_recovered: false,
+                        end_refused_ticks: 0,
+                        end_refused_last_tick: None,
                     };
                     match self.send_walk_hop(d, snapshot, options, hop, here) {
                         Poll::Watching => return None,
@@ -835,6 +845,12 @@ struct WalkHop {
     stall_idle_at: Option<WorldTile>,
     /// A cancelled-walk recovery already reissued this hop's aim once.
     stall_recovered: bool,
+    /// Distinct game ticks the route's last tile, one step away, refused
+    /// the click while no walk of this follow was accepted
+    /// ([`HopFailure::EndBlocked`]).
+    end_refused_ticks: u32,
+    /// Snapshot tick last credited to `end_refused_ticks`.
+    end_refused_last_tick: Option<u32>,
 }
 
 impl WalkHop {
