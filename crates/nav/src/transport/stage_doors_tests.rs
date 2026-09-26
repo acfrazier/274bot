@@ -5,147 +5,21 @@ use super::*;
 use crate::router::{find_with, FindOptions, Leg, RouteError};
 use crate::world_state::WorldState;
 
-/// `scripts/doors/scripts/door_procs.rs2:74-101` (check_axis and
-/// check_axis_locactive, verbatim).
-const DOOR_PROCS: &str = "\
-[proc,check_axis](coord $coord, coord $loc_coord, int $angle)(boolean)
-switch_int($angle) {
-    case ^loc_north, ^loc_south :
-        if (coordz($coord) = coordz($loc_coord)) {
-            return(true);
-        }
-    case ^loc_west, ^loc_east :
-        if (coordx($coord) = coordx($loc_coord)) {
-            return(true);
-        }
-}
-return(false);
-
-[proc,check_axis_locactive](coord $coord)(boolean)
-switch_int(loc_angle) {
-    case ^loc_north, ^loc_south :
-        if (coordz($coord) = coordz(loc_coord)) {
-            return(true);
-        }
-    case ^loc_west, ^loc_east :
-        if (coordx($coord) = coordx(loc_coord)) {
-            return(true);
-        }
-}
-return(false);
-";
-
-/// `scripts/doors/scripts/open_and_close_doors.rs2:9-62` and
-/// `open_and_close_double_doors.rs2:63-104`: the teleport sequence of each
-/// proc (the leaf/sound tails trimmed).
-const OPEN_PROCS_RS2: &str = "\
-[proc,open_and_close_door](loc $replacement, boolean $entering, boolean $play_locked_synth)
-def_coord $loc_coord = loc_coord;
-def_int $angle = loc_angle;
-$x, $z = ~door_open($angle, loc_shape);
-def_coord $dest = $loc_coord;
-if ($entering = true) {
-    if (coord ! $loc_coord) {
-        p_teleport($loc_coord);
-        p_delay(1);
-    }
-    $dest = movecoord($loc_coord, $x, 0, $z);
-}
-p_teleport($dest);
-
-[proc,open_and_close_door2](loc $replacement, boolean $entering, synth $sound)
-def_int $angle = loc_angle;
-def_coord $loc_coord = loc_coord;
-$x, $z = ~door_open($angle, loc_shape);
-def_coord $dest = $loc_coord;
-if ($entering = true) {
-    if (coord ! $loc_coord) {
-        p_teleport($loc_coord);
-        p_delay(1);
-    }
-    $dest = movecoord(loc_coord, $x, 0, $z);
-}
-p_teleport($dest);
-
-[proc,open_and_close_double_door2](boolean $entering, int $side, synth $sound)
-def_coord $loc_coord = loc_coord;
-def_int $angle = loc_angle;
-$x, $z = ~door_open($angle, loc_shape);
-def_coord $dest = $loc_coord;
-if ($entering = true) {
-    if (coord ! $loc_coord & coord ! $opposite_coord) {
-        p_teleport($loc_coord);
-        p_delay(1);
-    }
-    $dest = movecoord($loc_coord, $x, 0, $z);
-}
-p_teleport($dest);
-";
-
-/// `open_and_close_doors.rs2:129-160` (the metal gate's teleport) and
-/// `open_and_close_double_doors.rs2:118-160` (the double door that takes
-/// the loc explicitly), trimmed like [`OPEN_PROCS_RS2`].
-const MORE_OPEN_PROCS_RS2: &str = "\
-[proc,open_and_close_metal_gate](loc $replacement, boolean $entering, boolean $mirrored)
-def_coord $loc_coord = loc_coord;
-def_int $angle = loc_angle;
-if ($mirrored = true) {
-    $x, $z = ~door_open_mirrored($angle);
-} else {
-    $x, $z = ~door_open($angle, loc_shape);
-}
-$telex, $telez = ~door_open($angle, loc_shape);
-def_coord $dest = $loc_coord;
-if ($entering = true) {
-    if (coord ! $loc_coord) {
-        p_teleport($loc_coord);
-        p_delay(1);
-    }
-    $dest = movecoord($loc_coord, $telex, 0, $telez);
-}
-p_teleport($dest);
-
-[proc,open_and_close_double_door3](boolean $entering, loc $loc_type, locshape $shape, int $angle, coord $loc_coord, int $side, synth $sound)
-$x, $z = ~door_open($angle, $shape);
-def_coord $dest = $loc_coord;
-if ($entering = true) {
-    if (coord ! $loc_coord & coord ! $opposite_coord) {
-        p_teleport($loc_coord);
-        p_delay(1);
-    }
-    $dest = movecoord($loc_coord, $x, 0, $z);
-}
-p_teleport($dest);
-";
-
-/// `ladders+stairs/scripts/ladders.rs2:154-161`.
-const CLIMB_LADDER_RS2: &str = "\
-[proc,climb_ladder](coord $coord, boolean $up)
-if ($up = true) {
-    anim(human_reachforladder, 0);
-} else {
-    anim(human_pickupfloor, 0);
-}
-p_delay(0);
-p_telejump($coord);
-";
-
-/// The shared engine facts every stage-door fixture needs: the door and
-/// ladder procs, `^left`/`^right`, `^true`, the journal colour rule and
+/// The shared engine facts every stage-door fixture needs: the pinned
+/// engine door and ladder procs ([`ENGINE_DOOR_PROCS`], verbatim),
+/// `^left`/`^right`, `^true`, the journal colour rule and
 /// one quest row (`%heroquest`, "Hero's Quest", complete at 15), a
 /// transmitted `%tbwt_main`, an untransmitted `%plain_flag` with no
 /// journal row, and the `ladder_cellar` block the climb price follows.
 fn write_stage_engine(fx: &Fixture) {
-    fx.write("scripts/doors/scripts/door_procs.rs2", DOOR_PROCS);
+    // The engine procs verbatim, exactly as the 289 content defines them.
     fx.write(
-        "scripts/doors/scripts/open_and_close_doors.rs2",
-        &format!("{OPEN_PROCS_RS2}\n{MORE_OPEN_PROCS_RS2}"),
+        "scripts/doors/scripts/engine_door_procs.rs2",
+        ENGINE_DOOR_PROCS,
     );
     fx.write(
         "scripts/ladders+stairs/scripts/ladders.rs2",
-        &format!(
-            "[oploc1,ladder_cellar]\np_arrivedelay;\n~climb_ladder(movecoord(coord(), 0, 0, 6400), false);\n\n{CLIMB_LADDER_RS2}"
-        ),
+        "[oploc1,ladder_cellar]\np_arrivedelay;\n~climb_ladder(movecoord(coord(), 0, 0, 6400), false);\n",
     );
     fx.write(
         "scripts/doors/configs/doubledoors.constant",
@@ -682,4 +556,99 @@ if($key_used = true) {
         "the jail door lets its prisoner out only"
     );
     assert!(door_crossings(&graph, 950).is_empty());
+}
+
+/// Writes a plain opener (`plain_door`, loc 900, west wall at (2821,3438))
+/// over the pinned engine procs, with `extra` script text added.
+fn plain_opener_fixture(extra: &str) -> Fixture {
+    let fx = Fixture::new();
+    write_stage_engine(&fx);
+    fx.write("pack/loc.pack", "900=plain_door\n1535=loc_1535\n");
+    fx.write("scripts/quests/quest_misc/scripts/plain.rs2", extra);
+    write_open_square(&fx, "0 5 46: 900 0 0\n");
+    fx
+}
+
+const PLAIN_OPENER: &str = "[oploc1,plain_door]\n~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n";
+
+/// A crossing proc is modelled only while the content's body of it (and of
+/// every proc it calls) is the pinned engine body: the verbatim 289 procs
+/// cross, while an `~open_and_close_door` whose landing calculation drifts,
+/// or that moves the player again, or a drifted `~door_open` it calls,
+/// yields no edge and is counted in the skip report — even though every
+/// line the old marker check looked for is still there.
+#[test]
+fn stage_door_crosses_only_through_the_pinned_engine_procs() {
+    let fx = plain_opener_fixture(PLAIN_OPENER);
+    let (graph, _) = derive_stage(&fx, &[900]);
+    assert_eq!(
+        door_crossings(&graph, 900).len(),
+        2,
+        "the pinned procs cross"
+    );
+
+    let door = "$dest = movecoord($loc_coord, $x, 0, $z);\n}\np_teleport($dest);";
+    let door_open_west = "case ^loc_west : return(-1, 0);";
+    for (label, from, to) in [
+        (
+            "landing drift",
+            door,
+            "$dest = movecoord($loc_coord, $x, 0, add($z, 1));\n}\np_teleport($dest);",
+        ),
+        (
+            "second movement",
+            door,
+            "$dest = movecoord($loc_coord, $x, 0, $z);\n}\np_teleport($dest);\np_teleport(movecoord($dest, 0, 0, 3));",
+        ),
+        ("callee drift", door_open_west, "case ^loc_west : return(-2, 0);"),
+    ] {
+        assert!(ENGINE_DOOR_PROCS.contains(from), "{label}");
+        // Drift only the first occurrence: `~open_and_close_door`'s body,
+        // or the wall-straight arm of `~door_open`.
+        let drifted = ENGINE_DOOR_PROCS.replacen(from, to, 1);
+        let fx = plain_opener_fixture(PLAIN_OPENER);
+        fx.write("scripts/doors/scripts/engine_door_procs.rs2", &drifted);
+        let defs = loc_defs(&[(900, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([900]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(
+            door_crossings(&graph, 900).is_empty(),
+            "{label}: a drifted proc is not a crossing"
+        );
+        assert_eq!(
+            skip_total(&skipped, SKIP_STAGE_DOOR_PROC_DRIFT),
+            1,
+            "{label}: the drifted proc is reported"
+        );
+    }
+}
+
+/// After the crossing, an opener may only call procs proven never to move
+/// the player: a proc that only prints keeps the edge, while a wrapper that
+/// teleports (directly or through another proc) or an undefined proc drops
+/// it.
+#[test]
+fn stage_door_refuses_an_unproven_proc_after_the_crossing() {
+    let opener = |call: &str| {
+        format!(
+            "[oploc1,plain_door]\n~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n{call}\n\n\
+[proc,say_goodbye]\nmes(\"The door shuts.\");\n\n\
+[proc,relocate_after_open]\np_delay(0);\n~nudge;\n\n\
+[proc,nudge]\np_teleport(movecoord(coord, 0, 0, 5));\n"
+        )
+    };
+    for (call, crosses) in [
+        ("~say_goodbye;", true),
+        ("~relocate_after_open;", false),
+        ("~nudge;", false),
+        ("~missing_proc;", false),
+        (
+            "if (%heroquest >= ^hero_complete) {\n    ~relocate_after_open;\n}",
+            false,
+        ),
+    ] {
+        let fx = plain_opener_fixture(&opener(call));
+        let (graph, _) = derive_stage(&fx, &[900]);
+        assert_eq!(!door_crossings(&graph, 900).is_empty(), crosses, "{call}");
+    }
 }

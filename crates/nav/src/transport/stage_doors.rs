@@ -1,4 +1,6 @@
-use super::rs2_syntax::{parse_body, CmpOp, Expr, Stmt};
+use std::cell::RefCell;
+
+use super::rs2_syntax::{lex, parse_body, CmpOp, Expr, Stmt, Tok};
 use super::*;
 
 // ---------------------------------------------------------------------------
@@ -53,33 +55,22 @@ use super::*;
 /// One proc a crossing may end in: the index of its `$entering` argument,
 /// of its replacement-loc argument (single doors) or its `^left`/`^right`
 /// side (double doors, which swing `lc_param(loc_type, next_loc_stage)`),
-/// the `(loc_type, shape, angle, loc_coord)` arguments a proc takes
-/// explicitly instead of reading the active loc, and the normalized
-/// teleport sequence its body must carry.
+/// and the `(loc_type, shape, angle, loc_coord)` arguments a proc takes
+/// explicitly instead of reading the active loc. Its body (and every proc
+/// it calls) must equal the pinned engine body in [`ENGINE_DOOR_PROCS`].
 struct OpenProc {
     name: &'static str,
     entering: usize,
     leaf: Option<usize>,
     side: Option<usize>,
     loc_args: Option<[usize; 4]>,
-    markers: &'static [&'static str],
 }
 
-/// `$x, $z = ~door_open(…)`, then the entering branch and the teleport
-/// (`scripts/doors/scripts/open_and_close_doors.rs2:17-35`,
-/// `open_and_close_double_doors.rs2:39-50`).
-const ACTIVE_LOC_MARKERS: &[&str] = &[
-    "$x,$z=~door_open($angle,loc_shape);",
-    "if($entering=true){",
-    "p_teleport($dest);",
-];
-/// The same sequence over the explicit shape argument
-/// (`open_and_close_double_doors.rs2:118-160`).
-const EXPLICIT_LOC_MARKERS: &[&str] = &[
-    "$x,$z=~door_open($angle,$shape);",
-    "if($entering=true){",
-    "p_teleport($dest);",
-];
+/// The engine procs a crossing ends in (`~open_and_close_*`, `~climb_ladder`,
+/// `~check_axis*`) and every proc they call, verbatim from the 289 content.
+/// A proc is modelled only while the content's body of it and of its whole
+/// call closure equals this text (comments and whitespace aside).
+pub(super) const ENGINE_DOOR_PROCS: &str = include_str!("engine_door_procs.rs2");
 
 const fn single(name: &'static str) -> OpenProc {
     OpenProc {
@@ -88,7 +79,6 @@ const fn single(name: &'static str) -> OpenProc {
         leaf: Some(0),
         side: None,
         loc_args: None,
-        markers: ACTIVE_LOC_MARKERS,
     }
 }
 
@@ -106,7 +96,6 @@ const OPEN_PROCS: [OpenProc; 10] = [
         leaf: None,
         side: Some(1),
         loc_args: None,
-        markers: ACTIVE_LOC_MARKERS,
     },
     OpenProc {
         name: "open_and_close_double_door2",
@@ -114,7 +103,6 @@ const OPEN_PROCS: [OpenProc; 10] = [
         leaf: None,
         side: Some(1),
         loc_args: None,
-        markers: ACTIVE_LOC_MARKERS,
     },
     OpenProc {
         name: "open_and_close_double_door3",
@@ -122,7 +110,6 @@ const OPEN_PROCS: [OpenProc; 10] = [
         leaf: None,
         side: Some(5),
         loc_args: Some([1, 2, 3, 4]),
-        markers: EXPLICIT_LOC_MARKERS,
     },
 ];
 
@@ -145,12 +132,6 @@ const PURE_OPAQUE: [&str; 14] = [
     "modulo",
 ];
 
-/// `[proc,check_axis]` as `door_procs.rs2` defines it (normalized): true
-/// when the coord shares the loc's z (north/south walls) or x (east/west).
-const CHECK_AXIS_BODY: &str = "switch_int($angle){case^loc_north,^loc_south:if(coordz($coord)=coordz($loc_coord)){return(true);}case^loc_west,^loc_east:if(coordx($coord)=coordx($loc_coord)){return(true);}}return(false);";
-/// `[proc,check_axis_locactive]`: the same test against the active loc.
-const CHECK_AXIS_LOCACTIVE_BODY: &str = "switch_int(loc_angle){case^loc_north,^loc_south:if(coordz($coord)=coordz(loc_coord)){return(true);}case^loc_west,^loc_east:if(coordx($coord)=coordx(loc_coord)){return(true);}}return(false);";
-
 /// Statements an opener may run before the crossing without changing
 /// where the player ends up or waiting on input.
 const INERT_CALLS: [&str; 10] = [
@@ -166,18 +147,25 @@ const INERT_CALLS: [&str; 10] = [
     "if_close",
 ];
 
-/// Calls that move the player or hand control elsewhere; none may follow
-/// the crossing.
-const MOVES: [&str; 9] = [
+/// Engine commands that move the player, start another interaction or
+/// hand control elsewhere; none may follow the crossing, directly or in a
+/// proc it calls (an unknown or unparsed proc counts as moving).
+const MOVES: [&str; 15] = [
     "p_teleport",
     "p_telejump",
     "p_exactmove",
     "p_walk",
-    "~forcemove",
-    "~agility_exactmove",
+    "p_opnpc",
+    "p_oploc",
+    "p_opobj",
+    "p_opplayer",
+    "p_opheld",
+    "jump",
     "queue",
     "longqueue",
     "weakqueue",
+    "strongqueue",
+    "softqueue",
 ];
 
 /// Engine `PlayerStat` order (`engine/src/engine/entity/PlayerStat.ts`):
@@ -209,6 +197,9 @@ const STATS: [&str; 21] = [
 /// Jumps followed before an opener is refused (label cycles).
 const MAX_JUMPS: usize = 16;
 
+/// One proc definition: its identity ([`proc_identity`]) and parsed body.
+type ProcDef = (String, Option<Vec<Stmt>>);
+
 /// One `[kind,name]` block: its declared parameters (labels) and body.
 #[derive(Debug, Clone)]
 struct Block {
@@ -220,7 +211,11 @@ struct Block {
 struct Sources {
     oploc1: HashMap<String, Vec<Option<Block>>>,
     labels: HashMap<String, Vec<Option<Block>>>,
-    procs: HashMap<String, Vec<String>>,
+    /// Proc name → each definition's normalized header parameters + body,
+    /// and its parsed body.
+    procs: HashMap<String, Vec<ProcDef>>,
+    /// Procs proven (or refuted) never to move the player.
+    non_moving: RefCell<HashMap<String, bool>>,
     constants: HashMap<String, i32>,
     varps: HashMap<String, i32>,
     objs: HashMap<String, i32>,
@@ -231,7 +226,7 @@ impl Sources {
     fn read(content_root: &Path, ids: &HashMap<String, i32>) -> Self {
         let mut oploc1: HashMap<String, Vec<Option<Block>>> = HashMap::new();
         let mut labels: HashMap<String, Vec<Option<Block>>> = HashMap::new();
-        let mut procs: HashMap<String, Vec<String>> = HashMap::new();
+        let mut procs: HashMap<String, Vec<ProcDef>> = HashMap::new();
         visit_rs2(&content_root.join("scripts"), &mut |text| {
             for (kind, name, params, body) in header_blocks(text) {
                 match kind.as_str() {
@@ -243,7 +238,10 @@ impl Sources {
                         .entry(name)
                         .or_default()
                         .push(parse_body(&body).map(|body| Block { params, body })),
-                    "proc" => procs.entry(name).or_default().push(normalized_body(&body)),
+                    "proc" => procs
+                        .entry(name)
+                        .or_default()
+                        .push((proc_identity(&params, &body), parse_body(&body))),
                     _ => {}
                 }
             }
@@ -252,6 +250,7 @@ impl Sources {
             oploc1,
             labels,
             procs,
+            non_moving: RefCell::new(HashMap::new()),
             constants: script_constants(content_root),
             varps: varp_ids_by_name(content_root),
             objs: obj_ids_by_name(content_root),
@@ -259,32 +258,74 @@ impl Sources {
         }
     }
 
-    /// The door procs the crossing model depends on, each defined once
-    /// with the modelled body; a drifted proc is not supported.
-    fn supported_open_procs(&self) -> HashSet<&'static str> {
-        let one = |name: &str| match self.procs.get(name).map(Vec::as_slice) {
-            Some([body]) => Some(body.as_str()),
-            _ => None,
-        };
-        if one("check_axis") != Some(CHECK_AXIS_BODY)
-            || one("check_axis_locactive") != Some(CHECK_AXIS_LOCACTIVE_BODY)
+    /// The [`ENGINE_DOOR_PROCS`] procs this content defines exactly once
+    /// with the pinned body, whose whole pinned call closure does too, and
+    /// how many it defines with a drifted body.
+    fn supported_procs(&self) -> (HashSet<String>, usize) {
+        let pinned = pinned_procs();
+        let matches = |name: &str| match (self.procs.get(name).map(Vec::as_slice), pinned.get(name))
         {
-            return HashSet::new();
-        }
-        OPEN_PROCS
-            .iter()
-            .filter(|p| one(p.name).is_some_and(|b| p.markers.iter().all(|m| b.contains(m))))
-            .map(|p| p.name)
-            .collect()
+            (Some([(body, _)]), Some((want, _))) => body == want,
+            _ => false,
+        };
+        let drifted = pinned
+            .keys()
+            .filter(|name| self.procs.contains_key(*name) && !matches(name))
+            .count();
+        let supported = pinned
+            .keys()
+            .filter(|name| {
+                let mut seen = HashSet::new();
+                let mut pending = vec![name.as_str()];
+                while let Some(n) = pending.pop() {
+                    if !seen.insert(n) {
+                        continue;
+                    }
+                    let Some((_, calls)) = pinned.get(n) else {
+                        return false;
+                    };
+                    if !matches(n) {
+                        return false;
+                    }
+                    pending.extend(calls.iter().map(String::as_str));
+                }
+                true
+            })
+            .cloned()
+            .collect();
+        (supported, drifted)
     }
 
-    /// `[proc,climb_ladder]` defined once and ending in the `p_telejump`
-    /// to its `$coord` (`ladders+stairs/scripts/ladders.rs2:154-161`).
-    fn climb_supported(&self) -> bool {
-        matches!(
-            self.procs.get("climb_ladder").map(Vec::as_slice),
-            Some([body]) if body.ends_with("p_telejump($coord);")
-        )
+    /// Whether a proc provably never moves the player: defined once, parsed,
+    /// and no statement of it moves or jumps ([`Sources::moves_or_jumps`]).
+    /// A proc on a call cycle is unproven.
+    fn proc_non_moving(&self, name: &str) -> bool {
+        if let Some(&known) = self.non_moving.borrow().get(name) {
+            return known;
+        }
+        self.non_moving.borrow_mut().insert(name.to_string(), false);
+        let proven = match self.procs.get(name).map(Vec::as_slice) {
+            Some([(_, Some(body))]) => !body.iter().any(|s| self.moves_or_jumps(s)),
+            _ => false,
+        };
+        self.non_moving
+            .borrow_mut()
+            .insert(name.to_string(), proven);
+        proven
+    }
+
+    /// Whether a statement may move the player or hand control elsewhere: a
+    /// [`MOVES`] command, an `@label` jump, or a `~proc` not proven
+    /// non-moving (the crossing procs and `~climb_ladder` move).
+    fn moves_or_jumps(&self, stmt: &Stmt) -> bool {
+        let mut calls = Vec::new();
+        stmt.calls(&mut calls);
+        calls.iter().any(|c| {
+            c.starts_with('@')
+                || MOVES.contains(&c.as_str())
+                || c.strip_prefix('~')
+                    .is_some_and(|p| !self.proc_non_moving(p))
+        })
     }
 
     fn one<'s>(map: &'s HashMap<String, Vec<Option<Block>>>, name: &str) -> Lookup<'s> {
@@ -302,6 +343,31 @@ enum Lookup<'s> {
     Unusable,
 }
 
+/// A proc definition's comparable identity: its parameter names in order
+/// and its body, comments and whitespace removed.
+fn proc_identity(params: &[String], body: &str) -> String {
+    format!("({}){}", params.join(","), normalized_body(body))
+}
+
+/// [`ENGINE_DOOR_PROCS`] as proc name → (identity, procs its body calls).
+fn pinned_procs() -> HashMap<String, (String, Vec<String>)> {
+    header_blocks(ENGINE_DOOR_PROCS)
+        .into_iter()
+        .filter(|(kind, ..)| kind == "proc")
+        .map(|(_, name, params, body)| {
+            let calls = lex(&body)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|t| match t {
+                    Tok::Word(w) => w.strip_prefix('~').map(str::to_string),
+                    _ => None,
+                })
+                .collect();
+            (name, (proc_identity(&params, &body), calls))
+        })
+        .collect()
+}
+
 /// `[kind,name]` headers with their body text, including one-line bodies
 /// (`[oploc1,herodoor_l] @open_heroes_guild(^left);`) and parameter lists
 /// (`[label,open_legends_door](int $side)`), which `script_blocks` cannot
@@ -316,7 +382,9 @@ fn header_blocks(text: &str) -> Vec<(String, String, Vec<String>, String)> {
             let word = |s: &str| {
                 !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
             };
-            (word(kind) && word(name)).then(|| (kind.to_string(), name.to_string(), after))
+            // `[proc,.chatnpc]`: a secondary-subject proc is its own block.
+            let name_ok = word(name.strip_prefix('.').unwrap_or(name));
+            (word(kind) && name_ok).then(|| (kind.to_string(), name.to_string(), after))
         });
         if let Some((kind, name, after)) = header {
             if let Some(done) = cur.take() {
@@ -460,7 +528,8 @@ enum Flow {
 /// stand tile (a ladder has none: it is climbed from any side).
 struct Eval<'s> {
     src: &'s Sources,
-    opens: &'s HashSet<&'static str>,
+    /// The pinned engine procs this content matches ([`Sources::supported_procs`]).
+    supported: &'s HashSet<String>,
     at: WorldTile,
     stand: Option<WorldTile>,
     angle: i32,
@@ -484,7 +553,7 @@ impl Eval<'_> {
                         if *rest == Stmt::Return {
                             return Flow::Crossed(leaf, true);
                         }
-                        if moves_or_jumps(rest) {
+                        if self.src.moves_or_jumps(rest) {
                             return Flow::Refused;
                         }
                     }
@@ -610,7 +679,7 @@ impl Eval<'_> {
         let Some(spec) = OPEN_PROCS.iter().find(|p| p.name == proc) else {
             return Flow::Refused;
         };
-        if !self.opens.contains(spec.name) {
+        if !self.supported.contains(spec.name) {
             return Flow::Refused;
         }
         let mut vals = Vec::with_capacity(args.len());
@@ -661,7 +730,7 @@ impl Eval<'_> {
     /// level change or a cellar `z ± 6400` shift; any horizontal shift
     /// depends on the side the player climbed from and is refused.
     fn climb(&mut self, args: &[Expr], env: &Env) -> Flow {
-        if self.stand.is_some() || !self.src.climb_supported() {
+        if self.stand.is_some() || !self.supported.contains("climb_ladder") {
             return Flow::Refused;
         }
         let [dest, up] = args else {
@@ -723,10 +792,14 @@ impl Eval<'_> {
         let vals: Option<Vec<Val>> = args.iter().map(|a| self.value(a, env)).collect();
         let vals = vals?;
         match (name, vals.as_slice()) {
-            ("~check_axis", [Val::Coord(c), Val::Coord(l), Val::Int(angle)]) => {
+            ("~check_axis", [Val::Coord(c), Val::Coord(l), Val::Int(angle)])
+                if self.supported.contains("check_axis") =>
+            {
                 Some(Val::Bool(check_axis(*c, *l, *angle)))
             }
-            ("~check_axis_locactive", [Val::Coord(c)]) => {
+            ("~check_axis_locactive", [Val::Coord(c)])
+                if self.supported.contains("check_axis_locactive") =>
+            {
                 Some(Val::Bool(check_axis(*c, self.at, self.angle)))
             }
             ("coordx", [Val::Coord(c)]) => Some(Val::Int(c.x)),
@@ -748,7 +821,8 @@ impl Eval<'_> {
             ("lc_param", [Val::Loc(LocRef::Itself), Val::Name(p)]) if p == "next_loc_stage" => {
                 Some(Val::Loc(LocRef::NextStage))
             }
-            ("~door_open", [_, _]) | ("loc_param", [_]) => Some(Val::Opaque),
+            ("~door_open", [_, _]) if self.supported.contains("door_open") => Some(Val::Opaque),
+            ("loc_param", [_]) => Some(Val::Opaque),
             _ if PURE_OPAQUE.contains(&name) => Some(Val::Opaque),
             _ => None,
         }
@@ -956,19 +1030,6 @@ fn inert(stmts: &[Stmt]) -> bool {
     })
 }
 
-fn moves_or_jumps(stmt: &Stmt) -> bool {
-    let mut calls = Vec::new();
-    stmt.calls(&mut calls);
-    calls.iter().any(|c| {
-        c.starts_with('@')
-            || c == "~climb_ladder"
-            || MOVES.contains(&c.as_str())
-            || OPEN_PROCS
-                .iter()
-                .any(|p| c.strip_prefix('~') == Some(p.name))
-    })
-}
-
 /// A loc's `category=` and `param=next_loc_stage` from every `.loc`
 /// config (the `_unpack` trees included — the pack tool compiles them). A
 /// loc declared twice with different values keeps neither.
@@ -1061,8 +1122,9 @@ pub(super) fn stage_door_edges(
     audit: &mut VarpGateAudit,
 ) {
     let src = Sources::read(content_root, ids);
-    let opens = src.supported_open_procs();
-    if opens.is_empty() {
+    let (supported, drifted) = src.supported_procs();
+    bump(skipped, SKIP_STAGE_DOOR_PROC_DRIFT, drifted);
+    if !OPEN_PROCS.iter().any(|p| supported.contains(p.name)) {
         bump(skipped, SKIP_STAGE_DOOR_PROCS, 1);
         return;
     }
@@ -1141,7 +1203,7 @@ pub(super) fn stage_door_edges(
             let eval = |stand: Option<WorldTile>| {
                 let mut eval = Eval {
                     src: &src,
-                    opens: &opens,
+                    supported: &supported,
                     at,
                     stand,
                     angle: p.angle,

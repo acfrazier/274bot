@@ -445,7 +445,9 @@ const SKIP_SWAP_DOOR_BLOCKS: &str = "in-place swap door's open loc still blocks 
 const SKIP_SCRIPTED_DOOR_SOURCE: &str =
     "scripted wall crossing opener is not the canonical form or its worn obj is unresolved";
 const SKIP_STAGE_DOOR_PROCS: &str =
-    "door open/check-axis procs differ from the modelled engine bodies (no stage doors)";
+    "no engine door open proc matches its pinned body (no stage doors)";
+const SKIP_STAGE_DOOR_PROC_DRIFT: &str =
+    "engine door/ladder proc differs from its pinned body (its crossings are not modelled)";
 const SKIP_STAGE_DOOR_CONFLICT: &str =
     "named wall/ladder opener is declared more than once, unparsed, or split across aliases";
 const SKIP_STAGE_DOOR_UNPROVEN: &str =

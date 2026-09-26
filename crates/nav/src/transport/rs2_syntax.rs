@@ -95,6 +95,8 @@ fn expr_calls(expr: &Expr, out: &mut Vec<String>) {
             expr_calls(a, out);
             expr_calls(b, out);
         }
+        // An argument-less proc call (`~proc` without parentheses).
+        Expr::Word(w) if w.starts_with('~') => out.push(w.clone()),
         Expr::Word(_) | Expr::Num(_) | Expr::Str | Expr::Other => {}
     }
 }
@@ -442,12 +444,12 @@ impl Parser<'_> {
     }
 }
 
-/// Every `name(` call and `@label` in a token run.
+/// Every `name(` call, `~proc` and `@label` in a token run.
 fn calls_in(toks: &[Tok]) -> Vec<String> {
     let mut out = Vec::new();
     for (k, t) in toks.iter().enumerate() {
         if let Tok::Word(w) = t {
-            if w.starts_with('@') || matches!(toks.get(k + 1), Some(Tok::Punct("("))) {
+            if w.starts_with(['@', '~']) || matches!(toks.get(k + 1), Some(Tok::Punct("("))) {
                 out.push(w.clone());
             }
         }
