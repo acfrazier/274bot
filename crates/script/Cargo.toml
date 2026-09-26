@@ -353,6 +353,21 @@ required-features = ["load"]
 [[test]]
 name = "blocked_cards"
 required-features = ["load"]
+[[test]]
+name = "bank_withdraw_op"
+required-features = ["load"]
+[[test]]
+name = "chat_dialog_continue"
+required-features = ["load"]
+[[test]]
+name = "client_adapter_self_anim"
+required-features = ["load"]
+[[test]]
+name = "fight_upkeep"
+required-features = ["load"]
+[[test]]
+name = "reconnect_hold"
+required-features = ["load"]
 
 [[example]]
 name = "catalog_inventory"
