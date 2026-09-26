@@ -25,6 +25,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   stall session through a bank return and renewed Guard readiness, within
   a 360-second deadline; a second unqualified bank visit fails. Real
   combat XP, Thieving XP and Cake requirements remain mandatory.
+
 ### Navigation
 
 - Radius walks to a solid in-scene target now route to one of its wall-valid
