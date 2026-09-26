@@ -727,9 +727,7 @@ fn herblore_native_deposit_soft_waits_open_unloaded_bank() {
     );
 }
 
-/// Eggs headed root cause: Repeat open re-sends Use-quickly after the
-/// bank is already loaded. Skip that send so deposit still sees a loaded
-/// current session.
+/// An already loaded bank must remain usable by the following deposit.
 #[test]
 fn herblore_open_seed_bank_skips_booth_when_current_bank_loaded() {
     use api::snapshot::Family;
@@ -785,8 +783,9 @@ fn herblore_open_seed_bank_skips_booth_when_current_bank_loaded() {
         .iter()
         .find(|step| step.name == "open and acknowledge the lobster seed bank")
         .expect("eggs lobster bank open");
-    let StepKind::Repeat { send } = &open_step.kind else {
-        panic!("eggs open must be Repeat");
+    let send = match &open_step.kind {
+        StepKind::Perform { send } | StepKind::Repeat { send } => send,
+        _ => panic!("missing bank open action"),
     };
     let before = client.out.pos;
     assert!(
@@ -797,6 +796,150 @@ fn herblore_open_seed_bank_skips_booth_when_current_bank_loaded() {
         client.out.pos, before,
         "skip must not emit another booth Use-quickly"
     );
+}
+
+fn plant_seed_booth(client: &mut Client, x: i32, z: i32) {
+    use client::config::LocType;
+
+    let id = 2213;
+    let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+    if cache.locs.len() <= id {
+        cache.locs.resize_with(id + 1, LocType::default);
+    }
+    cache.locs[id] = LocType {
+        id: id as i32,
+        name: "Bank booth".into(),
+        op: vec![None, Some("Use-quickly".into()), None, None, None],
+        ..Default::default()
+    };
+    let x = x - client.map_build_base_x;
+    let z = z - client.map_build_base_z;
+    let typecode = 0x4000_0000 | ((id as i32) << 14) | x | (z << 7);
+    client
+        .world
+        .set_wall(0, x, z, 0, 0, 0, typecode, 10 | (2 << 6), 0, 0, 0, 0);
+}
+
+#[test]
+fn flax_spin_seed_lands_on_an_operable_booth_stand() {
+    use client::client::MiniMenuAction;
+    use client::dash3d::ClientPlayer;
+
+    let scenario = get("flax_aio_spin").unwrap();
+    let seed = scenario
+        .steps
+        .iter()
+        .find(|step| step.name.starts_with("seed crafting, banked flax,"))
+        .unwrap();
+    let StepKind::Perform { send } = &seed.kind else {
+        panic!("missing flax seed action");
+    };
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    assert!(send(&mut client, &GameSnapshot::new()));
+
+    // Apply the emitted teleport to the captured Seers booth layout, not
+    // the broad ArrivedNear arm (which also admits the old diagonal stand).
+    let bytes = &client.out.data()[..client.out.pos];
+    let start = bytes.windows(5).position(|b| b == b"tele ").unwrap() + 5;
+    let end = bytes[start..]
+        .iter()
+        .position(|b| !b.is_ascii_digit() && *b != b',')
+        .unwrap();
+    let args: Vec<i32> = std::str::from_utf8(&bytes[start..start + end])
+        .unwrap()
+        .split(',')
+        .map(|part| part.parse().unwrap())
+        .collect();
+    let x = args[1] * 64 + args[3];
+    let z = args[2] * 64 + args[4];
+    client.map_build_base_x = 2672;
+    client.map_build_base_z = 3440;
+    client.minusedlevel = args[0];
+    client.local_player = Some(ClientPlayer::at(x - 2672, z - 3440));
+    for column in &mut client.collision[0].flags {
+        column.fill(0);
+    }
+    for booth_x in [2721, 2722, 2724, 2727, 2728, 2729] {
+        plant_seed_booth(&mut client, booth_x, 3494);
+    }
+    client.bump_gens(client::io::ServerProt::PLAYER_INFO);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let opener = scenario
+        .steps
+        .iter()
+        .find(|step| step.name == "open and acknowledge the exact flax seed bank")
+        .unwrap();
+    let StepKind::Perform { send } = &opener.kind else {
+        panic!("missing flax bank action");
+    };
+    assert!(
+        send(&mut client, &snapshot),
+        "the seeded landing must permit the real booth operation"
+    );
+    assert_eq!(client.menu_action[0], MiniMenuAction::OP_LOC2);
+    let booth_x = client.map_build_base_x + client.menu_param_b[0];
+    let booth_z = client.map_build_base_z + client.menu_param_c[0];
+    assert_eq!((booth_x - x).abs() + (booth_z - z).abs(), 1);
+}
+
+#[test]
+fn herblore_seed_bank_waits_for_one_open_ack_before_deposit() {
+    use client::client::MiniMenuAction;
+    use client::dash3d::ClientPlayer;
+    use client::io::{Packet, ServerProt};
+
+    let mut scenario = get("herblore_secondaries").unwrap();
+    let open = scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "open and acknowledge the lobster seed bank")
+        .unwrap();
+    scenario.steps = scenario.steps.drain(open..=open + 1).collect();
+    scenario.seed.mainland = false;
+    scenario.settings = ScenarioSettings::default();
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    client.map_build_base_x = 3056;
+    client.map_build_base_z = 3440;
+    client.local_player = Some(ClientPlayer::at(40, 54));
+    for column in &mut client.collision[0].flags {
+        column.fill(0);
+    }
+    plant_seed_booth(&mut client, 3096, 3493);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 2 });
+    assert_eq!(client.menu_action[0], MiniMenuAction::OP_LOC2);
+    let opening = client.out.data()[..client.out.pos].to_vec();
+
+    // Several observes can precede the server's first bank response. They
+    // must not queue more opens that invalidate the next deposit's session.
+    for _ in 0..3 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(client.out.data()[..client.out.pos], opening);
+    }
+    plant_open_unloaded_bank(&mut client);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 2 });
+    assert_eq!(client.out.data()[..client.out.pos], opening);
+
+    let mut full = Packet::new(vec![2, 89, 0]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+    plant_bank_side(&mut client, NOTED_LOBSTER_ID, HERBLORE_EGG_FOOD_SEED);
+    client.bump_gens(ServerProt::UPDATE_INV_FULL);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    assert_eq!(client.out.data()[..client.out.pos], opening);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    assert_eq!(client.menu_param_a[0], NOTED_LOBSTER_ID);
+    assert_eq!(client.menu_param_c[0], 701, "deposit from the bank side");
 }
 
 /// Capture 2026-09-18T06-11-18: booth 2213@3091,3243 is not operable from
@@ -7118,12 +7261,6 @@ fn flax_aio_and_secondary_cases_register_collection_cycles() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
-    assert!(spin_seed.contains(&Proof::ArrivedNear {
-        x: 2725,
-        z: 3493,
-        level: 0,
-        radius: 8,
-    }));
     assert!(spin_seed.contains(&Proof::BankItemId {
         id: FLAX_ID,
         count: FLAX_SPIN_SEED,
@@ -7354,14 +7491,6 @@ fn flax_aio_and_secondary_cases_register_collection_cycles() {
         step.name
             == "acknowledge exact Draynor booth identity and Use-quickly action before bank send"
     }));
-    let coin_open = buy.steps[..buy_start]
-        .iter()
-        .find(|step| step.name == "open and acknowledge the coin seed bank")
-        .expect("newt coin bank open");
-    assert!(
-        matches!(coin_open.kind, StepKind::Repeat { .. }),
-        "newt open must Repeat exact booth, not one-shot nearest Perform"
-    );
     assert!(buy_seed.contains(&Proof::ArrivedNear {
         x: 3012,
         z: 3259,
@@ -11035,16 +11164,6 @@ fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
                 }),
                 "{name}: readiness step is present"
             );
-        let open = scenario.steps[..start]
-            .iter()
-            .find(|step| {
-                step.name == "open the exact named shop bank booth for the coin seed deposit"
-            })
-            .expect("exact booth open");
-        assert!(
-            matches!(open.kind, StepKind::Repeat { .. }),
-            "{name}: open must Repeat exact booth, not one-shot nearest"
-        );
         assert!(
             seed.contains(&Proof::BankItemId {
                 id: COINS_ID,

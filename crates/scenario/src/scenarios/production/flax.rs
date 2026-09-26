@@ -20,12 +20,6 @@ pub(crate) const FLAX_SPINNER_WHEEL: WorldTile = WorldTile {
     z: 3471,
     level: 1,
 };
-/// FlaxAIO BANK_STAND; the spinner booth seed is 2722,3493,0.
-const FLAX_AIO_BANK: WorldTile = WorldTile {
-    x: 2725,
-    z: 3493,
-    level: 0,
-};
 const FLAX_AIO_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "picking",
@@ -600,7 +594,7 @@ pub(crate) fn flax_aio_pick_scenario() -> Scenario {
     }
 }
 
-/// FlaxAIO spin-only. Banked flax at FlaxAIO's own booth stand, wheel
+/// FlaxAIO spin-only. Banked flax at an operable Seers booth stand, wheel
 /// conversion+XP, string deposit, restock, closed return upstairs, further
 /// spin. Wool is not this core.
 pub(crate) fn flax_aio_spin_scenario() -> Scenario {
@@ -614,7 +608,9 @@ pub(crate) fn flax_aio_spin_scenario() -> Scenario {
         id: BOW_STRING_ID,
         count: 1,
     };
-    let bank = FLAX_AIO_BANK;
+    // The catalog's bank anchor is diagonal to an open booth. Seed on the
+    // spinner's cardinal stand: the seed opener sends an op, not a walk.
+    let bank = FLAX_SPINNER_BANK;
     let mut steps = script_live_seed_steps();
     steps.push(Step {
         name: "seed crafting, banked flax, and tele to FlaxAIO's Seers bank before Start",

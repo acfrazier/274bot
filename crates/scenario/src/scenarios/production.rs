@@ -297,15 +297,9 @@ pub(crate) const DRAYNOR_BANK_BOOTH: WorldTile = WorldTile {
 };
 pub(crate) const DRAYNOR_BANK_BOOTH_ID: i32 = 2213;
 
-/// Empty pack at the Seers flax bank. Banked flax 1779, never bow string.
-/// Script withdraws, climbs to the wheel, spins Flax into 1777 with Crafting
-/// XP, deposits, restocks, returns upstairs and spins again. Wool is not this
-/// core.
-/// Open one exact booth until the bank arm holds. Runner re-fires `Repeat`
-/// every tick *before* checking the arm: re-clicking Use-quickly on an already
-/// open loaded bank bumps the bank session and clears `bank_loaded` /
-/// `bank_side`, so deposit then hard-fails. Skip the booth send once the
-/// current session is open and loaded.
+/// Send one exact booth open, then wait for its bank acknowledgement.
+/// Re-sending while the first response is in flight queues more opens that
+/// can invalidate the loaded session after this step advances to deposit.
 pub(super) fn herblore_open_seed_bank_at(
     name: &'static str,
     arm: Proof,
@@ -314,20 +308,13 @@ pub(super) fn herblore_open_seed_bank_at(
 ) -> Step {
     Step {
         name,
-        kind: StepKind::Repeat {
+        kind: StepKind::Perform {
             send: Box::new(move |c, snapshot| {
                 if snapshot.bank_component_id() >= 0 && snapshot.bank_loaded() {
                     return true;
                 }
                 match Interactions::new(snapshot, c).open_booth_at(booth, booth_id) {
                     SendResult::Sent { .. } => true,
-                    SendResult::Refused {
-                        reason:
-                            SendReason::SceneUnavailable
-                            | SendReason::OffScene
-                            | SendReason::StaleTarget,
-                        ..
-                    } => true,
                     SendResult::Refused { reason, .. } => {
                         eprintln!(
                             "[scenario] exact booth {booth_id}@{},{} send refused: {reason:?}",

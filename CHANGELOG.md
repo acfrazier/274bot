@@ -28,6 +28,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - The Taverley jail v2 scenarios wait for the acquired jail/dusty key before
   starting the clean-stop grace. Headless qualification no longer times out
   during the dungeon walk; navigation and the scenario budgets are unchanged.
+- FlaxAIO's spin seed lands cardinally beside an open Seers booth, not on
+  the catalog's diagonal bank anchor. Exact-booth seed opens now send once
+  and await the bank acknowledgement, preventing queued reopens from
+  invalidating Herblore and shop seed deposits.
 
 ### Navigation
 
