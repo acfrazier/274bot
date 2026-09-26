@@ -7,6 +7,7 @@ pub mod game_view;
 pub mod grid;
 mod input_capture;
 pub mod loadouts;
+pub mod log_pane;
 pub mod nav_settings;
 pub mod overlay;
 pub mod paint;

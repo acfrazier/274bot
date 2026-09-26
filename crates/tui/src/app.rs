@@ -380,6 +380,8 @@ pub struct TuiApp {
     pub resources: ResourceView,
     /// One-line background-bots notice until the operator acks it.
     pub background_notice: Option<String>,
+    /// F7 log pane over the shared structured log.
+    pub log: crate::log_pane::LogPaneState,
     /// Last draw rects for click hit-testing.
     pub chat_area: Rect,
     pub script_area: Rect,
@@ -443,6 +445,7 @@ impl TuiApp {
             error: None,
             resources: ResourceView::default(),
             background_notice: None,
+            log: crate::log_pane::LogPaneState::default(),
             chat_area: Rect::default(),
             script_area: Rect::default(),
         }
@@ -927,6 +930,15 @@ impl TuiApp {
         if self.quit {
             return AppAction::None;
         }
+        if key.code == KeyCode::F(7) && !self.log.open {
+            self.log.open = true;
+            return AppAction::None;
+        }
+        if self.log.open {
+            let focused = self.focused.and_then(|i| self.names.get(i));
+            self.log.on_key(key, focused.map(String::as_str));
+            return AppAction::None;
+        }
         if self.params_state.open {
             return AppAction::None;
         }
@@ -1401,7 +1413,7 @@ impl TuiApp {
     /// chat pane answers options / continues; the script pane answers its
     /// buttons and the Browse picker rows.
     pub fn on_click(&mut self, col: u16, row: u16) -> AppAction {
-        if self.params_state.open {
+        if self.params_state.open || self.log.open {
             return AppAction::None;
         }
         if self.settings_state.open {
@@ -1605,6 +1617,25 @@ impl TuiApp {
             );
             frame.render_widget(pane, area);
         }
+        if self.log.open {
+            let focused = self
+                .focused
+                .and_then(|i| self.names.get(i))
+                .map(String::as_str);
+            self.log.refresh(focused);
+            let below_strip = Rect {
+                y: area.y + 1,
+                height: area.height.saturating_sub(1),
+                ..area
+            };
+            frame.render_widget(
+                crate::log_pane::LogPane {
+                    state: &self.log,
+                    focused,
+                },
+                below_strip,
+            );
+        }
     }
 
     /// Render the loadouts popup overlay (call after [`Self::draw`]).
@@ -1672,7 +1703,7 @@ impl TuiApp {
             }
         }
         let mut text = format!(
-            "[{members}]  focused: {focused}   {}   F4 map · q quit · o options · l loadouts · Tab focus · m load+login all · i login · u logout · U logout all · x remove",
+            "[{members}]  focused: {focused}   {}   F4 map · F7 log · q quit · o options · l loadouts · Tab focus · m load+login all · i login · u logout · U logout all · x remove",
             self.title
         );
         if let Some(err) = &self.error {

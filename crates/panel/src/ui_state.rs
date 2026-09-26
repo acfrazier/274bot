@@ -61,6 +61,10 @@ pub struct PanelUiState {
     /// with the TUI. Absent (0.1.8.1) or unknown = ask.
     #[serde(default)]
     pub map_bake: frontend_core::MapBakeChoice,
+    /// Write a per-session log file under `~/.274bot/logs/` (shared with the
+    /// TUI as `frontend_core::log_file::SESSION_LOG_KEY`). Absent = off.
+    #[serde(default)]
+    pub session_log_file: bool,
 }
 
 /// Panel subsection ids in General config (parameters shares
@@ -122,6 +126,7 @@ impl Default for PanelUiState {
             background_bots_ack: false,
             chrome: crate::theme::ChromeColors::default(),
             map_bake: frontend_core::MapBakeChoice::Ask,
+            session_log_file: false,
         }
     }
 }
@@ -453,6 +458,23 @@ mod tests {
         assert_eq!(c.warn, rgba_to_hex(WARN));
         assert_eq!(c.error, rgba_to_hex(ERROR));
         assert_eq!(c.green, rgba_to_hex(GREEN));
+    }
+
+    #[test]
+    fn session_log_file_is_off_for_old_prefs_and_survives_a_panel_save() {
+        let old: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
+        assert!(!old.session_log_file, "absent key: no session file");
+        // The TUI writes the shared key; a later panel save must keep it.
+        let on: PanelUiState = serde_json::from_str(&format!(
+            r#"{{"last_focus":null,"collapsed":{{}},"{}":true}}"#,
+            frontend_core::log_file::SESSION_LOG_KEY
+        ))
+        .unwrap();
+        assert!(on.session_log_file);
+        let bytes = serde_json::to_vec(&on).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value[frontend_core::log_file::SESSION_LOG_KEY], true);
     }
 
     #[test]

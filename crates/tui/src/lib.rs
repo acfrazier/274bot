@@ -9,7 +9,7 @@
 //!
 //! Panes: the WalkTo map (spec `2026-09-01-headless-tui-design.md`), the
 //! chat ring / NPC dialogue, the status + inv/stats/locs readout, the
-//! disabled script shape, and the settings popup. `tui-play` (bin.rs)
+//! disabled script shape, the settings popup and the F7 log pane. `tui-play` (bin.rs)
 //! wires the panes to `host_play::Play`: chat Continue/Answer and WASD
 //! walks go through [`host_play::WireCmd`], map Walk-confirm routes via
 //! `host_play::arm_walk_on`.
@@ -18,6 +18,7 @@ pub mod app;
 pub mod bin;
 pub mod chat;
 pub mod loadouts;
+pub mod log_pane;
 pub mod map;
 pub mod script_params;
 pub mod script_shape;

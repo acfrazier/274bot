@@ -8,15 +8,16 @@ use super::{
     apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for, catalog_core_gate,
     chooser_should_open_popup, clamp_hop_label_px, debug_caption, drive_startup,
     edit_parameters_enabled, game_window_flags, hold_script_terminal_shot, live_null_tick,
-    live_script_tick, live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom,
-    logout_enabled, manual_shot_label, parse_args, parse_live_args, progress_channel,
-    random_status_text, request_clean_stop_capture, request_native_failure_capture, runner_config,
+    live_script_tick, live_smoke_tick, live_stress_tick, loading_text, logout_enabled,
+    manual_shot_label, parse_args, parse_live_args, progress_channel, random_status_text,
+    request_clean_stop_capture, request_native_failure_capture, runner_config,
     script_failure_scenario, slot_startup_banner_line, smoke_settled, smoke_should_fire,
     startup_progress, Boot, CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress,
     PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
     StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
     SMOKE_DEADLINE, SMOKE_SETTLE,
 };
+use crate::log_pane::log_follow_bottom;
 use crate::test_support::TestDir;
 use crate::theme::{
     applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,

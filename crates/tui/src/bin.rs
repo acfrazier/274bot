@@ -2253,6 +2253,9 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
         Err(e) => return Err(format!("instance lock: {e}")),
     };
+    if frontend_core::log_file::session_log_setting() {
+        frontend_core::log_file::apply_session_log(true);
+    }
     let selection = args.profile.resolve(None)?;
     if let Some(number) = args.world {
         let worlds = selection

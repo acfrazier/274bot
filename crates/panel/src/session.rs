@@ -20,6 +20,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use api::hostlog::{Level, Source};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientGens};
 use client::render::nav_debug::{
@@ -1123,9 +1124,9 @@ pub struct Session {
     pub capture_tx: Option<Sender<InputEv>>,
     /// BOT_MAINLAND=1 / host-play --mainland; not a panel checkbox.
     pub mainland: Arc<AtomicBool>,
-    /// Per-username panel log lines (status transitions), each capped at
-    /// [`LOG_CAP`]. Vault / no-username lines use [`PROCESS`].
-    pub log_by: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    /// The log section's filtered view and controls over the shared
+    /// `frontend_core::log` store.
+    pub log_pane: crate::log_pane::LogPane,
     /// Vault passphrase scratch buffer for the in-panel unlock prompt.
     pub pass_scratch: String,
     /// Display copy of the core's last status poll, with queued walk
@@ -1373,22 +1374,14 @@ pub struct Session {
     pub fixture_path: Option<PathBuf>,
 }
 
-/// Keep each per-name panel log bounded.
-const LOG_CAP: usize = 200;
+/// A panel-owned line (audio, seeding) for `name` on the shared log.
+fn slot_log(name: &str, level: Level, message: &str) {
+    frontend_core::log::global().slot_line(name, Source::Host, level, message);
+}
 
-/// Log bucket for vault errors and lines with no username.
-pub const PROCESS: &str = "*";
-
-/// Append `line` under `name`, dropping from the front past [`LOG_CAP`].
-fn push_log(map: &mut HashMap<String, Vec<String>>, name: &str, line: String) {
-    if host::debug_enabled() {
-        eprintln!("[panel] {name}: {line}");
-    }
-    let vec = map.entry(name.to_string()).or_default();
-    vec.push(line);
-    while vec.len() > LOG_CAP {
-        vec.remove(0);
-    }
+/// A panel-owned line no slot owns (vault, profile binding).
+fn process_log(level: Level, message: &str) {
+    frontend_core::log::global().process_line(Source::Host, level, message);
 }
 
 pub(crate) fn external_loader_fixture() -> scenario::Scenario {
@@ -1549,7 +1542,7 @@ impl Session {
             mainland: Arc::new(AtomicBool::new(
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
             )),
-            log_by: Arc::new(Mutex::new(HashMap::new())),
+            log_pane: crate::log_pane::LogPane::default(),
             pass_scratch: String::new(),
             statuses: Vec::new(),
             cred_user: String::new(),
@@ -2360,11 +2353,7 @@ impl Session {
                 match self.start_play(vault) {
                     Ok(()) => true,
                     Err(msg) => {
-                        push_log(
-                            &mut self.log_by.lock().unwrap(),
-                            PROCESS,
-                            format!("profile: {msg}"),
-                        );
+                        process_log(Level::Error, &format!("profile: {msg}"));
                         self.error = Some(msg);
                         false
                     }
@@ -2372,11 +2361,7 @@ impl Session {
             }
             Err(e) => {
                 let msg = e.to_string();
-                push_log(
-                    &mut self.log_by.lock().unwrap(),
-                    PROCESS,
-                    format!("vault: {msg}"),
-                );
+                process_log(Level::Error, &format!("vault: {msg}"));
                 self.error = Some(msg);
                 false
             }
@@ -2873,7 +2858,6 @@ impl Session {
     /// first focused profile only. Parked names are started from [`select`].
     fn start_play(&mut self, vault: Vault) -> Result<(), String> {
         let focus = Arc::clone(&self.focus);
-        let log_by = Arc::clone(&self.log_by);
         let mainland = Arc::clone(&self.mainland);
         let mainland_sent = Arc::clone(&self.mainland_sent);
         let scatter = Arc::clone(&self.scatter);
@@ -2999,26 +2983,22 @@ impl Session {
                 match AudioOut::try_open(c.midi.clone(), c.waves.clone(), c.fade.clone()) {
                     Ok(out) => {
                         *audio_fail.lock().unwrap() = None;
-                        push_log(
-                            &mut log_by.lock().unwrap(),
+                        slot_log(
                             name,
-                            format!("audio: speaker open ({} Hz)", out.sample_rate),
+                            Level::Info,
+                            &format!("audio: speaker open ({} Hz)", out.sample_rate),
                         );
                         Some(out)
                     }
                     Err(e) => {
                         *audio_fail.lock().unwrap() = Some((name.to_string(), now));
-                        push_log(&mut log_by.lock().unwrap(), name, format!("audio: {e}"));
+                        slot_log(name, Level::Warn, &format!("audio: {e}"));
                         None
                     }
                 }
             });
             if change == AudioChange::Closed {
-                push_log(
-                    &mut log_by.lock().unwrap(),
-                    name,
-                    "audio: speaker closed".into(),
-                );
+                slot_log(name, Level::Info, "audio: speaker closed");
             }
             // Reconcile the client's actual `lowmem` mode to the
             // Music/SFX gate (toggle on = highmem): a lowmem spawn
@@ -3037,18 +3017,14 @@ impl Session {
                         |template| template.scatter_tile_for(c.login_uid),
                     );
                     api::interact::seed_at(c, t.level, t.x, t.z);
-                    push_log(
-                        &mut log_by.lock().unwrap(),
+                    slot_log(
                         name,
-                        format!("{name}: scatter seed {} {} {}", t.level, t.x, t.z),
+                        Level::Info,
+                        &format!("scatter seed {} {} {}", t.level, t.x, t.z),
                     );
                 } else if mainland.load(Ordering::Relaxed) {
                     api::interact::mainland_hop(c);
-                    push_log(
-                        &mut log_by.lock().unwrap(),
-                        name,
-                        format!("{name}: mainland hop queued"),
-                    );
+                    slot_log(name, Level::Info, "mainland hop queued");
                 }
             }
 
@@ -3246,38 +3222,20 @@ impl Session {
         self.core.copy_statuses_into(&mut current);
         self.ingest_tutorial_chat(&current);
         self.maybe_getvar_tutorial(&current);
-        if let Some(play) = self.core.play() {
-            let mut log_by = self.log_by.lock().unwrap();
-            for s in &current {
-                for line in play.script_take_pending_logs(&s.username) {
-                    if let Some(watch) = self.external_core_watch() {
-                        if watch.configured() && watch.account() == s.username {
-                            watch.note_logs(
-                                Instant::now(),
-                                &s.username,
-                                std::slice::from_ref(&line),
-                            );
-                        }
+        // The core moved transitions and script lines onto the shared
+        // log; the external-loader watch still reads its account's lines.
+        let watch = if self.core.script_lines().is_empty() {
+            None
+        } else {
+            self.external_core_watch()
+        };
+        if let Some(watch) = watch {
+            if watch.configured() {
+                for (slot, line) in self.core.script_lines() {
+                    if watch.account() == *slot {
+                        watch.note_logs(Instant::now(), slot, std::slice::from_ref(line));
                     }
-                    push_log(&mut log_by, &s.username, format!("script: {line}"));
                 }
-            }
-        }
-        {
-            use frontend_core::Transition;
-            let mut log_by = self.log_by.lock().unwrap();
-            for change in self.core.transitions() {
-                let name = change.slot.as_str();
-                let line = match &change.transition {
-                    Transition::SlotUp => format!("{name}: slot up"),
-                    Transition::LoginError(e) => format!("{name}: login {e}"),
-                    Transition::Ingame => format!("{name}: ingame"),
-                    Transition::Scene(scene) => format!("{name}: scene {scene}"),
-                    Transition::Welcome(line) | Transition::WelcomeFailure(line) => {
-                        format!("{name}: {line}")
-                    }
-                };
-                push_log(&mut log_by, name, line);
             }
         }
         self.statuses = current;

@@ -53,7 +53,7 @@ use crate::resource::{
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
     script_pause_enabled, script_status_text, script_stop_enabled, ProfilePreparationCompletion,
-    Session, PROCESS,
+    Session,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
@@ -1346,6 +1346,13 @@ fn panel_window(
             walkto_button(ui, session);
             slot_config_row(ui, session);
             let order = resolve_heading_order(&session.ui.section_order);
+            // The log fills the leftover height only when nothing follows it.
+            let log_last = !crate::ui_state::panel_section_visible(&session.ui, "parameters")
+                && order
+                    .iter()
+                    .rev()
+                    .find(|id| crate::ui_state::panel_section_visible(&session.ui, id))
+                    .is_some_and(|id| id == "log");
             for id in order {
                 if !crate::ui_state::panel_section_visible(&session.ui, &id) {
                     continue;
@@ -1360,7 +1367,7 @@ fn panel_window(
                     "profile" => profile_section(ui, session),
                     "script" => script_section(ui, session),
                     "debug" => debug_section(ui, session),
-                    "log" => log_section(ui, session),
+                    "log" => log_section(ui, session, log_last),
                     _ => {}
                 }
             }
@@ -3263,35 +3270,12 @@ fn resource_section(ui: &Ui, session: &mut Session, view: &ResourceView) {
     draw_resource_rows(ui, view, true);
 }
 
-/// Stick to the bottom of the log when the last frame was already there
-/// (1 px slack for float layout). Scrolling up to read history stays put.
-fn log_follow_bottom(scroll_y: f32, scroll_max_y: f32) -> bool {
-    scroll_y >= scroll_max_y - 1.0
-}
-
-/// log: focused slot's status-transition lines (or PROCESS when none).
-fn log_section(ui: &Ui, session: &mut Session) {
+/// log: the shared structured log (see [`crate::log_pane`]).
+fn log_section(ui: &Ui, session: &mut Session, last: bool) {
     if !section_open(ui, session, "log") {
         return;
     }
-    let key = session
-        .focused_name()
-        .unwrap_or_else(|| PROCESS.to_string());
-    let log_by = session.log_by.lock().unwrap();
-    let empty: Vec<String> = Vec::new();
-    let lines = log_by.get(&key).unwrap_or(&empty);
-    ui.child_window("panel-log")
-        .size([0.0, 80.0])
-        .build(ui, || {
-            let follow = log_follow_bottom(ui.scroll_y(), ui.scroll_max_y());
-            let _wrap = ui.push_text_wrap_pos(0.0);
-            for line in lines.iter() {
-                ui.text_wrapped(line);
-            }
-            if follow {
-                ui.set_scroll_here_y(1.0);
-            }
-        });
+    crate::log_pane::log_body(ui, session, last);
 }
 
 /// Selected picker button: amber fill, dark text (illuminated invert).
@@ -3489,6 +3473,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     let slot = session.focused_name().unwrap_or_else(|| "—".into());
     ui.text_colored(session.ui.chrome.accent_rgba(), slot);
     global_capture_section(ui, session);
+    crate::log_pane::session_log_row(ui, session);
     let mut sidecar = session.focus.lock().unwrap().sidecar_50;
     if ui.checkbox("sidecar 50 fps", &mut sidecar) {
         session.set_sidecar_50(sidecar);
@@ -4396,6 +4381,7 @@ fn init_panel_running(
     state.session.set_pair_core_enabled(args.pair_core);
     state.session.set_external_core_enabled(args.external_core);
     state.session.set_external_ts(args.external_ts.clone());
+    crate::log_pane::apply_session_log_pref(&state.session);
     let fixture_mode = if args.run_prepared {
         scenario::FixtureMode::RunPrepared
     } else {

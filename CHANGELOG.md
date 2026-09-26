@@ -202,6 +202,27 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 ### Panel and TUI
 
+- **Shared structured log.** Panel and TUI read one log from `frontend-core`:
+  each line carries wall time (`HH:MM:SS.mmm`), game tick, slot, source
+  (script/login/nav/bank/watchdog/host) and level. Host code logs through one
+  `host_log!` facade: login phases, handshakes, script lifecycle, watchdog,
+  random events, route-level nav events and bank operations always reach the
+  slot log, also in release builds; per-frame and per-tick traces stay on
+  stderr under `BOT_DEBUG=1` / `--debug` as before. Each bot keeps its newest
+  500 lines plus a 500-line process ring (measured ≈ 61 KiB per bot for
+  typical lines, ≤ 282 KiB at the 512-byte line cap).
+  Passwords are redacted before a line is stored, copied, saved or written.
+  The panel log section fills the leftover side-panel height (or is a
+  resizable box when other sections follow it) with a timestamp column, level
+  colours, level/source/scope filters, search, follow, **Copy** and **Save
+  log…**; the TUI opens the same view with **F7** (80×24 included). Status
+  transitions, script lines, audio and vault/profile errors moved onto it, and
+  the TUI now drains script lines too instead of letting them pile up.
+- **Session log file** (off by default): the panel's General config
+  checkbox or `F` in the TUI log pane sets `session_log_file` in
+  `~/.274bot/panel-ui.json` (absent = off). While on, a background thread
+  writes the session to `~/.274bot/logs/session-<time>-<pid>.log`, rotating at
+  4 MiB (3 old segments) and keeping the newest 10 sessions.
 - The main panel shows a collapsible **resource** section whenever MultiBox is
   off, using the same 1 Hz sampler as the rail card (bots N (M running), cpu,
   ram peak, traffic) plus a background-bot count. The TUI status pane shows the

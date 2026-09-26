@@ -791,15 +791,6 @@ fn empty_play() -> host_play::Play {
     )
 }
 
-fn status(name: &str, ingame: bool, scene: i32) -> SlotStatus {
-    SlotStatus {
-        username: name.into(),
-        ingame,
-        scene_state: scene,
-        ..SlotStatus::default()
-    }
-}
-
 /// A `w`×`h` all-walkable level-0 world at (0,0).
 fn open_world(w: usize, h: usize) -> NavWorld {
     NavWorld::from_parts(
@@ -1978,65 +1969,6 @@ fn seed_on_first_world_skips_after_reconnect() {
     assert!(seed_on_first_world(None));
     assert!(seed_on_first_world(Some(false)));
     assert!(!seed_on_first_world(Some(true)));
-}
-
-#[test]
-fn pump_status_log_is_per_username() {
-    // two SlotStatus rows, pump twice with transitions; log_by["alice"] does not contain bob lines
-    let mut s = Session::new();
-    let play = empty_play();
-    play.statuses
-        .lock()
-        .unwrap()
-        .extend([status("alice", false, 0), status("bob", false, 0)]);
-    s.core.set_play(Some(play));
-
-    s.pump_status();
-    {
-        let log_by = s.log_by.lock().unwrap();
-        let alice = log_by.get("alice").expect("alice log");
-        let bob = log_by.get("bob").expect("bob log");
-        assert!(alice.iter().any(|l| l.contains("slot up")));
-        assert!(bob.iter().any(|l| l.contains("slot up")));
-        assert!(alice.iter().all(|l| !l.contains("bob")));
-        assert!(bob.iter().all(|l| !l.contains("alice")));
-    }
-
-    s.core
-        .play()
-        .unwrap()
-        .statuses
-        .lock()
-        .unwrap()
-        .iter_mut()
-        .for_each(|row| {
-            if row.username == "alice" {
-                row.ingame = true;
-                row.scene_state = 2;
-            } else if row.username == "bob" {
-                row.ingame = true;
-                row.scene_state = 1;
-            }
-        });
-    s.pump_status();
-    let log_by = s.log_by.lock().unwrap();
-    let alice = log_by.get("alice").expect("alice log");
-    let bob = log_by.get("bob").expect("bob log");
-    assert!(alice.iter().any(|l| l.contains("ingame")));
-    assert!(alice.iter().any(|l| l.contains("scene 2")));
-    assert!(bob.iter().any(|l| l.contains("ingame")));
-    assert!(bob.iter().any(|l| l.contains("scene 1")));
-    assert!(
-        alice
-            .iter()
-            .all(|l| !l.contains("bob") && !l.contains("scene 1")),
-        "alice must not see bob lines: {alice:?}"
-    );
-    assert!(
-        bob.iter()
-            .all(|l| !l.contains("alice") && !l.contains("scene 2")),
-        "bob must not see alice lines: {bob:?}"
-    );
 }
 
 #[test]
@@ -3420,8 +3352,6 @@ fn sidecar_select_does_not_restart_when_game_is_highmem() {
         std::sync::Arc::as_ptr(&s.core.slot_io("bob").unwrap().pixels),
         bob_px
     );
-    let log = s.log_by.lock().unwrap();
-    assert!(!log.values().flatten().any(|l| l.contains("slot restarted")));
 }
 
 #[test]
