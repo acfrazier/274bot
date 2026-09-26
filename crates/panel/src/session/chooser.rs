@@ -51,28 +51,54 @@ impl Session {
                     .unwrap_or_else(|| self.cred_settings.clone()),
             }
         };
-        // Staged now and written off this thread; a running slot learns the
-        // next-handshake settings once the write is durable.
-        if let Err(e) =
-            self.core
-                .save_profile(profile, frontend_core::ArmMirror::Remember, "credentials")
-        {
-            self.error = Some(e);
-            return false;
-        }
-        if let Some(old) = rename_from {
-            let old = old.to_string();
-            if let Err(e) = self.core.vault_remove(&old) {
+        // Staged now and written off this thread (a rename as one
+        // transaction); a running slot learns the next-handshake settings
+        // once the write is durable.
+        let mirror = frontend_core::ArmMirror::Remember;
+        let saved = match rename_from {
+            Some(old) => {
+                let old = old.to_string();
+                self.core
+                    .rename_profile(&old, profile, mirror, "credentials")
+            }
+            None => self.core.save_profile(profile, mirror, "credentials"),
+        };
+        let op = match saved {
+            Ok(op) => op,
+            Err(e) => {
                 self.error = Some(e);
                 return false;
             }
-        }
+        };
         self.chooser_edit = None;
-        // `select` builds the arm from the vault auto-login setting; a
-        // running slot already received its next-handshake settings above.
         self.error = None;
-        self.select(&username);
+        // Select (and so spawn) only once the credentials are durable: a
+        // failed write must not leave a worker logging in with them.
+        self.saving_profile = Some((op, username));
         true
+    }
+
+    /// Select the profile a credentials Save wrote once that write settled
+    /// successfully. A failed write selects nothing (its error is shown).
+    pub(crate) fn settle_profile_save(&mut self) {
+        let Some((op, name)) = self.saving_profile.as_ref() else {
+            return;
+        };
+        let outcome = self
+            .core
+            .operation(*op)
+            .and_then(|r| r.outcome(name))
+            .cloned();
+        match outcome {
+            Some(frontend_core::Outcome::Pending) => {}
+            Some(frontend_core::Outcome::Completed) => {
+                let name = name.clone();
+                self.saving_profile = None;
+                // `select` builds the arm from the durable auto-login.
+                self.select(&name);
+            }
+            _ => self.saving_profile = None,
+        }
     }
 
     /// Empty the credentials-section fields. The vault entry is untouched.

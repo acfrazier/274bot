@@ -4667,6 +4667,8 @@ fn save_credentials_upserts_under_username_key_keeping_uid() {
     s.cred_user = "alice".into();
     s.cred_pass = "newpass".into();
     assert!(s.save_credentials());
+    s.core.flush_writes();
+    s.pump_status();
 
     let p = s.core.vault().unwrap().get("alice").unwrap();
     assert_eq!(p.password, "newpass");
@@ -4755,6 +4757,8 @@ fn save_credentials_creates_new_profile_when_username_is_new() {
     s.cred_user = "bob".into();
     s.cred_pass = "bobpass".into();
     assert!(s.save_credentials());
+    s.core.flush_writes();
+    s.pump_status();
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
     assert!(s.core.slots().contains_key("bob"));
 
@@ -4788,6 +4792,8 @@ fn save_credentials_without_focus_upserts_spawns_and_selects() {
     s.cred_user = "test".into();
     s.cred_pass = "test".into();
     assert!(s.save_credentials());
+    s.core.flush_writes();
+    s.pump_status();
     assert!(s.core.vault().unwrap().get("test").is_some());
     assert_eq!(s.focused_name().as_deref(), Some("test"));
     assert!(s.core.slots().contains_key("test"));
@@ -4813,6 +4819,8 @@ fn save_credentials_does_not_duplicate_running_slot() {
     s.cred_user = "alice".into();
     s.cred_pass = "newpw".into();
     assert!(s.save_credentials());
+    s.core.flush_writes();
+    s.pump_status();
     assert_eq!(s.core.slots().len(), 1);
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
 }
@@ -4832,6 +4840,8 @@ fn save_credentials_rename_editing_profile_replaces_old_key() {
     s.cred_user = "bob".into();
     s.cred_pass = "bobpass".into();
     assert!(s.save_credentials());
+    s.core.flush_writes();
+    s.pump_status();
 
     let vault = s.core.vault().unwrap();
     assert!(vault.get("bob").is_some(), "rename must upsert the new key");
@@ -4845,6 +4855,48 @@ fn save_credentials_rename_editing_profile_replaces_old_key() {
         "rename keeps the old uid"
     );
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
+}
+
+#[test]
+#[cfg(unix)]
+fn first_time_save_spawns_nothing_until_the_write_is_durable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TestDir::new("save-first-time");
+    let path = dir.join("vault.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.cred_user = "alice".into();
+    s.cred_pass = "pw".into();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+    assert!(s.save_credentials());
+    assert!(
+        s.core.play().unwrap().arm("alice").is_none(),
+        "no worker before the write is durable"
+    );
+    s.core.flush_writes();
+    s.pump_status();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert!(s
+        .error
+        .as_deref()
+        .is_some_and(|e| e.starts_with("credentials:")));
+    assert!(s.core.play().unwrap().arm("alice").is_none(), "no slot");
+    assert!(s.core.slot_io("alice").is_none());
+    assert!(s.focused_name().is_none());
+    assert!(s.core.vault().unwrap().get("alice").is_none());
+
+    // The same Save on a writable vault spawns once the write lands.
+    assert!(s.save_credentials());
+    assert!(s.core.play().unwrap().arm("alice").is_none());
+    s.core.flush_writes();
+    s.pump_status();
+    assert!(s.core.play().unwrap().arm("alice").is_some());
+    assert_eq!(s.focused_name().as_deref(), Some("alice"));
 }
 
 #[test]

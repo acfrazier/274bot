@@ -232,7 +232,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   and write the vault on the UI thread. The edit shows at once; one writer
   thread saves it in order, and a running bot picks up the change only after
   the save succeeded. A failed save is shown on the error line and the
-  profile goes back to its saved value.
+  profile goes back to its saved value. A new or renamed profile is selected
+  (and its bot started) only after its save succeeded, and a rename saves
+  the new name and removes the old one in one write.
 - Stop all now also stops a bot whose script is still shutting down for a
   Reload; before, the reloaded script started again after Stop all.
 - In the TUI, `x` removes the bot from the strip at once and Tab no longer

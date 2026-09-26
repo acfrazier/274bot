@@ -111,6 +111,7 @@ pub enum ArmMirror {
 struct PendingWrite {
     label: &'static str,
     mirror: ArmMirror,
+    member: String,
 }
 
 pub struct OperatorSession<Io> {
@@ -129,6 +130,7 @@ pub struct OperatorSession<Io> {
     /// Durable vault writes, created with the first write.
     writer: Option<ProfileWriter>,
     writes: HashMap<OperationId, PendingWrite>,
+    write_gate: Arc<std::sync::Mutex<()>>,
     /// The newest write per profile: only its failure restores the durable
     /// value, so an older failure cannot undo a newer staged edit.
     latest_write: HashMap<String, OperationId>,
@@ -156,6 +158,7 @@ impl<Io> OperatorSession<Io> {
             operations: OperationBook::default(),
             writer: None,
             writes: HashMap::new(),
+            write_gate: Arc::default(),
             latest_write: HashMap::new(),
             write_failures: Vec::new(),
             starts: HashMap::new(),
@@ -980,7 +983,35 @@ impl<Io> OperatorSession<Io> {
         vault.stage_upsert(profile.clone());
         Ok(self.submit_write(
             ActionKind::SaveProfile,
-            VaultChange::Upsert(profile),
+            vec![VaultChange::Upsert(profile)],
+            mirror,
+            label,
+        ))
+    }
+
+    /// Rename `old` to `profile.username` as one transaction: the new row
+    /// and the removal of the old one are written in a single commit, and a
+    /// failure puts both back.
+    pub fn rename_profile(
+        &mut self,
+        old: &str,
+        profile: Profile,
+        mirror: ArmMirror,
+        label: &'static str,
+    ) -> Result<OperationId, String> {
+        self.ensure_writer();
+        let vault = self
+            .vault
+            .as_mut()
+            .ok_or_else(|| format!("{label}: vault locked"))?;
+        vault.stage_upsert(profile.clone());
+        vault.stage_remove(old);
+        Ok(self.submit_write(
+            ActionKind::SaveProfile,
+            vec![
+                VaultChange::Upsert(profile),
+                VaultChange::Remove(old.to_string()),
+            ],
             mirror,
             label,
         ))
@@ -999,7 +1030,7 @@ impl<Io> OperatorSession<Io> {
         }
         Ok(Some(self.submit_write(
             ActionKind::DeleteProfile,
-            VaultChange::Remove(name.to_string()),
+            vec![VaultChange::Remove(name.to_string())],
             ArmMirror::None,
             "chooser",
         )))
@@ -1010,7 +1041,10 @@ impl<Io> OperatorSession<Io> {
     fn ensure_writer(&mut self) {
         if self.writer.is_none() {
             if let Some(vault) = self.vault.as_ref() {
-                self.writer = Some(ProfileWriter::spawn(vault.store()));
+                self.writer = Some(ProfileWriter::spawn(
+                    vault.store(),
+                    Arc::clone(&self.write_gate),
+                ));
             }
         }
     }
@@ -1018,17 +1052,28 @@ impl<Io> OperatorSession<Io> {
     fn submit_write(
         &mut self,
         action: ActionKind,
-        change: VaultChange,
+        changes: Vec<VaultChange>,
         mirror: ArmMirror,
         label: &'static str,
     ) -> OperationId {
         let op = self.operations.open(action);
-        let name = change.username().to_string();
-        self.operations.set(op, &name, Outcome::Pending);
-        self.writes.insert(op, PendingWrite { label, mirror });
-        self.latest_write.insert(name, op);
+        // The operation's member is the profile the edit is about (a
+        // rename's new name).
+        let member = changes[0].username().to_string();
+        self.operations.set(op, &member, Outcome::Pending);
+        for change in &changes {
+            self.latest_write.insert(change.username().to_string(), op);
+        }
+        self.writes.insert(
+            op,
+            PendingWrite {
+                label,
+                mirror,
+                member,
+            },
+        );
         if let Some(writer) = self.writer.as_mut() {
-            writer.submit(op, change);
+            writer.submit(op, changes);
         }
         op
     }
@@ -1099,26 +1144,36 @@ impl<Io> OperatorSession<Io> {
         let Some(pending) = self.writes.remove(&written.op) else {
             return;
         };
-        let newest = self.latest_write.get(&written.username) == Some(&written.op);
-        if newest {
-            self.latest_write.remove(&written.username);
+        // Profiles whose newest queued write this is: only those may be put
+        // back on failure, so an older failure cannot undo a newer edit.
+        let mut newest = Vec::new();
+        for (name, durable) in written.durable {
+            if self.latest_write.get(&name) == Some(&written.op) {
+                self.latest_write.remove(&name);
+                newest.push((name, durable));
+            }
         }
+        let member = pending.member;
         match written.result {
+            // A later write in the same commit replaced this value before it
+            // was ever durable on its own: its live mirror must not run.
+            Ok(()) if written.superseded => {
+                self.operations.set(written.op, &member, Outcome::Cancelled);
+            }
             Ok(()) => {
-                self.operations
-                    .set(written.op, &written.username, Outcome::Completed);
-                self.apply_mirror(&written.username, pending.mirror);
+                self.operations.set(written.op, &member, Outcome::Completed);
+                self.apply_mirror(&member, pending.mirror);
             }
             Err(error) => {
-                if newest {
-                    if let Some(vault) = self.vault.as_mut() {
-                        vault.restore(&written.username, written.durable);
+                if let Some(vault) = self.vault.as_mut() {
+                    for (name, durable) in newest {
+                        vault.restore(&name, durable);
                     }
                 }
                 self.write_failures
                     .push(format!("{}: {error}", pending.label));
                 self.operations
-                    .set(written.op, &written.username, Outcome::Failed(error));
+                    .set(written.op, &member, Outcome::Failed(error));
             }
         }
     }
@@ -1170,6 +1225,12 @@ impl<Io> OperatorSession<Io> {
         self.flush_writes();
         self.writer = None;
         self.vault.as_mut()
+    }
+
+    /// Held by the writer while it gathers and commits a batch; holding it
+    /// queues several writes into one batch.
+    pub fn write_gate(&self) -> Arc<std::sync::Mutex<()>> {
+        Arc::clone(&self.write_gate)
     }
 
     pub fn set_vault(&mut self, vault: Option<Vault>) {

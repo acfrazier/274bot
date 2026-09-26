@@ -1136,6 +1136,9 @@ pub struct Session {
     /// Profile picker edit: `None` not editing, `Some("")` new profile,
     /// `Some(name)` editing that vault row.
     pub chooser_edit: Option<String>,
+    /// A credentials Save whose write has not settled; its profile is
+    /// selected (and spawned) only after the write succeeds.
+    pub saving_profile: Option<(frontend_core::OperationId, String)>,
     /// Per-username walk arms; the focused slot's arm carries the armed
     /// whole-world route (polled from `start_play` `per_frame` via
     /// [`nav::traveller::Traveller::follow`]).
@@ -1543,6 +1546,7 @@ impl Session {
             cred_pass: String::new(),
             cred_settings: ProfileSettings::default(),
             chooser_edit: None,
+            saving_profile: None,
             travellers: Arc::new(Mutex::new(HashMap::new())),
             script_nav_paint: Arc::new(Mutex::new(None)),
             nav_states: Arc::new(Mutex::new(HashMap::new())),
@@ -3212,6 +3216,7 @@ impl Session {
             // A locked-down session still settles its profile writes.
             self.core.poll_host();
             self.surface_write_failures();
+            self.settle_profile_save();
             return;
         }
         // Start/Stop return before the isolate is up or reaped: the core
@@ -3220,6 +3225,7 @@ impl Session {
         // panel then commits the Starts that settled.
         self.core.poll_host();
         self.surface_write_failures();
+        self.settle_profile_save();
         self.settle_script_starts();
         let mut current = std::mem::take(&mut self.statuses);
         self.core.copy_statuses_into(&mut current);

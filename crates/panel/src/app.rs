@@ -4133,6 +4133,9 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             }
             }
             ui.spacing();
+            if let Some((_, name)) = &session.saving_profile {
+                ui.text_disabled(format!("saving {name}…"));
+            }
             let w = ui.content_region_avail()[0];
             if ui.button_with_size("Close", [w, 0.0]) {
                 session.wall.chooser_open = false;

@@ -10,6 +10,7 @@ use vault::{Profile, ProfileSettings, Vault};
 
 use super::*;
 use crate::surface::{SlotAttach, SlotSurface};
+use crate::ArmMirror;
 
 /// Records lifecycle callbacks; IO values count attaches so reuse is visible.
 #[derive(Default)]
@@ -673,4 +674,75 @@ fn stop_scripts_drops_a_start_queued_behind_a_reap() {
         s.operation(replacement).unwrap().outcome("alice"),
         Some(&Outcome::Cancelled)
     );
+}
+
+#[test]
+fn a_superseded_write_in_the_same_commit_is_cancelled_and_its_mirror_never_runs() {
+    let mut s = session("write-coalesce", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let alice = arm(&s, "alice");
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    let on = s.set_auto_login("alice", true).unwrap();
+    let off = s.set_auto_login("alice", false).unwrap();
+    drop(held);
+    s.flush_writes();
+
+    assert_eq!(
+        s.operation(on).unwrap().outcome("alice"),
+        Some(&Outcome::Cancelled)
+    );
+    assert_eq!(
+        s.operation(off).unwrap().outcome("alice"),
+        Some(&Outcome::Completed)
+    );
+    assert!(
+        !alice.auto_login.load(Ordering::Relaxed),
+        "the slot never observes the superseded value"
+    );
+    let disk = Vault::unlock(&vault_path("write-coalesce"), "bot").unwrap();
+    assert!(!disk.get("alice").unwrap().settings.auto_login);
+}
+
+#[test]
+fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
+    let mut s = session("rename-fail", &[("alice", 1, false)]);
+    let mut renamed = s.vault().unwrap().get("alice").unwrap().clone();
+    renamed.username = "alicia".into();
+    let blocker = vault_path("rename-fail").with_extension("tmp");
+    std::fs::create_dir_all(&blocker).unwrap();
+
+    let op = s
+        .rename_profile("alice", renamed.clone(), ArmMirror::None, "credentials")
+        .unwrap();
+    assert!(s.vault().unwrap().get("alice").is_none(), "staged at once");
+    s.flush_writes();
+    std::fs::remove_dir_all(&blocker).unwrap();
+
+    assert!(matches!(
+        s.operation(op).unwrap().outcome("alicia"),
+        Some(Outcome::Failed(_))
+    ));
+    assert!(
+        s.vault().unwrap().get("alice").is_some(),
+        "old name restored"
+    );
+    assert!(
+        s.vault().unwrap().get("alicia").is_none(),
+        "new name rolled back"
+    );
+    let disk = Vault::unlock(&vault_path("rename-fail"), "bot").unwrap();
+    assert!(disk.get("alice").is_some() && disk.get("alicia").is_none());
+
+    let op = s
+        .rename_profile("alice", renamed, ArmMirror::None, "credentials")
+        .unwrap();
+    s.flush_writes();
+    assert_eq!(
+        s.operation(op).unwrap().outcome("alicia"),
+        Some(&Outcome::Completed)
+    );
+    let disk = Vault::unlock(&vault_path("rename-fail"), "bot").unwrap();
+    assert!(disk.get("alice").is_none() && disk.get("alicia").is_some());
 }
