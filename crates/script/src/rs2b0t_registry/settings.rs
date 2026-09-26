@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+#[cfg(feature = "load")]
 use std::path::Path;
 
 use super::{
@@ -1460,6 +1461,7 @@ fn resolve_preset_buyable_names(
 
 const SHOP_DB_SOURCE_KEYS: [&str; 2] = ["./src/bot/data/shopdb.ts", "./src/bot/data/shopdb.js"];
 
+#[cfg(feature = "load")]
 /// Load `SHOP_DB` from the registered catalog root at the known data path.
 pub(crate) fn insert_shop_db_from_root(sources: &mut HashMap<String, String>, root: &Path) {
     let ts = root.join("src/bot/data/shopdb.ts");

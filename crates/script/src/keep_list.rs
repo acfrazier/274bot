@@ -1,9 +1,13 @@
 //! Rust-owned composition for the compatibility combat keep list.
 
-use api::game_data::{GameItem, SelectedGameData};
+use api::game_data::GameItem;
+#[cfg(feature = "load")]
+use api::game_data::SelectedGameData;
+#[cfg(feature = "load")]
 use serde_json::Value;
 use std::collections::HashSet;
 
+#[cfg(feature = "load")]
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct CombatKeepOptions {
     pub(crate) food: String,
@@ -14,6 +18,7 @@ pub(crate) struct CombatKeepOptions {
     pub(crate) extra: Vec<String>,
 }
 
+#[cfg(feature = "load")]
 pub(crate) fn from_args(args: &[Value]) -> CombatKeepOptions {
     let Some(object) = args.first().and_then(Value::as_object) else {
         return CombatKeepOptions::default();
@@ -45,6 +50,7 @@ pub(crate) fn from_args(args: &[Value]) -> CombatKeepOptions {
     }
 }
 
+#[cfg(feature = "load")]
 pub(crate) fn combat_keep_names(
     data: &SelectedGameData,
     options: &CombatKeepOptions,
@@ -111,7 +117,7 @@ pub(crate) fn food_forms(items: &[GameItem], food: &str) -> Vec<String> {
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "load"))]
 mod tests {
     use super::*;
     use client::io::ClientRevision;

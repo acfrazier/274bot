@@ -2,9 +2,9 @@
 //! `note-progress` lifecycle op. RangingGuild import graph after the shim.
 
 use script::isolate_fb::{ReachViewInput, SnapshotInput, TileInput};
-use script::load::{JsLibrary, LoadShape};
+use script::load::LoadShape;
 use script::shim::InteractReq;
-use script::{LoadIsolate, ScriptSource};
+use script::LoadIsolate;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
@@ -136,47 +136,44 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn ranging_guild_card_has_no_import_blockers_after_supervisor_shim() {
-    let Some(root) = script::rs2b0t_root() else {
-        return;
-    };
-    let card_path = root.join("src/bot/scripts/RangingGuild/RangingGuild.ts");
-    if !card_path.is_file() {
-        return;
-    }
-    let origin = std::fs::read_to_string(&card_path).expect("RangingGuild.ts");
-    assert_eq!(
-        script::load::first_unloadable_for_card(&origin, &card_path),
-        None,
-        "RangingGuild must not remain import-blocked on Supervisor"
-    );
-}
+fn ranging_guild_shaped_card_imports_supervisor_without_blocker() {
+    use script::load::first_unloadable_for_card;
+    use script::load::JsLibrary;
+    use script::ScriptSource;
 
-#[test]
-fn ranging_guild_catalog_row_not_supervisor_unloadable() {
-    let Some(root) = script::rs2b0t_root() else {
-        return;
-    };
-    let card_path = root.join("src/bot/scripts/RangingGuild/RangingGuild.ts");
-    if !card_path.is_file() {
-        eprintln!("skip: pinned catalog lacks RangingGuild");
-        return;
-    }
     let dir = std::env::temp_dir().join(format!(
         "274bot-ranging-supervisor-{}-{}",
         std::process::id(),
-        "catalog"
+        "fixture"
     ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.join("rs2b0t");
+    let card_dir = root.join("src/bot/scripts/RangingGuild");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    let origin = r#"
+import { Supervisor } from '../../runtime/Supervisor.js';
+import { Game } from '../../api/game/Game.js';
+export default class RangingGuild extends LoopingBot {
+    loop() { Supervisor.noteProgress(); Game.ingame(); }
+}
+"#;
+    let card_path = card_dir.join("RangingGuild.ts");
+    std::fs::write(&card_path, origin).unwrap();
+    assert_eq!(
+        first_unloadable_for_card(origin, &card_path),
+        None,
+        "Supervisor shim must not block RangingGuild-shaped imports"
+    );
+    std::fs::write(
+        root.join("src/bot/scripts/index.ts"),
+        "import RangingGuild from './RangingGuild/RangingGuild.js'; ScriptRegistry.register({ name: 'RangingGuild', create: () => new RangingGuild() });",
+    )
+    .unwrap();
     let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("catalog register");
+        .expect("register");
     let card = lib
         .get(ScriptSource::Catalog, "RangingGuild")
-        .cloned()
-        .expect("RangingGuild catalog card");
-    assert_eq!(
-        card.unloadable, None,
-        "G5 removes ../../runtime/Supervisor.js from RangingGuild unloadable stamp"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
+        .expect("listed");
+    assert_eq!(card.unloadable, None);
 }

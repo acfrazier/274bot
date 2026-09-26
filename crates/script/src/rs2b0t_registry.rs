@@ -7,9 +7,6 @@
 
 use std::collections::HashMap;
 
-#[cfg(test)]
-use std::path::PathBuf;
-
 mod paths;
 mod settings;
 
@@ -19,13 +16,12 @@ pub use paths::{
     rs2b0t_import_deferred_at, rs2b0t_root, rs2b0t_root_at, script_file_path,
     set_rs2b0t_import_deferred_at,
 };
-#[cfg(test)]
-use settings::catalog_option_values;
+#[cfg(feature = "load")]
+pub(crate) use settings::insert_shop_db_from_root;
 use settings::parse_settings_export;
 pub use settings::settings_schema_from_source;
 pub(crate) use settings::{
-    catalog_option_table, insert_shop_db_from_root, is_revision_fact_option_ident,
-    w1c_equipment_option_families,
+    catalog_option_table, is_revision_fact_option_ident, w1c_equipment_option_families,
 };
 
 /// How a script card is executed in the host.
@@ -209,6 +205,7 @@ fn settings_blob(sources: &HashMap<String, String>, rel_path: &str) -> Option<St
     Some(blob)
 }
 
+#[cfg(feature = "load")]
 /// `import … from './Logic.js'` next to `./Folder/Script.js` → `./Folder/Logic.js`.
 pub(crate) fn same_dir_import_rel(script_rel: &str, import_rel: &str) -> Option<String> {
     let import = import_rel.strip_prefix("./")?;
@@ -237,6 +234,7 @@ fn scan_imports(src: &str) -> HashMap<String, ImportBinding> {
     imports
 }
 
+#[cfg(feature = "load")]
 pub(crate) fn same_dir_import_rels(script_rel: &str, src: &str) -> Vec<String> {
     let mut out = Vec::new();
     for binding in scan_imports(src).into_values() {

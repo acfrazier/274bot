@@ -540,81 +540,6 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-#[ignore = "requires RS2B0T to name a frozen catalog root"]
-fn selected_game_data_composes_with_frozen_alcher_logic() {
-    let root = PathBuf::from(std::env::var("RS2B0T").expect("RS2B0T frozen root"))
-        .canonicalize()
-        .expect("canonical frozen root");
-    let alcher_dir = root.join("src/bot/scripts/Alcher");
-    let probe_path = alcher_dir.join("SelectedDataProbe.ts");
-    let source = r#"
-import { ALCH_ITEMS, ALCH_OPTIONS, customAlchItem, selectedAlchItems } from './AlcherLogic.js';
-export default class T extends LoopingBot {
-    loop() {
-        const selected = selectedAlchItems(['rune_platebody', 'rune_chainbody']);
-        const bodies = ALCH_ITEMS.filter(i => i.key.endsWith('dragonhide_body'));
-        globalThis.__probe = {
-            options: ALCH_OPTIONS.length,
-            allItems: ALCH_ITEMS.length,
-            selected: selected.map(i => i.key),
-            customAlias: customAlchItem('adamant_scimitar'),
-            customName: customAlchItem('Adamant scimitar'),
-            bodyIds: bodies.map(i => i.id),
-            unknown: customAlchItem('not_a_real_selected_item'),
-        };
-    }
-}
-"#;
-    let cache = JsCache::new(temp_dir("selected-alcher").join("js-cache"));
-    let siblings = script::resolve_sibling_modules(
-        &probe_path,
-        source,
-        &cache,
-        CacheMeta {
-            kind: ScriptKind::Compat,
-            source: ScriptSource::File,
-            shape: Some("CompatClass".into()),
-            api_family: None,
-        },
-    )
-    .expect("frozen AlcherLogic resolves");
-    for revision in [
-        client::io::ClientRevision::R274,
-        client::io::ClientRevision::R289,
-    ] {
-        let data = api::game_data::for_revision(revision).unwrap();
-        let iso = LoadIsolate::spawn_with_game_data(
-            source.into(),
-            LoadShape::CompatClass,
-            siblings.clone(),
-            data,
-        )
-        .unwrap();
-        iso.on_game_tick(1);
-        let probe = iso.probe("__probe").unwrap();
-        assert_eq!(probe["options"], 37, "custom plus every enabled fodder");
-        assert_eq!(probe["allItems"], 36);
-        assert_eq!(
-            probe["selected"],
-            serde_json::json!(["rune_platebody", "rune_chainbody"])
-        );
-        assert_eq!(probe["customAlias"]["id"], 1331);
-        assert_eq!(probe["customName"]["id"], 1331);
-        let body_ids = probe["bodyIds"].as_array().unwrap();
-        assert_eq!(body_ids.len(), 4);
-        assert_eq!(
-            body_ids
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            4
-        );
-        assert!(probe["unknown"].is_null());
-        iso.join();
-    }
-}
-
-#[test]
 fn thiever_resolves_food_from_host_loadout_and_queues_eat() {
     let src = r#"
 import { scriptFood } from '../../api/loadout/loadoutPlan.js';
@@ -646,5 +571,75 @@ export default class T extends LoopingBot {
         serde_json::json!(["Lobster", 12])
     );
     assert!(iso.drain_interacts().iter().any(|r| matches!(r,script::shim::InteractReq::Held{name,action} if name=="Lobster" && action=="Eat")));
+    iso.join();
+}
+
+#[test]
+fn selected_game_data_composes_with_handwritten_alcher_logic() {
+    let dir = temp_dir("selected-alcher-handwritten");
+    let cache = JsCache::new(dir.join("js-cache"));
+    let card_dir = dir.join("Alcher");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    std::fs::write(
+        card_dir.join("AlcherLogic.ts"),
+        r#"
+import { ITEM_DB } from '../../data/itemdb.js';
+export function customAlchItem(query) {
+    const key = String(query).trim().toLowerCase().replace(/\s+/g, '_');
+    return ITEM_DB.find((r) => r.obj === key) ?? ITEM_DB.find((r) => r.name === query) ?? null;
+}
+export function selectedAlchItems(keys) {
+    return keys.map((k) => ITEM_DB.find((r) => r.obj === k)).filter(Boolean);
+}
+export const ALCH_ITEMS = ITEM_DB.filter((r) => ['maple_longbow', 'yew_longbow', 'rune_platebody'].includes(r.obj))
+    .map((r) => ({ key: r.obj, id: r.id, name: r.name }));
+export const ALCH_OPTIONS = ['custom', ...ALCH_ITEMS.map((i) => i.key)];
+"#,
+    )
+    .unwrap();
+    let probe = r#"
+import { ALCH_ITEMS, ALCH_OPTIONS, customAlchItem, selectedAlchItems } from './AlcherLogic.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            options: ALCH_OPTIONS.length,
+            allItems: ALCH_ITEMS.length,
+            selected: selectedAlchItems(['rune_platebody', 'rune_chainbody']).map((i) => i.obj),
+            customAlias: customAlchItem('adamant_scimitar'),
+            customName: customAlchItem('Adamant scimitar'),
+            unknown: customAlchItem('not_a_real_selected_item'),
+        };
+    }
+}
+"#;
+    std::fs::write(card_dir.join("SelectedDataProbe.ts"), probe).unwrap();
+    let siblings = script::resolve_sibling_modules(
+        &card_dir.join("SelectedDataProbe.ts"),
+        probe,
+        &cache,
+        CacheMeta {
+            kind: ScriptKind::Compat,
+            source: ScriptSource::File,
+            shape: Some("CompatClass".into()),
+            api_family: None,
+        },
+    )
+    .expect("AlcherLogic sibling");
+    assert_eq!(siblings.len(), 1);
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(probe.into(), LoadShape::CompatClass, siblings, data)
+            .unwrap();
+    iso.on_game_tick(1);
+    let row = iso.probe("__probe").unwrap();
+    assert_eq!(row["options"], 4);
+    assert_eq!(row["allItems"], 3);
+    assert_eq!(
+        row["selected"],
+        serde_json::json!(["rune_platebody", "rune_chainbody"])
+    );
+    assert_eq!(row["customAlias"]["id"], 1331);
+    assert_eq!(row["customName"]["id"], 1331);
+    assert!(row["unknown"].is_null());
     iso.join();
 }

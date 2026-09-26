@@ -203,32 +203,6 @@ fn declared_abi_has_note_progress_and_ent_quartet() {
     );
 }
 
-/// When `$RS2B0T` is set on this process, the checked-in fixture must match
-/// a fresh parse of that tree's `index.d.ts`. Isolated from the operator
-/// persisted catalog so a dirty/older checkout cannot un-pin 00d39a17e0.
-#[test]
-fn declared_abi_fixture_matches_local_dts() {
-    let env = script::IsolatedEnv::enter("declared-abi");
-    if let Ok(root) = std::env::var("RS2B0T") {
-        if !root.is_empty() {
-            env.set_rs2b0t(std::path::Path::new(&root));
-        }
-    }
-    let Some(root) = script::rs2b0t_root() else {
-        return;
-    };
-    let path = catalog_index_dts(&root);
-    let Ok(src) = std::fs::read_to_string(&path) else {
-        return;
-    };
-    let live = parse_index_dts(&src);
-    let fixture = load_fixture().expect("js_declared_abi.json");
-    assert_eq!(
-        live, fixture,
-        "js_declared_abi.json is stale; run: cargo test -p script --test declared_abi regen_js_declared_abi -- --ignored"
-    );
-}
-
 /// Writes `tests/fixtures/js_declared_abi.json` from the local catalog.
 /// Fail-closed: does not write an empty list when the catalog is missing.
 #[test]

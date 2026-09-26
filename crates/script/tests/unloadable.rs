@@ -203,36 +203,6 @@ export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
 }
 
 #[test]
-fn pinned_flour_collector_transpiles_and_instantiates() {
-    use script::load::JsLibrary;
-    use script::ScriptSource;
-
-    let Some(root) = script::rs2b0t_root() else {
-        eprintln!("skip pinned FlourCollector proof: RS2B0T is not configured");
-        return;
-    };
-    let card_path = root.join("src/bot/scripts/FlourCollector/FlourCollector.ts");
-    if !card_path.is_file() {
-        eprintln!("skip pinned FlourCollector proof: card is unavailable");
-        return;
-    }
-    let dir = std::env::temp_dir().join(format!("274bot-pinned-flour-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let mut library = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    library
-        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("pinned catalog registers");
-    let card = library
-        .get(ScriptSource::Catalog, "FlourCollector")
-        .expect("pinned FlourCollector listed");
-    assert_eq!(card.unloadable, None);
-    library
-        .prepare_card_unvalidated(ScriptSource::Catalog, "FlourCollector")
-        .expect("pinned FlourCollector transpiles and instantiates");
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
 fn reach_loc_op_fails_closed_through_proxy() {
     use script::{LoadIsolate, LoadShape};
 

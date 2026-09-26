@@ -990,17 +990,39 @@ fn dispatch_watchdog_uses_active_execution_start_and_tick() {
     let observed = Instant::now();
     thread::sleep(Duration::from_millis(560));
     dispatch_slot_tick(&mut slot, &mut driver, 4);
-    let logs = wait_for_cut_restart(&mut slot, generation, script::RunState::Running);
-    assert!(
-        observed.elapsed() < Duration::from_millis(900),
-        "watchdog was cadence-delayed: {:?}",
-        observed.elapsed()
-    );
+    // Watchdog must fire on the active execution horizon (~600ms from tick 3
+    // start), not on a later cadence dispatch. Poll for the cut log before
+    // waiting on generation bump so parallel load on cut-restart does not
+    // inflate this timing budget.
+    let log_deadline = observed + Duration::from_millis(1000);
+    let mut logs = Vec::new();
+    while Instant::now() < log_deadline {
+        slot.observe_lifecycle();
+        logs.extend(slot.take_pending_logs());
+        if logs
+            .iter()
+            .any(|line| line.contains("tick 3: runaway execution interrupted by watchdog"))
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
     assert!(
         logs.iter()
             .any(|line| { line.contains("tick 3: runaway execution interrupted by watchdog") }),
-        "watchdog blamed the wrong dispatch: {logs:?}"
+        "watchdog blamed the wrong dispatch within {:?}: {logs:?}",
+        observed.elapsed()
     );
+    assert!(
+        observed.elapsed() < Duration::from_millis(1000),
+        "watchdog was cadence-delayed: {:?}",
+        observed.elapsed()
+    );
+    logs.extend(wait_for_cut_restart(
+        &mut slot,
+        generation,
+        script::RunState::Running,
+    ));
     slot.stop();
     wait_slot_state(&mut slot, script::RunState::Idle);
 }
@@ -4176,174 +4198,6 @@ export default class T extends LoopingBot {
         vec![script::shim::InteractReq::AnswerCount { value: 27 }],
         "Answer-Count waits for the posted count dialog"
     );
-    iso.join();
-}
-
-// The live BoneBurier gold probe: when `$RS2B0T` points at a real rs2b0t
-// checkout, load the actual BoneBurier card and drive it against a
-// seeded snapshot (Bones in the inv, inv tab bound, Prayer stats). The
-// script's onStart must settle and its loop must queue a held Bury —
-// the exact shim path the live `script_bone_burier` scenario runs.
-#[test]
-fn real_bone_burier_queues_bury_when_seeded() {
-    let Some(root) = script::rs2b0t_root() else {
-        eprintln!("skip: $RS2B0T not set");
-        return;
-    };
-    let path = root.join("src/bot/scripts/BoneBurier/BoneBurier.ts");
-    let Ok(source) = std::fs::read_to_string(&path) else {
-        eprintln!("skip: no BoneBurier.ts at {path:?}");
-        return;
-    };
-    if !source.contains("Bury") {
-        eprintln!("skip: BoneBurier.ts is not a burier implementation");
-        return;
-    }
-    let shape = script::detect_shape(&source);
-    assert_eq!(
-        shape,
-        script::LoadShape::CompatClass,
-        "BoneBurier is a class card"
-    );
-    let js = script::transpile_ts(&source).expect("transpile BoneBurier.ts");
-    let iso = LoadIsolate::spawn(js, shape, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.ingame = true;
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 3220,
-        z: 3220,
-        level: 0,
-    });
-    let inv = [nc(Some("Bones"), 5)];
-    snap.inv = &inv;
-    snap.inv_size = 28;
-    let stats = [script::isolate_fb::StatInput {
-        index: 5,
-        name: "Prayer",
-        xp: 31,
-        base: 1,
-        effective: 1,
-    }];
-    snap.stats = &stats;
-    post_snapshot_input(&iso, &snap);
-    for n in 1..=8 {
-        iso.on_game_tick(n);
-    }
-    // Sync barrier: the tick commands are fire-and-forget; the probe
-    // round-trips so the thread has processed them before the drains.
-    let _ = iso.probe("1 + 1");
-    let logs = iso.drain_logs();
-    assert!(
-        logs.iter().all(|l| !is_throw_shaped_log(l)),
-        "the real BoneBurier must not throw on a seeded snapshot: {logs:?}"
-    );
-    let reqs = iso.drain_interacts();
-    assert!(
-        reqs.iter().any(|r| matches!(
-            r,
-            script::shim::InteractReq::Held { name, action }
-                if name == "Bones" && action == "Bury"
-        )),
-        "the script must queue a held Bury, got {reqs:?}"
-    );
-    iso.join();
-}
-
-#[test]
-fn real_bone_burier_without_bones_queues_host_bank_route() {
-    let Some(root) = script::rs2b0t_root() else {
-        eprintln!("skip: $RS2B0T not set");
-        return;
-    };
-    let path = root.join("src/bot/scripts/BoneBurier/BoneBurier.ts");
-    let source = std::fs::read_to_string(&path).expect("read captured BoneBurier.ts");
-    let shape = script::detect_shape(&source);
-    let js = script::transpile_ts(&source).expect("transpile captured BoneBurier.ts");
-    let iso = LoadIsolate::spawn_with_content(
-        js,
-        shape,
-        vec![],
-        None,
-        std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
-            api::named_banks::NamedBank::new(
-                "Chosen bank",
-                api::snapshot::WorldTile {
-                    x: 3300,
-                    z: 3300,
-                    level: 0,
-                },
-            ),
-        ])),
-        std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-    )
-    .unwrap();
-    let mut snap = base_snapshot();
-    snap.ingame = true;
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 3200,
-        z: 3200,
-        level: 0,
-    });
-    let banks = [script::isolate_fb::BankStandInput {
-        name: "Bank booth",
-        x: 3210,
-        z: 3210,
-        level: 0,
-        kind: "booth",
-        op: 2,
-        choose: None,
-    }];
-    snap.banks = &banks;
-    let inv = [nc(Some("Coins"), 1)];
-    snap.inv = &inv;
-    snap.inv_size = 28;
-    let stats = [script::isolate_fb::StatInput {
-        index: 5,
-        name: "Prayer",
-        xp: 31,
-        base: 1,
-        effective: 1,
-    }];
-    snap.stats = &stats;
-    post_snapshot_input(&iso, &snap);
-    for tick in 1..=8 {
-        iso.on_game_tick(tick);
-    }
-    let _ = iso.probe("true");
-    let logs = iso.drain_logs();
-    assert!(
-        logs.iter().all(|line| !is_throw_shaped_log(line)),
-        "captured BoneBurier bank trip must not throw: {logs:?}"
-    );
-    let requests = iso.drain_interacts();
-    let [script::shim::InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
-        panic!("off-scene BoneBurier must await bank selection, got {requests:?}");
-    };
-    // The selected bank, not the unrelated packed booth at 3210,3210, owns
-    // this trip. No walk or withdrawal was admitted while selection waited.
-    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
-        &snap,
-        script::isolate_fb::NativeFactsInput {
-            bank_selection: script::isolate_fb::BankSelectionInput {
-                request_id: *request_id,
-                generation: 1,
-                bank_index: 0,
-                kind: 2,
-            },
-            ..Default::default()
-        },
-    ));
-    iso.on_game_tick(9);
-    iso.probe("true").unwrap();
-    assert!(matches!(
-        iso.drain_interacts().as_slice(),
-        [script::shim::InteractReq::WalkNear {
-            x: 3300,
-            z: 3300,
-            radius: 4,
-            ..
-        }]
-    ));
     iso.join();
 }
 

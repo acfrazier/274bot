@@ -1,7 +1,6 @@
-//! `Tools.bestFromTiers` export and frozen RangingGuildLogic sibling load.
+//! `Tools.bestFromTiers` export and tier-selection edge cases.
 
-use script::load::{JsLibrary, LoadIsolate, LoadShape};
-use script::{CacheMeta, JsCache, ScriptKind, ScriptSource};
+use script::load::{LoadIsolate, LoadShape};
 
 const TIER_SRC: &str = r#"
 import { bestFromTiers } from '../../api/acquisition/Tools.js';
@@ -154,116 +153,63 @@ fn best_from_tiers_export_orders_level_before_available_and_short_circuits() {
     iso.join();
 }
 
-fn scratch(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("274bot-tool-tiers-{}-{}", std::process::id(), name))
-}
-
 #[test]
-fn ranging_guild_logic_module_evaluates_with_best_from_tiers() {
-    let Some(root) = script::rs2b0t_root() else {
-        return;
-    };
-    let card_path = root.join("src/bot/scripts/RangingGuild/RangingGuild.ts");
-    if !card_path.is_file() {
-        return;
-    }
-    let origin = std::fs::read_to_string(&card_path).expect("RangingGuild.ts");
-    let dir = scratch("ranging-logic");
+fn logic_sibling_best_from_tiers_selects_yew_shortbow() {
+    use script::{CacheMeta, JsCache, ScriptKind, ScriptSource};
+
+    let dir = std::env::temp_dir().join(format!(
+        "274bot-tool-tiers-logic-{}-{}",
+        std::process::id(),
+        "fixture"
+    ));
     std::fs::create_dir_all(&dir).unwrap();
+    let card_dir = dir.join("RangingGuild");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    std::fs::write(
+        card_dir.join("RangingGuildLogic.ts"),
+        r#"
+import { bestFromTiers } from '../../api/acquisition/Tools.js';
+const TIERS = [
+    { name: 'Magic shortbow', level: 50 },
+    { name: 'Yew shortbow', level: 40 },
+    { name: 'Shortbow', level: 1 },
+];
+export const BOWS = TIERS;
+export function bestBow(level, available) {
+    return bestFromTiers(level, TIERS, available);
+}
+"#,
+    )
+    .unwrap();
+    let main = r#"
+import { bestBow, BOWS } from './RangingGuildLogic.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__bows = BOWS.length;
+        globalThis.__bow = bestBow(40, (n) => n === 'Yew shortbow');
+    }
+}
+"#;
+    std::fs::write(card_dir.join("RangingGuild.ts"), main).unwrap();
     let cache = JsCache::new(dir.join("sib-cache"));
     let siblings = script::resolve_sibling_modules(
-        &card_path,
-        &origin,
+        &card_dir.join("RangingGuild.ts"),
+        main,
         &cache,
         CacheMeta {
             kind: ScriptKind::Compat,
-            source: ScriptSource::Catalog,
+            source: ScriptSource::File,
             shape: Some("CompatClass".into()),
             api_family: None,
         },
     )
-    .expect("RangingGuild siblings resolve");
-    assert!(
-        siblings
-            .iter()
-            .any(|(url, _)| url.contains("RangingGuildLogic")),
-        "logic sibling must be in graph: {:?}",
-        siblings.iter().map(|(u, _)| u.as_str()).collect::<Vec<_>>()
-    );
-
-    let harness = r#"
-import { bestBow, BOWS } from './RangingGuildLogic.js';
-globalThis.__bows = BOWS.length;
-globalThis.__bow = bestBow(40, (n) => n === 'Yew shortbow');
-export default class T extends LoopingBot { loop() {} }
-"#;
-    let iso = LoadIsolate::spawn(harness.to_string(), LoadShape::CompatClass, siblings)
-        .expect("RangingGuildLogic harness spawns");
+    .expect("logic sibling");
+    let iso = LoadIsolate::spawn(main.to_string(), LoadShape::CompatClass, siblings).unwrap();
     iso.on_game_tick(1);
-    assert_eq!(iso.probe("__bows").unwrap(), 12);
+    assert_eq!(iso.probe("__bows").unwrap(), 3);
     assert_eq!(iso.probe("__bow").unwrap(), "Yew shortbow");
     for line in iso.drain_logs() {
-        assert!(
-            !line.contains("not impl"),
-            "RangingGuildLogic eval must not throw notImpl: {line}"
-        );
+        assert!(!line.contains("not impl"), "logic eval threw: {line}");
     }
     iso.join();
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn ranging_guild_catalog_card_spawns_without_best_from_tiers_not_impl() {
-    let Some(root) = script::rs2b0t_root() else {
-        return;
-    };
-    let card_path = root.join("src/bot/scripts/RangingGuild/RangingGuild.ts");
-    if !card_path.is_file() {
-        eprintln!("skip: pinned catalog lacks RangingGuild");
-        return;
-    }
-    let dir = scratch("ranging-card");
-    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("catalog register");
-    lib.ensure_js(ScriptSource::Catalog, "RangingGuild")
-        .expect("RangingGuild transpile");
-    let card = lib
-        .get(ScriptSource::Catalog, "RangingGuild")
-        .cloned()
-        .expect("RangingGuild catalog row");
-    let cache = JsCache::new(dir.join("sib-cache"));
-    let siblings = script::resolve_sibling_modules(
-        &card.path,
-        &card.origin,
-        &cache,
-        CacheMeta {
-            kind: ScriptKind::Compat,
-            source: ScriptSource::Catalog,
-            shape: Some(format!("{:?}", card.shape)),
-            api_family: None,
-        },
-    )
-    .expect("RangingGuild siblings");
-    let iso = LoadIsolate::spawn_with_game_data(
-        card.js.clone(),
-        card.shape,
-        siblings,
-        api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
-    )
-    .expect("RangingGuild card spawn");
-    iso.on_game_tick(1);
-    let mut blockers = Vec::new();
-    for line in iso.drain_logs() {
-        if line.contains("not impl") || line.contains("Error") {
-            blockers.push(line);
-        }
-    }
-    iso.join();
-    let _ = std::fs::remove_dir_all(&dir);
-    assert!(
-        blockers.is_empty(),
-        "full RangingGuild load blockers (report next gap if any):\n{}",
-        blockers.join("\n")
-    );
 }

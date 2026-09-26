@@ -27,6 +27,7 @@ pub mod isolated_env;
 #[cfg(feature = "load")]
 pub mod js_cache;
 mod keep_list;
+#[cfg(feature = "load")]
 pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
@@ -53,6 +54,7 @@ pub use identity::{
 pub use isolated_env::{bot_file, bot_home, rs2b0t_env, IsolatedEnv};
 #[cfg(feature = "load")]
 pub use js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
+#[cfg(feature = "load")]
 pub use load::{
     default_js_store, detect_shape, first_unloadable_specifier, is_catalog_dim, is_reserved,
     live_example_path, live_file_fixture_path, live_file_fixture_stem, parse_declared_api_version,

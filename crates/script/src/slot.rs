@@ -815,6 +815,7 @@ impl SlotScript {
         if let Some(pending) = &mut self.pending_bank_op {
             pending.freeze();
         }
+        #[cfg(feature = "load")]
         let mut abort_recovery = false;
         if self.has_instance() && matches!(self.state, RunState::Running | RunState::Starting) {
             #[cfg(feature = "load")]
@@ -831,7 +832,14 @@ impl SlotScript {
             }
             self.state = RunState::Paused;
         }
-        abort_recovery
+        #[cfg(feature = "load")]
+        {
+            abort_recovery
+        }
+        #[cfg(not(feature = "load"))]
+        {
+            false
+        }
     }
 
     /// Operator Resume: `want_run` back on. Assumes the client is up; the
@@ -1785,10 +1793,11 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     "(no message)".to_string()
 }
 
+#[cfg(feature = "load")]
 fn settings_fp(bag: &serde_json::Map<String, serde_json::Value>) -> String {
     serde_json::to_string(bag).unwrap_or_default()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "load"))]
 #[path = "slot_tests.rs"]
 mod tests;

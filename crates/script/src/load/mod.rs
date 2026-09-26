@@ -1,10 +1,9 @@
 //! JS Load: shape detection, the picker library of loaded JS cards, and the
 //! out-of-tree `LoadIsolate` (rustyscript V8 on its own thread).
 //!
-//! The classify surface (`detect_shape`, `LoadShape`, `is_reserved`,
-//! `is_catalog_dim`, import scans, fingerprints, `JsCard`) compiles without
-//! the `load` feature; the cache-backed `JsLibrary`, sibling resolve and the
-//! isolate need it.
+//! This module is feature-gated because its cache-backed `JsLibrary`, sibling
+//! resolution and V8 isolate need `load`. Static registry parsing and settings
+//! schemas live in `rs2b0t_registry` and compile without that feature.
 //!
 //! Loading (`JsLibrary::load`) only reads, classifies, validates the source
 //! in a throwaway Runtime (dropped before `load()` returns), registers the
