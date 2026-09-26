@@ -184,6 +184,10 @@ fn walking_cards_wait_for_their_own_walk_off_the_landing() {
             40,
             &format!("{name}: the seeded landing is not the card's walk"),
         );
+        assert!(
+            !runner.wants_script_paint(),
+            "{name}: a card without a receipt watch never reads paint"
+        );
         set_world_tile(&mut c, landing_offset(short));
         assert_running_for(
             &mut runner,

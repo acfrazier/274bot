@@ -35,6 +35,7 @@ use crossterm::terminal::{
 };
 #[cfg(test)]
 use host_play::arm_walk_on;
+use host_play::catalog_core::CoreWatch;
 use host_play::live_gate::{self, CoreGate, LiveCore, PassHold};
 use host_play::live_start::{self, PendingCatalogStart, StartArming};
 use host_play::paired_core::PairWatch;
@@ -415,6 +416,13 @@ fn live_card_starts(
     }
 }
 
+/// The Play-owned witness handles a core-gated `--live` run polls, taken
+/// once at prepare so each poll borrows them instead of cloning `Play`'s.
+struct LiveWitnesses {
+    catalog: CoreWatch,
+    pair: PairWatch,
+}
+
 /// The TUI session: the running play, the vault, the per-slot snapshot
 /// publication, and the per-username walk arms (the same `WalkArm` map
 /// `host_play::arm_walk_on` latches and the panel drives).
@@ -474,7 +482,10 @@ pub struct TuiSession {
     /// `--live` prepare arms.
     live_catalog_core: bool,
     live_pair_core: bool,
-    /// The core witness's own ceiling (`None` without a core gate).
+    /// The witnesses a `--catalog-core` / `--pair-core` run armed. `None`
+    /// for interactive use and plain `--live` runs, which poll no gate.
+    live_witnesses: Option<LiveWitnesses>,
+    /// The armed witness's own ceiling (`None` without a core gate).
     live_core_deadline: Option<Instant>,
     /// `BUDGET_S` soak: keep pumping after proof PASS until this instant.
     live_soak_until: Option<Instant>,
@@ -562,6 +573,7 @@ impl TuiSession {
             live_name: None,
             live_catalog_core: false,
             live_pair_core: false,
+            live_witnesses: None,
             live_core_deadline: None,
             live_soak_until: None,
             live_announced_pass: false,
@@ -942,7 +954,11 @@ impl TuiSession {
             .play()
             .ok_or_else(|| "live prepare needs the unlocked play".to_string())?;
         live_core.configure(play, &names)?;
-        let (catalog_watch, pair_watch) = (play.catalog_core_watch(), play.paired_core_watch());
+        let pair_watch = play.paired_core_watch();
+        self.live_witnesses = (live_core != LiveCore::Off).then(|| LiveWitnesses {
+            catalog: play.catalog_core_watch(),
+            pair: pair_watch.clone(),
+        });
         self.live_name = Some(name);
         self.live_wait_script_stop = wait_script_stop;
         self.live_stop_wait_started = None;
@@ -1041,13 +1057,15 @@ impl TuiSession {
                 )?;
             }
         }
-        self.live_core_deadline = live_gate::core_deadline(
-            Some(&catalog_watch),
-            Some(&pair_watch),
-            budget,
-            scenario_deadline,
-            Instant::now(),
-        );
+        self.live_core_deadline = self.live_witnesses.as_ref().and_then(|armed| {
+            live_gate::core_deadline(
+                Some(&armed.catalog),
+                Some(&armed.pair),
+                budget,
+                scenario_deadline,
+                Instant::now(),
+            )
+        });
         Ok(())
     }
 
@@ -2109,16 +2127,33 @@ impl TuiSession {
     /// passed (0) or failed (1); `None` while it runs. Proof lines are
     /// returned, not printed, so a headed loop can hold them until after
     /// alternate-screen restore. The shared live gate decides exactly as the
-    /// panel watches do: a configured core witness that failed fails the
-    /// run, one still Pending holds the PASS before the clean-stop grace.
+    /// panel watches do: the witness this run armed fails the run when it
+    /// fails, and holds the PASS while Pending, before the clean-stop grace.
     fn live_status(&mut self) -> (Option<i32>, Vec<ProofLine>) {
-        let name = self.live_name.as_deref().unwrap_or("script");
-        let now = Instant::now();
-        let catalog = self.core.play().map(|play| play.catalog_core_watch());
-        let pair = self.core.play().map(|play| play.paired_core_watch());
-        let core_gate =
-            live_gate::catalog_core_gate(catalog.as_ref(), self.live_core_deadline, now);
-        let pair_gate = live_gate::pair_core_gate(pair.as_ref(), self.live_core_deadline, now);
+        // The UI loop polls this every frame, interactive use included:
+        // without a `--live` run there is nothing to decide, so read no
+        // clock, take no lock and touch no witness.
+        let Some(name) = self.live_name.as_deref() else {
+            return (None, Vec::new());
+        };
+        // Only the witness this run armed can decide it, borrowed from the
+        // run; a plain `--live` run has none and evaluates no gate.
+        let (core_gate, pair_gate) = match &self.live_witnesses {
+            None => (CoreGate::Disabled, CoreGate::Disabled),
+            Some(armed) => {
+                let now = Instant::now();
+                (
+                    live_gate::catalog_core_gate(
+                        Some(&armed.catalog),
+                        self.live_core_deadline,
+                        now,
+                    ),
+                    live_gate::pair_core_gate(Some(&armed.pair), self.live_core_deadline, now),
+                )
+            }
+        };
+        let catalog = self.live_witnesses.as_ref().map(|armed| &armed.catalog);
+        let pair = self.live_witnesses.as_ref().map(|armed| &armed.pair);
         // The witness receipts ride with the terminal line: stdout before a
         // PASS, stderr before a FAIL, labelled with the `--live` token.
         let witnesses = |ok: bool| {
@@ -2126,11 +2161,11 @@ impl TuiSession {
             [
                 (
                     live_gate::CATALOG_CORE_TAG,
-                    live_gate::catalog_core_record(catalog.as_ref(), &core_gate),
+                    live_gate::catalog_core_record(catalog, &core_gate),
                 ),
                 (
                     live_gate::PAIRED_CORE_TAG,
-                    live_gate::pair_core_record(pair.as_ref(), &pair_gate),
+                    live_gate::pair_core_record(pair, &pair_gate),
                 ),
             ]
             .into_iter()
@@ -2166,7 +2201,7 @@ impl TuiSession {
                 self.live_wait_script_stop,
                 |needle| self.script_self_stop_observed(needle),
                 &mut grace,
-                now,
+                Instant::now(),
             );
             self.live_stop_wait_started = grace;
             match hold {

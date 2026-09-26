@@ -613,12 +613,22 @@ fn passed_runner() -> scenario::ScenarioRunner {
     runner
 }
 
+/// What `--catalog-core` prepare leaves: the Play's catalog witness armed for
+/// the driven account and held by the run.
+fn arm_catalog_witness(session: &mut TuiSession, play: &Play) {
+    let catalog = play.catalog_core_watch();
+    catalog.configure(host_play::catalog_core::CoreCase::Thiever, "alice");
+    session.live_witnesses = Some(LiveWitnesses {
+        catalog,
+        pair: play.paired_core_watch(),
+    });
+}
+
 #[test]
 fn catalog_core_holds_live_pass_until_the_witness_qualifies_or_its_deadline_fails() {
     let play = empty_play();
-    play.catalog_core_watch()
-        .configure(host_play::catalog_core::CoreCase::Thiever, "alice");
     let mut session = TuiSession::new(dummy_options());
+    arm_catalog_witness(&mut session, &play);
     session.inject_play(play);
     session.live_name = Some("core_hold".into());
     *session.scenario.lock().unwrap() = Some(passed_runner());
@@ -643,6 +653,37 @@ fn catalog_core_holds_live_pass_until_the_witness_qualifies_or_its_deadline_fail
         !lines
             .iter()
             .any(|line| matches!(line, ProofLine::Stdout(text) if text.starts_with("PASS:"))),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn only_the_witness_a_live_run_armed_decides_it() {
+    // A catalog witness no live run armed, already failed at its Start.
+    let play = empty_play();
+    let unarmed = play.catalog_core_watch();
+    unarmed.configure(host_play::catalog_core::CoreCase::Thiever, "alice");
+    unarmed.observe(
+        "alice",
+        host_play::catalog_core::Observation::default(),
+        false,
+    );
+    assert!(unarmed.begin_start("alice").is_err());
+    let mut session = TuiSession::new(dummy_options());
+    session.inject_play(play);
+
+    // Interactive tui-play polls every frame and has nothing to decide.
+    assert_eq!(session.live_status(), (None, Vec::new()));
+
+    // A plain `--live` run passes on its own proof, without a witness line.
+    session.live_name = Some("plain".into());
+    *session.scenario.lock().unwrap() = Some(passed_runner());
+    let (code, lines) = session.live_status();
+    assert_eq!(code, Some(0), "{lines:?}");
+    assert!(
+        lines.iter().all(|line| match line {
+            ProofLine::Stdout(text) | ProofLine::Stderr(text) => !text.contains("CORE"),
+        }),
         "{lines:?}"
     );
 }
