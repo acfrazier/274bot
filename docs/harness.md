@@ -104,33 +104,54 @@ load another copy.
 
 | Setting | Meaning |
 |---|---|
-| `BOT_MEMORY_N` | Exactly 1, 16, 32 or 128; accepting a count is not a capacity guarantee. |
+| `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128; accepting a count is not a capacity guarantee. |
 | `BOT_MEMORY_WORKLOAD` | `idle`, `seeded-idle`, `active` or `lifecycle`; default `idle`. |
+| `BOT_MEMORY_SCENARIO` | Catalog scenario for `active`/`lifecycle`; default `thiever`. Representative runner cells also use `moss_giant_bank_start`. |
 | `BOT_MEMORY_WARMUP_S` / `BOT_MEMORY_OBSERVE_S` | Positive seconds, defaults 120 / 600. |
-| `BOT_MEMORY_SUSTAIN=1` | Active Thiever fixture with four food initially, stock in the bank, target 22 food and restocking at three. |
+| `BOT_MEMORY_TEARDOWN_S` | Positive teardown seconds after scripts Stop; default 60. |
+| `BOT_MEMORY_SUSTAIN=1` | Active/lifecycle Thiever only: four food initially, stock in the bank, target 22 food and restocking at three. Other scenarios reject this setting. |
 | `BOT_MEMORY_DIAGNOSTICS=1` | Optional bounded frames, logs, requests and per-script progress sidecar. |
-| `BOT_MEMORY_RENDER_POLICY` | Panel `rotating-all`, `focused-one` or `focused-plus-background`. |
+| `BOT_MEMORY_RENDER_POLICY` | Panel `rotating-all`, `fixed-one`, `focused-one`, `focused-plus-background`, `stress50` or `stress50-full`. `stress50` draws one of 50 slots; `stress50-full` draws all 50 at full rate. |
 | `BOT_MEMORY_SINGLE_RENDERER=1` | Legacy fixed slot-zero rendering. |
 | `BOT_CPU=1` | CPU fallback for the panel's client renderer. |
 
 `idle` only logs clients in. `seeded-idle` performs the ordinary Thiever seed
-without starting the catalog script. `active` starts the real catalog script;
-`lifecycle` additionally alternates Stop and restart every 60 observation seconds.
-After observation, scripts Stop and the harness keeps a 60-second teardown window.
+without starting the catalog script. `active` starts the selected real catalog
+script; `lifecycle` additionally alternates Stop and restart every 60
+observation seconds. After observation, scripts Stop and the harness remains
+open for `BOT_MEMORY_TEARDOWN_S`.
 
-Readiness requires every slot to be `ingame && scene_state == 2`. Seed/proof or
-script failures fail the run and return a nonzero exit. The observation-boundary
-qualification file records each slot's state, error and script progress. Inspect
-those records before treating a run as a benchmark: a process that exits normally
-is not by itself evidence that every bot did useful work for the whole interval.
+Ingame readiness requires every slot to remain `ingame && scene_state == 2`
+continuously for two seconds. A transient ready pulse before the mainland-hop
+reload does not latch. Samples report that settled `all_bots_ingame_scene2_s`
+milestone separately from `qualification_complete_s`. Qualification additionally
+requires seed/proof completion and running scripts for active workloads.
+Multi-slot `moss_giant_bank_start` replaces only its contended post-return
+fresh-XP checkpoint with fail-closed local-player named-NPC engagement; the
+scenario's final Strength-XP-since-Start proof remains mandatory.
+
+Seed/proof or script failures fail the run and return a nonzero exit. The
+observation-boundary qualification file records each slot's state, error and
+script progress. Inspect those records before treating a run as a benchmark: a
+process that exits normally is not by itself evidence that every bot did useful
+work for the whole interval.
 
 ## Reading results
 
 `samples.jsonl` separates current resident bytes from process-lifetime peak RSS.
 It also records cumulative process CPU, optional allocator counts, V8 sample
-coverage/age, snapshot capacity and tracked GPU buffer/texture bytes. Timing
-fields are basic count/total/maximum aggregates, not latency percentiles.
-Requested rendering metadata does not prove the observed backend or cadence.
+coverage/age, snapshot capacity and tracked GPU buffer/texture bytes. Host
+mainloop/observe/raster fields are cumulative **wall-time** counters, including
+waits, preemption and contention; they are not CPU time. Retired slot counters
+remain in the per-username process totals across relogs, while
+`host_profile_slots` counts only active slots.
+
+Panel samples include a cumulative one-millisecond frame histogram whose final
+bucket means “at least 250 ms”, plus `ui_frame_count`, `ui_frame_total_ns` and
+`ui_frame_max_ns`. A receipt must label overflow percentiles as censored and
+report overflow count, mean and maximum rather than presenting 250 ms as an
+exact slow-frame duration. Requested rendering metadata does not prove the
+observed backend or cadence.
 
 `samples.qualification.jsonl` contains observation start/end progress. With
 optional diagnostics, `samples.diagnostics.jsonl` adds bounded per-slot evidence.
@@ -138,9 +159,11 @@ Detailed navigation history is null because the campaign capture system is not
 part of this harness. Direct-owner census, scheduling/latency journals, managed
 process controllers and campaign replay/provisioning tools are not dependencies.
 
-Compare matched workloads and intervals. Allocation avoidance is not necessarily
-an RSS reduction, and current RSS must not be confused with peak RSS or allocator
-counts. The selected fixes have focused allocation/ownership evidence; they do
+Compare matched workloads, platforms and intervals. Allocation avoidance is not
+necessarily an RSS reduction, and current RSS must not be confused with peak RSS
+or allocator counts. Negative or non-monotonic RSS slopes can be sampler noise,
+especially with macOS `resident_size`; they are measurements, not savings
+claims. The selected fixes have focused allocation/ownership evidence; they do
 not establish an additive total saving, universal responsiveness improvement,
 low-end budget, or 128-client capacity guarantee.
 

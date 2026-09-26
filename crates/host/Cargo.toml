@@ -8,7 +8,6 @@ publish = false
 api = { path = "../api" }
 client = { workspace = true }
 num-bigint = "0.4"
-parking_lot = "0.12"
 vault = { path = "../vault" }
 
 [features]

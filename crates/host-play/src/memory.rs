@@ -22,6 +22,8 @@ const PANEL_FRAME_BUCKETS: usize = 251;
 static PANEL_FRAME_MS: [AtomicU64; PANEL_FRAME_BUCKETS] =
     [const { AtomicU64::new(0) }; PANEL_FRAME_BUCKETS];
 
+const READY_SETTLE: Duration = Duration::from_secs(2);
+
 /// Whole-panel frame timer installed only by a memory-profile panel build.
 ///
 /// Buckets are millisecond ceilings from 0 through 249; bucket 250 includes
@@ -482,7 +484,9 @@ pub struct Run {
     pub pass: String,
     frontend: &'static str,
     started: Instant,
-    warm: Option<Instant>,
+    all_ready_since: Option<Instant>,
+    all_ingame: Option<Instant>,
+    qualification_complete: Option<Instant>,
     observing: Option<Instant>,
     last_sample: Option<Instant>,
     lifecycle_cycle: u64,
@@ -511,6 +515,25 @@ pub enum SeedNav {
     /// Reuse the Play-owned world as-is — `None` preserves missing-pack
     /// behavior (no second decode attempt).
     FromPlay(Option<Arc<nav::world::NavWorld>>),
+}
+
+fn update_stable_all_ingame(
+    all_ready_since: &mut Option<Instant>,
+    all_ingame: &mut Option<Instant>,
+    ready: usize,
+    wanted: usize,
+    now: Instant,
+) {
+    if ready == wanted {
+        let since = *all_ready_since.get_or_insert(now);
+        if all_ingame.is_none() && now.duration_since(since) >= READY_SETTLE {
+            // Record when the stable interval began, not the end of the
+            // settle hold.
+            *all_ingame = Some(since);
+        }
+    } else {
+        *all_ready_since = None;
+    }
 }
 
 impl Run {
@@ -542,6 +565,15 @@ impl Run {
         // Fail closed on panel-only / conflicting flags before minting vaults.
         let render_policy = parse_render_policy(frontend)?;
         let single_renderer = std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
+        let sustain = std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1");
+        let requested_scenario =
+            std::env::var("BOT_MEMORY_SCENARIO").unwrap_or_else(|_| "thiever".to_string());
+        if sustain
+            && (!matches!(config.workload, Workload::Active | Workload::Lifecycle)
+                || requested_scenario != "thiever")
+        {
+            return Err("BOT_MEMORY_SUSTAIN=1 requires the active thiever scenario".into());
+        }
         client::profiling::enable();
         use vault::{Profile, ProfileSettings, Vault};
 
@@ -591,7 +623,7 @@ impl Run {
         let scenario_name = if matches!(config.workload, Workload::Idle | Workload::SeededIdle) {
             None
         } else {
-            Some(std::env::var("BOT_MEMORY_SCENARIO").unwrap_or_else(|_| "thiever".to_string()))
+            Some(requested_scenario)
         };
         let card = if let Some(scenario_name) = scenario_name.as_deref() {
             let benchmark = scenario::get(scenario_name)
@@ -673,7 +705,9 @@ impl Run {
             pass,
             frontend,
             started: Instant::now(),
-            warm: None,
+            all_ready_since: None,
+            all_ingame: None,
+            qualification_complete: None,
             observing: None,
             last_sample: None,
             lifecycle_cycle: 0,
@@ -790,6 +824,14 @@ impl Run {
             .filter(|s| s.ingame && s.scene_state == 2)
             .count();
 
+        update_stable_all_ingame(
+            &mut self.all_ready_since,
+            &mut self.all_ingame,
+            ready,
+            self.config.n,
+            now,
+        );
+
         let mut seeded = 0usize;
         let mut proved = 0usize;
         if self.config.workload != Workload::Idle {
@@ -850,8 +892,9 @@ impl Run {
             .filter(|name| play.script_state(name) == script::RunState::Running)
             .count();
 
-        // Unseeded idle: ready only. Seeded idle: seed completed, no scripts.
-        // Active/lifecycle: all ready, seeded, XP-proved, scripts up.
+        // Unseeded idle: stable ingame readiness only. Seeded idle: seed
+        // completed, no scripts. Active/lifecycle: all ready, seeded,
+        // XP-proved, and scripts up.
         let established = if self.config.workload == Workload::SeededIdle {
             ready == self.config.n && seeded == self.config.n && active == 0
         } else if self.card.is_none() {
@@ -863,16 +906,24 @@ impl Run {
                 && active == self.config.n
         };
 
-        if self.warm.is_none() && established {
-            self.warm = Some(now);
+        if self.qualification_complete.is_none() && established {
+            if let Some(all_ingame) = self.all_ingame {
+                self.qualification_complete =
+                    Some(if self.card.is_none() { all_ingame } else { now });
+            }
         }
-        if self.warm.is_none() && self.started.elapsed() > Duration::from_secs(1800) {
+        if self.qualification_complete.is_none()
+            && self.started.elapsed() > Duration::from_secs(1800)
+        {
             return Err(format!(
                 "blocked: ready={ready} seeded={seeded} proved={proved} wanted={}",
                 self.config.n
             ));
         }
-        if self.observing.is_none() && self.warm.is_some_and(|t| t.elapsed() >= self.config.warmup)
+        if self.observing.is_none()
+            && self
+                .qualification_complete
+                .is_some_and(|t| t.elapsed() >= self.config.warmup)
         {
             if !established {
                 return Err("workload did not remain ready through warmup".into());
@@ -928,7 +979,7 @@ impl Run {
                     "teardown".into()
                 } else if self.observing.is_some() {
                     "observe".into()
-                } else if self.warm.is_some() {
+                } else if self.qualification_complete.is_some() {
                     "warmup".into()
                 } else {
                     "seed".into()
@@ -974,8 +1025,12 @@ impl Run {
             value["contention_qualification"] = (self.config.n > 1
                 && self.scenario_name.as_deref() == Some("moss_giant_bank_start"))
             .into();
-            value["startup_ready_s"] = self
-                .warm
+            value["all_bots_ingame_scene2_s"] = self
+                .all_ingame
+                .map(|ready| ready.duration_since(self.started).as_secs_f64())
+                .into();
+            value["qualification_complete_s"] = self
+                .qualification_complete
                 .map(|ready| ready.duration_since(self.started).as_secs_f64())
                 .into();
             let host_timings = host::performance_profile::snapshots();
@@ -1132,6 +1187,27 @@ mod tests {
         let after = process_cpu_seconds().expect("process cpu sample");
         assert!(before.0 >= 0.0 && before.1 >= 0.0);
         assert!(after.0 >= before.0 && after.1 >= before.1);
+    }
+
+    #[test]
+    fn stable_readiness_discards_the_pre_hop_ready_pulse() {
+        let base = Instant::now();
+        let mut since = None;
+        let mut ready = None;
+        update_stable_all_ingame(&mut since, &mut ready, 1, 1, base);
+        update_stable_all_ingame(&mut since, &mut ready, 1, 1, base + Duration::from_secs(1));
+        assert!(ready.is_none(), "one-second ready pulse must not latch");
+        update_stable_all_ingame(
+            &mut since,
+            &mut ready,
+            0,
+            1,
+            base + Duration::from_millis(1100),
+        );
+        let settled = base + Duration::from_secs(3);
+        update_stable_all_ingame(&mut since, &mut ready, 1, 1, settled);
+        update_stable_all_ingame(&mut since, &mut ready, 1, 1, settled + READY_SETTLE);
+        assert_eq!(ready, Some(settled));
     }
 
     #[test]
@@ -1296,6 +1372,27 @@ mod tests {
         assert!(
             err.contains("panel frontend"),
             "expected panel-only error, got {err}"
+        );
+    }
+
+    #[test]
+    fn prepare_rejects_sustain_for_non_thiever_scenario() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SCENARIO",
+            "BOT_MEMORY_SUSTAIN",
+        ]);
+        std::env::set_var("BOT_MEMORY_SCENARIO", "moss_giant_bank_start");
+        std::env::set_var("BOT_MEMORY_SUSTAIN", "1");
+        let err = match Run::prepare_unseeded(unit_config(1, Workload::Active), "tui") {
+            Err(error) => error,
+            Ok(_) => panic!("expected non-thiever sustain error"),
+        };
+        assert_eq!(
+            err,
+            "BOT_MEMORY_SUSTAIN=1 requires the active thiever scenario"
         );
     }
 
@@ -1671,6 +1768,11 @@ mod tests {
         assert_eq!(
             engagement.wait.arm,
             scenario::Proof::LocalTargetingNpcName { name: "Moss giant" }
+        );
+        assert_eq!(
+            fleet.proof,
+            scenario::Proof::StatXpGain { id: 2, min: 1 },
+            "fleet qualification must retain the final post-Start Strength XP proof"
         );
     }
 

@@ -1769,13 +1769,14 @@ mod tests {
         let mut c = seeded();
         c.self_slot = 4;
         c.local_player.as_mut().unwrap().entity.face_entity = 3;
-        let mut npcs = (0..=708)
+        let mut npcs = (0..=709)
             .map(|id| NpcType {
                 id,
                 ..Default::default()
             })
             .collect::<Vec<_>>();
         npcs[708].name = "Moss giant".into();
+        npcs[709].name = "Rat".into();
         c.cache = Arc::new(Cache {
             npcs,
             ..Default::default()
@@ -1787,6 +1788,30 @@ mod tests {
         let s = snap(&mut c);
         assert!(proof.check(&s, None));
         assert_eq!(proof.name(), "local_targeting_npc_name(Moss giant)");
+
+        let mut wrong_name = ClientNpc {
+            r#type: Some(709),
+            ..Default::default()
+        };
+        wrong_name.entity.x = 104;
+        wrong_name.entity.z = 204;
+        c.npc[4] = Some(Box::new(wrong_name));
+        c.npc_ids[1] = 4;
+        c.npc_count = 2;
+        c.local_player.as_mut().unwrap().entity.face_entity = 4;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        c.bump_gens(ServerProt::NPC_INFO);
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "an NPC target with the wrong name must not qualify"
+        );
+
+        c.local_player.as_mut().unwrap().entity.face_entity = 32768;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "a player target must not qualify as the named NPC"
+        );
 
         c.local_player.as_mut().unwrap().entity.face_entity = -1;
         c.bump_gens(ServerProt::PLAYER_INFO);

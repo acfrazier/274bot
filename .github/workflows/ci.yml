@@ -66,6 +66,8 @@ jobs:
         run: |
           cargo clippy --workspace --all-targets --no-deps -- -D warnings
           cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings
+          cargo clippy -p host --all-targets --no-deps --features performance-profile -- -D warnings
+          cargo clippy -p panel --all-targets --no-deps --features memory-profile -- -D warnings
 
   architecture:
     name: architecture
@@ -114,3 +116,6 @@ jobs:
           # Exercise targets hidden behind required-features in their manifests.
           cargo test -p script --features load --tests
           cargo test -p host-play --features memory-profile --tests
+          # Keep profiling feature coverage scoped to the behavioral units.
+          cargo test -p host --features performance-profile --lib performance_profile
+          cargo test -p panel --features memory-profile --lib focus::tests::memory_stress_policies

@@ -32,6 +32,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   the catalog's diagonal bank anchor. Exact-booth seed opens now send once
   and await the bank acknowledgement, preventing queued reopens from
   invalidating Herblore and shop seed deposits.
+
 ### Performance measurement
 
 - The opt-in `memory-profile` harness now accepts 50-slot runs, representative
@@ -39,10 +40,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   readiness, process CPU, and feature-gated host loop/observe/raster counters.
   A find-only 289 navigation corpus reports cold and warm searches plus peak
   scratch capacity. Normal builds do not compile the host timing registry.
-- Multi-bot MossGiant baselines retain the ordinary one-bot fresh-XP proof but
-  qualify each fleet member by its own fail-closed named-NPC target, because the
-  shared single-combat fixture denies some contenders while the frozen card
-  counts another player's disappearing target as a kill.
+- Multi-bot MossGiant baselines replace only the contended post-return fresh-XP
+  checkpoint with each local player's fail-closed named-NPC engagement. Every
+  fleet member must still pass the scenario's final Strength-XP-since-Start
+  proof; the one-bot path retains its ordinary fresh-XP checkpoint as well.
 
 ### Navigation
 
