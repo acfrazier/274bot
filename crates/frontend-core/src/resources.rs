@@ -1,12 +1,20 @@
 //! The process resource meter shared by the panel and the TUI. The
-//! operator session owns the one sampler and runs it from `poll` at most
-//! once per [`SAMPLE_PERIOD`]: never per row, per bot or per frame. Every
-//! value says whether it is still measuring, measured, not measurable here,
-//! or failed; memory is the whole process's, never a per-bot figure.
+//! operator session owns the one meter and polls it once per frame; the
+//! meter samples at most once per [`SAMPLE_PERIOD`] by the poll's clock,
+//! never per row, per bot or per frame. The OS process probe (system calls,
+//! `/proc` reads) runs on the meter's own thread, so a poll only asks for
+//! a probe and picks up the latest finished one; the fleet side (live
+//! workers, traffic) is one in-memory pass over the host rows. Every value
+//! says whether it is still measuring, measured, not measurable here, or
+//! failed; memory is the whole process's, never a per-bot figure.
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use host_play::Play;
+use parking_lot::Mutex;
 
 /// How often the meter samples.
 pub const SAMPLE_PERIOD: Duration = Duration::from_secs(1);
@@ -80,11 +88,13 @@ pub enum ProcessProbe {
     },
 }
 
-/// Read this process's CPU time and memory.
+/// Read this process's CPU time and memory. The current resident size is
+/// read first, so the peak read after it already covers it.
 pub fn probe_process() -> ProcessProbe {
     if !cfg!(any(target_os = "macos", target_os = "linux", windows)) {
         return ProcessProbe::Unsupported;
     }
+    let resident = host_play::current_resident_bytes();
     let (peak, cpu_seconds) = host_play::sample_process();
     // The host sampler's failure sentinel is `(0, 0.0)`.
     if peak == 0 && cpu_seconds == 0.0 {
@@ -92,7 +102,7 @@ pub fn probe_process() -> ProcessProbe {
     }
     ProcessProbe::Sampled {
         cpu_seconds,
-        resident: host_play::current_resident_bytes(),
+        resident,
         peak,
     }
 }
@@ -101,13 +111,156 @@ const NOT_MEASURED_HERE: &str = "not measured on this platform";
 const NO_LIVE_SLOTS: &str = "no live slots";
 const PROBE_FAILED: &str = "process sample failed";
 
-/// The meter state kept between samples.
-pub(crate) struct Resources {
+/// CPU and memory as the probe thread last measured them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessMetrics {
+    cpu: Metric,
+    ram: Metric,
+}
+
+/// What the poll and the probe thread share.
+struct ProbeShared {
     probe: fn() -> ProcessProbe,
+    /// Set by the poll to ask for one probe; the thread takes it.
+    requested: AtomicBool,
+    stop: AtomicBool,
+    /// Probes finished so far; the poll reads `latest` when it moves.
+    finished: AtomicU64,
+    latest: Mutex<ProcessMetrics>,
+}
+
+/// The probe thread: waits to be asked, runs the OS probe and turns
+/// successive reads into CPU and memory values.
+fn probe_thread(shared: Arc<ProbeShared>) {
+    let cores = thread::available_parallelism()
+        .map_or(1, |n| n.get() as u32)
+        .max(1);
+    let mut last_cpu = None;
+    loop {
+        if shared.stop.load(Ordering::Acquire) {
+            return;
+        }
+        if !shared.requested.swap(false, Ordering::AcqRel) {
+            thread::park();
+            continue;
+        }
+        let taken = Instant::now();
+        let probe = std::panic::catch_unwind(shared.probe).unwrap_or(ProcessProbe::Failed);
+        let metrics = process_metrics(probe, taken, &mut last_cpu, cores);
+        *shared.latest.lock() = metrics;
+        shared.finished.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// CPU from the previous read (`last_cpu`, updated here) and memory from
+/// this one. The peak shown is never below the current size: a lifetime
+/// peak below it is not a valid value.
+fn process_metrics(
+    probe: ProcessProbe,
+    taken: Instant,
+    last_cpu: &mut Option<(Instant, f64)>,
     cores: u32,
+) -> ProcessMetrics {
+    match probe {
+        ProcessProbe::Unsupported => {
+            *last_cpu = None;
+            ProcessMetrics {
+                cpu: Metric::Unavailable(NOT_MEASURED_HERE),
+                ram: Metric::Unavailable(NOT_MEASURED_HERE),
+            }
+        }
+        ProcessProbe::Failed => {
+            *last_cpu = None;
+            ProcessMetrics {
+                cpu: Metric::Error(PROBE_FAILED.into()),
+                ram: Metric::Error(PROBE_FAILED.into()),
+            }
+        }
+        ProcessProbe::Sampled {
+            cpu_seconds,
+            resident,
+            peak,
+        } => {
+            let cpu = match last_cpu.replace((taken, cpu_seconds)) {
+                Some((then, cpu0)) => cpu_from_delta(
+                    cpu_seconds - cpu0,
+                    taken.saturating_duration_since(then).as_secs_f64(),
+                    cores,
+                ),
+                None => Metric::Measuring,
+            };
+            let ram = match resident {
+                Some(resident) => Metric::Available(format!(
+                    "{} process, peak {}",
+                    format_bytes(resident),
+                    format_bytes(peak.max(resident))
+                )),
+                None => Metric::Available(format!("peak {} process", format_bytes(peak))),
+            };
+            ProcessMetrics { cpu, ram }
+        }
+    }
+}
+
+/// One live worker's traffic counter at a sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SlotTraffic {
+    lifetime: u64,
+    stream: u32,
+    bytes: u64,
+}
+
+/// Per-worker traffic baselines: a rate is only taken over the same
+/// workers and the same streams, so a replaced worker or a restarted
+/// counter re-baselines instead of producing a false rate.
+#[derive(Debug, Default)]
+struct Traffic {
+    at: Option<Instant>,
+    /// The last sample, sorted by lifetime.
+    last: Vec<SlotTraffic>,
+    /// This sample being gathered (then swapped with `last`).
+    current: Vec<SlotTraffic>,
+}
+
+impl Traffic {
+    fn rate(&mut self, now: Instant) -> Metric {
+        self.current.sort_unstable_by_key(|slot| slot.lifetime);
+        std::mem::swap(&mut self.last, &mut self.current);
+        let (sample, before) = (&self.last, &self.current);
+        let previous = self.at.replace(now);
+        if sample.is_empty() {
+            return Metric::Unavailable(NO_LIVE_SLOTS);
+        }
+        let Some(then) = previous else {
+            return Metric::Measuring;
+        };
+        let dt = now.saturating_duration_since(then).as_secs_f64();
+        if dt <= 0.0 || sample.len() != before.len() {
+            return Metric::Measuring;
+        }
+        let mut bytes = 0u64;
+        for (now, then) in sample.iter().zip(before) {
+            if now.lifetime != then.lifetime || now.stream != then.stream || now.bytes < then.bytes
+            {
+                return Metric::Measuring;
+            }
+            bytes = bytes.saturating_add(now.bytes - then.bytes);
+        }
+        Metric::Available(format_rate(bytes as f64 / dt))
+    }
+}
+
+/// The meter state kept by the poll.
+pub(crate) struct Resources {
+    shared: Arc<ProbeShared>,
+    /// The probe thread, started by the first sample.
+    worker: Option<JoinHandle<()>>,
+    /// A probe was asked for and has not finished.
+    in_flight: bool,
+    /// `ProbeShared::finished` as last taken.
+    seen: u64,
     last_sample: Option<Instant>,
-    last_cpu: Option<(Instant, f64)>,
-    last_traffic: Option<(Instant, u64, usize)>,
+    traffic: Traffic,
     view: ResourceView,
     generation: u64,
 }
@@ -118,16 +271,34 @@ impl Default for Resources {
     }
 }
 
+impl Drop for Resources {
+    fn drop(&mut self) {
+        // The thread exits at its next wake; nothing here waits for it.
+        self.shared.stop.store(true, Ordering::Release);
+        if let Some(worker) = &self.worker {
+            worker.thread().unpark();
+        }
+    }
+}
+
 impl Resources {
     pub(crate) fn with_probe(probe: fn() -> ProcessProbe) -> Self {
         Self {
-            probe,
-            cores: std::thread::available_parallelism()
-                .map_or(1, |n| n.get() as u32)
-                .max(1),
+            shared: Arc::new(ProbeShared {
+                probe,
+                requested: AtomicBool::new(false),
+                stop: AtomicBool::new(false),
+                finished: AtomicU64::new(0),
+                latest: Mutex::new(ProcessMetrics {
+                    cpu: Metric::Measuring,
+                    ram: Metric::Measuring,
+                }),
+            }),
+            worker: None,
+            in_flight: false,
+            seen: 0,
             last_sample: None,
-            last_cpu: None,
-            last_traffic: None,
+            traffic: Traffic::default(),
             view: ResourceView::default(),
             generation: 0,
         }
@@ -137,102 +308,116 @@ impl Resources {
         &self.view
     }
 
-    /// Moves whenever a sample changed the view.
+    /// Moves whenever the view changed.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// Sample once per [`SAMPLE_PERIOD`]; a call before that does nothing.
+    /// Take a finished process probe (one atomic load when there is none)
+    /// and, once per [`SAMPLE_PERIOD`], ask for the next one and count the
+    /// live workers and their traffic.
     pub(crate) fn poll(&mut self, now: Instant, play: Option<&Play>, selected: Option<&str>) {
-        if self
+        let mut changed = self.take_process_metrics();
+        let due = self
             .last_sample
-            .is_some_and(|last| now.saturating_duration_since(last) < SAMPLE_PERIOD)
-        {
-            return;
+            .is_none_or(|last| now.saturating_duration_since(last) >= SAMPLE_PERIOD);
+        if due {
+            self.last_sample = Some(now);
+            changed |= self.request_probe();
+            changed |= self.sample_fleet(now, play, selected);
         }
-        self.last_sample = Some(now);
-        let (mut bots, mut ingame, mut background, mut traffic_sum) = (0, 0, 0, 0u64);
+        if changed {
+            self.generation += 1;
+        }
+    }
+
+    fn take_process_metrics(&mut self) -> bool {
+        let finished = self.shared.finished.load(Ordering::Acquire);
+        if finished == self.seen {
+            return false;
+        }
+        self.seen = finished;
+        self.in_flight = false;
+        let latest = self.shared.latest.lock();
+        let changed = self.view.cpu != latest.cpu || self.view.ram != latest.ram;
+        if changed {
+            self.view.cpu.clone_from(&latest.cpu);
+            self.view.ram.clone_from(&latest.ram);
+        }
+        changed
+    }
+
+    /// Ask the probe thread for one probe (starting it the first time).
+    /// A probe still running is not asked for again. Returns whether the
+    /// view changed (the thread could not be started or has stopped).
+    fn request_probe(&mut self) -> bool {
+        if self
+            .worker
+            .as_ref()
+            .is_some_and(|worker| worker.is_finished())
+        {
+            self.worker = None;
+            self.in_flight = false;
+            return self.set_process_error("resource meter thread stopped".into());
+        }
+        if self.in_flight {
+            return false;
+        }
+        if self.worker.is_none() {
+            let shared = Arc::clone(&self.shared);
+            match thread::Builder::new()
+                .name("resource-meter".into())
+                .spawn(move || probe_thread(shared))
+            {
+                Ok(worker) => self.worker = Some(worker),
+                Err(error) => {
+                    return self.set_process_error(format!("resource meter thread: {error}"))
+                }
+            }
+        }
+        self.shared.requested.store(true, Ordering::Release);
+        if let Some(worker) = &self.worker {
+            worker.thread().unpark();
+        }
+        self.in_flight = true;
+        false
+    }
+
+    fn set_process_error(&mut self, error: String) -> bool {
+        let metric = Metric::Error(error);
+        let changed = self.view.cpu != metric || self.view.ram != metric;
+        self.view.cpu.clone_from(&metric);
+        self.view.ram = metric;
+        changed
+    }
+
+    /// Count the live workers and take their traffic rate: one pass over
+    /// the host rows, no system calls.
+    fn sample_fleet(&mut self, now: Instant, play: Option<&Play>, selected: Option<&str>) -> bool {
+        let (mut bots, mut ingame, mut background) = (0, 0, 0);
+        let current = &mut self.traffic.current;
+        current.clear();
         if let Some(play) = play {
             play.for_each_live_slot(|slot| {
                 bots += 1;
                 ingame += usize::from(slot.ingame);
                 background += usize::from(selected != Some(slot.name));
-                traffic_sum = traffic_sum.wrapping_add(slot.traffic_bytes);
+                current.push(SlotTraffic {
+                    lifetime: slot.lifetime,
+                    stream: slot.stream,
+                    bytes: slot.traffic_bytes,
+                });
             });
         }
-        let traffic = self.traffic(now, traffic_sum, bots);
-        let (cpu, ram) = self.process(now);
-        let view = ResourceView {
-            bots,
-            ingame,
-            background,
-            cpu,
-            ram,
-            traffic,
-        };
-        if view != self.view {
-            self.view = view;
-            self.generation += 1;
-        }
-    }
-
-    fn traffic(&mut self, now: Instant, sum: u64, slots: usize) -> Metric {
-        let previous = self.last_traffic.replace((now, sum, slots));
-        if slots == 0 {
-            return Metric::Unavailable(NO_LIVE_SLOTS);
-        }
-        let Some((then, sum0, slots0)) = previous else {
-            return Metric::Measuring;
-        };
-        let dt = now.saturating_duration_since(then).as_secs_f64();
-        // A worker came or went, or a counter restarted: re-baseline
-        // rather than report a false rate.
-        if dt <= 0.0 || slots != slots0 || sum < sum0 {
-            return Metric::Measuring;
-        }
-        Metric::Available(format_rate((sum - sum0) as f64 / dt))
-    }
-
-    fn process(&mut self, now: Instant) -> (Metric, Metric) {
-        match (self.probe)() {
-            ProcessProbe::Unsupported => {
-                self.last_cpu = None;
-                (
-                    Metric::Unavailable(NOT_MEASURED_HERE),
-                    Metric::Unavailable(NOT_MEASURED_HERE),
-                )
-            }
-            ProcessProbe::Failed => {
-                self.last_cpu = None;
-                (
-                    Metric::Error(PROBE_FAILED.into()),
-                    Metric::Error(PROBE_FAILED.into()),
-                )
-            }
-            ProcessProbe::Sampled {
-                cpu_seconds,
-                resident,
-                peak,
-            } => {
-                let cpu = match self.last_cpu.replace((now, cpu_seconds)) {
-                    Some((then, cpu0)) => cpu_from_delta(
-                        cpu_seconds - cpu0,
-                        now.saturating_duration_since(then).as_secs_f64(),
-                        self.cores,
-                    ),
-                    None => Metric::Measuring,
-                };
-                let ram = match resident {
-                    Some(resident) => Metric::Available(format!(
-                        "{} process, peak {}",
-                        format_bytes(resident),
-                        format_bytes(peak)
-                    )),
-                    None => Metric::Available(format!("peak {} process", format_bytes(peak))),
-                };
-                (cpu, ram)
-            }
-        }
+        let traffic = self.traffic.rate(now);
+        let view = &mut self.view;
+        let changed = (view.bots, view.ingame, view.background) != (bots, ingame, background)
+            || view.traffic != traffic;
+        view.bots = bots;
+        view.ingame = ingame;
+        view.background = background;
+        view.traffic = traffic;
+        changed
     }
 }
 

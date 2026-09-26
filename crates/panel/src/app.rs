@@ -137,8 +137,10 @@ struct PanelState {
     /// One cached tile texture per wall member (blitted at TILE_W×TILE_H).
     views: HashMap<String, TileView>,
     /// The fleet rows the rail and the grid draw: a copy of the core's
-    /// projection, refreshed only when its rows generation moves.
+    /// projection, refreshed only when its rows generation moves, with each
+    /// row's cap strings built once per refresh (never per frame).
     fleet: Vec<FleetRow>,
+    fleet_labels: Vec<CapLabels>,
     fleet_generation: Option<u64>,
     /// Last resource sample reported under `BOT_DEBUG`.
     debug_resources: u64,
@@ -490,6 +492,17 @@ struct TileView {
     view: GameView,
 }
 
+/// One fleet row's rail/grid cap strings, rebuilt with the rows.
+#[derive(Default)]
+struct CapLabels {
+    /// `name: brief###cap`, the select label (stable ID).
+    title: String,
+    /// The active public world number, empty for a local profile.
+    world: String,
+    /// `wN · brief`, the world marker's tooltip.
+    world_tip: String,
+}
+
 /// Drop rail/grid `GameView`s that are not painting (left the wall, or
 /// only-render-selected hid the slot). Unbind-to-owned keeps the panel's
 /// 765×503 texture, which Metal pads to 8 MB — dispose frees it.
@@ -529,6 +542,7 @@ impl PanelState {
             paint: PaintOverlay::new(),
             views: HashMap::new(),
             fleet: Vec::new(),
+            fleet_labels: Vec::new(),
             fleet_generation: None,
             debug_resources: 0,
             live: None,
@@ -541,12 +555,28 @@ impl PanelState {
     }
 
     /// Copy the core's fleet rows for the rail and the grid when (and only
-    /// when) they changed; the copy reuses its buffers.
+    /// when) they changed, and rebuild their cap strings; both reuse their
+    /// buffers.
     fn sync_fleet(&mut self) {
+        use std::fmt::Write as _;
         let view = self.session.core.fleet_view();
-        if self.fleet_generation != Some(view.rows_generation()) {
-            self.fleet_generation = Some(view.rows_generation());
-            view.copy_rows_into(&mut self.fleet);
+        if self.fleet_generation == Some(view.rows_generation()) {
+            return;
+        }
+        self.fleet_generation = Some(view.rows_generation());
+        view.copy_rows_into(&mut self.fleet);
+        self.fleet_labels
+            .resize_with(self.fleet.len(), CapLabels::default);
+        for (row, labels) in self.fleet.iter().zip(&mut self.fleet_labels) {
+            labels.title.clear();
+            // `###cap`: the select keeps its ID while the brief changes.
+            let _ = write!(labels.title, "{}: {}###cap", row.name, row.brief);
+            labels.world.clear();
+            labels.world_tip.clear();
+            if let Some(number) = row.world {
+                let _ = write!(labels.world, "{number}");
+                let _ = write!(labels.world_tip, "w{number} · {}", row.brief);
+            }
         }
     }
 
@@ -902,20 +932,32 @@ pub fn parse_live_args(
     Ok(live.map(RunMode::Live).unwrap_or(RunMode::Interactive))
 }
 
+/// The selected slot's script paint, as the shared `Arc` (no copy):
+/// `None` when the slot has no status row, `Some(None)` when it paints
+/// nothing.
+fn focused_paint(session: &Session) -> Option<Option<Arc<script::shim::ScriptPaint>>> {
+    let name = session.core.selected()?;
+    session
+        .statuses()
+        .iter()
+        .find(|s| s.username == name)
+        .map(|s| s.script_paint.clone())
+}
+
 fn overlay_script_paint(
     ui: &Ui,
     gpu: &mut Gpu,
     state: &mut PanelState,
-    slot: Option<&host_play::SlotStatus>,
+    paint: Option<Option<Arc<script::shim::ScriptPaint>>>,
     min: [f32; 2],
     size: [f32; 2],
 ) {
-    match slot {
-        Some(slot) => {
+    match paint {
+        Some(paint) => {
             if let Some((hit, generation)) =
                 state
                     .paint
-                    .frame(ui, Some(gpu), slot.script_paint.as_deref(), min, size)
+                    .frame(ui, Some(gpu), paint.as_deref(), min, size)
             {
                 match hit {
                     crate::paint::PaintFrameHit::Button(id) => {
@@ -1188,8 +1230,8 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         state.overlay.frame(ui, queue, min, size);
         // Script-paint overlay: the focused slot's paint renders in an
         // ImGui window over the chatbox rect — never on the game texture.
-        let slot = focused_slot(&state.session, state.session.statuses()).cloned();
-        overlay_script_paint(ui, gpu, state, slot.as_ref(), min, size);
+        let paint = focused_paint(&state.session);
+        overlay_script_paint(ui, gpu, state, paint, min, size);
         // Capture: only map/enqueue while on and hovered;
         // capture off skips the coord math entirely (tx is
         // also None).
@@ -1227,39 +1269,38 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         return;
     }
     let rows = std::mem::take(&mut state.fleet);
+    let labels = std::mem::take(&mut state.fleet_labels);
     let cells = grid_cells(rows.len(), avail);
-    let (focused, capture) = {
+    let (capture, only_selected) = {
         let focus = state.session.focus.lock().unwrap();
-        (focus.focused.clone(), should_capture(&focus))
+        (should_capture(&focus), focus.only_render_selected)
     };
-    let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     {
         let focus = state.session.focus.lock().unwrap();
         dispose_idle_views(&mut state.views, gpu, |name| {
             rows.iter().any(|row| row.name == name) && draw_for_slot(&focus, name)
         });
     }
-    // Only the focused cell paints the script overlay: copy that one row.
-    let focused_slot = focused.as_deref().and_then(|name| {
-        state
-            .session
-            .statuses()
-            .iter()
-            .find(|s| s.username == name)
-            .cloned()
-    });
-    for (row, [cx, cy, cw, ch]) in rows.iter().zip(cells) {
+    // Only the focused cell paints the script overlay (an `Arc`, no copy).
+    let mut focused_paint = focused_paint(&state.session);
+    for ((row, labels), [cx, cy, cw, ch]) in rows.iter().zip(&labels).zip(cells) {
         let name = &row.name;
-        let is_focused = focused.as_deref() == Some(name.as_str());
+        let (is_focused, draw) = {
+            let focus = state.session.focus.lock().unwrap();
+            (
+                focus.focused.as_deref() == Some(name.as_str()),
+                draw_for_slot(&focus, name),
+            )
+        };
         ui.set_cursor_pos([cx, cy]);
         let preview = rail_preview_open(
             name,
-            focused.as_deref(),
+            is_focused,
             only_selected,
             true,
             &state.session.ui.rail_preview,
         );
-        let (cap_select, cap_remove, cap_fold) = rail_cap(ui, row, focused.as_deref(), cw, preview);
+        let (cap_select, cap_remove, cap_fold) = rail_cap(ui, row, labels, is_focused, cw, preview);
         let mut body_clicked = false;
         if preview {
             let after = ui.cursor_pos();
@@ -1269,7 +1310,6 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 cx + ((cw - size[0]) * 0.5).max(0.0),
                 after[1] + ((remain_h - size[1]) * 0.5).max(0.0),
             ]);
-            let draw = draw_for_slot(&state.session.focus.lock().unwrap(), name);
             body_clicked = cell_body(ui, gpu, state, name, size, draw);
             let image_min = ui.item_rect_min();
             if is_focused && capture && ui.is_item_hovered() {
@@ -1294,7 +1334,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                     ui,
                     gpu,
                     state,
-                    focused_slot.as_ref(),
+                    focused_paint.take(),
                     ui.item_rect_min(),
                     size,
                 );
@@ -1313,6 +1353,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
     }
     state.fleet = rows;
+    state.fleet_labels = labels;
 }
 
 /// Right panel: rs2b0t chrome squished into the 330px strip. Vertical scroll
@@ -3685,6 +3726,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
     state.sync_fleet();
     let rows = std::mem::take(&mut state.fleet);
+    let labels = std::mem::take(&mut state.fleet_labels);
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     {
         let focus = state.session.focus.lock().unwrap();
@@ -3692,22 +3734,25 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             rows.iter().any(|row| row.name == name) && draw_for_slot(&focus, name)
         });
     }
-    for row in &rows {
+    for (row, labels) in rows.iter().zip(&labels) {
         let name = &row.name;
-        let (focused, draw) = {
+        let (is_focused, draw) = {
             let focus = state.session.focus.lock().unwrap();
-            (focus.focused.clone(), draw_for_slot(&focus, name))
+            (
+                focus.focused.as_deref() == Some(name.as_str()),
+                draw_for_slot(&focus, name),
+            )
         };
         let avail = ui.content_region_avail()[0];
         let preview = rail_preview_open(
             name,
-            focused.as_deref(),
+            is_focused,
             only_selected,
             false,
             &state.session.ui.rail_preview,
         );
         let (cap_select, cap_remove, cap_fold) =
-            rail_cap(ui, row, focused.as_deref(), avail, preview);
+            rail_cap(ui, row, labels, is_focused, avail, preview);
         let body_clicked = if preview {
             rail_body(ui, gpu, state, name, draw)
         } else {
@@ -3725,43 +3770,44 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         ui.spacing();
     }
     state.fleet = rows;
+    state.fleet_labels = labels;
 }
 
 /// Cap row: the active public-world number (or a status dot for local
 /// profiles) in the row's light, the member's name plus its brief status
 /// (click selects), and a small red ✗ (rail remove: logout arm then
 /// `stop_slot`, never `vault`). `width` is the strip the row must fit (rail
-/// avail or grid cell width).
+/// avail or grid cell width). Every string is the row's cached label: a
+/// frame formats nothing.
 fn rail_cap(
     ui: &Ui,
     row: &FleetRow,
-    focused: Option<&str>,
+    labels: &CapLabels,
+    is_focused: bool,
     width: f32,
     preview: bool,
 ) -> (bool, bool, bool) {
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
-    let name = row.name.as_str();
+    let _id = ui.push_id(row.name.as_str());
     let colour = light_rgb(row.light());
     let marker_x = ui.cursor_pos_x();
-    match row.world {
-        Some(number) => {
-            world_marker(ui, number, colour, DOT_W);
-            ui.set_item_tooltip(format!("w{number} · {}", row.brief));
-        }
-        None => ui.text_colored(colour, STATUS_GLYPH),
+    if labels.world.is_empty() {
+        ui.text_colored(colour, STATUS_GLYPH);
+    } else {
+        world_marker(ui, &labels.world, colour, DOT_W);
+        ui.set_item_tooltip(&labels.world_tip);
     }
     ui.same_line_with_pos(marker_x + DOT_W + BUTTON_GAP);
-    let selected = focused == Some(name);
     let name_w = (width - BTN * 2.0 - DOT_W - BUTTON_GAP * 3.0).max(10.0);
     let clicked = ui
-        .selectable_config(format!("{name}: {}", row.brief))
-        .selected(selected)
+        .selectable_config(&labels.title)
+        .selected(is_focused)
         .size([name_w, 0.0])
         .build();
     gap_line(ui);
     let fold_g = if preview { FOLD_GLYPH } else { UNFOLD_GLYPH };
-    let folded = ui.button_with_size(format!("{fold_g}##fold-{name}"), [BTN, 0.0]);
+    let folded = ui.button_with_size(fold_g, [BTN, 0.0]);
     ui.set_item_tooltip(if preview {
         "fold preview"
     } else {
@@ -3769,7 +3815,7 @@ fn rail_cap(
     });
     gap_line(ui);
     let red = ui.push_style_color(StyleColor::Text, ERROR);
-    let removed = ui.button_with_size(format!("{REMOVE_GLYPH}##{name}"), [BTN, 0.0]);
+    let removed = ui.button_with_size(REMOVE_GLYPH, [BTN, 0.0]);
     ui.set_item_tooltip("drop from the wall — does not delete the vault profile");
     red.pop();
     (clicked, removed, folded)
@@ -3780,15 +3826,14 @@ fn rail_cap(
 /// knocked out in the background colour. Drawn as geometry so the digit is
 /// the rail's own font and the disc size does not depend on glyph metrics.
 /// Occupies one text line, like the status glyph it replaces.
-fn world_marker(ui: &Ui, number: u16, colour: [f32; 4], width: f32) {
+fn world_marker(ui: &Ui, number: &str, colour: [f32; 4], width: f32) {
     let line_h = ui.text_line_height();
     let [x, y] = ui.cursor_screen_pos();
     let center = [x + width * 0.5, y + line_h * 0.5];
     let radius = (line_h * 0.5 + 1.5).min(width * 0.5);
-    let label = number.to_string();
     let [text_w, text_h] =
         ui.current_font()
-            .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, &label);
+            .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, number);
     let dl = ui.get_window_draw_list();
     dl.add_circle(center, radius, colour).filled(true).build();
     dl.add_text(
@@ -3797,7 +3842,7 @@ fn world_marker(ui: &Ui, number: u16, colour: [f32; 4], width: f32) {
             (center[1] - text_h * 0.5).round(),
         ],
         crate::theme::BG,
-        &label,
+        number,
     );
     drop(dl);
     ui.dummy([width, line_h]);
@@ -3819,17 +3864,18 @@ fn cell_body(
         if let Some(tv) = state.views.remove(name) {
             tv.view.dispose(gpu);
         }
-        return ui
-            .selectable_config(format!("renderer off##{name}"))
-            .size(size)
-            .build();
+        let _id = ui.push_id(name);
+        return ui.selectable_config("renderer off").size(size).build();
     }
-    let tv = state
-        .views
-        .entry(name.to_string())
-        .or_insert_with(|| TileView {
-            view: GameView::init(gpu),
-        });
+    if !state.views.contains_key(name) {
+        state.views.insert(
+            name.to_string(),
+            TileView {
+                view: GameView::init(gpu),
+            },
+        );
+    }
+    let tv = state.views.get_mut(name).expect("inserted above");
     // One consumer per `FrameBuf`: in rail mode the Game pane draws the
     // focused slot (or the first spawned slot when nothing is focused), so
     // that member's tile must not take the same frame too (grid mode has
@@ -4656,20 +4702,21 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
         }
     }
     state.session.pump_script_transpile();
-    let statuses = state.session.statuses().to_vec();
-    let terminal_shot_status = {
-        let label = state
-            .session
-            .scenario
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|runner| runner.terminal_shot());
-        label
-            .map(|label| state.shot_state.lock().unwrap().status(label))
-            .unwrap_or(ShotStatus::Missing)
-    };
     if let Some(live) = state.live.as_mut() {
+        // Harness runs only: an interactive frame copies no status rows.
+        let statuses = state.session.statuses().to_vec();
+        let terminal_shot_status = {
+            let label = state
+                .session
+                .scenario
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|runner| runner.terminal_shot());
+            label
+                .map(|label| state.shot_state.lock().unwrap().status(label))
+                .unwrap_or(ShotStatus::Missing)
+        };
         if let Some(msg) = live.tick(
             &mut state.session,
             &statuses,

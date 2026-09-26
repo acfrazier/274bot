@@ -1,19 +1,22 @@
 //! Small typed projections of the operator session, shared by the panel
 //! and the TUI: one [`FleetRow`] per fleet member (phase, queue place,
-//! script state, a retained error, the newest operation) and a
+//! script state, walking, a retained error, the newest operation) and a
 //! [`SlotDetail`] for the selected slot only.
 //!
 //! [`crate::OperatorSession::poll`] refreshes them from the status rows it
-//! already polled. A row whose facts did not change is left alone (no label
-//! rebuilt, no allocation), and the generations move only when something a
-//! front end shows changed, so a front end copies or redraws only then.
-//! Rows hold identifiers and scalar summaries, never chat, paint or world
-//! data. Colours, wrapping and layout stay with each front end.
+//! already polled and the front end's walk arms. A row whose facts did not
+//! change is left alone (no label rebuilt, no allocation), and the
+//! generations move only when something a front end shows changed, so a
+//! front end copies or redraws only then. Rows hold identifiers and scalar
+//! summaries, never chat, paint or world data. Colours, wrapping and layout
+//! stay with each front end.
 
+use std::collections::HashMap;
 use std::fmt::{self, Write as _};
+use std::sync::{Arc, Mutex, TryLockError};
 use std::time::Instant;
 
-use host_play::{Play, SlotArm, SlotStatus, StartupPhase};
+use host_play::{Play, SlotArm, SlotStatus, StartupPhase, WalkArm};
 use script::RunState;
 
 use api::hostlog::{Level, Source};
@@ -44,9 +47,13 @@ pub enum Phase {
     /// Game-ready: scripts and walks may act.
     Ready,
     /// On the title screen without a login intent: an explicit Log out, or
-    /// auto-login off. Log in brings it back.
+    /// auto-login off (also when it was turned off while a failed login
+    /// waited to retry: that error stays as the row's last error). Log in
+    /// brings it back.
     LoggedOut,
-    /// The last login attempt failed; the host retries it.
+    /// The last login attempt failed and the host retries it, or the error
+    /// holds the login until the operator acts (a public world preference
+    /// failure).
     LoginError,
     /// This worker lifetime ended (asset startup failure, exit or panic);
     /// only an explicit Log in recreates it.
@@ -440,9 +447,12 @@ impl<'a> FleetView<'a> {
 struct RowState {
     /// Index of the row's status in the last poll (checked first).
     hint: usize,
-    /// Identity of the worker lifetime the row last saw (0: none).
-    lifetime: usize,
+    /// [`SlotArm::lifetime_id`] of the worker the row last saw (0: none).
+    lifetime: u64,
 }
+
+/// The front end's walk arms (routes its WalkTo armed), keyed by slot.
+pub(crate) type WalkRoutes = HashMap<String, Arc<Mutex<WalkArm>>>;
 
 /// What a refresh reads, borrowed from the session.
 pub(crate) struct Inputs<'a> {
@@ -450,6 +460,8 @@ pub(crate) struct Inputs<'a> {
     pub selected: Option<&'a str>,
     pub statuses: &'a [SlotStatus],
     pub play: Option<&'a Play>,
+    /// The front end's walk arms, locked for this refresh.
+    pub walks: Option<&'a WalkRoutes>,
     /// The selected profile's assignment display name.
     pub card: Option<&'a str>,
 }
@@ -654,14 +666,12 @@ fn find_status<'a>(
     Some(&statuses[index])
 }
 
-/// Derive `row`'s facts from the host. Returns whether any changed (the
-/// caller then rebuilds the label).
+/// Derive `row`'s facts from the host and the front end's walk arms.
+/// Returns whether any changed (the caller then rebuilds the label).
 fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> bool {
     let status = find_status(input.statuses, &row.name, &mut state.hint);
     let arm = input.play.and_then(|play| play.arm(&row.name));
-    let lifetime = arm
-        .as_ref()
-        .map_or(0, |arm| std::sync::Arc::as_ptr(arm) as usize);
+    let lifetime = arm.as_ref().map_or(0, |arm| arm.lifetime_id());
     let new_lifetime = std::mem::replace(&mut state.lifetime, lifetime) != lifetime;
     let phase = phase_of(status, arm.as_deref());
     let queue = match phase {
@@ -675,7 +685,19 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
     let mut changed = false;
     let world = status.and_then(|s| s.world);
     let connected = status.is_some_and(|s| s.connected);
-    let walking = status.is_some_and(|s| s.walk_x != -1);
+    // A script walk is published on the host row; a WalkTo walk lives on
+    // the front end's arm.
+    let walking = status.is_some_and(|s| s.walk_x != -1)
+        || match input.walks.and_then(|walks| walks.get(&row.name)) {
+            None => false,
+            Some(walk) => match walk.try_lock() {
+                Ok(walk) => walk.route.is_some(),
+                // Its slot thread is stepping the walk right now: keep the
+                // last answer rather than wait on the slot.
+                Err(TryLockError::WouldBlock) => row.walking,
+                Err(TryLockError::Poisoned(_)) => false,
+            },
+        };
     if (
         row.world,
         row.phase,
@@ -709,7 +731,9 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
     changed
 }
 
-/// The single phase derivation. `arm` is the slot's live worker lifetime.
+/// The single phase derivation. `arm` is the slot's live worker lifetime:
+/// its intent (not the row's last published latch) decides whether a
+/// disconnected worker is parked.
 fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> Phase {
     let Some(s) = status else {
         return Phase::Offline;
@@ -723,20 +747,35 @@ fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> Phase {
     if s.ingame {
         return Phase::Ready;
     }
-    if s.login_latched && !s.connected {
-        return Phase::LoggedOut;
+    if s.connected {
+        return Phase::Loading;
     }
-    if s.error.is_some() || s.startup_phase == StartupPhase::Error {
-        return Phase::LoginError;
+    if arm.login_latched() {
+        return Phase::LoggedOut;
     }
     match s.startup_phase {
         StartupPhase::Preparing => Phase::Preparing,
-        StartupPhase::Queueing if QueuePlace::of(s).is_some() => Phase::Queued,
-        StartupPhase::Queueing if arm.login_wanted() => Phase::Waiting,
-        StartupPhase::Queueing => Phase::LoggedOut,
         StartupPhase::Connecting => Phase::Connecting,
         StartupPhase::LoadingScene | StartupPhase::Ready => Phase::Loading,
-        StartupPhase::Error => Phase::LoginError,
+        StartupPhase::Queueing | StartupPhase::Error => {
+            let failed = s.error.is_some() || s.startup_phase == StartupPhase::Error;
+            if !arm.login_wanted() {
+                // Parked on the title. An error that withdrew the login
+                // still needs the operator; any other failure is history
+                // once nothing wants the login any more.
+                if failed && arm.login_held_by_error() {
+                    Phase::LoginError
+                } else {
+                    Phase::LoggedOut
+                }
+            } else if failed {
+                Phase::LoginError
+            } else if QueuePlace::of(s).is_some() {
+                Phase::Queued
+            } else {
+                Phase::Waiting
+            }
+        }
     }
 }
 

@@ -538,10 +538,14 @@ impl TuiSession {
         script::IsolatedEnv::ensure_thread();
         let mut js = script::JsLibrary::new(script::default_js_store());
         let _ = js.restore(); // missing/broken store is not fatal here
+        let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
+        let mut core = OperatorSession::new(_instance);
+        // The fleet rows show the map walks this TUI arms.
+        core.set_walk_arms(Arc::clone(&travellers));
         Self {
             #[cfg(feature = "memory-profile")]
             memory: None,
-            core: OperatorSession::new(_instance),
+            core,
             auto_world: None,
             error: None,
             names: Vec::new(),
@@ -554,7 +558,7 @@ impl TuiSession {
             last_focused: None,
             snapshots: Arc::new(Mutex::new(HashMap::new())),
             frontend_gens: Arc::new(Mutex::new(HashMap::new())),
-            travellers: Arc::new(Mutex::new(HashMap::new())),
+            travellers,
             tick_latch: Arc::new(Mutex::new(HashMap::new())),
             walk_clear: Arc::new(AtomicBool::new(false)),
             nav_world: Arc::new(Mutex::new(None)),

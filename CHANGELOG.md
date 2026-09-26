@@ -261,25 +261,29 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - The main panel shows a collapsible **resource** section whenever MultiBox is
   off, and the TUI status pane shows the same rows: bots N (M running), cpu,
   ram, traffic, plus a background-bot count. One sampler in the operator
-  session feeds both (1 Hz; never per bot or per frame). RAM is the whole
-  process, current resident size and lifetime peak (`812.3 MB process, peak
-  900.1 MB`; before, Linux showed the peak without saying so), never a per-bot
-  figure. A value still being measured reads `measuring…`, one the platform
-  cannot measure says so, traffic with no live worker reads `no live slots`
-  (not 0 B/s), and a failed sample reads as an error.
+  session feeds both (1 Hz, on its own thread; never per bot or per frame, and
+  a slow probe never stalls a frame). RAM is the whole process, current
+  resident size and lifetime peak (`812.3 MB process, peak 900.1 MB`; before,
+  Linux showed the peak without saying so; the peak never reads below the
+  current size), never a per-bot figure. A value still being measured reads
+  `measuring…`, one the platform cannot measure says so, traffic with no live
+  worker reads `no live slots` (not 0 B/s), a replaced or restarted worker
+  re-measures instead of showing a false rate, and a failed sample reads as an
+  error.
 - **One status per bot in both front ends.** The operator session derives
   each bot's status once (offline, preparing, waiting, queued k/n, logging in,
-  loading, idle/running, logged out, login error, failed) and the panel (rail
-  and grid caps, status section, banner, queue cards) and the TUI (fleet
-  table, BOT line, header counts, status pane) show it. A bot waiting to
-  reconnect no longer reads "logged out" on the rail; a bot parked with
-  auto-login off no longer reads "waiting" in the TUI or "Waiting to
-  connect" in the panel; an impossible queue place (3 of 2) is not shown. A
-  login error stays visible as **last error** while the bot retries, until
-  it is in game. Each bot shows its newest operation (`op#12 Start failed:
-  …`), kept per bot however many other operations follow, and the bot's log
-  records each operation's acceptance and outcome with its id (`op#12 Start
-  accepted`, `op#12 Start completed`).
+  loading, idle/running, logged out, login error, failed; a bot walking a
+  panel WalkTo or TUI map route reads running) and the panel (rail and grid
+  caps, status section, banner, queue cards) and the TUI (fleet table, BOT
+  line, header counts, status pane) show it. A bot waiting to reconnect no
+  longer reads "logged out" on the rail; a bot parked with auto-login off no
+  longer reads "waiting" in the TUI or "Waiting to connect" in the panel; an
+  impossible queue place (3 of 2) is not shown. A login error stays visible
+  as **last error** while the bot retries, until it is in game. Each bot
+  shows its newest operation (`op#12 Start failed: …`), kept per bot however
+  many other operations follow, and the bot's log records each operation's
+  acceptance and outcome with its id (`op#12 Start accepted`, `op#12 Start
+  completed`).
 - Switching profile in single-bot mode, or turning MultiBox off, still leaves
   other bots running. A one-time acknowledgement names how many live workers
   remain and the live meter cost, points at the resource section, and **Got it,

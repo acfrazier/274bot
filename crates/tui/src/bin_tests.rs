@@ -1413,6 +1413,46 @@ fn arm_walk_on_with_allow_bank_fetch_latches_bank_fetch() {
     );
 }
 
+/// A map walk the TUI arms shows on the member's fleet row (what the strip
+/// and the status pane draw) until the route ends.
+#[test]
+fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
+    use api::snapshot::WorldTile as SnapTile;
+    use bank_fetch_fixtures::knife_nav_world;
+
+    let mut session = TuiSession::new(dummy_options());
+    *session.nav_world.lock().unwrap() = Some(Arc::new(knife_nav_world(2)));
+    session.core.fleet_mut().add("alice");
+    session.core.select("alice");
+    let mut app = TuiApp::new("274bot headless");
+    session.pump(&mut app);
+    assert!(!app.fleet[0].walking);
+
+    app.here = Some(SnapTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    });
+    // West of the fixture's knife door: reachable on foot.
+    session.arm_walk_on(
+        &mut app,
+        Tile {
+            x: 1,
+            z: 4,
+            level: 0,
+        },
+    );
+    assert_eq!(app.error, None);
+    session.pump(&mut app);
+    assert!(app.fleet[0].walking, "the armed walk shows on the row");
+    assert!(app.fleet[0].busy());
+
+    let arm = Arc::clone(session.travellers.lock().unwrap().get("alice").unwrap());
+    arm.lock().unwrap().route = None;
+    session.pump(&mut app);
+    assert!(!app.fleet[0].walking, "an ended route clears the row");
+}
+
 #[test]
 fn refused_no_origin_walk_does_not_arm_destination() {
     // Production `Play::map_walk` NoOrigin needs a bound ServerProfile nav

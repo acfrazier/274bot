@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use api::hostlog::{Level, Source};
-use host_play::{InstancePermit, Play, SlotArm, SlotStatus};
+use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
 use vault::{Profile, Vault, VaultChange};
 
 use crate::fleet::Fleet;
@@ -167,8 +167,11 @@ pub struct OperatorSession<Io> {
     op_changes: Vec<OpChange>,
     /// Reused buffer for operation log lines.
     op_line: String,
-    /// The one process resource sampler, run by the poll at 1 Hz.
+    /// The one process resource meter; its OS probe runs on its own thread.
     resources: Resources,
+    /// The front end's walk arms: a member with an armed WalkTo route is
+    /// walking (script walks are on the host rows).
+    walk_arms: Option<WalkArms>,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
 }
@@ -205,6 +208,7 @@ impl<Io> OperatorSession<Io> {
             op_changes: Vec::new(),
             op_line: String::new(),
             resources: Resources::default(),
+            walk_arms: None,
             _instance: instance,
         }
     }
@@ -309,6 +313,12 @@ impl<Io> OperatorSession<Io> {
     /// Moves whenever a sample changed [`Self::resources`].
     pub fn resource_generation(&self) -> u64 {
         self.resources.generation()
+    }
+
+    /// Hand over the front end's walk arms (the map its WalkTo arms and
+    /// its slot hook follows) so the rows show those walks too.
+    pub fn set_walk_arms(&mut self, arms: WalkArms) {
+        self.walk_arms = Some(arms);
     }
 
     /// Open an operation for a coordinator in this crate (scripts).
@@ -831,11 +841,18 @@ impl<Io> OperatorSession<Io> {
                     assignment.display_name.as_str()
                 }
             });
+        // Map before arm, the order every walk-arm user takes; an arm its
+        // slot thread holds is not waited on (see `views::update_row`).
+        let walks = self.walk_arms.as_ref().map(|arms| {
+            arms.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        });
         let input = Inputs {
             members: self.fleet.members(),
             selected,
             statuses: &self.statuses,
             play: self.play.as_ref(),
+            walks: walks.as_deref(),
             card,
         };
         self.views.refresh(&input, &self.op_changes);

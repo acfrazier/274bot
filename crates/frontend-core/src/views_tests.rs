@@ -10,7 +10,7 @@ use vault::{Profile, ProfileSettings, Vault};
 
 use super::*;
 use crate::log::{LogScope, LogView};
-use crate::resources::{Metric, ProcessProbe};
+use crate::resources::{Metric, ProcessProbe, ResourceView};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
 
@@ -215,7 +215,7 @@ fn a_member_row_follows_every_offline_transition() {
     assert_eq!(detail(&s).ready_tile, None, "no routing origin offline");
 
     let logout = s.logout("vt-alice");
-    step(&mut s, &|r| r.login_latched = true);
+    step(&mut s, &|_| {});
     let parked = row(&s, "vt-alice");
     assert_eq!(parked.phase, Phase::LoggedOut);
     assert_eq!(detail(&s).state, "logged out (Log in to connect)");
@@ -246,6 +246,53 @@ fn a_parked_member_without_login_intent_is_logged_out_until_log_in() {
     assert_eq!(row(&s, "vp-carol").phase, Phase::Waiting);
 }
 
+/// Turning Auto login off while a failed login waits for its retry parks
+/// the slot (the host stops retrying): logged out, with the error kept as
+/// history. An error that itself withdrew the login stays a failure.
+#[test]
+fn auto_login_off_during_a_retry_wait_parks_the_slot_with_the_error_as_history() {
+    let mut s = fleet("autologin-off", &["va-gus"], true);
+    s.select("va-gus");
+    publish(&s, "va-gus", |r| {
+        phase_to(r, StartupPhase::Error);
+        r.error = Some("code 5: retry later".into());
+    });
+    s.poll();
+    assert_eq!(row(&s, "va-gus").phase, Phase::LoginError);
+
+    s.set_auto_login("va-gus", false).unwrap();
+    s.flush_writes();
+    s.poll();
+    let parked = row(&s, "va-gus");
+    assert_eq!(
+        (parked.phase, parked.light()),
+        (Phase::LoggedOut, Light::Grey)
+    );
+    assert_eq!(parked.error.as_deref(), Some("code 5: retry later"));
+    assert!(!parked.has_failure());
+    assert_eq!(s.fleet_view().counts().failed, 0);
+    assert_eq!(detail(&s).state, "logged out (Log in to connect)");
+
+    s.set_auto_login("va-gus", true).unwrap();
+    s.flush_writes();
+    s.poll();
+    assert_eq!(
+        row(&s, "va-gus").phase,
+        Phase::LoginError,
+        "wanted again: the retry is due"
+    );
+
+    // A public world preference error withdraws the login itself.
+    s.play()
+        .unwrap()
+        .arm("va-gus")
+        .unwrap()
+        .hold_login_on_error_for_test();
+    s.poll();
+    assert_eq!(row(&s, "va-gus").phase, Phase::LoginError);
+    assert!(row(&s, "va-gus").has_failure());
+}
+
 #[test]
 fn a_login_error_stays_visible_while_retrying_until_ready() {
     let mut s = fleet("error-retained", &["ve-bob"], true);
@@ -263,12 +310,12 @@ fn a_login_error_stays_visible_while_retrying_until_ready() {
     assert_eq!(s.fleet_view().counts().failed, 1);
 
     // An explicit logout outranks the stale error, which stays as history.
-    publish(&s, "ve-bob", |r| r.login_latched = true);
+    s.logout("ve-bob");
     s.poll();
     assert_eq!(row(&s, "ve-bob").phase, Phase::LoggedOut);
     assert!(row(&s, "ve-bob").error.is_some());
     assert_eq!(row(&s, "ve-bob").light(), Light::Grey);
-    publish(&s, "ve-bob", |r| r.login_latched = false);
+    s.login("ve-bob", &mut HeadlessSurface::new());
     s.poll();
     assert_eq!(row(&s, "ve-bob").phase, Phase::LoginError);
 
@@ -570,6 +617,17 @@ fn counting_probe() -> ProcessProbe {
     }
 }
 
+/// Keep polling at `at` (no new sample is due) until the meter shows what
+/// `done` waits for from its probe thread, or fail after a few seconds.
+fn settle_meter(s: &mut OperatorSession<()>, at: Instant, done: impl Fn(&ResourceView) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !done(s.resources()) {
+        assert!(Instant::now() < deadline, "{:?}", s.resources());
+        std::thread::sleep(Duration::from_millis(1));
+        s.poll_at(at);
+    }
+}
+
 /// One process sample per second for the whole fleet: polling many
 /// members many times never samples per row, per bot or per frame.
 #[test]
@@ -580,9 +638,11 @@ fn the_meter_samples_once_a_second_for_the_whole_fleet() {
     s.set_resource_probe(counting_probe);
     s.select("vm-00");
     let start = Instant::now();
+    let last_frame = start + Duration::from_millis(59 * 15);
     for frame in 0..60u64 {
         s.poll_at(start + Duration::from_millis(frame * 15));
     }
+    settle_meter(&mut s, last_frame, |view| view.ram != Metric::Measuring);
     assert_eq!(PROBES.load(Ordering::SeqCst), 1, "one sample in 885 ms");
     let first = s.resources().clone();
     assert_eq!((first.bots, first.background), (40, 39));
@@ -593,7 +653,9 @@ fn the_meter_samples_once_a_second_for_the_whole_fleet() {
     );
 
     let generation = s.resource_generation();
-    s.poll_at(start + Duration::from_secs(1));
+    let second = start + Duration::from_secs(1);
+    s.poll_at(second);
+    settle_meter(&mut s, second, |view| view.cpu != Metric::Measuring);
     assert_eq!(PROBES.load(Ordering::SeqCst), 2);
     assert!(matches!(s.resources().cpu, Metric::Available(_)));
     assert!(s.resource_generation() > generation);

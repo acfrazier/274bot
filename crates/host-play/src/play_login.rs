@@ -295,12 +295,25 @@ impl SlotArm {
         self.intent.lock().login_latched
     }
 
+    /// Process-unique identity of the worker lifetime this arm controls:
+    /// a respawn of the same profile gets a new arm and a new id.
+    pub fn lifetime_id(&self) -> u64 {
+        self.queue_owner
+    }
+
     /// Whether the slot wants to be logged in right now: not latched off,
     /// and a login intent or an active script (the want the handshake loop
     /// follows). `false` means it parks on the title screen.
     pub fn login_wanted(&self) -> bool {
         let intent = self.intent.lock();
         self.wanted(&intent)
+    }
+
+    /// Whether a login error withdrew the login (a public world preference
+    /// failure): the slot parks until the operator arms a login or changes
+    /// auto-login or the world, instead of retrying on its own.
+    pub fn login_held_by_error(&self) -> bool {
+        self.intent.lock().error_hold
     }
 
     /// Apply the live auto-login policy. Disabling it withdraws only an
@@ -345,6 +358,12 @@ impl SlotArm {
         intent.error_hold = true;
         drop(intent);
         self.retry_wake.notify_all();
+    }
+
+    /// Fixture seam: the hold a public world preference error places.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hold_login_on_error_for_test(&self) {
+        self.hold_login_on_error();
     }
 
     /// The operator corrected the world: lift a world-error hold and

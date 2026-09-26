@@ -3063,56 +3063,58 @@ fn picker_confirm_uses_find_with_options() {
     )));
 }
 
+/// A WalkTo walk the panel arms shows on the member's fleet row (what the
+/// rail and grid caps draw) from the pump that follows it until the route
+/// ends; then the picked dest clears. An arm its slot thread holds is not
+/// waited on.
 #[test]
-fn sync_walk_status_copies_queued_and_clears_dest_on_arrived() {
+fn a_picker_walk_shows_the_member_running_until_it_ends() {
     let mut s = Session::new();
-    s.set_focus_for_test("alice");
     let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let _fixture = bind_picker_session(&mut s, &world, origin);
+    s.core.fleet_mut().add("alice");
+    s.pump_status();
+    let before = s.core.fleet_view().rows_generation();
+    assert!(!s.core.fleet_view().row("alice").unwrap().walking);
+
     let dest = Tile {
         x: 2,
         z: 2,
         level: 0,
     };
-    assert!(confirm_map_walk(
-        &mut s,
-        &world,
-        Tile {
-            x: 0,
-            z: 1,
-            level: 0,
-        },
-        dest
-    ));
-    s.sync_walk_status();
-    assert_eq!(
-        (
-            s.statuses[0].walk_x,
-            s.statuses[0].walk_z,
-            s.statuses[0].walk_level
-        ),
-        (2, 2, 0)
+    s.select_picker_tile(&world, dest);
+    assert!(s.confirm_picker_walk(&world));
+    s.pump_status();
+    let walking = s.core.fleet_view().row("alice").unwrap();
+    assert!(walking.walking);
+    assert_eq!(walking.brief, "running");
+    assert!(
+        s.core.fleet_view().rows_generation() > before,
+        "the rail's cached rows are refreshed"
     );
-    // The slot hook clears the route and flags walk_clear on Arrived.
-    s.travellers
-        .lock()
-        .unwrap()
-        .get("alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .route = None;
-    s.walk_clear
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    s.sync_walk_status();
+
+    // The slot hook ends the route while it holds the arm.
+    let arm = Arc::clone(s.travellers.lock().unwrap().get("alice").unwrap());
+    {
+        let mut held = arm.lock().unwrap();
+        held.route = None;
+        s.pump_status();
+        assert!(
+            s.core.fleet_view().row("alice").unwrap().walking,
+            "an arm in use keeps its last answer; the pump does not wait"
+        );
+    }
+    s.walk_clear.store(true, Ordering::Relaxed);
+    s.pump_status();
+    let arrived = s.core.fleet_view().row("alice").unwrap();
+    assert!(!arrived.walking);
+    assert_eq!(arrived.brief, "idle");
     assert_eq!(s.walk_status_text(), "—");
-    assert_eq!(
-        (
-            s.statuses[0].walk_x,
-            s.statuses[0].walk_z,
-            s.statuses[0].walk_level
-        ),
-        (-1, -1, -1)
-    );
 }
 
 #[test]

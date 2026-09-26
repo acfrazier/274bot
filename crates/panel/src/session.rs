@@ -1477,6 +1477,10 @@ impl Session {
         let ui = crate::ui_state::load();
         let capture_pref = ui.capture;
         let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
+        let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
+        let mut core = OperatorSession::new(_instance);
+        // The fleet rows show the WalkTo walks this panel arms.
+        core.set_walk_arms(Arc::clone(&travellers));
         Self {
             focus: Arc::new(Mutex::new(crate::focus::Focus {
                 focused: None,
@@ -1491,7 +1495,7 @@ impl Session {
                 wall: Vec::new(),
                 renderer_by: HashMap::new(),
             })),
-            core: OperatorSession::new(_instance),
+            core,
             error: None,
             capture_tx: None,
             mainland: Arc::new(AtomicBool::new(
@@ -1505,7 +1509,7 @@ impl Session {
             cred_settings: ProfileSettings::default(),
             chooser_edit: None,
             saving_profile: None,
-            travellers: Arc::new(Mutex::new(HashMap::new())),
+            travellers,
             script_nav_paint: Arc::new(Mutex::new(None)),
             nav_states: Arc::new(Mutex::new(HashMap::new())),
             frontend_gens: Arc::new(Mutex::new(HashMap::new())),
@@ -3194,40 +3198,26 @@ impl Session {
             }
         }
         self.statuses = current;
-        self.sync_walk_status();
+        self.settle_walk_dest();
     }
 
-    /// Copy each slot's walk-arm dest into `walk_*` (−1 if none) and
-    /// clear [`Session::walk_dest`] after Arrived.
-    fn sync_walk_status(&mut self) {
-        for s in &mut self.statuses {
-            let queued = self
-                .travellers
+    /// Clear [`Session::walk_dest`] once the focused walk ended (the slot
+    /// hook flags `walk_clear` when a route arrives or stalls). The fleet
+    /// rows read the walk arms themselves (see
+    /// `OperatorSession::set_walk_arms`).
+    fn settle_walk_dest(&mut self) {
+        if !self.walk_clear.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        let still_walking = self.core.selected().is_some_and(|name| {
+            self.travellers
                 .lock()
                 .unwrap()
-                .get(&s.username)
-                .and_then(|a| a.lock().unwrap().queued_tile());
-            if queued.is_some() {
-                apply_queued_walk(s, queued);
-            }
-        }
-        if self.walk_clear.swap(false, Ordering::Relaxed) {
-            let focused = self.focused_name();
-            let keep = focused.as_ref().and_then(|n| {
-                self.travellers
-                    .lock()
-                    .unwrap()
-                    .get(n)
-                    .and_then(|a| a.lock().unwrap().queued_tile())
-            });
-            if keep.is_none() {
-                self.walk_dest = None;
-                if let Some(name) = focused.as_deref() {
-                    if let Some(s) = self.statuses.iter_mut().find(|s| s.username == name) {
-                        apply_queued_walk(s, None);
-                    }
-                }
-            }
+                .get(name)
+                .is_some_and(|arm| arm.lock().unwrap().route.is_some())
+        });
+        if !still_walking {
+            self.walk_dest = None;
         }
     }
 
@@ -3376,8 +3366,7 @@ impl Session {
     }
 
     fn focused_slot(&self) -> Option<&SlotIo> {
-        let name = self.focused_name()?;
-        self.core.slot_io(&name)
+        self.core.slot_io(self.core.selected()?)
     }
 
     /// Switch focus only onto an already-live slot. Capture sequencing uses
@@ -4846,22 +4835,6 @@ fn warn_stress50_debug() {
 /// (host-play assigns uids from the same 274M base range).
 fn fresh_uid(vault: &Vault) -> i32 {
     vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
-}
-
-/// Copy a traveller dest into `SlotStatus.walk_*`; −1 when idle.
-fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
-    match queued {
-        Some(t) => {
-            status.walk_x = t.x;
-            status.walk_z = t.z;
-            status.walk_level = t.level;
-        }
-        None => {
-            status.walk_x = -1;
-            status.walk_z = -1;
-            status.walk_level = -1;
-        }
-    }
 }
 
 /// Detach the picker's nav world only after the play's slot threads are

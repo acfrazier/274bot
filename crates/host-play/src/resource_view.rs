@@ -12,25 +12,52 @@ use crate::Play;
 #[derive(Debug, Clone, Copy)]
 pub struct LiveSlot<'a> {
     pub name: &'a str,
+    /// [`crate::SlotArm::lifetime_id`]: a respawn of the same name is a
+    /// different lifetime.
+    pub lifetime: u64,
     pub ingame: bool,
+    /// `bytes_in + bytes_out` of the current stream.
     pub traffic_bytes: u64,
+    /// The row's [`crate::SlotStatus::stream_epoch`]: it changes whenever
+    /// the byte counters restart.
+    pub stream: u32,
 }
 
 impl Play {
-    /// Visit each worker lifetime that is still owned (`arm` present).
-    /// Logged-out, queued, connecting, and disconnected workers count;
-    /// terminal history rows and retired slots do not.
+    /// Visit each worker lifetime that is still owned (`arm` present), in
+    /// one pass over the status rows. Logged-out, queued, connecting, and
+    /// disconnected workers count; terminal history rows and retired slots
+    /// do not. A worker whose row is not published yet has no traffic.
     pub fn for_each_live_slot(&self, mut visit: impl FnMut(LiveSlot<'_>)) {
         let statuses = crate::lock_statuses(&self.statuses);
-        for name in self.arms.keys() {
-            let row = statuses.iter().find(|status| &status.username == name);
-            visit(LiveSlot {
-                name: name.as_str(),
-                ingame: row.is_some_and(|status| status.ingame),
-                traffic_bytes: row
-                    .map(|status| status.bytes_in.wrapping_add(status.bytes_out))
-                    .unwrap_or(0),
-            });
+        let mut visited = 0;
+        for row in statuses.iter() {
+            if let Some(arm) = self.arms.get(&row.username) {
+                visited += 1;
+                visit(LiveSlot {
+                    name: &row.username,
+                    lifetime: arm.lifetime_id(),
+                    ingame: row.ingame,
+                    traffic_bytes: row.bytes_in.wrapping_add(row.bytes_out),
+                    stream: row.stream_epoch,
+                });
+            }
+        }
+        if visited == self.arms.len() {
+            return;
+        }
+        // A spawn publishes its row at once, so this scan is for arms
+        // attached without a worker (fixtures) only.
+        for (name, arm) in &self.arms {
+            if !statuses.iter().any(|row| &row.username == name) {
+                visit(LiveSlot {
+                    name,
+                    lifetime: arm.lifetime_id(),
+                    ingame: false,
+                    traffic_bytes: 0,
+                    stream: 0,
+                });
+            }
         }
     }
 

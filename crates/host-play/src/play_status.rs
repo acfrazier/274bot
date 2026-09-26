@@ -72,6 +72,9 @@ pub struct SlotStatus {
     /// the connected session ends.
     pub bytes_in: u64,
     pub bytes_out: u64,
+    /// Bumped (wrapping) each time `bytes_in`/`bytes_out` restart at a
+    /// session boundary, so a traffic rate never spans two streams.
+    pub stream_epoch: u32,
     /// Newest `MESSAGE_GAME` / chat-ring head (`chat_text[0]`). Used to
     /// parse `getvar` replies (`get tutorial: 1000`).
     pub chat_head: String,
@@ -120,6 +123,7 @@ impl Clone for SlotStatus {
             login_latched: self.login_latched,
             bytes_in: self.bytes_in,
             bytes_out: self.bytes_out,
+            stream_epoch: self.stream_epoch,
             chat_head: self.chat_head.clone(),
             random: self.random.clone(),
             script_paint: self.script_paint.clone(),
@@ -160,6 +164,7 @@ impl Clone for SlotStatus {
         self.login_latched.clone_from(&source.login_latched);
         self.bytes_in.clone_from(&source.bytes_in);
         self.bytes_out.clone_from(&source.bytes_out);
+        self.stream_epoch = source.stream_epoch;
         self.chat_head.clone_from(&source.chat_head);
         self.script_paint.clone_from(&source.script_paint);
         let (random, from) = (&mut self.random, &source.random);
@@ -316,6 +321,7 @@ impl Default for SlotStatus {
             login_latched: false,
             bytes_in: 0,
             bytes_out: 0,
+            stream_epoch: 0,
             chat_head: String::new(),
             random: RandomStatus::default(),
             script_paint: None,
@@ -507,6 +513,7 @@ pub(super) fn reset_slot_observation(s: &mut SlotStatus) {
     s.run_sends = 0;
     s.bytes_in = 0;
     s.bytes_out = 0;
+    s.stream_epoch = s.stream_epoch.wrapping_add(1);
     s.main_modal_id = -1;
     s.welcome_hold = false;
     s.welcome_failure = None;
