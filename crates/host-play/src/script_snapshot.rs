@@ -1476,6 +1476,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         walk_outcome_level: walk_outcome.level,
         walk_outcome_radius: walk_outcome.radius,
         walk_outcome_allow_teleports: walk_outcome.allow_teleports,
+        walk_outcome_blocked: walk_outcome.blocked,
         walk_missing_carry,
         route_inspect: script::isolate_fb::RouteInspectFactsInput {
             latest: latest_in,

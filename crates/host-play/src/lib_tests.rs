@@ -3115,6 +3115,82 @@ fn route_end_of_request_id_zero_publishes_nothing() {
     assert_eq!(bot.walk_outcome_seq, 0, "request id 0 publishes nothing");
 }
 
+/// Frozen `'blocked'` (`WalkExecutor.ts:1092-1094`): a follow that ends
+/// `EndBlocked` settles the armed walk as its route end, flagged blocked,
+/// where any other stall publishes a failure.
+#[test]
+fn end_blocked_follow_settles_the_armed_walk_as_a_blocked_route_end() {
+    let dest = WorldTile {
+        x: 4,
+        z: 4,
+        level: 0,
+    };
+    let mut bot = NavBot {
+        route_generation: 1,
+        requested_route: Some(native_requested(dest, 0, false)),
+        walk_request_id: 9,
+        ..Default::default()
+    };
+    bot.publish_route(
+        1,
+        9,
+        false,
+        RouteOutcome::Routed(Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        }),
+    );
+    apply_nav_follow_outcome(
+        &mut bot,
+        Some(nav::traveller::TravelOutcome::Stalled {
+            at: WorldTile {
+                x: 4,
+                z: 3,
+                level: 0,
+            },
+            aiming: dest,
+            why: nav::traveller::HopFailure::EndBlocked,
+            tries: 0,
+        }),
+        false,
+    );
+    assert!(bot.route.is_none(), "the follow ended");
+    assert_eq!(bot.walk_outcome_seq, 1);
+    assert_eq!(bot.walk_outcome_request_id, 9);
+    assert!(!bot.walk_outcome_failed, "blocked is a settled route end");
+    assert!(bot.walk_outcome_blocked);
+
+    // A plain stall of the next walk fails and clears the flag.
+    bot.walk_request_id = 10;
+    bot.publish_route(
+        1,
+        10,
+        false,
+        RouteOutcome::Routed(Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        }),
+    );
+    apply_nav_follow_outcome(
+        &mut bot,
+        Some(nav::traveller::TravelOutcome::Stalled {
+            at: WorldTile {
+                x: 4,
+                z: 3,
+                level: 0,
+            },
+            aiming: dest,
+            why: nav::traveller::HopFailure::Dropped,
+            tries: 1,
+        }),
+        false,
+    );
+    assert!(bot.walk_outcome_failed);
+    assert!(!bot.walk_outcome_blocked);
+}
+
 #[test]
 fn bank_fetch_session_refuses_exact_walk_near() {
     let dest = WorldTile {
@@ -3255,6 +3331,7 @@ fn posted_from_bot(bot: &NavBot) -> PostedWalkOutcome {
         level: bot.walk_outcome_level,
         radius: bot.walk_outcome_radius,
         allow_teleports: bot.walk_outcome_allow_teleports,
+        blocked: false,
     }
 }
 
@@ -3617,6 +3694,7 @@ fn two_same_target_requests_delayed_old_outcome_does_not_settle() {
             level: 0,
             radius: 1,
             allow_teleports: false,
+            blocked: false,
         },
     ));
     iso.on_game_tick(2);
@@ -4145,6 +4223,7 @@ fn new_isolate_does_not_consume_prior_host_outcome() {
         level: 0,
         radius: 1,
         allow_teleports: false,
+        blocked: false,
     };
     let iso2 = script::LoadIsolate::spawn(
         walk_resilient_src(2820, 3556, 1),
@@ -4193,6 +4272,7 @@ fn bank_fetch_refusal_echoes_isolate_request_id() {
         level: 0,
         radius: 0,
         allow_teleports: false,
+        blocked: false,
     };
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "bank".to_string(),

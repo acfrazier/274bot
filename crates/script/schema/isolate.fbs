@@ -442,6 +442,10 @@ table Snapshot {
   // changes; an omitted slot keeps the last id. The frozen `AttackClock`
   // keys a swing start on this id, not on the `animating` flag above.
   self_anim: int = -1;
+  // Slot 266, walk_outcome family: the settled route end is frozen
+  // 'blocked' (the player stands next to a last tile the live scene
+  // refuses; WalkExecutor.ts:1039-1040, 1092-1094).
+  walk_outcome_blocked: bool = false;
 }
 
 table Collision {

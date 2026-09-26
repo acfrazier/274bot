@@ -54,6 +54,8 @@ pub(crate) struct PostedWalkOutcome {
     pub(crate) level: i32,
     pub(crate) radius: i32,
     pub(crate) allow_teleports: bool,
+    /// The settled route end is frozen `'blocked'`.
+    pub(crate) blocked: bool,
 }
 
 /// One navigator-named gate short of a failed walk: the `MissingReq::Carry`
@@ -107,6 +109,9 @@ pub(crate) struct NavBot {
     pub(crate) walk_outcome_level: i32,
     pub(crate) walk_outcome_radius: i32,
     pub(crate) walk_outcome_allow_teleports: bool,
+    /// The published route end is frozen `'blocked'`
+    /// ([`nav::traveller::HopFailure::EndBlocked`]).
+    pub(crate) walk_outcome_blocked: bool,
     /// The navigator-named gate shorts of that same published outcome: set
     /// only where a `NoPath` was diagnosed, and cleared wherever the outcome
     /// is, so a list can never outlive the failure it belongs to.
@@ -985,6 +990,7 @@ impl NavBot {
         self.walk_outcome_generation = generation;
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = true;
+        self.walk_outcome_blocked = false;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -1002,7 +1008,10 @@ impl NavBot {
 
     /// The armed walk's route reached its end: publish a settled, not
     /// failed, outcome for `request_id` (frozen `'closest'`,
-    /// `WalkExecutor.ts:316-325`). The matching isolate wait settles true.
+    /// `WalkExecutor.ts:316-325`, or `'blocked'` when the follow ended next
+    /// to a refused last tile, `WalkExecutor.ts:1092-1094`). The matching
+    /// isolate wait settles true.
+    #[allow(clippy::too_many_arguments)] // the published outcome's fields
     pub(super) fn note_route_end(
         &mut self,
         generation: u64,
@@ -1010,6 +1019,7 @@ impl NavBot {
         to: WorldTile,
         radius: i32,
         allow_teleports: bool,
+        blocked: bool,
     ) {
         log_walk_arm_bot(|| {
             format!(
@@ -1022,6 +1032,7 @@ impl NavBot {
         self.walk_outcome_generation = generation;
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = false;
+        self.walk_outcome_blocked = blocked;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -1034,6 +1045,7 @@ impl NavBot {
     pub(crate) fn clear_walk_outcome(&mut self) {
         self.bump_walk_outcome_seq();
         self.walk_outcome_failed = false;
+        self.walk_outcome_blocked = false;
         self.walk_outcome_generation = self.route_generation;
         self.walk_outcome_request_id = 0;
         self.walk_outcome_x = 0;

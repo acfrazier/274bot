@@ -82,6 +82,29 @@ pub(super) fn apply_watchdog_nav_action(
     }
 }
 
+/// The armed walk's route ended (arrived, or frozen `'blocked'`): clear it
+/// and publish the settled outcome for the armed request.
+fn settle_route_end(bot: &mut NavBot, blocked: bool) {
+    bot.route = None;
+    if bot.bank_fetch.is_none() {
+        if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
+            if bot.walk_request_id != 0
+                && bot.route_request_id == bot.walk_request_id
+                && bot.armed_outcome_may_publish(bot.walk_request_id)
+            {
+                bot.note_route_end(
+                    bot.route_generation,
+                    bot.walk_request_id,
+                    to,
+                    radius,
+                    allow_teleports,
+                    blocked,
+                );
+            }
+        }
+    }
+}
+
 /// Mid-follow Stall / Refused / Blocked / GaveUp publish a failed outcome
 /// with the armed walk's isolate request id so the matching wait returns
 /// false. A follow that reaches the end of the armed walk's route publishes
@@ -100,25 +123,16 @@ pub(crate) fn apply_nav_follow_outcome(
     walking_stand: bool,
 ) {
     match outcome {
-        Some(nav::traveller::TravelOutcome::Arrived { .. }) => {
-            bot.route = None;
-            if bot.bank_fetch.is_none() {
-                if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
-                    if bot.walk_request_id != 0
-                        && bot.route_request_id == bot.walk_request_id
-                        && bot.armed_outcome_may_publish(bot.walk_request_id)
-                    {
-                        bot.note_route_end(
-                            bot.route_generation,
-                            bot.walk_request_id,
-                            to,
-                            radius,
-                            allow_teleports,
-                        );
-                    }
-                }
-            }
-        }
+        Some(nav::traveller::TravelOutcome::Arrived { .. }) => settle_route_end(bot, false),
+        // Frozen `'blocked'` (`WalkExecutor.ts:1092-1094`): the follow ended
+        // next to a route end the live scene refuses. The armed walk settles
+        // as its route end, flagged blocked, and walkResilient returns true
+        // (`Traversal.ts:171-174`). A bank-fetch stand walk is not the armed
+        // walk's end and fails below.
+        Some(nav::traveller::TravelOutcome::Stalled {
+            why: nav::traveller::HopFailure::EndBlocked,
+            ..
+        }) if bot.bank_fetch.is_none() => settle_route_end(bot, true),
         Some(_) => {
             let owned = bot.route_request_id == bot.walk_request_id;
             if !owned {

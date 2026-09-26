@@ -64,8 +64,10 @@
 //!   big-budget rebake (`walkLadder.ts:73–75`).
 
 //! - Frozen `WalkExecutor.lastOutcome === 'blocked'` returns true
-//!   (`Traversal.ts:172–174`). This host's walk wait is arrived-or-failed;
-//!   there is no blocked, so a settled walk is re-checked with `isArrived`.
+//!   (`Traversal.ts:171–174`): the host follow ends `EndBlocked` next to a
+//!   route end the live scene refuses and publishes a settled, blocked
+//!   outcome, which ends the ladder true. Any other settle is re-checked
+//!   with `isArrived`.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, SceneRow};
@@ -752,6 +754,14 @@ impl Walk {
             request_id: self.token,
         });
     }
+
+    /// The settled walk ended frozen `'blocked'`: the host follow stood next
+    /// to a route end the live scene refuses (`WalkExecutor.ts:1092–1094`).
+    pub(crate) fn blocked(&self) -> bool {
+        walk_wait::dispatch(&json!({ "op": "blocked", "token": self.token }))
+            .as_bool()
+            .unwrap_or(false)
+    }
 }
 
 struct SceneStep {
@@ -987,6 +997,9 @@ impl Resilient {
                         self.phase = Phase::Walking(walk);
                         None
                     }
+                    // Frozen `outcome === 'blocked'` returns true
+                    // (`Traversal.ts:171–174`).
+                    Some(_) if owns_wait && walk.blocked() => Some(true),
                     Some(_) if owns_wait => self.after_baked(cx),
                     Some(_) => self.after_displaced_walk(cx),
                 }
@@ -1850,6 +1863,7 @@ pub(crate) mod tests {
                     },
                     radius,
                     allow_teleports: false,
+                    blocked: false,
                 });
         });
     }
@@ -2290,6 +2304,47 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn a_blocked_route_end_ends_the_ladder_true_without_arrival() {
+        reset();
+        post_here(0, 0);
+        let h = start(None);
+        machine::step(&mut NoJs);
+        let token = walk_token();
+        observed::post(2, |post| {
+            post.session(true)
+                .here(observed::Tile {
+                    x: 9,
+                    z: 0,
+                    level: 0,
+                })
+                .walk_outcome(WalkOutcome {
+                    seq: 2,
+                    generation: 0,
+                    request_id: token,
+                    failed: false,
+                    tile: observed::Tile {
+                        x: 10,
+                        z: 0,
+                        level: 0,
+                    },
+                    radius: 0,
+                    allow_teleports: false,
+                    blocked: true,
+                });
+        });
+        machine::step(&mut NoJs);
+        assert!(
+            machine::merge_ops(Vec::new()).is_empty(),
+            "no scene step after a blocked end"
+        );
+        assert_eq!(
+            machine::take(h),
+            Take::Settled(Outcome::Done(json!(true))),
+            "frozen `outcome === 'blocked'` returns true (Traversal.ts:171–174)"
+        );
+    }
+
     fn blocked_booth_across_long_wall(
     ) -> (api::snapshot::SceneView, WorldTile, WorldTile, WorldTile) {
         use client::dash3d::CollisionFlag;
@@ -2479,6 +2534,7 @@ pub(crate) mod tests {
                     },
                     radius: 0,
                     allow_teleports: false,
+                    blocked: false,
                 });
         });
         machine::step(&mut NoJs);

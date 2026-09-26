@@ -73,6 +73,7 @@ struct HostOutcome {
     generation: u64,
     request_id: u64,
     failed: bool,
+    blocked: bool,
     key: WalkKey,
 }
 
@@ -83,6 +84,7 @@ impl HostOutcome {
             generation: 0,
             request_id: 0,
             failed: false,
+            blocked: false,
             key: WalkKey {
                 tile: WorldTile {
                     x: 0,
@@ -105,6 +107,7 @@ impl HostOutcome {
                 generation: o.generation,
                 request_id: o.request_id,
                 failed: o.failed,
+                blocked: o.blocked,
                 key: WalkKey {
                     tile: WorldTile {
                         x: o.tile.x,
@@ -126,6 +129,8 @@ struct Wait {
     /// The host's terminal outcome for this request: `Some(false)` once a
     /// failure matched (sticky), `Some(true)` for a route end.
     matched: Option<bool>,
+    /// The matched route end is frozen `'blocked'` (`Traversal.ts:171–174`).
+    blocked: bool,
 }
 
 /// The one live wait. The player tile and the host outcome are read from
@@ -149,6 +154,7 @@ impl WalkSlot {
         if let Some(wait) = self.wait.as_mut() {
             if Self::outcome_matches(outcome, wait) {
                 wait.matched = Some(wait.matched.unwrap_or(true) && !outcome.failed);
+                wait.blocked = wait.matched == Some(true) && outcome.blocked;
             }
         }
     }
@@ -161,6 +167,7 @@ impl WalkSlot {
             settled: None,
             seq_at_begin: outcome.seq,
             matched: None,
+            blocked: false,
         });
         token
     }
@@ -203,6 +210,7 @@ impl WalkSlot {
             let outcome = observed::with(HostOutcome::posted);
             if Self::outcome_matches(outcome, wait) {
                 wait.matched = Some(!outcome.failed);
+                wait.blocked = !outcome.failed && outcome.blocked;
             }
         }
         if let Some(value) = wait.matched {
@@ -216,6 +224,13 @@ impl WalkSlot {
         self.wait
             .as_ref()
             .is_some_and(|wait| wait.token == token && wait.settled == Some(true))
+    }
+
+    /// The wait settled on a frozen `'blocked'` route end, not on arrival.
+    fn blocked(&self, token: u64) -> bool {
+        self.wait
+            .as_ref()
+            .is_some_and(|wait| wait.token == token && wait.settled == Some(true) && wait.blocked)
     }
 }
 
@@ -280,6 +295,7 @@ pub(crate) fn dispatch(input: &Value) -> Value {
                 ))
             }
             "value" => json!(slot.value(json_u64(input.get("token")))),
+            "blocked" => json!(slot.blocked(json_u64(input.get("token")))),
             _ => Value::Null,
         }
     })
@@ -491,6 +507,7 @@ mod tests {
                 },
                 radius: 1,
                 allow_teleports: false,
+                blocked: false,
             });
         });
         assert!(

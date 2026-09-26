@@ -487,6 +487,8 @@ pub struct WalkOutcome {
     pub tile: Tile,
     pub radius: i32,
     pub allow_teleports: bool,
+    /// The settled route end is frozen `'blocked'`.
+    pub blocked: bool,
 }
 
 /// Which post carried a page, in which scene. Equal stamps are the same
@@ -1125,6 +1127,7 @@ impl Scene {
                 },
                 radius: snap.walk_outcome_radius(),
                 allow_teleports: snap.walk_outcome_allow_teleports(),
+                blocked: snap.walk_outcome_blocked(),
             });
         }
     }

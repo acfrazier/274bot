@@ -229,6 +229,7 @@ const VT_SNAP_BANK_SELECTION_GENERATION: VOffsetT = 258;
 const VT_SNAP_BANK_SELECTION_INDEX: VOffsetT = 260;
 const VT_SNAP_BANK_SELECTION_KIND: VOffsetT = 262;
 const VT_SNAP_SELF_ANIM: VOffsetT = 264;
+const VT_SNAP_WALK_OUTCOME_BLOCKED: VOffsetT = 266;
 
 // Carry: { id, count, name }
 const VT_CARRY_ID: VOffsetT = 4;
@@ -774,6 +775,9 @@ pub struct NativeFactsInput<'a> {
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
+    /// The settled route end is frozen `'blocked'`: the player stands next
+    /// to a last tile the live scene refuses. Part of the walk outcome.
+    pub walk_outcome_blocked: bool,
     /// The walk outcome's navigator-named gate shorts. ALWAYS supplied — an
     /// empty slice is the observed "this outcome names no short", and the pack
     /// posts it with the family above in the same buffer, so a clear is never
@@ -1783,6 +1787,7 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_WALK_OUTCOME_REQUEST_ID,
                 false,
             )?
+            .visit_field::<bool>("walk_outcome_blocked", VT_SNAP_WALK_OUTCOME_BLOCKED, false)?
             .visit_field::<i32>("canvas_width", VT_SNAP_CANVAS_WIDTH, false)?
             .visit_field::<i32>("canvas_height", VT_SNAP_CANVAS_HEIGHT, false)?
             .visit_field::<i32>("combat_level", VT_SNAP_COMBAT_LEVEL, false)?
@@ -2341,6 +2346,9 @@ impl SnapshotReader<'_> {
     }
     pub fn walk_outcome_request_id(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_REQUEST_ID, None) }.unwrap_or(0)
+    }
+    pub fn walk_outcome_blocked(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_WALK_OUTCOME_BLOCKED, None) }.unwrap_or(false)
     }
     pub fn has_route_inspect_seq(&self) -> bool {
         unsafe {
@@ -3228,6 +3236,7 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
+    pub walk_outcome_blocked: bool,
     /// The walk outcome's named shorts. Part of that family: a list that moved
     /// without a scalar moving still re-posts the family, so a clear is never
     /// left to a stale keep.
@@ -3507,6 +3516,7 @@ impl SnapshotFingerprint {
             walk_outcome_radius: native.walk_outcome_radius,
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
             walk_outcome_request_id: native.walk_outcome_request_id,
+            walk_outcome_blocked: native.walk_outcome_blocked,
             walk_missing_carry: native
                 .walk_missing_carry
                 .iter()
@@ -3863,6 +3873,7 @@ impl DeltaMask {
                 || next.walk_outcome_radius != last.walk_outcome_radius
                 || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports
                 || next.walk_outcome_request_id != last.walk_outcome_request_id
+                || next.walk_outcome_blocked != last.walk_outcome_blocked
                 || next.walk_missing_carry != last.walk_missing_carry,
             route_inspect: next.route_inspect != last.route_inspect,
             collision: next.collision != last.collision,
@@ -4724,6 +4735,7 @@ fn encode_snapshot_masked_into(
             VT_SNAP_WALK_OUTCOME_REQUEST_ID,
             native.walk_outcome_request_id,
         );
+        b.push_slot_always(VT_SNAP_WALK_OUTCOME_BLOCKED, native.walk_outcome_blocked);
         // The vector rides every post of the family: a supplied empty one is
         // the observed "no named short", so a clear is never omitted. Only a
         // caller that supplied no list at all omits the slot.
@@ -8385,5 +8397,30 @@ pub(crate) mod tests {
             DeltaMask::changed(&fp, &other, false).walk_outcome,
             "the family bit covers the named shorts"
         );
+    }
+
+    #[test]
+    fn a_blocked_route_end_rides_the_walk_outcome_family() {
+        let blocked = NativeFactsInput {
+            walk_outcome_blocked: true,
+            ..carry_native(&[], 3)
+        };
+        let (keyframe, fp) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), blocked, false);
+        assert!(decode_snapshot(&keyframe)
+            .expect("keyframe")
+            .walk_outcome_blocked());
+        let (delta, _) = encode_snapshot_delta_with_native(
+            Some(&fp),
+            &empty_input(2),
+            carry_native(&[], 3),
+            false,
+        );
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(
+            view.has_walk_outcome_seq(),
+            "the flag alone re-posts the family"
+        );
+        assert!(!view.walk_outcome_blocked());
     }
 }
