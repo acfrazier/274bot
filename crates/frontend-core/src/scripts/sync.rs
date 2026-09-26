@@ -119,7 +119,11 @@ impl SyncReport {
 #[derive(Default)]
 pub(super) struct SyncState {
     prepared: Option<SyncScope>,
+    /// The newest applied sync, shown to the operator.
     last: Option<SyncReport>,
+    /// Older syncs with member writes still in flight. Each settles its own
+    /// operation and is dropped then; bounded by the writes in flight.
+    earlier: Vec<SyncReport>,
     /// The last report settled and its final summary is not shown yet.
     announce: bool,
 }
@@ -140,32 +144,30 @@ impl SyncState {
     /// Fold one settled write into the report it belongs to. Returns the
     /// sync operation and the member outcome to record there.
     pub(super) fn record(&mut self, write: &SettingsWrite) -> Option<(OperationId, Outcome)> {
-        let report = self.last.as_mut()?;
-        let index = report
-            .pending
-            .iter()
-            .position(|(op, member)| *op == write.op && *member == write.profile)?;
-        report.pending.swap_remove(index);
-        let outcome = match &write.result {
-            SettingsResult::Saved(live) => {
-                report.saved += 1;
-                match live {
-                    LiveDelivery::Delivered => report.delivered += 1,
-                    LiveDelivery::Unchanged => report.unchanged += 1,
-                    LiveDelivery::Stale => report.stale += 1,
-                    LiveDelivery::NotRunning => report.not_running += 1,
-                }
-                Outcome::Completed
-            }
-            SettingsResult::Superseded => {
-                report.superseded += 1;
-                Outcome::Cancelled
-            }
-            SettingsResult::Failed(error) => {
-                report.failed.push((write.profile.clone(), error.clone()));
-                Outcome::Failed(error.clone())
-            }
+        let owns = |report: &SyncReport| {
+            report
+                .pending
+                .iter()
+                .position(|(op, member)| *op == write.op && *member == write.profile)
         };
+        if let Some((slot, index)) = self
+            .earlier
+            .iter()
+            .enumerate()
+            .find_map(|(slot, report)| owns(report).map(|index| (slot, index)))
+        {
+            let report = &mut self.earlier[slot];
+            report.pending.swap_remove(index);
+            let settled = (report.op, fold(report, write));
+            if report.pending.is_empty() {
+                self.earlier.swap_remove(slot);
+            }
+            return Some(settled);
+        }
+        let report = self.last.as_mut()?;
+        let index = owns(report)?;
+        report.pending.swap_remove(index);
+        let outcome = fold(report, write);
         report.refresh();
         if report.pending.is_empty() {
             self.announce = true;
@@ -173,11 +175,45 @@ impl SyncState {
         Some((report.op, outcome))
     }
 
+    /// Replace the shown report; one still waiting on writes keeps settling
+    /// in `earlier`.
+    fn push(&mut self, report: SyncReport) {
+        if let Some(previous) = self.last.replace(report) {
+            if !previous.is_settled() {
+                self.earlier.push(previous);
+            }
+        }
+    }
+
     pub(super) fn take_settled_summary(&mut self) -> Option<String> {
         if !std::mem::take(&mut self.announce) {
             return None;
         }
         self.last.as_ref().map(|report| report.text.clone())
+    }
+}
+
+/// Count one settled member write into `report`; the member's outcome.
+fn fold(report: &mut SyncReport, write: &SettingsWrite) -> Outcome {
+    match &write.result {
+        SettingsResult::Saved(live) => {
+            report.saved += 1;
+            match live {
+                LiveDelivery::Delivered => report.delivered += 1,
+                LiveDelivery::Unchanged => report.unchanged += 1,
+                LiveDelivery::Stale => report.stale += 1,
+                LiveDelivery::NotRunning => report.not_running += 1,
+            }
+            Outcome::Completed
+        }
+        SettingsResult::Superseded => {
+            report.superseded += 1;
+            Outcome::Cancelled
+        }
+        SettingsResult::Failed(error) => {
+            report.failed.push((write.profile.clone(), error.clone()));
+            Outcome::Failed(error.clone())
+        }
     }
 }
 
@@ -327,7 +363,7 @@ impl Scripts {
         // Shown now; `record` announces the final summary once writes settle.
         self.sync.announce = false;
         self.show(report.text.clone());
-        self.sync.last = Some(report);
+        self.sync.push(report);
         Ok(op)
     }
 }

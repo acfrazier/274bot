@@ -432,3 +432,40 @@ fn a_parameter_edit_reaches_the_run_once_durable() {
     );
     assert!(f.run_has_bag("alice", &bag(&[("target", json!("Guard"))])));
 }
+
+/// Two Apply-to-all runs overlap (the first one's writes still queued when
+/// the second applies): each operation settles on its own writes, and the
+/// newest report is the one shown.
+#[test]
+fn overlapping_syncs_each_settle_their_own_operation() {
+    let mut f = fixture("sync-overlap", &["alice", "bob"]);
+    let thiever = f.card("thiever.ts", LOOPING);
+    f.assign("alice", &thiever);
+    f.assign("bob", &thiever);
+    f.set("alice", &thiever, "target", json!("Guard"));
+    f.core.flush_writes();
+
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    f.prepare("alice", &thiever);
+    let first = f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.prepare("alice", &thiever);
+    let second = f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    drop(held);
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    for op in [first, second] {
+        let report = f.core.operation(op).unwrap();
+        assert!(report.is_settled(), "{op:?} left pending: {report:?}");
+    }
+    assert!(matches!(
+        f.core.operation(second).unwrap().outcome("bob"),
+        Some(Outcome::Completed)
+    ));
+    assert_eq!(f.scripts.last_settings_sync().unwrap().op, second);
+    assert_eq!(
+        f.saved_bag("bob", &thiever.identity_key()),
+        Some(bag(&[("target", json!("Guard"))]))
+    );
+}
