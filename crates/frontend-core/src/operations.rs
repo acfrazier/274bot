@@ -29,6 +29,8 @@ pub enum ActionKind {
     ScriptStop,
     SaveProfile,
     DeleteProfile,
+    /// Bulk parameter sync ("Apply to all"); one member per wall member.
+    SyncSettings,
 }
 
 impl ActionKind {
@@ -45,6 +47,7 @@ impl ActionKind {
             Self::ScriptStop => "Stop",
             Self::SaveProfile => "Save profile",
             Self::DeleteProfile => "Delete profile",
+            Self::SyncSettings => "Apply to all",
         }
     }
 }

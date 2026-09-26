@@ -31,25 +31,12 @@ impl Session {
     /// classified only; the isolate is spawned on Start. Transpile is
     /// [`JsLibrary::ensure_js`] on first click / Start / Transpile all.
     pub fn fill_rs2b0t_cards_once(&mut self) {
-        if self.rs2b0t_filled {
+        if self.scripts.catalog_filled() {
             return;
         }
-        let root = match self.catalog_root() {
-            Ok(Some(root)) => root,
-            Ok(None) => return,
-            Err(error) => {
-                self.error = Some(format!("server profile: {error}"));
-                return;
-            }
-        };
-        self.rs2b0t_filled = true;
-        if let Err(e) = self
-            .js
-            .register_rs2b0t(&root, &script::default_rs2b0t_path_file())
-        {
-            if host::debug_enabled() {
-                eprintln!("[panel] $RS2B0T registry: {e}");
-            }
+        match self.catalog_root() {
+            Ok(root) => self.scripts.fill_catalog_once(root.as_deref()),
+            Err(error) => self.error = Some(format!("server profile: {error}")),
         }
     }
 
@@ -64,7 +51,7 @@ impl Session {
     /// Opening Browse: fill from `$RS2B0T`/persisted root, or prompt for a
     /// clone root, or honour a prior defer.
     pub fn on_script_browse_open(&mut self) {
-        if self.rs2b0t_filled {
+        if self.scripts.catalog_filled() {
             return;
         }
         let selected = match self.catalog_root() {
@@ -74,9 +61,13 @@ impl Session {
                 return;
             }
         };
-        self.rs2b0t_filled = true;
+        self.scripts.mark_catalog_filled();
         if let Some(root) = selected {
-            if let Err(e) = self.js.register_rs2b0t(&root, &self.rs2b0t_path_file()) {
+            if let Err(e) = self
+                .scripts
+                .js
+                .register_rs2b0t(&root, &self.rs2b0t_path_file())
+            {
                 if host::debug_enabled() {
                     eprintln!("[panel] $RS2B0T registry: {e}");
                 }
@@ -108,7 +99,10 @@ impl Session {
                 script::registry_index_path(root).display()
             ));
         }
-        let n = self.js.register_rs2b0t(root, &self.rs2b0t_path_file())?;
+        let n = self
+            .scripts
+            .js
+            .register_rs2b0t(root, &self.rs2b0t_path_file())?;
         let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
         self.ui.script_catalog_last_dir = Some(root.to_path_buf());
         if self.persist_ui {
@@ -140,7 +134,7 @@ impl Session {
     /// Operator opted into warming every unwarmed card. Still one
     /// `ensure_js` per armed frame — never a catalog-wide click.
     pub fn queue_transpile_all(&mut self) {
-        let need = self.js.cards_needing_transpile();
+        let need = self.scripts.js.cards_needing_transpile();
         if need.is_empty() {
             return;
         }
@@ -163,9 +157,9 @@ impl Session {
     pub fn pump_script_transpile(&mut self) {
         if self.transpile_armed {
             if let Some((source, name)) = self.transpile_queue.pop_front() {
-                match self.js.ensure_js(source, &name) {
+                match self.scripts.js.ensure_js(source, &name) {
                     Ok(()) => {
-                        if self.js.load_failures().is_empty() {
+                        if self.scripts.js.load_failures().is_empty() {
                             self.error = None;
                         }
                         self.transpile_done = self.transpile_done.saturating_add(1);
@@ -189,14 +183,14 @@ impl Session {
         name: String,
         to_front: bool,
     ) {
-        if self.js.js_is_ready(source, &name) {
+        if self.scripts.js.js_is_ready(source, &name) {
             return;
         }
-        let Some(card) = self.js.get(source, &name) else {
+        let Some(card) = self.scripts.js.get(source, &name) else {
             return;
         };
-        if self.js.cache().is_cached(card.origin.as_bytes()) {
-            if let Err(e) = self.js.ensure_js(source, &name) {
+        if self.scripts.js.cache().is_cached(card.origin.as_bytes()) {
+            if let Err(e) = self.scripts.js.ensure_js(source, &name) {
                 self.error = Some(format!("transpile {name}: {e}"));
             }
             return;
@@ -232,7 +226,7 @@ impl Session {
         script::resolve_sibling_modules(
             &card.path,
             &card.origin,
-            self.js.cache(),
+            self.scripts.js.cache(),
             script::CacheMeta {
                 kind: card.kind,
                 source: card.source,
@@ -250,7 +244,7 @@ impl Session {
             self.error = Some(format!("script: not a file: {}", path.display()));
             return;
         }
-        match self.js.load(path) {
+        match self.scripts.js.load(path) {
             Ok(card) => {
                 self.error = None;
                 let sel = script::ScriptSel::Loaded(card.source, card.identity_id());

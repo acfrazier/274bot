@@ -716,20 +716,20 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
         let iso = IsolatedEnv::enter(&format!("tui-bone-v2-{name}"));
         let mut session = TuiSession::new(dummy_options());
         session.core.set_spawn_workers(false);
-        session.js = script::JsLibrary::with_cache(
+        session.scripts.js = script::JsLibrary::with_cache(
             iso.dir.join("js-scripts.json"),
             iso.dir.join("js-cache"),
         );
-        session.js.load(&ts).expect("preload ts");
-        session.js.load(&js).expect("preload js");
-        session.script_settings.set_str(
+        session.scripts.js.load(&ts).expect("preload ts");
+        session.scripts.js.load(&js).expect("preload js");
+        session.scripts.legacy.set_str(
             script::ScriptSource::File,
             "bone_burier_v2",
             "boneName",
             "stem",
         );
         let identity = script::file_identity(path);
-        session.script_settings.set_str(
+        session.scripts.legacy.set_str(
             script::ScriptSource::File,
             &identity,
             "boneName",
@@ -857,6 +857,7 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     );
     assert!(
         session
+            .scripts
             .js
             .cards()
             .iter()
@@ -877,6 +878,7 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     assert_eq!(n, 1);
     assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
     let card = session
+        .scripts
         .js
         .get(script::ScriptSource::Catalog, "BoneBurier")
         .expect("catalog card");
@@ -908,13 +910,13 @@ fn pump_leaves_app_world_none_when_no_pack_loaded() {
 /// pending Start has settled. Start returns before V8 setup.
 fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
     let deadline = Instant::now() + Duration::from_secs(10);
-    while !session.pending_starts.is_empty() && Instant::now() < deadline {
+    while session.scripts.starts_pending() && Instant::now() < deadline {
         session.core.poll();
-        session.settle_script_starts(app);
+        session.poll_scripts(app);
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(
-        session.pending_starts.is_empty(),
+        !session.scripts.starts_pending(),
         "script Start did not settle"
     );
 }
@@ -923,6 +925,18 @@ fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
 fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     let iso = IsolatedEnv::enter("tui-initial-load");
     let mut session = TuiSession::new(dummy_options());
+    let mut vault = Vault::create(&iso.dir.join("vault"), "bot").unwrap();
+    for (uid, name) in [(7, "alice"), (8, "bob")] {
+        vault
+            .upsert(vault::Profile {
+                username: name.into(),
+                password: "pw".into(),
+                uid,
+                settings: vault::ProfileSettings::default(),
+            })
+            .unwrap();
+    }
+    session.core.set_vault(Some(vault));
     let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
     play.attach_arm("alice", SlotArm::new(7, false));
     play.attach_arm("bob", SlotArm::new(8, false));
@@ -935,7 +949,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     std::fs::write(&helper, "export const fail = true;").unwrap();
     let src = "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('tui-initial-load');\nexport function tick(api) {}";
     std::fs::write(&path, src).unwrap();
-    let card = session.js.load(&path).unwrap();
+    let card = session.scripts.js.load(&path).unwrap();
     let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
     session.script_start(&mut app, &sel);
     settle_starts(&mut session, &mut app);
@@ -947,6 +961,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
         "{shown}"
     );
     let failure = session
+        .scripts
         .js
         .load_failure(&card.identity_key())
         .unwrap()
@@ -974,7 +989,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
         "export default class T extends LoopingBot { override loop() {} }",
     )
     .unwrap();
-    let good = session.js.load(&good_path).unwrap();
+    let good = session.scripts.js.load(&good_path).unwrap();
     assert_eq!(good.api_family, script::ApiFamily::V1);
     app.focused = Some(1);
     session.script_start(
@@ -996,14 +1011,14 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
         .unwrap()
         .contains("script already active"));
     assert_eq!(
-        session.js.load_failure(&card.identity_key()),
+        session.scripts.js.load_failure(&card.identity_key()),
         Some(&failure)
     );
     app.focused = Some(2);
     session.script_start(&mut app, &sel);
     assert_eq!(app.error.as_deref(), Some("script: no slot: missing"));
     assert_eq!(
-        session.js.load_failure(&card.identity_key()),
+        session.scripts.js.load_failure(&card.identity_key()),
         Some(&failure)
     );
 
@@ -1011,7 +1026,11 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     app.focused = Some(0);
     session.script_start(&mut app, &sel);
     settle_starts(&mut session, &mut app);
-    assert!(session.js.load_failure(&card.identity_key()).is_none());
+    assert!(session
+        .scripts
+        .js
+        .load_failure(&card.identity_key())
+        .is_none());
     assert_eq!(app.error, None);
     assert_eq!(
         session
@@ -1891,4 +1910,231 @@ fn removing_the_focused_member_focuses_its_neighbour() {
         !bob.stop.load(Ordering::Relaxed),
         "and is not stopped inline"
     );
+}
+
+const LOOPING_TS: &str = "export default class T extends LoopingBot { override loop() {} }\n";
+const THIEVER_TS: &str = "export const SETTINGS = { target: { type: 'string', default: 'Man' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
+
+/// A TUI session over a real vault and an empty play: members loaded
+/// (arms attached, no worker threads), library in the isolated home.
+fn tui_with_profiles(iso: &IsolatedEnv, names: &[&str]) -> (TuiSession, TuiApp) {
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let mut vault = Vault::create(&iso.dir.join("vault"), "bot").unwrap();
+    for (i, name) in names.iter().enumerate() {
+        vault
+            .upsert(vault::Profile {
+                username: (*name).into(),
+                password: "pw".into(),
+                uid: 1 + i as i32,
+                settings: vault::ProfileSettings::default(),
+            })
+            .unwrap();
+    }
+    session.core.set_vault(Some(vault));
+    session.inject_play(run_with_io(
+        &dummy_options(),
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    ));
+    session.scripts.js =
+        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    let mut surface = HeadlessSurface::new();
+    for name in names {
+        session.core.load(name, &mut surface);
+    }
+    let mut app = TuiApp::new("scripts");
+    session.pump(&mut app);
+    (session, app)
+}
+
+fn assign(session: &mut TuiSession, name: &str, card: &script::JsCard) {
+    assert!(session
+        .scripts
+        .persist_assignment(&mut session.core, name, card.assignment()));
+    session.core.flush_writes();
+}
+
+fn focus_member(session: &mut TuiSession, app: &mut TuiApp, name: &str) {
+    session.focus(name);
+    session.pump(app);
+}
+
+fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::KeyCode) {
+    let key = crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+    let action = session.params_key(app, key);
+    dispatch(session, app, action);
+}
+
+/// Start all, Reload (warn, then Confirm) and Stop all from the script
+/// pane go through the same coordinator as the panel: assigned members
+/// start, the warning names both runs, Confirm replaces both, Stop all
+/// stops both.
+#[test]
+fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
+    let iso = IsolatedEnv::enter("tui-bulk-scripts");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    let path = iso.dir.join("shared.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.js.load(&path).unwrap();
+    assign(&mut session, "alice", &card);
+    assign(&mut session, "bob", &card);
+
+    dispatch(&mut session, &mut app, AppAction::ScriptStartAll);
+    assert_eq!(
+        app.error.as_deref(),
+        Some("Start all: started 2, skipped 0")
+    );
+    settle_starts(&mut session, &mut app);
+    let generation = |session: &TuiSession, name: &str| {
+        session.core.play().unwrap().script_runtime_generation(name)
+    };
+    for name in ["alice", "bob"] {
+        wait_script_state(
+            session.core.play().unwrap(),
+            name,
+            script::RunState::Running,
+        );
+    }
+    let before = (generation(&session, "alice"), generation(&session, "bob"));
+
+    focus_member(&mut session, &mut app, "alice");
+    assert_eq!(
+        app.script_sel,
+        frontend_core::scripts::sel_from_assignment(&card.assignment()),
+        "the heading is alice's assignment"
+    );
+    std::fs::write(&path, format!("{LOOPING_TS}// changed\n")).unwrap();
+    dispatch(&mut session, &mut app, AppAction::ScriptReload);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let outcome = loop {
+        session.pump(&mut app);
+        if let Some(outcome) = session.scripts.take_reload_outcome() {
+            break outcome;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "reload validation did not settle"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(outcome, frontend_core::scripts::ReloadOutcome::NeedsConfirm);
+    assert!(app.reload_confirm, "Reload reads Confirm");
+    let warning = app.error.clone().unwrap_or_default();
+    assert!(
+        warning.contains("will replace running bots") && warning.contains("alice, bob"),
+        "{warning}"
+    );
+    assert_eq!(
+        (generation(&session, "alice"), generation(&session, "bob")),
+        before,
+        "nothing is replaced before Confirm"
+    );
+
+    dispatch(&mut session, &mut app, AppAction::ScriptReload);
+    assert!(matches!(
+        session.scripts.take_reload_outcome(),
+        Some(frontend_core::scripts::ReloadOutcome::Applied {
+            restarted: 2,
+            failed: 0,
+            ..
+        })
+    ));
+    settle_starts(&mut session, &mut app);
+    for name in ["alice", "bob"] {
+        wait_script_state(
+            session.core.play().unwrap(),
+            name,
+            script::RunState::Running,
+        );
+    }
+    assert_ne!(generation(&session, "alice"), before.0);
+    assert_ne!(generation(&session, "bob"), before.1);
+    assert!(!app.reload_confirm);
+
+    dispatch(&mut session, &mut app, AppAction::ScriptStopAll);
+    for name in ["alice", "bob"] {
+        wait_script_state(session.core.play().unwrap(), name, script::RunState::Idle);
+    }
+}
+
+/// The TUI params popup edits the focused profile's own bag (not the
+/// global store) and `a`/`y` apply it to the same-card member only.
+#[test]
+fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
+    use crossterm::event::KeyCode;
+    let iso = IsolatedEnv::enter("tui-apply-to-all");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob", "carol"]);
+    let thiever_path = iso.dir.join("thiever.ts");
+    std::fs::write(&thiever_path, THIEVER_TS).unwrap();
+    let miner_path = iso.dir.join("miner.ts");
+    std::fs::write(&miner_path, LOOPING_TS).unwrap();
+    let thiever = session.scripts.js.load(&thiever_path).unwrap();
+    let miner = session.scripts.js.load(&miner_path).unwrap();
+    assign(&mut session, "alice", &thiever);
+    assign(&mut session, "bob", &thiever);
+    assign(&mut session, "carol", &miner);
+    session
+        .scripts
+        .start_profile(&mut session.core, "bob", None)
+        .unwrap();
+    settle_starts(&mut session, &mut app);
+    wait_script_state(
+        session.core.play().unwrap(),
+        "bob",
+        script::RunState::Running,
+    );
+
+    focus_member(&mut session, &mut app, "alice");
+    dispatch(&mut session, &mut app, AppAction::ScriptParams);
+    assert!(app.params_state.open, "alice's thiever parameters open");
+    press(&mut session, &mut app, KeyCode::Enter);
+    while !app.params_state.scratch.is_empty() {
+        press(&mut session, &mut app, KeyCode::Backspace);
+    }
+    for c in "Guard".chars() {
+        press(&mut session, &mut app, KeyCode::Char(c));
+    }
+    press(&mut session, &mut app, KeyCode::Enter);
+    session.core.flush_writes();
+    press(&mut session, &mut app, KeyCode::Char('a'));
+    let prompt = app.params_state.sync_prompt.clone().unwrap_or_default();
+    assert!(prompt.contains("1 same-card member"), "{prompt}");
+    press(&mut session, &mut app, KeyCode::Char('y'));
+    session.core.flush_writes();
+    session.pump(&mut app);
+
+    let key = thiever.identity_key();
+    let target = |session: &TuiSession, name: &str| {
+        session
+            .core
+            .vault()
+            .unwrap()
+            .get(name)
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .and_then(|bag| bag.get("target").cloned())
+    };
+    let guard = Some(serde_json::json!("Guard"));
+    assert_eq!(target(&session, "alice"), guard);
+    assert_eq!(target(&session, "bob"), guard);
+    assert_eq!(target(&session, "carol"), None, "other card untouched");
+    assert!(
+        session
+            .scripts
+            .legacy
+            .overrides(script::ScriptSource::File, &thiever.name)
+            .is_empty(),
+        "the global store is not written"
+    );
+    let report = session.scripts.last_settings_sync().unwrap();
+    assert_eq!(
+        (report.saved, report.skipped.len(), report.delivered),
+        (1, 1, 1)
+    );
+    assert_eq!(app.error.as_deref(), Some(report.summary()));
+    session.core.play().unwrap().script_stop("bob");
 }

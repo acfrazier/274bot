@@ -17,6 +17,13 @@ use script::{JsCard, RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
 /// [`pause_button_label`]).
 pub const SCRIPT_BUTTONS: [&str; 5] = ["Browse", "Start", "Pause", "Stop", "Load"];
 
+/// The bulk row under the buttons (after `[Params]` when a schema
+/// exists). The first slot reads "Confirm" while a reload warning awaits
+/// confirmation, followed by a "Cancel" button.
+pub const SCRIPT_BULK_BUTTONS: [&str; 3] = ["Reload", "Start all", "Stop all"];
+
+const PARAMS_LABEL: &str = "[Params]";
+
 /// Pause/Resume label for the third button (matches panel `script_section`).
 pub fn pause_button_label(state: RunState) -> &'static str {
     if state == RunState::Paused {
@@ -267,6 +274,8 @@ pub struct ScriptPane<'a> {
     pub load_path: &'a str,
     pub params_available: bool,
     pub slot: Option<&'a SlotScript>,
+    /// A reload warning awaits confirmation.
+    pub reload_confirm: bool,
 }
 
 impl<'a> ScriptPane<'a> {
@@ -294,7 +303,32 @@ impl<'a> ScriptPane<'a> {
             load_path,
             params_available,
             slot,
+            reload_confirm: false,
         }
+    }
+
+    pub fn with_reload_confirm(mut self, confirm: bool) -> Self {
+        self.reload_confirm = confirm;
+        self
+    }
+
+    /// The bulk row's buttons, left to right.
+    fn bulk_buttons(&self) -> impl Iterator<Item = &'static str> {
+        let reload = if self.reload_confirm {
+            "Confirm"
+        } else {
+            "Reload"
+        };
+        let cancel = self.reload_confirm.then_some("Cancel");
+        std::iter::once(reload)
+            .chain(cancel)
+            .chain(SCRIPT_BULK_BUTTONS[1..].iter().copied())
+    }
+
+    /// Whether the bulk row (and `[Params]`) is shown: not while Browse or
+    /// Load owns the rows under the buttons.
+    fn bulk_row_shown(&self) -> bool {
+        !self.browse_open && !self.load_open
     }
 
     fn browse_lines(&self) -> Vec<BrowseLine> {
@@ -328,14 +362,20 @@ impl<'a> ScriptPane<'a> {
                 cursor += label.len() as u16 + 3;
             }
         }
-        if self.params_available
-            && !self.browse_open
-            && !self.load_open
-            && row == inner.y + 2
-            && col >= inner.x
-            && col < inner.x + 8
-        {
-            return ScriptClick::Params;
+        if self.bulk_row_shown() && row == inner.y + 2 && row < inner.bottom() {
+            let mut cursor = inner.x;
+            if self.params_available {
+                if col >= cursor && col < cursor + PARAMS_LABEL.len() as u16 {
+                    return ScriptClick::Params;
+                }
+                cursor += PARAMS_LABEL.len() as u16 + 1;
+            }
+            for label in self.bulk_buttons() {
+                if col >= cursor && col < cursor + label.len() as u16 + 3 {
+                    return ScriptClick::Button(label);
+                }
+                cursor += label.len() as u16 + 3;
+            }
         }
         if self.browse_open {
             let list_top = inner.y + 2;
@@ -399,8 +439,18 @@ impl Widget for ScriptPane<'_> {
             Line::from(format!("script: {state}   sel: {sel}")),
             Line::from(buttons),
         ];
-        if self.params_available && !self.browse_open && !self.load_open {
-            lines.push(Line::from("[Params]"));
+        if self.bulk_row_shown() {
+            let mut row = String::new();
+            if self.params_available {
+                row.push_str(PARAMS_LABEL);
+                row.push(' ');
+            }
+            for label in self.bulk_buttons() {
+                row.push('[');
+                row.push_str(label);
+                row.push_str("] ");
+            }
+            lines.push(Line::from(row.trim_end().to_string()));
         }
         if self.load_open {
             lines.push(Line::from("load: browse for .ts/.js file"));
@@ -525,6 +575,65 @@ mod tests {
         assert_eq!(slot.state(), script::RunState::Idle, "state unchanged");
         assert!(!slot.want_run, "want_run unchanged");
         assert_eq!(run_state_text(slot.state()), "idle");
+    }
+
+    /// The bulk row under the buttons: Reload / Start all / Stop all after
+    /// `[Params]`; a pending reload warning turns Reload into Confirm and
+    /// adds Cancel, shifting the rest.
+    #[test]
+    fn bulk_row_clicks_follow_the_painted_labels() {
+        let pane = |confirm: bool| {
+            ScriptPane::new(
+                script::RunState::Running,
+                None,
+                &[],
+                &[],
+                false,
+                false,
+                false,
+                "",
+                true,
+                None,
+            )
+            .with_reload_confirm(confirm)
+        };
+        let area = Rect::new(0, 0, 80, 6);
+        let row = 3;
+        let painted = render(pane(false), 80, 6);
+        assert!(
+            painted.contains("[Params] [Reload] [Start all] [Stop all]"),
+            "{painted}"
+        );
+        assert_eq!(pane(false).on_click(area, 1, row), ScriptClick::Params);
+        assert_eq!(
+            pane(false).on_click(area, 10, row),
+            ScriptClick::Button("Reload")
+        );
+        assert_eq!(
+            pane(false).on_click(area, 19, row),
+            ScriptClick::Button("Start all")
+        );
+        assert_eq!(
+            pane(false).on_click(area, 31, row),
+            ScriptClick::Button("Stop all")
+        );
+        let painted = render(pane(true), 80, 6);
+        assert!(
+            painted.contains("[Params] [Confirm] [Cancel] [Start all] [Stop all]"),
+            "{painted}"
+        );
+        assert_eq!(
+            pane(true).on_click(area, 10, row),
+            ScriptClick::Button("Confirm")
+        );
+        assert_eq!(
+            pane(true).on_click(area, 20, row),
+            ScriptClick::Button("Cancel")
+        );
+        assert_eq!(
+            pane(true).on_click(area, 29, row),
+            ScriptClick::Button("Start all")
+        );
     }
 
     #[test]

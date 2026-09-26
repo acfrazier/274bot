@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_support::TestDir;
+use frontend_core::scripts::ReloadOutcome;
 use std::fs;
 use std::time::{Duration, Instant};
 use vault::{Profile, ProfileSettings, Vault};
@@ -8,19 +9,17 @@ use vault::{Profile, ProfileSettings, Vault};
 /// lifecycle work has settled.
 fn settle(s: &mut Session) {
     let deadline = Instant::now() + Duration::from_secs(10);
-    while (s.reload_validation_pending() || !s.pending_starts.is_empty())
-        && Instant::now() < deadline
+    while (s.reload_validation_pending() || s.scripts.starts_pending()) && Instant::now() < deadline
     {
-        s.poll_reload_validation();
         s.core.poll_host();
-        s.settle_script_starts();
+        s.poll_scripts();
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(
         !s.reload_validation_pending(),
         "script validation did not settle"
     );
-    assert!(s.pending_starts.is_empty(), "script Start did not settle");
+    assert!(!s.scripts.starts_pending(), "script Start did not settle");
 }
 
 fn reload(s: &mut Session) -> ReloadOutcome {
@@ -47,6 +46,23 @@ fn wait_state(s: &Session, name: &str, want: script::RunState) {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(play.script_state(name), want, "{name}");
+}
+
+/// Operator Start of `sel` on `profile` through the shared coordinator.
+fn start_sel(s: &mut Session, profile: &str, sel: script::ScriptSel) -> Result<(), String> {
+    s.scripts
+        .start_selected(&mut s.core, profile, Some(&sel), None)
+}
+
+fn run_generations(s: &Session, names: &[&str]) -> Vec<(String, u64)> {
+    let play = s.core.play().unwrap();
+    names
+        .iter()
+        .filter_map(|n| {
+            play.script_runtime_generation(n)
+                .map(|g| (n.to_string(), g))
+        })
+        .collect()
 }
 
 fn tmp(name: &str) -> TestDir {
@@ -118,7 +134,7 @@ fn two_profiles_keep_isolated_settings_after_legacy_claim() {
     let (mut s, dir) = session_with_profiles(&["alice", "bob"]);
     let store = dir.join("script-settings.json");
     fs::write(&store, r#"{"catalog:SmithingBot":{"bar":"Adamant"}}"#).unwrap();
-    s.script_settings = script::ScriptSettingsStore::at(store);
+    s.scripts.legacy = script::ScriptSettingsStore::at(store);
     let a = s.profile_overrides("alice", "catalog:SmithingBot", "SmithingBot");
     assert_eq!(a.get("bar"), Some(&Value::String("Adamantite".into())));
     s.set_profile_setting(
@@ -202,24 +218,6 @@ fn same_stem_files_are_distinct_and_hash_whitespace() {
         .unwrap());
 }
 
-#[test]
-fn catalog_diff_noop_and_remove_keep_assignment() {
-    let (mut s, _dir) = session_with_profiles(&["alice"]);
-    s.persist_successful_assignment(
-        "alice",
-        ScriptAssignment {
-            source_kind: "catalog".into(),
-            identity: "GoneBot".into(),
-            display_name: "GoneBot".into(),
-            unavailable: None,
-        },
-    );
-    s.mark_removed_catalog_assignments("GoneBot");
-    let asg = s.profile_assignment("alice").unwrap();
-    assert_eq!(asg.identity, "GoneBot");
-    assert!(asg.unavailable.unwrap().contains("catalog removed"));
-}
-
 const BOT_TS: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 
 fn empty_play() -> host_play::Play {
@@ -239,7 +237,7 @@ fn empty_play() -> host_play::Play {
 
 fn session_with_play(names: &[&str]) -> (Session, TestDir) {
     let (mut s, dir) = session_with_profiles(names);
-    s.js = script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.scripts.js = script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     let mut play = empty_play();
     for name in names {
         play.attach_arm(name, host_play::SlotArm::new(42, false));
@@ -287,7 +285,7 @@ fn initial_runtime_load_failure_survives_another_card_start() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let bad_source = "export const apiVersion = 2;\nthrow new Error('initial-load-proof');\nexport function tick(api) {}\n";
     let bad_path = write_bot(&dir, "bad.ts", bad_source);
-    let bad = s.js.load(&bad_path).unwrap();
+    let bad = s.scripts.js.load(&bad_path).unwrap();
     s.script_sel = Some(script::ScriptSel::Loaded(
         bad.source,
         bad_path.to_string_lossy().into_owned(),
@@ -312,11 +310,13 @@ fn initial_runtime_load_failure_survives_another_card_start() {
     );
 
     let good_path = write_bot(&dir, "good.ts", BOT_TS);
-    s.js.load(&good_path).unwrap();
+    s.scripts.js.load(&good_path).unwrap();
     start_file_on(&mut s, "bob", &good_path);
-    let failure =
-        s.js.load_failure(&bad.identity_key())
-            .expect("initial runtime failure must remain inspectable after another card starts");
+    let failure = s
+        .scripts
+        .js
+        .load_failure(&bad.identity_key())
+        .expect("initial runtime failure must remain inspectable after another card starts");
     assert_eq!(failure.path, bad_path);
     assert_eq!(failure.stage, script::load::LoadStage::RuntimeLoad);
     assert_eq!(
@@ -324,7 +324,11 @@ fn initial_runtime_load_failure_survives_another_card_start() {
         script::raw_content_fingerprint(&bad_path, bad_source)
     );
     assert_eq!(failure.api_family, Some(script::ApiFamily::V2));
-    assert!(s.js.named_failure_output().contains("initial-load-proof"));
+    assert!(s
+        .scripts
+        .js
+        .named_failure_output()
+        .contains("initial-load-proof"));
     s.core.play().unwrap().script_stop("bob");
 }
 
@@ -334,12 +338,11 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
     let helper = write_bot(&dir, "gate.ts", "export const fail = true;");
     let source = "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('retry-load-proof');\nexport function tick(api) {}";
     let path = write_bot(&dir, "retry.ts", source);
-    let card = s.js.load(&path).unwrap();
+    let card = s.scripts.js.load(&path).unwrap();
     let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
     // Start returns before V8 setup: the runtime failure settles after
     // it and reaches the operator as the Start error it used to be.
-    s.script_start_sel("alice", sel.clone())
-        .expect("Start is accepted before setup");
+    start_sel(&mut s, "alice", sel.clone()).expect("Start is accepted before setup");
     settle(&mut s);
     assert!(
         s.error
@@ -353,25 +356,34 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
         s.core.play().unwrap().script_state("alice"),
         script::RunState::Idle
     );
-    let failure = s.js.load_failure(&card.identity_key()).unwrap().clone();
+    let failure = s
+        .scripts
+        .js
+        .load_failure(&card.identity_key())
+        .unwrap()
+        .clone();
     assert!(s.profile_assignment("alice").is_none());
     assert_eq!(
         s.core.play().unwrap().script_runtime_generation("alice"),
         Some(0)
     );
     assert_eq!(
-        s.script_start_sel("missing", sel.clone()).unwrap_err(),
+        start_sel(&mut s, "missing", sel.clone()).unwrap_err(),
         "no slot: missing"
     );
-    assert_eq!(s.js.load_failure(&card.identity_key()), Some(&failure));
+    assert_eq!(
+        s.scripts.js.load_failure(&card.identity_key()),
+        Some(&failure)
+    );
 
     let other_path = write_bot(
         &dir,
         "other.ts",
         &format!("throw new Error('other-load-proof');\n{BOT_TS}"),
     );
-    let other = s.js.load(&other_path).unwrap();
-    s.script_start_sel(
+    let other = s.scripts.js.load(&other_path).unwrap();
+    start_sel(
+        &mut s,
         "bob",
         script::ScriptSel::Loaded(other.source, other_path.to_string_lossy().into_owned()),
     )
@@ -386,18 +398,23 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
         s.error
     );
     assert!(s.profile_assignment("bob").is_none());
-    let other_failure = s.js.load_failure(&other.identity_key()).unwrap().clone();
+    let other_failure = s
+        .scripts
+        .js
+        .load_failure(&other.identity_key())
+        .unwrap()
+        .clone();
     assert_eq!(other_failure.api_family, Some(script::ApiFamily::V1));
     assert_eq!(other_failure.stage, script::LoadStage::RuntimeLoad);
 
     // Resolve the changed sibling on explicit Start, without replacing the card
     // or running a throwaway validation isolate that could clear the diagnostic.
     fs::write(&helper, "export const fail = false;").unwrap();
-    s.script_start_sel("alice", sel.clone()).unwrap();
+    start_sel(&mut s, "alice", sel.clone()).unwrap();
     settle(&mut s);
-    assert!(s.js.load_failure(&card.identity_key()).is_none());
+    assert!(s.scripts.js.load_failure(&card.identity_key()).is_none());
     assert_eq!(
-        s.js.load_failure(&other.identity_key()),
+        s.scripts.js.load_failure(&other.identity_key()),
         Some(&other_failure)
     );
     let play = s.core.play().unwrap();
@@ -407,7 +424,8 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
         Some(card.identity_key())
     );
     assert_eq!(
-        s.script_start_sel(
+        start_sel(
+            &mut s,
             "alice",
             script::ScriptSel::Loaded(other.source, other_path.to_string_lossy().into_owned())
         )
@@ -415,7 +433,7 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
         "script already active: stop it first"
     );
     assert_eq!(
-        s.js.load_failure(&other.identity_key()),
+        s.scripts.js.load_failure(&other.identity_key()),
         Some(&other_failure)
     );
     assert_eq!(
@@ -502,18 +520,22 @@ fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
         script::RunState::Idle,
         "load must not Start"
     );
-    let first =
-        s.js.cards()
-            .iter()
-            .filter(|c| c.source == script::ScriptSource::File)
-            .count();
+    let first = s
+        .scripts
+        .js
+        .cards()
+        .iter()
+        .filter(|c| c.source == script::ScriptSource::File)
+        .count();
     assert_eq!(first, 1);
     s.load_js(&path);
-    let again =
-        s.js.cards()
-            .iter()
-            .filter(|c| c.source == script::ScriptSource::File)
-            .count();
+    let again = s
+        .scripts
+        .js
+        .cards()
+        .iter()
+        .filter(|c| c.source == script::ScriptSource::File)
+        .count();
     assert_eq!(again, 1, "same path must replace, not duplicate");
     s.script_start_selected();
     settle(&mut s);
@@ -546,6 +568,7 @@ fn ui_reload_validation_keeps_the_control_thread_responsive() {
     let path = write_bot(&dir, "runaway.ts", BOT_TS);
     session.load_js(&path);
     let old_js = session
+        .scripts
         .js
         .get(script::ScriptSource::File, &path.to_string_lossy())
         .expect("loaded card")
@@ -584,6 +607,7 @@ fn ui_reload_validation_keeps_the_control_thread_responsive() {
     );
     assert_eq!(
         session
+            .scripts
             .js
             .get(script::ScriptSource::File, &path.to_string_lossy())
             .expect("old card remains installed")
@@ -599,14 +623,17 @@ fn catalog_validation_keeps_the_control_thread_responsive() {
     let root = dir.join("catalog-worker");
     fake_catalog(&root, &[("RunawayBot", BOT_TS)]);
     session
+        .scripts
         .js
         .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .unwrap();
     session
+        .scripts
         .js
         .ensure_js(script::ScriptSource::Catalog, "RunawayBot")
         .unwrap();
     let old_js = session
+        .scripts
         .js
         .get(script::ScriptSource::Catalog, "RunawayBot")
         .expect("loaded card")
@@ -637,6 +664,7 @@ fn catalog_validation_keeps_the_control_thread_responsive() {
     ));
     assert_eq!(
         session
+            .scripts
             .js
             .get(script::ScriptSource::Catalog, "RunawayBot")
             .expect("old card remains installed")
@@ -646,11 +674,11 @@ fn catalog_validation_keeps_the_control_thread_responsive() {
     );
     assert!(
         session
-            .catalog_refresh_report
-            .as_deref()
+            .scripts
+            .catalog_refresh_report()
             .is_some_and(|report| report.contains("failed")),
         "{:?}",
-        session.catalog_refresh_report
+        session.scripts.catalog_refresh_report()
     );
 }
 
@@ -660,6 +688,7 @@ fn external_unchanged_reload_dispatches_validation_once() {
     let path = write_bot(&dir, "ExampleBot.ts", BOT_TS);
     session.load_js(&path);
     let card = session
+        .scripts
         .js
         .get(script::ScriptSource::File, &path.to_string_lossy())
         .expect("loaded File card")
@@ -738,11 +767,13 @@ fn reload_clicked_warns_before_replacing_running() {
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
-    let old_js =
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
-            .unwrap()
-            .js
-            .clone();
+    let old_js = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .unwrap()
+        .js
+        .clone();
     fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
     let first = reload(&mut s);
     assert_eq!(first, ReloadOutcome::NeedsConfirm);
@@ -755,11 +786,13 @@ fn reload_clicked_warns_before_replacing_running() {
         s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
     );
-    let now_js =
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
-            .unwrap()
-            .js
-            .clone();
+    let now_js = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .unwrap()
+        .js
+        .clone();
     assert_eq!(old_js, now_js, "preview must not replace registration");
     s.core.play().unwrap().script_stop("alice");
 }
@@ -779,11 +812,13 @@ fn reload_commit_gates_pause_during_prep() {
         s.core.play().unwrap().script_state("alice"),
         script::RunState::Paused
     );
-    let old_js =
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
-            .unwrap()
-            .js
-            .clone();
+    let old_js = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .unwrap()
+        .js
+        .clone();
     settle(&mut s);
     assert_eq!(s.take_reload_outcome(), Some(ReloadOutcome::NeedsConfirm));
     assert!(
@@ -798,11 +833,13 @@ fn reload_commit_gates_pause_during_prep() {
         s.core.play().unwrap().script_state("alice"),
         script::RunState::Paused
     );
-    let now_js =
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
-            .unwrap()
-            .js
-            .clone();
+    let now_js = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .unwrap()
+        .js
+        .clone();
     assert_eq!(old_js, now_js);
     s.core.play().unwrap().script_stop("alice");
 }
@@ -814,10 +851,12 @@ fn prepare_failure_preserves_old_instance() {
     s.load_js(&path);
     s.script_start_selected();
     settle(&mut s);
-    let old =
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
-            .unwrap()
-            .clone();
+    let old = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .unwrap()
+        .clone();
     fs::write(&path, "const x = 1;\n").unwrap();
     let out = reload(&mut s);
     settle(&mut s);
@@ -828,9 +867,11 @@ fn prepare_failure_preserves_old_instance() {
         ),
         other => panic!("expected Failed, got {other:?}"),
     }
-    let now =
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
-            .unwrap();
+    let now = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .unwrap();
     assert_eq!(now.origin, old.origin);
     assert_eq!(now.js, old.js);
     assert_eq!(
@@ -857,6 +898,8 @@ fn live_settings_reach_running_and_paused() {
         "n",
         Value::String("2".into()),
     ));
+    // The run receives the bag once the write is durable.
+    s.core.flush_writes();
     let play = s.core.play().unwrap();
     let identity = play.script_source_identity("alice").unwrap();
     let gen = play.script_runtime_generation("alice").unwrap();
@@ -875,6 +918,7 @@ fn live_settings_reach_running_and_paused() {
         "n",
         Value::String("3".into()),
     ));
+    s.core.flush_writes();
     bag.insert("n".into(), Value::String("3".into()));
     let play = s.core.play().unwrap();
     assert!(
@@ -890,21 +934,31 @@ fn catalog_prepare_failure_does_not_mutate_or_block_valid() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog");
     fake_catalog(&root, &[("GoodBot", BOT_TS), ("BadBot", BOT_TS)]);
-    s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    s.scripts
+        .js
+        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .unwrap();
-    s.js.ensure_js(script::ScriptSource::Catalog, "GoodBot")
+    s.scripts
+        .js
+        .ensure_js(script::ScriptSource::Catalog, "GoodBot")
         .unwrap();
-    s.js.ensure_js(script::ScriptSource::Catalog, "BadBot")
+    s.scripts
+        .js
+        .ensure_js(script::ScriptSource::Catalog, "BadBot")
         .unwrap();
-    let good_js =
-        s.js.get(script::ScriptSource::Catalog, "GoodBot")
-            .unwrap()
-            .js
-            .clone();
-    let bad =
-        s.js.get(script::ScriptSource::Catalog, "BadBot")
-            .unwrap()
-            .clone();
+    let good_js = s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "GoodBot")
+        .unwrap()
+        .js
+        .clone();
+    let bad = s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "BadBot")
+        .unwrap()
+        .clone();
     fs::write(
         root.join("src/bot/scripts/GoodBot/GoodBot.ts"),
         "export default class T extends LoopingBot { override loop() { return; } }\n",
@@ -917,26 +971,38 @@ fn catalog_prepare_failure_does_not_mutate_or_block_valid() {
     .unwrap();
     refresh_catalog(&mut s, &root);
     settle(&mut s);
-    let good = s.js.get(script::ScriptSource::Catalog, "GoodBot").unwrap();
+    let good = s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "GoodBot")
+        .unwrap();
     assert!(!good.js.is_empty(), "successful prepare must keep js");
     assert_ne!(good.js, good_js, "changed good card commits prepared js");
-    let bad_now = s.js.get(script::ScriptSource::Catalog, "BadBot").unwrap();
+    let bad_now = s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "BadBot")
+        .unwrap();
     assert_eq!(bad_now.origin, bad.origin);
     assert_eq!(bad_now.js, bad.js);
     assert!(
         s.error.as_deref().unwrap_or("").contains("BadBot")
-            || s.catalog_refresh_report
-                .as_deref()
+            || s.scripts
+                .catalog_refresh_report()
                 .unwrap_or("")
                 .contains("failed"),
         "independent failure is reported: {:?} {:?}",
         s.error,
-        s.catalog_refresh_report
+        s.scripts.catalog_refresh_report()
     );
     assert!(
-        s.js.load_failures().iter().any(|f| f.name == "BadBot"),
+        s.scripts
+            .js
+            .load_failures()
+            .iter()
+            .any(|f| f.name == "BadBot"),
         "failed catalog card stays inspectable: {:?}",
-        s.js.load_failures()
+        s.scripts.js.load_failures()
     );
 }
 
@@ -952,13 +1018,21 @@ fn catalog_mixed_batch_keeps_two_failures_after_success() {
             ("BadImport", BOT_TS),
         ],
     );
-    s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    s.scripts
+        .js
+        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .unwrap();
-    s.js.ensure_js(script::ScriptSource::Catalog, "GoodBot")
+    s.scripts
+        .js
+        .ensure_js(script::ScriptSource::Catalog, "GoodBot")
         .unwrap();
-    s.js.ensure_js(script::ScriptSource::Catalog, "BadParse")
+    s.scripts
+        .js
+        .ensure_js(script::ScriptSource::Catalog, "BadParse")
         .unwrap();
-    s.js.ensure_js(script::ScriptSource::Catalog, "BadImport")
+    s.scripts
+        .js
+        .ensure_js(script::ScriptSource::Catalog, "BadImport")
         .unwrap();
     fs::write(
         root.join("src/bot/scripts/GoodBot/GoodBot.ts"),
@@ -977,22 +1051,24 @@ fn catalog_mixed_batch_keeps_two_failures_after_success() {
     .unwrap();
     refresh_catalog(&mut s, &root);
     settle(&mut s);
-    let names: Vec<_> =
-        s.js.load_failures()
-            .iter()
-            .map(|f| f.name.as_str())
-            .collect();
+    let names: Vec<_> = s
+        .scripts
+        .js
+        .load_failures()
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
     assert!(
         names.contains(&"BadParse") && names.contains(&"BadImport"),
         "both failures stay inspectable: {names:?} err={:?} report={:?}",
         s.error,
-        s.catalog_refresh_report
+        s.scripts.catalog_refresh_report()
     );
     assert!(!names.contains(&"GoodBot"));
-    assert!(s.js.named_failure_output().contains("BadParse"));
+    assert!(s.scripts.js.named_failure_output().contains("BadParse"));
     assert!(s
-        .catalog_refresh_report
-        .as_deref()
+        .scripts
+        .catalog_refresh_report()
         .unwrap_or("")
         .contains("BadParse"));
 }
@@ -1002,9 +1078,13 @@ fn catalog_refresh_warns_before_stopping_running() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-run");
     fake_catalog(&root, &[("RunBot", BOT_TS)]);
-    s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    s.scripts
+        .js
+        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .unwrap();
-    s.js.ensure_js(script::ScriptSource::Catalog, "RunBot")
+    s.scripts
+        .js
+        .ensure_js(script::ScriptSource::Catalog, "RunBot")
         .unwrap();
     s.persist_successful_assignment(
         "alice",
@@ -1035,10 +1115,11 @@ fn catalog_refresh_warns_before_stopping_running() {
         "catalog refresh must warn before stopping"
     );
     assert!(
-        s.reload_warning.is_some() || s.error.as_deref().unwrap_or("").contains("running"),
+        s.scripts.reload_warning().is_some()
+            || s.error.as_deref().unwrap_or("").contains("running"),
         "{:?} {:?}",
         s.error,
-        s.reload_warning.as_ref().map(|w| &w.running)
+        s.scripts.reload_warning().map(|w| &w.running)
     );
     s.core.play().unwrap().script_stop("alice");
 }
@@ -1061,7 +1142,10 @@ fn start_after_launch_runs_saved_catalog_assignment_before_any_browse() {
     );
     focus_profile(&mut s, "alice");
     assert!(
-        s.js.get(script::ScriptSource::Catalog, "RunBot").is_none(),
+        s.scripts
+            .js
+            .get(script::ScriptSource::Catalog, "RunBot")
+            .is_none(),
         "fresh launch: catalog not filled yet"
     );
     s.script_start_selected();
@@ -1122,20 +1206,19 @@ fn cancel_reload_preserves_running_and_paused_executions() {
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     s.core.play().unwrap().script_pause("bob");
-    let generations = s.generations_for(&["alice".into(), "bob".into()]);
-    let old_js =
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
-            .unwrap()
-            .js
-            .clone();
+    let generations = run_generations(&s, &["alice", "bob"]);
+    let old_js = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .unwrap()
+        .js
+        .clone();
     warn_shared_reload(&mut s, &path);
     assert!(s.script_reload_confirmation_pending());
     s.cancel_reload();
     assert!(!s.script_reload_confirmation_pending());
-    assert_eq!(
-        s.generations_for(&["alice".into(), "bob".into()]),
-        generations
-    );
+    assert_eq!(run_generations(&s, &["alice", "bob"]), generations);
     assert_eq!(
         s.core.play().unwrap().script_state("alice"),
         script::RunState::Running
@@ -1145,7 +1228,9 @@ fn cancel_reload_preserves_running_and_paused_executions() {
         script::RunState::Paused
     );
     assert_eq!(
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+        s.scripts
+            .js
+            .get(script::ScriptSource::File, &path.to_string_lossy())
             .unwrap()
             .js,
         old_js
@@ -1171,21 +1256,23 @@ fn reload_confirm_does_not_authorize_switched_selection() {
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
     s.core.play().unwrap().script_pause("bob");
-    let old_b =
-        s.js.get(script::ScriptSource::File, &path_b.to_string_lossy())
-            .unwrap()
-            .js
-            .clone();
+    let old_b = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path_b.to_string_lossy())
+        .unwrap()
+        .js
+        .clone();
     fs::write(&path_a, format!("{BOT_TS}// a changed\n")).unwrap();
     fs::write(&path_b, format!("{BOT_TS}// b changed\n")).unwrap();
     focus_profile(&mut s, "alice");
     assert_eq!(reload(&mut s), ReloadOutcome::NeedsConfirm);
     assert!(
-        s.reload_warning
-            .as_ref()
+        s.scripts
+            .reload_warning()
             .is_some_and(|w| w.running.iter().any(|n| n == "alice")),
         "{:?}",
-        s.reload_warning.as_ref().map(|w| &w.running)
+        s.scripts.reload_warning().map(|w| &w.running)
     );
     focus_profile(&mut s, "bob");
     let second = reload(&mut s);
@@ -1200,11 +1287,13 @@ fn reload_confirm_does_not_authorize_switched_selection() {
         script::RunState::Paused,
         "B must not be replaced without its own warning"
     );
-    let now_b =
-        s.js.get(script::ScriptSource::File, &path_b.to_string_lossy())
-            .unwrap()
-            .js
-            .clone();
+    let now_b = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path_b.to_string_lossy())
+        .unwrap()
+        .js
+        .clone();
     assert_eq!(old_b, now_b, "B registration stays until B is confirmed");
     s.core.play().unwrap().script_stop("alice");
     s.core.play().unwrap().script_stop("bob");
@@ -1223,13 +1312,13 @@ fn reload_warn_survives_focus_only() {
     fs::write(&path_a, format!("{BOT_TS}// changed\n")).unwrap();
     focus_profile(&mut s, "alice");
     assert_eq!(reload(&mut s), ReloadOutcome::NeedsConfirm);
-    let warned = s.reload_warning.as_ref().unwrap().lookup.clone();
+    let warned = s.scripts.reload_warning().unwrap().lookup.clone();
     focus_profile(&mut s, "bob");
     assert!(
-        s.reload_warning.is_some(),
+        s.scripts.reload_warning().is_some(),
         "focus alone must not cancel a bound warning"
     );
-    assert_eq!(s.reload_warning.as_ref().unwrap().lookup, warned);
+    assert_eq!(s.scripts.reload_warning().unwrap().lookup, warned);
     focus_profile(&mut s, "alice");
     let out = reload(&mut s);
     settle(&mut s);
@@ -1249,9 +1338,13 @@ fn catalog_confirm_gates_newly_paused() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-pause");
     fake_catalog(&root, &[("PauseBot", BOT_TS)]);
-    s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    s.scripts
+        .js
+        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .unwrap();
-    s.js.ensure_js(script::ScriptSource::Catalog, "PauseBot")
+    s.scripts
+        .js
+        .ensure_js(script::ScriptSource::Catalog, "PauseBot")
         .unwrap();
     s.persist_successful_assignment(
         "alice",
@@ -1269,11 +1362,13 @@ fn catalog_confirm_gates_newly_paused() {
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
-    let old_js =
-        s.js.get(script::ScriptSource::Catalog, "PauseBot")
-            .unwrap()
-            .js
-            .clone();
+    let old_js = s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "PauseBot")
+        .unwrap()
+        .js
+        .clone();
     fs::write(
         root.join("src/bot/scripts/PauseBot/PauseBot.ts"),
         format!("{BOT_TS}// changed\n"),
@@ -1298,18 +1393,20 @@ fn catalog_confirm_gates_newly_paused() {
             .as_deref()
             .unwrap_or("")
             .contains("paused during prepare")
-            || s.reload_warning
-                .as_ref()
+            || s.scripts
+                .reload_warning()
                 .is_some_and(|w| !w.paused_during_prep.is_empty()),
         "{:?} {:?}",
         s.error,
-        s.reload_warning.as_ref().map(|w| &w.paused_during_prep)
+        s.scripts.reload_warning().map(|w| &w.paused_during_prep)
     );
-    let now_js =
-        s.js.get(script::ScriptSource::Catalog, "PauseBot")
-            .unwrap()
-            .js
-            .clone();
+    let now_js = s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "PauseBot")
+        .unwrap()
+        .js
+        .clone();
     assert_eq!(old_js, now_js);
     s.core.play().unwrap().script_stop("alice");
 }
@@ -1322,10 +1419,12 @@ fn reload_toplevel_throw_fails_before_replacement() {
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
-    let old =
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
-            .unwrap()
-            .clone();
+    let old = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .unwrap()
+        .clone();
     fs::write(
         &path,
         "throw new Error('prep boom');\nexport default class T extends LoopingBot { override loop() {} }\n",
@@ -1340,9 +1439,11 @@ fn reload_toplevel_throw_fails_before_replacement() {
         ),
         other => panic!("top-level throw must fail before replacement, got {other:?}"),
     }
-    let now =
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
-            .unwrap();
+    let now = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .unwrap();
     assert_eq!(now.origin, old.origin);
     assert_eq!(now.js, old.js);
     assert_eq!(
@@ -1364,10 +1465,12 @@ fn reload_missing_named_export_fails_before_replacement() {
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
-    let old =
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
-            .unwrap()
-            .clone();
+    let old = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .unwrap()
+        .clone();
     fs::write(&path, src).unwrap();
     let out = reload(&mut s);
     settle(&mut s);
@@ -1378,9 +1481,11 @@ fn reload_missing_named_export_fails_before_replacement() {
         ),
         other => panic!("missing named export must fail before replacement, got {other:?}"),
     }
-    let now =
-        s.js.get(script::ScriptSource::File, &path.to_string_lossy())
-            .unwrap();
+    let now = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .unwrap();
     assert_eq!(now.origin, old.origin);
     assert_eq!(now.js, old.js);
     assert_eq!(
@@ -1395,9 +1500,13 @@ fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-stale");
     fake_catalog(&root, &[("StaleBot", BOT_TS)]);
-    s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    s.scripts
+        .js
+        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .unwrap();
-    s.js.ensure_js(script::ScriptSource::Catalog, "StaleBot")
+    s.scripts
+        .js
+        .ensure_js(script::ScriptSource::Catalog, "StaleBot")
         .unwrap();
     s.persist_successful_assignment(
         "alice",
@@ -1414,11 +1523,13 @@ fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
     ));
     s.script_start_selected();
     settle(&mut s);
-    let old_js =
-        s.js.get(script::ScriptSource::Catalog, "StaleBot")
-            .unwrap()
-            .js
-            .clone();
+    let old_js = s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "StaleBot")
+        .unwrap()
+        .js
+        .clone();
     let bot = root.join("src/bot/scripts/StaleBot/StaleBot.ts");
     fs::write(&bot, format!("{BOT_TS}// first\n")).unwrap();
     refresh_catalog(&mut s, &root);
@@ -1435,7 +1546,11 @@ fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
         script::RunState::Running,
         "content change after warn must not authorize the previous prepared set"
     );
-    let now = s.js.get(script::ScriptSource::Catalog, "StaleBot").unwrap();
+    let now = s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "StaleBot")
+        .unwrap();
     assert_eq!(now.js, old_js);
     s.core.play().unwrap().script_stop("alice");
 }
@@ -1472,7 +1587,7 @@ fn reload_reports_true_startup_failure_without_aborting_peer() {
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
-    s.fail_reload_start_for = Some("bob".into());
+    s.scripts.fail_reload_start_for = Some("bob".into());
     let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 1);
@@ -1547,7 +1662,7 @@ fn reload_stop_all_clears_pending_without_restart() {
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
     s.script_stop_all();
-    assert!(s.pending_reload.is_none());
+    assert!(s.scripts.pending_reload().is_none());
     wait_state(&s, "alice", script::RunState::Idle);
     wait_state(&s, "bob", script::RunState::Idle);
 }
@@ -1558,7 +1673,7 @@ fn stop_all_during_a_reload_reap_drops_the_queued_replacement() {
     let path = write_bot(&dir, "reap.ts", BOT_TS);
     s.load_js(&path);
     start_file_on(&mut s, "alice", &path);
-    let card = s.js.load(&path).unwrap();
+    let card = s.scripts.js.load(&path).unwrap();
     // Reload shape: the old isolate is reaping and its replacement Start is
     // queued behind the reap (no observe has run in between).
     s.core.stop_script("alice");
@@ -1581,10 +1696,7 @@ fn stop_all_during_a_reload_reap_drops_the_queued_replacement() {
 
     s.script_stop_all();
 
-    assert_eq!(
-        s.last_bulk_script_report.as_deref(),
-        Some("Stop all: stopped 1")
-    );
+    assert_eq!(s.scripts.last_bulk_report(), Some("Stop all: stopped 1"));
     wait_state(&s, "alice", script::RunState::Idle);
     for _ in 0..20 {
         s.pump_status();
@@ -1763,8 +1875,8 @@ fn start_all_lists_a_member_whose_setup_fails_after_the_click() {
         "bad.ts",
         "throw new Error('bulk-load-proof');\nexport function tick(api) {}\n",
     );
-    let good = s.js.load(&good_path).unwrap();
-    let bad = s.js.load(&bad_path).unwrap();
+    let good = s.scripts.js.load(&good_path).unwrap();
+    let bad = s.scripts.js.load(&bad_path).unwrap();
     s.persist_successful_assignment("alice", good.assignment());
     s.persist_successful_assignment("bob", bad.assignment());
     s.script_start_all();
@@ -1779,7 +1891,11 @@ fn start_all_lists_a_member_whose_setup_fails_after_the_click() {
     let play = s.core.play().unwrap();
     assert_eq!(play.script_state("alice"), script::RunState::Running);
     assert_eq!(play.script_state("bob"), script::RunState::Idle);
-    let failure = s.js.load_failure(&bad.identity_key()).expect("recorded");
+    let failure = s
+        .scripts
+        .js
+        .load_failure(&bad.identity_key())
+        .expect("recorded");
     assert_eq!(failure.stage, script::LoadStage::RuntimeLoad);
     play.script_stop("alice");
 }
@@ -1789,9 +1905,13 @@ fn catalog_native_stop_skips_target_and_reloads_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let root = dir.join("catalog-stop");
     fake_catalog(&root, &[("StopBot", BOT_TS)]);
-    s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    s.scripts
+        .js
+        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .unwrap();
-    s.js.ensure_js(script::ScriptSource::Catalog, "StopBot")
+    s.scripts
+        .js
+        .ensure_js(script::ScriptSource::Catalog, "StopBot")
         .unwrap();
     let asg = ScriptAssignment {
         source_kind: "catalog".into(),
@@ -1837,4 +1957,107 @@ fn catalog_native_stop_skips_target_and_reloads_peer() {
         script::RunState::Running
     );
     s.core.play().unwrap().script_stop("alice");
+}
+
+const THIEVER_TS: &str = "export const SETTINGS = { target: { type: 'string', default: 'Man' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
+
+/// Apply to all from the Script prefs editor: the focused profile's bag
+/// for its card reaches the other same-card member (saved and pushed to
+/// its run), a member on another card is skipped and untouched.
+#[test]
+fn apply_to_all_reaches_same_card_members_only() {
+    let (mut s, dir) = session_with_play(&["alice", "bob", "carol"]);
+    let thiever = write_bot(&dir, "thiever.ts", THIEVER_TS);
+    let miner = write_bot(&dir, "miner.ts", BOT_TS);
+    s.load_js(&thiever);
+    s.load_js(&miner);
+    start_file_on(&mut s, "bob", &thiever);
+    start_file_on(&mut s, "carol", &miner);
+    wait_state(&s, "bob", script::RunState::Running);
+    let card = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &thiever.to_string_lossy())
+        .unwrap()
+        .clone();
+    s.persist_successful_assignment("alice", card.assignment());
+    // Loading the files left alice browsing the miner; she edits the thiever.
+    s.set_pending_browse(
+        "alice",
+        script::ScriptSel::Loaded(card.source, card.identity_id()),
+    );
+    focus_profile(&mut s, "alice");
+    assert!(s.set_profile_setting(
+        "alice",
+        card.source,
+        &card.name,
+        &card.path,
+        "target",
+        Value::String("Guard".into()),
+    ));
+
+    s.prepare_settings_sync();
+    let scope = s.scripts.prepared_settings_sync().unwrap();
+    assert_eq!(scope.targets, ["bob"]);
+    assert_eq!(scope.skipped.len(), 1);
+    s.apply_settings_sync();
+    s.core.flush_writes();
+    s.poll_scripts();
+
+    let key = card.identity_key();
+    let saved = |s: &Session, name: &str| {
+        s.core
+            .vault()
+            .unwrap()
+            .get(name)
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .and_then(|bag| bag.get("target").cloned())
+    };
+    assert_eq!(saved(&s, "bob"), Some(Value::String("Guard".into())));
+    assert_eq!(saved(&s, "carol"), None);
+    let report = s.scripts.last_settings_sync().unwrap();
+    assert_eq!((report.saved, report.delivered), (1, 1));
+    assert_eq!(s.error.as_deref(), Some(report.summary()));
+    s.core.play().unwrap().script_stop("bob");
+    s.core.play().unwrap().script_stop("carol");
+}
+
+/// A parameter edit whose save fails never reaches the running script:
+/// the run is posted only once the write is durable.
+#[test]
+fn a_failed_parameter_save_is_not_pushed_to_the_run() {
+    let (mut s, dir) = session_with_play(&["alice"]);
+    let path = write_bot(&dir, "live.ts", BOT_TS);
+    s.load_js(&path);
+    s.script_start_selected();
+    settle(&mut s);
+    wait_state(&s, "alice", script::RunState::Running);
+    s.core.flush_writes();
+    // The writer's temp file cannot be created where a directory sits.
+    let blocker = dir.join("v.vault").with_extension("tmp");
+    fs::create_dir_all(&blocker).unwrap();
+    s.set_profile_setting(
+        "alice",
+        script::ScriptSource::File,
+        "live",
+        &path,
+        "n",
+        Value::String("2".into()),
+    );
+    s.core.flush_writes();
+    fs::remove_dir_all(&blocker).unwrap();
+    assert_eq!(s.core.take_write_failures().len(), 1, "the save failed");
+    let play = s.core.play().unwrap();
+    let identity = play.script_source_identity("alice").unwrap();
+    let generation = play.script_runtime_generation("alice").unwrap();
+    let mut bag = serde_json::Map::new();
+    bag.insert("n".into(), Value::String("2".into()));
+    assert!(
+        play.script_post_settings_fenced("alice", &bag, &identity, generation),
+        "the unsaved value was already posted to the run"
+    );
+    play.script_stop("alice");
 }

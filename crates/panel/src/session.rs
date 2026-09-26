@@ -1250,34 +1250,12 @@ pub struct Session {
     /// The script picked in Browse (compiled id or loaded JS card);
     /// `None` until one is selected. Selecting never Starts — Start is the
     /// section button. This is the focused heading; per-profile pending
-    /// Browse lives in [`Session::pending_browse`].
+    /// Browse lives in the shared [`frontend_core::Scripts`].
     pub script_sel: Option<script::ScriptSel>,
-    /// Per-profile Browse selection, never treated as last successful Start.
-    pub pending_browse: HashMap<String, script::ScriptSel>,
-    pub last_bulk_script_report: Option<String>,
-    /// Load Starts whose isolate setup has not settled, by profile. The
-    /// assignment and the load diagnostic are committed when it does.
-    pub(crate) pending_starts: HashMap<String, crate::profile_script::PendingStart>,
-    /// The last Start all report, kept so a member whose setup fails after
-    /// the click moves from started to failed.
-    pub(crate) bulk_start: Option<crate::profile_script::BulkStart>,
-    pub reload_warning: Option<crate::profile_script::ReloadWarning>,
-    /// Bound prepare/warn record for Reload or catalog Refresh confirm.
-    pub pending_reload: Option<crate::profile_script::PendingReload>,
-    /// Next catalog Refresh confirms a previously shown running/paused warning.
-    pub catalog_refresh_confirm: bool,
-    pub catalog_refresh_report: Option<String>,
-    pub reload_generation: u64,
-    /// Worker-owned V8 validation for an operator reload/catalog preview.
-    pub(crate) reload_validation: Option<crate::profile_script::ReloadValidationJob>,
-    /// Terminal result of the latest asynchronous reload/catalog operation.
-    /// Test and harness callers consume it after the worker settles.
-    pub(crate) reload_outcome: Option<crate::profile_script::ReloadOutcome>,
+    /// Shared script coordination (card library and catalog, assignment,
+    /// per-profile parameters, Start/Stop all, reload, Apply to all).
+    pub scripts: frontend_core::Scripts,
     external_reload_pending: Option<ExternalReloadPending>,
-    /// Test-only: fail replacement Start for this profile after it passed
-    /// eligibility and was stopped. Not a cancellation fixture.
-    #[cfg(test)]
-    pub fail_reload_start_for: Option<String>,
     /// Catalog warmup: at most one `ensure_js` per armed frame.
     pub transpile_queue: VecDeque<(script::ScriptSource, String)>,
     pub(crate) transpile_armed: bool,
@@ -1304,8 +1282,6 @@ pub struct Session {
     pub rs2b0t_catalog_dir: PathBuf,
     /// Script Browse category filter (`None` = all categories).
     pub browse_category_filter: Option<String>,
-    /// Persisted operator script-parameter overrides.
-    pub script_settings: script::ScriptSettingsStore,
     /// Parameters editor modal open.
     /// Modal typed editors moved to Script prefs window (0.1.6).
     pub script_prefs_open: bool,
@@ -1327,15 +1303,6 @@ pub struct Session {
     pub loadouts_qty_bufs: Vec<String>,
     /// Process-wide equipment/inventory presets.
     pub loadouts: script::LoadoutsStore,
-    /// Scenario/live inject merged last on Start (Task 12 fills this).
-    pub script_settings_inject: Option<serde_json::Map<String, serde_json::Value>>,
-    /// The out-of-tree JS library (`~/.274bot/js-scripts.json`). Loaded
-    /// cards appear in Browse and Start spawns their isolate.
-    pub js: script::JsLibrary,
-    /// True once the `$RS2B0T` catalog has been parsed for this session
-    /// (first Load/Browse). Keeps the ambient env/persisted root out of
-    /// boot and of every `Session::new`.
-    pub(crate) rs2b0t_filled: bool,
     /// Shared `--live script_*` harness runner (Task 6): the slot thread
     /// ticks it from the per-frame hook (sends go through the slot's own
     /// `Client`), the UI frame reads its status/evidence. `None` when no
@@ -1585,20 +1552,15 @@ impl Session {
             multibox: false,
             ui,
             script_sel: None,
-            pending_browse: HashMap::new(),
-            last_bulk_script_report: None,
-            pending_starts: HashMap::new(),
-            bulk_start: None,
-            reload_warning: None,
-            pending_reload: None,
-            catalog_refresh_confirm: false,
-            catalog_refresh_report: None,
-            reload_generation: 0,
-            reload_validation: None,
-            reload_outcome: None,
+            scripts: frontend_core::Scripts::new(
+                {
+                    let mut js = script::JsLibrary::new(script::default_js_store());
+                    let _ = js.restore(); // missing/broken store is not fatal here
+                    js
+                },
+                script::ScriptSettingsStore::with_default_path(),
+            ),
             external_reload_pending: None,
-            #[cfg(test)]
-            fail_reload_start_for: None,
             transpile_queue: VecDeque::new(),
             transpile_armed: false,
             transpile_done: 0,
@@ -1614,7 +1576,6 @@ impl Session {
             rs2b0t_catalog_defer_ok: false,
             rs2b0t_catalog_dir: crate::script_picker::default_load_browse_dir(None),
             browse_category_filter: None,
-            script_settings: script::ScriptSettingsStore::with_default_path(),
             script_prefs_open: false,
             loadouts_open: false,
             loadouts_sel: 0,
@@ -1625,13 +1586,6 @@ impl Session {
             loadouts_search_supply: None,
             loadouts_qty_bufs: Vec::new(),
             loadouts: script::LoadoutsStore::with_default_path(),
-            script_settings_inject: None,
-            js: {
-                let mut js = script::JsLibrary::new(script::default_js_store());
-                let _ = js.restore(); // missing/broken store is not fatal here
-                js
-            },
-            rs2b0t_filled: false,
             scenario: Arc::new(Mutex::new(None)),
             live_script_stop_wait_started: None,
             pending_script: Arc::new(Mutex::new(Vec::new())),
@@ -1810,15 +1764,21 @@ impl Session {
                     Some(script::ScriptSel::Loaded(_, lookup)) => lookup.clone(),
                     _ => path.to_string_lossy().into_owned(),
                 };
-                if let Err(error) = self.js.ensure_js(script::ScriptSource::File, &lookup) {
+                if let Err(error) = self
+                    .scripts
+                    .js
+                    .ensure_js(script::ScriptSource::File, &lookup)
+                {
                     watch.fail(format!("transpile: {error}"));
                     return;
                 }
                 let Some(card) = self
+                    .scripts
                     .js
                     .get(script::ScriptSource::File, &lookup)
                     .or_else(|| {
-                        self.js
+                        self.scripts
+                            .js
                             .get(script::ScriptSource::File, &path.display().to_string())
                     })
                 else {
@@ -1826,6 +1786,7 @@ impl Session {
                     return;
                 };
                 let count = self
+                    .scripts
                     .js
                     .cards()
                     .iter()
@@ -1837,7 +1798,7 @@ impl Session {
                 let want =
                     script::ScriptSel::Loaded(script::ScriptSource::File, card.identity_id());
                 let selected = self.script_sel.as_ref() == Some(&want)
-                    || self.pending_browse.get(&account) == Some(&want);
+                    || self.scripts.pending_browse(&account) == Some(&want);
                 let running = self.core.play().is_some_and(|play| {
                     !matches!(play.script_state(&account), script::RunState::Idle)
                 });
@@ -1904,7 +1865,7 @@ impl Session {
                     return;
                 }
                 match outcome {
-                    crate::profile_script::ReloadOutcome::NothingChanged => {
+                    frontend_core::scripts::ReloadOutcome::NothingChanged => {
                         watch.note_reload_unchanged(host_play::external_loader::NOTHING_CHANGED);
                     }
                     other => watch.fail(format!("unchanged reload: {other:?}")),
@@ -1922,6 +1883,7 @@ impl Session {
                     };
                     let source_before = source_sha256(&before_bytes);
                     let compiled_before = self
+                        .scripts
                         .js
                         .get(script::ScriptSource::File, &path.display().to_string())
                         .map(|card| card.sha256.clone())
@@ -1963,9 +1925,9 @@ impl Session {
                     return;
                 };
                 let (applied, nothing_changed) = match &outcome {
-                    crate::profile_script::ReloadOutcome::Applied { .. } => (true, false),
-                    crate::profile_script::ReloadOutcome::NothingChanged => (false, true),
-                    crate::profile_script::ReloadOutcome::Failed(error) => {
+                    frontend_core::scripts::ReloadOutcome::Applied { .. } => (true, false),
+                    frontend_core::scripts::ReloadOutcome::NothingChanged => (false, true),
+                    frontend_core::scripts::ReloadOutcome::Failed(error) => {
                         watch.fail(format!("changed reload: {error}"));
                         return;
                     }
@@ -1975,6 +1937,7 @@ impl Session {
                     }
                 };
                 let Some(card) = self
+                    .scripts
                     .js
                     .get(script::ScriptSource::File, &path.display().to_string())
                 else {
@@ -1982,6 +1945,7 @@ impl Session {
                     return;
                 };
                 let count = self
+                    .scripts
                     .js
                     .cards()
                     .iter()
@@ -1994,7 +1958,7 @@ impl Session {
                 let want =
                     script::ScriptSel::Loaded(script::ScriptSource::File, card.identity_id());
                 let selected = self.script_sel.as_ref() == Some(&want)
-                    || self.pending_browse.get(&account) == Some(&want);
+                    || self.scripts.pending_browse(&account) == Some(&want);
                 let running = self.core.play().is_some_and(|play| {
                     !matches!(play.script_state(&account), script::RunState::Idle)
                 });
@@ -2727,7 +2691,7 @@ impl Session {
         // Load through normal File provenance and select by identity_id.
 
         if let Some(file_name) = view.start_file {
-            let card = load_live_example_card(&mut self.js, file_name)?;
+            let card = load_live_example_card(&mut self.scripts.js, file_name)?;
             let identity = card.identity_id();
             self.script_sel = Some(script::ScriptSel::Loaded(
                 script::ScriptSource::File,
@@ -2756,10 +2720,12 @@ impl Session {
             } else if let Some(fixture) = script::live_file_fixture_path(card_name) {
                 let stem = script::live_file_fixture_stem(card_name)
                     .ok_or_else(|| format!("no file stem for live fixture {card_name}"))?;
-                self.js
+                self.scripts
+                    .js
                     .load(&fixture)
                     .map_err(|e| format!("load {card_name} fixture: {e}"))?;
                 let card = self
+                    .scripts
                     .js
                     .get(script::ScriptSource::File, stem)
                     .cloned()
@@ -2802,10 +2768,12 @@ impl Session {
                 }
             } else {
                 self.fill_rs2b0t_cards_once();
-                self.js
+                self.scripts
+                    .js
                     .ensure_js(script::ScriptSource::Catalog, card_name)
                     .map_err(|e| format!("transpile {card_name}: {e}"))?;
                 let card = self
+                    .scripts
                     .js
                     .get(script::ScriptSource::Catalog, card_name)
                     .cloned()
@@ -3196,7 +3164,6 @@ impl Session {
         // the sidecar-50 cadence latch, and the speaker teardown when the
         // owning slot is no longer running.
         self.sync_sidecar_cadence();
-        self.poll_reload_validation();
         self.sync_nav_publish();
         if let Some(owner) = self.audio.owner() {
             if !self.core.slots().contains_key(&owner) {
@@ -3217,7 +3184,7 @@ impl Session {
         self.core.poll_host();
         self.surface_write_failures();
         self.settle_profile_save();
-        self.settle_script_starts();
+        self.poll_scripts();
         let mut current = std::mem::take(&mut self.statuses);
         self.core.copy_statuses_into(&mut current);
         self.ingest_tutorial_chat(&current);
@@ -4715,8 +4682,7 @@ impl Session {
         name: &str,
         schema: &[script::SettingDef],
     ) -> serde_json::Map<String, serde_json::Value> {
-        self.script_settings
-            .merged_bag(source, name, schema, self.script_settings_inject.as_ref())
+        self.scripts.legacy_bag(source, name, schema)
     }
 
     /// Inject overrides merged last when the selected script Starts (live gold).
@@ -4724,7 +4690,7 @@ impl Session {
         &mut self,
         inject: Option<serde_json::Map<String, serde_json::Value>>,
     ) {
-        self.script_settings_inject = inject;
+        self.scripts.inject = inject;
     }
 
     /// Schema defaults + overrides + inject. Empty schema still keeps
@@ -4753,7 +4719,7 @@ impl Session {
             self.error = Some("script: no focused profile".into());
             return;
         };
-        match self.script_start_profile_with(&name, true) {
+        match self.script_start_focused(&name) {
             Ok(()) => self.error = None,
             Err(e) => self.error = Some(format!("script: {e}")),
         }

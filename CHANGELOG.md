@@ -263,6 +263,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   is logged back in and a crashed worker recreated), and new keys act on the
   focused bot: `i` Log in, `u` Log out, `U` Log out all, `x` Remove (clean
   logout, then the worker stops; the neighbour becomes focused).
+- Script coordination is shared too (`frontend-core` `Scripts`): per-profile
+  assignment and parameters, Start all / Stop all, Reload and catalog Refresh
+  run through the same code in the panel and the TUI. The TUI now edits the
+  focused profile's own parameters (not the global `script-settings.json`),
+  keeps a per-profile Browse selection, saves the assignment once a Start is
+  Ready, and has Reload (warning, then Confirm or Cancel), Start all and Stop
+  all buttons under the script buttons. A parameter edit reaches the running
+  script only after it is saved; a failed save is never pushed.
+- Apply to all: from a profile's script parameters (panel Script prefs, TUI
+  parameters `a` then `y`), copy that card's parameters to every wall member
+  assigned the same card, after a confirmation naming the members. Each
+  member's profile is saved, and a member running that card receives the
+  parameters once the save succeeded (only the run seen at Apply; a restarted
+  run already started with them). Members on another card are skipped; the
+  report counts saved, failed and skipped separately from live delivery.
 - Profile edits (auto-login, random events and lamp, credentials, render
   prefs, script assignment, tutorial flag, profile delete) no longer encrypt
   and write the vault on the UI thread. The edit shows at once; one writer

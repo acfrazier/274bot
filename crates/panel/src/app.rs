@@ -1947,6 +1947,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .as_ref()
         .map(|sel| match sel {
             script::ScriptSel::Loaded(source, identity) => session
+                .scripts
                 .js
                 .get(*source, identity)
                 .map(|card| card.name.clone())
@@ -2170,7 +2171,7 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
         {
             if p.delivery {
                 if let Some(from) = category_from_key(p.data) {
-                    let present = card_categories(session.js.cards());
+                    let present = card_categories(session.scripts.js.cards());
                     let mut order =
                         resolve_category_order(&session.ui.script_category_order, &present);
                     move_category(&mut order, &from, cat);
@@ -2255,7 +2256,7 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
                 let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                 ui.text_disabled(line);
             }
-            if let Some(failure) = session.js.load_failure(&card.identity_key()) {
+            if let Some(failure) = session.scripts.js.load_failure(&card.identity_key()) {
                 ui.text_colored(ERROR, format!("failed {}", failure.stage.as_str()));
                 if selected {
                     ui.text_wrapped(failure.named_line());
@@ -2316,7 +2317,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     let validating = session.reload_validation_pending();
     let label = if validating {
         "Validating catalog…"
-    } else if session.catalog_refresh_confirm {
+    } else if session.scripts.catalog_refresh_confirm() {
         "Confirm catalog reload"
     } else {
         "Refresh catalog"
@@ -2327,7 +2328,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
             session.begin_refresh_catalog();
         }
     }
-    if (session.catalog_refresh_confirm || validating)
+    if (session.scripts.catalog_refresh_confirm() || validating)
         && ui.button_with_size("Cancel reload", [w, 0.0])
     {
         session.cancel_reload();
@@ -2344,7 +2345,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         }
         ui.spacing();
     }
-    let cards: Vec<script::JsCard> = session.js.cards().to_vec();
+    let cards: Vec<script::JsCard> = session.scripts.js.cards().to_vec();
     let present = card_categories(&cards);
     let order = resolve_category_order(&session.ui.script_category_order, &present);
     if order != session.ui.script_category_order {
@@ -2356,7 +2357,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         ui.spacing();
     }
     let busy = !session.transpile_queue.is_empty();
-    let need = session.js.cards_needing_transpile().len();
+    let need = session.scripts.js.cards_needing_transpile().len();
     if need > 0 || busy {
         let w = ui.content_region_avail()[0];
         let _off = busy.then(|| ui.begin_disabled());
@@ -2379,7 +2380,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         }
         ui.spacing();
     }
-    let named_failures = session.js.named_failure_output();
+    let named_failures = session.scripts.js.named_failure_output();
     if !named_failures.is_empty() {
         // Collapsed by default: the list is long (dim catalog cards are
         // expected misses) and pushes the script browser off screen.
@@ -2387,7 +2388,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         let open = ui.collapsing_header(
             format!(
                 "{} failed###script-failures",
-                session.js.load_failures().len()
+                session.scripts.js.load_failures().len()
             ),
             TreeNodeFlags::NONE,
         );
@@ -2823,7 +2824,7 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
     }
     match &session.script_sel {
         Some(script::ScriptSel::Loaded(source, name)) => {
-            if let Some(card) = session.js.get(*source, name) {
+            if let Some(card) = session.scripts.js.get(*source, name) {
                 if card.settings_schema.is_empty() {
                     ui.text_disabled("(no parameters)");
                 } else {
@@ -2863,9 +2864,10 @@ fn persist_profile_setting(
         return;
     }
     session
-        .script_settings
+        .scripts
+        .legacy
         .set_value(source, &card.name, id, value);
-    let _ = session.script_settings.save();
+    let _ = session.scripts.legacy.save();
 }
 
 fn script_parameter_editors(ui: &Ui, session: &mut Session) {
@@ -2873,7 +2875,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
         ui.text_wrapped("select a loaded script with a parameter schema");
         return;
     };
-    let Some(card) = session.js.get(source, &name).cloned() else {
+    let Some(card) = session.scripts.js.get(source, &name).cloned() else {
         ui.text_disabled("(script not found)");
         return;
     };
@@ -3031,6 +3033,36 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             ui.set_item_tooltip(help);
         }
     }
+    if session.focused_name().is_some() {
+        apply_to_all_section(ui, session);
+    }
+}
+
+/// Apply to all: copy the focused profile's parameters for this card to
+/// every wall member assigned the same card, after a confirmation naming
+/// the frozen scope. The last result stays below it.
+fn apply_to_all_section(ui: &Ui, session: &mut Session) {
+    ui.separator();
+    if let Some(scope) = session.scripts.prepared_settings_sync() {
+        ui.text_wrapped(scope.prompt());
+        if ui.button("Apply") {
+            session.apply_settings_sync();
+        }
+        ui.same_line();
+        if ui.button("Cancel##apply-to-all") {
+            session.cancel_settings_sync();
+        }
+    } else {
+        if ui.button("Apply to same-card members…") {
+            session.prepare_settings_sync();
+        }
+        ui.set_item_tooltip(
+            "copy these parameters to every wall member assigned this card; members on another card are skipped",
+        );
+    }
+    if let Some(report) = session.scripts.last_settings_sync() {
+        ui.text_wrapped(report.summary());
+    }
 }
 
 /// Script prefs window: typed parameter editors + optional rail preview toggle.
@@ -3077,6 +3109,7 @@ fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
         Some(script::ScriptSel::Compiled(_)) => Some("compiled scripts have no parameter schema"),
         Some(script::ScriptSel::Loaded(source, name)) => {
             let empty = session
+                .scripts
                 .js
                 .get(*source, name)
                 .is_none_or(|card| card.settings_schema.is_empty());

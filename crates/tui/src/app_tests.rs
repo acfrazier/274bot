@@ -1266,9 +1266,8 @@ fn load_browser_enter_returns_script_load() {
 fn script_params_click_and_space_toggle_persist_bool() {
     let dir = std::env::temp_dir().join(format!("274bot-tui-app-params-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("script-settings.json");
-    let mut store = script::ScriptSettingsStore::at(path);
     let loadouts = script::LoadoutsStore::at(dir.join("loadouts.json"));
+    let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
     let schema = vec![script::SettingDef {
         id: "buryBones".into(),
         ty: "boolean".into(),
@@ -1300,23 +1299,30 @@ fn script_params_click_and_space_toggle_persist_bool() {
         AppAction::ScriptParams,
         "[Params] opens the popup"
     );
-    app.open_script_params(&store);
+    app.open_script_params(script::merge_bag(
+        &app.params_schema,
+        &serde_json::Map::new(),
+        None,
+    ));
     assert!(app.params_state.open);
-    app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Char(' ')));
+    let mut commit = |id: &str, value: serde_json::Value| {
+        commits.push((id.to_string(), value));
+        Ok(())
+    };
+    app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Char(' ')));
     assert_eq!(
         app.params_bag.get("buryBones"),
         Some(&serde_json::json!(false))
     );
-    let start_bag = app.merged_script_settings_bag(&store).expect("merged bag");
     assert_eq!(
-        start_bag.get("buryBones"),
-        Some(&serde_json::json!(false)),
-        "Start would post the toggled bool"
+        commits,
+        [("buryBones".to_string(), serde_json::json!(false))],
+        "the toggle is committed to the profile"
     );
     terminal
         .draw(|frame| {
             app.draw(frame);
-            app.draw_params_overlay(frame, &mut store, &loadouts, None);
+            app.draw_params_overlay(frame, &loadouts, None);
         })
         .unwrap();
     let buf = terminal.backend().buffer();
@@ -1338,8 +1344,12 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let mut store = script::ScriptSettingsStore::at(dir.join("script-settings.json"));
     let loadouts = script::LoadoutsStore::at(dir.join("loadouts.json"));
+    let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
+    let mut commit = |id: &str, value: serde_json::Value| {
+        commits.push((id.to_string(), value));
+        Ok(())
+    };
     let schema = vec![script::SettingDef {
         id: "alchs".into(),
         ty: "number".into(),
@@ -1360,36 +1370,43 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
     let mut app = TuiApp::new("274bot headless");
     app.script_sel = Some(ScriptSel::Loaded(ScriptSource::Catalog, "Alcher".into()));
     app.params_schema = schema;
-    app.open_script_params(&store);
+    app.open_script_params(script::merge_bag(
+        &app.params_schema,
+        &serde_json::Map::new(),
+        None,
+    ));
     assert!(app.params_state.open);
     assert_eq!(app.on_key(key(KeyCode::Char('q'))), AppAction::None);
     assert!(!app.quit, "params overlay must consume q");
-    app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Enter));
+    app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Enter));
     assert!(app.params_state.editing);
     while !app.params_state.scratch.is_empty() {
-        app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Backspace));
+        app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Backspace));
     }
-    app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Char('5')));
-    app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Esc));
+    app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Char('5')));
+    app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Esc));
     assert!(!app.params_state.editing);
     assert_eq!(
         app.params_bag.get("alchs").and_then(|v| v.as_f64()),
         Some(27.0)
     );
-    app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Enter));
+    app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Enter));
     while !app.params_state.scratch.is_empty() {
-        app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Backspace));
+        app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Backspace));
     }
-    app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Char('5')));
-    app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Enter));
+    app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Char('5')));
+    app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Enter));
     assert_eq!(
         app.params_bag.get("alchs").and_then(|v| v.as_f64()),
         Some(5.0)
     );
-    let start_bag = app.merged_script_settings_bag(&store).expect("merged bag");
-    assert_eq!(start_bag.get("alchs").and_then(|v| v.as_f64()), Some(5.0));
-    app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Esc));
+    app.params_on_key(&mut commit, &loadouts, None, key(KeyCode::Esc));
     assert!(!app.params_state.open);
+    assert_eq!(
+        commits,
+        [("alchs".to_string(), serde_json::json!(5.0))],
+        "only the saved edit is committed; the cancelled one is not"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -3177,11 +3177,12 @@ fn browse_file_card_without_desc_does_not_assert_on_endchild() {
     )
     .unwrap();
     let mut s = crate::session::Session::new();
-    s.js = script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts.js =
+        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
     s.load_js(&path);
     assert_eq!(s.error, None, "load: {:?}", s.error);
     assert_eq!(
-        s.js.cards()[0].description,
+        s.scripts.js.cards()[0].description,
         "",
         "File cards have no registry description — this is the abort path"
     );

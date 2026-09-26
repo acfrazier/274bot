@@ -63,7 +63,7 @@ punishment.
 | `nav` | Packed world, router, Traveller | Script isolate or operator UI |
 | `script` | Compiled cards, Load isolate, thin JS shim | A production dependant of `client` or `nav` |
 | `host-play` | Shared `Play` lifecycle over host/script/nav/vault | A second panel or client renderer |
-| `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results, the structured operator log | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries |
+| `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results, the structured operator log; script coordination (catalog, per-profile assignment and parameters, Start all/Stop all, reload, Apply to all) | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries |
 | `scenario` | Shared headed/headless live scenario runner | Panel/TUI chrome |
 | `panel` | Native ImGui UI, winit/wgpu window, game blit | The client 3D renderer or isolate runtime |
 | `tui` | Headless operator view over the same `frontend-core` session | A second kernel or GPU loop |
@@ -389,7 +389,10 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `surface.rs` | front-end slot adapter | `SlotSurface`, `HeadlessSurface` |
 | `log.rs` | structured operator log | per-slot and process rings (500 each), redaction, filtered `LogView`, Save log… |
 | `log_file.rs` | per-session log file | shared off-by-default preference, background writer, size rotation, session pruning |
-| `session_tests.rs` | test bodies | real `Play` seam, no server |
+| `scripts/mod.rs` | script coordination | card library and catalog fill, per-profile assignment and pending Browse, parameter bags (legacy claim, typed edits pushed live once durable), Start / Start all / Stop all, Start settlement (assignment on Ready), notices |
+| `scripts/reload.rs` | reload and catalog-refresh transaction | worker validation, warning with exact runs and generations, confirm/cancel, fenced replacement |
+| `scripts/sync.rs` | Apply to all (bulk parameter sync) | frozen same-card scope, per-profile writes, generation-fenced live push, separate persistence/live counts |
+| `session_tests.rs`, `scripts/tests.rs` | test bodies | real `Play` seam, no server |
 
 ### panel
 
@@ -401,7 +404,7 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `session.rs` | native adapter over `frontend_core::OperatorSession` | `PanelSurface` (slot IO, draw/audio policy), render `Focus` mirror, nav paint, harness state |
 | `session/chooser.rs` | chooser credential scratch | edit buffers and vault helpers |
 | `session_catalog.rs` | catalog discovery and warmup | loading and transpile warmup |
-| `profile_script.rs` | per-profile script controls | assignment, start, reload, refresh |
+| `profile_script.rs` | panel adapter over `frontend_core::Scripts` | focused profile, heading and catalog root; banner notices; external-loader Start failures |
 | `window.rs` | GPU and winit shell | config, surface, errors |
 | `game_view.rs` | game image texture | mailbox frames to texture |
 | `input_capture.rs` | game input capture | keyboard queue and mouse streaming |
@@ -472,7 +475,7 @@ These are product boundaries. The crate checker does not prove them.
 | --- | --- | --- |
 | Operator window, ImGui chrome, MultiBox, game blit, input into slots | `panel` | client applet UI, script isolate |
 | Headless operator view (raster Off) | `tui` | GPU renderer, a second `Play` |
-| Operator lifecycle: vault, fleet membership and latch, selected bot, Load/Log in/Log out/Remove intent, removal settlement, operation results | `frontend-core` | panel/tui chrome, a second login queue or script runtime |
+| Operator lifecycle: vault, fleet membership and latch, selected bot, Load/Log in/Log out/Remove intent, removal settlement, operation results, script assignment/parameters/reload/bulk coordination | `frontend-core` | panel/tui chrome, a second login queue or script runtime |
 | Slot workers: spawn/stop/reap, connection and readiness, login FIFO, tick pump, script start/pause/stop/load execution | `host-play` (`Play`) | panel/tui chrome, `frontend-core`, `e2e` |
 | Native per-slot host APIs, snapshot/think, random-event guardian | `host` | nav internals, JS |
 | Script kernel, isolate thread, shim coerce/marshal only | `script` | JS policy/routers, a foreign runtime |

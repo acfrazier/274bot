@@ -22,6 +22,7 @@ use vault::{Profile, Vault, VaultChange};
 use crate::fleet::Fleet;
 use crate::operations::{ActionKind, OperationBook, OperationId, OperationReport, Outcome};
 use crate::profiles::{ProfileWriter, Written};
+use crate::scripts::{LiveDelivery, LiveSettings, SettingsResult, SettingsWrite};
 use crate::surface::SlotSurface;
 
 /// Clean-logout window a connected member gets on removal before its worker
@@ -97,7 +98,7 @@ pub struct StartSettled {
 }
 
 /// What a running slot learns once a profile write is durable.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ArmMirror {
     /// Nothing live changes (assignments, tutorial flag, render prefs).
     None,
@@ -109,6 +110,9 @@ pub enum ArmMirror {
     },
     /// Handshake-time settings (password, world) for the next login.
     Remember,
+    /// A card's parameters: posted to the run captured at edit time, if
+    /// any, and reported through [`OperatorSession::take_settings_writes`].
+    ScriptSettings(Option<LiveSettings>),
 }
 
 struct PendingWrite {
@@ -145,6 +149,8 @@ pub struct OperatorSession<Io> {
     /// value, so an older failure cannot undo a newer staged edit.
     latest_write: HashMap<String, OperationId>,
     write_failures: Vec<String>,
+    /// Settled script-parameter writes, drained by the script coordinator.
+    settings_writes: Vec<SettingsWrite>,
     /// Load Starts whose setup has not settled, by slot.
     starts: HashMap<String, OperationId>,
     settled_starts: Vec<StartSettled>,
@@ -177,6 +183,7 @@ impl<Io> OperatorSession<Io> {
             write_gate: Arc::default(),
             latest_write: HashMap::new(),
             write_failures: Vec::new(),
+            settings_writes: Vec::new(),
             starts: HashMap::new(),
             settled_starts: Vec::new(),
             spawn_workers: true,
@@ -270,6 +277,15 @@ impl<Io> OperatorSession<Io> {
 
     pub fn last_operation(&self) -> Option<&OperationReport> {
         self.operations.last()
+    }
+
+    /// Open an operation for a coordinator in this crate (scripts).
+    pub(crate) fn open_operation(&mut self, action: ActionKind) -> OperationId {
+        self.operations.open(action)
+    }
+
+    pub(crate) fn set_outcome(&mut self, op: OperationId, slot: &str, outcome: Outcome) {
+        self.operations.set(op, slot, outcome);
     }
 
     /// Failure text of `id`, for a front end's error line.
@@ -932,7 +948,8 @@ impl<Io> OperatorSession<Io> {
                 | ActionKind::Load
                 | ActionKind::ScriptStart
                 | ActionKind::SaveProfile
-                | ActionKind::DeleteProfile => None,
+                | ActionKind::DeleteProfile
+                | ActionKind::SyncSettings => None,
             }
         });
     }
@@ -1243,6 +1260,12 @@ impl<Io> OperatorSession<Io> {
         std::mem::take(&mut self.write_failures)
     }
 
+    /// Script-parameter writes settled since the last take: what was saved
+    /// and, separately, what reached the run captured at edit time.
+    pub fn take_settings_writes(&mut self) -> Vec<SettingsWrite> {
+        std::mem::take(&mut self.settings_writes)
+    }
+
     /// Wait for every queued profile write and settle it. For startup and
     /// harness boundaries only: it blocks on disk I/O, so frame paths use
     /// [`Self::poll`] instead.
@@ -1280,17 +1303,19 @@ impl<Io> OperatorSession<Io> {
             }
         }
         let member = pending.member;
-        match written.result {
+        let settings = matches!(pending.mirror, ArmMirror::ScriptSettings(_));
+        let result = match written.result {
             // A later write in the same commit replaced this value before it
             // was ever durable on its own: its live mirror must not run.
             // A superseded job is Cancelled whatever the commit did: only the
             // job that owns the committed value succeeds or fails.
             _ if written.superseded => {
                 self.operations.set(written.op, &member, Outcome::Cancelled);
+                SettingsResult::Superseded
             }
             Ok(()) => {
                 self.operations.set(written.op, &member, Outcome::Completed);
-                self.apply_mirror(&member, pending.mirror, committed);
+                SettingsResult::Saved(self.apply_mirror(&member, pending.mirror, committed))
             }
             Err(error) => {
                 if let Some(vault) = self.vault.as_mut() {
@@ -1301,14 +1326,29 @@ impl<Io> OperatorSession<Io> {
                 self.write_failures
                     .push(format!("{}: {error}", pending.label));
                 self.operations
-                    .set(written.op, &member, Outcome::Failed(error));
+                    .set(written.op, &member, Outcome::Failed(error.clone()));
+                SettingsResult::Failed(error)
             }
+        };
+        if settings {
+            self.settings_writes.push(SettingsWrite {
+                op: written.op,
+                profile: member,
+                result,
+            });
         }
     }
 
-    fn apply_mirror(&mut self, name: &str, mirror: ArmMirror, committed: Option<Profile>) {
+    /// Apply a durable write's live effect. Returns what a script-parameter
+    /// push did (`NotRunning` for every other mirror).
+    fn apply_mirror(
+        &mut self,
+        name: &str,
+        mirror: ArmMirror,
+        committed: Option<Profile>,
+    ) -> LiveDelivery {
         let Some(play) = self.play.as_mut() else {
-            return;
+            return LiveDelivery::NotRunning;
         };
         match mirror {
             ArmMirror::None => {}
@@ -1336,7 +1376,30 @@ impl<Io> OperatorSession<Io> {
                     play.remember_profile(profile);
                 }
             }
+            ArmMirror::ScriptSettings(live) => return deliver_settings(play, name, live),
         }
+        LiveDelivery::NotRunning
+    }
+}
+
+/// Post a durable bag to the run it was edited for. A different identity
+/// or generation means the run it targeted is gone: that run is never
+/// posted to (a replacement Start already read the saved bag).
+fn deliver_settings(play: &Play, name: &str, live: Option<LiveSettings>) -> LiveDelivery {
+    let Some(live) = live else {
+        return LiveDelivery::NotRunning;
+    };
+    let same_run = play.script_source_identity(name).as_deref() == Some(live.identity.as_str())
+        && play.script_runtime_generation(name) == Some(live.generation);
+    if !same_run {
+        return LiveDelivery::Stale;
+    }
+    if play.script_post_settings_fenced(name, &live.bag, &live.identity, live.generation) {
+        return LiveDelivery::Delivered;
+    }
+    match play.script_state(name) {
+        script::RunState::Idle | script::RunState::Error => LiveDelivery::NotRunning,
+        _ => LiveDelivery::Unchanged,
     }
 }
 

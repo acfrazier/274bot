@@ -551,10 +551,12 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     assert_eq!(session.catalog_root().unwrap(), Some(explicit.clone()));
     session.fill_rs2b0t_cards_once();
     assert!(session
+        .scripts
         .js
         .get(script::ScriptSource::Catalog, "Chosen")
         .is_some());
     assert!(session
+        .scripts
         .js
         .get(script::ScriptSource::Catalog, "Ambient")
         .is_none());
@@ -565,13 +567,15 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
         "export default class Custom extends LoopingBot { override loop() {} }",
     )
     .unwrap();
-    session.js.load(&custom).unwrap();
+    session.scripts.js.load(&custom).unwrap();
     session.import_rs2b0t_catalog(&ambient).unwrap();
     assert!(session
+        .scripts
         .js
         .get(script::ScriptSource::File, "custom")
         .is_some());
     assert!(session
+        .scripts
         .js
         .get(script::ScriptSource::Catalog, "Ambient")
         .is_some());
@@ -597,6 +601,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         .unwrap();
     session.fill_rs2b0t_cards_once();
     session
+        .scripts
         .js
         .ensure_js(script::ScriptSource::Catalog, "Chosen")
         .unwrap();
@@ -614,6 +619,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     };
     session.set_server_revision(289).unwrap();
     assert!(session
+        .scripts
         .js
         .get(script::ScriptSource::Catalog, "Chosen")
         .is_some());
@@ -622,6 +628,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     let another = write_looping_catalog(&root.join("another"), &[("Another", "Another")]);
     session.import_rs2b0t_catalog(&another).unwrap();
     assert!(session
+        .scripts
         .js
         .get(script::ScriptSource::Catalog, "Another")
         .is_some());
@@ -3627,20 +3634,20 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
     ] {
         let iso = IsolatedEnv::enter(&format!("bone-v2-{name}"));
         let mut s = Session::new();
-        s.js = script::JsLibrary::with_cache(
+        s.scripts.js = script::JsLibrary::with_cache(
             iso.dir.join("js-scripts.json"),
             iso.dir.join("js-cache"),
         );
-        s.js.load(&ts).expect("preload ts");
-        s.js.load(&js).expect("preload js");
-        s.script_settings.set_str(
+        s.scripts.js.load(&ts).expect("preload ts");
+        s.scripts.js.load(&js).expect("preload js");
+        s.scripts.legacy.set_str(
             script::ScriptSource::File,
             "bone_burier_v2",
             "boneName",
             "stem",
         );
         let identity = script::file_identity(path);
-        s.script_settings.set_str(
+        s.scripts.legacy.set_str(
             script::ScriptSource::File,
             &identity,
             "boneName",
@@ -3649,7 +3656,7 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
         let scenario = scenario::get(name).expect("registered");
         assert_eq!(scenario.settings.start_file, Some(file_name));
         assert_eq!(scenario.settings.start_script, None);
-        let card = load_live_example_card(&mut s.js, file_name).expect("identity load");
+        let card = load_live_example_card(&mut s.scripts.js, file_name).expect("identity load");
         assert_eq!(
             card.identity_id(),
             identity,
@@ -3700,7 +3707,7 @@ fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
         ))
     );
     let mut trade = preparation_only_session();
-    trade.js =
+    trade.scripts.js =
         script::JsLibrary::with_cache(iso.dir.join("trade-js.json"), iso.dir.join("trade-cache"));
     trade
         .live_prepare_script(scenario::get("script_trade").expect("registered"))
@@ -3752,7 +3759,8 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    s.js = script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts.js =
+        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
     s.live_prepare_script(scenario::get("script_trade").expect("registered"))
         .expect("prepare");
     assert_eq!(
@@ -5915,7 +5923,7 @@ fn load_js_registers_card_selects_and_persists_to_the_session_store() {
     .unwrap();
 
     let mut s = Session::new();
-    s.js = script::JsLibrary::with_cache(store.clone(), dir.join("js-cache"));
+    s.scripts.js = script::JsLibrary::with_cache(store.clone(), dir.join("js-cache"));
     s.load_js(&path);
     assert_eq!(s.error, None, "load should succeed: {:?}", s.error);
     match &s.script_sel {
@@ -5924,7 +5932,7 @@ fn load_js_registers_card_selects_and_persists_to_the_session_store() {
         }
         other => panic!("{other:?}"),
     }
-    assert_eq!(s.js.cards().len(), 1);
+    assert_eq!(s.scripts.js.cards().len(), 1);
     assert!(!s.script_load_open, "success closes the load browser");
     assert!(store.exists(), "the card is persisted to the session store");
 
@@ -5969,7 +5977,7 @@ fn script_start_selected_refuses_unloadable_import() {
         )
         .unwrap();
     let mut s = Session::new();
-    s.js = script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.scripts.js = script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(42, false));
     s.core.set_play(Some(play));
@@ -6001,7 +6009,9 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
     iso.set_rs2b0t(&root);
     let mut s = Session::new();
     assert!(
-        s.js.get(script::ScriptSource::Catalog, "BoneBurier")
+        s.scripts
+            .js
+            .get(script::ScriptSource::Catalog, "BoneBurier")
             .is_none(),
         "Session::new must not parse $RS2B0T"
     );
@@ -6010,17 +6020,23 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
         "Session::new must not rewrite the persisted root"
     );
     s.fill_rs2b0t_cards_once();
-    let card =
-        s.js.get(script::ScriptSource::Catalog, "BoneBurier")
-            .expect("BoneBurier card filled on first Browse");
+    let card = s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .expect("BoneBurier card filled on first Browse");
     assert_eq!(card.shape, script::LoadShape::CompatClass);
     assert!(
         iso.home.join(".274bot/rs2b0t-path").is_file(),
         "the first successful parse persists the root path"
     );
-    assert_eq!(s.js.cards().len(), 1, "once-only fill");
+    assert_eq!(s.scripts.js.cards().len(), 1, "once-only fill");
     s.fill_rs2b0t_cards_once();
-    assert_eq!(s.js.cards().len(), 1, "a second Browse does not re-parse");
+    assert_eq!(
+        s.scripts.js.cards().len(),
+        1,
+        "a second Browse does not re-parse"
+    );
 }
 
 fn fake_rs2b0t_tree(dir: &Path) -> PathBuf {
@@ -6081,7 +6097,9 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
         "defer must not write rs2b0t-path"
     );
     assert!(
-        s.js.cards()
+        s.scripts
+            .js
+            .cards()
             .iter()
             .all(|c| c.source != script::ScriptSource::Catalog),
         "zero Catalog cards after defer"
@@ -6096,9 +6114,11 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let n = s.import_rs2b0t_catalog(&root).expect("import");
     assert_eq!(n, 1);
     assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
-    let card =
-        s.js.get(script::ScriptSource::Catalog, "BoneBurier")
-            .expect("catalog card");
+    let card = s
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .expect("catalog card");
     assert_eq!(card.category, "Prayer");
     assert_eq!(card.description, "Buries bones");
     assert_eq!(card.tags, vec!["bones"]);
@@ -6112,7 +6132,9 @@ fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
     let mut s = Session::new();
     s.on_script_browse_open();
     assert!(
-        s.js.get(script::ScriptSource::Catalog, "BoneBurier")
+        s.scripts
+            .js
+            .get(script::ScriptSource::Catalog, "BoneBurier")
             .is_some(),
         "RS2B0T env still fills catalog on first browse"
     );
@@ -6132,8 +6154,11 @@ fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
     let root = write_two_card_catalog(&iso.dir);
     let mut s = Session::new();
     s.persist_ui = false;
-    s.js = script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
-    s.js.register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+    s.scripts.js =
+        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts
+        .js
+        .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
         .expect("catalog");
 
     s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");
@@ -6150,14 +6175,18 @@ fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
         Some("BoneBurier")
     );
     assert!(
-        s.js.get(script::ScriptSource::Catalog, "BoneBurier")
+        s.scripts
+            .js
+            .get(script::ScriptSource::Catalog, "BoneBurier")
             .unwrap()
             .js
             .is_empty(),
         "click must not transpile on the same call"
     );
     assert!(
-        s.js.get(script::ScriptSource::Catalog, "ShopRunner")
+        s.scripts
+            .js
+            .get(script::ScriptSource::Catalog, "ShopRunner")
             .unwrap()
             .js
             .is_empty(),
@@ -6166,7 +6195,9 @@ fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
 
     s.pump_script_transpile();
     assert!(
-        s.js.get(script::ScriptSource::Catalog, "BoneBurier")
+        s.scripts
+            .js
+            .get(script::ScriptSource::Catalog, "BoneBurier")
             .unwrap()
             .js
             .is_empty(),
@@ -6175,12 +6206,14 @@ fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
 
     s.pump_script_transpile();
     assert!(!s
+        .scripts
         .js
         .get(script::ScriptSource::Catalog, "BoneBurier")
         .unwrap()
         .js
         .is_empty());
     assert!(s
+        .scripts
         .js
         .get(script::ScriptSource::Catalog, "ShopRunner")
         .unwrap()
@@ -6195,8 +6228,11 @@ fn queue_transpile_all_warms_one_card_per_armed_frame() {
     let root = write_two_card_catalog(&iso.dir);
     let mut s = Session::new();
     s.persist_ui = false;
-    s.js = script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
-    s.js.register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+    s.scripts.js =
+        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts
+        .js
+        .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
         .expect("catalog");
 
     s.queue_transpile_all();
@@ -6205,13 +6241,27 @@ fn queue_transpile_all_warms_one_card_per_armed_frame() {
 
     s.pump_script_transpile();
     s.pump_script_transpile();
-    let warmed = s.js.cards().iter().filter(|c| !c.js.is_empty()).count();
+    let warmed = s
+        .scripts
+        .js
+        .cards()
+        .iter()
+        .filter(|c| !c.js.is_empty())
+        .count();
     assert_eq!(warmed, 1, "all-at-once still one file per armed frame");
     assert_eq!(s.transpile_queue.len(), 1);
 
     s.pump_script_transpile();
     s.pump_script_transpile();
-    assert_eq!(s.js.cards().iter().filter(|c| !c.js.is_empty()).count(), 2);
+    assert_eq!(
+        s.scripts
+            .js
+            .cards()
+            .iter()
+            .filter(|c| !c.js.is_empty())
+            .count(),
+        2
+    );
     assert!(s.transpile_queue.is_empty());
 }
 
@@ -6221,10 +6271,15 @@ fn select_script_card_skips_queue_on_cache_hit() {
     let root = write_two_card_catalog(&iso.dir);
     let mut s = Session::new();
     s.persist_ui = false;
-    s.js = script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
-    s.js.register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+    s.scripts.js =
+        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts
+        .js
+        .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
         .expect("catalog");
-    s.js.ensure_js(script::ScriptSource::Catalog, "BoneBurier")
+    s.scripts
+        .js
+        .ensure_js(script::ScriptSource::Catalog, "BoneBurier")
         .unwrap();
 
     s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");

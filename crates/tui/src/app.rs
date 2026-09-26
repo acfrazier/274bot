@@ -26,7 +26,7 @@ use script::{RunState, ScriptSel};
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
 use crate::loadouts::{LoadoutsPane, LoadoutsState};
 use crate::map::{Map, MapAction, MapView, ObservedMark};
-use crate::script_params::{ParamsKey, ParamsPane, ParamsState};
+use crate::script_params::{ParamsCommit, ParamsKey, ParamsPane, ParamsState};
 use crate::script_shape::{
     browse_lines, browse_section_height, rs2b0t_root_has_index, BrowseCard, BrowseLine,
     ScriptClick, ScriptPane,
@@ -168,6 +168,20 @@ pub enum AppAction {
     ScriptBrowse,
     /// Open the script params popup for the selected card.
     ScriptParams,
+    /// Start every wall member on its last successful assignment.
+    ScriptStartAll,
+    /// Stop every member's script (queued replacement Starts included).
+    ScriptStopAll,
+    /// Reload the focused heading's card, or confirm a shown warning.
+    ScriptReload,
+    /// Discard a prepared reload without touching any run.
+    ScriptReloadCancel,
+    /// Prepare Apply to all for the params popup's card.
+    ScriptSyncPrepare,
+    /// Apply the prepared Apply to all.
+    ScriptSyncApply,
+    /// Drop the prepared Apply to all.
+    ScriptSyncCancel,
     /// Open the first-run rs2b0t catalog folder browser.
     ScriptImportCatalog,
     /// Defer the rs2b0t catalog import (Not now).
@@ -350,8 +364,13 @@ pub struct TuiApp {
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: RunState,
-    /// The Browse-selected script card; Start keys on `(source, name)`.
+    /// The focused profile's script heading; Start keys on `(source, name)`.
     pub script_sel: Option<ScriptSel>,
+    /// The operator picked a card in Browse since the last pump: the
+    /// binary records it as the focused profile's pending selection.
+    pub browse_changed: bool,
+    /// A reload warning awaits confirmation: Reload reads "Confirm".
+    pub reload_confirm: bool,
     /// Registry cards the Browse picker lists (copied from the session each pump).
     pub script_cards: Vec<BrowseCard>,
     /// Persisted category order keys for Browse grouping.
@@ -428,6 +447,8 @@ impl TuiApp {
             loadouts_state: LoadoutsState::default(),
             script_state: RunState::Idle,
             script_sel: None,
+            browse_changed: false,
+            reload_confirm: false,
             script_cards: Vec::new(),
             script_category_order: Vec::new(),
             script_browse_open: false,
@@ -1151,72 +1172,62 @@ impl TuiApp {
         true
     }
 
-    /// Route keys to the params popup when it is open; returns whether the
-    /// key was consumed.
+    /// Route keys to the params popup when it is open. Edits go through
+    /// `commit`; Apply-to-all keys come back as actions.
     pub fn params_on_key(
         &mut self,
-        store: &mut script::ScriptSettingsStore,
+        commit: &mut ParamsCommit<'_>,
         loadouts: &script::LoadoutsStore,
         game_data: Option<&api::game_data::SelectedGameData>,
         key: KeyEvent,
-    ) -> bool {
+    ) -> AppAction {
         if !self.params_state.open {
-            return false;
+            return AppAction::None;
         }
-        let Some((source, name)) = self.params_script_sel() else {
+        if self.params_card().is_none() {
             self.params_state.open = false;
-            return true;
-        };
-        let schema = self.params_schema.clone();
+            return AppAction::None;
+        }
         let mut pane = ParamsPane {
-            schema: &schema,
+            schema: &self.params_schema,
             bag: &mut self.params_bag,
-            store,
+            commit,
             loadouts,
             game_data,
-            source,
-            name: &name,
             state: &mut self.params_state,
         };
-        if pane.on_key(key.code) == ParamsKey::Close {
-            self.params_state.open = false;
+        match pane.on_key(key.code) {
+            ParamsKey::Close => {
+                self.params_state.open = false;
+                AppAction::None
+            }
+            ParamsKey::SyncPrepare => AppAction::ScriptSyncPrepare,
+            ParamsKey::SyncApply => AppAction::ScriptSyncApply,
+            ParamsKey::SyncCancel => AppAction::ScriptSyncCancel,
+            _ => AppAction::None,
         }
-        true
     }
 
-    fn params_script_sel(&self) -> Option<(script::ScriptSource, String)> {
+    /// The loaded card the params popup edits: `(source, lookup)`.
+    pub fn params_card(&self) -> Option<(script::ScriptSource, String)> {
         match self.script_sel.as_ref()? {
             script::ScriptSel::Loaded(source, name) => Some((*source, name.clone())),
             _ => None,
         }
     }
 
-    /// Open the params popup for the Browse-selected card.
-    pub fn open_script_params(&mut self, store: &script::ScriptSettingsStore) {
-        let Some((source, name)) = self.params_script_sel() else {
-            return;
-        };
-        if self.params_schema.is_empty() {
+    /// Open the params popup over `bag`, the focused profile's merged bag
+    /// for the selected card.
+    pub fn open_script_params(&mut self, bag: serde_json::Map<String, serde_json::Value>) {
+        if self.params_card().is_none() || self.params_schema.is_empty() {
             return;
         }
-        self.params_bag = store.merged_bag(source, &name, &self.params_schema, None);
+        self.params_bag = bag;
         self.params_state = ParamsState {
             open: true,
             cursor: 0,
             ..Default::default()
         };
-    }
-
-    /// The merged settings bag Start would post for the selected card.
-    pub fn merged_script_settings_bag(
-        &self,
-        store: &script::ScriptSettingsStore,
-    ) -> Option<serde_json::Map<String, serde_json::Value>> {
-        let (source, name) = self.params_script_sel()?;
-        if self.params_schema.is_empty() {
-            return None;
-        }
-        Some(store.merged_bag(source, &name, &self.params_schema, None))
     }
     fn load_entries(&self) -> Vec<LoadEntry> {
         let mut out = vec![LoadEntry::Up];
@@ -1407,6 +1418,7 @@ impl TuiApp {
         let next = (pos as i32 + step).rem_euclid(card_indices.len() as i32) as usize;
         let card = &self.script_cards[card_indices[next]];
         self.script_sel = Some(ScriptSel::Loaded(card.source, card.name.clone()));
+        self.browse_changed = true;
     }
 
     /// One mouse click (crossterm col/row). The strip selects a slot; the
@@ -1466,7 +1478,8 @@ impl TuiApp {
             "",
             !self.params_schema.is_empty(),
             None,
-        );
+        )
+        .with_reload_confirm(self.reload_confirm);
         match pane.on_click(self.script_area, col, row) {
             ScriptClick::Button("Browse") => {
                 let opening = !self.script_browse_open;
@@ -1492,11 +1505,18 @@ impl TuiApp {
                 AppAction::None
             }
             ScriptClick::Params => AppAction::ScriptParams,
+            ScriptClick::Button("Reload") | ScriptClick::Button("Confirm") => {
+                AppAction::ScriptReload
+            }
+            ScriptClick::Button("Cancel") => AppAction::ScriptReloadCancel,
+            ScriptClick::Button("Start all") => AppAction::ScriptStartAll,
+            ScriptClick::Button("Stop all") => AppAction::ScriptStopAll,
             ScriptClick::Button(_) => AppAction::None,
             ScriptClick::ImportCatalog => AppAction::ScriptImportCatalog,
             ScriptClick::Pick(idx) => {
                 if let Some(card) = self.script_cards.get(idx) {
                     self.script_sel = Some(ScriptSel::Loaded(card.source, card.name.clone()));
+                    self.browse_changed = true;
                 }
                 AppAction::None
             }
@@ -1661,25 +1681,20 @@ impl TuiApp {
     pub fn draw_params_overlay(
         &mut self,
         frame: &mut Frame<'_>,
-        store: &mut script::ScriptSettingsStore,
         loadouts: &script::LoadoutsStore,
         game_data: Option<&api::game_data::SelectedGameData>,
     ) {
-        if !self.params_state.open {
+        if !self.params_state.open || self.params_card().is_none() {
             return;
         }
-        let Some((source, name)) = self.params_script_sel() else {
-            return;
-        };
-        let schema = self.params_schema.clone();
+        // Rendering never commits.
+        let mut read_only = |_: &str, _: serde_json::Value| Ok(());
         let pane = ParamsPane {
-            schema: &schema,
+            schema: &self.params_schema,
             bag: &mut self.params_bag,
-            store,
+            commit: &mut read_only,
             loadouts,
             game_data,
-            source,
-            name: &name,
             state: &mut self.params_state,
         };
         frame.render_widget(pane, frame.area());
@@ -1987,7 +2002,8 @@ impl TuiApp {
             "",
             !self.params_schema.is_empty(),
             None,
-        );
+        )
+        .with_reload_confirm(self.reload_confirm);
         frame.render_widget(pane, area);
     }
 }
