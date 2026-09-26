@@ -640,6 +640,96 @@ export default class T extends LoopingBot {
     );
 }
 
+/// Operator Pause drops the host route (`abort_script_walk`); the hunt's
+/// walk to the fight spot is sent again once after Resume, under its own
+/// request id, as frozen resumes the same walk.
+#[test]
+fn a_paused_hunt_walk_is_sent_again_once_after_resume() {
+    let iso = LoadIsolate::spawn(
+        r#"
+import { WalkToSpot } from '../../api/combat/hunting/combat.js';
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        const host = {
+            died: false,
+            targetIdx: null,
+            hpFraction: () => 1,
+            panicHp: () => 0.2,
+            retreatHp: () => 0.5,
+            hasFood: () => false,
+            needEat: () => false,
+            style: () => 'range',
+            safespotIndex: () => 0,
+            buryBones: () => false,
+            boneName: () => 'Bones',
+            fight: { interruptWatch() {} },
+            log() {},
+            setStatus() {},
+        };
+        const site = {
+            key: 'test',
+            target: 'Goblin',
+            alsoHunt: [],
+            safespots: [{ x: 2901, z: 9809, level: 0 }],
+            meleeAnchor: { x: 2900, z: 9808, level: 0 },
+            boxes: [{ minX: 2888, maxX: 2923, minZ: 9769, maxZ: 9816, level: 0 }],
+            fireAtRange: false,
+            rangedThreat: false,
+            approach: [],
+        };
+        new WalkToSpot(host, site).execute();
+    }
+}
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let here = TileInput {
+        x: 2914,
+        z: 9809,
+        level: 0,
+    };
+    let walks = |ops: Vec<InteractReq>| -> Vec<u64> {
+        ops.into_iter()
+            .filter_map(|op| match op {
+                InteractReq::Walk {
+                    x: 2901,
+                    z: 9809,
+                    request_id,
+                    ..
+                } => Some(request_id),
+                _ => None,
+            })
+            .collect()
+    };
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+        1, here,
+    )));
+    iso.on_game_tick(1);
+    iso.probe("true").unwrap();
+    let first = walks(iso.drain_interacts());
+    assert_eq!(first.len(), 1, "the hunt walk goes out once: {first:?}");
+    iso.pause();
+    iso.resume();
+    for tick in 2..=3 {
+        iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+            tick, here,
+        )));
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    }
+    let again = walks(iso.drain_interacts());
+    iso.join();
+    assert_eq!(
+        again, first,
+        "Resume sends the same walk once more, no other"
+    );
+}
+
 fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
     SnapshotInput {
         tick,

@@ -173,7 +173,9 @@ arguments and awaits one completion.
   walks once more. Teleport id lists, ship or shortcut exclusion,
   `pathFollow` and `forceRepath` fail with `not impl`.
 - Operator Pause stops a script's walk and Resume sends it again if it had
-  not finished; Stop, or a script stopping itself, stops it for good. A
+  not finished, whichever machine owns it (walks, reach, the hunt
+  steppers); during a reconnect hold the host's carry re-sends it instead.
+  Stop, or a script stopping itself, stops it for good. A
   walk machine that fails (a throwing `Sustain` or `log`) stops its route.
 - **`createReturnToAnchorTask`:** `validate` is beyond the bot's leash plus
   slack. `execute` does nothing inside the arrive disk, walks a resilient leg

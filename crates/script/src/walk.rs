@@ -772,11 +772,6 @@ impl Walk {
     /// stopped its walker). The bool is the wait's value, not `isArrived`:
     /// a closest terminal is true here and the ladder re-checks arrival.
     pub(crate) fn step(&self, cx: &mut Cx<'_>) -> Option<bool> {
-        // Pause dropped the host route; the deadline was frozen with the
-        // row, so the same request goes out again on the same bound.
-        if walk_wait::take_resume(self.token) {
-            cx.emit(self.request());
-        }
         let settled = walk_wait::dispatch(&json!({ "op": "settled", "token": self.token }))
             .as_bool()
             .unwrap_or(false);
@@ -798,7 +793,7 @@ impl Walk {
         cx.emit(self.release());
     }
 
-    /// The native walk this wait is for, as sent (and re-sent after Resume).
+    /// The native walk this wait is for.
     fn request(&self) -> InteractReq {
         let WorldTile { x, z, level } = self.dest;
         if self.radius > 0 {
