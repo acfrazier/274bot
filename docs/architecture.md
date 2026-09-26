@@ -379,9 +379,10 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
 | `lib.rs` | crate facade | re-exports the session vocabulary |
-| `session.rs` | operator lifecycle over `Play` | vault, play, selection, slot IO, Load/Log in/Log out/Remove, poll, script Start/Stop settlement |
+| `session.rs` | operator lifecycle over `Play` | vault (staged view), play, selection, slot IO, Load/Log in/Log out/Remove, poll, script Start/Stop settlement, profile write settlement |
 | `fleet.rs` | fleet membership | ordered members, logout latch, focus neighbour |
 | `operations.rs` | operation results | ids, per-member outcomes, bounded book |
+| `profiles.rs` | durable profile writes | one writer thread, ordered, last write per profile wins; results settle in `poll` |
 | `surface.rs` | front-end slot adapter | `SlotSurface`, `HeadlessSurface` |
 | `session_tests.rs` | test bodies | real `Play` seam, no server |
 
