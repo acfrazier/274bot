@@ -1,5 +1,6 @@
 use super::*;
 use host_play::profile::ProfileEnvironment;
+use host_play::{Play, SlotArm};
 use nav::grid::StepGrid;
 use nav::router::FindOptions;
 use nav::world::NavWorld;
@@ -673,7 +674,7 @@ fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
     let root = fake_rs2b0t_tree(&iso.dir);
     iso.set_rs2b0t(&root);
     let mut session = TuiSession::new(dummy_options());
-    session.suppress_slot_spawn = true;
+    session.core.set_spawn_workers(false);
     session
         .live_prepare_script(scenario::get("bone_burier").expect("registered"))
         .expect("prepare");
@@ -687,10 +688,10 @@ fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
         )),
         "prepare sets script_sel to the catalog card"
     );
-    let play = session.play.as_ref().expect("play started");
+    assert!(session.core.play().is_some(), "play started");
     assert!(
-        play.arm(&name).is_none(),
-        "unit fixture must not create a slot worker"
+        session.core.fleet().contains(&name),
+        "the minted driver is a loaded member"
     );
     assert_eq!(
         session
@@ -714,7 +715,7 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
     ] {
         let iso = IsolatedEnv::enter(&format!("tui-bone-v2-{name}"));
         let mut session = TuiSession::new(dummy_options());
-        session.suppress_slot_spawn = true;
+        session.core.set_spawn_workers(false);
         session.js = script::JsLibrary::with_cache(
             iso.dir.join("js-scripts.json"),
             iso.dir.join("js-cache"),
@@ -799,7 +800,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
     .unwrap();
     iso.set_rs2b0t(&root);
     let mut session = TuiSession::new(dummy_options());
-    session.suppress_slot_spawn = true;
+    session.core.set_spawn_workers(false);
     session
         .live_prepare_script(scenario::get("thiever").expect("registered"))
         .expect("prepare");
@@ -908,6 +909,7 @@ fn pump_leaves_app_world_none_when_no_pack_loaded() {
 fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !session.pending_starts.is_empty() && Instant::now() < deadline {
+        session.core.poll();
         session.settle_script_starts(app);
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -959,8 +961,8 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     );
     assert_eq!(
         session
-            .play
-            .as_ref()
+            .core
+            .play()
             .unwrap()
             .script_runtime_generation("alice"),
         Some(0)
@@ -981,7 +983,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     );
     settle_starts(&mut session, &mut app);
     assert_eq!(
-        session.play.as_ref().unwrap().script_state("bob"),
+        session.core.play().unwrap().script_state("bob"),
         script::RunState::Running
     );
     let output = app.error.as_deref().unwrap();
@@ -1013,14 +1015,14 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     assert_eq!(app.error, None);
     assert_eq!(
         session
-            .play
-            .as_ref()
+            .core
+            .play()
             .unwrap()
             .script_runtime_generation("alice"),
         Some(1)
     );
-    session.play.as_ref().unwrap().script_stop("alice");
-    session.play.as_ref().unwrap().script_stop("bob");
+    session.core.play().unwrap().script_stop("alice");
+    session.core.play().unwrap().script_stop("bob");
 }
 
 /// Task 13 fix: the paint-as-chat toggle must not stick across a
@@ -1046,14 +1048,14 @@ fn script_pause_toggle_resumes_when_paused_and_pauses_when_running() {
 
     dispatch(&mut session, &mut app, AppAction::ScriptPause);
     assert_eq!(
-        session.play.as_ref().unwrap().script_state("alice"),
+        session.core.play().unwrap().script_state("alice"),
         script::RunState::Paused,
         "Pause while Running"
     );
 
     dispatch(&mut session, &mut app, AppAction::ScriptPause);
     assert_eq!(
-        session.play.as_ref().unwrap().script_state("alice"),
+        session.core.play().unwrap().script_state("alice"),
         script::RunState::Running,
         "Resume while Paused"
     );
@@ -1090,7 +1092,7 @@ fn paint_button_action_does_not_queue_a_wire_cmd() {
         AppAction::Chat(ChatAction::PaintButton(0)),
     );
     assert_eq!(
-        session.play.as_ref().unwrap().script_state("alice"),
+        session.core.play().unwrap().script_state("alice"),
         script::RunState::Running,
         "paint click must not pause or stop"
     );
@@ -1669,7 +1671,7 @@ fn tui_pump_reaps_finished_workers_logged_out_arms_still_count() {
     app.names = session.names.clone();
     app.focused = Some(0);
     session.pump(&mut app);
-    let play = session.play.as_ref().unwrap();
+    let play = session.core.play().unwrap();
     assert!(
         play.arm("bob").is_none(),
         "pump must reap the finished worker"
@@ -1725,4 +1727,121 @@ fn tui_successful_ack_preserves_unrelated_error() {
     assert_eq!(app.error.as_deref(), Some("script: no focused profile"));
     assert!(host_play::background_bots_acked());
     let _iso = iso;
+}
+
+/// Vault with `alice` pinned to world 2 and auto-login on, in a temp dir.
+fn lifecycle_vault(test: &str) -> Vault {
+    let dir = std::env::temp_dir().join(format!("274bot-tui-{}-{test}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("vault");
+    let _ = std::fs::remove_file(&path);
+    let mut vault = Vault::create(&path, "bot").unwrap();
+    vault
+        .upsert(Profile {
+            username: "alice".into(),
+            password: "pw".into(),
+            uid: 7,
+            settings: vault::ProfileSettings {
+                auto_login: true,
+                world: Some(2),
+                ..vault::ProfileSettings::default()
+            },
+        })
+        .unwrap();
+    vault
+}
+
+#[test]
+fn multibox_key_logs_a_loaded_logged_out_member_back_in() {
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let mut play = empty_play();
+    let alice = SlotArm::new(7, true);
+    alice.request_logout();
+    alice.hold_logged_out();
+    play.attach_arm("alice", Arc::clone(&alice));
+    session.core.start(lifecycle_vault("multibox-rearm"), play);
+    let mut app = TuiApp::new("tui");
+    assert!(!alice.wants_login());
+
+    dispatch(&mut session, &mut app, AppAction::SpawnAll);
+
+    assert!(
+        alice.wants_login(),
+        "m must re-arm a member that is already loaded but logged out"
+    );
+    assert!(!alice.login_latched());
+    assert!(session.core.fleet().contains("alice"));
+}
+
+#[test]
+fn settings_popup_writes_only_guardian_fields() {
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let alice = SlotArm::new(7, true);
+    session
+        .core
+        .start(lifecycle_vault("settings-fields"), empty_play());
+    session
+        .core
+        .play_mut()
+        .unwrap()
+        .attach_arm("alice", Arc::clone(&alice));
+    let mut app = TuiApp::new("tui");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    // A stale popup draft: every non-guardian field at its default.
+    app.settings = vault::ProfileSettings {
+        random_events: false,
+        lamp_skill: "Magic".into(),
+        lamp_auto: true,
+        ..vault::ProfileSettings::default()
+    };
+    session.names = vec!["alice".into()];
+    session.last_focused = Some("alice".into());
+    app.settings_dirty = true;
+
+    session.pump(&mut app);
+
+    let saved = session.core.vault().unwrap().get("alice").unwrap().clone();
+    assert!(!saved.settings.random_events);
+    assert_eq!(saved.settings.lamp_skill, "Magic");
+    assert!(saved.settings.lamp_auto);
+    assert_eq!(saved.settings.world, Some(2), "world pin survives");
+    assert!(saved.settings.auto_login, "auto-login survives");
+    assert!(!alice.random_events.load(Ordering::Relaxed));
+    assert_eq!(*alice.lamp_skill.lock().unwrap(), "Magic");
+}
+
+#[test]
+fn removing_the_focused_member_focuses_its_neighbour() {
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let play = two_arm_play();
+    play.statuses.lock().unwrap().push(host_play::SlotStatus {
+        username: "bob".into(),
+        connected: true,
+        ..host_play::SlotStatus::default()
+    });
+    session
+        .core
+        .start(lifecycle_vault("remove-neighbour"), play);
+    session.core.fleet_mut().add("alice");
+    session.core.fleet_mut().add("bob");
+    let bob = session.core.play().unwrap().arm("bob").unwrap();
+    let mut app = TuiApp::new("tui");
+    app.names = vec!["alice".into(), "bob".into()];
+    app.focused = Some(1);
+    dispatch(&mut session, &mut app, AppAction::Focus("bob".into()));
+
+    dispatch(&mut session, &mut app, AppAction::Remove);
+
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+    assert_eq!(session.core.selected(), Some("alice"));
+    assert_eq!(session.core.members(), ["alice".to_string()]);
+    assert!(bob.wants_logout(), "a connected member logs out cleanly");
+    assert!(
+        !bob.stop.load(Ordering::Relaxed),
+        "and is not stopped inline"
+    );
 }

@@ -5940,6 +5940,7 @@ dependencies = [
  "api",
  "client",
  "crossterm",
+ "frontend-core",
  "host",
  "host-play",
  "libc",

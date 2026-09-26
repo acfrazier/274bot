@@ -144,8 +144,16 @@ pub enum AppAction {
     MapTeleport(Tile),
     /// Chat modal advance: queue `WireCmd::Continue` / `Answer`.
     Chat(ChatAction),
-    /// MultiBox: spawn every vault profile that is not running yet.
+    /// MultiBox: load every vault profile and log every member in.
     SpawnAll,
+    /// Log in the focused member (explicit handshake).
+    Login,
+    /// Log out the focused member (it stays loaded, latched).
+    Logout,
+    /// Log out every member.
+    LogoutAll,
+    /// Remove the focused member from the fleet (clean logout, then stop).
+    Remove,
     /// Start the Browse-selected JS card on the focused slot:
     /// `tui-play` dispatches `Play::script_start_load` with the card's
     /// source and shape.
@@ -1027,6 +1035,10 @@ impl TuiApp {
                 return AppAction::None;
             }
             KeyCode::Char('m') => return AppAction::SpawnAll,
+            KeyCode::Char('i') => return AppAction::Login,
+            KeyCode::Char('u') => return AppAction::Logout,
+            KeyCode::Char('U') => return AppAction::LogoutAll,
+            KeyCode::Char('x') => return AppAction::Remove,
             KeyCode::Char('p') => {
                 if self.chat_data.script_paint.is_some() {
                     self.chat_data.show_game_chat = !self.chat_data.show_game_chat;
@@ -1636,7 +1648,7 @@ impl TuiApp {
             }
         }
         let mut text = format!(
-            "[{members}]  focused: {focused}   {}   F4 map · q quit · o options · l loadouts · Tab focus",
+            "[{members}]  focused: {focused}   {}   F4 map · q quit · o options · l loadouts · Tab focus · m load+login all · i login · u logout · U logout all · x remove",
             self.title
         );
         if let Some(err) = &self.error {

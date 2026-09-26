@@ -2,10 +2,13 @@
 //! `host-play` / `panel-play` (`--vault`, `--vault-pass` / `BOT_VAULT_PASS`,
 //! `--host`, `--port`, `--cache`, `--user`, `--live script_<name>`).
 //!
-//! The binary owns the `host_play::Play` session: a per-frame hook
-//! publishes each slot's snapshot and steps the focused slot's walk arm,
-//! and the UI loop polls statuses, refreshes [`TuiApp`], routes
-//! keys/clicks, and dispatches the returned [`AppAction`] onto the play —
+//! The operator lifecycle (vault, `host_play::Play`, fleet membership,
+//! selection, Load/Log in/Log out/Remove, script Start/Stop settlement and
+//! status polling) lives in the shared [`frontend_core::OperatorSession`];
+//! the binary adds a per-frame hook that publishes each slot's snapshot and
+//! steps the focused slot's walk arm, and the UI loop polls the core,
+//! refreshes [`TuiApp`], routes keys/clicks, and dispatches the returned
+//! [`AppAction`] —
 //! map Walk-confirm consumes a revision-bound `MapCommand` through
 //! `host_play::Play::map_walk`, chat Continue/Answer and WASD walks go
 //! through `host_play::WireCmd`, and the settings popup writes
@@ -42,9 +45,9 @@ use host_play::{
     mint_live_entries_for_target, mint_live_names, open_map_catalogue, open_vault,
     parse_profile_args, peek_map_catalogue, persist_background_bots_ack, player_here_tile,
     profile_password_for, run_with_io, run_with_template, step_walk_arm_bank_fetch,
-    walk_arm_bank_fetch_freezes_follow, MapDemandHandle, MapJobStatus, MapStage, Play, PlayOptions,
+    walk_arm_bank_fetch_freezes_follow, MapDemandHandle, MapJobStatus, MapStage, PlayOptions,
     ProfileOptions, ReadyCatalogue, ResourceSampler, ResourceView, ServerProfile,
-    SharedClientTemplate, SlotArm, WalkArm, WireCmd,
+    SharedClientTemplate, WalkArm, WireCmd,
 };
 use nav::map::identity::Digest;
 use nav::tile::Tile;
@@ -53,6 +56,8 @@ use nav::WorldState;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use vault::{Profile, Vault};
+
+use frontend_core::{HeadlessSurface, OperatorSession, ScriptStart};
 
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
@@ -426,11 +431,10 @@ fn fire_pending_catalog_start(
 pub struct TuiSession {
     #[cfg(feature = "memory-profile")]
     memory: Option<host_play::memory::Run>,
-    play: Option<Play>,
+    /// Shared operator lifecycle (vault, play, fleet, selection, removals,
+    /// status polling and operation results). Headless: no per-slot IO.
+    core: OperatorSession<()>,
     auto_world: Option<u16>,
-    #[cfg(test)]
-    suppress_slot_spawn: bool,
-    vault: Option<Vault>,
     pub error: Option<String>,
     /// All profile names (for the strip's slot list), in vault order.
     names: Vec<String>,
@@ -508,14 +512,13 @@ pub struct TuiSession {
     background_bots_acked: bool,
     ack_checked_at: Option<Instant>,
     notice_sig: Option<(usize, ResourceView)>,
-    _instance: host_play::InstancePermit,
 }
 
 #[cfg(test)]
 impl TuiSession {
     /// Inject a `Play` for unit tests (no vault / slot threads).
-    fn inject_play(&mut self, play: Play) {
-        self.play = Some(play);
+    fn inject_play(&mut self, play: host_play::Play) {
+        self.core.set_play(Some(play));
     }
 
     fn expire_ack_cache(&mut self) {
@@ -538,11 +541,8 @@ impl TuiSession {
         Self {
             #[cfg(feature = "memory-profile")]
             memory: None,
-            play: None,
+            core: OperatorSession::new(_instance),
             auto_world: None,
-            #[cfg(test)]
-            suppress_slot_spawn: false,
-            vault: None,
             error: None,
             names: Vec::new(),
             options,
@@ -581,7 +581,6 @@ impl TuiSession {
             background_bots_acked: background_bots_acked(),
             ack_checked_at: Some(Instant::now()),
             notice_sig: None,
-            _instance,
         }
     }
 
@@ -672,8 +671,9 @@ impl TuiSession {
         self.start_play(vault)
     }
 
-    /// Empty `Play` (shared cache + FIFO + per-frame hook), then spawn the
-    /// focused profile only; `m` spawns the rest.
+    /// Empty `Play` (shared cache + FIFO + per-frame hook) handed to the
+    /// core; the boot then loads and logs in the focused profile only and
+    /// `m` loads and logs in the rest.
     fn start_play(&mut self, vault: Vault) -> Result<(), String> {
         let snapshots = Arc::clone(&self.snapshots);
         let frontend_gens = Arc::clone(&self.frontend_gens);
@@ -795,79 +795,110 @@ impl TuiSession {
             );
         }
         *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
-        self.play = Some(play);
-        self.vault = Some(vault);
+        self.core.start(vault, play);
         Ok(())
     }
 
-    /// Spawn `name`'s profile as a slot thread. `RasterMode::Off` always
-    /// (the TUI never attaches a `Renderer`); the slot logs in
-    /// immediately and re-handshakes after a DC only when the profile's
-    /// `auto_login` is on.
-    fn spawn(&mut self, name: &str) -> bool {
-        #[cfg(test)]
-        if self.suppress_slot_spawn {
-            return false;
-        }
-        let Some(mut profile) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() else {
-            return false;
+    /// Load `name` into the fleet and log it in (the TUI boot and `--live`
+    /// intent). `RasterMode::Off` always (the headless surface never
+    /// attaches a `Renderer`); after a DC the slot re-handshakes only when
+    /// the profile's `auto_login` is on.
+    fn load_and_login(&mut self, name: &str) -> bool {
+        let failure = {
+            let (core, mut surface) = self.core_and_surface();
+            let (load, _) = core.load(name, &mut surface);
+            let login = core.login(name, &mut surface);
+            core.failure(load).or_else(|| core.failure(login))
         };
-        profile.settings.raster = vault::RasterMode::Off;
-        let auto_login = profile.settings.auto_login;
-        let arm = SlotArm::new(profile.uid, false);
-        arm.set_auto_login(auto_login);
-        arm.arm_explicit_login();
-        arm.random_events
-            .store(profile.settings.random_events, Ordering::Relaxed);
-        arm.lamp_auto
-            .store(profile.settings.lamp_auto, Ordering::Relaxed);
-        *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
-        if let Some(play) = self.play.as_mut() {
-            if reset_frontend_slot_lifetime(
-                name,
-                &self.frontend_gens,
-                &self.snapshots,
-                &self.travellers,
-                &self.tick_latch,
-            ) {
-                self.walk_clear.store(true, Ordering::Relaxed);
+        match failure {
+            Some(error) => {
+                self.error = Some(error);
+                false
             }
-            match play.try_spawn_slot(profile, None, None, Some(arm)) {
-                Ok(()) => true,
-                Err(error) => {
-                    self.error = Some(error);
-                    false
+            None => true,
+        }
+    }
+
+    /// Split borrow: the core plus the headless surface, whose lifetime
+    /// reset drops this slot's published snapshot and walk arm.
+    fn core_and_surface(
+        &mut self,
+    ) -> (
+        &mut OperatorSession<()>,
+        HeadlessSurface<impl FnMut(&str) + '_>,
+    ) {
+        let gens = &self.frontend_gens;
+        let snapshots = &self.snapshots;
+        let travellers = &self.travellers;
+        let tick_latch = &self.tick_latch;
+        let walk_clear = &self.walk_clear;
+        (
+            &mut self.core,
+            HeadlessSurface::with_reset(move |name: &str| {
+                if reset_frontend_slot_lifetime(name, gens, snapshots, travellers, tick_latch) {
+                    walk_clear.store(true, Ordering::Relaxed);
                 }
-            }
-        } else {
-            false
+            }),
+        )
+    }
+
+    /// Log in the focused member (explicit handshake; recreates a terminal
+    /// worker).
+    fn login(&mut self, app: &mut TuiApp) {
+        let Some(name) = app.focused_name() else {
+            return;
+        };
+        let (core, mut surface) = self.core_and_surface();
+        let op = core.login(&name, &mut surface);
+        app.error = core.failure(op);
+    }
+
+    /// Log out the focused member; the slot stays loaded and latched.
+    fn logout(&mut self, app: &mut TuiApp) {
+        if let Some(name) = app.focused_name() {
+            self.core.logout(&name);
         }
     }
 
-    /// Spawn every vault profile that is not running yet (the `m` key).
-    fn spawn_all(&mut self) -> usize {
-        let names: Vec<String> = self
-            .vault
-            .as_ref()
-            .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-            .unwrap_or_default();
-        let mut spawned = 0;
-        for name in names {
-            if self.play.as_ref().is_some_and(|p| p.arm(&name).is_some()) {
-                continue;
-            }
-            if self.spawn(&name) {
-                spawned += 1;
-            }
-        }
-        spawned
+    /// Log out every member and every other running slot.
+    fn logout_all(&mut self) {
+        self.core.logout_all();
     }
 
-    /// Focus `name` in the play (pure bookkeeping in the flat model).
+    /// Remove the focused member: clean logout, then its worker stops. The
+    /// neighbour becomes focused.
+    fn remove(&mut self, app: &mut TuiApp) {
+        let Some(name) = app.focused_name() else {
+            return;
+        };
+        let (core, mut surface) = self.core_and_surface();
+        let removal = core.remove(&name, Instant::now(), &mut surface);
+        if let Some(next) = removal.reselected {
+            app.focused = app.names.iter().position(|n| n == &next);
+        } else if removal.selection_cleared {
+            app.focused = None;
+        }
+    }
+
+    /// Load every vault profile and log in every member (the `m` key). A
+    /// loaded, logged-out member is re-armed and a terminal worker
+    /// recreated. Returns how many were newly loaded.
+    fn load_and_login_all(&mut self) -> usize {
+        let (added, failure) = {
+            let (core, mut surface) = self.core_and_surface();
+            let (load, added) = core.load_all(&mut surface);
+            let login = core.login_all(&mut surface);
+            (added, core.failure(load).or_else(|| core.failure(login)))
+        };
+        if failure.is_some() {
+            self.error = failure;
+        }
+        added
+    }
+
+    /// Select `name` (pure bookkeeping: never a spawn or login).
     fn focus(&mut self, name: &str) {
-        if let Some(play) = self.play.as_mut() {
-            play.focus(name);
-        }
+        self.core.select(name);
     }
 
     /// `--live script_*` boot: minted ephemeral vault + spawn + runner.
@@ -887,7 +918,7 @@ impl TuiSession {
         self.live_name = Some(name);
         self.live_wait_script_stop = wait_script_stop;
         self.live_stop_wait_started = None;
-        let world = self.play.as_ref().and_then(|play| play.world());
+        let world = self.core.play().and_then(|play| play.world());
         let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
         if let Some(budget) = scenario::budget_s_from_env() {
             runner.set_deadline(budget);
@@ -895,14 +926,14 @@ impl TuiSession {
             self.live_announced_pass = false;
         }
         runner.set_live_names(&names);
-        if let Some(play) = &self.play {
+        if let Some(play) = self.core.play() {
             runner.set_obj_names(play.obj_names());
         }
         *self.scenario.lock().unwrap() = Some(runner);
         self.script_settings_inject = scenario::settings_inject_map(settings_inject);
         self.names = names.clone();
         for n in &names {
-            self.spawn(n);
+            self.load_and_login(n);
         }
         self.focus(&names[0]);
         // A scenario that names a script card selects the real `$RS2B0T`
@@ -1011,8 +1042,8 @@ impl TuiSession {
     }
 
     fn map_members(&self) -> bool {
-        self.play
-            .as_ref()
+        self.core
+            .play()
             .map(|p| p.map_members())
             .or_else(|| self.template.as_ref().map(|t| t.profile().map_members()))
             .unwrap_or(false)
@@ -1035,7 +1066,7 @@ impl TuiSession {
 
     fn map_context(&self, app: &TuiApp) -> Result<MapContext, ActionError> {
         let name = app.focused_name().ok_or(ActionError::NoFocus)?;
-        let focus = self.play.as_ref().and_then(|play| play.map_focus(&name));
+        let focus = self.core.play().and_then(|play| play.map_focus(&name));
         let nav = self
             .server_profile
             .as_ref()
@@ -1153,8 +1184,8 @@ impl TuiSession {
 
     fn bind_ready_catalogue(&mut self, app: &mut TuiApp, ready: Arc<ReadyCatalogue>) {
         let Some(world) = app.world.clone().or_else(|| {
-            self.play
-                .as_ref()
+            self.core
+                .play()
                 .and_then(|play| play.world())
                 .or_else(|| self.nav_world.lock().unwrap().clone())
         }) else {
@@ -1172,7 +1203,7 @@ impl TuiSession {
         };
         let data = profile
             .game_data()
-            .or_else(|| self.play.as_ref().and_then(|play| play.game_data()));
+            .or_else(|| self.core.play().and_then(|play| play.game_data()));
         let same = app.map_host_catalogue.as_ref().is_some_and(|catalogue| {
             catalogue.identity() == identity && catalogue.nav_identity() == nav
         });
@@ -1209,7 +1240,7 @@ impl TuiSession {
     fn arm_walk_on(&mut self, app: &mut TuiApp, dest: Tile) {
         self.walk_clear.store(false, Ordering::Relaxed);
         #[cfg(test)]
-        if self.play.is_none() && self.server_profile.is_none() {
+        if self.core.play().is_none() && self.server_profile.is_none() {
             // Headless arm tests have no Play/profile identity to capture.
             self.arm_walk_without_host(app, dest);
             return;
@@ -1244,7 +1275,7 @@ impl TuiSession {
             }
         };
         app.clear_consumed_map_selection();
-        let Some(play) = &self.play else {
+        let Some(play) = self.core.play() else {
             app.error = Some(ActionError::NoFocus.to_string());
             return;
         };
@@ -1341,7 +1372,7 @@ impl TuiSession {
             }
         };
         app.clear_consumed_map_selection();
-        let Some(play) = &self.play else {
+        let Some(play) = self.core.play() else {
             app.error = Some(ActionError::NoFocus.to_string());
             return;
         };
@@ -1379,7 +1410,7 @@ impl TuiSession {
             }
         };
         app.clear_consumed_map_selection();
-        let Some(play) = &self.play else {
+        let Some(play) = self.core.play() else {
             app.error = Some(ActionError::NoFocus.to_string());
             return;
         };
@@ -1438,7 +1469,7 @@ impl TuiSession {
         let Some(name) = app.focused_name() else {
             return;
         };
-        if let Some(play) = &self.play {
+        if let Some(play) = self.core.play() {
             play.queue_wire(
                 &name,
                 WireCmd::Walk {
@@ -1456,7 +1487,7 @@ impl TuiSession {
         let Some(name) = app.focused_name() else {
             return;
         };
-        if let Some(play) = &self.play {
+        if let Some(play) = self.core.play() {
             match action {
                 ChatAction::Continue => play.queue_wire(&name, WireCmd::Continue),
                 ChatAction::Answer(option) => {
@@ -1557,8 +1588,8 @@ impl TuiSession {
             app.error = Some("script: no focused profile".into());
             return;
         };
-        let result = match &self.play {
-            Some(play) => match sel {
+        let result = match self.core.play() {
+            Some(_) => match sel {
                 script::ScriptSel::Loaded(source, card_name) => {
                     match self.js.get(*source, card_name) {
                         Some(card) if card.unloadable.is_some() => Err(format!(
@@ -1585,14 +1616,17 @@ impl TuiSession {
                                             api_family: Some(card.api_family.as_str().into()),
                                         },
                                     ) {
-                                        Ok(siblings) => match play.script_start_load_typed(
+                                        Ok(siblings) => match self.core.start_script(
                                             &name,
-                                            card.js.clone(),
-                                            card.shape,
-                                            bag,
-                                            siblings,
+                                            ScriptStart::Load {
+                                                js: card.js.clone(),
+                                                shape: card.shape,
+                                                bag,
+                                                siblings,
+                                            },
+                                            None,
                                         ) {
-                                            Ok(()) => {
+                                            Ok(_) => {
                                                 self.pending_starts.insert(name.clone(), card);
                                                 Ok(())
                                             }
@@ -1607,7 +1641,11 @@ impl TuiSession {
                         None => Err(format!("no loaded script: {card_name}")),
                     }
                 }
-                script::ScriptSel::Compiled(id) => play.script_start(&name, *id),
+                script::ScriptSel::Compiled(id) => self
+                    .core
+                    .start_script(&name, ScriptStart::Compiled(*id), None)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
             },
             None => Err("no play".to_string()),
         };
@@ -1628,22 +1666,13 @@ impl TuiSession {
     /// did: a failure is `script: <diagnostic>`, success the remaining
     /// failure list (or nothing). Called once per pump.
     fn settle_script_starts(&mut self, app: &mut TuiApp) {
-        if self.pending_starts.is_empty() {
-            return;
-        }
-        let Some(play) = self.play.as_ref() else {
-            return;
-        };
-        let mut settled = Vec::new();
-        for name in self.pending_starts.keys() {
-            match play.script_poll_start(name) {
-                script::StartPoll::Pending => {}
-                script::StartPoll::Settled(outcome) => settled.push((name.clone(), Some(outcome))),
-                // The slot was removed (its Stop cancelled the Start).
-                script::StartPoll::NotOwed => settled.push((name.clone(), None)),
-            }
-        }
-        for (name, outcome) in settled {
+        let settled = self.core.take_settled_starts();
+        for frontend_core::StartSettled {
+            slot: name,
+            outcome,
+            ..
+        } in settled
+        {
             let Some(card) = self.pending_starts.remove(&name) else {
                 continue;
             };
@@ -1674,25 +1703,15 @@ impl TuiSession {
 
     /// Pause or resume the focused slot's script (toggle like the panel).
     fn script_toggle_pause(&mut self, app: &mut TuiApp) {
-        let Some(name) = app.focused_name() else {
-            return;
-        };
-        if let Some(play) = &self.play {
-            if play.script_state(&name) == script::RunState::Paused {
-                play.script_resume(&name);
-            } else {
-                play.script_pause(&name);
-            }
+        if let Some(name) = app.focused_name() {
+            self.core.toggle_pause(&name);
         }
     }
 
     /// Stop the focused slot's script.
     fn script_stop(&mut self, app: &mut TuiApp) {
-        let Some(name) = app.focused_name() else {
-            return;
-        };
-        if let Some(play) = &self.play {
-            play.script_stop(&name);
+        if let Some(name) = app.focused_name() {
+            self.core.stop_script(&name);
         }
     }
 
@@ -1726,26 +1745,20 @@ impl TuiSession {
     /// profile (the operator vault; `--live`'s temp vault is ephemeral)
     /// and mirror guardian settings onto a running slot's arm.
     fn persist_settings(&mut self, app: &mut TuiApp) {
-        let Some(vault) = self.vault.as_mut() else {
-            return;
-        };
         let Some(name) = app.focused_name() else {
             return;
         };
-        let Some(mut profile) = vault.get(&name).cloned() else {
-            return;
-        };
-        profile.settings = app.settings.clone();
-        let random_events = profile.settings.random_events;
-        let lamp_auto = profile.settings.lamp_auto;
-        let lamp_skill = profile.settings.lamp_skill.clone();
-        if let Err(e) = vault.upsert(profile) {
+        // Field edit, not a whole-settings replacement: the popup owns only
+        // the guardian fields, and the arm changes only after the vault
+        // write succeeded.
+        let settings = &app.settings;
+        if let Err(e) = self.core.set_random_settings(
+            &name,
+            settings.random_events,
+            &settings.lamp_skill,
+            settings.lamp_auto,
+        ) {
             app.error = Some(format!("settings: {e}"));
-        }
-        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
-            arm.random_events.store(random_events, Ordering::Relaxed);
-            arm.lamp_auto.store(lamp_auto, Ordering::Relaxed);
-            *arm.lamp_skill.lock().unwrap() = lamp_skill;
         }
     }
 
@@ -1754,8 +1767,8 @@ impl TuiSession {
         #[cfg(feature = "memory-profile")]
         if let Some(run) = self.memory.as_mut() {
             app.focused = Some(run.focus_index());
-            if let Some(play) = self.play.as_mut() {
-                play.focus(&run.names[run.focus_index()]);
+            self.core.select(&run.names[run.focus_index()]);
+            if let Some(play) = self.core.play_mut() {
                 match run.poll(play) {
                     Ok(true) => {
                         restore_terminal();
@@ -1774,14 +1787,12 @@ impl TuiSession {
 
         // Start/Stop return before the isolate is up or reaped. A slot that
         // is offline or queued for login has no observe of its own, so the
-        // pump resolves every slot, then commits the Starts that settled.
-        if let Some(play) = self.play.as_mut() {
-            play.pump_worker_reaps();
-            play.pump_script_lifecycles();
-        }
+        // core resolves every slot (and advances removals), then the TUI
+        // commits the Starts that settled.
+        self.core.poll();
         self.settle_script_starts(app);
 
-        let statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
+        let statuses = self.core.statuses().to_vec();
         // Running slots join the strip even when they are not in the
         // vault (live minted names).
         let mut names = self.names.clone();
@@ -1796,7 +1807,7 @@ impl TuiSession {
         let sampled = self.resource_sampler.due(now);
         if sampled {
             let focused = app.focused_name();
-            match self.play.as_ref() {
+            match self.core.play() {
                 Some(play) => self
                     .resource_sampler
                     .sample_play(now, play, focused.as_deref()),
@@ -1842,8 +1853,8 @@ impl TuiSession {
         if app.map_active {
             self.poll_map_demand(app);
             app.refresh_walk_send(|name| {
-                self.play
-                    .as_ref()
+                self.core
+                    .play()
                     .map(|p| p.walk_eligibility(name))
                     .unwrap_or(WalkSlotStatus::Excluded(WalkExclude::NotLoggedIn))
             });
@@ -1857,7 +1868,7 @@ impl TuiSession {
             self.last_focused = focused.clone();
             app.settings = focused
                 .as_deref()
-                .and_then(|n| self.vault.as_ref().and_then(|v| v.get(n)))
+                .and_then(|n| self.core.vault().and_then(|v| v.get(n)))
                 .map(|p| p.settings.clone())
                 .unwrap_or_default();
             app.settings_state.open = false;
@@ -1943,7 +1954,7 @@ impl TuiSession {
             if self.walk_clear.swap(false, Ordering::Relaxed) {
                 app.walk_dest = None;
             }
-            if let Some(play) = &self.play {
+            if let Some(play) = self.core.play() {
                 app.script_state = play.script_state(name);
             }
         } else if app.map_active {
@@ -1959,7 +1970,7 @@ impl TuiSession {
         let Some(name) = self.names.first() else {
             return false;
         };
-        let Some(play) = self.play.as_ref() else {
+        let Some(play) = self.core.play() else {
             return false;
         };
         matches!(play.script_state(name), script::RunState::Idle)
@@ -2019,7 +2030,7 @@ impl TuiSession {
         self.live_announced_pass = announced;
         let mut lines = lines;
         if code == Some(1) && std::env::var_os("BOT_DEBUG").is_some() {
-            if let (Some(slot), Some(play)) = (self.names.first(), self.play.as_ref()) {
+            if let (Some(slot), Some(play)) = (self.names.first(), self.core.play()) {
                 if let Some(receipt) = play.script_lifecycle_receipt(slot) {
                     lines.push(ProofLine::Stderr(format!(
                         "[tui-play] script lifecycle slot={slot:?} generation={} state={:?} tick={} reason={:?}",
@@ -2037,7 +2048,7 @@ impl TuiSession {
         let runner = self.scenario.lock().unwrap();
         let runner = runner.as_ref()?;
         let owned = runner.owned_profile_names();
-        let statuses = self.play.as_ref()?.statuses();
+        let statuses = self.core.play()?.statuses();
         host_play::owned_terminal_startup_error(&statuses, &owned)
     }
 
@@ -2077,8 +2088,8 @@ impl TuiSession {
         self.refresh_ack_cache(now);
         let focused = app.focused_name();
         let background = self
-            .play
-            .as_ref()
+            .core
+            .play()
             .map(|play| play.background_bot_count(focused.as_deref()))
             .unwrap_or(0);
         if self.background_bots_acked || background == 0 {
@@ -2182,7 +2193,7 @@ fn prompt_instance_conflict(holder: &host_play::InstanceHolder) -> bool {
     )
 }
 
-/// Run the interactive (or `--live`) TUI: unlock, spawn, event loop.
+/// Run the interactive (or `--live`) TUI: unlock, load + log in, event loop.
 fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let memory = {
         #[cfg(feature = "memory-profile")]
@@ -2237,10 +2248,10 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         session.options.mainland = true;
         session.unlock_at(&run.vault, &run.pass)?;
         run.bind_seed_nav(host_play::memory::SeedNav::FromPlay(
-            session.play.as_ref().and_then(|p| p.world()),
+            session.core.play().and_then(|p| p.world()),
         ))?;
         session.names = run.names.clone();
-        session.spawn_all();
+        session.load_and_login_all();
         session.focus(&run.names[0]);
         let mut app = TuiApp::new(format!(
             "{} memory benchmark · {}",
@@ -2288,13 +2299,13 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             // `--user` names may not exist: create them like host-play
             // does (`password = username`, fresh uid).
             for u in &args.users {
-                if session.vault.as_ref().is_none_or(|v| v.get(u).is_none()) {
+                if session.core.vault().is_none_or(|v| v.get(u).is_none()) {
                     session.create_profile(u)?;
                 }
             }
             session.names = session
-                .vault
-                .as_ref()
+                .core
+                .vault()
                 .map(|v| v.profiles().map(|p| p.username.clone()).collect())
                 .unwrap_or_default();
             let focus = args
@@ -2305,7 +2316,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             let Some(focus) = focus else {
                 return Err("vault has no profiles (create one with host-play --user)".into());
             };
-            session.spawn(&focus);
+            session.load_and_login(&focus);
             session.focus(&focus);
             let mut app = TuiApp::new(format!(
                 "{} headless · {}",
@@ -2324,8 +2335,8 @@ impl TuiSession {
     /// username, uid one past the vault's max, from the 274M base).
     fn create_profile(&mut self, username: &str) -> Result<(), String> {
         let uid = self
-            .vault
-            .as_ref()
+            .core
+            .vault()
             .map(|v| v.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1)
             .unwrap_or(274_000_001);
         let profile = Profile {
@@ -2334,7 +2345,7 @@ impl TuiSession {
             uid,
             settings: vault::ProfileSettings::default(),
         };
-        let Some(vault) = self.vault.as_mut() else {
+        let Some(vault) = self.core.vault_mut() else {
             return Ok(());
         };
         vault.upsert(profile).map_err(|e| format!("profile: {e}"))
@@ -2504,6 +2515,10 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::MapTeleport(tile) => session.map_teleport(app, tile),
         AppAction::Chat(action) => session.chat_send(app, action),
         AppAction::SpawnAll => multibox_key(session, app),
+        AppAction::Login => session.login(app),
+        AppAction::Logout => session.logout(app),
+        AppAction::LogoutAll => session.logout_all(),
+        AppAction::Remove => session.remove(app),
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),
         AppAction::ScriptStop => session.script_stop(app),
@@ -2540,12 +2555,13 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     }
 }
 
-/// The `m` key spawns the rest of the MultiBox wall.
+/// The `m` key loads every profile and logs every member in.
 fn multibox_key(session: &mut TuiSession, app: &mut TuiApp) {
-    let spawned = session.spawn_all();
-    if spawned > 0 {
-        app.error = Some(format!("spawned {spawned} slot(s)"));
-    }
+    let loaded = session.load_and_login_all();
+    app.error = session
+        .error
+        .take()
+        .or_else(|| (loaded > 0).then(|| format!("loaded {loaded} member(s)")));
 }
 
 pub fn main() -> ExitCode {

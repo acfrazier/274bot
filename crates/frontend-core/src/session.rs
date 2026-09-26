@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus};
-use vault::{Profile, Vault};
+use vault::Vault;
 
 use crate::fleet::Fleet;
 use crate::operations::{ActionKind, OperationBook, OperationId, OperationReport, Outcome};
@@ -950,22 +950,6 @@ impl<Io> OperatorSession<Io> {
             .as_mut()
             .ok_or_else(|| "chooser: vault locked".to_string())?;
         vault.remove(name).map_err(|e| format!("chooser: {e}"))
-    }
-
-    /// Insert or replace a vault profile, publishing handshake-time
-    /// settings to a running slot.
-    pub fn upsert_profile(&mut self, profile: Profile) -> Result<(), String> {
-        let vault = self
-            .vault
-            .as_mut()
-            .ok_or_else(|| "vault locked".to_string())?;
-        vault.upsert(profile.clone()).map_err(|e| e.to_string())?;
-        if let Some(play) = self.play.as_mut() {
-            if play.arm(&profile.username).is_some() {
-                play.remember_profile(profile);
-            }
-        }
-        Ok(())
     }
 }
 
