@@ -51,6 +51,9 @@ pub enum MapCacheError {
     Cancelled,
     NoPreparedCache,
     Busy,
+    /// A [`MapDemand::ReadyImages`] demand found no published terrain; it
+    /// never bakes, so the demand settles catalogue-only.
+    TerrainNotBaked,
 }
 
 impl fmt::Display for MapCacheError {
@@ -64,6 +67,7 @@ impl fmt::Display for MapCacheError {
                 f.write_str("map assets unavailable: prepared client cache is absent")
             }
             Self::Busy => f.write_str("map cache worker is busy with another identity"),
+            Self::TerrainNotBaked => f.write_str("map terrain is not baked"),
         }
     }
 }
@@ -716,8 +720,32 @@ impl MapProfileDescriptor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapDemand {
     CatalogueOnly,
+    /// Catalogue plus terrain, baking terrain locally when it is not ready.
     Images,
+    /// Catalogue plus already-published terrain only: the worker derives a
+    /// missing catalogue but never starts a terrain bake. When the terrain is
+    /// gone by the image stage the demand settles Ready without images.
+    ReadyImages,
 }
+
+impl MapDemand {
+    fn wants_images(self) -> bool {
+        matches!(self, Self::Images | Self::ReadyImages)
+    }
+
+    /// Worker demand flag: what the image stage may do.
+    fn flag(self) -> usize {
+        match self {
+            Self::CatalogueOnly => DEMAND_CATALOGUE,
+            Self::Images => DEMAND_BAKE_IMAGES,
+            Self::ReadyImages => DEMAND_ADOPT_IMAGES,
+        }
+    }
+}
+
+const DEMAND_CATALOGUE: usize = 0;
+const DEMAND_BAKE_IMAGES: usize = 1;
+const DEMAND_ADOPT_IMAGES: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapStage {
@@ -1461,12 +1489,16 @@ impl MapDemandManager {
         &self.inner.root
     }
 
-    /// Whether published terrain imagery for `descriptor` is ready (baked
-    /// earlier or installed), independent of the catalogue: a missing or
-    /// stale catalogue is derived cheaply by the worker, terrain is the
-    /// expensive local bake.
-    pub fn images_ready(&self, descriptor: &MapProfileDescriptor) -> Result<bool, MapCacheError> {
-        Ok(self.cached_images(descriptor.image_identity())?.is_some())
+    /// Published terrain imagery for `descriptor` (baked earlier or
+    /// installed), independent of the catalogue: a missing or stale catalogue
+    /// is derived cheaply by the worker, terrain is the expensive local bake.
+    /// The returned value holds a shared lease, so capacity pruning cannot
+    /// remove that terrain while it is retained.
+    pub fn ready_images(
+        &self,
+        descriptor: &MapProfileDescriptor,
+    ) -> Result<Option<Arc<ReadyImages>>, MapCacheError> {
+        self.cached_images(descriptor.image_identity())
     }
 
     pub fn request(
@@ -1494,8 +1526,19 @@ impl MapDemandManager {
         let mut active = self.inner.active.lock();
         if let Some(job) = (*active).as_mut() {
             if job.key == key {
-                if demand == MapDemand::Images {
-                    job.demand.store(1, AtomicOrdering::Release);
+                match demand {
+                    MapDemand::Images => job
+                        .demand
+                        .store(DEMAND_BAKE_IMAGES, AtomicOrdering::Release),
+                    MapDemand::ReadyImages => {
+                        let _ = job.demand.compare_exchange(
+                            DEMAND_CATALOGUE,
+                            DEMAND_ADOPT_IMAGES,
+                            AtomicOrdering::AcqRel,
+                            AtomicOrdering::Acquire,
+                        );
+                    }
+                    MapDemand::CatalogueOnly => {}
                 }
                 let status = job.status.lock().clone();
                 if matches!(status, MapJobStatus::Failed(_)) {
@@ -1531,7 +1574,7 @@ impl MapDemandManager {
             .inner
             .next_generation
             .fetch_add(1, AtomicOrdering::Relaxed);
-        let demand_flag = Arc::new(AtomicUsize::new(usize::from(demand == MapDemand::Images)));
+        let demand_flag = Arc::new(AtomicUsize::new(demand.flag()));
         let consumers = Arc::new(AtomicUsize::new(1));
         let ready_slot = Arc::new(Mutex::new(None));
         let cancel = Arc::new(AtomicBool::new(false));
@@ -1668,7 +1711,7 @@ impl MapDemandManager {
         let Some(catalogue) = self.cached_catalogue(descriptor.catalogue_identity())? else {
             return Ok(None);
         };
-        let images = if demand == MapDemand::Images {
+        let images = if demand.wants_images() {
             let Some(images) = self.cached_images(descriptor.image_identity())? else {
                 return Ok(None);
             };
@@ -1695,7 +1738,7 @@ impl MapDemandManager {
         let catalogue = self
             .cached_catalogue(descriptor.catalogue_identity())?
             .ok_or(MapCacheError::Message("catalogue is not ready".into()))?;
-        let images = if demand == MapDemand::Images {
+        let images = if demand.wants_images() {
             Some(
                 self.cached_images(descriptor.image_identity())?
                     .ok_or(MapCacheError::Message("images are not ready".into()))?,
@@ -1807,6 +1850,7 @@ fn run_job(
             &producer,
             &descriptor,
             ArtifactKind::Catalogue,
+            true,
             Arc::clone(&cancel),
             Arc::clone(&progress),
         )?;
@@ -1817,21 +1861,50 @@ fn run_job(
             identity,
             lease,
         )?);
-        if demand.load(AtomicOrdering::Acquire) != 1 {
-            return Ok(ReadyMap {
-                catalogue,
-                images: None,
-            });
-        }
+        let may_bake = match demand.load(AtomicOrdering::Acquire) {
+            DEMAND_BAKE_IMAGES => true,
+            DEMAND_ADOPT_IMAGES => false,
+            _ => {
+                return Ok(ReadyMap {
+                    catalogue,
+                    images: None,
+                })
+            }
+        };
         let identity = descriptor.image_identity();
-        let lease = execute_artifact(
+        let lease = match execute_artifact(
             &root,
             &producer,
             &descriptor,
             ArtifactKind::Images,
+            may_bake,
             Arc::clone(&cancel),
             Arc::clone(&progress),
-        )?;
+        ) {
+            Ok(lease) => lease,
+            // A consented Images request joined this adopt-only job meanwhile.
+            Err(MapCacheError::TerrainNotBaked)
+                if demand.load(AtomicOrdering::Acquire) == DEMAND_BAKE_IMAGES =>
+            {
+                execute_artifact(
+                    &root,
+                    &producer,
+                    &descriptor,
+                    ArtifactKind::Images,
+                    true,
+                    Arc::clone(&cancel),
+                    Arc::clone(&progress),
+                )?
+            }
+            Err(MapCacheError::TerrainNotBaked) => {
+                // Fail closed: an adopt-only demand never bakes terrain.
+                return Ok(ReadyMap {
+                    catalogue,
+                    images: None,
+                });
+            }
+            Err(error) => return Err(error),
+        };
         let images = ReadyImages::open(&root.image_dir(identity)?, identity, lease)?;
         Ok(ReadyMap {
             catalogue,
@@ -1871,6 +1944,7 @@ fn execute_artifact(
     producer: &Arc<dyn MapBakeProducer>,
     descriptor: &MapProfileDescriptor,
     artifact: ArtifactKind,
+    may_bake: bool,
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn Fn(MapProgress) + Send + Sync>,
 ) -> Result<PublishLock, MapCacheError> {
@@ -1897,6 +1971,9 @@ fn execute_artifact(
         }
         if cancel.load(AtomicOrdering::Acquire) {
             return Err(MapCacheError::Cancelled);
+        }
+        if !may_bake {
+            return Err(MapCacheError::TerrainNotBaked);
         }
         if !capacity_checked {
             // Establish the global-capacity state before contending for the
@@ -1998,6 +2075,9 @@ pub struct MapDemandHandle {
     ready_slot: Option<Arc<Mutex<Option<ReadyMap>>>>,
     ready_owner: Option<Arc<ReadyMap>>,
     lease: Option<Arc<ConsumerLease>>,
+    /// Terrain lease kept from an admission decision (see
+    /// [`Self::with_terrain_pin`]).
+    terrain_pin: Option<Arc<ReadyImages>>,
 }
 
 impl fmt::Debug for MapDemandHandle {
@@ -2033,6 +2113,7 @@ impl MapDemandHandle {
             ready_slot: Some(ready_slot),
             ready_owner: None,
             lease: Some(lease),
+            terrain_pin: None,
         }
     }
 
@@ -2051,6 +2132,7 @@ impl MapDemandHandle {
             ready_slot: None,
             ready_owner: Some(ready),
             lease: None,
+            terrain_pin: None,
         }
     }
     fn terminal(
@@ -2068,6 +2150,7 @@ impl MapDemandHandle {
             ready_slot: None,
             ready_owner: None,
             lease: None,
+            terrain_pin: None,
         }
     }
 
@@ -2107,10 +2190,25 @@ impl MapDemandHandle {
     pub fn descriptor(&self) -> &MapProfileDescriptor {
         &self.descriptor
     }
+    /// Keep `terrain` leased for this handle's lifetime, so the terrain an
+    /// admission decision relied on cannot be pruned while the worker derives
+    /// the catalogue and adopts it.
+    pub fn with_terrain_pin(mut self, terrain: Arc<ReadyImages>) -> Self {
+        self.terrain_pin = Some(terrain);
+        self
+    }
 }
 
 impl Clone for MapDemandHandle {
     fn clone(&self) -> Self {
+        let mut clone = self.clone_demand();
+        clone.terrain_pin = self.terrain_pin.as_ref().map(Arc::clone);
+        clone
+    }
+}
+
+impl MapDemandHandle {
+    fn clone_demand(&self) -> Self {
         if let Some(lease) = &self.lease {
             // A cloned UI view shares one cancellation lease.  The original
             // and clone therefore cannot accidentally cancel each other twice.
@@ -2123,6 +2221,7 @@ impl Clone for MapDemandHandle {
                 ready_slot: self.ready_slot.as_ref().map(Arc::clone),
                 ready_owner: self.ready_owner.as_ref().map(Arc::clone),
                 lease: Some(Arc::clone(lease)),
+                terrain_pin: self.terrain_pin.as_ref().map(Arc::clone),
             }
         } else if let Some(owner) = &self.ready_owner {
             Self::already_ready(

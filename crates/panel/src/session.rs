@@ -4180,8 +4180,10 @@ impl Session {
         if let Some(handle) = &self.map_demand {
             if handle.is_ready() {
                 if self.map_images.is_none() {
-                    if let Ok(Some(images)) = map_ready_images(handle) {
-                        self.map_images = Some(images);
+                    match map_ready_images(handle) {
+                        Ok(Some(images)) => self.map_images = Some(images),
+                        Ok(None) => self.map_bake.note_ready_without_terrain(handle.demand()),
+                        Err(_) => {}
                     }
                 }
                 if let Ok(ready) = map_ready_catalogue(handle) {

@@ -67,6 +67,22 @@ pub fn open_map_demand(
     }
 }
 
+/// Open terrain that is already published for `descriptor` without ever
+/// baking it: `None` when there is none. The handle keeps the terrain leased
+/// while the worker derives a missing catalogue, so capacity pruning cannot
+/// remove it, and its [`MapDemand::ReadyImages`] image stage never starts a
+/// bake (it settles catalogue-only if the terrain is gone anyway).
+pub fn open_map_ready_terrain(
+    manager: &MapDemandManager,
+    descriptor: MapProfileDescriptor,
+) -> Result<Option<MapDemandHandle>, MapCacheError> {
+    let Some(terrain) = manager.ready_images(&descriptor)? else {
+        return Ok(None);
+    };
+    let handle = open_map_demand(manager, descriptor, MapDemand::ReadyImages)?;
+    Ok(Some(handle.with_terrain_pin(terrain)))
+}
+
 /// Catalogue published independently of terrain. `None` while still baking.
 pub fn peek_map_catalogue(profile: &ServerProfile) -> Option<Arc<ReadyCatalogue>> {
     let descriptor = map_profile_descriptor(profile).ok()?;

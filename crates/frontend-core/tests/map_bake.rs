@@ -150,27 +150,14 @@ fn a_ready_cache_opens_without_asking_or_baking() {
 #[test]
 fn ready_terrain_with_a_missing_catalogue_derives_it_without_asking_or_baking_terrain() {
     let scratch = Scratch::new("terrain-only");
-    {
-        let (installer, _) = manager(&scratch);
-        let handle = MapBakeGate::new(MapBakeChoice::Always)
-            .open(&installer, fixture_descriptor(), MapDemand::Images)
-            .unwrap();
-        wait_ready(&handle);
-    }
-    // Installed terrain, but the catalogue is absent (e.g. its policy key
-    // changed since the terrain was baked or shipped).
-    let catalogue = scratch
-        .root()
-        .catalogue_dir(fixture_descriptor().catalogue_identity())
-        .unwrap();
-    std::fs::remove_dir_all(&catalogue).unwrap();
+    publish_terrain_without_catalogue(&scratch);
     let (manager, producer) = manager(&scratch);
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
     let handle = gate
         .open(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(gate.prompt(), MapBakePrompt::None, "terrain is ready");
-    assert_eq!(handle.demand(), MapDemand::Images);
+    assert_eq!(handle.demand(), MapDemand::ReadyImages, "adopt, never bake");
     wait_ready(&handle);
     assert!(
         has_terrain(&handle),
@@ -178,6 +165,81 @@ fn ready_terrain_with_a_missing_catalogue_derives_it_without_asking_or_baking_te
     );
     assert_eq!(producer.catalogue_runs(), 1, "catalogue derived silently");
     assert_eq!(producer.image_runs(), 0, "no terrain bake");
+}
+
+/// Publish terrain, then drop the catalogue, as a policy change would.
+fn publish_terrain_without_catalogue(scratch: &Scratch) {
+    {
+        let (installer, _) = manager(scratch);
+        let handle = MapBakeGate::new(MapBakeChoice::Always)
+            .open(&installer, fixture_descriptor(), MapDemand::Images)
+            .unwrap();
+        wait_ready(&handle);
+    }
+    let catalogue = scratch
+        .root()
+        .catalogue_dir(fixture_descriptor().catalogue_identity())
+        .unwrap();
+    std::fs::remove_dir_all(&catalogue).unwrap();
+}
+
+#[test]
+fn over_the_cache_cap_the_admitted_terrain_is_not_pruned_or_rebaked() {
+    let scratch = Scratch::new("over-cap");
+    publish_terrain_without_catalogue(&scratch);
+    let terrain = scratch
+        .root()
+        .image_dir(fixture_descriptor().image_identity())
+        .unwrap();
+    // The admitted terrain is the least recently used entry, and a newer
+    // unrelated entry puts the cache over its cap (a sparse file: no disk).
+    std::fs::File::open(&terrain)
+        .unwrap()
+        .set_modified(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(3600))
+        .unwrap();
+    let unrelated = terrain.parent().unwrap().join("unrelated-older-bake");
+    std::fs::create_dir_all(&unrelated).unwrap();
+    std::fs::File::create(unrelated.join("tile.png"))
+        .unwrap()
+        .set_len(host_play::map_cache::MAX_GENERATED_CACHE_BYTES + (16 << 20))
+        .unwrap();
+    let (manager, producer) = manager(&scratch);
+    let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
+    let handle = gate
+        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .unwrap();
+    assert_eq!(gate.prompt(), MapBakePrompt::None, "terrain is ready");
+    wait_ready(&handle);
+    assert!(
+        has_terrain(&handle),
+        "the admitted terrain survives pruning"
+    );
+    assert!(!unrelated.exists(), "capacity came from the other entry");
+    assert_eq!(producer.catalogue_runs(), 1);
+    assert_eq!(producer.image_runs(), 0, "no bake without consent");
+}
+
+#[test]
+fn an_adopt_only_demand_without_terrain_never_bakes_and_raises_the_prompt() {
+    let scratch = Scratch::new("adopt-only");
+    let (manager, producer) = manager(&scratch);
+    let handle = manager
+        .request(fixture_descriptor(), MapDemand::ReadyImages)
+        .unwrap();
+    wait_ready(&handle);
+    assert!(!has_terrain(&handle), "settles catalogue-only");
+    assert_eq!(producer.catalogue_runs(), 1);
+    assert_eq!(producer.image_runs(), 0, "fails closed instead of baking");
+    let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
+    gate.note_ready_without_terrain(handle.demand());
+    assert_eq!(gate.prompt(), MapBakePrompt::Asking);
+    gate.accept();
+    let baking = gate
+        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .unwrap();
+    wait_ready(&baking);
+    assert!(has_terrain(&baking), "consent then bakes");
+    assert_eq!(producer.image_runs(), 1);
 }
 
 #[test]
