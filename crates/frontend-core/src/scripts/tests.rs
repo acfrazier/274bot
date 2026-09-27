@@ -185,7 +185,7 @@ fn merged_profile_bag_carries_profile_global_clue_partner() {
     let mut profile = f.core.vault().unwrap().get("alice").unwrap().clone();
     profile.settings.clue_duel_partner = "Helper".into();
     f.core
-        .save_profile(profile, crate::ArmMirror::Remember, "clue-global")
+        .save_profile(profile, crate::ArmMirror::Remember(None), "clue-global")
         .unwrap();
     f.core.flush_writes();
     let card = f.card("clue.ts", LOOPING);
@@ -280,7 +280,7 @@ fn apply_to_all_keeps_each_live_targets_global_clue_partner() {
         let mut profile = f.core.vault().unwrap().get(name).unwrap().clone();
         profile.settings.clue_duel_partner = partner.into();
         f.core
-            .save_profile(profile, crate::ArmMirror::Remember, "partner")
+            .save_profile(profile, crate::ArmMirror::Remember(None), "partner")
             .unwrap();
     }
     f.core.flush_writes();
@@ -311,6 +311,58 @@ fn apply_to_all_keeps_each_live_targets_global_clue_partner() {
             "{name}'s run keeps its own global partner"
         );
     }
+}
+
+/// A profile save that changes the clue duel partner reaches the running
+/// script once durable, as frozen reads the Global partner live.
+#[test]
+fn a_saved_partner_reaches_the_running_script() {
+    let mut f = fixture("partner-live", &["alice"]);
+    let clue = f.card("clue.ts", LOOPING);
+    f.assign("alice", &clue);
+    f.start_running("alice");
+    let mut profile = f.core.vault().unwrap().get("alice").unwrap().clone();
+    profile.settings.clue_duel_partner = " Helper ".into();
+    let live = f
+        .scripts
+        .profile_save_live(&f.core, "alice", &profile.settings);
+    f.core
+        .save_profile(profile, crate::ArmMirror::Remember(live), "credentials")
+        .unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert!(f.run_has_bag("alice", &bag(&[("clueDuelPartner", json!("Helper"))])));
+}
+
+/// Two partner saves of one profile committed together: the newer one
+/// replaces the older, which is superseded rather than delivered, and the
+/// running script ends on the newer partner.
+#[test]
+fn coalesced_partner_saves_settle_on_the_newest_partner() {
+    let mut f = fixture("partner-coalesced", &["alice"]);
+    let clue = f.card("clue.ts", LOOPING);
+    f.assign("alice", &clue);
+    f.start_running("alice");
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    let saves = ["First", "Second"].map(|partner| {
+        let mut profile = f.core.vault().unwrap().get("alice").unwrap().clone();
+        profile.settings.clue_duel_partner = partner.into();
+        let live = f
+            .scripts
+            .profile_save_live(&f.core, "alice", &profile.settings);
+        f.core
+            .save_profile(profile, crate::ArmMirror::Remember(live), "credentials")
+            .unwrap()
+    });
+    drop(held);
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    let outcome = |op| f.core.operation(op).unwrap().outcome("alice").cloned();
+    assert_eq!(outcome(saves[0]), Some(Outcome::Cancelled));
+    assert_eq!(outcome(saves[1]), Some(Outcome::Completed));
+    assert!(f.run_has_bag("alice", &bag(&[("clueDuelPartner", json!("Second"))])));
 }
 
 #[test]

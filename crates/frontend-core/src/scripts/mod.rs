@@ -405,25 +405,66 @@ impl Scripts {
         schema: &[script::SettingDef],
         overrides: &Map<String, Value>,
     ) -> Map<String, Value> {
+        let partner = core
+            .vault()
+            .and_then(|vault| vault.get(profile))
+            .map_or("", |profile| profile.settings.clue_duel_partner.as_str());
+        self.run_bag_with(schema, overrides, partner)
+    }
+
+    /// [`Self::run_bag`] with the profile's global partner given.
+    fn run_bag_with(
+        &self,
+        schema: &[script::SettingDef],
+        overrides: &Map<String, Value>,
+        partner: &str,
+    ) -> Map<String, Value> {
         let mut bag = script::merge_bag(schema, overrides, self.inject.as_ref());
         let injected = self
             .inject
             .as_ref()
             .is_some_and(|inject| inject.contains_key(script::CLUE_DUEL_PARTNER));
-        if !injected {
-            if let Some(partner) = core
-                .vault()
-                .and_then(|vault| vault.get(profile))
-                .map(|profile| profile.settings.clue_duel_partner.trim())
-                .filter(|partner| !partner.is_empty())
-            {
-                bag.insert(
-                    script::CLUE_DUEL_PARTNER.into(),
-                    Value::String(partner.into()),
-                );
-            }
+        let partner = partner.trim();
+        if !injected && !partner.is_empty() {
+            bag.insert(
+                script::CLUE_DUEL_PARTNER.into(),
+                Value::String(partner.into()),
+            );
         }
         bag
+    }
+
+    /// The bag the running assignment of `profile` holds once `settings`
+    /// are saved, for a profile save that changes a global setting: frozen
+    /// scripts read the clue duel partner live, at each crossing. `None`
+    /// when no run of the profile's assigned card is live.
+    pub fn profile_save_live<Io>(
+        &self,
+        core: &OperatorSession<Io>,
+        profile: &str,
+        settings: &vault::ProfileSettings,
+    ) -> Option<LiveSettings> {
+        let assignment = settings.script_assignment.as_ref()?;
+        let key = assignment.key();
+        let (identity, generation) = live_fence(core, profile, &key)?;
+        let script::ScriptSel::Loaded(source, lookup) = sel_from_assignment(assignment)? else {
+            return None;
+        };
+        let schema = self
+            .js
+            .get(source, &lookup)
+            .map(|card| card.settings_schema.as_slice())
+            .unwrap_or_default();
+        let overrides = settings
+            .script_settings
+            .get(&key)
+            .cloned()
+            .unwrap_or_default();
+        Some(LiveSettings {
+            identity,
+            generation,
+            bag: Arc::new(self.run_bag_with(schema, &overrides, &settings.clue_duel_partner)),
+        })
     }
 
     /// The legacy global bag for a card (no profile focused).

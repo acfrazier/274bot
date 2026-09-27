@@ -116,7 +116,7 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
     let blocker = path.with_extension("tmp");
     std::fs::create_dir_all(&blocker).unwrap();
     let op = s
-        .save_profile(edited.clone(), ArmMirror::Remember, "credentials")
+        .save_profile(edited.clone(), ArmMirror::Remember(None), "credentials")
         .unwrap();
     s.flush_writes();
     std::fs::remove_dir_all(&blocker).unwrap();
@@ -130,7 +130,7 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
     s.logout("alice");
 
     // A successful save reaches the same worker's next handshake.
-    s.save_profile(edited, ArmMirror::Remember, "credentials")
+    s.save_profile(edited, ArmMirror::Remember(None), "credentials")
         .unwrap();
     s.flush_writes();
     let since = Instant::now();

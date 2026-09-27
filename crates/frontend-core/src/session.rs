@@ -115,8 +115,10 @@ pub enum ArmMirror {
         lamp_skill: String,
         lamp_auto: bool,
     },
-    /// Handshake-time settings (password, world) for the next login.
-    Remember,
+    /// Handshake-time settings (password, world) for the next login, and
+    /// the whole bag for the run captured at edit time when the save
+    /// changed its profile-global settings (the clue duel partner).
+    Remember(Option<LiveSettings>),
     /// A card's parameters: posted to the run captured at edit time, if
     /// any, and reported through [`OperatorSession::take_settings_writes`].
     ScriptSettings {
@@ -129,13 +131,14 @@ pub enum ArmMirror {
 impl ArmMirror {
     /// Whether this mirror, on a later write committed together with
     /// `earlier`'s, sets the same setting, so `earlier` need not settle or
-    /// reach the slot on its own. Parameters replace the same card's: the
-    /// later edit captured that card's current run, if any.
+    /// reach the slot on its own. Parameters replace the same card's, and a
+    /// profile save an earlier save's handshake settings and partner: the
+    /// later edit captured the current run, if any.
     fn replaces(&self, earlier: &Self) -> bool {
         match (self, earlier) {
             (Self::AutoLogin(_), Self::AutoLogin(_))
             | (Self::Guardian { .. }, Self::Guardian { .. })
-            | (Self::Remember, Self::Remember) => true,
+            | (Self::Remember(_), Self::Remember(_)) => true,
             (Self::ScriptSettings { card: later, .. }, Self::ScriptSettings { card, .. }) => {
                 later == card
             }
@@ -1516,12 +1519,13 @@ impl<Io> OperatorSession<Io> {
                     *arm.lamp_skill.lock().unwrap() = lamp_skill;
                 }
             }
-            ArmMirror::Remember => {
+            ArmMirror::Remember(live) => {
                 // The committed row, not the staged vault (a newer edit may
                 // be queued behind this one).
                 if let Some(profile) = committed {
                     play.remember_profile(profile);
                 }
+                return deliver_settings(play, name, live);
             }
             ArmMirror::ScriptSettings { live, .. } => return deliver_settings(play, name, live),
         }

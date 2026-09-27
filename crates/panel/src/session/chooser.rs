@@ -55,8 +55,16 @@ impl Session {
         };
         // Staged now and written off this thread (a rename as one
         // transaction); a running slot learns the next-handshake settings
-        // once the write is durable.
-        let mirror = frontend_core::ArmMirror::Remember;
+        // once the write is durable, and its running script the profile's
+        // clue duel partner (frozen reads it live).
+        let live = rename_from
+            .is_none()
+            .then(|| {
+                self.scripts
+                    .profile_save_live(&self.core, &profile.username, &profile.settings)
+            })
+            .flatten();
+        let mirror = frontend_core::ArmMirror::Remember(live);
         let saved = match rename_from {
             Some(old) => {
                 let old = old.to_string();

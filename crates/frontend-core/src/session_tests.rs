@@ -966,7 +966,7 @@ fn a_parked_profile_spawns_from_its_durable_row_while_an_edit_is_saving() {
 
     // Slow write: Log in before it settles uses the durable row.
     let held = gate.lock().unwrap();
-    s.save_profile(edited.clone(), ArmMirror::Remember, "credentials")
+    s.save_profile(edited.clone(), ArmMirror::Remember(None), "credentials")
         .unwrap();
     assert!(
         !s.profile_saving("alice"),
@@ -1002,7 +1002,7 @@ fn a_parked_profile_spawns_from_its_durable_row_while_an_edit_is_saving() {
     assert!(Arc::ptr_eq(&arm(&s, "alice"), &alice));
 
     // The write succeeds: the post-write mirror hands Play the new row.
-    s.save_profile(edited, ArmMirror::Remember, "credentials")
+    s.save_profile(edited, ArmMirror::Remember(None), "credentials")
         .unwrap();
     s.flush_writes();
     assert_eq!(s.durable_profile("alice").unwrap().password, "new-pass");
