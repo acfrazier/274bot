@@ -23,8 +23,11 @@ export function parseDuelPartnerHeader(header) {
     return call({ op: 'header', text: typeof header === 'string' ? header : null });
 }
 
+// Rust names the pen; the answer is that frozen DUEL_FIGHT_ARENAS entry,
+// so a pen compares equal to itself across calls, as the trainer expects.
 export function fightArenaAt(tile) {
-    return call({ op: 'pen', tile });
+    const index = call({ op: 'pen', tile });
+    return index === null ? null : DUEL_FIGHT_ARENAS[index];
 }
 
 export const Duel = proxy('Duel', {

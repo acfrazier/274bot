@@ -369,6 +369,41 @@ export default class T extends LoopingBot {
     }
 }
 
+/// Frozen `fightArenaAt` answers with the `DUEL_FIGHT_ARENAS` entry itself:
+/// the trainer tells a pen change, and an opponent in its own pen, apart by
+/// identity (DuelArena.ts observeFightState, canAttemptDuelFight).
+#[test]
+fn fight_arena_at_answers_the_frozen_pen_object() {
+    let src = r#"
+import { DUEL_FIGHT_ARENAS, fightArenaAt } from '../../api/duel/Duel.js';
+export default class T extends LoopingBot {
+    loop() {
+        const self = fightArenaAt({ x: 3340, z: 3250, level: 0 });
+        globalThis.__probe = {
+            shared: self === fightArenaAt({ x: 3350, z: 3252, level: 0 }),
+            frozen: self === DUEL_FIGHT_ARENAS[0],
+            other: fightArenaAt({ x: 3370, z: 3230, level: 0 }) === DUEL_FIGHT_ARENAS[1],
+            lobby: fightArenaAt({ x: 3368, z: 3274, level: 0 }),
+            upstairs: fightArenaAt({ x: 3340, z: 3250, level: 1 }),
+        };
+    }
+}
+"#;
+    let iso = spawn(src);
+    let probe = probe_loop(&iso, &base_snapshot());
+    assert_eq!(
+        probe,
+        serde_json::json!({
+            "shared": true,
+            "frozen": true,
+            "other": true,
+            "lobby": null,
+            "upstairs": null,
+        })
+    );
+    iso.join();
+}
+
 #[test]
 fn missing_distance_or_max_refuses_hostile_true() {
     let src = r#"

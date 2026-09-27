@@ -212,13 +212,11 @@ pub(crate) fn dispatch(value: &Value) -> Value {
             fresh_handshake(value.get("partner").and_then(Value::as_str).unwrap_or(""));
             Value::Null
         }
-        "pen" => {
-            let Some(index) = json_tile(value.get("tile")).and_then(pen_at) else {
-                return Value::Null;
-            };
-            let (min_x, max_x, min_z, max_z) = PENS[index];
-            json!({ "minX": min_x, "maxX": max_x, "minZ": min_z, "maxZ": max_z })
-        }
+        // The index into `tables.pens`: the shim answers with that frozen
+        // object, so callers can compare pens by identity as frozen does.
+        "pen" => json_tile(value.get("tile"))
+            .and_then(pen_at)
+            .map_or(Value::Null, |index| json!(index)),
         "crosses" => {
             let Some(dest) = json_tile(value.get("tile")) else {
                 return json!(false);
