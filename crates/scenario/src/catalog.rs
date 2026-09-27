@@ -58,6 +58,8 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("nav_full", scenarios::nav_full_scenario),
     Entry::new("nav_door", scenarios::nav_door_scenario),
+    Entry::new("nav_diagonal_door", scenarios::nav_diagonal_door_scenario),
+    Entry::new("nav_quest_door", scenarios::nav_quest_door_scenario),
     Entry::new("nav_cart", scenarios::nav_cart_scenario),
     Entry::new("nav_essence", scenarios::nav_essence_scenario),
     Entry::new("nav_elkoy", scenarios::nav_elkoy_scenario),
@@ -75,6 +77,11 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("prayer_v2_ts", scenarios::prayer_v2_scenario),
     Entry::new("prayer_v1_ts", scenarios::prayer_v1_scenario),
+    Entry::new("boat_fare_v1_ts", scenarios::boat_fare_v1_scenario),
+    Entry::new(
+        "boat_fare_reconnect_v1_ts",
+        scenarios::boat_fare_reconnect_v1_scenario,
+    ),
     Entry::new("line_of_sight_v2_ts", scenarios::line_of_sight_v2_scenario),
     Entry::new(
         "actor_observation_v2_ts",
@@ -104,8 +111,16 @@ const REGISTRY: &[Entry] = &[
         scenarios::chicken_killer_bank_scenario,
     ),
     Entry::new("thiever", scenarios::thiever_scenario),
+    Entry::new(
+        "thiever_diagonal_door_trap",
+        scenarios::thiever_diagonal_door_trap_scenario,
+    ),
     Entry::new("alcher", scenarios::alcher_scenario),
     Entry::new("alcher_defaults", scenarios::alcher_defaults_scenario),
+    Entry::new(
+        "alcher_dwarven_mine",
+        scenarios::alcher_dwarven_mine_scenario,
+    ),
     Entry::new("alcher_custom", scenarios::alcher_custom_scenario),
     Entry::new(
         "alcher_custom_alias",
@@ -274,7 +289,15 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("chaos_druid_bank", scenarios::chaos_druid_bank_scenario),
     Entry::new("ardy_fighter_bank", scenarios::ardy_fighter_bank_scenario),
+    Entry::new(
+        "ardy_fighter_bank_seeded",
+        scenarios::ardy_fighter_bank_seeded_scenario,
+    ),
     Entry::new("rock_crab_bank", scenarios::rock_crab_bank_scenario),
+    Entry::new(
+        "rock_crab_bank_seeded",
+        scenarios::rock_crab_bank_seeded_scenario,
+    ),
     Entry::new("green_dragon_bank", scenarios::green_dragon_bank_scenario),
     Entry::new(
         "green_dragon_bank_prepared",
@@ -388,6 +411,8 @@ const REGISTRY: &[Entry] = &[
     Entry::new("sherlock_dig", scenarios::sherlock_dig_scenario),
     Entry::new("sherlock_coord", scenarios::sherlock_coord_scenario),
     Entry::new("duel_arena", scenarios::duel_arena_scenario),
+    Entry::new("clue_duel_3554", scenarios::clue_duel_3554_scenario),
+    Entry::new("jive_kq_four", scenarios::jive_kq_four_scenario),
 ];
 
 /// The registered scenario with this name, `None` when unknown.

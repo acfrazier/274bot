@@ -194,6 +194,13 @@ fn validate_identity_shape(identity: &BundledNavIdentity) -> Result<(), String> 
             );
         }
     }
+    if let Some(pois) = &identity.pois_sha256 {
+        if pois.len() != 64 || !pois.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(
+                "bundled navigation identity pois_sha256 is not a SHA-256 hex digest".into(),
+            );
+        }
+    }
     if let Some(policy) = &identity.canlight_identity {
         if policy.len() != 64 || !policy.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(
@@ -250,6 +257,7 @@ mod tests {
             reach_sha256: None,
             canlight_sha256: None,
             canlight_identity: None,
+            pois_sha256: None,
             relative_path: relative_path.into(),
         }
     }

@@ -1,11 +1,10 @@
-//! Owned-root quest-journal machine: `api.questJournalBegin` / `Next` / `Close`.
+//! Owned-root quest-journal machine: `api.questJournalBegin` plus one awaited
+//! `api.questJournalRun`.
 //!
 //! One token per isolate over the posted quest row and the paired main-modal
-//! texts. The JS wrapper owns call arguments, generation, and enqueue of the
-//! one `if-button` / `close-modal`. This machine reads the isolate scene for
-//! the tab, the click target, the pair and its tick. It owns the token, the
-//! generation captured at Begin, the frozen clock, acquisition, the
-//! owned-root refusal and the one close.
+//! texts. The JS wrapper only validates begin/run arguments and awaits the
+//! machine. Rust reads the isolate scene, emits the one `if-button` and
+//! `close-modal`, and owns the token, acquisition, close and frozen clock.
 //!
 //! The pair is the only occupancy fact. The closed start is the explicit
 //! `{ root: -1, texts: [] }` the host posted; an omitted pair is not free,
@@ -19,16 +18,21 @@
 //! the acquisition window. There is no Stop arm and nothing is enqueued from
 //! `onStop`.
 
+use crate::machine::{AbortReason, Begin, Cx, Family, Step};
 use crate::observed::{self, QuestTab};
 use crate::scene_query;
+use crate::shim::InteractReq;
 use crate::task_clock::InstantTaskClock;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 
-/// Frozen acquisition window: the click has to produce a paired post whose
-/// root is not `-1` inside this window, or the token is `modal-timeout`. This
-/// is the journal machine's own window — it is not `modals::CLOSE_TIMEOUT_MS`
-/// and the public timeout is `modal-timeout`, not `timeout`.
+/// Frozen observation window: the click has to produce a paired post whose
+/// root is not `-1`, and a dispatched close has to produce an explicit closed
+/// pair, inside this window. Otherwise the token is `modal-timeout`. This is
+/// the journal machine's own window — it is not
+/// `modals::CLOSE_TIMEOUT_MS` — and the public timeout is `modal-timeout`, not
+/// `timeout`.
 pub const ACQUIRE_TIMEOUT_MS: u64 = 3_000;
 
 thread_local! {
@@ -39,6 +43,8 @@ thread_local! {
 enum Phase {
     /// No token: a refused call leaves this in place.
     Idle,
+    /// Begin admitted the token; the machine has not emitted its click yet.
+    Ready,
     /// The click was returned; the paired post has not acquired yet.
     AwaitingAcquire,
     /// The pair this token opened: root, texts and its sequence are stored.
@@ -99,6 +105,18 @@ impl JournalRuntime {
     /// A lookup refusal. Does not bump the token or drop a live journal.
     fn refuse(&self, reason: &str) -> Value {
         json!({ "kind": "aborted", "token": self.token, "reason": reason })
+    }
+
+    /// A missing or internally inconsistent pair while an observation is in
+    /// flight is not a terminal. Acquisition and closing each arm their own
+    /// frozen window, so a permanently unusable page eventually releases the
+    /// token as `modal-timeout`.
+    fn observation_unavailable(&mut self) -> Value {
+        if self.frozen() || !self.clock.bound_reached() {
+            json!({ "kind": "wait", "token": self.token })
+        } else {
+            self.aborted("modal-timeout")
+        }
     }
 
     /// The stored acquired pair is still the live pair, tags and order
@@ -163,44 +181,41 @@ impl JournalRuntime {
             return self.aborted("snapshot-unavailable");
         }
         if self.frozen() {
-            // A frozen begin does not click and does not arm the window: a
-            // click that was never returned is not timed out later.
+            // A frozen begin does not admit a token or arm the window.
             return self.aborted("frozen");
         }
         self.token = self.token.wrapping_add(1);
-        self.phase = Phase::AwaitingAcquire;
+        self.phase = Phase::Ready;
         self.name = folded;
         self.component_id = component_id;
         self.generation = generation;
         self.root = -1;
         self.texts.clear();
         self.sequence = sequence;
-        self.clock.arm(ACQUIRE_TIMEOUT_MS);
-        json!({
-            "kind": "if-button",
-            "token": self.token,
-            "component_id": component_id,
-        })
+        self.clock.deadline = None;
+        json!({ "kind": "token", "token": self.token })
     }
 
-    fn next(&mut self, input: &Value) -> Value {
-        // A missing pair is snapshot-unavailable and does not spend the
-        // token. An unusable pair (root -1 with texts) is checked after
-        // token and generation, matching the base machine.
-        let Some((root, texts)) = posted_pair() else {
-            return self.refuse("snapshot-unavailable");
-        };
-        let Some(token) = input.get("token").and_then(Value::as_u64) else {
-            return self.aborted("stale");
-        };
+    fn next(&mut self, token: u64, generation: u64) -> Value {
         if token != self.token || self.phase == Phase::Idle {
             return self.aborted("stale");
         }
-        if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
+        if generation != self.generation {
             return self.aborted("stale");
         }
+        let Some((root, texts)) = posted_pair() else {
+            return if self.phase == Phase::AwaitingAcquire {
+                self.observation_unavailable()
+            } else {
+                self.refuse("snapshot-unavailable")
+            };
+        };
         if root == -1 && !texts.is_empty() {
-            return self.refuse("snapshot-unavailable");
+            return if self.phase == Phase::AwaitingAcquire {
+                self.observation_unavailable()
+            } else {
+                self.refuse("snapshot-unavailable")
+            };
         }
         if self.frozen() {
             // Frozen: no verb and no burn. `bound_reached` reads the frozen
@@ -209,6 +224,7 @@ impl JournalRuntime {
         }
         let sequence = posted_sequence().unwrap_or(0);
         match self.phase {
+            Phase::Ready => json!({ "kind": "wait", "token": self.token }),
             Phase::Idle => self.aborted("stale"),
             Phase::AwaitingAcquire => {
                 if root != -1 {
@@ -255,27 +271,33 @@ impl JournalRuntime {
         }
     }
 
-    fn close(&mut self, input: &Value) -> Value {
-        let Some((root, texts)) = posted_pair() else {
-            return self.refuse("snapshot-unavailable");
-        };
-        let Some(token) = input.get("token").and_then(Value::as_u64) else {
-            return self.aborted("stale");
-        };
+    fn close(&mut self, token: u64, generation: u64) -> Value {
         if token != self.token || self.phase == Phase::Idle {
             return self.aborted("stale");
         }
-        if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
+        if generation != self.generation {
             return self.aborted("stale");
         }
+        let Some((root, texts)) = posted_pair() else {
+            return if self.phase == Phase::Closing {
+                self.observation_unavailable()
+            } else {
+                self.refuse("snapshot-unavailable")
+            };
+        };
         if root == -1 && !texts.is_empty() {
-            return self.refuse("snapshot-unavailable");
+            return if self.phase == Phase::Closing {
+                self.observation_unavailable()
+            } else {
+                self.refuse("snapshot-unavailable")
+            };
         }
         if self.frozen() {
             return json!({ "kind": "wait", "token": self.token });
         }
         let sequence = posted_sequence().unwrap_or(0);
         match self.phase {
+            Phase::Ready => self.aborted("stale"),
             Phase::Idle => self.aborted("stale"),
             Phase::AwaitingAcquire => {
                 // Close before a positive root is acquired emits nothing and
@@ -287,6 +309,7 @@ impl JournalRuntime {
                     // One close-modal, only while the latest pair is still
                     // the acquired root and the acquired texts.
                     self.phase = Phase::Closing;
+                    self.clock.arm(ACQUIRE_TIMEOUT_MS);
                     json!({ "kind": "close-modal", "token": self.token })
                 } else {
                     self.aborted("stale")
@@ -294,22 +317,138 @@ impl JournalRuntime {
             }
             Phase::Closing => {
                 if root == -1 && texts.is_empty() {
-                    // The only close success: a later explicit closed pair.
+                    // Preserve both observations: the lines/root page the
+                    // caller asked for and the later page that proved closed.
                     let token = self.token;
+                    let lines = self.texts.clone();
+                    let root = self.root;
+                    let as_of_sequence = self.sequence;
                     self.abort();
                     json!({
                         "kind": "done",
                         "token": token,
-                        "as_of_sequence": sequence,
+                        "lines": lines,
+                        "root": root,
+                        "as_of_sequence": as_of_sequence,
+                        "closed_as_of_sequence": sequence,
                     })
                 } else if self.still_owned(root, &texts) {
-                    // Still open. A second close does not emit another verb.
-                    json!({ "kind": "wait", "token": self.token })
+                    // Still open. A second close does not emit another verb,
+                    // but a permanently open modal cannot retain the token.
+                    self.observation_unavailable()
                 } else {
                     self.aborted("stale")
                 }
             }
         }
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct QuestJournalArgs {
+    token: u64,
+}
+
+/// Drives one admitted journal token from its click through the observed close.
+pub(crate) struct QuestJournal {
+    token: u64,
+}
+
+impl QuestJournal {
+    fn stale(&self) -> Value {
+        json!({ "kind": "aborted", "token": self.token, "reason": "stale" })
+    }
+}
+
+impl Family for QuestJournal {
+    const NAME: &'static str = "quest-journal";
+    const EXCLUSIVE: bool = true;
+    const KICK_ON_START: bool = true;
+    type Args = QuestJournalArgs;
+    type Output = Value;
+
+    fn begin(args: QuestJournalArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+        let live = RUNTIME.with(|rt| {
+            let rt = rt.borrow();
+            rt.phase != Phase::Idle && rt.token == args.token
+        });
+        if live {
+            Begin::Run(Self { token: args.token })
+        } else {
+            Begin::Refuse("stale".into())
+        }
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        loop {
+            let phase = RUNTIME.with(|rt| {
+                let rt = rt.borrow();
+                (rt.phase != Phase::Idle && rt.token == self.token).then_some(rt.phase)
+            });
+            let Some(phase) = phase else {
+                return Step::Done(self.stale());
+            };
+            match phase {
+                Phase::Idle => return Step::Done(self.stale()),
+                Phase::Ready => {
+                    let component_id = RUNTIME.with(|rt| {
+                        let mut rt = rt.borrow_mut();
+                        if rt.frozen() {
+                            return None;
+                        }
+                        rt.phase = Phase::AwaitingAcquire;
+                        rt.clock.arm(ACQUIRE_TIMEOUT_MS);
+                        Some(rt.component_id)
+                    });
+                    let Some(component_id) = component_id else {
+                        return Step::Wait;
+                    };
+                    cx.emit(InteractReq::IfButton { component_id });
+                    return Step::Wait;
+                }
+                Phase::AwaitingAcquire => {
+                    let step = RUNTIME.with(|rt| {
+                        let mut rt = rt.borrow_mut();
+                        let generation = rt.generation;
+                        rt.next(self.token, generation)
+                    });
+                    match step.get("kind").and_then(Value::as_str) {
+                        Some("wait") => return Step::Wait,
+                        Some("done") => continue,
+                        _ => return Step::Done(step),
+                    }
+                }
+                Phase::Acquired | Phase::Closing => {
+                    let step = RUNTIME.with(|rt| {
+                        let mut rt = rt.borrow_mut();
+                        let generation = rt.generation;
+                        rt.close(self.token, generation)
+                    });
+                    match step.get("kind").and_then(Value::as_str) {
+                        Some("close-modal") => {
+                            cx.emit(InteractReq::CloseModal);
+                            return Step::Wait;
+                        }
+                        Some("wait") => return Step::Wait,
+                        _ => return Step::Done(step),
+                    }
+                }
+            }
+        }
+    }
+
+    fn abort(&mut self, why: AbortReason) {
+        // A newer run continues the same owned token. Reset and termination
+        // kill it; a newer begin already changed the runtime token.
+        if why == AbortReason::Superseded {
+            return;
+        }
+        RUNTIME.with(|rt| {
+            let mut rt = rt.borrow_mut();
+            if rt.phase != Phase::Idle && rt.token == self.token {
+                rt.abort();
+            }
+        });
     }
 }
 
@@ -357,8 +496,6 @@ pub fn on_reset() {
 pub fn dispatch(input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "begin" => RUNTIME.with(|rt| rt.borrow_mut().begin(input)),
-        "next" => RUNTIME.with(|rt| rt.borrow_mut().next(input)),
-        "close" => RUNTIME.with(|rt| rt.borrow_mut().close(input)),
         _ => json!({ "kind": "notImpl", "reason": "unknown quest journal op" }),
     }
 }
@@ -401,26 +538,37 @@ mod tests {
     }
 
     fn begin(name: &str, generation: u64) -> Value {
-        dispatch(&json!({
+        let out = dispatch(&json!({
             "op": "begin",
             "name": name,
             "generation": generation,
-        }))
+        }));
+        if out.get("kind").and_then(Value::as_str) == Some("token") {
+            RUNTIME.with(|rt| {
+                let mut rt = rt.borrow_mut();
+                rt.phase = Phase::AwaitingAcquire;
+                rt.clock.arm(ACQUIRE_TIMEOUT_MS);
+            });
+        }
+        out
     }
 
     fn call(op: &str, token: u64, generation: u64) -> Value {
-        dispatch(&json!({
-            "op": op,
-            "token": token,
-            "generation": generation,
-        }))
+        RUNTIME.with(|rt| {
+            let mut rt = rt.borrow_mut();
+            match op {
+                "next" => rt.next(token, generation),
+                "close" => rt.close(token, generation),
+                _ => json!({ "kind": "notImpl" }),
+            }
+        })
     }
 
     #[test]
     fn a_generation_mismatch_is_stale_without_a_verb() {
         reset_closed();
         let begin = begin("Cook's Assistant", 4);
-        assert_eq!(begin["kind"], "if-button");
+        assert_eq!(begin["kind"], "token");
         let token = begin["token"].as_u64().unwrap();
         post_tab(
             8,
@@ -463,7 +611,7 @@ mod tests {
         );
         post_tab(9, -1, &[], vec![cook_row(), waterfall_row()]);
         let restarted = begin("Waterfall Quest", 4);
-        assert_eq!(restarted["kind"], "if-button");
+        assert_eq!(restarted["kind"], "token");
     }
 
     #[test]
@@ -486,7 +634,8 @@ mod tests {
         post_tab(11, -1, &[], vec![cook_row(), waterfall_row()]);
         let closed = call("close", token, 1);
         assert_eq!(closed["kind"], "done");
-        assert_eq!(closed["as_of_sequence"], 11);
+        assert_eq!(closed["as_of_sequence"], 8);
+        assert_eq!(closed["closed_as_of_sequence"], 11);
     }
 
     #[test]
@@ -522,5 +671,66 @@ mod tests {
         assert_eq!(unknown["reason"], "unknown-quest");
         let closing = call("close", token, 1);
         assert_eq!(closing["kind"], "close-modal", "{closing}");
+    }
+    #[test]
+    fn close_before_acquisition_aborts_without_a_close_verb() {
+        reset_closed();
+        let token = begin("Cook's Assistant", 1)["token"].as_u64().unwrap();
+        let early = call("close", token, 1);
+        assert_eq!(early["kind"], "aborted", "{early}");
+        assert_eq!(early["reason"], "stale", "{early}");
+        let dead = call("next", token, 1);
+        assert_eq!(dead["kind"], "aborted", "{dead}");
+        assert_eq!(dead["reason"], "stale", "{dead}");
+    }
+
+    #[test]
+    fn a_replacement_root_is_stale_and_is_never_closed() {
+        reset_closed();
+        let token = begin("Cook's Assistant", 1)["token"].as_u64().unwrap();
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        assert_eq!(call("next", token, 1)["kind"], "done");
+        assert_eq!(call("close", token, 1)["kind"], "close-modal");
+
+        post_tab(
+            9,
+            3824,
+            &["@dre@Some Other Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        let replaced = call("close", token, 1);
+        assert_eq!(replaced["kind"], "aborted", "{replaced}");
+        assert_eq!(replaced["reason"], "stale", "{replaced}");
+        assert_eq!(call("next", token, 1)["reason"], "stale");
+    }
+
+    #[test]
+    fn a_wrong_token_on_an_unusable_pair_kills_the_live_token_as_stale() {
+        reset_closed();
+        let token = begin("Cook's Assistant", 1)["token"].as_u64().unwrap();
+        post_tab(
+            8,
+            -1,
+            &["orphaned modal text"],
+            vec![cook_row(), waterfall_row()],
+        );
+        let wrong = call("next", token + 5, 1);
+        assert_eq!(wrong["kind"], "aborted", "{wrong}");
+        assert_eq!(wrong["reason"], "stale", "{wrong}");
+        assert_eq!(call("close", token + 5, 1)["reason"], "stale");
+        assert_eq!(call("next", token, 1)["reason"], "stale");
+
+        post_tab(
+            9,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        assert_eq!(call("next", token, 1)["reason"], "stale");
     }
 }

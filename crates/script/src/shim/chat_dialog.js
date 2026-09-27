@@ -1,6 +1,5 @@
-import { Execution } from '../../execution/Execution.js';
 import { reader } from '../../../adapter/ClientAdapter.js';
-import { snap, queue, proxy, optionalText, notImpl, runMachine } from '../../../shim/_kernel.js';
+import { snap, proxy, optionalText, notImpl, runMachine } from '../../../shim/_kernel.js';
 
 // One `chat-dialog` machine await: Rust picks the product/option/row,
 // presses it and owns the waits.
@@ -40,13 +39,7 @@ export const ChatDialog = proxy('ChatDialog', {
         return run('makeX', { match: String(match ?? ''), count: count ?? 0 });
     },
     async continue() {
-        if (!ChatDialog.canContinue()) return false;
-        queue({ op: 'continue' });
-        const before = snap().chat_modal_id;
-        return Execution.delayUntil(
-            () => snap().chat_modal_id !== before || !snap().chat_continue,
-            3000,
-        );
+        return run('continue', {});
     },
     async chooseOption(match) {
         return run('chooseOption', { match: text(match) });

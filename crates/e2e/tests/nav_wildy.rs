@@ -22,7 +22,6 @@ use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
 use nav::router::{find, find_with, FindOptions};
 use nav::transport::TransportKind;
-use nav::wilderness::in_wilderness;
 use nav::world::NavWorld;
 use scenario::default_pack_path;
 
@@ -78,12 +77,12 @@ fn nav_wildy() {
         z: tz,
         level: 0,
     };
-    if in_wilderness(from) {
+    if world.graph.wilderness.contains(from) {
         fail(&format!(
             "spawn tile {from:?} must be south of the ditch for this case"
         ));
     }
-    if !in_wilderness(WILDY_DEST) {
+    if !world.graph.wilderness.contains(WILDY_DEST) {
         fail(&format!(
             "dest {WILDY_DEST:?} must be inside the wilderness zone"
         ));
@@ -145,10 +144,13 @@ fn nav_wildy() {
     {
         fail("nav_wildy: no lever edge carries the Pull op (Door kind, option 1)");
     }
-    if !levers.iter().any(|e| in_wilderness(e.to)) {
+    if !levers.iter().any(|e| world.graph.wilderness.contains(e.to)) {
         fail("nav_wildy: no lever edge lands inside the wilderness");
     }
-    if !levers.iter().any(|e| !in_wilderness(e.to)) {
+    if !levers
+        .iter()
+        .any(|e| !world.graph.wilderness.contains(e.to))
+    {
         fail("nav_wildy: no lever edge lands outside the wilderness");
     }
 

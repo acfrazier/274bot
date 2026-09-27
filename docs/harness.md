@@ -35,8 +35,8 @@ cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --
 Match `--profile` / engine ports to the revision (274: `:43594`/`:80`;
 289: `:44594`/`:1080`). The door test also accepts
 `BOT_NAV_DOOR_REVERSE_LOGIN=1`. Its closer remains active while the driven
-player must reach the exact destination. Pack format is version **9**
-(magic `274V`; `decode` rejects v8 and older as `BadVersion`). **Rebake
+player must reach the exact destination. Pack format is version **10**
+(magic `274V`; `decode` rejects v9 and older as `BadVersion`). **Rebake
 existing override packs** after updating. A new executable does not rewrite
 an existing override pack on its own.
 
@@ -54,6 +54,64 @@ relevant test's cache options when running it on another machine; setting
 harnesses use the configured engine/cache path from the resolved profile.
 Windows uses `USERPROFILE` only when `HOME` is unavailable; an explicitly
 blank `HOME` remains explicit.
+
+Catalog `stat_xp_gain` proofs capture all later cumulative skill baselines
+immediately before `StartScript`, excluding preparation XP. A gain remains
+observable even if another skill or an item is watched first.
+`fresh_stat_xp_gain` is deliberately different: it arms only when its own
+step begins, so an earlier trip cannot qualify a later bank-return phase.
+Scenarios without `StartScript` retain first-watch cumulative baselines.
+
+A scenario that waits for a card's clean stop (`wait_script_stop`) must
+also watch the card's own work. Its post-Start watch and terminal proof must
+be an outcome its pre-Start seed cannot already satisfy, or the run passes
+on its Start snapshot and the 45-second stop grace becomes the only check.
+The catalog test `clean_stop_scenarios_are_not_satisfied_by_their_own_seed`
+builds each such scenario's seeded state (mainland landing, then its fixture
+prerequisites) and fails any proof that already holds there. Cards that
+only observe prove themselves with the receipt row they paint
+(`script_receipt(prefix)`); cards that walk use `arrived_ring` around the
+tile they start on.
+
+The `ardy_cakes_fight` fixture waits, within its ordinary bounded scenario
+step, for a nearby unengaged Guard with native scene line of sight before
+starting the catalog script. It prepares Attack, Strength and Hitpoints 70
+with the same adamant scimitar so back-to-back Guard fights do not consume
+the entire stall watch. A ready Guard can still wander away: the Strength
+watch tolerates one catch-less stall session, observes its bank visit,
+closure and return, then requires renewed Guard readiness at the stall.
+A second unqualified bank visit fails rather than admitting a third try.
+The scenario has a 360-second wall deadline and a 900-dirty-snapshot combat
+watch; the Thieving XP and exact Cake watches retain their original bounds.
+All three still require real post-Start evidence; no catch is forced.
+Script kill messages alone are not XP evidence:
+in a crowded single-combat camp, a selected NPC can disappear after
+another player kills it while the observing slot receives no XP.
+
+### Core-gated qualification
+
+A scenario PASS alone proves the scenario's own predicates. The shared core
+witnesses in `host-play` (`catalog_core`, `paired_core`) prove the full
+post-Start cycle. Both front ends run them through one gate,
+`host_play::live_gate`:
+
+```sh
+cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever --catalog-core
+cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_flax_runner --pair-core
+# environment form for harnesses that pass only environment:
+BOT_LIVE_CORE=catalog cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
+```
+
+These are the panel's `catalog_watch` / `pair_watch` modes. The witness is
+armed before either slot publishes, and its Start baseline is frozen
+immediately before the actual isolate Start. While the witness is Pending,
+a scenario PASS is held and the 45-second clean-stop grace has not started.
+A failed witness, or one still unqualified at the scenario deadline
+(`BUDGET_S` when set), fails the run. The compact witness receipt is printed
+as `CATALOG_CORE: script_<name> {…}` / `PAIRED_CORE: script_<name> {…}`
+next to the terminal line. The paired proofs (`nature_crafter_air`,
+`mule_crafter_air`, `flax_runner`, `duel_arena`) refuse to run without the
+pair gate.
 
 ## Fleet preparation and basic samples
 
@@ -82,33 +140,55 @@ load another copy.
 
 | Setting | Meaning |
 |---|---|
-| `BOT_MEMORY_N` | Exactly 1, 16, 32 or 128; accepting a count is not a capacity guarantee. |
+| `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128; accepting a count is not a capacity guarantee. |
 | `BOT_MEMORY_WORKLOAD` | `idle`, `seeded-idle`, `active` or `lifecycle`; default `idle`. |
+| `BOT_MEMORY_SCENARIO` | Catalog scenario for `active`/`lifecycle`; default `thiever`. Representative runner cells also use `moss_giant_bank_start`. |
 | `BOT_MEMORY_WARMUP_S` / `BOT_MEMORY_OBSERVE_S` | Positive seconds, defaults 120 / 600. |
-| `BOT_MEMORY_SUSTAIN=1` | Active Thiever fixture with four food initially, stock in the bank, target 22 food and restocking at three. |
+| `BOT_MEMORY_TEARDOWN_S` | Positive teardown seconds after scripts Stop; default 60. |
+| `BOT_MEMORY_SUSTAIN=1` | Active/lifecycle Thiever only: four food initially, stock in the bank, target 22 food and restocking at three. Other scenarios reject this setting. |
 | `BOT_MEMORY_DIAGNOSTICS=1` | Optional bounded frames, logs, requests and per-script progress sidecar. |
-| `BOT_MEMORY_RENDER_POLICY` | Panel `rotating-all`, `focused-one` or `focused-plus-background`. |
+| `BOT_MEMORY_RENDER_POLICY` | Panel `rotating-all`, `fixed-one`, `focused-one`, `focused-plus-background`, `stress50` or `stress50-full`. `stress50` draws one of 50 slots; `stress50-full` draws all 50 at full rate. |
 | `BOT_MEMORY_SINGLE_RENDERER=1` | Legacy fixed slot-zero rendering. |
 | `BOT_CPU=1` | CPU fallback for the panel's client renderer. |
 
 `idle` only logs clients in. `seeded-idle` performs the ordinary Thiever seed
-without starting the catalog script. `active` starts the real catalog script;
-`lifecycle` additionally alternates Stop and restart every 60 observation seconds.
-After observation, scripts Stop and the harness keeps a 60-second teardown window.
+without starting the catalog script. `active` starts the selected real catalog
+script; `lifecycle` additionally alternates Stop and restart every 60
+observation seconds. After observation, scripts Stop and the harness remains
+open for `BOT_MEMORY_TEARDOWN_S`.
 
-Readiness requires every slot to be `ingame && scene_state == 2`. Seed/proof or
-script failures fail the run and return a nonzero exit. The observation-boundary
-qualification file records each slot's state, error and script progress. Inspect
-those records before treating a run as a benchmark: a process that exits normally
-is not by itself evidence that every bot did useful work for the whole interval.
+Ingame readiness requires every slot to remain `ingame && scene_state == 2`
+continuously for two seconds. A transient ready pulse before the mainland-hop
+reload does not latch. Samples report that settled `all_bots_ingame_scene2_s`
+milestone separately from `qualification_complete_s`. Qualification additionally
+requires seed/proof completion and running scripts for active workloads.
+Multi-slot `moss_giant_bank_start` replaces only its contended post-return
+fresh-XP checkpoint with fail-closed local-player named-NPC engagement; the
+scenario's final Strength-XP-since-Start proof remains mandatory.
+
+Seed/proof or script failures fail the run and return a nonzero exit. The
+observation-boundary qualification file records each slot's state, error and
+script progress. Inspect those records before treating a run as a benchmark: a
+process that exits normally is not by itself evidence that every bot did useful
+work for the whole interval.
 
 ## Reading results
 
 `samples.jsonl` separates current resident bytes from process-lifetime peak RSS.
 It also records cumulative process CPU, optional allocator counts, V8 sample
-coverage/age, snapshot capacity and tracked GPU buffer/texture bytes. Timing
-fields are basic count/total/maximum aggregates, not latency percentiles.
-Requested rendering metadata does not prove the observed backend or cadence.
+coverage/age, snapshot capacity and tracked GPU buffer/texture bytes. Host
+mainloop/observe/raster fields are cumulative **wall-time** counters, including
+waits, preemption and contention; they are not CPU time. Retired slot counters
+remain in the per-username process totals across relogs, while
+`host_profile_slots` counts only active slots.
+
+Panel samples include a cumulative one-millisecond frame histogram whose final
+bucket means “at least 250 ms”, cumulative `ui_frame_count` and
+`ui_frame_total_ns`, and a swap-reset `ui_frame_max_ns` for that sample
+interval. A receipt must label overflow percentiles as censored and report
+overflow count, observation-window mean and the maximum of the interval maxima
+rather than presenting 250 ms as an exact slow-frame duration. Requested
+rendering metadata does not prove the observed backend or cadence.
 
 `samples.qualification.jsonl` contains observation start/end progress. With
 optional diagnostics, `samples.diagnostics.jsonl` adds bounded per-slot evidence.
@@ -116,9 +196,11 @@ Detailed navigation history is null because the campaign capture system is not
 part of this harness. Direct-owner census, scheduling/latency journals, managed
 process controllers and campaign replay/provisioning tools are not dependencies.
 
-Compare matched workloads and intervals. Allocation avoidance is not necessarily
-an RSS reduction, and current RSS must not be confused with peak RSS or allocator
-counts. The selected fixes have focused allocation/ownership evidence; they do
+Compare matched workloads, platforms and intervals. Allocation avoidance is not
+necessarily an RSS reduction, and current RSS must not be confused with peak RSS
+or allocator counts. Negative or non-monotonic RSS slopes can be sampler noise,
+especially with macOS `resident_size`; they are measurements, not savings
+claims. The selected fixes have focused allocation/ownership evidence; they do
 not establish an additive total saving, universal responsiveness improvement,
 low-end budget, or 128-client capacity guarantee.
 

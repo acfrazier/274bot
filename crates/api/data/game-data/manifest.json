@@ -8,7 +8,7 @@
       "records": 3894,
       "consumption": 250,
       "pickpocket": 12,
-      "drop_tables": 4,
+      "drop_tables": 5,
       "spells": 16,
       "staves": 14,
       "herbs": 19,
@@ -87,7 +87,13 @@
         "confirm_accept": 6520,
         "select_partner": 6671,
         "select_status": 6684,
-        "confirm_status": 6571
+        "confirm_status": 6571,
+        "select_mine": 6669,
+        "select_theirs": 6670,
+        "confirm_mine": 6507,
+        "confirm_theirs": 6508,
+        "obstacles": 6732,
+        "options_varp": 286
       },
       "special": {
         "energy_varp": 300,
@@ -128,8 +134,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 3213936,
-      "sha256": "cc31b7744b76e4112355ee011e999c9080b7369c544cb730779d2e78a80cee1a",
+      "bytes": 3253919,
+      "sha256": "90dd3fdb10a38850ed801fdb9c4864ca76f7af76d48e2670bd4ac542c8c3b93f",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -306,6 +312,11 @@
           "sha256": "c9f1d425bfbe070ddc3a1662aa06329e982782592dbb77c875b0066c0d837d95"
         },
         {
+          "path": "scripts/areas/area_kalphite/configs/kalphite.npc",
+          "bytes": 5501,
+          "sha256": "8db97de7a77d875d347a7a1315a6ebf72eadeb899ceab0716ec8ca01d020ef91"
+        },
+        {
           "path": "scripts/drop tables/scripts/giant.rs2",
           "bytes": 2248,
           "sha256": "ac38239a050771542e019ec1e0cc1e5b0ffb61791a2fdf4afd723971a7c2d8a6"
@@ -324,6 +335,11 @@
           "path": "scripts/drop tables/scripts/green_dragon.rs2",
           "bytes": 2051,
           "sha256": "41bdc2b9fa12af871ab98e5e0c93534a9e9299bb081271fcb32a45367d2c1637"
+        },
+        {
+          "path": "scripts/drop tables/scripts/kalphite_queen.rs2",
+          "bytes": 4036,
+          "sha256": "5e1c42893abcd571c656e417e700a9a70319919b0c35e7725ba3cadaba120865"
         },
         {
           "path": "scripts/drop tables/scripts/shared_droptables.rs2",
@@ -548,7 +564,80 @@
         "content_id": "0d14c891b5727142379c6d8844bd5bb1ff9874d4d996db1dc5ceea0e9062469c",
         "nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
         "flags_sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb"
-      }
+      },
+      "bank_inputs": {
+        "catalog": {
+          "path": "rs2b0t-00d39a17e0/src/bot/api/bank/BankLocations.ts",
+          "bytes": 11864,
+          "sha256": "b38f12202cd54b0f6d22d35a736e385022b04db8bbec206137ad0f4361d8c2be"
+        },
+        "loc_configs": {
+          "files": 128,
+          "bytes": 602628,
+          "sha256": "fb6d3385610e1f218cd8f254ba20f175c751de31666276f41c256a727392c23d"
+        },
+        "npc_configs": {
+          "files": 138,
+          "bytes": 885445,
+          "sha256": "3fedd0e528dbb318bccba2d2e3b68c9fc433501f57a19399d0cbc87eb57de6f4"
+        },
+        "maps": {
+          "files": 483,
+          "bytes": 48704328,
+          "sha256": "ab7e905e85bf13e10fc78cd635abab1b1881a228268ce5c0182eda698fda35b3"
+        },
+        "loc_pack": {
+          "path": "pack/loc.pack",
+          "bytes": 105424,
+          "sha256": "326b4b80f62abcd4b81dd0c6f7af94e2ab49b5b915e1dfe64ffab312df00c291"
+        },
+        "npc_pack": {
+          "path": "pack/npc.pack",
+          "bytes": 25984,
+          "sha256": "a19dc299ef62570e3c190029c32719373e3d6d3fc81b875ff1f02877fe75e01d"
+        }
+      },
+      "bank_placements": {
+        "rows": 70,
+        "missing": [
+          "Canifis"
+        ]
+      },
+      "cook_inputs": {
+        "catalog": [
+          {
+            "path": "rs2b0t-00d39a17e0/src/bot/data/cookLocations.ts",
+            "bytes": 4801,
+            "sha256": "be66672f04420d14690a0791677a92fb9079d5b440c367efafcbb771066d6e70"
+          },
+          {
+            "path": "rs2b0t-00d39a17e0/src/bot/data/cookingRanges.ts",
+            "bytes": 8683,
+            "sha256": "76733cbeee40d8d7468e2173ce665cb651f23aafd6f89c05a7ba9786d312d284"
+          },
+          {
+            "path": "rs2b0t-00d39a17e0/tools/cooking/gen-cooksurfaces.ts",
+            "bytes": 3849,
+            "sha256": "9f04b52e9f3f6c349f443d5429dc1ce3feeb8b76da72f585ca738d4d89773665"
+          }
+        ],
+        "loc_configs": {
+          "files": 128,
+          "bytes": 602628,
+          "sha256": "fb6d3385610e1f218cd8f254ba20f175c751de31666276f41c256a727392c23d"
+        },
+        "maps": {
+          "files": 483,
+          "bytes": 48704328,
+          "sha256": "ab7e905e85bf13e10fc78cd635abab1b1881a228268ce5c0182eda698fda35b3"
+        },
+        "loc_pack": {
+          "path": "pack/loc.pack",
+          "bytes": 105424,
+          "sha256": "326b4b80f62abcd4b81dd0c6f7af94e2ab49b5b915e1dfe64ffab312df00c291"
+        }
+      },
+      "cook_surfaces": 123
     },
     {
       "revision": 289,
@@ -556,7 +645,7 @@
       "records": 4089,
       "consumption": 250,
       "pickpocket": 12,
-      "drop_tables": 4,
+      "drop_tables": 5,
       "spells": 16,
       "staves": 14,
       "herbs": 19,
@@ -635,7 +724,13 @@
         "confirm_accept": 6520,
         "select_partner": 6671,
         "select_status": 6684,
-        "confirm_status": 6571
+        "confirm_status": 6571,
+        "select_mine": 6669,
+        "select_theirs": 6670,
+        "confirm_mine": 6507,
+        "confirm_theirs": 6508,
+        "obstacles": 6732,
+        "options_varp": 286
       },
       "special": {
         "energy_varp": 300,
@@ -676,8 +771,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 3316097,
-      "sha256": "4b69daa489efe86f92670460118adf4c6ca918fdf3ee21a9c4e69d7ba41d682d",
+      "bytes": 3356255,
+      "sha256": "8b3a78afec040d6e2cf05d62b4f8fb09bc567d89527999330c2a769eac2e90cd",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -854,6 +949,11 @@
           "sha256": "a1fac9f721daab99848f0cb30d8eb59ee880ed01a6ce095cd5ee28496cbc3a13"
         },
         {
+          "path": "scripts/areas/area_kalphite/configs/kalphite.npc",
+          "bytes": 5651,
+          "sha256": "619c213282f6485e2687a75b1dd61b0b69e712ff058aea658d1fbed59b88835f"
+        },
+        {
           "path": "scripts/drop tables/scripts/giant.rs2",
           "bytes": 2248,
           "sha256": "ac38239a050771542e019ec1e0cc1e5b0ffb61791a2fdf4afd723971a7c2d8a6"
@@ -872,6 +972,11 @@
           "path": "scripts/drop tables/scripts/green_dragon.rs2",
           "bytes": 2051,
           "sha256": "41bdc2b9fa12af871ab98e5e0c93534a9e9299bb081271fcb32a45367d2c1637"
+        },
+        {
+          "path": "scripts/drop tables/scripts/kalphite_queen.rs2",
+          "bytes": 4036,
+          "sha256": "5e1c42893abcd571c656e417e700a9a70319919b0c35e7725ba3cadaba120865"
         },
         {
           "path": "scripts/drop tables/scripts/shared_droptables.rs2",
@@ -1096,7 +1201,80 @@
         "content_id": "cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044",
         "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
         "flags_sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a"
-      }
+      },
+      "bank_inputs": {
+        "catalog": {
+          "path": "rs2b0t-00d39a17e0/src/bot/api/bank/BankLocations.ts",
+          "bytes": 11864,
+          "sha256": "b38f12202cd54b0f6d22d35a736e385022b04db8bbec206137ad0f4361d8c2be"
+        },
+        "loc_configs": {
+          "files": 131,
+          "bytes": 673664,
+          "sha256": "efa4c8260972ce2c03f0204964826d604e2267e808c0bb03dbc063c848ec9c33"
+        },
+        "npc_configs": {
+          "files": 144,
+          "bytes": 933024,
+          "sha256": "3cd8ec5f94296143031083bb17a818e14e74248f969d3065c80664ccf5b83fab"
+        },
+        "maps": {
+          "files": 534,
+          "bytes": 55049838,
+          "sha256": "41a6bb259a87a851b0650db06ae2d26126086b4548f8d32368b99df41911f08d"
+        },
+        "loc_pack": {
+          "path": "pack/loc.pack",
+          "bytes": 117164,
+          "sha256": "64b0bb63190678077f7a6c6f353d3931a6f75eba0711023ff89275b07c438cb0"
+        },
+        "npc_pack": {
+          "path": "pack/npc.pack",
+          "bytes": 31379,
+          "sha256": "b28b1157c007690d9a7d1fc02bcb51bb4d45929997a71585ac9c0bdda35776d2"
+        }
+      },
+      "bank_placements": {
+        "rows": 70,
+        "missing": [
+          "Canifis"
+        ]
+      },
+      "cook_inputs": {
+        "catalog": [
+          {
+            "path": "rs2b0t-00d39a17e0/src/bot/data/cookLocations.ts",
+            "bytes": 4801,
+            "sha256": "be66672f04420d14690a0791677a92fb9079d5b440c367efafcbb771066d6e70"
+          },
+          {
+            "path": "rs2b0t-00d39a17e0/src/bot/data/cookingRanges.ts",
+            "bytes": 8683,
+            "sha256": "76733cbeee40d8d7468e2173ce665cb651f23aafd6f89c05a7ba9786d312d284"
+          },
+          {
+            "path": "rs2b0t-00d39a17e0/tools/cooking/gen-cooksurfaces.ts",
+            "bytes": 3849,
+            "sha256": "9f04b52e9f3f6c349f443d5429dc1ce3feeb8b76da72f585ca738d4d89773665"
+          }
+        ],
+        "loc_configs": {
+          "files": 131,
+          "bytes": 673664,
+          "sha256": "efa4c8260972ce2c03f0204964826d604e2267e808c0bb03dbc063c848ec9c33"
+        },
+        "maps": {
+          "files": 534,
+          "bytes": 55049838,
+          "sha256": "41a6bb259a87a851b0650db06ae2d26126086b4548f8d32368b99df41911f08d"
+        },
+        "loc_pack": {
+          "path": "pack/loc.pack",
+          "bytes": 117164,
+          "sha256": "64b0bb63190678077f7a6c6f353d3931a6f75eba0711023ff89275b07c438cb0"
+        }
+      },
+      "cook_surfaces": 124
     }
   ]
 }

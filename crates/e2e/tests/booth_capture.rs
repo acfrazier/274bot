@@ -239,7 +239,7 @@ fn dump_bank_locs() {
     }
 
     if let Some(arm) = play.arm("test") {
-        arm.want_logout.store(true, Ordering::Relaxed);
+        arm.request_logout();
     } else {
         fail("dump_bank_locs: no arm for test slot; cannot IF-logout");
     }

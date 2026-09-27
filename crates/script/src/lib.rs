@@ -7,13 +7,19 @@
 pub mod boost_potions;
 #[cfg(feature = "load")]
 pub mod canvas;
+#[cfg(feature = "load")]
+pub mod channel;
 /// Curated script site configuration and the hostile-attacker predicate.
 pub mod content;
 pub mod ctx;
 pub mod declared_abi;
+#[cfg(feature = "load")]
+mod duel;
 /// Script-side Ent tile lookup over caller-supplied rows.
 pub mod ent;
 pub mod escape_runes;
+#[cfg(feature = "load")]
+mod event_signal;
 #[cfg(feature = "load")]
 mod events;
 pub mod food_policy;
@@ -27,6 +33,7 @@ pub mod isolated_env;
 #[cfg(feature = "load")]
 pub mod js_cache;
 mod keep_list;
+#[cfg(feature = "load")]
 pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
@@ -44,6 +51,8 @@ pub mod slot;
 pub mod watchdog;
 
 pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
+#[cfg(feature = "load")]
+pub use duel::{duel_name, duel_partner_name};
 pub use identity::{
     card_assignment, card_identity_id, card_identity_key, claim_legacy_overrides,
     combine_fingerprints, compiled_assignment, compiled_identity_key, file_identity,
@@ -53,6 +62,7 @@ pub use identity::{
 pub use isolated_env::{bot_file, bot_home, rs2b0t_env, IsolatedEnv};
 #[cfg(feature = "load")]
 pub use js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
+#[cfg(feature = "load")]
 pub use load::{
     default_js_store, detect_shape, first_unloadable_specifier, is_catalog_dim, is_reserved,
     live_example_path, live_file_fixture_path, live_file_fixture_stem, parse_declared_api_version,
@@ -79,7 +89,7 @@ pub use rs2b0t_registry::{
 };
 pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
-    parameter_rows, setting_visible, ScriptSettingsStore,
+    parameter_rows, setting_visible, ScriptSettingsStore, CLUE_DUEL_PARTNER,
 };
 pub use slot::{RunState, ScriptLifecycleReceipt, ScriptTerminalState, SlotScript};
 #[cfg(feature = "load")]
@@ -93,6 +103,10 @@ pub use watchdog::{
 pub use load::{transpile_ts, LoadIsolate, Ready};
 
 #[cfg(feature = "load")]
+mod anchor_return;
+#[cfg(feature = "load")]
+mod attack_clock;
+#[cfg(feature = "load")]
 mod autocast;
 #[cfg(feature = "load")]
 mod bank_access;
@@ -103,16 +117,26 @@ mod bank_op;
 #[cfg(feature = "load")]
 mod bank_open;
 #[cfg(feature = "load")]
+mod bank_select;
+#[cfg(feature = "load")]
 mod bank_withdraw;
+#[cfg(feature = "load")]
+mod banking_open;
+#[cfg(feature = "load")]
+mod boat_fare;
 pub mod cake_stall;
 #[cfg(feature = "load")]
 mod clue;
+#[cfg(feature = "load")]
+mod cook_locations;
 #[cfg(feature = "load")]
 mod death_recovery;
 #[cfg(feature = "load")]
 mod dialog;
 #[cfg(feature = "load")]
 mod drive_partner_trade;
+#[cfg(feature = "load")]
+mod fight_upkeep;
 #[cfg(feature = "load")]
 mod fire;
 /// The hunt step machines on the machine host (fence F09).

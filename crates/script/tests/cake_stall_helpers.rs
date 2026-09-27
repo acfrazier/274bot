@@ -66,8 +66,23 @@ fn restock_honors_capacity_and_requested_count() {
     assert!(!needs_cake_restock(0, Some(0), false));
     assert!(!needs_cake_restock(4, Some(4), false));
     assert!(needs_cake_restock(0, None, false));
-    assert!(counts_as_stall_food("chocolate slice"));
+}
+
+#[test]
+fn stall_food_matches_frozen_substring_patterns() {
+    // Exact posted names and consumed partials.
     assert!(counts_as_stall_food("Cake"));
-    assert!(!counts_as_stall_food("Chocolate cake"));
-    assert!(!counts_as_stall_food("Bread roll"));
+    assert!(counts_as_stall_food("2/3 cake"));
+    assert!(counts_as_stall_food("Slice of cake"));
+    assert!(counts_as_stall_food("Bread"));
+    assert!(counts_as_stall_food("chocolate slice"));
+    // Frozen also accepts any name that merely contains a pattern.
+    assert!(counts_as_stall_food("Chocolate cake"));
+    assert!(counts_as_stall_food("Bread roll"));
+    // Unrelated inventory stays out.
+    assert!(!counts_as_stall_food("Lobster"));
+    assert!(!counts_as_stall_food("Chocolate bar"));
+    assert!(!counts_as_stall_food("Rune scimitar"));
+    assert!(!counts_as_stall_food(""));
+    assert!(!counts_as_stall_food("   "));
 }

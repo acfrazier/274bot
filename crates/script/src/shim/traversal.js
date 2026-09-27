@@ -1,53 +1,51 @@
-import { snap, queue, proxy, notImpl, arrived, runMachine } from '../../shim/_kernel.js';
-import { Execution } from '../execution/Execution.js';
+import { snap, proxy, notImpl, runMachine } from '../../shim/_kernel.js';
 import { Sustain } from '../sustain/Sustain.js';
 
+const whole = (value) => (typeof value === 'number' ? { value: Math.floor(value) } : null);
+const count = (value) => (Array.isArray(value) ? value.length : 0);
 
-function allowTeleports(opts) {
-    return opts.useTeleportCatalog === true || opts.policy?.useTeleports === true;
-}
-
-function walkNative(payload) {
-    return globalThis.rustyscript.functions.__rs2b0t_walk(payload);
-}
-
+// Frozen Traversal.walkTo(dest, WalkOptions): Rust owns the walk, the
+// option defaults and refusals, the Sustain pumps, the boat-fare recovery
+// and the one re-walk (`walk-to`). The shim only coerces options.
 async function walkWorld(tile, opts = {}) {
-    const radius = opts.radius ?? 0;
-    if (!snap().here) return false;
-    const target = { x: tile.x, z: tile.z, level: tile.level ?? 0 };
-    if (arrived(target, radius)) return true;
-    const allow_teleports = allowTeleports(opts);
-    const token = walkNative({
-        op: 'begin',
-        x: target.x,
-        z: target.z,
-        level: target.level,
-        radius,
-        allow_teleports,
-    });
-    queue({
-        op: radius > 0 ? 'walk-near' : 'walk',
-        ...(radius > 0 ? { radius } : {}),
-        x: target.x,
-        z: target.z,
-        level: target.level,
-        allow_teleports,
-        allow_wilderness: true,
-        allow_bank_fetch: true,
-        request_id: token,
-    });
-    const done = await Execution.delayUntil(
-        () => walkNative({ op: 'settled', token }) === true,
-        opts.timeoutMs ?? 60_000,
+    const policy = opts.policy || {};
+    const radius = whole(opts.radius);
+    const timeoutMs = whole(opts.timeoutMs);
+    const span = whole(policy.distanceBeforeTeleport);
+    const out = await runMachine(
+        'walk-to',
+        {
+            tile: { x: tile.x, z: tile.z, level: tile.level ?? 0 },
+            ...(radius ? { radius: radius.value } : {}),
+            ...(timeoutMs ? { timeoutMs: timeoutMs.value } : {}),
+            ...(typeof opts.useTeleportCatalog === 'boolean'
+                ? { useTeleportCatalog: opts.useTeleportCatalog }
+                : {}),
+            policy: {
+                ...(typeof policy.useTeleports === 'boolean' ? { useTeleports: policy.useTeleports } : {}),
+                ...(span ? { distanceBeforeTeleport: span.value } : {}),
+                allowTeleportIds: count(policy.allowTeleportIds),
+                denyTeleportIds: count(policy.denyTeleportIds),
+                ...(typeof policy.useShips === 'boolean' ? { useShips: policy.useShips } : {}),
+                ...(typeof policy.useShortcuts === 'boolean' ? { useShortcuts: policy.useShortcuts } : {}),
+            },
+            avoidZones: Array.isArray(opts.avoidZones) ? opts.avoidZones : [],
+            pathFollow: opts.pathFollow !== undefined && opts.pathFollow !== null,
+            forceRepath: opts.forceRepath === true,
+        },
+        { log: typeof opts.log === 'function' ? opts.log : undefined, sustain: () => Sustain.run() },
     );
-    return done === true && walkNative({ op: 'value', token }) === true;
+    if (out.kind === 'refused') throw notImpl('Traversal.walkTo', out.reason);
+    return out.kind === 'done' && out.value === true;
 }
 
 export const Traversal = proxy('Traversal', {
     walkTo: walkWorld,
     // Frozen Traversal.walkResilient: Rust owns the baked walk, retries,
-    // attempts/no-progress, interrupt and arrival (`walk-resilient`).
+    // attempts/no-progress, verify probe, interrupt, arrival and the
+    // teleport policy (`walk-resilient`). The shim only coerces options.
     async walkResilient(tile, opts = {}) {
+        const policy = opts.policy || {};
         const out = await runMachine(
             'walk-resilient',
             {
@@ -60,14 +58,27 @@ export const Traversal = proxy('Traversal', {
                     ...(typeof opts.timeoutMs === 'number'
                         ? { timeoutMs: Math.floor(opts.timeoutMs) }
                         : {}),
-                    useTeleportCatalog: allowTeleports(opts),
+                    ...(typeof opts.sceneRadius === 'number'
+                        ? { sceneRadius: Math.floor(opts.sceneRadius) }
+                        : {}),
+                    ...(typeof opts.useTeleportCatalog === 'boolean'
+                        ? { useTeleportCatalog: opts.useTeleportCatalog }
+                        : {}),
+                    policy: {
+                        ...(typeof policy.useTeleports === 'boolean'
+                            ? { useTeleports: policy.useTeleports }
+                            : {}),
+                        ...(typeof policy.distanceBeforeTeleport === 'number'
+                            ? { distanceBeforeTeleport: Math.floor(policy.distanceBeforeTeleport) }
+                            : {}),
+                    },
+                    avoidZones: Array.isArray(opts.avoidZones) ? opts.avoidZones : [],
                 },
             },
             { log: typeof opts.log === 'function' ? opts.log : undefined, sustain: () => Sustain.run() },
         );
         if (out.kind === 'refused') throw notImpl('Traversal.walkResilient', out.reason);
         return out.kind === 'done' && out.value === true;
-
     },
 
     preload() {

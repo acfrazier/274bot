@@ -1,11 +1,173 @@
 # Release packaging
 
-Alpha 3 uses host workspace version 0.1.8. The public name comes from
-`crates/panel/src/build_info.rs` `RELEASE`. Initial targets:
+## End-to-end release entry point
+
+`release.py` is the checked-in controller and native worker for all three
+platforms:
+
+```sh
+COMMIT="$(git rev-parse HEAD)"
+python3 tools/release/release.py build --commit "$COMMIT" --platform all --dry-run
+python3 tools/release/release.py finalize --commit "$COMMIT" --platform all \
+  --tag 0.1.9 --dry-run
+python3 tools/release/release.py verify --commit "$COMMIT" --platform all --dry-run
+```
+
+Dry runs only inspect the requested commit and print the complete plan. They do
+not create a work directory, connect to a builder, build, sign, notarize, tag,
+push, or publish.
+
+For a real candidate, give the controller a local work directory and the three
+canonical revision-289 input roots:
+
+```sh
+python3 tools/release/release.py build \
+  --commit "$COMMIT" --platform all --work-dir "$WORK" \
+  --engine-dir "$ENGINE" --content-dir "$CONTENT" \
+  --snapshot-root "$SNAPSHOTS" --snapshot-version "$SNAPSHOT_VERSION" \
+  --sign-identity "$RELEASE_SIGN_IDENTITY" \
+  --rusty-v8-archive "$RUSTY_V8_ARCHIVE"
+```
+
+The engine argument is the engine root containing `data/pack/client`; the
+content argument is the canonical content tree; the snapshot root contains the
+named decoded snapshot directory. `--client-root` defaults to
+`vendor/fr-client-rust`. The controller reads the client commit from the host
+commit's gitlink and refuses malformed or mismatched identities. It exports
+both exact commits into `source.tar.gz`, exports only the pinned build inputs
+into `inputs.tar.gz`, and writes `expect.json` with archive SHA-256 records and
+the SHA-256 tree digest plus file count for pack, content, and snapshot.
+`.git` metadata is excluded and symlinks are refused.
+Real builds require both host and client checkouts to be at the requested
+commits with no tracked or untracked changes. `release.py` and
+`windows-ssh.py` must match that commit, so uncommitted controller code cannot
+become the transported native worker.
+
+Every native worker verifies both archives, extracts them into a fresh
+per-commit workspace, recomputes all three input digests, and then builds:
+
+```text
+GIT_DIRTY=0
+BOT_NAV_BUILD=require
+cargo build --locked --release -p panel --bin panel-play -p tui --bin tui-play
+```
+
+It records the exact host/client commits, target, `rustc -Vv`, default features,
+input digests, and every binary/nav digest in the build receipt before calling
+`package.py`. Each platform therefore ships `panel-play`, `tui-play`,
+revision-289 navigation, and the terrain baked by the staged TUI from the same
+pinned cache and snapshot.
+
+Completed `prepared/` state is reusable: a one-platform retry verifies the
+existing archives, manifest, and current input tree digests instead of
+regenerating shared payload hashes. Use `--force-platform` to discard only the
+selected native staging and rebuild it. Use `--reset-prepared` only when the
+pinned source or inputs intentionally changed; it deletes and recreates the
+shared payload before staging the requested platform. An interrupted initial
+prepare removes its partial directory automatically.
+
+### Builders and parameters
+
+- macOS arm64 builds locally. `--sign-identity` (or
+  `RELEASE_SIGN_IDENTITY`) is required for a real release build.
+- Linux x64 uses the SSH target `274bot-builder` by default. Override it with
+  `--linux-host` or `RELEASE_LINUX_HOST`.
+- Windows x64 runs over the promoted `windows-ssh.py` transport.
+  `--windows-host` or `RELEASE_WINDOWS_HOST` is required. The Rusty V8 archive
+  is supplied as `--rusty-v8-archive` or `RUSTY_V8_ARCHIVE`; no builder path is
+  stored in the repository.
+- Identity and known-hosts files are optional
+  `--linux-identity`/`--linux-known-hosts` and
+  `--windows-identity`/`--windows-known-hosts` parameters (with matching
+  `RELEASE_*` environment variables). Batch mode and strict host-key checking
+  are always enabled.
+- Remote work roots default to the home-relative `274bot-release` and can be
+  changed with `--linux-remote-root` / `--windows-remote-root`. Cargo output is
+  cached below the platform's per-commit workspace, so artifacts from different
+  commits cannot mix. Remote roots must stay below the remote home directory.
+- `--jobs` defaults to 4, `--revision` to 289, and the macOS app profile to
+  `public-289`.
+
+No username, key path, cache path, signing identity, or credential is
+hard-coded; the Linux host is only the documented, overridable builder alias.
+`windows-ssh.py --help` documents its standalone `run`, `put`, and `get`
+operations.
+
+### Finalize and verify
+
+After all native package directories exist:
+
+```sh
+python3 tools/release/release.py finalize \
+  --commit "$COMMIT" --platform all --work-dir "$WORK" \
+  --artifact-dir "$ARTIFACTS" --tag 0.1.9 \
+  --release-notes "$RELEASE_NOTES"
+
+python3 tools/release/release.py verify \
+  --commit "$COMMIT" --platform all --artifact-dir "$ARTIFACTS"
+```
+
+Finalization first refuses a tag that is neither the Cargo version nor a
+numeric patch tag beginning with that version (for example, version `0.1.8`
+may finalize as `0.1.8.1`). It also requires the staged manifest's version and
+public release name to match the pinned source. It then copies the release
+notes, records platform runtime requirements, rehashes every package file,
+creates the native archive, downloads remote archives, and regenerates
+`SHA256SUMS` from only the candidate's expected archive names.
+
+On macOS it submits the signed zip, requires Apple's `Accepted` result, records
+the submission id immediately, staples and validates `274bot.app`, then
+rehashes and recreates the archive. A retry after stapling or Gatekeeper
+failure reuses that accepted id rather than resubmitting. The keychain profile
+defaults to `274bot` and is parameterized by `--notary-profile` or
+`RELEASE_NOTARY_PROFILE`. Credentials remain in the local keychain.
+
+Verification safely extracts every archive, rejects traversal, links, duplicate
+members, extra files, missing files, byte-count differences, and SHA-256
+differences, and verifies `SHA256SUMS` has exactly the candidate archives. It
+checks the requested host commit, runs both executables' `--help` on their
+native platforms, and validates the extracted macOS signatures, staple, and
+Gatekeeper acceptance. Navigation is reported byte-identical only after all
+six files from all three platform archives compare equal; a partial
+per-platform verification explicitly reports that navigation was not compared.
+Verification does not publish anything.
+
+### Retry and cleanup
+
+The retry controls are deliberately scoped to the release work root:
+
+```sh
+# Rebuild one native platform without changing prepared archive identities.
+python3 tools/release/release.py build ... --platform linux --force-platform
+
+# Remove selected platform staging explicitly, keeping prepared/.
+python3 tools/release/release.py clean --commit "$COMMIT" \
+  --work-dir "$WORK" --platform linux --mode reset-platform
+
+# After release verification, retain only package directories/archives,
+# build/finalize receipts, and the macOS notarization id on each builder.
+python3 tools/release/release.py clean --commit "$COMMIT" \
+  --work-dir "$WORK" --platform all --mode retain
+
+# Deliberately discard shared preparation (local only).
+python3 tools/release/release.py clean --commit "$COMMIT" \
+  --work-dir "$WORK" --mode reset-prepared
+```
+
+Mac finalization itself is resumable as described above. Remote cleanup uses
+the same parameterized SSH settings as build/finalize and never touches paths
+outside the per-commit release root.
+
+The controller intentionally has no tag, push, upload, or GitHub-release
+operation. Those remain explicit operator actions after native verification.
+
+The package version comes from `[workspace.package]` in `Cargo.toml`; the public
+name comes from `crates/panel/src/build_info.rs` `RELEASE`. Release targets:
 
 - macOS ARM64: Developer ID signed `274bot.app`, `panel-play`, `tui-play`.
 - Windows x64: `panel-play.exe`, `tui-play.exe`.
-- Linux x64: `tui-play`.
+- Linux x64: `panel-play`, `tui-play` (the panel from 0.1.9; see
+  [Linux panel runtime](#linux-panel-runtime)).
 
 `host-play` remains a developer tool. Build default features with
 `cargo build --locked --release`; do not enable profiling features. Build from
@@ -20,19 +182,47 @@ artifact's relative path to its SHA-256. It verifies hashes before staging.
 It copies only the selected binaries, navigation artifacts, and public docs;
 it excludes machine-local bake stamps, engine/cache data and credentials.
 
+Revision 289 packages also ship the WalkTo map terrain (operator decision
+2026-09-26). After staging the binaries, `package.py` runs the staged
+`tui-play --map-bundle` against the pinned client cache the nav bundle was
+built from: `--map-cache` (its jag directory) and `--map-unpack` (the snapshot
+root holding its decoded snapshot). Both are required, either explicitly or
+through `BOT_NAV_ENGINE_DIR` (or `ENGINE_DIR`) plus
+`BOT_NAV_SNAPSHOT_ROOT`; there are no operator-filesystem defaults.
+The bake runs the production map-cache path (the same producer, writer and
+publication as a local bake) in a scratch cache and ships the published
+directory as `map/289/images/<key>/` (image `manifest.json` plus terrain
+PNGs), with `map/289/274bot.mapimages.json` recording the image identity
+(revision, decoded client content, bake policy), key, the manifest's size and
+SHA-256 and the tile totals. `package.py` refuses terrain whose content
+identity differs from `274bot.navpack.json`'s `content_id`, re-verifies every
+shipped file against those receipts, records the description as
+`map_images` in `release-manifest.json` (whose `files` list, and so the
+archive `SHA256SUMS`, covers every tile), and copies `map/` into the macOS
+bundle's `Contents/Resources` beside `nav/`. The 289 terrain is 1,702 tiles,
+about 19 MB on disk, and the bake step takes about 25 s. The app installs it into
+`~/.274bot/map-cache` only when the identity matches the bound client cache
+exactly; otherwise the local bake stays behind the operator's consent.
+
 Example, after recording the build receipt:
 
 ```sh
 python3 tools/release/package.py --platform macos \
-  --input target/release --output .superpowers/release/274bot-0.1.8-macos-arm64 \
-  --build-receipt .superpowers/release/macos-build.json \
-  --app-profile public-289 --sign-identity YOUR_DEVELOPER_ID_IDENTITY_SHA1
+  --input target/release --output "$WORK/274bot-$VERSION-macos-arm64" \
+  --build-receipt "$WORK/macos-build.json" \
+  --app-profile public-289 --sign-identity "$RELEASE_SIGN_IDENTITY" \
+  --map-cache "$ENGINE/data/pack/client" --map-unpack "$SNAPSHOTS"
 ```
+
+`--check` (no `--output`, no signing) stages the same package into a
+temporary directory, verifies every staged file against its release manifest,
+prints a JSON summary (file count, bytes, shipped map terrain) and removes it.
 
 The app's Finder launch selects public-289 through its Info.plist environment.
 The standalone executables retain their normal CLI profile selection. The
-bundle has its own navigation resources under Contents/Resources; standalone
-binaries use the adjacent nav directory. Keep each layout intact.
+bundle has its own navigation and map resources under Contents/Resources;
+standalone binaries use the adjacent nav and map directories. Keep each layout
+intact.
 
 macOS signing enables hardened runtime with only the JIT entitlement needed
 by V8. Test script execution after signing. Verify signatures and native launch
@@ -55,3 +245,36 @@ identity was checked on 2026-09-16 via HTTPS /crc and all eight archive CRCs;
 only versionlist differs from the existing local 289 set. Both exact cache
 identities remain recognized. Local servers with another cache require their
 own matching navigation build or explicit external navigation resources.
+
+## Linux panel runtime
+
+The Linux package ships `panel-play` beside `tui-play` with the same adjacent
+`nav/289/` and `map/289/` resources as the Windows package; the panel's fonts
+are compiled in. Build both binaries in the release build (`cargo build
+--locked --release`). They are built on Ubuntu 24.04 and need glibc 2.39 or
+newer.
+
+- **Display:** an X11 or Wayland session. winit loads the display libraries at
+  runtime: libX11, libX11-xcb, libXcursor, libXi, libxcb, libxkbcommon and
+  libxkbcommon-x11 on X11; libwayland-client, libwayland-cursor and
+  libxkbcommon on Wayland.
+- **Graphics:** the panel draws with wgpu's Vulkan backend, so it needs the
+  Vulkan loader (`libvulkan.so.1`) and a Vulkan driver: the GPU vendor's, or
+  Mesa lavapipe (`libvulkan_lvp.so`) for software rendering. There is no
+  OpenGL fallback for the window. `BOT_CPU=1` draws the game view with the CPU
+  rasterizer instead of the GPU renderer; the window still presents through
+  Vulkan.
+- **Linked libraries** (`ldd` on the builder build): `panel-play` links
+  `libasound.so.2` (ALSA, game audio), `libssl.so.3` and `libcrypto.so.3`
+  (OpenSSL 3), `libgcc_s.so.1`, `libm.so.6` and `libc.so.6`; `tui-play` links
+  the same except ALSA and needs no display or Vulkan.
+- **Ubuntu 24.04 packages:** `libasound2t64 libssl3t64 libx11-6 libx11-xcb1
+  libxcursor1 libxi6 libxkbcommon0 libxkbcommon-x11-0 libwayland-client0
+  libwayland-cursor0 libvulkan1 mesa-vulkan-drivers`.
+
+Checked 2026-09-27 on the Ubuntu 24.04 builder: `package.py --check
+--platform linux` staged 1,715 files (both binaries, `nav/289`, `map/289`,
+docs), and the staged `panel-play` ran on Xvfb with Mesa lavapipe
+(`adapter name=llvmpipe … backend=Vulkan`), logged a throwaway local account
+in, and opened WalkTo on the shipped terrain (installed into the scratch
+`~/.274bot/map-cache` byte for byte) without a bake prompt.

@@ -1,6 +1,7 @@
 //! Portable isolate tests for native skill.xp / inventory.changed delivery.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use script::isolate_fb::{
     encode_snapshot, encode_snapshot_delta, ChatLineInput, ItemRowInput, ReachViewInput,
@@ -202,6 +203,39 @@ fn seed_then_bury_fires_callbacks_after_tick() {
     assert_eq!(rows[0].as_str(), Some("xp"));
     assert!(rows.iter().skip(1).all(|v| v.as_str() == Some("inv")));
     assert_eq!(probe_i64(&iso, "__level||0"), 0);
+    iso.join();
+}
+
+/// Frozen producers emit `tick` with `{ tick }` (`producers.ts:58`).
+#[test]
+fn tick_event_carries_its_tick_number() {
+    let iso = LoadIsolate::spawn(
+        r#"
+export default class T extends LoopingBot {
+    constructor() {
+        super();
+        globalThis.__ticks = [];
+        this.on('tick', (e) => { globalThis.__ticks.push(e); });
+    }
+    loop() {}
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let mut snap = base_snapshot();
+    for tick in [1, 2] {
+        snap.tick = tick;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("1");
+    }
+    assert_eq!(
+        probe_alive(&iso, "globalThis.__ticks"),
+        serde_json::json!([{ "tick": 1 }, { "tick": 2 }])
+    );
     iso.join();
 }
 
@@ -586,7 +620,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn runaway_callback_uses_existing_50ms_interrupt() {
+fn runaway_callback_uses_shared_pause_deadline() {
     let src = r#"
 export default class T extends LoopingBot {
     onStart() {
@@ -607,8 +641,17 @@ export default class T extends LoopingBot {
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
-    std::thread::sleep(std::time::Duration::from_millis(80));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(
+            Instant::now() < deadline,
+            "runaway callback never entered execution"
+        );
+        std::thread::yield_now();
+    }
     iso.pause();
+    iso.probe("true")
+        .expect("Pause must settle the runaway callback");
     iso.resume();
     iso.on_game_tick(3);
     let n = iso
@@ -924,7 +967,7 @@ export default class T extends LoopingBot {
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
-    std::thread::sleep(std::time::Duration::from_millis(80));
+    std::thread::sleep(std::time::Duration::from_millis(650));
     snap.hold = false;
     snap.tick = 3;
     post_snapshot_input(&iso, &snap);

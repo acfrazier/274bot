@@ -1,35 +1,48 @@
-//! WalkTo picker: a collision-dot map window over the baked nav world.
+//! WalkTo picker: native map window over the baked nav world.
 //!
-//! Draws the walkable tiles of the loaded [`NavWorld`] as amber dots inside
-//! a child canvas. Click snaps to the nearest walkable tile (highlight
-//! only); **Walk** arms `session.arm_walk_on` and closes. The world is the
-//! session's [`Play`] world, injected once via [`set_pack`] — the picker
-//! never decodes the pack itself.
+//! Terrain and optional grid/collision/reach layers are drawn by the app-owned
+//! [`crate::walk_map::WalkMapRenderer`]. Click, search, **Walk**, and **Teleport**
+//! go through [`host_play::walk_map::MapModel`] on `Session`; confirmation
+//! consumes the pending selection once. Walk needs a snapped target; debug
+//! Teleport uses the requested tile when Local+loopback is authorized.
+//! Missing origin or focus still refuse.
+//! The world is the session's [`Play`] world, injected once via [`set_pack`] — the
+//! picker never decodes the pack itself.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
-use nav::paint::{bake_reach, collision_at, flood_components, reached, remaining_path_tiles};
-use nav::router::Route;
-use nav::tile::{chebyshev, Tile};
+use frontend_core::{MapBakePrompt, MAP_BAKE_TITLE, MAP_BAKE_WARNING};
+use host_play::walk_map::{
+    select_route_source, ActionError, MapModel, RouteProjection, RouteSource, Selection,
+};
+use nav::map::spatial::GameTile;
+use nav::paint::{bake_reach, flood_components};
+use nav::router::{Leg, Route};
+use nav::tile::Tile;
 use nav::world::NavWorld;
 
-use crate::nav_settings::{parse_html_color, NavSettings};
+use crate::game_view::FrameGpu;
 use crate::session::Session;
-use crate::theme::{ACCENT, TEXT};
+use crate::walk_map::{
+    overlay_colors, snap_tile, view_from_canvas, OverlayLayers, WalkMapRenderer, MAX_LABELS,
+    NSEW_PPT,
+};
 
 /// Default picker centre: the Lumbridge courtyard when the player's tile is
 /// unknown.
 const DEFAULT_CENTRE: (i32, i32) = (3220, 3220);
-/// Zoom steps in pixels per tile. The coarsest step spans at most ~320 tiles
-/// across the canvas (rs2b0t `TILES_AT_ZOOM1` cap); fine steps keep clicks
-/// precise.
-const ZOOMS: [f32; 4] = [2.0, 4.0, 8.0, 16.0];
+/// Zoom steps in pixels per tile. Coarse pyramid steps (0.25/0.5/1) sit in
+/// front of the existing fine 2/4/8/16 choices. Default remains 2 px/tile.
+const ZOOMS: [f32; 7] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
+const DEFAULT_ZOOM: i32 = 3;
 
 /// The baked world shared with the session's [`Play`], injected by
 /// [`set_pack`]; `None` when no play world is attached (the picker then
@@ -43,7 +56,7 @@ static CENTRE_Z: AtomicI32 = AtomicI32::new(DEFAULT_CENTRE.1);
 static PAN_REM_X: AtomicI32 = AtomicI32::new(0);
 static PAN_REM_Z: AtomicI32 = AtomicI32::new(0);
 static LEVEL: AtomicI32 = AtomicI32::new(0);
-static ZOOM: AtomicI32 = AtomicI32::new(0);
+static ZOOM: AtomicI32 = AtomicI32::new(DEFAULT_ZOOM);
 /// True while the picker window was drawn last frame; drives the view reset
 /// when it opens fresh.
 static PREV_OPEN: AtomicBool = AtomicBool::new(false);
@@ -55,30 +68,38 @@ static PREV_OPEN: AtomicBool = AtomicBool::new(false);
 /// new world's grid instead of indexing stale geometry. The reach bake is
 /// dropped too — it answers the new world's transport network.
 pub fn set_pack(world: Option<Arc<NavWorld>>) {
-    *PACK.lock().unwrap() = world;
+    let _nav = lock_nav_statics();
+    let detaching = world.is_none();
+    *lock_data(&PACK) = world;
     drop_flags_sidecar();
-    *REACH.lock().unwrap() = None;
+    *lock_data(&REACH) = None;
+    // Map-owned flood leases clear here and on WalkTo close via release_map_leases.
+    release_map_leases();
+    if detaching {
+        // Session/pack teardown must not leak the process-static bundled reach Arc.
+        *lock_data(&REACH_BINDING) = ReachBinding::Unbound;
+    }
 }
 
 /// The attached nav world; `None` when no play world is set. The returned
 /// `Arc` keeps the world alive for the caller, so the picker and the
 /// session paint the same bake without a second decode.
 pub(crate) fn pack() -> Option<Arc<NavWorld>> {
-    PACK.lock().unwrap().clone()
+    lock_data(&PACK).clone()
 }
 
 /// The raw baked collision flags decoded from the `.navflags` sidecar,
 /// plus the grid header they were decoded for. Loaded once while a
-/// collision paint toggle (`collision_fill`/`nsew_labels`) is on and
-/// dropped when both go off; the paint only applies them to a
-/// `WorldCollision` with the same geometry. A side table so the shared
-/// [`NavWorld`] `Arc` stays immutable for the router and the walk grid
-/// is never cloned.
+/// collision paint toggle (`collision_fill`/`nsew_labels`) is on **and** a
+/// surface actually draws them; dropped when the last drawer stops or both
+/// toggles go off. The paint only applies them to a `WorldCollision` with
+/// the same geometry. A side table so the shared [`NavWorld`] `Arc` stays
+/// immutable for the router and the walk grid is never cloned.
 struct FlagSidecar {
     origin: WorldTile,
     width: usize,
     height: usize,
-    flags: Arc<[u32]>,
+    flags: Arc<Vec<u32>>,
 }
 
 /// The session's decoded flags sidecar; `Unloaded` until paint-on.
@@ -104,6 +125,113 @@ static FLAGS_TRUSTED_BUNDLED: AtomicBool = AtomicBool::new(false);
 /// Content-hash attempts while loading the flags sidecar. Tests assert the
 /// bundled fast path never increments this; external overrides always do.
 static FLAGS_CONTENT_HASHES: AtomicU32 = AtomicU32::new(0);
+/// Successful or attempted disk loads of the flags sidecar (from `Unloaded`).
+/// Drawing-gated activation tests assert boot prefs do not bump this.
+static FLAGS_LOADS: AtomicU32 = AtomicU32::new(0);
+
+// Test lock order, outermost first. Taking an earlier lock while this thread
+// holds a later one panics in tests instead of deadlocking another test:
+//   1. `crate::IMGUI_CTX_TEST_GUARD` (`test_support::imgui_context_guard`)
+//   2. `FLAGS_TEST_LOCK` (`lock_nav_statics`; reentrant)
+//   3. the picker nav data mutexes (`PACK`, `FLAGS`, `BOUND_NAV_FLAGS`,
+//      `EXPECTED_FLAGS_SHA256`, `REACH`, `REACH_BINDING`, `FLOOD_CACHE`,
+//      `FLOOD_REPORT`, `ROUTE_TILES`), always taken through `lock_data`.
+// A holder of a data mutex that goes on to call a nav-locking API must take
+// `lock_nav_statics` first (see `lock_route_path`). Production keeps only the
+// data mutexes; the nav lock and the order checks compile away.
+
+/// Serialize every test (and every cfg(test) mutator) that touches
+/// process-static picker nav debug state: flags binding/slot, reach binding,
+/// flood cache, pack. Reentrant so tests may hold the lock across ensure/drop
+/// while the APIs themselves also take it (Session drop → set_pack included).
+#[cfg(test)]
+pub(crate) static FLAGS_TEST_LOCK: parking_lot::ReentrantMutex<()> =
+    parking_lot::ReentrantMutex::new(());
+
+#[cfg(test)]
+thread_local! {
+    /// Picker nav data guards this thread currently holds.
+    static HELD_DATA_GUARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// True when this thread holds the nav-statics lock or a picker nav data
+/// mutex, so an outer-order lock (the ImGui context guard) would invert.
+#[cfg(test)]
+pub(crate) fn holds_nav_locks() -> bool {
+    FLAGS_TEST_LOCK.is_owned_by_current_thread() || HELD_DATA_GUARDS.with(|n| n.get()) > 0
+}
+
+/// RAII holder for the process-global nav-statics lock (tests only).
+/// The guard field is only held so Drop releases the mutex; it is never read.
+pub(crate) struct NavStaticsGuard(
+    #[cfg(test)]
+    #[allow(dead_code)]
+    parking_lot::ReentrantMutexGuard<'static, ()>,
+);
+
+/// Take the process-global nav-statics lock. No-op outside tests. Panics
+/// when this thread holds a picker data mutex without already owning the
+/// nav lock: that inversion deadlocks against a nav holder waiting on the
+/// same data mutex.
+#[cfg(test)]
+pub(crate) fn lock_nav_statics() -> NavStaticsGuard {
+    assert!(
+        FLAGS_TEST_LOCK.is_owned_by_current_thread() || HELD_DATA_GUARDS.with(|n| n.get()) == 0,
+        "lock order: lock_nav_statics taken while holding a picker nav data mutex"
+    );
+    NavStaticsGuard(FLAGS_TEST_LOCK.lock())
+}
+
+#[cfg(not(test))]
+#[inline]
+fn lock_nav_statics() -> NavStaticsGuard {
+    NavStaticsGuard()
+}
+
+/// A held picker nav data mutex; tests count it per thread for the lock
+/// order check in [`lock_nav_statics`].
+#[cfg(test)]
+pub(crate) struct DataGuard<'a, T>(std::sync::MutexGuard<'a, T>);
+
+#[cfg(not(test))]
+type DataGuard<'a, T> = std::sync::MutexGuard<'a, T>;
+
+#[cfg(test)]
+impl<T> std::ops::Deref for DataGuard<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl<T> std::ops::DerefMut for DataGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
+#[cfg(test)]
+impl<T> Drop for DataGuard<'_, T> {
+    fn drop(&mut self) {
+        HELD_DATA_GUARDS.with(|n| n.set(n.get() - 1));
+    }
+}
+
+/// Lock one picker nav data mutex (lock order level 3).
+#[cfg(test)]
+pub(crate) fn lock_data<T>(mutex: &Mutex<T>) -> DataGuard<'_, T> {
+    let guard = mutex.lock().unwrap();
+    HELD_DATA_GUARDS.with(|n| n.set(n.get() + 1));
+    DataGuard(guard)
+}
+
+#[cfg(not(test))]
+#[inline]
+fn lock_data<T>(mutex: &Mutex<T>) -> DataGuard<'_, T> {
+    mutex.lock().unwrap()
+}
 
 /// Bind the process-profile flags path, expected digest, and provenance.
 /// `trusted_bundled` is true only for the build-stamped sibling of a bundled
@@ -114,8 +242,9 @@ pub(crate) fn set_navflags_binding(
     flags_sha256: Option<String>,
     trusted_bundled: bool,
 ) {
-    *BOUND_NAV_FLAGS.lock().unwrap() = Some(path);
-    *EXPECTED_FLAGS_SHA256.lock().unwrap() = flags_sha256;
+    let _nav = lock_nav_statics();
+    *lock_data(&BOUND_NAV_FLAGS) = Some(path);
+    *lock_data(&EXPECTED_FLAGS_SHA256) = flags_sha256;
     FLAGS_TRUSTED_BUNDLED.store(trusted_bundled, Ordering::Relaxed);
     drop_flags_sidecar();
 }
@@ -123,7 +252,7 @@ pub(crate) fn set_navflags_binding(
 /// The flags sidecar path: `$NAV_FLAGS`, else the pack path with its
 /// extension swapped to `.navflags` (the `nav-pack` write target).
 pub(crate) fn navflags_path() -> PathBuf {
-    if let Some(path) = BOUND_NAV_FLAGS.lock().unwrap().clone() {
+    if let Some(path) = lock_data(&BOUND_NAV_FLAGS).clone() {
         return path;
     }
     match std::env::var("NAV_FLAGS") {
@@ -133,13 +262,15 @@ pub(crate) fn navflags_path() -> PathBuf {
 }
 
 /// Decode sidecar bytes into a [`FlagSidecar`]; `None` when decode fails.
+#[cfg(test)]
+#[allow(dead_code)] // kept for in-memory fixtures alongside decode_sidecar_file
 fn decode_sidecar_bytes(bytes: &[u8]) -> Option<FlagSidecar> {
-    let (origin, width, height, flags) = nav::pack::decode_flags_sidecar(bytes).ok()?;
+    let (origin, width, height, flags) = nav::pack::decode_flags_sidecar_arc(bytes).ok()?;
     Some(FlagSidecar {
         origin,
         width,
         height,
-        flags: flags.into(),
+        flags,
     })
 }
 
@@ -147,46 +278,64 @@ fn decode_sidecar_bytes(bytes: &[u8]) -> Option<FlagSidecar> {
 /// the file is missing or fails the sidecar decode (the paint then falls
 /// back to the walk word).
 #[cfg(test)]
-fn decode_sidecar_file(path: &PathBuf) -> Option<FlagSidecar> {
-    let bytes = std::fs::read(path).ok()?;
-    decode_sidecar_bytes(&bytes)
+fn decode_sidecar_file(path: &std::path::Path) -> Option<FlagSidecar> {
+    // Tests decode fixtures without identity hashing.
+    let loaded = nav::pack::read_flags_sidecar(path, false).ok()?;
+    Some(FlagSidecar {
+        origin: loaded.origin,
+        width: loaded.width,
+        height: loaded.height,
+        flags: loaded.flags,
+    })
 }
 
-/// Decode the flags sidecar once while a collision paint is on; no-op
-/// when already attempted for this paint-on. Missing, unknown, or
-/// mismatched identity falls back to the walk word and is not retried
-/// until the sidecar is dropped. Build-stamped bundled flags skip the
-/// content hash; external overrides always validate against the digest.
+/// Decode the flags sidecar once while a collision paint is on **and** a
+/// surface is actually drawing it; no-op when already attempted for this
+/// paint-on. Missing, unknown, or mismatched identity falls back to the
+/// walk word and is not retried until the sidecar is dropped. Build-stamped
+/// bundled flags skip the content hash; external overrides always validate
+/// against the digest. Disk load streams into one resident `Arc<Vec<u32>>` so
+/// the raw file buffer is never retained beside the decoded words.
 pub(crate) fn ensure_flags_sidecar() {
-    if !matches!(*FLAGS.lock().unwrap(), FlagsSlot::Unloaded) {
+    let _nav = lock_nav_statics();
+    if !matches!(*lock_data(&FLAGS), FlagsSlot::Unloaded) {
         return;
     }
-    let expected = EXPECTED_FLAGS_SHA256.lock().unwrap().clone();
+    let expected = lock_data(&EXPECTED_FLAGS_SHA256).clone();
     let path = navflags_path();
     let trusted_bundled = FLAGS_TRUSTED_BUNDLED.load(Ordering::Relaxed);
+    FLAGS_LOADS.fetch_add(1, Ordering::Relaxed);
+    // Hash only when identity must be checked. The counter lives next to the
+    // actual digest so trusted bundled never bills a 260 MB SHA-256.
+    let hash = !trusted_bundled;
     let slot = match expected {
         None => FlagsSlot::Refused("flags identity is unknown"),
-        Some(expected) => match std::fs::read(&path) {
-            Err(_) => FlagsSlot::Missing,
-            Ok(bytes) => {
+        Some(expected) => match nav::pack::read_flags_sidecar(&path, hash) {
+            Err(nav::pack::PackError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+                FlagsSlot::Missing
+            }
+            Err(_) => FlagsSlot::Refused("flags sidecar is unreadable"),
+            Ok(loaded) => {
                 let identity_ok = if trusted_bundled {
                     true
                 } else {
                     FLAGS_CONTENT_HASHES.fetch_add(1, Ordering::Relaxed);
-                    nav::manifest::hash_bytes(&bytes) == expected
+                    loaded.content_sha256.as_deref() == Some(expected.as_str())
                 };
                 if !identity_ok {
                     FlagsSlot::Refused("flags sidecar hash mismatch")
                 } else {
-                    match decode_sidecar_bytes(&bytes) {
-                        Some(sidecar) => FlagsSlot::Loaded(sidecar),
-                        None => FlagsSlot::Refused("flags sidecar is unreadable"),
-                    }
+                    FlagsSlot::Loaded(FlagSidecar {
+                        origin: loaded.origin,
+                        width: loaded.width,
+                        height: loaded.height,
+                        flags: loaded.flags,
+                    })
                 }
             }
         },
     };
-    let mut guard = FLAGS.lock().unwrap();
+    let mut guard = lock_data(&FLAGS);
     if matches!(*guard, FlagsSlot::Unloaded) {
         *guard = slot;
     }
@@ -195,17 +344,32 @@ pub(crate) fn ensure_flags_sidecar() {
 /// Drop the decoded sidecar (both collision toggles off); the next
 /// paint-on re-decodes.
 pub(crate) fn drop_flags_sidecar() {
-    *FLAGS.lock().unwrap() = FlagsSlot::Unloaded;
+    let _nav = lock_nav_statics();
+    *lock_data(&FLAGS) = FlagsSlot::Unloaded;
 }
 
 #[cfg(test)]
 pub(crate) fn flags_content_hash_count() -> u32 {
+    let _nav = lock_nav_statics();
     FLAGS_CONTENT_HASHES.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
 pub(crate) fn reset_flags_content_hash_count() {
+    let _nav = lock_nav_statics();
     FLAGS_CONTENT_HASHES.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn flags_load_count() -> u32 {
+    let _nav = lock_nav_statics();
+    FLAGS_LOADS.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_flags_load_count() {
+    let _nav = lock_nav_statics();
+    FLAGS_LOADS.store(0, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -219,7 +383,8 @@ pub(crate) enum FlagsSidecarState {
 
 #[cfg(test)]
 pub(crate) fn flags_sidecar_state() -> FlagsSidecarState {
-    match &*FLAGS.lock().unwrap() {
+    let _nav = lock_nav_statics();
+    match &*lock_data(&FLAGS) {
         FlagsSlot::Unloaded => FlagsSidecarState::Unloaded,
         FlagsSlot::Missing => FlagsSidecarState::Missing,
         FlagsSlot::Refused(reason) => FlagsSidecarState::Refused(reason),
@@ -233,8 +398,8 @@ pub(crate) fn flags_sidecar_for(
     origin: WorldTile,
     width: usize,
     height: usize,
-) -> Option<Arc<[u32]>> {
-    let guard = FLAGS.lock().unwrap();
+) -> Option<Arc<Vec<u32>>> {
+    let guard = lock_data(&FLAGS);
     match &*guard {
         FlagsSlot::Loaded(s) => sidecar_for_grid(s, origin, width, height),
         _ => None,
@@ -248,16 +413,10 @@ fn sidecar_for_grid(
     origin: WorldTile,
     width: usize,
     height: usize,
-) -> Option<Arc<[u32]>> {
+) -> Option<Arc<Vec<u32>>> {
     (s.origin == origin && s.width == width && s.height == height).then(|| Arc::clone(&s.flags))
 }
 
-/// The cached paint-only reach bitset for a world grid: one `step_ok` BFS
-/// from every transport seed ([`bake_reach`]), baked once per grid. The
-/// whole-world bake spans millions of tiles, so a picker frame or a 3D
-/// publish must never re-flood; only a changed world (a new [`set_pack`])
-/// recomputes. Bundled identities never flood: they reuse the bitset
-/// decoded at profile bind.
 struct ReachCache {
     key: (i32, i32, usize, usize),
     bits: Arc<[u64]>,
@@ -277,8 +436,8 @@ static REACH: Mutex<Option<ReachCache>> = Mutex::new(None);
 static REACH_BINDING: Mutex<ReachBinding> = Mutex::new(ReachBinding::Unbound);
 
 /// Bind the process paint-reach bitset. Bundled provenance supplies the
-/// decoded sidecar; the external/custom path leaves this unbound and keeps
-/// its one-time [`bake_reach`].
+/// decoded sidecar. The map never bakes; 3D paint may still one-time bake
+/// when unbound.
 pub(crate) fn set_reach_binding(
     bits: Option<Arc<[u64]>>,
     origin: WorldTile,
@@ -286,7 +445,8 @@ pub(crate) fn set_reach_binding(
     height: usize,
     trusted_bundled: bool,
 ) {
-    *REACH_BINDING.lock().unwrap() = match (trusted_bundled, bits) {
+    let _nav = lock_nav_statics();
+    *lock_data(&REACH_BINDING) = match (trusted_bundled, bits) {
         (true, Some(bits)) => ReachBinding::Bundled {
             bits,
             origin,
@@ -295,35 +455,50 @@ pub(crate) fn set_reach_binding(
         },
         _ => ReachBinding::Unbound,
     };
-    *REACH.lock().unwrap() = None;
+    *lock_data(&REACH) = None;
 }
 
-/// The reach bitset for `world`, baked once and cached; `None` only when
-/// no bake could be produced (the paint then treats every tile as
-/// reached). Reach answers connectivity through the transport network —
-/// `find` never reads it. Bundled runtime returns the bind-time sidecar
-/// and must not call [`bake_reach`].
-pub(crate) fn reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
+fn bound_reach(world: &NavWorld) -> Option<Arc<[u64]>> {
     let c = &world.collision;
-    let key = (c.origin.x, c.origin.z, c.width, c.height);
-    {
-        let binding = REACH_BINDING.lock().unwrap();
-        if let ReachBinding::Bundled {
+    let binding = lock_data(&REACH_BINDING);
+    match &*binding {
+        ReachBinding::Bundled {
             bits,
             origin,
             width,
             height,
-        } = &*binding
-        {
-            if *origin == c.origin && *width == c.width && *height == c.height {
-                return Some(Arc::clone(bits));
-            }
-            // Bundled bits belong to a different world; do not flood a
-            // custom sidecar in by geometry.
-            return None;
+        } if *origin == c.origin && *width == c.width && *height == c.height => {
+            Some(Arc::clone(bits))
         }
+        _ => None,
     }
-    let mut guard = REACH.lock().unwrap();
+}
+
+fn reach_binding_is_bundled() -> bool {
+    matches!(*lock_data(&REACH_BINDING), ReachBinding::Bundled { .. })
+}
+
+/// Bound `.navreach` bits matching `world`, or `None` (the map then shows
+/// "reach unavailable"). Never floods the world.
+pub(crate) fn map_reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
+    let _nav = lock_nav_statics();
+    bound_reach(world)
+}
+
+/// 3D paint-reach: bound sidecar, else one cached `bake_reach` on the
+/// external path. A bundled sidecar for a different world is not replaced
+/// by a runtime flood. The map must not call this.
+pub(crate) fn reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
+    let _nav = lock_nav_statics();
+    if let Some(bits) = bound_reach(world) {
+        return Some(bits);
+    }
+    if reach_binding_is_bundled() {
+        return None;
+    }
+    let c = &world.collision;
+    let key = (c.origin.x, c.origin.z, c.width, c.height);
+    let mut guard = lock_data(&REACH);
     let bits = match guard.as_ref() {
         Some(cache) if cache.key == key => cache.bits.clone(),
         _ => {
@@ -336,29 +511,6 @@ pub(crate) fn reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
         }
     };
     Some(bits)
-}
-
-/// The walkable tiles of the world on `level`, row-major (z then x): a
-/// tile is a "dot" when the collision's blanket `walkable` check passes
-/// (the standable test, not a directional mask).
-fn world_dots(world: &NavWorld, level: i32) -> impl Iterator<Item = Tile> + '_ {
-    let c = &world.collision;
-    let o = c.origin;
-    (0..c.height)
-        .flat_map(move |z| {
-            (0..c.width).map(move |x| Tile {
-                x: o.x + x as i32,
-                z: o.z + z as i32,
-                level,
-            })
-        })
-        .filter(move |t| {
-            c.walkable(WorldTile {
-                x: t.x,
-                z: t.z,
-                level: t.level,
-            })
-        })
 }
 
 /// Levels with a baked plane: level 0 is the ground plane and always
@@ -389,29 +541,21 @@ pub fn available_levels(world: &NavWorld) -> Vec<i32> {
 
 /// The nearest walkable tile on the world's `level` plane to the float
 /// point `(x, z)`, or the click's own tile when it is already walkable.
-/// Distance is Chebyshev with Manhattan breaking ties. `None` when the
-/// level is not one of the baked planes (see [`available_levels`]) or has
-/// no walkable tile.
+/// Uses A's radius-16 Chebyshev/Manhattan snap. `None` when the level is
+/// not one of the baked planes (see [`available_levels`]) or has no
+/// walkable tile inside the snap radius.
 pub fn snap(world: &NavWorld, x: f32, z: f32, level: i32) -> Option<Tile> {
-    if !available_levels(world).contains(&level) {
+    if !(0..4).contains(&level) || !available_levels(world).contains(&level) {
         return None;
     }
-    let target = Tile {
-        x: x.round() as i32,
-        z: z.round() as i32,
-        level,
-    };
-    if world.collision.walkable(WorldTile {
-        x: target.x,
-        z: target.z,
-        level: target.level,
-    }) {
-        return Some(target);
-    }
-    world_dots(world, level).min_by_key(|t| {
-        let manhattan = (t.x - target.x).abs() + (t.z - target.z).abs();
-        (chebyshev(*t, target), manhattan)
-    })
+    snap_tile(
+        world,
+        GameTile {
+            x: x.floor() as i32,
+            z: z.floor() as i32,
+            plane: level as u8,
+        },
+    )
 }
 
 /// Map a click in the canvas at `click` (canvas-local px) to the nearest
@@ -425,31 +569,122 @@ pub fn click_to_tile(
     size: [f32; 2],
     level: i32,
 ) -> Option<Tile> {
-    let (tx, tz) = world_from_canvas(centre, scale, size, click);
+    click_to_tile_rem(world, centre, (0.0, 0.0), scale, click, size, level)
+}
+
+fn click_to_tile_rem(
+    world: &NavWorld,
+    centre: (i32, i32),
+    rem: (f32, f32),
+    scale: f32,
+    click: [f32; 2],
+    size: [f32; 2],
+    level: i32,
+) -> Option<Tile> {
+    let (tx, tz) = world_from_canvas_rem(centre, rem, scale, size, click);
     snap(world, tx, tz, level)
 }
 
-/// Canvas-local px of world tile `(tx, tz)`: +x east is right, +z north is
-/// up (imgui Y grows down, so z is negated). The old mapping put north at
-/// the bottom (south-facing).
-fn canvas_from_world(centre: (i32, i32), scale: f32, size: [f32; 2], tx: f32, tz: f32) -> [f32; 2] {
-    [
-        size[0] / 2.0 + (tx - centre.0 as f32) * scale,
-        size[1] / 2.0 - (tz - centre.1 as f32) * scale,
-    ]
+fn click_requested_tile(
+    centre: (i32, i32),
+    rem: (f32, f32),
+    scale: f32,
+    click: [f32; 2],
+    size: [f32; 2],
+    level: i32,
+) -> Option<Tile> {
+    if !(0..4).contains(&level) {
+        return None;
+    }
+    let (tx, tz) = world_from_canvas_rem(centre, rem, scale, size, click);
+    Some(Tile {
+        x: tx.floor() as i32,
+        z: tz.floor() as i32,
+        level,
+    })
 }
 
-/// Inverse of [`canvas_from_world`].
-fn world_from_canvas(
+fn world_from_canvas_rem(
     centre: (i32, i32),
+    rem: (f32, f32),
     scale: f32,
     size: [f32; 2],
     click: [f32; 2],
 ) -> (f32, f32) {
     (
-        centre.0 as f32 + (click[0] - size[0] / 2.0) / scale,
-        centre.1 as f32 - (click[1] - size[1] / 2.0) / scale,
+        centre.0 as f32 + rem.0 + (click[0] - size[0] / 2.0) / scale,
+        centre.1 as f32 + rem.1 - (click[1] - size[1] / 2.0) / scale,
     )
+}
+
+fn split_centre(x: f32, z: f32) -> ((i32, i32), (f32, f32)) {
+    let ix = x.floor() as i32;
+    let iz = z.floor() as i32;
+    ((ix, iz), (x - ix as f32, z - iz as f32))
+}
+
+/// Keep the world point under `click` fixed while changing pixels/tile.
+pub(crate) fn zoom_toward(
+    centre: (i32, i32),
+    rem: (f32, f32),
+    old_scale: f32,
+    new_scale: f32,
+    size: [f32; 2],
+    click: [f32; 2],
+) -> ((i32, i32), (f32, f32)) {
+    if old_scale <= 0.0 || new_scale <= 0.0 {
+        return (centre, rem);
+    }
+    let (wx, wz) = world_from_canvas_rem(centre, rem, old_scale, size, click);
+    let ncx = wx - (click[0] - size[0] / 2.0) / new_scale;
+    let ncz = wz + (click[1] - size[1] / 2.0) / new_scale;
+    split_centre(ncx, ncz)
+}
+
+fn map_layers(map: &WalkMapRenderer, view: nav::map::spatial::View) -> OverlayLayers {
+    OverlayLayers {
+        grid: map.show_grid,
+        collision_fill: map.show_collision,
+        reach: map.show_reach,
+        nsew: map.show_nsew && view.pixels_per_tile >= NSEW_PPT,
+        path: false,
+        flood: map.show_flood,
+    }
+}
+
+fn recenter_on(x: i32, z: i32) {
+    CENTRE_X.store(x, Ordering::Relaxed);
+    CENTRE_Z.store(z, Ordering::Relaxed);
+    PAN_REM_X.store(0, Ordering::Relaxed);
+    PAN_REM_Z.store(0, Ordering::Relaxed);
+}
+
+fn sync_view_from_model(model: &MapModel) {
+    recenter_on(
+        model.center[0].floor() as i32,
+        model.center[1].floor() as i32,
+    );
+    LEVEL.store(i32::from(model.plane), Ordering::Relaxed);
+}
+
+fn bind_map_model(session: &mut Session, world: &NavWorld) {
+    let context = session.picker_context(world);
+    session.map_model.bind(context);
+}
+
+pub(crate) fn pending_highlight(session: &Session) -> Option<Tile> {
+    session
+        .map_model
+        .pending()
+        .map(|sel| sel.target.unwrap_or(sel.requested))
+}
+
+fn poi_anchor(poi: &nav::map::poi::PoiRecord) -> Tile {
+    Tile {
+        x: poi.display.x.floor() as i32,
+        z: poi.display.z.floor() as i32,
+        level: i32::from(poi.effective_plane),
+    }
 }
 
 /// Apply a pixel pan. `rem` is the leftover tile fraction in (-1, 1) from
@@ -488,7 +723,7 @@ pub(crate) fn pan_by(
 }
 
 /// WalkTo window flags: no docking, and the imgui window must not steal
-/// wheel (that pans the map). `NO_SCROLLBAR` hides the bar; without
+/// wheel (that zooms the map). `NO_SCROLLBAR` hides the bar; without
 /// `NO_SCROLL_WITH_MOUSE` the window still scrolls once content overflows.
 /// `.opened` supplies the title-bar ✕.
 fn walkto_window_flags() -> WindowFlags {
@@ -511,18 +746,273 @@ fn right_align_x(cursor_x: f32, avail_x: f32, width: f32) -> f32 {
     cursor_x + avail_x - width
 }
 
-/// Footer labels: Teleport only on a local engine.
-fn walkto_footer_labels(local: bool) -> &'static [&'static str] {
-    if local {
-        &["recentre", "Walk", "Teleport"]
+/// Footer labels: Send sits next to Walk; Teleport only when authorized.
+pub(crate) fn walkto_footer_labels(teleport: bool) -> &'static [&'static str] {
+    if teleport {
+        &["recentre", "Walk", "Send", "Teleport"]
     } else {
-        &["recentre", "Walk"]
+        &["recentre", "Walk", "Send"]
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WalktoCaption {
+    None,
+    Walk { requested: Tile, target: Tile },
+    TeleportOnly { requested: Tile },
+    Blocked { requested: Tile },
+}
+
+pub(crate) fn walkto_selection_caption(
+    pending: Option<&Selection>,
+    teleport: bool,
+) -> WalktoCaption {
+    match pending {
+        None => WalktoCaption::None,
+        Some(sel) => match sel.target {
+            Some(target) => WalktoCaption::Walk {
+                requested: sel.requested,
+                target,
+            },
+            None if teleport => WalktoCaption::TeleportOnly {
+                requested: sel.requested,
+            },
+            None => WalktoCaption::Blocked {
+                requested: sel.requested,
+            },
+        },
+    }
+}
+
+pub(crate) fn ellipsize_to_width(ui: &Ui, text: &str, max_w: f32) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    let font = ui.current_font();
+    let size = ui.current_font_size();
+    if font.calc_text_size(size, f32::MAX, 0.0, text)[0] <= max_w {
+        return text.to_string();
+    }
+    const ELLIPSIS: &str = "…";
+    let ellipsis_w = font.calc_text_size(size, f32::MAX, 0.0, ELLIPSIS)[0];
+    if ellipsis_w >= max_w {
+        return String::new();
+    }
+    let mut lo = 0usize;
+    let mut hi = text.len();
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let Some(prefix) = text.get(..mid).filter(|p| p.is_char_boundary(p.len())) else {
+            hi = mid.saturating_sub(1);
+            continue;
+        };
+        let width = font.calc_text_size(size, f32::MAX, 0.0, prefix)[0];
+        if width + ellipsis_w <= max_w {
+            lo = mid;
+        } else {
+            hi = mid.saturating_sub(1);
+        }
+    }
+    let mut end = lo.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{ELLIPSIS}", &text[..end])
+}
+
+pub(crate) fn format_walkto_status(caption: WalktoCaption, status: &str) -> String {
+    match caption {
+        WalktoCaption::None => format!("click a tile, then Walk · {status}"),
+        WalktoCaption::Walk { requested, target } => format!(
+            "selected {} {} {} (walk target {} {}) · {status}",
+            requested.x, requested.z, requested.level, target.x, target.z
+        ),
+        WalktoCaption::TeleportOnly { requested } => format!(
+            "blocked {} {} {} (teleport only) · {status}",
+            requested.x, requested.z, requested.level
+        ),
+        WalktoCaption::Blocked { requested } => format!(
+            "blocked {} {} {} · {status}",
+            requested.x, requested.z, requested.level
+        ),
+    }
+}
+
+/// Walk needs a snapped target. Teleport needs any selection when authorized.
+pub(crate) fn walkto_actions_enabled(pending: Option<&Selection>, teleport: bool) -> (bool, bool) {
+    (
+        pending.and_then(|sel| sel.target).is_some(),
+        teleport && pending.is_some(),
+    )
 }
 
 /// Combo width on the Level/Zoom toolbar so they do not eat the row
 /// (default item width is the remaining content region).
 const TOOLBAR_COMBO_W: f32 = 140.0;
+/// Search field shrinks to this before wrapping onto the next header row.
+const TOOLBAR_SEARCH_MIN_W: f32 = 120.0;
+
+/// Space left on the current widget row after the last item (screen space).
+fn remaining_on_row(ui: &Ui) -> f32 {
+    let spacing = ui.clone_style().item_spacing()[0];
+    let right = ui.cursor_screen_pos()[0] + ui.content_region_avail()[0];
+    (right - ui.item_rect_max()[0] - spacing).max(0.0)
+}
+
+/// Keep the next toolbar widget on this row when `next_w` still fits.
+fn toolbar_continue(ui: &Ui, next_w: f32) {
+    if remaining_on_row(ui) >= next_w {
+        ui.same_line();
+    }
+}
+
+/// ImGui checkbox width: square + inner gap + label.
+fn checkbox_w(ui: &Ui, label: &str) -> f32 {
+    let inner = ui.clone_style().item_inner_spacing()[0];
+    let text = ui
+        .current_font()
+        .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, label)[0];
+    ui.frame_height() + inner + text
+}
+
+/// Footer is one status/action row plus the gap under the canvas child.
+fn map_footer_reserve(ui: &Ui) -> f32 {
+    ui.frame_height() + ui.clone_style().item_spacing()[1]
+}
+
+struct ToolbarGeom {
+    header_max_x: f32,
+    search_max_x: f32,
+}
+
+fn note_toolbar_item(geom: &mut ToolbarGeom, ui: &Ui) {
+    geom.header_max_x = geom.header_max_x.max(ui.item_rect_max()[0]);
+}
+
+/// Plane, zoom, search, then wrapping layer checkboxes.
+fn draw_walkto_toolbar(
+    ui: &Ui,
+    session: &mut Session,
+    map: &mut WalkMapRenderer,
+    world: &NavWorld,
+    levels: &[i32],
+    lvl_idx: &mut usize,
+) -> ToolbarGeom {
+    let mut geom = ToolbarGeom {
+        header_max_x: 0.0,
+        search_max_x: 0.0,
+    };
+    ui.set_next_item_width(TOOLBAR_COMBO_W);
+    if ui.combo("##walkto-level", lvl_idx, levels, |l: &i32| {
+        Cow::Owned(format!("level {l}"))
+    }) {
+        LEVEL.store(levels[*lvl_idx], Ordering::Relaxed);
+        if let Ok(plane) = u8::try_from(levels[*lvl_idx]) {
+            session.map_model.set_plane(plane);
+        }
+    }
+    note_toolbar_item(&mut geom, ui);
+    toolbar_continue(ui, TOOLBAR_COMBO_W);
+    let mut zoom = ZOOM
+        .load(Ordering::Relaxed)
+        .clamp(0, ZOOMS.len() as i32 - 1) as usize;
+    ui.set_next_item_width(TOOLBAR_COMBO_W);
+    if ui.combo("##walkto-zoom", &mut zoom, &ZOOMS, |z: &f32| {
+        Cow::Owned(if *z < 1.0 {
+            format!("{z}px/tile")
+        } else {
+            format!("{z:.0}px/tile")
+        })
+    }) {
+        ZOOM.store(zoom as i32, Ordering::Relaxed);
+    }
+    note_toolbar_item(&mut geom, ui);
+    let search_remain = remaining_on_row(ui);
+    if search_remain >= TOOLBAR_SEARCH_MIN_W {
+        ui.same_line();
+        ui.set_next_item_width(search_remain);
+    } else {
+        ui.set_next_item_width(ui.content_region_avail()[0].max(TOOLBAR_SEARCH_MIN_W));
+    }
+    ui.input_text("##walkto-search", &mut map.search)
+        .hint("search / x,z,plane")
+        .build();
+    geom.search_max_x = ui.item_rect_max()[0];
+    note_toolbar_item(&mut geom, ui);
+    if ui.is_item_focused() && ui.is_key_pressed(Key::Enter) {
+        apply_search_jump(session, map, world);
+    }
+    let toggles: [(&str, &mut bool); 6] = [
+        ("basemap", &mut map.show_basemap),
+        ("grid", &mut map.show_grid),
+        ("reach", &mut map.show_reach),
+        ("collision", &mut map.show_collision),
+        ("nsew", &mut map.show_nsew),
+        ("flood", &mut map.show_flood),
+    ];
+    for (i, (label, flag)) in toggles.into_iter().enumerate() {
+        if i > 0 {
+            toolbar_continue(ui, checkbox_w(ui, label));
+        }
+        ui.checkbox(label, flag);
+        note_toolbar_item(&mut geom, ui);
+    }
+    geom
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+struct PickerLayout {
+    content_max: [f32; 2],
+    header_max_x: f32,
+    search_max_x: f32,
+    canvas_inner_min: [f32; 2],
+    canvas_inner_max: [f32; 2],
+    canvas_item_max: [f32; 2],
+    footer_max: [f32; 2],
+    footer_reserve: f32,
+}
+
+#[cfg(test)]
+static LAST_PICKER_LAYOUT: Mutex<Option<PickerLayout>> = Mutex::new(None);
+
+fn record_picker_layout(
+    ui: &Ui,
+    toolbar: &ToolbarGeom,
+    canvas_inner: Option<([f32; 2], [f32; 2])>,
+    canvas_item_max: [f32; 2],
+    footer_reserve: f32,
+) {
+    #[cfg(test)]
+    {
+        let pad = ui.clone_style().window_padding();
+        let pos = ui.window_pos();
+        let size = ui.window_size();
+        let (inner_min, inner_max) = canvas_inner.unwrap_or(([0.0, 0.0], [0.0, 0.0]));
+        *LAST_PICKER_LAYOUT.lock().unwrap() = Some(PickerLayout {
+            content_max: [pos[0] + size[0] - pad[0], pos[1] + size[1] - pad[1]],
+            header_max_x: toolbar.header_max_x,
+            search_max_x: toolbar.search_max_x,
+            canvas_inner_min: inner_min,
+            canvas_inner_max: inner_max,
+            canvas_item_max,
+            footer_max: ui.item_rect_max(),
+            footer_reserve,
+        });
+    }
+    #[cfg(not(test))]
+    {
+        let _ = (ui, toolbar, canvas_inner, canvas_item_max, footer_reserve);
+    }
+}
+
+#[cfg(test)]
+fn last_picker_layout() -> PickerLayout {
+    LAST_PICKER_LAYOUT
+        .lock()
+        .unwrap()
+        .expect("picker_map_body records layout")
+}
 
 /// The width a text-only button of `label` occupies under the current style,
 /// for right-aligning a button against the content region edge.
@@ -532,52 +1022,16 @@ fn button_w(ui: &Ui, label: &str) -> f32 {
     text + 2.0 * ui.clone_style().frame_padding()[0]
 }
 
-/// The pack-map paints of one visible tile. Only layers that are on mark
-/// tiles: `blocked` fills under `collision_fill`, `path`/`transport` draw
-/// the remaining route under `show_nav_path`, `flood` (0 = player seed,
-/// 1 = dest seed) colours the component under `component_flood`, and
-/// `unreached` marks walkable ground the transport network never reaches
-/// (painted with the flood-unreachable tone whenever the reach bitset is
-/// baked).
-pub(crate) struct PackMapTile {
-    pub tile: Tile,
-    pub blocked: bool,
-    pub path: bool,
-    pub transport: bool,
-    pub flood: Option<u32>,
-    pub unreached: bool,
-}
-
-/// The visible canvas as a tile rectangle on the selected plane:
-/// `width`×`height` tiles starting at `(x0, z0)`. The plane itself is
-/// passed with the paints (see [`pack_map_tiles`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PackView {
-    pub x0: i32,
-    pub z0: i32,
-    pub width: i32,
-    pub height: i32,
-}
-
-/// Flood component A (the player seed): `#0000FF`.
-const FLOOD_A: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
-/// Flood component B (the dest seed): `#C828F0`.
-const FLOOD_B: [f32; 4] = [200.0 / 255.0, 40.0 / 255.0, 240.0 / 255.0, 1.0];
-
-/// The panel tile of a world tile (structurally identical fields).
-fn tile_from(w: WorldTile) -> Tile {
-    Tile {
-        x: w.x,
-        z: w.z,
-        level: w.level,
-    }
-}
-
 /// Cached flood components for a seed pair. The whole-world BFS spans
 /// hundreds of thousands of tiles on the real pack (~20 ms per component),
-/// so a picker frame must never re-flood; only a changed seed pair
-/// recomputes.
+/// so a picker frame must never re-flood; only a changed seed pair or world
+/// recomputes. Geometry alone is not identity — a different pack with the
+/// same origin/size must not reuse stale components.
 struct FloodCache {
+    /// Weak identity of the `NavWorld` the sets were flooded on. Distinct
+    /// Arc allocations never share a cache entry even when origin/dims match;
+    /// a dropped world fails the upgrade check and forces a recompute.
+    world: std::sync::Weak<NavWorld>,
     /// The collision grid the sets were computed from (origin + dims).
     key: (i32, i32, usize, usize),
     seeds: Vec<WorldTile>,
@@ -586,21 +1040,51 @@ struct FloodCache {
 
 static FLOOD_CACHE: Mutex<Option<FloodCache>> = Mutex::new(None);
 
+fn release_flood_cache() {
+    *lock_data(&FLOOD_CACHE) = None;
+}
+
+fn release_flood_leases() {
+    let _nav = lock_nav_statics();
+    release_flood_cache();
+    *lock_data(&FLOOD_REPORT) = None;
+}
+
+/// Drop this consumer's flood cache. Reach stays the bound `.navreach` sidecar
+/// until pack detach clears `REACH_BINDING`.
+pub fn release_map_leases() {
+    let _nav = lock_nav_statics();
+    release_flood_leases();
+    *lock_data(&ROUTE_TILES) = None;
+}
+
 /// The step-ok reachable sets for `seeds`, computed once per seed pair and
-/// cached; a cache hit only bumps `Arc` refcounts.
-fn flood_sets_for(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<WorldTile>>> {
+/// world identity and cached; a cache hit only bumps `Arc` refcounts. Empty
+/// demand clears the cache so turning component-flood off releases ownership
+/// without waiting for WalkTo close.
+fn flood_sets_for(world: &Arc<NavWorld>, seeds: &[WorldTile]) -> Vec<Arc<HashSet<WorldTile>>> {
+    let _nav = lock_nav_statics();
+    if seeds.is_empty() {
+        release_flood_leases();
+        return Vec::new();
+    }
     let c = &world.collision;
     let key = (c.origin.x, c.origin.z, c.width, c.height);
-    let mut cache = FLOOD_CACHE.lock().unwrap();
-    let fresh = cache
-        .as_ref()
-        .is_some_and(|f| f.key == key && f.seeds.as_slice() == seeds);
+    let mut cache = lock_data(&FLOOD_CACHE);
+    let fresh = cache.as_ref().is_some_and(|f| {
+        f.world
+            .upgrade()
+            .is_some_and(|cached| Arc::ptr_eq(&cached, world))
+            && f.key == key
+            && f.seeds.as_slice() == seeds
+    });
     if !fresh {
         let components: Vec<Arc<HashSet<WorldTile>>> = flood_components(c, seeds)
             .into_iter()
             .map(Arc::new)
             .collect();
         *cache = Some(FloodCache {
+            world: Arc::downgrade(world),
             key,
             seeds: seeds.to_vec(),
             components: components.clone(),
@@ -609,6 +1093,32 @@ fn flood_sets_for(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<Worl
     } else {
         cache.as_ref().unwrap().components.clone()
     }
+}
+
+/// Resolve flood sets for a borrowed world: prefer the bound pack `Arc` so
+/// identity is Weak-stable; otherwise compute uncached (no pack Arc to pin).
+fn flood_sets_for_ref(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<WorldTile>>> {
+    if let Some(arc) = pack().filter(|a| std::ptr::eq(a.as_ref(), world)) {
+        return flood_sets_for(&arc, seeds);
+    }
+    if seeds.is_empty() {
+        release_flood_leases();
+        return Vec::new();
+    }
+    flood_components(&world.collision, seeds)
+        .into_iter()
+        .map(Arc::new)
+        .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn flood_cache_occupied() -> bool {
+    lock_data(&FLOOD_CACHE).is_some()
+}
+
+#[cfg(test)]
+pub(crate) fn reach_binding_occupied() -> bool {
+    !matches!(*lock_data(&REACH_BINDING), ReachBinding::Unbound)
 }
 
 /// Last `nav-flood` line reported on stderr, keyed by the arm generation
@@ -652,118 +1162,267 @@ fn flood_report_sizes(comps: &[Arc<HashSet<WorldTile>>], dest: WorldTile) -> (us
 /// component sizes change. The sizes come from the cached flood sets, so
 /// an arm never runs a second world BFS.
 fn report_flood_sizes(world: &NavWorld, player: WorldTile, dest: WorldTile, arm_gen: u64) {
-    let comps = flood_sets_for(world, &[player, dest]);
+    let comps = flood_sets_for_ref(world, &[player, dest]);
     let (n, m) = flood_report_sizes(&comps, dest);
-    let mut last = FLOOD_REPORT.lock().unwrap();
+    let mut last = lock_data(&FLOOD_REPORT);
     if let Some(line) = flood_report_line(*last, arm_gen, player, dest, n, m) {
         eprintln!("{line}");
         *last = Some((arm_gen, player, dest, n, m));
     }
 }
 
-/// The pack-map paints for the visible canvas: every viewport tile a layer
-/// draws (blocked collision fill, remaining path / transport hop, flood
-/// component), and nothing outside the view. `route`/`here`/`dest` are the
-/// focused walk arm's inputs; `layers` are the effective nav settings.
-pub(crate) fn pack_map_tiles(
-    world: &NavWorld,
-    view: PackView,
-    route: Option<&Route>,
-    here: Option<WorldTile>,
-    dest: Option<WorldTile>,
-    layers: &NavSettings,
-    level: i32,
-) -> Vec<PackMapTile> {
-    let path: HashMap<Tile, bool> = if layers.show_nav_path {
-        route
-            .map(|r| remaining_path_tiles(r, here))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| (tile_from(p.tile), p.transport))
-            .collect()
-    } else {
-        HashMap::new()
-    };
-    let seeds: Vec<WorldTile> = if layers.component_flood {
-        [here, dest].into_iter().flatten().collect()
-    } else {
-        Vec::new()
-    };
-    let floods = if seeds.is_empty() {
-        Vec::new()
-    } else {
-        flood_sets_for(world, &seeds)
-    };
-    let reach = reach_bitset(world);
-    let mut out = Vec::new();
-    for z in view.z0..view.z0 + view.height {
-        for x in view.x0..view.x0 + view.width {
-            let t = Tile { x, z, level };
-            let wt = WorldTile { x, z, level };
-            let blocked = layers.collision_fill && collision_at(&world.collision, wt).blocked;
-            let (is_path, transport) = path.get(&t).map(|&tr| (true, tr)).unwrap_or((false, false));
-            let flood = if floods.is_empty() {
-                None
-            } else {
-                floods
-                    .iter()
-                    .position(|f| f.contains(&wt))
-                    .map(|i| i as u32)
-            };
-            // Walkable ground the transport network never reaches: standable
-            // (no blocked-ground base — walls keep their collision fill) and
-            // not set in the reach bitset. Always shown once the bitset is
-            // baked, per the reach layer's spec row.
-            let unreached = reach.as_deref().is_some_and(|bits| {
-                !reached(bits, &world.collision, wt) && world.collision.standable(wt)
-            });
-            if blocked || is_path || flood.is_some() || unreached {
-                out.push(PackMapTile {
-                    tile: t,
-                    blocked,
-                    path: is_path,
-                    transport,
-                    flood,
-                    unreached,
+type RouteTiles = Vec<(WorldTile, bool)>;
+
+struct LegSpan {
+    transport: bool,
+    start: usize,
+    end: usize,
+}
+
+struct RouteTileCache {
+    source: RouteSource,
+    generation: u64,
+    tiles: RouteTiles,
+    legs: Vec<LegSpan>,
+    start: usize,
+}
+
+static ROUTE_TILES: Mutex<Option<RouteTileCache>> = Mutex::new(None);
+#[cfg(test)]
+static ROUTE_FLATTEN_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+fn push_flat(tiles: &mut RouteTiles, tile: WorldTile, transport: bool) {
+    if let Some(last) = tiles.last_mut() {
+        if last.0 == tile {
+            last.1 |= transport;
+            return;
+        }
+    }
+    tiles.push((tile, transport));
+}
+
+fn flatten_route(route: &Route) -> (RouteTiles, Vec<LegSpan>) {
+    #[cfg(test)]
+    ROUTE_FLATTEN_COUNT.fetch_add(1, Ordering::Relaxed);
+    let mut tiles = Vec::new();
+    let mut legs = Vec::new();
+    for leg in &route.legs {
+        match leg {
+            Leg::Walk { tiles: walk } => {
+                if walk.is_empty() {
+                    continue;
+                }
+                let start_len = tiles.len();
+                for tile in walk {
+                    push_flat(&mut tiles, *tile, false);
+                }
+                let start = if tiles.len() > start_len {
+                    start_len
+                } else {
+                    start_len.saturating_sub(1)
+                };
+                if !tiles.is_empty() {
+                    legs.push(LegSpan {
+                        transport: false,
+                        start,
+                        end: tiles.len() - 1,
+                    });
+                }
+            }
+            Leg::Transport { edge } => {
+                push_flat(&mut tiles, edge.at, true);
+                let at_idx = tiles.len() - 1;
+                push_flat(&mut tiles, edge.to, true);
+                legs.push(LegSpan {
+                    transport: true,
+                    start: at_idx,
+                    end: tiles.len() - 1,
                 });
             }
         }
     }
-    out
+    (tiles, legs)
 }
 
-/// The focused paint route: live scenario Follow if armed, else WalkTo.
-fn focused_route(session: &Session) -> Option<Route> {
-    let name = session.focused_name()?;
-    let walk = session
-        .travellers
-        .lock()
-        .unwrap()
-        .get(&name)
-        .cloned()
-        .and_then(|a| a.lock().unwrap().route.clone());
-    let live = session
-        .scenario
-        .lock()
-        .unwrap()
+fn remaining_start(
+    tiles: &[(WorldTile, bool)],
+    legs: &[LegSpan],
+    here: Option<WorldTile>,
+    floor: usize,
+) -> usize {
+    let Some(here) = here else {
+        return floor;
+    };
+    if tiles.is_empty() {
+        return 0;
+    }
+    let mut index = 0;
+    while index < legs.len() {
+        let span = &legs[index];
+        if tiles.get(span.end).is_some_and(|tile| tile.0 == here) {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+    let computed = match legs.get(index) {
+        Some(span) if !span.transport => tiles[span.start..=span.end]
+            .iter()
+            .position(|tile| tile.0 == here)
+            .map(|pos| span.start + pos)
+            .unwrap_or(span.start),
+        Some(span) => span.start,
+        None => tiles.len(),
+    };
+    computed.max(floor)
+}
+
+fn update_route_cache(computed: Option<(RouteSource, u64, &Route)>, here: Option<WorldTile>) {
+    // Nav statics first (lock order); tests share one route cache.
+    let _nav = lock_nav_statics();
+    let mut cache = lock_data(&ROUTE_TILES);
+    let Some((source, generation, route)) = computed else {
+        *cache = None;
+        return;
+    };
+    if cache
         .as_ref()
-        .and_then(|r| r.drives(&name).then(|| r.armed_route().cloned()).flatten());
-    live.or(walk)
+        .is_some_and(|row| row.source == source && row.generation == generation)
+    {
+        let start = remaining_start(
+            &cache.as_ref().unwrap().tiles,
+            &cache.as_ref().unwrap().legs,
+            here,
+            cache.as_ref().unwrap().start,
+        );
+        cache.as_mut().unwrap().start = start;
+        return;
+    }
+    let (tiles, legs) = flatten_route(route);
+    let start = remaining_start(&tiles, &legs, here, 0);
+    *cache = Some(RouteTileCache {
+        source,
+        generation,
+        tiles,
+        legs,
+        start,
+    });
 }
 
-/// `[u8; 3]` to an opaque RGBA float colour for the draw list.
-fn color_rgb([r, g, b]: [u8; 3]) -> [f32; 4] {
-    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+/// Remaining path tiles for the focused slot, borrowed through
+/// [`host_play::Play::with_map_route`]: driven live, then script, then manual WalkTo.
+/// Cached by `(source, route generation)`; `here` advances a monotonic start
+/// index using [`remaining_path_tiles`] leg semantics without flattening again.
+fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
+    let Some(name) = session.focused_name() else {
+        update_route_cache(None, here);
+        return;
+    };
+    let travellers = session.travellers.lock().unwrap();
+    let manual_arc = travellers.get(&name).cloned();
+    drop(travellers);
+    let manual = manual_arc.as_ref().map(|arm| arm.lock().unwrap());
+    let scenario = session.scenario.lock().unwrap();
+    let live_route = scenario
+        .as_ref()
+        .and_then(|runner| runner.drives(&name).then(|| runner.armed_route()).flatten());
+    let live = live_route.map(|route| RouteProjection::live(route, session.route_gen(), None));
+    if let Some(play) = session.core.play() {
+        play.with_map_route(&name, manual.as_deref(), live, |proj| {
+            update_route_cache(
+                proj.map(|p| (p.stamp.source, p.stamp.generation, p.route)),
+                here,
+            );
+        });
+        return;
+    }
+    match select_route_source(
+        live.is_some(),
+        false,
+        manual.as_ref().is_some_and(|arm| arm.route.is_some()),
+    ) {
+        Some(RouteSource::Live) => update_route_cache(
+            live.map(|p| (p.stamp.source, p.stamp.generation, p.route)),
+            here,
+        ),
+        Some(RouteSource::Manual) => {
+            let route = manual.as_ref().and_then(|arm| {
+                arm.route
+                    .as_ref()
+                    .map(|route| (RouteSource::Manual, arm.route_generation, route))
+            });
+            update_route_cache(route, here);
+        }
+        Some(RouteSource::Script) | None => update_route_cache(None, here),
+    }
+}
+
+/// The remaining route tiles, borrowed across the canvas draw. The draw floods
+/// and reads reach while holding it, and those take the nav-statics lock, so
+/// the guard takes that lock first (test lock order: nav, then `ROUTE_TILES`).
+/// Fields drop in order: the path unlocks before the nav lock.
+struct RoutePathGuard {
+    path: DataGuard<'static, Option<RouteTileCache>>,
+    _nav: NavStaticsGuard,
+}
+
+impl RoutePathGuard {
+    fn as_slice(&self) -> &[(WorldTile, bool)] {
+        match &*self.path {
+            Some(cache) => {
+                let start = cache.start.min(cache.tiles.len());
+                &cache.tiles[start..]
+            }
+            None => &[],
+        }
+    }
+}
+
+fn lock_route_path() -> RoutePathGuard {
+    let nav = lock_nav_statics();
+    RoutePathGuard {
+        path: lock_data(&ROUTE_TILES),
+        _nav: nav,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn reset_route_cache() {
+    let _nav = lock_nav_statics();
+    *lock_data(&ROUTE_TILES) = None;
+    ROUTE_FLATTEN_COUNT.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn route_flatten_count() -> usize {
+    ROUTE_FLATTEN_COUNT.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn cached_remaining_path(
+    route: &Route,
+    source: RouteSource,
+    generation: u64,
+    here: Option<WorldTile>,
+) -> Vec<(WorldTile, bool)> {
+    update_route_cache(Some((source, generation, route)), here);
+    lock_route_path().as_slice().to_vec()
 }
 
 /// Call when the Game pane is not showing WalkTo so the next open resets
 /// the view (the WalkTo chrome button toggles without running the body).
 pub fn note_closed() {
     PREV_OPEN.store(false, Ordering::Relaxed);
+    release_map_leases();
 }
 
 /// WalkTo map in the Game pane as its own window so the title-bar ✕ closes it.
-pub fn draw_picker(ui: &Ui, session: &mut Session) {
+pub fn draw_picker(
+    ui: &Ui,
+    gpu: Option<&mut dyn FrameGpu>,
+    session: &mut Session,
+    map: &mut WalkMapRenderer,
+) {
     let pos = ui.cursor_screen_pos();
     let avail = ui.content_region_avail();
     let mut open = true;
@@ -773,112 +1432,381 @@ pub fn draw_picker(ui: &Ui, session: &mut Session) {
         .position(pos, Condition::Always)
         .size(avail, Condition::Always)
         .build(|| match pack() {
-            Some(world) => picker_map_body(ui, session, &world),
+            Some(world) => picker_map_body(ui, gpu, session, map, &world),
             None => {
+                map.note_open();
                 ui.text_wrapped("no nav pack — run nav-pack");
             }
         });
     if !open {
         session.walkto_open = false;
         PREV_OPEN.store(false, Ordering::Relaxed);
-        session.picker_sel = None;
+        session.map_model.close();
     }
 }
 
-/// The collision-dot map window. `open` is the window's live open flag;
-/// confirm Walk closes it. Headless tests wrap the body in a window.
+/// The map window. `open` is the window's live open flag; confirm Walk closes
+/// it. Headless tests wrap the body in a window.
 #[cfg(test)]
-fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mut bool) {
+fn picker_map_window(
+    ui: &Ui,
+    session: &mut Session,
+    world: &NavWorld,
+    open: &mut bool,
+    gpu: Option<&mut dyn FrameGpu>,
+    map: &mut WalkMapRenderer,
+) {
     let _ = ui
         .window("WalkTo")
         .opened(open)
         .flags(walkto_window_flags())
-        .size([720.0, 560.0], Condition::FirstUseEver)
+        .position([0.0, 0.0], Condition::Always)
+        .size([720.0, 560.0], Condition::Always)
         .size_constraints([480.0, 360.0], [f32::MAX, f32::MAX])
         .build(|| {
-            picker_map_body(ui, session, world);
+            picker_map_body(ui, gpu, session, map, world);
         });
 }
 
+/// WalkTo nested in a Game pane, matching production [`draw_picker`].
+#[cfg(test)]
+fn picker_nested_in_game(
+    ui: &Ui,
+    session: &mut Session,
+    world: &NavWorld,
+    map: &mut WalkMapRenderer,
+    game_size: [f32; 2],
+) {
+    let _ = ui
+        .window("Game")
+        .flags(
+            WindowFlags::NO_COLLAPSE
+                | WindowFlags::NO_SCROLLBAR
+                | WindowFlags::NO_SCROLL_WITH_MOUSE
+                | WindowFlags::NO_RESIZE,
+        )
+        .position([0.0, 0.0], Condition::Always)
+        .size(game_size, Condition::Always)
+        .build(|| {
+            let pos = ui.cursor_screen_pos();
+            let avail = ui.content_region_avail();
+            let mut open = true;
+            ui.window("WalkTo")
+                .opened(&mut open)
+                .flags(walkto_window_flags() | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE)
+                .position(pos, Condition::Always)
+                .size(avail, Condition::Always)
+                .build(|| {
+                    picker_map_body(ui, None, session, map, world);
+                });
+        });
+}
+
+/// The local terrain-bake warning while asking, or the Bake control after
+/// Not now (the map stays catalogue-only meanwhile). Wording and decision
+/// are frontend-core's [`frontend_core::MapBakeGate`], which the TUI's map
+/// demand also goes through.
+fn draw_map_bake_banner(ui: &Ui, session: &mut Session) {
+    match session.map_bake.prompt() {
+        MapBakePrompt::None => {}
+        MapBakePrompt::Asking => {
+            ui.text_colored(session.ui.chrome.warn_rgba(), MAP_BAKE_TITLE);
+            ui.text_wrapped(MAP_BAKE_WARNING);
+            if ui.button("Bake now") {
+                session.accept_map_bake(false);
+            }
+            ui.same_line();
+            if ui.button("Always bake") {
+                session.accept_map_bake(true);
+            }
+            ui.same_line();
+            if ui.button("Not now") {
+                session.decline_map_bake();
+            }
+            ui.separator();
+        }
+        MapBakePrompt::Declined => {
+            ui.text_disabled("terrain not baked \u{b7} catalogue only");
+            ui.same_line();
+            if ui.button("Bake terrain") {
+                session.accept_map_bake(false);
+            }
+        }
+    }
+}
+
 /// Toolbar, canvas, and footer. Used inside the Game pane and the test window.
-fn picker_map_body(ui: &Ui, session: &mut Session, world: &NavWorld) {
+fn picker_map_body(
+    ui: &Ui,
+    gpu: Option<&mut dyn FrameGpu>,
+    session: &mut Session,
+    map: &mut WalkMapRenderer,
+    world: &NavWorld,
+) {
+    map.note_open();
+    session.sync_walk_map(pack());
+    draw_map_bake_banner(ui, session);
+    if let Some(images) = session.map_images.clone() {
+        map.bind_ready_images(images);
+    }
+    map.bind_catalogue(session.map_catalogue.clone());
+    map.set_observed(session.observed_map_services.clone());
+    bind_map_model(session, world);
     // Reset the view when the picker opens fresh.
     if !PREV_OPEN.swap(true, Ordering::Relaxed) {
-        let (cx, cz, _) = session
+        let observed = session
             .focused_tile()
-            .unwrap_or((DEFAULT_CENTRE.0, DEFAULT_CENTRE.1, 0));
-        CENTRE_X.store(cx, Ordering::Relaxed);
-        CENTRE_Z.store(cz, Ordering::Relaxed);
-        PAN_REM_X.store(0, Ordering::Relaxed);
-        PAN_REM_Z.store(0, Ordering::Relaxed);
-        LEVEL.store(available_levels(world)[0], Ordering::Relaxed);
-        session.picker_sel = None;
+            .map(|(x, z, level)| Tile { x, z, level });
+        session.map_model.recenter(observed);
+        sync_view_from_model(&session.map_model);
     }
     let levels = available_levels(world);
     let mut lvl_idx = levels
         .iter()
         .position(|l| *l == LEVEL.load(Ordering::Relaxed))
         .unwrap_or(0);
-    ui.set_next_item_width(TOOLBAR_COMBO_W);
-    if ui.combo("##walkto-level", &mut lvl_idx, &levels, |l: &i32| {
-        Cow::Owned(format!("level {l}"))
-    }) {
-        LEVEL.store(levels[lvl_idx], Ordering::Relaxed);
+    let toolbar = draw_walkto_toolbar(ui, session, map, world, &levels, &mut lvl_idx);
+    if !map.search.trim().is_empty() {
+        if let Ok(coord) = MapModel::parse_coordinates(map.search.trim()) {
+            ui.text_disabled(format!("coord {} {} {}", coord.x, coord.z, coord.level));
+        } else if let Some(coord) = map.parse_search_coord() {
+            ui.text_disabled(format!("coord {} {} {}", coord.x, coord.z, coord.plane));
+        } else {
+            draw_search_hits(ui, session, map, world);
+        }
     }
-    ui.same_line();
-    let mut zoom = ZOOM.load(Ordering::Relaxed) as usize;
-    ui.set_next_item_width(TOOLBAR_COMBO_W);
-    if ui.combo("##walkto-zoom", &mut zoom, &ZOOMS, |z: &f32| {
-        Cow::Owned(format!("{z:.0}px/tile"))
-    }) {
-        ZOOM.store(zoom as i32, Ordering::Relaxed);
-    }
-    let footer_h = ui.frame_height() + ui.clone_style().item_spacing()[1];
+    let footer_h = map_footer_reserve(ui);
     let avail = ui.content_region_avail();
     let canvas_h = (avail[1] - footer_h).max(120.0);
-    draw_canvas(ui, session, world, canvas_h);
-    match session.picker_sel {
-        Some(t) => ui.text_disabled(format!("selected {} {} {}", t.x, t.z, t.level)),
-        None => ui.text_disabled("click a tile, then Walk"),
+    let mut overlay_zoom_in = false;
+    let canvas_inner = draw_canvas(ui, gpu, session, map, world, canvas_h, &mut overlay_zoom_in);
+    let canvas_item_max = ui.item_rect_max();
+    let mut status = if overlay_zoom_in {
+        String::from("zoom in for tile layers")
+    } else {
+        map.status_line().to_string()
+    };
+    if let Some(prefix) = session.map_bind_status() {
+        status = format!("{prefix} · {status}");
     }
+    if let Some(catalogue) = &session.map_catalogue {
+        for message in catalogue.coverage_messages() {
+            status = format!("{status} · {message}");
+        }
+    };
+    let teleport = session.map_teleport_authorized();
     let spacing = ui.clone_style().item_spacing()[0];
-    let local = session.debug_ui();
-    let labels = walkto_footer_labels(local);
-    let cluster = labels.iter().map(|l| button_w(ui, l)).sum::<f32>()
+    let walk_label = session.walk_send.walk_label();
+    let labels = walkto_footer_labels(teleport);
+    let cluster = labels
+        .iter()
+        .map(|label| button_w(ui, if *label == "Walk" { walk_label } else { label }))
+        .sum::<f32>()
         + spacing * (labels.len().saturating_sub(1) as f32);
+    let status_text = format_walkto_status(
+        walkto_selection_caption(session.map_model.pending(), teleport),
+        &status,
+    );
+    let status_max = (ui.content_region_avail()[0] - cluster - spacing).max(0.0);
+    ui.text_disabled(ellipsize_to_width(ui, &status_text, status_max));
     let x = right_align_x(ui.cursor_pos()[0], ui.content_region_avail()[0], cluster);
     ui.same_line_with_pos(x);
     if ui.button("recentre") {
-        let (cx, cz, _) = session
+        let observed = session
             .focused_tile()
-            .unwrap_or((DEFAULT_CENTRE.0, DEFAULT_CENTRE.1, 0));
-        CENTRE_X.store(cx, Ordering::Relaxed);
-        CENTRE_Z.store(cz, Ordering::Relaxed);
-        PAN_REM_X.store(0, Ordering::Relaxed);
-        PAN_REM_Z.store(0, Ordering::Relaxed);
+            .map(|(x, z, level)| Tile { x, z, level });
+        session.map_model.recenter(observed);
+        sync_view_from_model(&session.map_model);
     }
     ui.same_line();
-    let can_walk = session.picker_sel.is_some();
-    let _off = ui.begin_disabled_with_cond(!can_walk);
-    if ui.button("Walk") && can_walk && session.confirm_picker_walk(world) {
-        session.walkto_open = false;
-        PREV_OPEN.store(false, Ordering::Relaxed);
-    }
-    if local {
-        ui.same_line();
-        if ui.button("Teleport") {
-            if let Some(t) = session.picker_sel.take() {
-                session.cheat_focused(&crate::session::walkto_tele_cmd(t));
+    let (can_walk, can_teleport) = walkto_actions_enabled(session.map_model.pending(), teleport);
+    let group = session.walk_send.mode == crate::session::WalkSendMode::Group;
+    let walk_ready = if group {
+        can_walk && session.walk_send.checked_count() > 0
+    } else {
+        can_walk
+    };
+    {
+        let _off = ui.begin_disabled_with_cond(!walk_ready);
+        if ui.button(walk_label) && walk_ready {
+            let ok = if group {
+                session.confirm_picker_group_walk(world)
+            } else {
+                session.confirm_picker_walk(world)
+            };
+            if ok {
                 session.walkto_open = false;
                 PREV_OPEN.store(false, Ordering::Relaxed);
+                session.map_model.close();
             }
+        }
+    }
+    ui.same_line();
+    if ui.button("Send") {
+        session.refresh_walk_send();
+        ui.open_popup("##walkto-send");
+    }
+    draw_walk_send_popup(ui, session);
+    if teleport {
+        ui.same_line();
+        let _off = ui.begin_disabled_with_cond(!can_teleport);
+        if ui.button("Teleport") && can_teleport && session.confirm_picker_teleport(world) {
+            session.walkto_open = false;
+            PREV_OPEN.store(false, Ordering::Relaxed);
+            session.map_model.close();
+        }
+    }
+    record_picker_layout(ui, &toolbar, canvas_inner, canvas_item_max, footer_h);
+}
+
+fn draw_walk_send_popup(ui: &Ui, session: &mut Session) {
+    ui.popup("##walkto-send", || {
+        use crate::session::WalkSendMode;
+        use crate::theme::TEXT_DIM;
+        use host_play::walk_map::WalkSlotStatus;
+        if ui.radio_button(
+            "Focused bot",
+            session.walk_send.mode == WalkSendMode::Focused,
+        ) {
+            session.set_walk_send_mode(WalkSendMode::Focused);
+        }
+        if ui.radio_button("Group", session.walk_send.mode == WalkSendMode::Group) {
+            session.set_walk_send_mode(WalkSendMode::Group);
+        }
+        if session.walk_send.mode == WalkSendMode::Group {
+            if ui.button("All eligible") {
+                session.walk_send_all_eligible();
+            }
+            ui.same_line();
+            if ui.button("None") {
+                session.walk_send_none();
+            }
+            let n = session.walk_send.rows().len();
+            for i in 0..n {
+                let _id = ui.push_id(i);
+                let eligible = session.walk_send.rows()[i].status.is_eligible();
+                if eligible {
+                    let mut checked = session.walk_send.rows()[i].checked;
+                    let changed =
+                        ui.checkbox(session.walk_send.rows()[i].name.as_str(), &mut checked);
+                    if changed {
+                        session.set_walk_send_checked(i, checked);
+                    }
+                } else {
+                    let _off = ui.begin_disabled_with_cond(true);
+                    let mut dummy = false;
+                    ui.checkbox(session.walk_send.rows()[i].name.as_str(), &mut dummy);
+                    ui.same_line();
+                    if let WalkSlotStatus::Excluded(reason) = session.walk_send.rows()[i].status {
+                        ui.text_colored(TEXT_DIM, reason.as_str());
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn draw_search_hits(ui: &Ui, session: &mut Session, map: &mut WalkMapRenderer, world: &NavWorld) {
+    if let Some(catalogue) = session.map_catalogue.clone() {
+        let query = map.search.clone();
+        if let Err(error) = map.catalogue_search.update(&catalogue, query.trim()) {
+            session.error = Some(error.to_string());
+            return;
+        }
+        for &index in map.catalogue_search.results().iter().take(MAX_LABELS) {
+            let Some(entry) = catalogue.entry(index) else {
+                continue;
+            };
+            let anchor = entry.anchor();
+            let label = format!(
+                "{}  {} {} {}",
+                entry.name(),
+                anchor.x,
+                anchor.z,
+                anchor.level
+            );
+            if ui.selectable(&label) && session.select_picker_poi(index) {
+                sync_view_from_model(&session.map_model);
+            }
+        }
+        return;
+    }
+    for poi in map.search_hits() {
+        let requested = poi_anchor(poi);
+        let label = format!(
+            "{}  {} {} {}",
+            poi.name.as_str(),
+            requested.x,
+            requested.z,
+            requested.level
+        );
+        if ui.selectable(&label) {
+            recenter_on(requested.x, requested.z);
+            LEVEL.store(requested.level, Ordering::Relaxed);
+            session.select_picker_tile(world, requested);
         }
     }
 }
 
-/// The child canvas: amber dots, drag-to-pan, wheel-to-pan, click-to-select
-/// (does not arm).
-fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
+fn apply_search_jump(session: &mut Session, map: &mut WalkMapRenderer, world: &NavWorld) {
+    match session.select_picker_coordinates(world, map.search.trim()) {
+        Ok(_) => {
+            sync_view_from_model(&session.map_model);
+            return;
+        }
+        Err(ActionError::InvalidCoordinates) => {}
+        Err(error) => {
+            session.error = Some(error.to_string());
+            return;
+        }
+    }
+    if let Some(coord) = map.parse_search_coord() {
+        let requested = Tile {
+            x: coord.x,
+            z: coord.z,
+            level: i32::from(coord.plane),
+        };
+        session.select_picker_tile(world, requested);
+        recenter_on(coord.x, coord.z);
+        LEVEL.store(i32::from(coord.plane), Ordering::Relaxed);
+        return;
+    }
+    if let Some(catalogue) = session.map_catalogue.clone() {
+        let query = map.search.clone();
+        match map.catalogue_search.update(&catalogue, query.trim()) {
+            Ok(_) => {
+                if let Some(&index) = map.catalogue_search.results().first() {
+                    if session.select_picker_poi(index) {
+                        sync_view_from_model(&session.map_model);
+                    }
+                    return;
+                }
+            }
+            Err(error) => {
+                session.error = Some(error.to_string());
+                return;
+            }
+        }
+    }
+    if let Some(poi) = map.search_hits().into_iter().next() {
+        let requested = poi_anchor(poi);
+        recenter_on(requested.x, requested.z);
+        LEVEL.store(requested.level, Ordering::Relaxed);
+        session.select_picker_tile(world, requested);
+    }
+}
+
+/// The child canvas: terrain images, one overlay, drag-to-pan, wheel-to-zoom,
+/// click-to-select (does not arm).
+fn draw_canvas(
+    ui: &Ui,
+    gpu: Option<&mut dyn FrameGpu>,
+    session: &mut Session,
+    map: &mut WalkMapRenderer,
+    world: &NavWorld,
+    height: f32,
+    overlay_zoom_in: &mut bool,
+) -> Option<([f32; 2], [f32; 2])> {
     let mut rect: Option<([f32; 2], [f32; 2])> = None;
     let mut pick: Option<[f32; 2]> = None;
     let mut hovered = false;
@@ -886,14 +1814,8 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
         .size([0.0, height])
         .flags(walkto_canvas_flags())
         .build(ui, || {
-            let draw = ui.get_window_draw_list();
             let origin = ui.cursor_screen_pos();
             let size = ui.content_region_avail();
-            // Fill the child so its content size matches the view. Hit
-            // testing is the painted rect (`is_mouse_hovering_rect`): the
-            // InvisibleButton's `is_item_hovered` is false when imgui's
-            // hovered window is the parent Game/WalkTo pane, not this
-            // child — that is why click-to-pick never fired.
             ui.invisible_button("##walkto-hit", size);
             let (min, max) = (origin, [origin[0] + size[0], origin[1] + size[1]]);
             hovered = ui.is_mouse_hovering_rect(min, max);
@@ -904,144 +1826,114 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                 pick = Some(ui.io().mouse_pos());
             }
             rect = Some((min, max));
-            let (cx, cz) = (
-                CENTRE_X.load(Ordering::Relaxed) as f32,
-                CENTRE_Z.load(Ordering::Relaxed) as f32,
-            );
-            let scale = ZOOMS[ZOOM.load(Ordering::Relaxed) as usize];
+            let scale = ZOOMS[ZOOM
+                .load(Ordering::Relaxed)
+                .clamp(0, ZOOMS.len() as i32 - 1) as usize];
             let centre_i = (
                 CENTRE_X.load(Ordering::Relaxed),
                 CENTRE_Z.load(Ordering::Relaxed),
             );
-            // Only draw tiles inside the visible window (north-up).
-            let (wx0, wx1) = (cx - size[0] / 2.0 / scale, cx + size[0] / 2.0 / scale);
-            let (wz0, wz1) = (cz - size[1] / 2.0 / scale, cz + size[1] / 2.0 / scale);
-            let dot = (scale * 0.72).clamp(1.5, 5.0);
-            let sel = session.picker_sel;
-            // The visible tile rectangle and the pack-map paints inside it.
-            // Layers paint only these tiles; the bake outside the view is
-            // never iterated.
-            let layers = session.effective_nav();
-            let reach_on = reach_bitset(world).is_some();
-            let any_layer =
-                layers.collision_fill || layers.show_nav_path || layers.component_flood || reach_on;
+            let rem = (
+                PAN_REM_X.load(Ordering::Relaxed) as f32 / 1000.0,
+                PAN_REM_Z.load(Ordering::Relaxed) as f32 / 1000.0,
+            );
             let level = LEVEL.load(Ordering::Relaxed);
-            let here = session
+            let fb_scale = ui.io().display_framebuffer_scale()[0].max(0.01);
+            let view = view_from_canvas(
+                centre_i,
+                rem,
+                scale,
+                size,
+                level.clamp(0, 3) as u8,
+                map.max_lod(),
+                fb_scale,
+            );
+            let layers_nav = session.effective_nav();
+            let layers = map_layers(map, view);
+            let colors = overlay_colors(&layers_nav);
+            let here_tile = session
                 .focused_tile()
-                .map(|(x, z, level)| WorldTile { x, z, level });
-            let dest = session.walk_dest.map(|t| WorldTile {
+                .map(|(x, z, level)| Tile { x, z, level });
+            let here = here_tile.map(|t| WorldTile {
                 x: t.x,
                 z: t.z,
-                level,
+                level: t.level,
             });
-            let view = PackView {
-                x0: wx0.ceil() as i32,
-                z0: wz0.ceil() as i32,
-                width: (wx1.floor() as i32 - wx0.ceil() as i32 + 1).max(0),
-                height: (wz1.floor() as i32 - wz0.ceil() as i32 + 1).max(0),
-            };
-            let paints = if any_layer {
-                pack_map_tiles(
-                    world,
-                    view,
-                    focused_route(session).as_ref(),
-                    here,
-                    dest,
-                    &layers,
-                    level,
-                )
+            // Only an armed walk draws the dest cross; a pending selection
+            // keeps its own outline (`pending_highlight`).
+            let dest_tile = session.walk_dest;
+            let dest = dest_tile.map(|t| WorldTile {
+                x: t.x,
+                z: t.z,
+                level: t.level,
+            });
+            bind_focused_route_cache(session, here);
+            let path = lock_route_path();
+            let seeds: Vec<WorldTile> = if layers.flood {
+                [here, dest].into_iter().flatten().collect()
             } else {
                 Vec::new()
             };
-            let painted: HashSet<Tile> = paints.iter().map(|p| p.tile).collect();
-            if layers.component_flood {
+            // Empty demand (layer off or no seeds) releases the process-static
+            // flood cache via flood_sets_for; close still uses release_map_leases.
+            let floods = flood_sets_for_ref(world, &seeds);
+            if layers.flood {
                 if let (Some(h), Some(d)) = (here, dest) {
                     report_flood_sizes(world, h, d, session.route_gen());
                 }
             }
-            let path_col = color_rgb(parse_html_color(&layers.color_path, [255, 0, 0]));
-            let transport_col = color_rgb(parse_html_color(&layers.color_transport, [0, 255, 0]));
-            let collision_col = color_rgb(parse_html_color(&layers.color_collision, [0, 128, 255]));
-            // Layer fills: the route wins over the flood region, the flood
-            // over the unreached puddle, the unreached over the blocked
-            // ground (a blocked tile is never on a route, in a flood, or
-            // standable).
-            for pt in &paints {
-                let t = pt.tile;
-                let (tx, tz) = (t.x as f32, t.z as f32);
-                let [sx, sy] = canvas_from_world(centre_i, scale, size, tx, tz);
-                let [sx1, sy1] = canvas_from_world(centre_i, scale, size, tx + 1.0, tz + 1.0);
-                let (x0, y0) = (sx.min(sx1) + min[0], sy.min(sy1) + min[1]);
-                let (x1, y1) = (sx.max(sx1) + min[0], sy.max(sy1) + min[1]);
-                let color = if pt.path {
-                    if pt.transport {
-                        transport_col
-                    } else {
-                        path_col
-                    }
-                } else if let Some(id) = pt.flood {
-                    if id == 0 {
-                        FLOOD_A
-                    } else {
-                        FLOOD_B
-                    }
-                } else if pt.unreached {
-                    FLOOD_B
-                } else {
-                    debug_assert!(pt.blocked, "pack_map_tiles returns only painted tiles");
-                    collision_col
-                };
-                draw.add_rect([x0, y0], [x1, y1], color)
-                    .filled(true)
-                    .build();
-                if sel.is_some_and(|s| s == t) {
-                    let d = (dot + 2.0).min(scale.max(3.0));
-                    let h = d / 2.0;
-                    let [mx, my] = canvas_from_world(centre_i, scale, size, tx + 0.5, tz + 0.5);
-                    draw.add_rect(
-                        [min[0] + mx - h, min[1] + my - h],
-                        [min[0] + mx + h, min[1] + my + h],
-                        TEXT,
-                    )
-                    .filled(true)
-                    .build();
-                }
-            }
-            // Amber dots: walkable view tiles no layer coloured.
-            for z in view.z0..view.z0 + view.height {
-                for x in view.x0..view.x0 + view.width {
-                    let t = Tile { x, z, level };
-                    if !world.collision.walkable(WorldTile { x, z, level })
-                        || (any_layer && painted.contains(&t))
-                    {
-                        continue;
-                    }
-                    let (tx, tz) = (t.x as f32, t.z as f32);
-                    let selected = sel.is_some_and(|s| s == t);
-                    let (color, d) = if selected {
-                        (TEXT, (dot + 2.0).min(scale.max(3.0)))
-                    } else {
-                        (ACCENT, dot)
-                    };
-                    let h = d / 2.0;
-                    let [mx, my] = canvas_from_world(centre_i, scale, size, tx + 0.5, tz + 0.5);
-                    draw.add_rect(
-                        [min[0] + mx - h, min[1] + my - h],
-                        [min[0] + mx + h, min[1] + my + h],
-                        color,
-                    )
-                    .filled(true)
-                    .build();
-                }
-            }
+            let reach_bits = if layers.reach {
+                map_reach_bitset(world)
+            } else {
+                None
+            };
+            map.present(
+                ui,
+                gpu,
+                origin,
+                size,
+                view,
+                world,
+                layers,
+                colors,
+                path.as_slice(),
+                &floods,
+                reach_bits.as_deref(),
+                pending_highlight(session),
+                here_tile,
+                dest_tile,
+                overlay_zoom_in,
+            );
         });
-    let Some((min, max)) = rect else {
-        return;
-    };
-    if !hovered {
-        return;
+    let (min, max) = rect?;
+    let scale = ZOOMS[ZOOM
+        .load(Ordering::Relaxed)
+        .clamp(0, ZOOMS.len() as i32 - 1) as usize];
+    let size = [max[0] - min[0], max[1] - min[1]];
+    if let Some(mouse) = pick {
+        let centre = (
+            CENTRE_X.load(Ordering::Relaxed),
+            CENTRE_Z.load(Ordering::Relaxed),
+        );
+        let rem = (
+            PAN_REM_X.load(Ordering::Relaxed) as f32 / 1000.0,
+            PAN_REM_Z.load(Ordering::Relaxed) as f32 / 1000.0,
+        );
+        if let Some(requested) = click_requested_tile(
+            centre,
+            rem,
+            scale,
+            [mouse[0] - min[0], mouse[1] - min[1]],
+            size,
+            LEVEL.load(Ordering::Relaxed),
+        ) {
+            session.select_picker_tile(world, requested);
+        }
+        return Some((min, max));
     }
-    let scale = ZOOMS[ZOOM.load(Ordering::Relaxed) as usize];
+    if !hovered {
+        return Some((min, max));
+    }
     if ui.is_mouse_dragging_with_threshold(MouseButton::Left, 5.0) {
         let delta = ui.io().mouse_delta();
         let (centre, rem) = pan_by(
@@ -1061,18 +1953,45 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
         CENTRE_Z.store(centre.1, Ordering::Relaxed);
         PAN_REM_X.store((rem.0 * 1000.0) as i32, Ordering::Relaxed);
         PAN_REM_Z.store((rem.1 * 1000.0) as i32, Ordering::Relaxed);
-        return;
+        return Some((min, max));
     }
-    // Wheel pans over the canvas: the vertical wheel always moves z, the
-    // horizontal wheel moves x. Shift+vertical wheel also adds to x (mice
-    // with no horizontal wheel) without cancelling z; both axes may apply in
-    // the same frame (trackpad diagonal). 16px per notch keeps the step in
-    // tiles zoom-independent (`tiles_per_notch = 16 / scale`).
+    // Vertical wheel zooms toward the cursor. Horizontal wheel still pans.
     let wheel = ui.io().mouse_wheel();
     let wheel_h = ui.io().mouse_wheel_h();
-    if wheel != 0.0 || wheel_h != 0.0 {
-        let shift = ui.is_key_down(Key::LeftShift) || ui.is_key_down(Key::RightShift);
-        let tiles_per_notch = 16.0 / scale;
+    let mouse = ui.io().mouse_pos();
+    let click = [mouse[0] - min[0], mouse[1] - min[1]];
+    if wheel != 0.0 {
+        let mut idx = ZOOM
+            .load(Ordering::Relaxed)
+            .clamp(0, ZOOMS.len() as i32 - 1);
+        if wheel > 0.0 {
+            idx = (idx + 1).min(ZOOMS.len() as i32 - 1);
+        } else {
+            idx = (idx - 1).max(0);
+        }
+        let new_scale = ZOOMS[idx as usize];
+        if (new_scale - scale).abs() > f32::EPSILON {
+            let (centre, rem) = zoom_toward(
+                (
+                    CENTRE_X.load(Ordering::Relaxed),
+                    CENTRE_Z.load(Ordering::Relaxed),
+                ),
+                (
+                    PAN_REM_X.load(Ordering::Relaxed) as f32 / 1000.0,
+                    PAN_REM_Z.load(Ordering::Relaxed) as f32 / 1000.0,
+                ),
+                scale,
+                new_scale,
+                size,
+                click,
+            );
+            ZOOM.store(idx, Ordering::Relaxed);
+            CENTRE_X.store(centre.0, Ordering::Relaxed);
+            CENTRE_Z.store(centre.1, Ordering::Relaxed);
+            PAN_REM_X.store((rem.0 * 1000.0) as i32, Ordering::Relaxed);
+            PAN_REM_Z.store((rem.1 * 1000.0) as i32, Ordering::Relaxed);
+        }
+    } else if wheel_h != 0.0 {
         let (centre, rem) = pan_by(
             (
                 CENTRE_X.load(Ordering::Relaxed),
@@ -1082,8 +2001,8 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                 PAN_REM_X.load(Ordering::Relaxed) as f32 / 1000.0,
                 PAN_REM_Z.load(Ordering::Relaxed) as f32 / 1000.0,
             ),
-            (wheel_h + if shift { wheel } else { 0.0 }) * tiles_per_notch * scale,
-            -wheel * tiles_per_notch * scale,
+            wheel_h * 16.0,
+            0.0,
             scale,
         );
         CENTRE_X.store(centre.0, Ordering::Relaxed);
@@ -1091,915 +2010,9 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
         PAN_REM_X.store((rem.0 * 1000.0) as i32, Ordering::Relaxed);
         PAN_REM_Z.store((rem.1 * 1000.0) as i32, Ordering::Relaxed);
     }
-    let Some(mouse) = pick else {
-        return;
-    };
-    let size = [max[0] - min[0], max[1] - min[1]];
-    let centre = (
-        CENTRE_X.load(Ordering::Relaxed),
-        CENTRE_Z.load(Ordering::Relaxed),
-    );
-    if let Some(tile) = click_to_tile(
-        world,
-        centre,
-        scale,
-        [mouse[0] - min[0], mouse[1] - min[1]],
-        size,
-        LEVEL.load(Ordering::Relaxed),
-    ) {
-        session.picker_sel = Some(tile);
-    }
+    Some((min, max))
 }
 
 #[cfg(test)]
-mod tests {
-    use api::snapshot::WorldTile;
-    use client::dash3d::CollisionFlag;
-    use nav::collision::WorldCollision;
-    use nav::tile::Tile;
-    use nav::transport::{TransportEdge, TransportGraph, TransportKind};
-    use nav::world::NavWorld;
-
-    use std::sync::Arc;
-
-    use super::{
-        available_levels, click_to_tile, decode_sidecar_file, drop_flags_sidecar,
-        ensure_flags_sidecar, flags_content_hash_count, flags_sidecar_for, flags_sidecar_state,
-        pack, pack_map_tiles, pan_by, picker_map_window, reach_bitset,
-        reset_flags_content_hash_count, right_align_x, set_navflags_binding, set_pack,
-        set_reach_binding, sidecar_for_grid, snap, walkto_canvas_flags, walkto_footer_labels,
-        walkto_window_flags, FlagSidecar, FlagsSidecarState, PackView,
-    };
-    use crate::nav_settings::NavSettings;
-    use crate::session::Session;
-    use dear_imgui_rs::WindowFlags;
-    use nav::router::{Leg, Route};
-    use std::sync::Mutex as StdMutex;
-
-    /// Process-global flags binding/hash counters; serialize tests that touch them.
-    static FLAGS_TEST_LOCK: StdMutex<()> = StdMutex::new(());
-    /// Process-global reach binding; serialize tests that touch it.
-    static REACH_TEST_LOCK: StdMutex<()> = StdMutex::new(());
-
-    /// A `w`×`h` all-walkable level-0 world at (0,0).
-    fn open_world(w: usize, h: usize) -> NavWorld {
-        NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                width: w,
-                height: h,
-                walk: vec![0u8; w * h],
-                blocked: vec![0u64; (w * h).div_ceil(64)],
-                flags: None,
-            },
-            TransportGraph::default(),
-            Vec::new(),
-        )
-    }
-
-    #[test]
-    fn snap_click_to_nearest_walkable() {
-        let w = open_world(3, 3);
-        let t = snap(&w, 1.4, 1.4, 0).unwrap();
-        assert_eq!(
-            t,
-            Tile {
-                x: 1,
-                z: 1,
-                level: 0
-            }
-        );
-    }
-
-    #[test]
-    fn snap_wall_click_lands_on_nearest_walkable() {
-        // The world's x=2 tile is a wall; (1,0) wins the Chebyshev/Manhattan
-        // tie over (3,0) by iteration order.
-        let mut flags = vec![0u32; 5];
-        flags[2] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
-        let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let w = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                width: 5,
-                height: 1,
-                walk,
-                blocked,
-                flags: None,
-            },
-            TransportGraph::default(),
-            Vec::new(),
-        );
-        let t = snap(&w, 2.2, 0.1, 0).unwrap();
-        assert_eq!(
-            t,
-            Tile {
-                x: 1,
-                z: 0,
-                level: 0
-            }
-        );
-    }
-
-    #[test]
-    fn snap_returns_none_on_level_without_walkables() {
-        let w = open_world(3, 3);
-        assert_eq!(snap(&w, 1.4, 1.4, 1), None);
-    }
-
-    #[test]
-    fn available_levels_lists_planes_with_content() {
-        let w = open_world(3, 3);
-        // An all-walkable single-plane world lists the ground plane only.
-        assert_eq!(available_levels(&w), vec![0]);
-        // A 4-plane world with a stamped level-1 plane lists it too.
-        let mut flags = vec![0u32; 4 * 9];
-        flags[9 + 4] = CollisionFlag::WALK_SCENERY as u32;
-        let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let w2 = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                width: 3,
-                height: 3,
-                walk,
-                blocked,
-                flags: None,
-            },
-            TransportGraph::default(),
-            Vec::new(),
-        );
-        assert_eq!(available_levels(&w2), vec![0, 1]);
-    }
-
-    #[test]
-    fn click_to_tile_maps_canvas_click_through_centre_and_scale() {
-        let w = open_world(3, 3);
-        // Canvas centre is the centre tile.
-        let t = click_to_tile(&w, (1, 1), 10.0, [50.0, 50.0], [100.0, 100.0], 0).unwrap();
-        assert_eq!(
-            t,
-            Tile {
-                x: 1,
-                z: 1,
-                level: 0
-            }
-        );
-        // 14px right of centre at 10px/tile -> east (higher x).
-        let t = click_to_tile(&w, (1, 1), 10.0, [64.0, 50.0], [100.0, 100.0], 0).unwrap();
-        assert_eq!(
-            t,
-            Tile {
-                x: 2,
-                z: 1,
-                level: 0
-            }
-        );
-        // 20px below centre is south (lower z): north is up on the canvas.
-        let t = click_to_tile(&w, (1, 1), 10.0, [50.0, 70.0], [100.0, 100.0], 0).unwrap();
-        assert_eq!(
-            t,
-            Tile {
-                x: 1,
-                z: 0,
-                level: 0
-            }
-        );
-    }
-
-    #[test]
-    fn pan_by_accumulates_sub_tile_remainder_at_fine_and_coarse_zoom() {
-        // 2px/tile: a 3px drag is 1.5 tiles; the whole tile lands now and the
-        // half tile stays in the remainder. Sign pins "content follows the
-        // cursor": positive mouse dx pans west (smaller centre.x), matching
-        // the existing `CENTRE_X -= delta/scale`.
-        let ((cx, _cz), rem) = pan_by((3200, 3200), (0.0, 0.0), -3.0, 0.0, 2.0);
-        assert_eq!(cx, 3201);
-        assert!((rem.0 - 0.5).abs() < 1e-5);
-        let ((cx, _), rem) = pan_by((3200, 3200), (0.0, 0.0), 3.0, 0.0, 2.0);
-        assert_eq!(cx, 3199);
-        assert!((rem.0 + 0.5).abs() < 1e-5);
-        // The leftover half tile plus another 1px (0.5 tile) completes a
-        // second tile.
-        let ((cx2, _), rem2) = pan_by((cx, 3200), rem, 1.0, 0.0, 2.0);
-        assert_eq!(cx2, 3198);
-        assert!(rem2.0.abs() < 1e-5);
-        // 16px/tile: an 8px drag is 0.5 tile — the centre must not stay stuck
-        // waiting for a full tile.
-        let (c, rem) = pan_by((3200, 3200), (0.0, 0.0), 8.0, 0.0, 16.0);
-        assert_eq!(c.0, 3200);
-        assert!(rem.0.abs() > 0.4);
-    }
-
-    #[test]
-    fn walkto_window_flags_capture_wheel_on_the_canvas() {
-        let w = walkto_window_flags();
-        assert!(
-            w.contains(WindowFlags::NO_SCROLLBAR),
-            "hide the imgui window scrollbar"
-        );
-        assert!(
-            w.contains(WindowFlags::NO_SCROLL_WITH_MOUSE),
-            "wheel over WalkTo must pan the map, not scroll the window"
-        );
-        let c = walkto_canvas_flags();
-        assert!(c.contains(WindowFlags::NO_SCROLLBAR));
-        assert!(c.contains(WindowFlags::NO_SCROLL_WITH_MOUSE));
-    }
-
-    #[test]
-    fn right_align_x_sits_the_cluster_on_the_content_edge() {
-        // cursor 12, 400px remaining, 80px cluster → 332.
-        assert_eq!(right_align_x(12.0, 400.0, 80.0), 332.0);
-    }
-
-    #[test]
-    fn walkto_footer_adds_teleport_on_local_engine() {
-        assert_eq!(walkto_footer_labels(false), &["recentre", "Walk"]);
-        assert_eq!(
-            walkto_footer_labels(true),
-            &["recentre", "Walk", "Teleport"]
-        );
-    }
-
-    #[test]
-    fn picker_map_window_builds_headless() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        let mut ctx = dear_imgui_rs::Context::create();
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let ui = ctx.frame();
-        let mut s = Session::new();
-        s.walkto_open = true;
-        let mut open = true;
-        picker_map_window(ui, &mut s, &open_world(3, 3), &mut open);
-        ctx.render();
-        assert!(open, "the window must stay open until Walk is confirmed");
-    }
-
-    fn picker_click_frame(
-        ctx: &mut dear_imgui_rs::Context,
-        session: &mut Session,
-        world: &NavWorld,
-        mouse: [f32; 2],
-        left_down: bool,
-    ) {
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        ctx.io_mut().add_mouse_pos_event(mouse);
-        ctx.io_mut()
-            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left_down);
-        {
-            let ui = ctx.frame();
-            let mut open = true;
-            picker_map_window(ui, session, world, &mut open);
-        }
-        ctx.render();
-    }
-
-    #[test]
-    fn picker_click_selects_a_walkable_tile() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::note_closed();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let world = open_world(3, 3);
-        let mut s = Session::new();
-        s.walkto_open = true;
-        // FirstUseEver WalkTo is 720×560 at the default imgui origin; the
-        // canvas sits under the toolbar. A click in the window interior
-        // must set picker_sel — not pan, not miss the hit target.
-        let mouse = [360.0, 320.0];
-        picker_click_frame(&mut ctx, &mut s, &world, mouse, false);
-        picker_click_frame(&mut ctx, &mut s, &world, mouse, true);
-        picker_click_frame(&mut ctx, &mut s, &world, mouse, false);
-        assert!(
-            s.picker_sel.is_some(),
-            "click on the WalkTo canvas must snap a tile, got {:?}",
-            s.picker_sel
-        );
-    }
-
-    /// A `w`×`h` level-0 bake at (0,0) with the given per-tile flags OR'd in.
-    fn bake_world(w: usize, h: usize, extras: &[(i32, i32, u32)]) -> NavWorld {
-        let mut flags = vec![0u32; w * h];
-        for &(x, z, f) in extras {
-            flags[z as usize * w + x as usize] |= f;
-        }
-        let (walk, blocked) = nav::collision::pack_walk(&flags);
-        NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                width: w,
-                height: h,
-                walk,
-                blocked,
-                flags: None,
-            },
-            TransportGraph::default(),
-            Vec::new(),
-        )
-    }
-
-    /// A 7×7 bake: a 3×3 open corner plus an isolated open tile moated by
-    /// WR_GRND; everything else blocked ground.
-    fn disconnected_world() -> NavWorld {
-        let mut extras = Vec::new();
-        for z in 0..7 {
-            for x in 0..7 {
-                let open = (x < 3 && z < 3) || (x == 5 && z == 5);
-                if !open {
-                    extras.push((x, z, CollisionFlag::WR_GRND as u32));
-                }
-            }
-        }
-        bake_world(7, 7, &extras)
-    }
-
-    #[test]
-    fn pack_map_collision_only_in_viewport() {
-        // A 5-wide bake with a WR_GRND wall at x=2; the small view covers
-        // the wall and its open neighbour.
-        let world = bake_world(5, 1, &[(2, 0, CollisionFlag::WR_GRND as u32)]);
-        let view = PackView {
-            x0: 1,
-            z0: 0,
-            width: 2,
-            height: 1,
-        };
-        let layers = NavSettings {
-            collision_fill: true,
-            ..Default::default()
-        };
-        let tiles = pack_map_tiles(&world, view, None, None, None, &layers, 0);
-        let in_view = |t: super::Tile| {
-            t.x >= view.x0
-                && t.x < view.x0 + view.width
-                && t.z >= view.z0
-                && t.z < view.z0 + view.height
-        };
-        assert!(tiles.iter().all(|t| in_view(t.tile)));
-        assert!(tiles.iter().any(|t| t.blocked));
-    }
-
-    #[test]
-    fn pack_map_paints_the_selected_plane() {
-        // A 3x3 two-plane world: level 0 is open, level 1 carries a WR_GRND
-        // wall at (1,1). Painting must read the passed level, not the bake's
-        // origin plane.
-        let mut flags = vec![0u32; 2 * 9];
-        flags[9 + 3 + 1] = CollisionFlag::WR_GRND as u32;
-        let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let world = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                width: 3,
-                height: 3,
-                walk,
-                blocked,
-                flags: None,
-            },
-            TransportGraph::default(),
-            Vec::new(),
-        );
-        let view = PackView {
-            x0: 0,
-            z0: 0,
-            width: 3,
-            height: 3,
-        };
-        let layers = NavSettings {
-            collision_fill: true,
-            ..Default::default()
-        };
-        let tiles = pack_map_tiles(&world, view, None, None, None, &layers, 1);
-        assert!(
-            tiles.iter().all(|p| p.tile.level == 1),
-            "paints live on the selected plane, not the bake's origin plane"
-        );
-        assert!(
-            tiles
-                .iter()
-                .any(|p| p.blocked && p.tile.x == 1 && p.tile.z == 1),
-            "the level-1 wall blocks its own plane"
-        );
-    }
-
-    #[test]
-    fn pack_map_flood_marks_two_components() {
-        let layers = NavSettings {
-            component_flood: true,
-            ..Default::default()
-        };
-        let tiles = pack_map_tiles(
-            &disconnected_world(),
-            PackView {
-                x0: 0,
-                z0: 0,
-                width: 7,
-                height: 7,
-            },
-            None,
-            Some(WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            }),
-            Some(WorldTile {
-                x: 5,
-                z: 5,
-                level: 0,
-            }),
-            &layers,
-            0,
-        );
-        let ids: std::collections::HashSet<_> = tiles.iter().filter_map(|t| t.flood).collect();
-        assert_eq!(ids.len(), 2, "the player and dest components both flood");
-    }
-
-    #[test]
-    fn pack_map_marks_walkable_unreached_puddle() {
-        let _guard = REACH_TEST_LOCK.lock().unwrap();
-        set_reach_binding(
-            None,
-            WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            0,
-            0,
-            false,
-        );
-        // 5×5 with a sealed 1×1 courtyard at (2,2) (all W_* faces) and one
-        // door edge outside it: the reach BFS floods the open ground but
-        // never the courtyard, so only the courtyard tile paints
-        // walkable-unreached.
-        let base = bake_world(5, 5, &[(2, 2, CollisionFlag::WALK_BLOCK_FLAGS as u32)]);
-        let banks = base.banks().to_vec();
-        let world = NavWorld::from_parts(
-            base.collision,
-            TransportGraph {
-                edges: vec![TransportEdge {
-                    kind: TransportKind::Door,
-                    at: WorldTile {
-                        x: 0,
-                        z: 0,
-                        level: 0,
-                    },
-                    to: WorldTile {
-                        x: 4,
-                        z: 4,
-                        level: 0,
-                    },
-                    loc_id: 1530,
-                    option: 1,
-                    ticks: 1,
-                    dir: None,
-                    open_loc_id: None,
-                    skill_req: vec![],
-                    item_req: vec![],
-                    quest_req: vec![],
-                    varp_req: vec![],
-                    worn_req: vec![],
-                    members_req: false,
-                }],
-                ..Default::default()
-            },
-            banks,
-        );
-        let view = PackView {
-            x0: 0,
-            z0: 0,
-            width: 5,
-            height: 5,
-        };
-        let tiles = pack_map_tiles(&world, view, None, None, None, &NavSettings::default(), 0);
-        let courtyard = tiles
-            .iter()
-            .find(|t| t.tile.x == 2 && t.tile.z == 2)
-            .expect("the sealed courtyard paints unreached");
-        assert!(
-            courtyard.unreached,
-            "the puddle floor is walkable-unreached"
-        );
-        assert!(
-            !courtyard.blocked && !courtyard.path && courtyard.flood.is_none(),
-            "the puddle is a plain unreached tile"
-        );
-        assert!(
-            tiles
-                .iter()
-                .all(|t| (t.tile.x == 2 && t.tile.z == 2) || !t.unreached),
-            "only the sealed courtyard is unreached"
-        );
-        assert!(
-            !tiles.iter().any(|t| t.tile.x == 0 && t.tile.z == 0),
-            "reached ground stays off the reach layer"
-        );
-    }
-
-    #[test]
-    fn pack_map_marks_remaining_path_in_view() {
-        let world = bake_world(5, 1, &[]);
-        let tiles: Vec<WorldTile> = (0..5).map(|x| WorldTile { x, z: 0, level: 0 }).collect();
-        let route = Route {
-            dest: tiles[4],
-            legs: vec![Leg::Walk {
-                tiles: tiles.clone(),
-            }],
-            ticks: 0.0,
-        };
-        let layers = NavSettings {
-            show_nav_path: true,
-            ..Default::default()
-        };
-        let view = PackView {
-            x0: 0,
-            z0: 0,
-            width: 5,
-            height: 1,
-        };
-        let marks = pack_map_tiles(&world, view, Some(&route), None, None, &layers, 0);
-        let path: Vec<i32> = marks.iter().filter(|t| t.path).map(|t| t.tile.x).collect();
-        assert_eq!(path, vec![0, 1, 2, 3, 4]);
-        assert!(
-            marks.iter().all(|t| !t.transport),
-            "a walk-only route has no hops"
-        );
-    }
-
-    #[test]
-    fn pack_map_flood_report_line_reports_each_arm() {
-        let player = WorldTile {
-            x: 0,
-            z: 0,
-            level: 0,
-        };
-        let dest = WorldTile {
-            x: 5,
-            z: 5,
-            level: 0,
-        };
-        let first = super::flood_report_line(None, 1, player, dest, 9, 1).unwrap();
-        assert_eq!(first, "nav-flood: player 9 dest 1");
-        // A second arm with the same tiles still reports: the arm
-        // generation is part of the report key.
-        let second =
-            super::flood_report_line(Some((1, player, dest, 9, 1)), 2, player, dest, 9, 1).unwrap();
-        assert_eq!(second, first);
-        // The same arm and sizes do not re-report; a size change does.
-        assert!(
-            super::flood_report_line(Some((2, player, dest, 9, 1)), 2, player, dest, 9, 1)
-                .is_none()
-        );
-        assert!(
-            super::flood_report_line(Some((2, player, dest, 9, 1)), 2, player, dest, 9, 9)
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn pack_map_flood_report_sizes_from_cached_sets() {
-        let world = disconnected_world();
-        let player = WorldTile {
-            x: 0,
-            z: 0,
-            level: 0,
-        };
-        let dest = WorldTile {
-            x: 5,
-            z: 5,
-            level: 0,
-        };
-        let comps = super::flood_sets_for(&world, &[player, dest]);
-        assert_eq!(
-            super::flood_report_sizes(&comps, dest),
-            (9, 1),
-            "the 3x3 corner and the isolated dest tile"
-        );
-        // Connected seeds (the dest inside the player's flood) share one size.
-        let inside = WorldTile {
-            x: 1,
-            z: 1,
-            level: 0,
-        };
-        let comps = super::flood_sets_for(&world, &[player, inside]);
-        assert_eq!(super::flood_report_sizes(&comps, inside), (9, 9));
-    }
-
-    #[test]
-    fn sidecar_file_roundtrips_and_rejects_garbage() {
-        let path = std::env::temp_dir().join(format!(
-            "274bot-panel-sidecar-{}.navflags",
-            std::process::id()
-        ));
-        let flags = vec![
-            CollisionFlag::W_N as u32 | CollisionFlag::WR_GRND as u32,
-            CollisionFlag::W_E as u32,
-            0,
-            CollisionFlag::WALK_SCENERY as u32,
-        ];
-        let bytes = nav::pack::encode_flags_sidecar(
-            WorldTile {
-                x: 3200,
-                z: 3200,
-                level: 0,
-            },
-            1,
-            1,
-            &flags,
-        );
-        std::fs::write(&path, &bytes).unwrap();
-        let s = decode_sidecar_file(&path).expect("valid sidecar decodes");
-        assert_eq!(
-            s.origin,
-            WorldTile {
-                x: 3200,
-                z: 3200,
-                level: 0
-            }
-        );
-        assert_eq!((s.width, s.height), (1, 1));
-        assert_eq!(&*s.flags, &flags[..]);
-        // Garbage and missing files fall back to the walk word, never panic.
-        std::fs::write(&path, b"not a sidecar").unwrap();
-        assert!(decode_sidecar_file(&path).is_none());
-        std::fs::remove_file(&path).ok();
-        assert!(decode_sidecar_file(&path).is_none());
-    }
-
-    #[test]
-    fn sidecar_flags_only_apply_to_the_matching_grid() {
-        let s = FlagSidecar {
-            origin: WorldTile {
-                x: 3200,
-                z: 3200,
-                level: 0,
-            },
-            width: 64,
-            height: 64,
-            flags: vec![0u32; 4 * 64 * 64].into(),
-        };
-        assert!(
-            sidecar_for_grid(
-                &s,
-                WorldTile {
-                    x: 3200,
-                    z: 3200,
-                    level: 0
-                },
-                64,
-                64
-            )
-            .is_some(),
-            "a matching grid header applies the sidecar"
-        );
-        assert!(
-            sidecar_for_grid(
-                &s,
-                WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0
-                },
-                64,
-                64
-            )
-            .is_none(),
-            "a foreign origin must not paint from a stale sidecar"
-        );
-        assert!(sidecar_for_grid(
-            &s,
-            WorldTile {
-                x: 3200,
-                z: 3200,
-                level: 0
-            },
-            64,
-            65
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn picker_pack_uses_injected_arc_not_a_second_decode() {
-        let world = Arc::new(bake_world(1, 1, &[]));
-        set_pack(Some(Arc::clone(&world)));
-        let p = pack().expect("injected");
-        assert!(
-            Arc::ptr_eq(&p, &world),
-            "pack() must hand back the injected Arc, not a re-decode"
-        );
-        // Leave the global detached so parallel tests cannot observe it.
-        set_pack(None);
-        assert!(pack().is_none(), "set_pack(None) must detach the world");
-    }
-
-    #[test]
-    fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
-        let _guard = FLAGS_TEST_LOCK.lock().unwrap();
-        let path = std::env::temp_dir().join(format!(
-            "274bot-panel-flags-identity-{}.navflags",
-            std::process::id()
-        ));
-        let origin = WorldTile {
-            x: 3200,
-            z: 3200,
-            level: 0,
-        };
-        let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
-        let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
-        std::fs::write(&path, &bytes).unwrap();
-        let digest = nav::manifest::hash_bytes(&bytes);
-
-        reset_flags_content_hash_count();
-        set_navflags_binding(path.clone(), None, false);
-        ensure_flags_sidecar();
-        assert_eq!(
-            flags_sidecar_state(),
-            FlagsSidecarState::Refused("flags identity is unknown")
-        );
-        assert!(flags_sidecar_for(origin, 1, 1).is_none());
-        assert_eq!(flags_content_hash_count(), 0);
-
-        drop_flags_sidecar();
-        set_navflags_binding(path.clone(), Some("00".repeat(32)), false);
-        ensure_flags_sidecar();
-        assert_eq!(
-            flags_sidecar_state(),
-            FlagsSidecarState::Refused("flags sidecar hash mismatch")
-        );
-        assert!(flags_sidecar_for(origin, 1, 1).is_none());
-        assert_eq!(flags_content_hash_count(), 1);
-
-        drop_flags_sidecar();
-        set_navflags_binding(path.clone(), Some(digest), false);
-        ensure_flags_sidecar();
-        assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
-        assert_eq!(
-            flags_sidecar_for(origin, 1, 1).as_deref(),
-            Some(flags.as_slice())
-        );
-        assert_eq!(flags_content_hash_count(), 2);
-        drop_flags_sidecar();
-        assert_eq!(flags_sidecar_state(), FlagsSidecarState::Unloaded);
-        assert!(flags_sidecar_for(origin, 1, 1).is_none());
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
-        let _guard = FLAGS_TEST_LOCK.lock().unwrap();
-        let path = std::env::temp_dir().join(format!(
-            "274bot-panel-flags-bundled-{}.navflags",
-            std::process::id()
-        ));
-        let origin = WorldTile {
-            x: 3200,
-            z: 3200,
-            level: 0,
-        };
-        let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
-        let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
-        std::fs::write(&path, &bytes).unwrap();
-        // Digest is still bound (identity names flags) but must not be rehashed.
-        let digest = nav::manifest::hash_bytes(&bytes);
-
-        reset_flags_content_hash_count();
-        set_navflags_binding(path.clone(), Some(digest.clone()), true);
-        ensure_flags_sidecar();
-        assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
-        assert_eq!(
-            flags_sidecar_for(origin, 1, 1).as_deref(),
-            Some(flags.as_slice())
-        );
-        assert_eq!(
-            flags_content_hash_count(),
-            0,
-            "trusted bundled flags must not content-hash on first paint"
-        );
-
-        // Per-session reuse: second ensure is a no-op and still does not hash.
-        ensure_flags_sidecar();
-        assert_eq!(flags_content_hash_count(), 0);
-        assert_eq!(
-            flags_sidecar_for(origin, 1, 1).as_deref(),
-            Some(flags.as_slice())
-        );
-
-        // Geometry mismatch still refuses paint application without a rehash.
-        assert!(flags_sidecar_for(origin, 2, 1).is_none());
-        assert_eq!(flags_content_hash_count(), 0);
-
-        drop_flags_sidecar();
-        // Explicit same-path override remains external and must hash.
-        set_navflags_binding(path.clone(), Some(digest), false);
-        ensure_flags_sidecar();
-        assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
-        assert_eq!(flags_content_hash_count(), 1);
-
-        drop_flags_sidecar();
-        set_navflags_binding(path.clone(), Some("00".repeat(32)), false);
-        ensure_flags_sidecar();
-        assert_eq!(
-            flags_sidecar_state(),
-            FlagsSidecarState::Refused("flags sidecar hash mismatch")
-        );
-        assert_eq!(flags_content_hash_count(), 2);
-
-        // Malformed header refused after trusted bind without hashing.
-        drop_flags_sidecar();
-        std::fs::write(&path, b"not-a-flags-sidecar").unwrap();
-        set_navflags_binding(path.clone(), Some("ab".repeat(32)), true);
-        ensure_flags_sidecar();
-        assert_eq!(
-            flags_sidecar_state(),
-            FlagsSidecarState::Refused("flags sidecar is unreadable")
-        );
-        assert_eq!(flags_content_hash_count(), 2);
-
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn bundled_reach_is_shared_without_flood_on_first_or_second_paint() {
-        let _guard = REACH_TEST_LOCK.lock().unwrap();
-        let mut world = bake_world(3, 3, &[]);
-        world.collision.origin.x = 7777;
-        let origin = world.collision.origin;
-        let width = world.collision.width;
-        let height = world.collision.height;
-        let expected: Arc<[u64]> = nav::paint::bake_reach(&world.collision, &world.graph).into();
-        nav::paint::reset_bake_reach_calls();
-        set_reach_binding(Some(Arc::clone(&expected)), origin, width, height, true);
-        let first = reach_bitset(&world).expect("bundled bits");
-        let second = reach_bitset(&world).expect("slot reuse");
-        assert!(Arc::ptr_eq(&first, &second));
-        assert_eq!(&*first, &*expected);
-        assert_eq!(
-            nav::paint::bake_reach_calls(),
-            0,
-            "bundled first/second paint must not flood"
-        );
-        let mut other = open_world(3, 3);
-        other.collision.origin.x = 99;
-        assert!(
-            reach_bitset(&other).is_none(),
-            "same-size different origin must not reuse bundled bits"
-        );
-        assert_eq!(nav::paint::bake_reach_calls(), 0);
-        set_reach_binding(None, origin, 0, 0, false);
-    }
-
-    #[test]
-    fn external_reach_floods_once_and_reuses_the_arc() {
-        let _guard = REACH_TEST_LOCK.lock().unwrap();
-        set_reach_binding(
-            None,
-            WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            0,
-            0,
-            false,
-        );
-        let world = bake_world(3, 3, &[]);
-        nav::paint::reset_bake_reach_calls();
-        let first = reach_bitset(&world).expect("external bake");
-        let second = reach_bitset(&world).expect("cached");
-        assert!(Arc::ptr_eq(&first, &second));
-        assert_eq!(nav::paint::bake_reach_calls(), 1);
-        set_pack(None);
-        let _ = reach_bitset(&world);
-        assert_eq!(
-            nav::paint::bake_reach_calls(),
-            2,
-            "set_pack drops the computed cache"
-        );
-    }
-}
+#[path = "picker_tests.rs"]
+mod tests;

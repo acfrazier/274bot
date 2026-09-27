@@ -1,90 +1,50 @@
-//! Status pane (spec `2026-09-01-headless-tui-design.md`): the focused
-//! slot's panel-style key/value rows — state, player, tile, walk, queue,
-//! modals, mem — plus the guardian's [`host_play::RandomStatus`]. One
-//! bot's rows, not a concatenated line.
+//! Status pane (spec `2026-09-01-headless-tui-design.md`): the selected
+//! slot's key/value rows — state, player, tile, walk, queue, modals, mem —
+//! plus the guardian status, the last login error while retrying and the
+//! newest operation, then the process meter. The values come from the
+//! shared `frontend-core` projection ([`SlotDetail`], [`ResourceView`]), the
+//! same the panel's status and resource sections show; this pane only lays
+//! them out.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
-use api::RandomKind;
-use host_play::SlotStatus;
+use frontend_core::resources::{format_background, format_bots};
+use frontend_core::{ResourceView, SlotDetail};
 
-/// The state cell: `ingame scene N`, a login error, `logging in…`, or
-/// `waiting`.
-pub fn state_text(s: &SlotStatus) -> String {
-    if s.ingame {
-        format!("ingame scene {}", s.scene_state)
-    } else if let Some(err) = &s.error {
-        format!("login {err}")
-    } else if s.login_started.is_some() {
-        "logging in…".to_string()
-    } else {
-        "waiting".to_string()
-    }
-}
-
-/// The queue cell: `k of n`, or `—` when not queued (the same -1
-/// sentinel as the walk fields).
-pub fn queue_text(s: &SlotStatus) -> String {
-    if s.queue_position > 0 && s.queue_total > 0 {
-        format!("{} of {}", s.queue_position, s.queue_total)
-    } else {
-        "—".into()
-    }
-}
-
-/// Status-row names for the guardian kinds (kebab-case, the same names
-/// the panel's status section uses).
-pub fn random_kind_name(kind: RandomKind) -> &'static str {
-    match kind {
-        RandomKind::Dialog => "dialog",
-        RandomKind::Pick => "pick",
-        RandomKind::Evade => "evade",
-        RandomKind::Maze => "maze",
-        RandomKind::Mime => "mime",
-        RandomKind::Box => "box",
-        RandomKind::Lamp => "lamp",
-        RandomKind::Hazard => "hazard",
-        RandomKind::LostTool => "lost-tool",
-        RandomKind::LostGear => "lost-gear",
-    }
-}
-
-/// The random status-row value: `dialog: mysterious old man`, plus
-/// `(hold)` while the slot freezes on the event and `(off)` when the
-/// profile toggle is off (toggle-off still detects + publishes). `None`
-/// when nothing is detected — the row is skipped then.
-pub fn random_status_text(s: &SlotStatus) -> Option<String> {
-    let kind = s.random.kind?;
-    let mut text = format!(
-        "{}: {}",
-        random_kind_name(kind),
-        s.random.name.as_deref().unwrap_or("?")
-    );
-    if s.random.hold {
-        text.push_str(" (hold)");
-    }
-    if !s.random.toggle {
-        text.push_str(" (off)");
-    }
-    Some(text)
-}
-
-/// The status pane widget: key/value rows for the focused slot, plus the
-/// operator's picked walk dest and the focused profile's mem mode.
+/// The status pane widget: key/value rows for the selected slot, plus the
+/// operator's picked walk dest and the selected profile's mem mode.
 pub struct StatusPane<'a> {
-    pub slot: Option<&'a SlotStatus>,
+    pub detail: Option<&'a SlotDetail>,
     /// The walk cell: the operator's picked dest (`x z level`) or `—`.
     pub walk: &'a str,
     /// The mem cell: `lowmem` / `highmem`.
     pub mem: &'a str,
+    pub resources: Option<&'a ResourceView>,
+    pub background_notice: Option<&'a str>,
 }
 
 impl<'a> StatusPane<'a> {
-    pub fn new(slot: Option<&'a SlotStatus>, walk: &'a str, mem: &'a str) -> Self {
-        Self { slot, walk, mem }
+    pub fn new(detail: Option<&'a SlotDetail>, walk: &'a str, mem: &'a str) -> Self {
+        Self {
+            detail,
+            walk,
+            mem,
+            resources: None,
+            background_notice: None,
+        }
+    }
+
+    pub fn resources(mut self, view: &'a ResourceView) -> Self {
+        self.resources = Some(view);
+        self
+    }
+
+    pub fn notice(mut self, notice: Option<&'a str>) -> Self {
+        self.background_notice = notice;
+        self
     }
 }
 
@@ -93,44 +53,64 @@ impl Widget for StatusPane<'_> {
         let block = Block::default().borders(Borders::ALL).title("status");
         let inner = block.inner(area);
         block.render(area, buf);
-        let lines: Vec<Line> = match self.slot {
+        // Most important first, so a short pane keeps what explains the
+        // bot: its state, why it is retrying, its newest operation and any
+        // guardian or welcome hold; related cells share a line so the
+        // meter still fits the 120x40 pane.
+        let mut lines: Vec<Line> = match self.detail {
             None => vec![
-                Line::from("state: no slots"),
-                Line::from("player: —"),
+                Line::from("state: no bot selected"),
                 Line::from(format!("walk: {}", self.walk)),
             ],
-            Some(s) => {
-                let mut lines = vec![
-                    Line::from(format!("state: {}", state_text(s))),
-                    Line::from(format!(
-                        "player: {}",
-                        if s.player.is_empty() {
-                            "?"
-                        } else {
-                            s.player.as_str()
-                        }
-                    )),
-                    Line::from(format!("tile: {} {}", s.tile_x, s.tile_z)),
-                    Line::from(match s.world {
-                        Some(number) => format!("world: w{number}"),
-                        None => "world: local".to_string(),
-                    }),
-                    Line::from(format!("walk: {}", self.walk)),
-                    Line::from(format!("queue: {}", queue_text(s))),
-                    Line::from(format!("modals: {}", s.main_modal_id)),
-                    Line::from(format!("mem: {}", self.mem)),
-                ];
-                if let Some(failure) = s.welcome_failure.as_deref() {
-                    lines.push(Line::from(format!("welcome: {failure}")));
-                } else if s.welcome_hold {
-                    lines.push(Line::from("welcome: holding"));
+            Some(d) => {
+                let mut lines = vec![Line::from(format!("state: {}", d.state))];
+                if let (false, Some(error)) = (d.row.phase.is_error(), d.row.error.as_deref()) {
+                    lines.push(Line::from(format!("last error: {error}")));
                 }
-                if let Some(random) = random_status_text(s) {
+                if let Some(op) = d.row.last_op.as_ref() {
+                    lines.push(Line::from(format!("operation: {op}")));
+                }
+                if let Some(random) = d.random.as_deref() {
                     lines.push(Line::from(format!("random: {random}")));
                 }
+                if let Some(welcome) = d.welcome.as_deref() {
+                    lines.push(Line::from(format!("welcome: {welcome}")));
+                }
+                let player = if d.player.is_empty() { "?" } else { &d.player };
+                let world = match d.row.world {
+                    Some(number) => format!("w{number}"),
+                    None => "local".to_string(),
+                };
+                let queue = match d.row.queue {
+                    Some(place) => place.to_string(),
+                    None => "—".to_string(),
+                };
+                lines.push(Line::from(format!("player: {player} · world: {world}")));
+                lines.push(Line::from(format!(
+                    "tile: {} {} · walk: {}",
+                    d.tile.0, d.tile.1, self.walk
+                )));
+                lines.push(Line::from(format!(
+                    "queue: {queue} · modals: {} · mem: {}",
+                    d.modal, self.mem
+                )));
                 lines
             }
         };
+        if let Some(view) = self.resources {
+            let mut bots = format!("bots: {}", format_bots(view.bots, view.ingame));
+            if view.background > 0 {
+                bots.push_str(" · ");
+                bots.push_str(&format_background(view.background));
+            }
+            lines.push(Line::from(bots));
+            lines.push(Line::from(format!("cpu: {}", view.cpu.text())));
+            lines.push(Line::from(format!("ram: {}", view.ram.text())));
+            lines.push(Line::from(format!("traffic: {}", view.traffic.text())));
+        }
+        if let Some(notice) = self.background_notice {
+            lines.push(Line::from(format!("notice: {notice}")));
+        }
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .render(inner, buf);
@@ -139,24 +119,14 @@ impl Widget for StatusPane<'_> {
 
 #[cfg(test)]
 mod tests {
-    use host_play::{RandomStatus, SlotStatus};
+    use frontend_core::{
+        ActionKind, FleetRow, Metric, OpBrief, OperationId, Outcome, Phase, ResourceView,
+        SlotDetail,
+    };
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    use api::RandomKind;
-
-    use super::{queue_text, random_status_text, state_text, StatusPane};
-
-    fn status(ingame: bool, scene_state: i32) -> SlotStatus {
-        SlotStatus {
-            username: "test".into(),
-            ingame,
-            scene_state,
-            tile_x: 10,
-            tile_z: 11,
-            ..SlotStatus::default()
-        }
-    }
+    use super::StatusPane;
 
     fn render(pane: StatusPane<'_>, w: u16, h: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
@@ -172,75 +142,129 @@ mod tests {
             .collect()
     }
 
+    /// The pane shows the projected detail as given: the retained error of
+    /// a retrying slot is labelled history, and its newest operation shows.
     #[test]
-    fn status_shows_ingame_scene_2_and_player() {
-        let s = status(true, 2);
-        assert_eq!(state_text(&s), "ingame scene 2");
-        let text = render(StatusPane::new(Some(&s), "10 11 0", "lowmem"), 40, 12);
-        assert!(text.contains("ingame scene 2"), "state row: {text:?}");
-        assert!(text.contains("tile: 10 11"), "tile row: {text:?}");
-        assert!(text.contains("walk: 10 11 0"), "walk row: {text:?}");
-    }
-
-    #[test]
-    fn status_displays_current_public_world() {
-        let mut slot = status(false, 0);
-        slot.world = Some(2);
-        let text = render(StatusPane::new(Some(&slot), "—", "lowmem"), 40, 12);
-        assert!(text.contains("world: w2"), "world row: {text:?}");
-    }
-
-    #[test]
-    fn status_shows_the_random_status_name_and_hold() {
-        let mut s = status(true, 2);
-        s.random = RandomStatus {
-            kind: Some(RandomKind::Dialog),
-            name: Some("mysterious old man".into()),
-            hold: true,
-            toggle: true,
-            ..RandomStatus::default()
+    fn a_retrying_slot_shows_its_last_error_and_operation() {
+        let detail = SlotDetail {
+            row: FleetRow {
+                name: "alice".into(),
+                phase: Phase::Connecting,
+                error: Some("code 5: already logged in".into()),
+                last_op: Some(OpBrief {
+                    id: OperationId(7),
+                    action: ActionKind::Login,
+                    outcome: Outcome::Pending,
+                }),
+                ..FleetRow::default()
+            },
+            state: "logging in…".into(),
+            ..SlotDetail::default()
         };
-        assert_eq!(
-            random_status_text(&s).as_deref(),
-            Some("dialog: mysterious old man (hold)")
-        );
-        let text = render(StatusPane::new(Some(&s), "—", "lowmem"), 40, 12);
+        let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 60, 14);
+        assert!(text.contains("state: logging in…"), "{text:?}");
         assert!(
-            text.contains("mysterious old man"),
-            "random row paints: {text:?}"
+            text.contains("last error: code 5: already logged in"),
+            "{text:?}"
         );
-        assert!(text.contains("(hold)"), "hold suffix: {text:?}");
+        assert!(text.contains("operation: op#7 Log in accepted"), "{text:?}");
     }
 
     #[test]
-    fn random_toggle_off_still_detects_and_labels_off() {
-        let mut s = status(true, 2);
-        s.random = RandomStatus {
-            kind: Some(RandomKind::Lamp),
-            name: Some("genie".into()),
-            hold: false,
-            toggle: false,
-            ..RandomStatus::default()
+    fn a_current_error_is_the_state_not_a_last_error() {
+        let detail = SlotDetail {
+            row: FleetRow {
+                name: "bob".into(),
+                phase: Phase::LoginError,
+                error: Some("code 3: invalid username or password".into()),
+                ..FleetRow::default()
+            },
+            state: "login code 3: invalid username or password".into(),
+            ..SlotDetail::default()
         };
-        assert_eq!(
-            random_status_text(&s).as_deref(),
-            Some("lamp: genie (off)"),
-            "toggle-off detects and publishes with an (off) suffix"
+        let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 60, 12);
+        assert!(!text.contains("last error"), "{text:?}");
+    }
+
+    #[test]
+    fn the_meter_shows_measuring_and_unavailable_values() {
+        let view = ResourceView {
+            bots: 0,
+            ingame: 0,
+            background: 0,
+            cpu: Metric::Measuring,
+            ram: Metric::Available("64.0 MB process, peak 80.0 MB".into()),
+            traffic: Metric::Unavailable("no live slots"),
+            ..ResourceView::default()
+        };
+        let text = render(
+            StatusPane::new(None, "—", "lowmem").resources(&view),
+            60,
+            12,
         );
+        assert!(text.contains("cpu: measuring…"), "{text:?}");
+        assert!(text.contains("ram: 64.0 MB process"), "{text:?}");
+        assert!(text.contains("traffic: no live slots"), "{text:?}");
     }
 
+    /// Cells pack onto shared rows, so a 58x14 pane shows a ready bot's
+    /// newest operation, its background bots and the whole meter.
     #[test]
-    fn queue_text_formats_k_of_n_and_dash() {
-        let mut s = status(true, 2);
-        assert_eq!(queue_text(&s), "—");
-        s.queue_position = 2;
-        s.queue_total = 3;
-        assert_eq!(queue_text(&s), "2 of 3");
+    fn a_58x14_pane_shows_the_whole_meter() {
+        let detail = SlotDetail {
+            row: FleetRow {
+                name: "fc3bob".into(),
+                phase: Phase::Ready,
+                last_op: Some(OpBrief {
+                    id: OperationId(8),
+                    action: ActionKind::Logout,
+                    outcome: Outcome::Completed,
+                }),
+                ..FleetRow::default()
+            },
+            state: "ingame scene 2".into(),
+            player: "Fc3bob".into(),
+            tile: (3094, 3106, 0),
+            modal: 3559,
+            ..SlotDetail::default()
+        };
+        let view = ResourceView {
+            bots: 3,
+            ingame: 2,
+            background: 2,
+            cpu: Metric::Available("0.1 cores (0% of 16)".into()),
+            ram: Metric::Available("263.9 MB process, peak 263.9 MB".into()),
+            traffic: Metric::Available("1.2 KB/s".into()),
+            ..ResourceView::default()
+        };
+        let text = render(
+            StatusPane::new(Some(&detail), "—", "lowmem").resources(&view),
+            58,
+            14,
+        );
+        assert!(
+            text.contains("operation: op#8 Log out completed"),
+            "{text:?}"
+        );
+        assert!(text.contains("traffic: 1.2 KB/s"), "{text:?}");
     }
 
+    /// A 38x6 pane keeps a retrying bot's state and why it is retrying
+    /// ahead of the player/tile rows.
     #[test]
-    fn empty_pane_says_no_slots() {
-        let text = render(StatusPane::new(None, "—", "lowmem"), 40, 8);
-        assert!(text.contains("no slots"), "empty status: {text:?}");
+    fn a_38x6_pane_keeps_the_retry_reason() {
+        let detail = SlotDetail {
+            row: FleetRow {
+                name: "fc3alice".into(),
+                phase: Phase::Connecting,
+                error: Some("code 5: Try again in 60 secs".into()),
+                ..FleetRow::default()
+            },
+            state: "logging in…".into(),
+            ..SlotDetail::default()
+        };
+        let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 38, 6);
+        assert!(text.contains("state: logging in…"), "{text:?}");
+        assert!(text.contains("last error: code 5"), "{text:?}");
     }
 }

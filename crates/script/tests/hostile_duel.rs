@@ -1,5 +1,6 @@
 use script::isolate_fb::{
-    ReachViewInput, SceneEntityInput, SnapshotInput, TileInput, WidgetTextInput,
+    ChatOptionInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput, VarpInput,
+    WidgetTextInput,
 };
 use script::{LoadIsolate, LoadShape};
 
@@ -115,6 +116,8 @@ fn npc_row<'a>(
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -172,6 +175,7 @@ export default class T extends LoopingBot {
         const npc = Npcs.all()[0];
         globalThis.__probe = {
             hostile: npc ? isHostileAttacker(npc, 8) : false,
+            face: npc?.snap.faceEntity ?? null,
             names: HOSTILE_NAMES,
         };
     }
@@ -185,12 +189,15 @@ export default class T extends LoopingBot {
     snap.npcs = std::slice::from_ref(&guard_self);
     let probe = probe_loop(&iso, &snap);
     assert_eq!(probe["hostile"], true);
+    assert_eq!(probe["face"], 32768);
     assert_eq!(probe["names"], serde_json::json!([]));
 
     let other = npc_row(Some("Guard"), true, 2, 7, 1, &attack);
     snap.tick = 2;
     snap.npcs = std::slice::from_ref(&other);
-    assert_eq!(probe_loop(&iso, &snap)["hostile"], false);
+    let probe = probe_loop(&iso, &snap);
+    assert_eq!(probe["hostile"], false);
+    assert_eq!(probe["face"], 32775);
 
     let man = npc_row(Some("Man"), true, 2, 0, 1, &attack);
     snap.tick = 3;
@@ -232,6 +239,7 @@ export default class T extends LoopingBot {
             partner: reader.ifText(6671),
             waiting: reader.ifText(6684),
             confirm: reader.ifText(6571),
+            stake: reader.ifText(6669),
             missing: reader.ifText(1),
             bad: reader.ifText('nope'),
         };
@@ -243,10 +251,17 @@ export default class T extends LoopingBot {
         WidgetTextInput {
             component_id: 6671,
             text: "Zezima",
+            item_count: -1,
         },
         WidgetTextInput {
             component_id: 6684,
             text: "Waiting for other player...",
+            item_count: -1,
+        },
+        WidgetTextInput {
+            component_id: 6669,
+            text: "",
+            item_count: 0,
         },
     ];
     let mut snap = base_snapshot();
@@ -256,6 +271,11 @@ export default class T extends LoopingBot {
     assert_eq!(probe["partner"], "Zezima");
     assert_eq!(probe["waiting"], "Waiting for other player...");
     assert_eq!(probe["confirm"], serde_json::Value::Null);
+    assert_eq!(
+        probe["stake"],
+        serde_json::Value::Null,
+        "an inventory component has no text"
+    );
     assert_eq!(probe["missing"], serde_json::Value::Null);
     assert_eq!(probe["bad"], serde_json::Value::Null);
 
@@ -289,6 +309,7 @@ export default class T extends LoopingBot {
     let widgets = [WidgetTextInput {
         component_id: 6671,
         text: "Partner",
+        item_count: -1,
     }];
     let mut snap = base_snapshot();
     snap.hold = true;
@@ -348,6 +369,41 @@ export default class T extends LoopingBot {
     }
 }
 
+/// Frozen `fightArenaAt` answers with the `DUEL_FIGHT_ARENAS` entry itself:
+/// the trainer tells a pen change, and an opponent in its own pen, apart by
+/// identity (DuelArena.ts observeFightState, canAttemptDuelFight).
+#[test]
+fn fight_arena_at_answers_the_frozen_pen_object() {
+    let src = r#"
+import { DUEL_FIGHT_ARENAS, fightArenaAt } from '../../api/duel/Duel.js';
+export default class T extends LoopingBot {
+    loop() {
+        const self = fightArenaAt({ x: 3340, z: 3250, level: 0 });
+        globalThis.__probe = {
+            shared: self === fightArenaAt({ x: 3350, z: 3252, level: 0 }),
+            frozen: self === DUEL_FIGHT_ARENAS[0],
+            other: fightArenaAt({ x: 3370, z: 3230, level: 0 }) === DUEL_FIGHT_ARENAS[1],
+            lobby: fightArenaAt({ x: 3368, z: 3274, level: 0 }),
+            upstairs: fightArenaAt({ x: 3340, z: 3250, level: 1 }),
+        };
+    }
+}
+"#;
+    let iso = spawn(src);
+    let probe = probe_loop(&iso, &base_snapshot());
+    assert_eq!(
+        probe,
+        serde_json::json!({
+            "shared": true,
+            "frozen": true,
+            "other": true,
+            "lobby": null,
+            "upstairs": null,
+        })
+    );
+    iso.join();
+}
+
 #[test]
 fn missing_distance_or_max_refuses_hostile_true() {
     let src = r#"
@@ -377,5 +433,615 @@ export default class T extends LoopingBot {
     let probe = probe_loop(&iso, &snap);
     assert_eq!(probe["noMax"], false);
     assert_eq!(probe["noDistance"], false);
+    iso.join();
+}
+
+fn handshake_source(partner: &str, initiator: bool) -> String {
+    format!(
+        r#"
+import {{ ClueDuelHandshake }} from '../../api/duel/ClueDuel.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__done) return;
+        this.handshake ||= new ClueDuelHandshake({partner:?}, {initiator}, () => {{}});
+        globalThis.__result = await this.handshake.tick();
+        globalThis.__done = true;
+    }}
+}}
+"#
+    )
+}
+
+fn run_handshake(
+    partner: &str,
+    initiator: bool,
+    snapshot: &SnapshotInput<'_>,
+) -> Vec<script::shim::InteractReq> {
+    let iso = spawn(&handshake_source(partner, initiator));
+    post_snapshot_input(&iso, snapshot);
+    iso.on_game_tick(snapshot.tick);
+    let _ = iso.probe("true");
+    let requests = iso.drain_interacts();
+    iso.join();
+    requests
+}
+
+#[test]
+fn clue_duel_both_roles_challenge_the_named_visible_partner() {
+    let challenge = ["Challenge".to_string()];
+    let player = npc_row(Some("Helper_Name"), false, 0, -1, 1, &challenge);
+    let mut snapshot = base_snapshot();
+    snapshot.here = Some(TileInput {
+        x: 3368,
+        z: 3274,
+        level: 0,
+    });
+    snapshot.players = std::slice::from_ref(&player);
+    for initiator in [false, true] {
+        assert_eq!(
+            run_handshake(" helper name ", initiator, &snapshot),
+            vec![script::shim::InteractReq::Player {
+                name: "Helper_Name".into(),
+                action: "Challenge".into(),
+            }]
+        );
+    }
+}
+
+#[test]
+fn clue_duel_rejects_wrong_partner_and_any_stake() {
+    let wrong = [
+        WidgetTextInput {
+            component_id: 6671,
+            text: "Dueling with: Intruder",
+            item_count: -1,
+        },
+        WidgetTextInput {
+            component_id: 6669,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6670,
+            text: "",
+            item_count: 0,
+        },
+    ];
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6575;
+    snapshot.widgets = &wrong;
+    assert_eq!(
+        run_handshake("Helper", true, &snapshot),
+        vec![script::shim::InteractReq::CloseModal]
+    );
+
+    let staked = [
+        WidgetTextInput {
+            component_id: 6671,
+            text: "Dueling with: Helper",
+            item_count: -1,
+        },
+        WidgetTextInput {
+            component_id: 6669,
+            text: "",
+            item_count: 1,
+        },
+        WidgetTextInput {
+            component_id: 6670,
+            text: "",
+            item_count: 0,
+        },
+    ];
+    snapshot.widgets = &staked;
+    assert_eq!(
+        run_handshake("Helper", false, &snapshot),
+        vec![script::shim::InteractReq::CloseModal]
+    );
+}
+
+#[test]
+fn clue_duel_initiator_sets_obstacle_rules_when_zero_varp_is_not_transmitted() {
+    let offer = [
+        WidgetTextInput {
+            component_id: 6671,
+            text: "Dueling with: Helper",
+            item_count: -1,
+        },
+        WidgetTextInput {
+            component_id: 6669,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6670,
+            text: "",
+            item_count: 0,
+        },
+    ];
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6575;
+    snapshot.widgets = &offer;
+    snapshot.varps = &[];
+    assert_eq!(
+        run_handshake("Helper", true, &snapshot),
+        vec![script::shim::InteractReq::IfButton { component_id: 6732 }]
+    );
+    assert!(
+        run_handshake("Helper", false, &snapshot).is_empty(),
+        "the helper waits for the solver to select obstacle rules"
+    );
+}
+#[test]
+fn clue_duel_helper_accepts_only_after_the_initiator_is_observed_accepted() {
+    let options = [VarpInput {
+        index: 286,
+        value: 1024,
+    }];
+    let offer = |status: &'static str| {
+        [
+            WidgetTextInput {
+                component_id: 6671,
+                text: "Dueling with: Helper",
+                item_count: -1,
+            },
+            WidgetTextInput {
+                component_id: 6669,
+                text: "",
+                item_count: 0,
+            },
+            WidgetTextInput {
+                component_id: 6670,
+                text: "",
+                item_count: 0,
+            },
+            WidgetTextInput {
+                component_id: 6684,
+                text: status,
+                item_count: -1,
+            },
+        ]
+    };
+    let initial = offer("");
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6575;
+    snapshot.varps = &options;
+    snapshot.widgets = &initial;
+    assert!(matches!(
+        run_handshake("Helper", true, &snapshot).as_slice(),
+        [script::shim::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
+    ));
+    assert!(
+        run_handshake("Helper", false, &snapshot).is_empty(),
+        "the helper must not race the initiator's accept packet"
+    );
+
+    let accepted = offer("Other player has accepted.");
+    snapshot.widgets = &accepted;
+    assert!(matches!(
+        run_handshake("Helper", false, &snapshot).as_slice(),
+        [script::shim::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
+    ));
+}
+
+#[test]
+fn clue_duel_offer_identity_does_not_authorize_a_staked_confirm() {
+    let source = r#"
+import { ClueDuelHandshake } from '../../api/duel/ClueDuel.js';
+export default class T extends LoopingBot {
+    async loop() {
+        this.handshake ||= new ClueDuelHandshake('Helper', true, () => {});
+        globalThis.__result = await this.handshake.tick();
+    }
+}
+"#;
+    let isolate = spawn(source);
+    let options = [VarpInput {
+        index: 286,
+        value: 1024,
+    }];
+    let offer = [
+        WidgetTextInput {
+            component_id: 6671,
+            text: "Dueling with: Helper",
+            item_count: -1,
+        },
+        WidgetTextInput {
+            component_id: 6669,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6670,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6684,
+            text: "",
+            item_count: -1,
+        },
+    ];
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6575;
+    snapshot.varps = &options;
+    snapshot.widgets = &offer;
+    post_snapshot_input(&isolate, &snapshot);
+    isolate.on_game_tick(1);
+    let _ = isolate.probe("globalThis.__result");
+    assert_eq!(
+        isolate.drain_interacts(),
+        vec![script::shim::InteractReq::DuelAccept {
+            screen: "offer".into(),
+            partner: "Helper".into(),
+            rules: 1024,
+        }]
+    );
+
+    let confirm = [
+        WidgetTextInput {
+            component_id: 6507,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6508,
+            text: "",
+            item_count: 1,
+        },
+        WidgetTextInput {
+            component_id: 6571,
+            text: "",
+            item_count: -1,
+        },
+    ];
+    std::thread::sleep(std::time::Duration::from_millis(650));
+    snapshot.tick = 2;
+    snapshot.main_modal_id = 6412;
+    snapshot.widgets = &confirm;
+    post_snapshot_input(&isolate, &snapshot);
+    isolate.on_game_tick(2);
+    let _ = isolate.probe("globalThis.__result");
+    assert_eq!(
+        isolate.drain_interacts(),
+        vec![script::shim::InteractReq::CloseModal],
+        "a stake inserted after a valid offer must cancel instead of confirming"
+    );
+    isolate.join();
+}
+
+#[test]
+fn clue_duel_confirm_without_a_validated_offer_is_rejected() {
+    let widgets = [
+        WidgetTextInput {
+            component_id: 6507,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6508,
+            text: "",
+            item_count: 0,
+        },
+    ];
+    let options = [VarpInput {
+        index: 286,
+        value: 1024,
+    }];
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6412;
+    snapshot.widgets = &widgets;
+    snapshot.varps = &options;
+    assert_eq!(
+        run_handshake("Helper", true, &snapshot),
+        vec![script::shim::InteractReq::CloseModal]
+    );
+}
+
+#[test]
+fn clue_duel_leave_targets_the_nearest_forfeit_exit() {
+    let actions = ["Forfeit".to_string()];
+    let loc = |id, x, z| SceneEntityInput {
+        index: id,
+        id,
+        name: Some("Trapdoor"),
+        x,
+        z,
+        level: 0,
+        distance: 0,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: 0,
+        nz: 0,
+        shape: 0,
+        angle: 0,
+    };
+    let locs = [loc(1, 3331, 3231), loc(2, 3365, 3245)];
+    let mut snapshot = base_snapshot();
+    snapshot.here = Some(TileInput {
+        x: 3374,
+        z: 3251,
+        level: 0,
+    });
+    snapshot.locs = &locs;
+    let iso = spawn(
+        r#"
+import { leaveClueDuel } from '../../api/duel/ClueDuel.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        await leaveClueDuel(() => {});
+    }
+}
+"#,
+    );
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(snapshot.tick);
+    let _ = iso.probe("true");
+    snapshot.tick += 1;
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(snapshot.tick);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Loc {
+            x: 3365,
+            z: 3245,
+            level: 0,
+            action: "Forfeit".into(),
+            id: Some(2),
+        }]
+    );
+    iso.join();
+}
+
+/// Frozen `walkAcrossClueDuel` from inside a pen to an outside tile: it
+/// forfeits (logging it), answers 'Yes', then walks the destination leg as
+/// a resilient walk whose wait settles on its own request.
+#[test]
+fn clue_duel_travel_walks_to_an_outside_destination_after_forfeit() {
+    let actions = ["Forfeit".to_string()];
+    let locs = [SceneEntityInput {
+        index: 2,
+        id: 3203,
+        name: Some("Arena exit"),
+        x: 3364,
+        z: 3251,
+        level: 0,
+        distance: 10,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: 0,
+        nz: 0,
+        shape: 0,
+        angle: 0,
+    }];
+    let mut snapshot = base_snapshot();
+    snapshot.here = Some(TileInput {
+        x: 3374,
+        z: 3251,
+        level: 0,
+    });
+    snapshot.locs = &locs;
+    let iso = spawn(
+        r#"
+import { runMachine } from '../../shim/_kernel.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__log = [];
+        await runMachine('clue_duel_travel', {
+            x: 3382, z: 3269, level: 0, radius: 2,
+        }, { log: (line) => globalThis.__log.push(line) });
+    }
+}
+"#,
+    );
+    for tick in 1..=2 {
+        snapshot.tick = tick;
+        post_snapshot_input(&iso, &snapshot);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("true");
+    }
+    let choices = [
+        ChatOptionInput {
+            text: "Yes",
+            com_id: 4883,
+        },
+        ChatOptionInput {
+            text: "No",
+            com_id: 4884,
+        },
+    ];
+    snapshot.tick = 3;
+    snapshot.chat_options = &choices;
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(3);
+    let _ = iso.probe("true");
+
+    snapshot.tick = 4;
+    snapshot.here = Some(TileInput {
+        x: 3361,
+        z: 3270,
+        level: 0,
+    });
+    snapshot.chat_options = &[];
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(4);
+    let _ = iso.probe("true");
+
+    let requests = iso.drain_interacts();
+    assert_eq!(
+        requests[..2],
+        [
+            script::shim::InteractReq::Loc {
+                x: 3364,
+                z: 3251,
+                level: 0,
+                action: "Forfeit".into(),
+                id: Some(3203),
+            },
+            script::shim::InteractReq::Answer { option: 1 },
+        ]
+    );
+    assert!(
+        matches!(
+            &requests[2..],
+            [script::shim::InteractReq::WalkNear {
+                x: 3382,
+                z: 3269,
+                level: 0,
+                radius: 2,
+                request_id,
+                ..
+            }] if *request_id != 0
+        ),
+        "{requests:?}"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__log").unwrap(),
+        serde_json::json!(["forfeiting the clue duel"])
+    );
+    iso.join();
+}
+
+/// A travel from the lobby into the packed clue's pen, logging to
+/// `globalThis.__log` and settling into `globalThis.__crossed`.
+const CROSS_TO_CLUE_PEN: &str = r#"
+import { walkAcrossClueDuel } from '../../api/ai/clues/duelTravel.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__log = [];
+        globalThis.__crossed = await walkAcrossClueDuel(
+            { x: 3374, z: 3250, level: 0 }, 1, (line) => globalThis.__log.push(line));
+    }
+}
+"#;
+
+/// Frozen `walkAcrossClueDuel` stops on an event signal while it waits for
+/// the helper, cancelling the duel screen only when one is open.
+#[test]
+fn clue_duel_travel_interrupt_cancels_only_an_open_duel() {
+    let offer = [WidgetTextInput {
+        component_id: 6671,
+        text: "Dueling with: Helper",
+        item_count: -1,
+    }];
+    for offer_open in [false, true] {
+        let iso = spawn(CROSS_TO_CLUE_PEN);
+        iso.post_settings_bag(
+            serde_json::json!({ "clueDuelPartner": "Helper" })
+                .as_object()
+                .unwrap(),
+        );
+        let mut snapshot = base_snapshot();
+        snapshot.here = Some(TileInput {
+            x: 3368,
+            z: 3274,
+            level: 0,
+        });
+        snapshot.my_name = Some("Solver");
+        post_snapshot_input(&iso, &snapshot);
+        iso.on_game_tick(1);
+        let _ = iso.probe("true");
+        assert!(iso.drain_interacts().is_empty(), "waiting at the lobby");
+
+        iso.probe("globalThis.__rs2b0t_event_interrupt = () => true, true")
+            .unwrap();
+        snapshot.tick = 2;
+        if offer_open {
+            snapshot.main_modal_id = 6575;
+            snapshot.widgets = &offer;
+        }
+        post_snapshot_input(&iso, &snapshot);
+        iso.on_game_tick(2);
+        let _ = iso.probe("true");
+        assert_eq!(
+            iso.drain_interacts(),
+            if offer_open {
+                vec![script::shim::InteractReq::CloseModal]
+            } else {
+                Vec::new()
+            },
+            "offer open: {offer_open}"
+        );
+        assert_eq!(
+            iso.probe("globalThis.__crossed").unwrap(),
+            false,
+            "offer open: {offer_open}"
+        );
+        assert_eq!(
+            iso.probe("globalThis.__log").unwrap(),
+            serde_json::json!(["waiting for clue helper Helper"])
+        );
+        iso.join();
+    }
+}
+
+/// Frozen `Duel.cancel()` is `Modals.close()` on an open duel screen: it
+/// resolves once the modal closed, and false with no duel screen open.
+#[test]
+fn duel_cancel_awaits_the_closed_duel_screen() {
+    let iso = spawn(
+        r#"
+import { Duel } from '../../api/duel/Duel.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__cancelled = await Duel.cancel();
+        globalThis.__again = await Duel.cancel();
+    }
+}
+"#,
+    );
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6575;
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::CloseModal]
+    );
+    assert_eq!(
+        iso.probe("globalThis.__cancelled").unwrap(),
+        serde_json::Value::Null,
+        "Duel.cancel waits for the offer screen to close"
+    );
+
+    snapshot.tick = 2;
+    snapshot.main_modal_id = -1;
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    assert_eq!(iso.probe("globalThis.__cancelled").unwrap(), true);
+    assert_eq!(
+        iso.probe("globalThis.__again").unwrap(),
+        false,
+        "no duel screen: nothing to cancel"
+    );
+    assert!(iso.drain_interacts().is_empty());
     iso.join();
 }

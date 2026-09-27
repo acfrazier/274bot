@@ -69,6 +69,8 @@ fn run() -> Result<(), String> {
     let reach_bytes = std::fs::read(&reach_path).ok();
     let canlight_path = nav_path.with_extension("navcanlight");
     let canlight_bytes = std::fs::read(&canlight_path).ok();
+    let pois_path = nav_path.with_extension("navpois");
+    let pois_bytes = std::fs::read(&pois_path).ok();
     let nav_manifest: NavManifest = read_json(&nav_manifest_path(nav_path))?;
     nav_manifest.verify(
         revision,
@@ -77,6 +79,7 @@ fn run() -> Result<(), String> {
         Some(&flags_bytes),
         reach_bytes.as_deref(),
         canlight_bytes.as_deref(),
+        pois_bytes.as_deref(),
     )?;
 
     let config_bytes =

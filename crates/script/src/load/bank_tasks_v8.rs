@@ -15,6 +15,8 @@
 //! - `__rs2b0t_next_withdraw_chunk(need)`: frozen `nextWithdrawChunk`
 //!   ([`crate::bank_withdraw::next_chunk`]), `null` or `{ kind, count }` /
 //!   `{ kind, op }`.
+//! - `__rs2b0t_withdraw_op(ops, amount)`: frozen `withdrawOp`
+//!   ([`crate::bank_op::withdraw_op`]), the matching op label or `null`.
 
 use super::callback_v8::{self as cb, Callback, JsResult};
 use crate::periodic_bank::{
@@ -33,7 +35,47 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         "__rs2b0t_death_recovery_validate",
         death_recovery_validate,
     )?;
-    cb::install(runtime, "__rs2b0t_next_withdraw_chunk", next_withdraw_chunk)
+    cb::install(runtime, "__rs2b0t_next_withdraw_chunk", next_withdraw_chunk)?;
+    cb::install(runtime, "__rs2b0t_withdraw_op", withdraw_op)
+}
+
+/// Frozen `withdrawOp(ops, amount)` (`api/bank/bankOps.ts:5-21`): the first
+/// posted label matching the amount, `null` when none does, `undefined` for
+/// an amount outside the frozen cases (the `switch` falls through).
+fn withdraw_op<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    use crate::bank_op::{withdraw_op, WithdrawAmount};
+    let result = (|| {
+        let amount = args.get(1);
+        let amount = amount
+            .is_string()
+            .then(|| amount.to_rust_string_lossy(scope))
+            .and_then(|amount| WithdrawAmount::parse(&amount));
+        let ops = args.get(0);
+        let Ok(list) = v8::Local::<v8::Array>::try_from(ops) else {
+            return Err(cb::type_error(scope, "ops.filter is not a function"));
+        };
+        let Some(amount) = amount else {
+            return Ok(v8::undefined(scope).into());
+        };
+        let mut labels = Vec::with_capacity(list.length() as usize);
+        for index in 0..list.length() {
+            let op = cb::get_index(scope, ops, index)?;
+            if op.is_string() {
+                labels.push(op.to_rust_string_lossy(scope));
+            }
+        }
+        Ok(
+            match withdraw_op(labels.iter().map(String::as_str), amount) {
+                Some(found) => cb::string(scope, &labels[found]),
+                None => v8::null(scope).into(),
+            },
+        )
+    })();
+    cb::finish(scope, rv, result);
 }
 
 fn next_withdraw_chunk<'s>(

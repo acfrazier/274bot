@@ -65,6 +65,12 @@ export const reader = proxy('reader', {
     worldTile() {
         return host().tile || snap().here || null;
     },
+    serverTile() {
+        return snap().here || null;
+    },
+    selfSlot() {
+        return finiteInt(snap().self_slot) ? snap().self_slot : -1;
+    },
     inventorySize() {
         return typeof host().invSize === 'number' ? host().invSize : 0;
     },
@@ -159,7 +165,7 @@ export const reader = proxy('reader', {
         return snap().in_combat === true;
     },
     selfAnim() {
-        return snap().animating === true ? 1 : -1;
+        return snap().self_anim ?? -1;
     },
     selfTarget() {
         const kind = snap().self_target_kind;

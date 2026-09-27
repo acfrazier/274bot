@@ -101,6 +101,10 @@ pub struct ScenarioSettings {
     /// (currently `Sherlock`) starts that port. `None` for host-driven
     /// scenarios.
     pub start_script: Option<&'static str>,
+    /// A heterogeneous or multi-slot catalog launch owned by the live
+    /// harness. Unlike `inject_companion_as`, this can select a different
+    /// card per slot and can start all four members of a party.
+    pub fleet_start: Option<FleetStart>,
     /// Exact in-tree example file name (`bone_burier_v2.ts` / `.js`). When
     /// set, live prepare Loads that path as a File card and selects it by
     /// canonical-path `identity_id()` — never a shared stem. Distinct from
@@ -125,6 +129,78 @@ pub struct ScenarioSettings {
     /// operator `loadouts.json`. Scenario-scoped; not a global name reservation
     /// on profile Start/reload.
     pub fixture_loadouts: Option<&'static [FixtureLoadout]>,
+}
+/// Harness-owned multi-slot catalog launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FleetStart {
+    /// Slot 0 runs ClueSolver; slot 1 runs the clue-mode Duel helper.
+    ClueDuel,
+    /// Every profile runs JiveKQ with one shared minted roster.
+    JiveKq,
+}
+
+/// How long the JiveKQ leader's Start waits after its three peers started,
+/// so they first prove their missing-peer bank hold.
+pub const JIVE_KQ_LEADER_DELAY: Duration = Duration::from_secs(30);
+
+/// One Start of a [`FleetStart`]: the catalog card a front end loads on the
+/// minted slot `names[slot]`, the harness settings merged last into its
+/// bag, and its hold after the members stashed before it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FleetMember {
+    pub slot: usize,
+    pub card: &'static str,
+    pub settings: Vec<(&'static str, String)>,
+    pub delay_after_peers: Option<Duration>,
+}
+
+impl FleetStart {
+    /// The launch plan for the run's minted `names` (driven slot first), in
+    /// Start order. Partner and roster settings name players as the game
+    /// shows them (`JString::to_screen_name`), as the frozen cards compare.
+    pub fn members(self, names: &[String]) -> Result<Vec<FleetMember>, String> {
+        let shown = |name: &String| client::util::JString::to_screen_name(name);
+        match self {
+            Self::ClueDuel => {
+                let [solver, helper] = names else {
+                    return Err("ClueDuel fleet requires exactly two profiles".into());
+                };
+                Ok(vec![
+                    FleetMember {
+                        slot: 0,
+                        card: "ClueSolver",
+                        settings: vec![("clueDuelPartner", shown(helper))],
+                        delay_after_peers: None,
+                    },
+                    FleetMember {
+                        slot: 1,
+                        card: "Duel Arena Combat Trainer",
+                        settings: vec![
+                            ("mode", "Clue helper".to_string()),
+                            ("partner", shown(solver)),
+                        ],
+                        delay_after_peers: None,
+                    },
+                ])
+            }
+            Self::JiveKq => {
+                if names.len() != 4 {
+                    return Err("JiveKq fleet requires exactly four profiles".into());
+                }
+                let roster = names.iter().map(shown).collect::<Vec<_>>().join(",");
+                // The driven leader starts last.
+                Ok([1, 2, 3, 0]
+                    .into_iter()
+                    .map(|slot| FleetMember {
+                        slot,
+                        card: "JiveKQ",
+                        settings: vec![("team", roster.clone())],
+                        delay_after_peers: (slot == 0).then_some(JIVE_KQ_LEADER_DELAY),
+                    })
+                    .collect())
+            }
+        }
+    }
 }
 
 /// One explicit loadout a live harness posts at catalog Start.
@@ -288,6 +364,7 @@ impl Default for ScenarioSettings {
             require_mainland_base: false,
             sustains: Vec::new(),
             start_script: None,
+            fleet_start: None,
             start_file: None,
             wait_script_stop: None,
             script_settings_inject: None,
@@ -370,6 +447,15 @@ pub enum StepKind {
         #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
+    /// Host-only fleet observation. Sends no game action and advances only
+    /// when `ready` accepts the evolving driven-slot snapshot. Companion
+    /// closures may feed the same shared witness. `evidence` is the named
+    /// receipt emitted by headed and headless runners.
+    Await {
+        evidence: &'static str,
+        #[allow(clippy::type_complexity)]
+        ready: Box<dyn Fn(&GameSnapshot) -> bool + Send + Sync>,
+    },
     /// Scenario-only native lamp witness. Sends no game action. The runner
     /// latches one post-entry episode from its existing host hold input plus
     /// snapshot facts: hold while `lamp_id` is present, `reward_stat` XP
@@ -392,6 +478,14 @@ pub enum StepKind {
         /// latched. `macro_maze` starts itself; do not wait on the transient
         /// Old Man NPC.
         trigger: Option<&'static str>,
+    },
+    /// Observe combat XP across at most two stall sessions. After a catch-less
+    /// first bank visit, require a closed bank, return to `stand`, and renewed
+    /// native `guard_ready` evidence. A second unqualified bank visit fails.
+    /// Sends no actions and preserves the Start-anchored cumulative XP arm.
+    ObserveStallCombat {
+        stand: WorldTile,
+        guard_ready: Proof,
     },
     /// Host starts the catalog isolate (`script_start_load`) once when
     /// the live pump sees this step. No-op on the client. The wait is an
@@ -663,6 +757,15 @@ fn insert_setstat_drain_before_hostile_tele(scenario: &mut Scenario) {
         .steps
         .insert(tele, drain_setstat_levelups_before_hostile_tele());
 }
+
+/// Where `api::interact::mainland_hop` lands (`tele 0,50,50,20,20`). A
+/// mainland seed releases only on this exact tile, so it is also the Start
+/// tile of a mainland-seeded File card whose seed does not move it.
+pub(crate) const MAINLAND_LANDING: WorldTile = WorldTile {
+    x: 3220,
+    z: 3220,
+    level: 0,
+};
 
 /// Catalog Start after the last seed wait: live pumps call `script_start_load`
 /// once, then this one-tick arm (run energy, not XP) succeeds.

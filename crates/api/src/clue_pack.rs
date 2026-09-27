@@ -8,7 +8,7 @@
 //! `teleportRuneTarget`, `weaponNeeded`, `casketRewardSlots`), `hardClueKit.ts`
 //! (`superantiDoses`, `hardClueKit`), and the `isKeep` predicate of
 //! `SolveClue.ts` (`bankFirst`) in
-//! `release-0.1.8/reference/rs2b0t-beecd9126b/`. Where the older preflight
+//! `release-0.1.9/reference/rs2b0t-00d39a17e0/`. Where the older preflight
 //! arithmetic disagrees with those files, the files control. The four pack
 //! helpers widen to `i64`: `perCast = i32::MAX` publishes `42949672940`, not a
 //! wrapped or saturated `i32`. The dose and shark sums widen the same way, so a

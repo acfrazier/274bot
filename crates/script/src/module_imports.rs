@@ -2,9 +2,9 @@
 //! from the `deno_ast` parse rather than a text scan. Type-only declarations
 //! are flagged so load scans follow only what the transpiled module imports.
 
-use deno_ast::swc::ast::{
-    ExportSpecifier, ImportSpecifier, ModuleDecl, ModuleExportName, ModuleItem,
-};
+#[cfg(feature = "load")]
+use deno_ast::swc::ast::ExportSpecifier;
+use deno_ast::swc::ast::{ImportSpecifier, ModuleDecl, ModuleExportName, ModuleItem};
 use deno_ast::ProgramRef;
 
 /// One static module dependency of a source, in source order.
@@ -16,6 +16,7 @@ pub(crate) struct ModuleImport {
     pub bindings: Vec<(String, String)>,
     /// False when TS strips the whole declaration (`import type`,
     /// `import { type A }`, `export type { A } from`).
+    #[cfg(feature = "load")]
     pub runtime: bool,
 }
 
@@ -64,6 +65,7 @@ pub(crate) fn module_imports(source: &str) -> Vec<ModuleImport> {
                         ImportSpecifier::Namespace(_) => None,
                     })
                     .collect();
+                #[cfg(feature = "load")]
                 let all_type_only = !import.specifiers.is_empty()
                     && import.specifiers.iter().all(
                         |spec| matches!(spec, ImportSpecifier::Named(named) if named.is_type_only),
@@ -71,18 +73,21 @@ pub(crate) fn module_imports(source: &str) -> Vec<ModuleImport> {
                 out.push(ModuleImport {
                     specifier: import.src.value.to_string(),
                     bindings,
+                    #[cfg(feature = "load")]
                     runtime: !import.type_only && !all_type_only,
                 });
             }
             ModuleDecl::ExportAll(export) => out.push(ModuleImport {
                 specifier: export.src.value.to_string(),
                 bindings: Vec::new(),
+                #[cfg(feature = "load")]
                 runtime: !export.type_only,
             }),
             ModuleDecl::ExportNamed(export) => {
                 let Some(src) = export.src.as_ref() else {
                     continue;
                 };
+                #[cfg(feature = "load")]
                 let all_type_only = !export.specifiers.is_empty()
                     && export.specifiers.iter().all(
                         |spec| matches!(spec, ExportSpecifier::Named(named) if named.is_type_only),
@@ -90,6 +95,7 @@ pub(crate) fn module_imports(source: &str) -> Vec<ModuleImport> {
                 out.push(ModuleImport {
                     specifier: src.value.to_string(),
                     bindings: Vec::new(),
+                    #[cfg(feature = "load")]
                     runtime: !export.type_only && !all_type_only,
                 });
             }
@@ -107,6 +113,7 @@ fn export_name(name: &ModuleExportName) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "load")]
     fn runtime(src: &str) -> Vec<String> {
         module_imports(src)
             .into_iter()
@@ -115,6 +122,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(feature = "load")]
     #[test]
     fn type_only_declarations_are_not_runtime_imports() {
         let src = r#"

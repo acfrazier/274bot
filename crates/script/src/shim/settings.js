@@ -53,7 +53,7 @@ class SettingsStoreImpl {
     }
 
     globalBag() {
-        throw new Error('not impl: SettingsStore.globalBag');
+        return new SettingsBag((globalThis.__rs2b0t_host || {}).globalSettingsBag || {});
     }
 }
 

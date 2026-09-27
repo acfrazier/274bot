@@ -193,6 +193,143 @@ pub(crate) fn nav_door_scenario() -> Scenario {
     }
 }
 
+/// Inside the East Ardougne house room sealed by the closed diagonal
+/// (`wall_diagonal`, shape 9) door `loc_1530` at (2669,3316).
+const DIAGONAL_ROOM: WorldTile = WorldTile {
+    x: 2671,
+    z: 3316,
+    level: 0,
+};
+/// The East Ardougne south bank booth stand the 0.1.8.1 Thiever could not
+/// reach from that room.
+const DIAGONAL_BANK: WorldTile = WorldTile {
+    x: 2655,
+    z: 3286,
+    level: 0,
+};
+
+/// The `nav_diagonal_door` scenario: cheat-tele into the East Ardougne
+/// house room whose only exit is the closed diagonal door `loc_1530` at
+/// (2669,3316) (closed is the engine default), then `Follow` the baked
+/// route to the south bank. The route's first transport is the door's
+/// packed diagonal crossing, so the traveller opens it and walks through
+/// the freed door tile. PASS is standing on the bank stand.
+pub(crate) fn nav_diagonal_door_scenario() -> Scenario {
+    Scenario {
+        name: "nav_diagonal_door",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            tele_step("tele into the diagonal-door room", DIAGONAL_ROOM),
+            follow_step(
+                "follow through the diagonal door to the south bank",
+                DIAGONAL_BANK,
+            ),
+        ],
+        proof: Proof::Arrived {
+            x: DIAGONAL_BANK.x,
+            z: DIAGONAL_BANK.z,
+            level: DIAGONAL_BANK.level,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            terminal_shot: Some("nav_diagonal_door terminal"),
+            nav: nav_test_paints().with_tick_ms(300),
+            ..Default::default()
+        },
+    }
+}
+
+/// West of the Heroes' Guild double doors (`herodoor_l/_r` at
+/// (2902,3510)/(2902,3511), `areas_heroes_guild/scripts/heroes_entrance.rs2`).
+const HERO_GUILD_OUTSIDE: WorldTile = WorldTile {
+    x: 2899,
+    z: 3510,
+    level: 0,
+};
+/// Inside the guild's entrance hall, east of the doors.
+const HERO_GUILD_INSIDE: WorldTile = WorldTile {
+    x: 2905,
+    z: 3510,
+    level: 0,
+};
+
+/// The `nav_quest_door` scenario: the quest-stage door live twin. Set
+/// `%heroquest` to `^hero_complete` (15) with the dev `setvar` cheat, relog
+/// so the login-time quest list turns the Hero's Quest row green (as the
+/// nav kit does for its transport quests), cheat-tele west of the Heroes'
+/// Guild, then `Follow` inside. The guild doors open only for
+/// `%heroquest >= ^hero_complete`, which the pack carries as the completed
+/// "Hero's Quest" journal row, so the route's door leg exists only once
+/// the journal is green; PASS is standing in the entrance hall.
+pub(crate) fn nav_quest_door_scenario() -> Scenario {
+    let start = HERO_GUILD_OUTSIDE;
+    let dest = HERO_GUILD_INSIDE;
+    Scenario {
+        name: "nav_quest_door",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            Step {
+                name: "set Hero's Quest complete",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "setvar heroquest 15");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: 3220,
+                        z: 3220,
+                        level: 0,
+                    },
+                    budget_ticks: 30,
+                },
+            },
+            Step {
+                name: "relog so the quest journal refreshes",
+                kind: StepKind::Relog,
+                wait: Wait {
+                    arm: Proof::SideTabAvailable { index: 3 },
+                    budget_ticks: 600,
+                },
+            },
+            Step {
+                name: "journal shows Hero's Quest complete",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::QuestDone {
+                        name: "Hero's Quest",
+                    },
+                    budget_ticks: 200,
+                },
+            },
+            tele_step("tele west of the Heroes' Guild", start),
+            follow_step("follow through the guild doors", dest),
+        ],
+        proof: Proof::Arrived {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            nav: nav_test_paints().with_tick_ms(300),
+            deadline: Duration::from_secs(360),
+            terminal_shot: Some("nav_quest_door terminal"),
+            ..Default::default()
+        },
+    }
+}
+
 /// Closed Catherby range-house door (loc 1530) the closer slams.
 const DOOR: WorldTile = WorldTile {
     x: 2816,

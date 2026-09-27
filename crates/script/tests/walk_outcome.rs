@@ -156,11 +156,59 @@ fn park_walk(iso: &LoadIsolate) -> u64 {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id,
+            avoid: _,
         }] => *request_id,
         other => panic!("unexpected interacts: {other:?}"),
     };
     assert_ne!(request_id, 0, "isolate must allocate a walk request id");
     request_id
+}
+
+#[test]
+fn synthetic_tick_drives_script_interrupt_and_stops_walk() {
+    let src = r#"
+import { EventSignal } from '../../api/execution/EventSignal.js';
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    constructor() {
+        super();
+        globalThis.__ticks = 0;
+        this.on('tick', () => { globalThis.__ticks += 1; });
+        globalThis.__checks = 0;
+        EventSignal.setInterrupt(() => {
+            globalThis.__checks += 1;
+            return globalThis.__ticks >= 2;
+        });
+    }
+    async loop() {
+        globalThis.__rs_ok = null;
+        globalThis.__rs_ok = await Traversal.walkTo(
+            { x: 2820, z: 3556, level: 0 },
+            { radius: 1, timeoutMs: 300000 },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let request_id = park_walk(&iso);
+    assert_ne!(request_id, 0);
+    assert_eq!(iso.probe("__ticks").unwrap(), 1);
+
+    iso.post_snapshot(encode_snapshot(&base_snapshot(2, far())));
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__ticks").unwrap(), 2);
+    assert_ne!(iso.probe("__checks").unwrap(), 0);
+    assert_eq!(
+        iso.probe("__rs_ok").unwrap(),
+        false,
+        "the script interrupt must settle the parked Rust walk"
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::AbortWalk { request_id }],
+        "an interrupted walk must cancel its owned host route"
+    );
+    iso.join();
 }
 
 #[test]
@@ -199,6 +247,7 @@ fn isolate_nopath_delta_snapshot_returns_false_promptly() {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id,
+            avoid: _,
         }] => *request_id,
         other => panic!("unexpected interacts: {other:?}"),
     };
@@ -379,6 +428,7 @@ fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: first,
+            avoid: _,
         }, InteractReq::WalkNear {
             x: 2820,
             z: 3556,
@@ -388,6 +438,7 @@ fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: second,
+            avoid: _,
         }] => {
             assert_ne!(*first, 0);
             assert_ne!(*second, 0);
@@ -578,6 +629,7 @@ fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id,
+                avoid: _,
             }] => *request_id,
             other => panic!("expected WalkNear radius 2 for world dest: {other:?}"),
         }
@@ -591,6 +643,7 @@ fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id,
+                avoid: _,
             }] => *request_id,
             other => panic!("expected Walk (radius 0) for world dest: {other:?}"),
         }
@@ -602,7 +655,8 @@ fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u
 #[test]
 fn walk_to_off_scene_world_dest_queues_native_walk_not_scene_walk_to() {
     let iso = LoadIsolate::spawn(
-        walk_to_src("Traversal.walkTo({ x: 3096, z: 9868, level: 0 })"),
+        // An exact walk; the frozen default radius 2 is `walk_options.rs`'s.
+        walk_to_src("Traversal.walkTo({ x: 3096, z: 9868, level: 0 }, { radius: 0 })"),
         LoadShape::CompatClass,
         vec![],
     )
@@ -661,6 +715,7 @@ fn walk_to_stays_pending_until_posted_arrival() {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id,
+            avoid: _,
         }] => assert_ne!(*request_id, 0),
         other => panic!("walkTo radius 1 must queue WalkNear: {other:?}"),
     }
@@ -701,6 +756,7 @@ fn walk_to_same_coord_wrong_plane_is_not_arrival() {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id,
+            avoid: _,
         }] => assert_ne!(*request_id, 0),
         other => panic!("wrong-plane dest must still queue native Walk: {other:?}"),
     }

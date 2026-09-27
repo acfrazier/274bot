@@ -264,7 +264,7 @@ fn begin_set(
     cx: &mut Cx<'_>,
 ) -> Begin<Prayer> {
     let Some(data) = data else {
-        return Begin::Done(PrayerDone::failed("unknown-prayer"));
+        return Begin::Done(PrayerDone::failed(crate::supply_v2::GAME_DATA_UNAVAILABLE));
     };
     let Some(row) = lookup(data, &args.name) else {
         return Begin::Done(PrayerDone::failed("unknown-prayer"));
@@ -453,6 +453,21 @@ mod tests {
         );
         assert!(drain().is_empty(), "neither path clicks");
         assert!(!machine::live("prayer"));
+    }
+
+    #[test]
+    fn missing_selected_data_has_an_explicit_reason() {
+        machine::on_reset();
+        observed::on_reset();
+        crate::supply_v2::configure(None);
+        assert_eq!(
+            start(set(on(true))),
+            Started::Settled(Outcome::Done(json!({
+                "ok": false,
+                "reason": "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+            })))
+        );
+        assert!(drain().is_empty());
     }
 
     #[test]

@@ -13,6 +13,7 @@ export { reader } from '../../adapter/ClientAdapter.js';
 export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool } from '../../api/acquisition/Tools.js';
 export { Execution } from '../../api/execution/Execution.js';
 export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '../../api/bot/Bot.js';
+export { Special } from '../../api/combat/Special.js';
 export { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
 export { Quests } from '../../api/ui/questlog/Quests.js';
 export { Traversal } from '../../api/walking/Traversal.js';

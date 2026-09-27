@@ -312,6 +312,7 @@ pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
         | "route_inspect_brimhaven_v2.ts"
         | "prayer_v2.ts"
         | "prayer_v1.ts"
+        | "boat_fare_v1.ts"
         | "line_of_sight_v2.ts"
         | "actor_observation_v2.ts"
         | "fight_field_v2.ts"
@@ -668,11 +669,14 @@ fn order_siblings_deps_first(
     }
     let rels: HashSet<String> = nodes.iter().map(|(rel, _, _, _)| rel.clone()).collect();
     let mut deps: HashMap<String, Vec<String>> = HashMap::new();
-    for (rel, _, _, origin) in &nodes {
+    for (rel, _, js, _) in &nodes {
         let mut needed = Vec::new();
-        for imp in scan_same_folder_js_imports(origin)
+        // Order by emitted runtime imports. Type-only edges in the TypeScript
+        // origin disappear during transpilation and must not manufacture a
+        // dependency cycle (JiveKQ route ↔ party is one such graph).
+        for imp in scan_same_folder_js_imports(js)
             .into_iter()
-            .chain(scan_scripts_sibling_js_imports(origin))
+            .chain(scan_scripts_sibling_js_imports(js))
         {
             if rels.contains(&imp) && imp != *rel {
                 needed.push(imp);
@@ -724,10 +728,9 @@ pub fn is_reserved(name: &str) -> bool {
 }
 
 /// Catalog picker names that stay dim even if their imports later remap.
-/// GatheringBot rows, quest-def cards, ClueSolver, MarketMaker.
+/// GatheringBot rows, quest-def cards, and MarketMaker.
 pub const CATALOG_DIM: &[&str] = &[
     "AIOQuester",
-    "ClueSolver",
     "Woodcutter",
     "Miner",
     "Fisher",
@@ -754,6 +757,18 @@ pub(super) fn catalog_unloadable(
         if name == "BankSorter" {
             return Some(
                 "dim: BankSorter is unavailable until native bank sorting is implemented".into(),
+            );
+        }
+        if name == "EssMiner" {
+            return Some(
+                "dim: EssMiner is unavailable until the native Gatherer replaces it".into(),
+            );
+        }
+        if name == "JiveKQ" {
+            // The broker, the fixture and the script_jive_kq_four witness
+            // stay for Beta 1; the live harness Starts it past this dim.
+            return Some(
+                "dim: JiveKQ is unavailable: four-player qualification incomplete in 0.1.9".into(),
             );
         }
         if is_catalog_dim(name) {

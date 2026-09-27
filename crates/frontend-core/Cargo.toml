@@ -1,0 +1,30 @@
+[package]
+name = "frontend-core"
+version.workspace = true
+edition = "2021"
+publish = false
+
+# Operator lifecycle shared by the native panel and the TUI. It depends on
+# neither front end nor on any window/terminal library.
+[dependencies]
+api = { path = "../api" }
+host = { path = "../host" }
+host-play = { path = "../host-play" }
+script = { path = "../script" }
+parking_lot = "0.12"
+serde = "=1.0.219"
+serde_json = "=1.0.140"
+vault = { path = "../vault" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# Integration tests use the fixture seams behind this crate's test-support.
+frontend-core = { path = ".", features = ["test-support"] }
+host-play = { path = "../host-play", features = ["test-support"] }
+
+[features]
+# Test-only lifecycle fixtures (arm-only spawns). Enabled from front-end
+# dev-dependencies, never production builds.
+test-support = ["host-play/test-support"]

@@ -94,7 +94,7 @@ fn v2_food_of<'s>(
     let fallback = required_string_field(scope, input, "fallback")?;
     let loadout = required_loadout(scope, input)?;
     let Some(data) = supply_v2::selected_data() else {
-        return Err("missing-selected-data".into());
+        return Err(supply_v2::GAME_DATA_UNAVAILABLE.into());
     };
     let value = loadout_plan::food_of_input(Some(data.as_ref()), loadout.as_ref(), &fallback);
     let s = v8_str(scope, &value)?;
@@ -158,7 +158,7 @@ fn v2_range_loadout_of<'s>(
     let weapon = field_string(scope, input, "weapon")?;
     let ammo = field_string(scope, input, "ammo")?;
     let Some(data) = supply_v2::selected_data() else {
-        return Err("missing-selected-data".into());
+        return Err(supply_v2::GAME_DATA_UNAVAILABLE.into());
     };
     let row = ranged::range_loadout_of_items(data.items(), &weapon, &ammo);
     let obj = v8::Object::new(scope);
@@ -727,6 +727,11 @@ fn helper_err<'s>(
     let obj = v8::Object::new(scope);
     let ok = v8::Boolean::new(scope, false);
     set_key(scope, obj, "ok", ok.into());
+    let error = if error == "missing-selected-data" {
+        supply_v2::GAME_DATA_UNAVAILABLE
+    } else {
+        error
+    };
     let err = v8_str(scope, error)?;
     set_key(scope, obj, "error", err);
     Ok(obj.into())

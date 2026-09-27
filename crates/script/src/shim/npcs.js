@@ -49,6 +49,15 @@ export class Npc {
         return Tile.from({ x: this.snap.nx, z: this.snap.nz, level: this.snap.level ?? 0 });
     }
 
+    networkTile() {
+        // Frozen Npc.ts:55-57 maps a missing network tile to tile().
+        return Tile.from({
+            x: this.snap.network_x ?? this.snap.x,
+            z: this.snap.network_z ?? this.snap.z,
+            level: this.snap.level ?? 0,
+        });
+    }
+
     /**
      * True when this NPC's combat target is the local player (`face_entity`),
      * not merely when `Game.inCombat()` is true.

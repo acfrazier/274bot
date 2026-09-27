@@ -1,7 +1,7 @@
 //! Nav: whole-world collision bake, transport graph, Dijkstra router
 //! (`find` / `find_with`), pollable `Traveller::follow`, WalkTo grid,
 //! arrival detection, and the content-derived bank stand table. Pack
-//! magic `274V`, version byte 9.
+//! magic `274V`, version byte 10.
 
 pub mod arrival;
 pub mod bake;
@@ -13,6 +13,7 @@ pub mod collision;
 pub mod essence;
 pub mod grid;
 pub mod manifest;
+pub mod map;
 pub mod named_banks;
 pub mod pack;
 pub mod paint;
@@ -21,73 +22,16 @@ pub mod tile;
 pub mod transport;
 pub mod traveller;
 pub mod walk_destinations;
-pub mod wilderness;
 pub mod world;
 pub mod world_state;
 
 pub use world_state::WorldState;
 
-/// Verbose nav/traveller dumps (`BOT_DEBUG=1`). Cached once per process.
+/// Verbose nav/traveller dumps (`BOT_DEBUG=1` or host `--debug`).
 pub fn debug_enabled() -> bool {
-    use std::sync::OnceLock;
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("BOT_DEBUG").is_ok_and(|v| v == "1"))
+    api::hostlog::debug_enabled()
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::grid::StepGrid;
-    use crate::tile::{chebyshev, Tile};
-
-    #[test]
-    fn fixture_center_is_walkable_and_origin_is_not_out_of_range() {
-        let g = StepGrid::fixture_open_3x3();
-        let c = Tile {
-            x: 1,
-            z: 1,
-            level: 0,
-        };
-        assert!(g.walkable(c));
-        assert!(!g.walkable(Tile {
-            x: -1,
-            z: 0,
-            level: 0
-        }));
-        assert_eq!(
-            chebyshev(
-                c,
-                Tile {
-                    x: 3,
-                    z: 1,
-                    level: 0
-                }
-            ),
-            2
-        );
-    }
-
-    #[test]
-    fn contains_is_bounds_and_level_only() {
-        let g = StepGrid::fixture_open_3x3();
-        assert!(g.contains(Tile {
-            x: 0,
-            z: 0,
-            level: 0
-        }));
-        assert!(g.contains(Tile {
-            x: 2,
-            z: 2,
-            level: 0
-        }));
-        assert!(!g.contains(Tile {
-            x: 3,
-            z: 0,
-            level: 0
-        }));
-        assert!(!g.contains(Tile {
-            x: 0,
-            z: 0,
-            level: 1
-        }));
-    }
-}
+#[path = "lib_tests.rs"]
+mod tests;

@@ -333,6 +333,79 @@ fn fixed_withdraw(action: &str, take: i32) -> bool {
     })
 }
 
+/// Frozen `withdrawOp` amounts (`api/bank/bankOps.ts:5`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WithdrawAmount {
+    All,
+    Ten,
+    Five,
+    X,
+    One,
+    Any,
+}
+
+impl WithdrawAmount {
+    /// The frozen `switch (amount)` cases; anything else matches none.
+    pub(crate) fn parse(amount: &str) -> Option<Self> {
+        Some(match amount {
+            "all" => Self::All,
+            "10" => Self::Ten,
+            "5" => Self::Five,
+            "x" => Self::X,
+            "1" => Self::One,
+            "any" => Self::Any,
+            _ => return None,
+        })
+    }
+}
+
+const WITHDRAW: &str = "withdraw";
+
+/// The text after `withdraw[\s-]*` at byte `at` of `op` (ASCII-folded
+/// `withdraw`), or `None` when `withdraw` does not start there.
+fn after_withdraw(op: &str, at: usize) -> Option<&str> {
+    let word = op.get(at..at + WITHDRAW.len())?;
+    word.eq_ignore_ascii_case(WITHDRAW).then(|| {
+        op[at + WITHDRAW.len()..].trim_start_matches(|c: char| c.is_whitespace() || c == '-')
+    })
+}
+
+/// Frozen `withdrawOp(ops, amount)` (`api/bank/bankOps.ts:5-21`): the index
+/// of the first op whose label matches the amount's pattern, read off the
+/// row's own ops. Unanchored patterns match `withdraw` anywhere in the label.
+pub(crate) fn withdraw_op<'a>(
+    ops: impl IntoIterator<Item = &'a str>,
+    amount: WithdrawAmount,
+) -> Option<usize> {
+    let unanchored = |op: &str, rest_ok: fn(&str) -> bool| {
+        (0..op.len()).any(|at| after_withdraw(op, at).is_some_and(rest_ok))
+    };
+    ops.into_iter().position(|op| match amount {
+        // `/withdraw[\s-]*all/i`
+        WithdrawAmount::All => unanchored(op, |rest| {
+            rest.get(..3)
+                .is_some_and(|all| all.eq_ignore_ascii_case("all"))
+        }),
+        // `/withdraw[\s-]*10/i`
+        WithdrawAmount::Ten => unanchored(op, |rest| rest.starts_with("10")),
+        // `/withdraw[\s-]*5\b/i`
+        WithdrawAmount::Five => unanchored(op, |rest| {
+            rest.strip_prefix('5').is_some_and(|tail| {
+                !tail
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
+        }),
+        // `/withdraw[\s-]*x/i`
+        WithdrawAmount::X => unanchored(op, |rest| rest.starts_with('x') || rest.starts_with('X')),
+        // `/^withdraw[\s-]*1$/i`
+        WithdrawAmount::One => after_withdraw(op, 0) == Some("1"),
+        // `/^withdraw/i`
+        WithdrawAmount::Any => after_withdraw(op, 0).is_some(),
+    })
+}
+
 fn row_by_id<'a>(rows: &'a [ItemRow], id: &Value) -> Option<&'a ItemRow> {
     let id = id.as_f64()?;
     rows.iter().find(|row| f64::from(row.id) == id)

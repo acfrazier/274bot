@@ -1,4 +1,5 @@
 import { notImpl, proxy, runMachine } from '../../shim/_kernel.js';
+import { Sustain } from '../sustain/Sustain.js';
 
 function optionalOpenMs(openMs) {
     return typeof openMs === 'number' && Number.isFinite(openMs) && openMs >= 0
@@ -36,11 +37,18 @@ export const Reach = proxy('Reach', {
     async npcDialog(opts) {
         const near = opts && opts.near ? opts.near : {};
         const openMs = optionalOpenMs(opts && opts.openMs);
-        const out = await runMachine('reach-npc-dialog', {
-            name: String(opts && opts.name != null ? opts.name : ''),
-            near: { x: near.x, z: near.z, level: near.level ?? 0 },
-            ...(openMs !== undefined ? { openMs } : {}),
-        });
+        const out = await runMachine(
+            'reach-npc-dialog',
+            {
+                name: String(opts && opts.name != null ? opts.name : ''),
+                near: { x: near.x, z: near.z, level: near.level ?? 0 },
+                ...(openMs !== undefined ? { openMs } : {}),
+            },
+            {
+                log: opts && typeof opts.log === 'function' ? opts.log : undefined,
+                sustain: () => Sustain.run(),
+            },
+        );
         if (out.kind === 'refused') throw notImpl('Reach.npcDialog', out.reason);
         return out.kind === 'done' ? out.value : 'retry';
     },

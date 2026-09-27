@@ -130,6 +130,8 @@ fn loc_row<'a>(
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -139,6 +141,7 @@ import { STALL_TILE, STAND, STAND_ALT, FLEE_TILE, STALL_NAME, STALL_OP, CAKE_ITE
 
 globalThis.__stolen = 0;
 globalThis.__reset = 0;
+globalThis.__receivers = [];
 globalThis.__result = null;
 globalThis.__pins = {
     stall: STALL_TILE ? [STALL_TILE.x, STALL_TILE.z, STALL_TILE.level] : null,
@@ -165,22 +168,41 @@ export default class T extends LoopingBot {
         }
         globalThis.__carried = carriedCakes();
         globalThis.__need = needsCakeRestock(globalThis.__needTarget);
-        globalThis.__result = await stealCakes({
+        const opts = {
             fillTo: globalThis.__fillTo,
-            abort: () => globalThis.__abort === true,
-            shouldEat: () => globalThis.__eat === true,
-            lockedOutUntil: () => globalThis.__lockUntil ?? 0,
-            setStatus: (s) => { (globalThis.__events ||= []).push(['status', s]); },
-            log: (m) => {
+            abort() {
+                globalThis.__receivers.push(['abort', this === opts]);
+                return globalThis.__abort === true;
+            },
+            shouldEat() {
+                globalThis.__receivers.push(['shouldEat', this === opts]);
+                return globalThis.__eat === true;
+            },
+            lockedOutUntil() {
+                globalThis.__receivers.push(['lockedOutUntil', this === opts]);
+                return globalThis.__lockUntil ?? 0;
+            },
+            setStatus(s) {
+                globalThis.__receivers.push(['setStatus', this === opts]);
+                (globalThis.__events ||= []).push(['status', s]);
+            },
+            log(m) {
+                globalThis.__receivers.push(['log', this === opts]);
                 (globalThis.__logs ||= []).push(m);
                 (globalThis.__events ||= []).push(['log', m]);
             },
-            onSteal: () => { globalThis.__stolen += 1; },
-            onReset: () => {
+            onSteal() {
+                globalThis.__receivers.push(['onSteal', this === opts]);
+                globalThis.__stolen += 1;
+            },
+            onReset() {
+                globalThis.__receivers.push(['onReset', this === opts]);
                 globalThis.__reset += 1;
                 (globalThis.__events ||= []).push(['reset']);
             },
-        });
+        };
+        globalThis.__cakeOpts = opts;
+        globalThis.__result = await stealCakes(opts);
         globalThis.__returns = (globalThis.__returns ?? 0) + 1;
     }
 }
@@ -292,7 +314,61 @@ fn native_cake_stall_does_not_roundtrip_js_snapshot_collections() {
 }
 
 #[test]
-fn other_stall_depleted_wrong_op_and_missing_facts_queue_nothing() {
+fn hooks_are_resolved_again_at_each_invocation() {
+    let steal = ["Steal from".to_string()];
+    let locs = [loc_row(2561, Some("Baker's stall"), 2667, 3310, 1, &steal)];
+    let cake = [ItemRowInput::nc(Some("Cake"), 1)];
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 28").unwrap();
+    let mut encoder = IsolateBuf::new();
+    let mut last = None;
+    let mut snap = base_snapshot(tile(2668, 3312, 0));
+    snap.locs = &locs;
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+
+    iso.probe(
+        r#"(() => {
+            globalThis.__dynamicAbort = false;
+            globalThis.__dynamicSteals = 0;
+            globalThis.__dynamicReceivers = [];
+            globalThis.__cakeOpts.abort = function () {
+                globalThis.__dynamicReceivers.push(this === globalThis.__cakeOpts);
+                return globalThis.__dynamicAbort;
+            };
+            globalThis.__cakeOpts.onSteal = function () {
+                globalThis.__dynamicReceivers.push(this === globalThis.__cakeOpts);
+                globalThis.__dynamicSteals += 1;
+            };
+            return true;
+        })()"#,
+    )
+    .unwrap();
+
+    snap.inv = &cake;
+    snap.tick = 2;
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
+    tick(&iso, 2);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("globalThis.__dynamicSteals").unwrap(), 1);
+
+    iso.probe("globalThis.__dynamicAbort = true").unwrap();
+    assert_eq!(wait_result(&iso), "aborted");
+    let receivers = iso.probe("globalThis.__dynamicReceivers").unwrap();
+    assert!(
+        receivers
+            .as_array()
+            .expect("dynamic hook receivers")
+            .iter()
+            .all(|value| value == true),
+        "{receivers:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn rust_selected_facts_outlive_js_content_and_invalid_stalls_queue_nothing() {
     let steal = ["Steal from".to_string()];
     let examine = ["Examine".to_string()];
     let open = ["Open".to_string()];
@@ -361,8 +437,9 @@ fn other_stall_depleted_wrong_op_and_missing_facts_queue_nothing() {
     snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
-    assert!(iso.drain_interacts().is_empty());
-    assert_eq!(wait_result(&iso), "no-progress");
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+    iso.probe("globalThis.__abort = true").unwrap();
+    assert_eq!(wait_result(&iso), "aborted");
     iso.join();
 }
 
@@ -457,17 +534,19 @@ fn gates_skip_dispatch_and_walk_revalidates() {
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 2);
-    assert!(iso.drain_interacts().is_empty());
-    assert_eq!(wait_result(&iso), "no-progress");
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+    iso.probe("globalThis.__abort = true").unwrap();
+    assert_eq!(wait_result(&iso), "aborted");
     iso.join();
 }
 
 #[test]
-fn food_delta_calls_onsteal_once_and_partial_is_not_stocked() {
+fn food_delta_calls_onsteal_once_and_partial_counts_as_stocked() {
     let steal = ["Steal from".to_string()];
     let locs = [loc_row(2561, Some("Baker's stall"), 2667, 3310, 1, &steal)];
     let cake = [ItemRowInput::nc(Some("Cake"), 1)];
-    let chocolate = [ItemRowInput::nc(Some("Chocolate cake"), 1)];
+    let slice = [ItemRowInput::nc(Some("Slice of cake"), 1)];
+    let two_thirds = [ItemRowInput::nc(Some("2/3 cake"), 1)];
 
     let iso = spawn();
     iso.probe("globalThis.__fillTo = 28").unwrap();
@@ -493,6 +572,13 @@ fn food_delta_calls_onsteal_once_and_partial_is_not_stocked() {
     iso.probe("globalThis.__abort = true").unwrap();
     assert_eq!(wait_result(&iso), "aborted");
     assert_eq!(iso.probe("__stolen").unwrap(), 1);
+    let receivers: Vec<serde_json::Value> =
+        serde_json::from_value(iso.probe("globalThis.__receivers").unwrap()).unwrap();
+    assert!(
+        receivers.contains(&serde_json::json!(["onSteal", true]))
+            && receivers.iter().all(|row| row[1] == true),
+        "{receivers:?}"
+    );
     iso.join();
 
     let iso = spawn();
@@ -509,18 +595,71 @@ fn food_delta_calls_onsteal_once_and_partial_is_not_stocked() {
     assert_eq!(iso.probe("__stolen").unwrap(), 1);
     iso.join();
 
+    // Frozen foodTarget 1 is already met by a remaining slice or 2/3 cake.
     let iso = spawn();
-    iso.probe("globalThis.__fillTo = 28").unwrap();
-    snap.inv = &chocolate;
+    iso.probe("globalThis.__fillTo = 1").unwrap();
+    iso.probe("globalThis.__needTarget = 1").unwrap();
+    snap.inv = &slice;
+    snap.tick = 1;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(wait_result(&iso), "stocked");
+    assert_eq!(iso.probe("__stolen").unwrap(), 0);
+    assert_eq!(iso.probe("__carried").unwrap(), 1);
+    assert_eq!(iso.probe("__need").unwrap(), false);
+    iso.join();
+
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 1").unwrap();
+    iso.probe("globalThis.__needTarget = 1").unwrap();
+    snap.inv = &two_thirds;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(wait_result(&iso), "stocked");
+    assert_eq!(iso.probe("__stolen").unwrap(), 0);
+    assert_eq!(iso.probe("__carried").unwrap(), 1);
+    assert_eq!(iso.probe("__need").unwrap(), false);
+    iso.join();
+}
+
+#[test]
+fn slice_of_cake_at_food_target_one_does_not_restock() {
+    let steal = ["Steal from".to_string()];
+    let locs = [loc_row(2561, Some("Baker's stall"), 2667, 3310, 1, &steal)];
+    let slice = [ItemRowInput::nc(Some("Slice of cake"), 1)];
+    let lobster = [ItemRowInput::nc(Some("Lobster"), 1)];
+
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 1").unwrap();
+    iso.probe("globalThis.__needTarget = 1").unwrap();
+    let mut snap = base_snapshot(tile(2668, 3312, 0));
+    snap.locs = &locs;
+    snap.inv = &slice;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "slice satisfies foodTarget 1; no steal"
+    );
+    assert_eq!(wait_result(&iso), "stocked");
+    assert_eq!(iso.probe("__carried").unwrap(), 1);
+    assert_eq!(iso.probe("__need").unwrap(), false);
+    iso.join();
+
+    // Unrelated food still leaves the stall restock owed.
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 1").unwrap();
+    iso.probe("globalThis.__needTarget = 1").unwrap();
+    snap.inv = &lobster;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
     assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
-    assert_eq!(iso.probe("__stolen").unwrap(), 0);
-    iso.probe("globalThis.__abort = true").unwrap();
-    tick(&iso, 2);
-    assert_eq!(wait_result(&iso), "aborted");
-    assert_eq!(iso.probe("__stolen").unwrap(), 0);
+    assert_eq!(iso.probe("__carried").unwrap(), 0);
     assert_eq!(iso.probe("__need").unwrap(), true);
+    iso.probe("globalThis.__abort = true").unwrap();
+    assert_eq!(wait_result(&iso), "aborted");
     iso.join();
 }
 
@@ -541,74 +680,6 @@ fn result_is_never_boolean_and_classify_is_not_on_the_path() {
         iso.probe("__classify").unwrap(),
         "not impl: cakeStallData.classifySteal"
     );
-    iso.join();
-}
-
-#[test]
-fn native_cake_owner_selects_with_native_predicate_and_posts_food_gain() {
-    let iso = LoadIsolate::spawn(
-        "export default class T extends LoopingBot { loop() {} }".to_string(),
-        LoadShape::CompatClass,
-        vec![],
-    )
-    .unwrap();
-    let open_op = ["Open".to_string()];
-    let steal_op = ["Steal from".to_string()];
-    let locs = [
-        loc_row(1530, Some("Door"), 2668, 3312, 0, &open_op),
-        loc_row(2561, Some("Baker's stall"), 2666, 3310, i32::MAX, &steal_op),
-        loc_row(2561, Some("Baker's stall"), 2667, 3310, 2, &steal_op),
-    ];
-    let mut snap = base_snapshot(tile(2668, 3312, 0));
-    snap.locs = &locs;
-    post_snapshot_input(&iso, &snap);
-    iso.probe("true").unwrap();
-
-    let begin = iso
-        .probe(r#"rustyscript.functions.__rs2b0t_cake_stall({ op: 'begin', fill_to: 28 })"#)
-        .unwrap();
-    let token = begin["token"].as_u64().expect("cake token");
-    assert_eq!(begin["kind"], "observe");
-    assert_eq!(begin["callbacks"], true);
-    assert_eq!(begin["lockout"], true);
-
-    let steal = iso
-        .probe(&format!(
-            r#"rustyscript.functions.__rs2b0t_cake_stall({{
-                op: 'next', token: {token}, abort: false, should_eat: false,
-                facts_valid: true, locked_out_until: 0,
-            }})"#
-        ))
-        .unwrap();
-    assert_eq!(steal["kind"], "loc");
-    assert_eq!(steal["id"], 2561);
-    assert_eq!(
-        steal["x"], 2667,
-        "missing distance must not win target selection"
-    );
-
-    let cake = [ItemRowInput::nc(Some("Cake"), 1)];
-    snap.tick = 2;
-    snap.inv = &cake;
-    snap.locs = &[];
-    post_snapshot_input(&iso, &snap);
-    iso.probe("true").unwrap();
-
-    let next = |iso: &LoadIsolate| {
-        iso.probe(&format!(
-            r#"rustyscript.functions.__rs2b0t_cake_stall({{
-                op: 'next', token: {token}, abort: false, should_eat: false,
-                facts_valid: true, locked_out_until: 0,
-            }})"#
-        ))
-        .unwrap()
-    };
-    assert_eq!(next(&iso)["kind"], "on-steal");
-    assert_eq!(next(&iso)["kind"], "observe");
-    // The emptied stall is waited on inside the same call.
-    let pause = next(&iso);
-    assert_eq!(pause["kind"], "pause");
-    assert_eq!(pause["log"], "stall emptied — waiting for the restock");
     iso.join();
 }
 
@@ -673,6 +744,15 @@ fn watched_stand_swaps_after_three_refused_steals() {
         ],
         "{events:?}"
     );
+    let receivers: Vec<serde_json::Value> =
+        serde_json::from_value(iso.probe("globalThis.__receivers").unwrap()).unwrap();
+    for name in ["setStatus", "log", "onReset"] {
+        assert!(
+            receivers.contains(&serde_json::json!([name, true])),
+            "{name}: {receivers:?}"
+        );
+    }
+    assert!(receivers.iter().all(|row| row[1] == true), "{receivers:?}");
     iso.join();
 }
 

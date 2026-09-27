@@ -19,8 +19,8 @@ pub(crate) const TAVERLEY_DUNGEON_LANDING: WorldTile = WorldTile {
 const JAIL_COMBAT_LEVEL: i32 = 70;
 const STRENGTH_STAT: i32 = 2;
 
-/// A walk of about 108 tiles, a fight of up to 90s and, if the Jailer is
-/// dead, his 75s respawn.
+/// The dungeon walk, a fight of up to 90s and, if the Jailer is dead, his
+/// 75s respawn.
 const ACQUIRE_KEY_DEADLINE: Duration = Duration::from_secs(360);
 const ACQUIRE_KEY_WATCH: u32 = 560;
 
@@ -73,16 +73,18 @@ pub(super) fn taverley_dungeon_seed_steps(jail_key: bool) -> Vec<Step> {
 /// needs the host's corridor walk-near, arrival, Jailer attack, the jail key
 /// in the pack and the settled `true` receipt.
 pub(crate) fn acquire_key_v2_scenario() -> Scenario {
+    // Do not start the clean-stop grace while the walk/fight is still active.
+    let jail_key = Proof::ItemId { id: 1591, count: 1 };
     let mut steps = taverley_dungeon_seed_steps(false);
     steps.push(start_catalog_step());
     steps.push(Step {
-        name: "watch the File card reach its named helper stop",
+        name: "watch the File card obtain the jail key",
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
             budget_ticks: ACQUIRE_KEY_WATCH,
-            arm: Proof::Stat { id: 16, min: 0 },
+            arm: jail_key,
         },
     });
     Scenario {
@@ -92,7 +94,7 @@ pub(crate) fn acquire_key_v2_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: Proof::Stat { id: 16, min: 0 },
+        proof: jail_key,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,

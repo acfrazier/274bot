@@ -3,12 +3,10 @@
 // identify, the phases, the clocks, the scene reads and the verbs. Callbacks
 // (`enabled` / `log` / `setStatus`) go through the one callback path. This file
 // never echoes snapshot pages and never enqueues a loc for an unknown kind.
-import { notImpl, runMachine } from '../../../shim/_kernel.js';
+import { runMachine } from '../../../shim/_kernel.js';
+import { crossesClueDuel, walkAcrossClueDuel } from './duelTravel.js';
 import { Traversal } from '../../walking/Traversal.js';
 
-const throwUse = (name) => {
-    throw notImpl(name);
-};
 
 function clueCall(payload) {
     const fn = globalThis.rustyscript && globalThis.rustyscript.functions
@@ -115,19 +113,21 @@ export class SolveClue {
 }
 
 export function heldClueLikeId() {
-    throwUse('SolveClue.heldClueLikeId');
+    const result = globalThis.__rs2b0t_clue_logic_v2('heldStep');
+    return result && result.ok === true && result.value && Number.isInteger(result.value.id)
+        ? result.value.id
+        : null;
 }
 
-// Frozen `walkToBank` (SolveClue.ts:96-105): one resilient trail-leg walk to
-// the bank stand (radius 3, 300 s, the trail's default teleport policy).
-// The Isafdar and Kharazi crossings are not mapped; the host route decides.
+// Frozen `walkToBank`: `{ ...trailWalkOpts(log, 3), attempts: 6,
+// timeoutMs: 300_000 }`; Rust owns the trail teleport policy half.
 export function walkToBank(tile, log) {
+    if (crossesClueDuel(tile)) return walkAcrossClueDuel(tile, 3, log);
     return Traversal.walkResilient(tile, {
+        ...clueCall({ op: 'trailWalkOpts' }),
         radius: 3,
         attempts: 6,
         timeoutMs: 300_000,
         log,
-        useTeleportCatalog: true,
-        policy: { useTeleports: true, distanceBeforeTeleport: 40 },
     });
 }

@@ -7,8 +7,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use script::{
     coerce_setting_value, format_setting_value, resolve_setting_options_with_labels,
-    setting_visible, LoadoutsStore, ResolvedSettingOptions, ScriptSettingsStore, ScriptSource,
-    SettingDef,
+    setting_visible, LoadoutsStore, ResolvedSettingOptions, SettingDef,
 };
 
 /// Mutable params-pane state: form open, cursor, and in-progress edit.
@@ -23,6 +22,11 @@ pub struct ParamsState {
     pub choice_cursor: usize,
     pub choice_selected: Vec<String>,
     pub error: Option<String>,
+    /// Apply-to-all confirmation line (scope and the y/n keys) while one
+    /// is prepared.
+    pub sync_prompt: Option<String>,
+    /// The last Apply-to-all result, shown until the next key.
+    pub report: Option<String>,
 }
 
 /// Outcome of a params key.
@@ -35,18 +39,28 @@ pub enum ParamsKey {
     Up,
     Down,
     Close,
+    /// `a`: prepare Apply to all (copy these parameters to same-card
+    /// members).
+    SyncPrepare,
+    /// `y`/Enter on the Apply-to-all confirmation.
+    SyncApply,
+    /// `n`/Esc on the Apply-to-all confirmation.
+    SyncCancel,
     None,
 }
 
-/// The script params popup over a card's settings schema.
+/// Where a parameter edit goes: the focused profile's bag through the
+/// shared script coordinator. `Err` keeps the old value and shows it.
+pub type ParamsCommit<'a> = dyn FnMut(&str, serde_json::Value) -> Result<(), String> + 'a;
+
+/// The script params popup over a card's settings schema. `bag` is the
+/// view of the focused profile's merged bag; edits go through `commit`.
 pub struct ParamsPane<'a> {
     pub schema: &'a [SettingDef],
     pub bag: &'a mut serde_json::Map<String, serde_json::Value>,
-    pub store: &'a mut ScriptSettingsStore,
+    pub commit: &'a mut ParamsCommit<'a>,
     pub loadouts: &'a LoadoutsStore,
     pub game_data: Option<&'a api::game_data::SelectedGameData>,
-    pub source: ScriptSource,
-    pub name: &'a str,
     pub state: &'a mut ParamsState,
 }
 
@@ -75,6 +89,7 @@ impl<'a> ParamsPane<'a> {
     }
 
     pub fn on_key(&mut self, code: crossterm::event::KeyCode) -> ParamsKey {
+        self.state.report = None;
         self.clamp_cursor();
         let rows = self.visible_rows();
         if rows.is_empty() {
@@ -83,8 +98,21 @@ impl<'a> ParamsPane<'a> {
         if self.state.editing {
             return self.on_edit_key(code, &rows);
         }
+        if self.state.sync_prompt.is_some() {
+            return match code {
+                crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Char('y') => {
+                    ParamsKey::SyncApply
+                }
+                crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('n') => {
+                    self.state.sync_prompt = None;
+                    ParamsKey::SyncCancel
+                }
+                _ => ParamsKey::None,
+            };
+        }
         match code {
             crossterm::event::KeyCode::Esc => ParamsKey::Close,
+            crossterm::event::KeyCode::Char('a') => ParamsKey::SyncPrepare,
             crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
                 if self.state.cursor > 0 {
                     self.state.cursor -= 1;
@@ -306,19 +334,13 @@ impl<'a> ParamsPane<'a> {
     }
 
     fn persist(&mut self, id: &str, value: serde_json::Value) -> bool {
-        let prev = self.bag.get(id).cloned();
-        self.store
-            .set_value(self.source, self.name, id, value.clone());
-        match self.store.save() {
+        match (self.commit)(id, value.clone()) {
             Ok(()) => {
                 self.bag.insert(id.to_string(), value);
                 self.state.error = None;
                 true
             }
             Err(err) => {
-                if let Some(prev) = prev {
-                    self.store.set_value(self.source, self.name, id, prev);
-                }
                 self.state.error = Some(format!("Save failed: {err}"));
                 false
             }
@@ -329,6 +351,12 @@ impl<'a> ParamsPane<'a> {
         if let Some(err) = self.state.error.as_deref() {
             return err.to_string();
         }
+        if let Some(prompt) = self.state.sync_prompt.as_deref() {
+            return prompt.to_string();
+        }
+        if let Some(report) = self.state.report.as_deref() {
+            return report.to_string();
+        }
         if self.state.editing {
             if self.state.multi_select {
                 "space toggle · enter save · esc cancel".into()
@@ -336,7 +364,7 @@ impl<'a> ParamsPane<'a> {
                 "enter save · esc cancel".into()
             }
         } else {
-            "enter edit · space toggle · esc close".into()
+            "enter edit · space toggle · a apply to same-card · esc close".into()
         }
     }
 }
@@ -491,7 +519,12 @@ impl Widget for ParamsPane<'_> {
         }
 
         let hint = self.hint();
-        let reserve = 1u16;
+        // A report or prompt wider than the popup wraps onto a second row.
+        let reserve = if hint.chars().count() > inner.width as usize {
+            2u16
+        } else {
+            1u16
+        };
         let content_h = inner.height.saturating_sub(reserve) as usize;
         if cursor_line < self.state.scroll {
             self.state.scroll = cursor_line;
@@ -510,9 +543,19 @@ impl Widget for ParamsPane<'_> {
                 .take(content_h)
                 .collect()
         };
-        let mut painted = window;
-        painted.push(Line::from(hint));
-        Paragraph::new(painted).render(inner, buf);
+        let list = Rect {
+            height: inner.height.saturating_sub(reserve),
+            ..inner
+        };
+        Paragraph::new(window).render(list, buf);
+        let hint_area = Rect {
+            y: list.y + list.height,
+            height: inner.height - list.height,
+            ..inner
+        };
+        Paragraph::new(hint)
+            .wrap(ratatui::widgets::Wrap { trim: true })
+            .render(hint_area, buf);
     }
 }
 
@@ -526,7 +569,7 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::widgets::Paragraph;
     use ratatui::Terminal;
-    use script::SettingDef;
+    use script::{ScriptSettingsStore, ScriptSource, SettingDef};
 
     static TEST_DIRS: AtomicU64 = AtomicU64::new(0);
 
@@ -584,6 +627,17 @@ mod tests {
         ]
     }
 
+    /// Commit sink over a legacy store, standing in for the coordinator.
+    fn store_commit<'s>(
+        store: &'s mut ScriptSettingsStore,
+        name: &'static str,
+    ) -> impl FnMut(&str, serde_json::Value) -> Result<(), String> + 's {
+        move |id, value| {
+            store.set_value(ScriptSource::Catalog, name, id, value);
+            store.save()
+        }
+    }
+
     fn type_replace(pane: &mut ParamsPane<'_>, text: &str) {
         while !pane.state.scratch.is_empty() {
             pane.on_key(KeyCode::Backspace);
@@ -610,11 +664,9 @@ mod tests {
         let mut pane = ParamsPane {
             schema: &schema,
             bag: &mut bag,
-            store: &mut store,
+            commit: &mut store_commit(&mut store, "ChickenKiller"),
             loadouts: &loadouts,
             game_data: None,
-            source: ScriptSource::Catalog,
-            name: "ChickenKiller",
             state: &mut state,
         };
         assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
@@ -642,11 +694,9 @@ mod tests {
         let mut pane = ParamsPane {
             schema: &schema,
             bag: &mut bag,
-            store: &mut store,
+            commit: &mut store_commit(&mut store, "Thiever"),
             loadouts: &loadouts,
             game_data: None,
-            source: ScriptSource::Catalog,
-            name: "Thiever",
             state: &mut state,
         };
         assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
@@ -669,11 +719,9 @@ mod tests {
         let mut pane = ParamsPane {
             schema: &schema,
             bag: &mut bag,
-            store: &mut store,
+            commit: &mut store_commit(&mut store, "Alcher"),
             loadouts: &loadouts,
             game_data: None,
-            source: ScriptSource::Catalog,
-            name: "Alcher",
             state: &mut state,
         };
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
@@ -712,11 +760,9 @@ mod tests {
         let mut pane = ParamsPane {
             schema: &schema,
             bag: &mut bag,
-            store: &mut store,
+            commit: &mut store_commit(&mut store, "Alcher"),
             loadouts: &loadouts,
             game_data: None,
-            source: ScriptSource::Catalog,
-            name: "Alcher",
             state: &mut state,
         };
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
@@ -758,11 +804,9 @@ mod tests {
         let mut pane = ParamsPane {
             schema: &schema,
             bag: &mut bag,
-            store: &mut store,
+            commit: &mut store_commit(&mut store, "Alcher"),
             loadouts: &loadouts,
             game_data: None,
-            source: ScriptSource::Catalog,
-            name: "Alcher",
             state: &mut state,
         };
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
@@ -804,11 +848,9 @@ mod tests {
         let mut pane = ParamsPane {
             schema: &schema,
             bag: &mut bag,
-            store: &mut store,
+            commit: &mut store_commit(&mut store, "Gatherer"),
             loadouts: &loadouts,
             game_data: None,
-            source: ScriptSource::Catalog,
-            name: "Gatherer",
             state: &mut state,
         };
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
@@ -844,60 +886,44 @@ mod tests {
         );
     }
 
+    /// `a` asks for Apply to all; the confirmation takes `y`/Enter or
+    /// `n`/Esc and nothing else, and a refused commit keeps the old value.
     #[test]
-    fn card_settings_are_isolated() {
-        let dir = temp_dir("isolate");
-        let path = dir.join("script-settings.json");
-        let mut store = ScriptSettingsStore::at(path.clone());
+    fn apply_to_all_keys_and_a_refused_commit() {
+        let dir = temp_dir("sync-keys");
         let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
         let schema = alcher_schema();
-        let mut alcher_bag = store.merged_bag(ScriptSource::Catalog, "Alcher", &schema, None);
+        let mut bag = serde_json::Map::new();
+        bag.insert("alchs".into(), serde_json::json!(27));
         let mut state = ParamsState {
             open: true,
             cursor: 1,
             ..Default::default()
         };
-        {
-            let mut pane = ParamsPane {
-                schema: &schema,
-                bag: &mut alcher_bag,
-                store: &mut store,
-                loadouts: &loadouts,
-                game_data: None,
-                source: ScriptSource::Catalog,
-                name: "Alcher",
-                state: &mut state,
-            };
-            pane.on_key(KeyCode::Enter);
-            type_replace(&mut pane, "9");
-            pane.on_key(KeyCode::Enter);
-        }
-        let mut other_bag = store.merged_bag(ScriptSource::Catalog, "MuleAlcher", &schema, None);
-        state = ParamsState {
-            open: true,
-            cursor: 1,
-            ..Default::default()
+        let mut refuse = |_: &str, _: serde_json::Value| Err("vault locked".to_string());
+        let mut pane = ParamsPane {
+            schema: &schema,
+            bag: &mut bag,
+            commit: &mut refuse,
+            loadouts: &loadouts,
+            game_data: None,
+            state: &mut state,
         };
-        {
-            let mut pane = ParamsPane {
-                schema: &schema,
-                bag: &mut other_bag,
-                store: &mut store,
-                loadouts: &loadouts,
-                game_data: None,
-                source: ScriptSource::Catalog,
-                name: "MuleAlcher",
-                state: &mut state,
-            };
-            pane.on_key(KeyCode::Enter);
-            type_replace(&mut pane, "3");
-            pane.on_key(KeyCode::Enter);
-        }
-        let reloaded = ScriptSettingsStore::at(path);
-        let alcher = reloaded.merged_bag(ScriptSource::Catalog, "Alcher", &schema, None);
-        let mule = reloaded.merged_bag(ScriptSource::Catalog, "MuleAlcher", &schema, None);
-        assert_eq!(alcher.get("alchs").and_then(|v| v.as_f64()), Some(9.0));
-        assert_eq!(mule.get("alchs").and_then(|v| v.as_f64()), Some(3.0));
+        assert_eq!(pane.on_key(KeyCode::Char('a')), ParamsKey::SyncPrepare);
+        pane.state.sync_prompt = Some("Copy Alcher parameters".into());
+        assert_eq!(pane.on_key(KeyCode::Down), ParamsKey::None);
+        assert_eq!(pane.on_key(KeyCode::Char('y')), ParamsKey::SyncApply);
+        assert_eq!(pane.on_key(KeyCode::Char('n')), ParamsKey::SyncCancel);
+        assert_eq!(pane.state.sync_prompt, None);
+
+        pane.on_key(KeyCode::Enter);
+        type_replace(&mut pane, "5");
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::None);
+        assert_eq!(
+            pane.state.error.as_deref(),
+            Some("Save failed: vault locked")
+        );
+        assert_eq!(pane.bag.get("alchs"), Some(&serde_json::json!(27)));
     }
 
     #[test]
@@ -929,11 +955,9 @@ mod tests {
                 let pane = ParamsPane {
                     schema: &schema,
                     bag: &mut bag,
-                    store: &mut store,
+                    commit: &mut store_commit(&mut store, "LongCard"),
                     loadouts: &loadouts,
                     game_data: None,
-                    source: ScriptSource::Catalog,
-                    name: "LongCard",
                     state: &mut state,
                 };
                 frame.render_widget(pane, frame.area());
@@ -991,11 +1015,9 @@ mod tests {
         let mut pane = ParamsPane {
             schema: &schema,
             bag: &mut bag,
-            store: &mut store,
+            commit: &mut store_commit(&mut store, "Alcher"),
             loadouts: &loadouts,
             game_data: None,
-            source: ScriptSource::Catalog,
-            name: "Alcher",
             state: &mut state,
         };
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
@@ -1046,11 +1068,9 @@ mod tests {
             let mut pane = ParamsPane {
                 schema: &schema,
                 bag: &mut bag,
-                store: &mut store,
+                commit: &mut store_commit(&mut store, "Alcher"),
                 loadouts: &loadouts,
                 game_data: Some(data.as_ref()),
-                source: ScriptSource::Catalog,
-                name: "Alcher",
                 state: &mut state,
             };
             assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
@@ -1080,11 +1100,9 @@ mod tests {
                 let pane = ParamsPane {
                     schema: &schema,
                     bag: &mut bag,
-                    store: &mut store,
+                    commit: &mut store_commit(&mut store, "Alcher"),
                     loadouts: &loadouts,
                     game_data: Some(data.as_ref()),
-                    source: ScriptSource::Catalog,
-                    name: "Alcher",
                     state: &mut state,
                 };
                 frame.render_widget(pane, frame.area());

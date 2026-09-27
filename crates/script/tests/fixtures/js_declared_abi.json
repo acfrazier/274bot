@@ -505,6 +505,8 @@
       "interact",
       "level",
       "name",
+      "networkTile",
+      "size",
       "targetsAnotherPlayer",
       "targetsMe",
       "tile",
@@ -550,6 +552,7 @@
     "kind": "class",
     "members": [
       "actions",
+      "combatLevel",
       "distance",
       "inCombat",
       "index",
@@ -610,6 +613,7 @@
       "isOpen",
       "open",
       "sell",
+      "sellAll",
       "stock"
     ]
   },
@@ -622,6 +626,19 @@
       "index",
       "level",
       "xp"
+    ]
+  },
+  {
+    "name": "Special",
+    "kind": "object",
+    "members": [
+      "arm",
+      "armed",
+      "barComponent",
+      "cost",
+      "energy",
+      "ready",
+      "wielded"
     ]
   },
   {

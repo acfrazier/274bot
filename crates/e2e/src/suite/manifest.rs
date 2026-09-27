@@ -1,7 +1,7 @@
 //! Frozen suite manifest: reference metadata plus the native adapter map.
 //!
 //! The manifest is *derived, tracked data* (`crates/e2e/fixtures/native-suite/`,
-//! regenerate with `derive.py`). It carries the frozen 96410ec5 reference identity,
+//! regenerate with `derive.py`). It carries the frozen 00d39a17 reference identity,
 //! the reference case statuses/budgets/coverage as evidence, and one row per native
 //! execution unit with its declared witness, options and gaps.
 //!
@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(manifest.schema_version, SCHEMA_VERSION);
         assert_eq!(
             manifest.provenance.reference_commit,
-            "96410ec5c779f3d8fe537268cae1a21c0174d16c"
+            "00d39a17e056df6c5e461f3f2cfd3598ff9720b6"
         );
         assert_eq!(manifest.intended_scripts.len(), 44);
         for script in ["Duel Arena Combat Trainer", "ClimbingBoots", "RockCrab"] {

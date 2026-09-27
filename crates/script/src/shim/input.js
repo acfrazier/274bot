@@ -27,6 +27,32 @@ function actionAt(row, op) {
 }
 
 export const Input = proxy('Input', {
+    walk(lx, lz) {
+        if (!Number.isInteger(lx) || !Number.isInteger(lz)) return false;
+        const reach = snap().reach;
+        if (
+            !reach ||
+            reach.available !== true ||
+            !Number.isInteger(reach.base_x) ||
+            !Number.isInteger(reach.base_z) ||
+            !Number.isInteger(reach.level) ||
+            !Number.isInteger(reach.width) ||
+            !Number.isInteger(reach.height) ||
+            lx < 0 ||
+            lz < 0 ||
+            lx >= reach.width ||
+            lz >= reach.height
+        ) {
+            return false;
+        }
+        queue({
+            op: 'walk-to',
+            x: reach.base_x + lx,
+            z: reach.base_z + lz,
+            level: reach.level,
+        });
+        return true;
+    },
     interactNpc(index, op) {
         const row = npcRow(index);
         const action = actionAt(row, op);

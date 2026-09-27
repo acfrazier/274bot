@@ -1,7 +1,8 @@
-//! Typed V8 marshalling for `Tile.distanceTo` and shim distance callers.
+//! Typed V8 marshalling for tile-distance shim callers.
 //!
-//! Frozen `Tile.distanceTo` (`Tile.ts`): Chebyshev on the plane,
-//! `1_000_000 + xz` across planes. Script-supplied coordinates are JS
+//! Frozen `Tile.distanceTo` (`Tile.ts`) is Chebyshev on the plane and
+//! `1_000_000 + xz` across planes. Entity-query `withinOf` uses the same
+//! calculation without the level penalty. Script-supplied coordinates are JS
 //! numbers, computed in `f64` the same way `Math.abs` would.
 
 use rustyscript::Runtime;
@@ -47,7 +48,8 @@ fn run_distance<'s>(
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let from = required_tile(scope, args.get(0), "from")?;
     let to = required_tile(scope, args.get(1), "to")?;
-    Ok(v8::Number::new(scope, js_tile_distance(from, to)).into())
+    let planar = args.get(2).boolean_value(scope);
+    Ok(v8::Number::new(scope, js_tile_distance(from, to, planar)).into())
 }
 
 #[derive(Clone, Copy)]
@@ -57,7 +59,7 @@ struct JsTile {
     level: f64,
 }
 
-fn js_tile_distance(from: JsTile, to: JsTile) -> f64 {
+fn js_tile_distance(from: JsTile, to: JsTile, ignore_level: bool) -> f64 {
     let (dx, dz) = ((from.x - to.x).abs(), (from.z - to.z).abs());
     // `Math.max` propagates NaN; `f64::max` would drop it.
     let planar = if dx.is_nan() || dz.is_nan() {
@@ -65,7 +67,7 @@ fn js_tile_distance(from: JsTile, to: JsTile) -> f64 {
     } else {
         dx.max(dz)
     };
-    if from.level != to.level {
+    if !ignore_level && from.level != to.level {
         1_000_000.0 + planar
     } else {
         planar

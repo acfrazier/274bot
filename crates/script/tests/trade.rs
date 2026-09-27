@@ -55,6 +55,8 @@ fn player<'a>(name: &'a str, distance: i32, actions: &'a [String]) -> SceneEntit
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 

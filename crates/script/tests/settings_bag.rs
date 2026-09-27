@@ -32,6 +32,52 @@ fn prelude_reads_posted_settings_bag_not_only_fallback() {
     iso.join();
 }
 
+#[test]
+fn profile_global_clue_partner_is_separate_from_card_settings() {
+    let src = r#"
+import { SettingsStore } from '../../runtime/Settings.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            partner: SettingsStore.globalBag().str('clueDuelPartner', ''),
+            cardPartner: this.settings.str('clueDuelPartner', 'missing'),
+            cardValue: this.settings.str('cardValue', ''),
+            cardOwnsPartner: Object.prototype.hasOwnProperty.call(
+                globalThis.__rs2b0t_host.settingsBag,
+                'clueDuelPartner',
+            ),
+            globalOwnsCard: Object.prototype.hasOwnProperty.call(
+                globalThis.__rs2b0t_host.globalSettingsBag,
+                'cardValue',
+            ),
+        };
+    }
+}
+"#;
+    let iso =
+        LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).expect("spawn global probe");
+    iso.post_settings_bag(
+        serde_json::json!({
+            "clueDuelPartner": "Helper",
+            "cardValue": "card",
+        })
+        .as_object()
+        .unwrap(),
+    );
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        serde_json::json!({
+            "partner": "Helper",
+            "cardPartner": "missing",
+            "cardValue": "card",
+            "cardOwnsPartner": false,
+            "globalOwnsCard": false,
+        })
+    );
+    iso.join();
+}
+
 // The posted bag is the value `JSON.parse` would give: ordinary objects at
 // every level, JS Numbers for every integer, and object values a shim can
 // stringify.

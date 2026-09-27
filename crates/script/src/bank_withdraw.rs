@@ -191,7 +191,7 @@ impl Family for WithdrawTo {
     const CALLBACKS: &'static [&'static str] = &["count"];
     /// Frozen `countInInv()` is a synchronous call: a returned promise is a
     /// value (`NaN` once it meets a number).
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[COUNT];
     /// `const start = countInInv()` and the first withdraw join the
     /// caller's tick.
     const KICK_ON_START: bool = true;
@@ -348,7 +348,7 @@ impl Family for CloseConfirm {
     const NAME: &'static str = "bank_close_confirm";
     const CALLBACKS: &'static [&'static str] = &["count"];
     /// Frozen `count()` is a synchronous call.
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[COUNT];
     type Args = CloseConfirmArgs;
     type Output = bool;
 

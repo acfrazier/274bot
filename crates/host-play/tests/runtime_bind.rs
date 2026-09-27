@@ -306,8 +306,46 @@ fn runtime_bind_negotiates_and_freezes_server_identity() {
     assert!(!owned.exists(), "the owned runtime cache is cleaned up");
 }
 
+/// A same-revision `--cache-manifest` must still authenticate the operator's
+/// source cache. Negotiation may replace runtime copies; empty/wrong archives
+/// must not bind.
 #[test]
-fn runtime_external_nav_requires_actual_selected_source_provenance() {
+fn runtime_bind_refuses_wrong_archive_same_revision_manifest() {
+    let root = TempRoot::new("wrong-manifest");
+    let cache = root.join("cache");
+    let local = packs(1);
+    write_packs(&cache, &local);
+    snapshot(&root.join("unpack"), &local);
+
+    let wrong = host_play::profile::CacheManifest {
+        revision: 274,
+        archives: Default::default(),
+    };
+    std::fs::write(
+        root.join("cache-manifest.json"),
+        serde_json::to_vec(&wrong).unwrap(),
+    )
+    .unwrap();
+    let error = selection(&root, "274", 9).bind_runtime().unwrap_err();
+    assert!(
+        error.contains("cache manifest") || error.contains("cache bytes"),
+        "{error}"
+    );
+
+    std::fs::write(
+        root.join("cache-manifest.json"),
+        serde_json::to_vec(&host_play::profile::CacheManifest::capture(274, &cache).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    let (port, server) = serve_packs(local, 0);
+    let profile = selection(&root, "274", port).bind_runtime().unwrap();
+    server.join().unwrap();
+    assert!(profile.client().cache_dir() != cache);
+}
+
+#[test]
+fn runtime_external_nav_binds_without_rehashing_selected_content() {
     let root = TempRoot::new("nav-source");
     let p = packs(1);
     write_packs(&root.join("cache"), &p);
@@ -341,7 +379,8 @@ fn runtime_external_nav_requires_actual_selected_source_provenance() {
     let pack = root.join("world.navpack");
     std::fs::write(&pack, &bytes).unwrap();
     let mut manifest =
-        host_play::profile::NavManifest::capture(289, &cache, &bytes, None, None, None).unwrap();
+        host_play::profile::NavManifest::capture(289, &cache, &bytes, None, None, None, None)
+            .unwrap();
     manifest.content_id = Some(
         compute_decoded_content_identity(289, &retained, &retained)
             .unwrap()
@@ -354,35 +393,27 @@ fn runtime_external_nav_requires_actual_selected_source_provenance() {
         serde_json::to_vec(&manifest).unwrap(),
     )
     .unwrap();
-    for changed in [false, true] {
-        if changed {
-            std::fs::write(content.join("world"), b"world-b").unwrap();
-        }
-        let (port, server) = serve_packs(p.clone(), 0);
-        let options = ProfileOptions {
-            revision: Some("289".into()),
-            cache_dir: Some(root.join("cache")),
-            cache_manifest: Some(root.join("cache-manifest.json")),
-            unpack_dir: Some(root.join("unpack")),
-            nav_pack: Some(pack.clone()),
-            content_dir: Some(content.clone()),
-            http_port: Some(port),
-            ..Default::default()
-        };
-        let env = ProfileEnvironment {
-            home: Some(root.0.clone()),
-            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
-            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
-            ..Default::default()
-        };
-        let result = options.resolve_with_env(None, &env).unwrap().bind_runtime();
-        server.join().unwrap();
-        if changed {
-            assert!(result.unwrap_err().contains("source provenance differs"));
-        } else {
-            assert!(result.unwrap().world().is_some());
-        }
-    }
+    std::fs::write(content.join("world"), b"world-b").unwrap();
+    let (port, server) = serve_packs(p.clone(), 0);
+    let options = ProfileOptions {
+        revision: Some("289".into()),
+        cache_dir: Some(root.join("cache")),
+        cache_manifest: Some(root.join("cache-manifest.json")),
+        unpack_dir: Some(root.join("unpack")),
+        nav_pack: Some(pack.clone()),
+        content_dir: Some(content.clone()),
+        http_port: Some(port),
+        ..Default::default()
+    };
+    let env = ProfileEnvironment {
+        home: Some(root.0.clone()),
+        rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+        rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+        ..Default::default()
+    };
+    let result = options.resolve_with_env(None, &env).unwrap().bind_runtime();
+    server.join().unwrap();
+    assert!(result.unwrap().world().is_some());
 }
 
 /// The offline explicit bind keeps its semantics: no `/crc` when every pack is

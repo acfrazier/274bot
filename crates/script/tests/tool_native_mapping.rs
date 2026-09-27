@@ -325,10 +325,15 @@ fn a_native_loop_over_holes_is_interrupted_by_the_tick_budget() {
     ] {
         let src = format!(
             "export function tick(api) {{\n\
+                 if (!globalThis.__started) {{\n\
+                     globalThis.__started = true;\n\
+                     return;\n\
+                 }}\n\
+                 globalThis.__entered = (globalThis.__entered | 0) + 1;\n\
                  globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;\n\
-                 if (globalThis.__rs_n === 1) {{\n\
+                 if (globalThis.__entered === 1) {{\n\
                      const a = []; a.length = 2 ** 27;\n\
-                     try {{ {body}; }} finally {{ globalThis.__finally = true; }}\n\
+                     try {{ for (;;) {{ {body}; }} }} finally {{ globalThis.__finally = true; }}\n\
                      globalThis.__after = true;\n\
                  }}\n\
              }}"
@@ -344,20 +349,44 @@ fn a_native_loop_over_holes_is_interrupted_by_the_tick_budget() {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         iso.on_game_tick(1);
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        let armed = std::time::Instant::now();
-        iso.pause();
+        assert_eq!(
+            iso.probe("globalThis.__started").unwrap(),
+            true,
+            "{body}: first tick must publish the slow-loop start handshake"
+        );
+        let mut logs = Vec::new();
         iso.resume();
         iso.on_game_tick(2);
+        let trigger_at = std::time::Instant::now() + std::time::Duration::from_millis(60);
+        while std::time::Instant::now() < trigger_at {
+            std::thread::yield_now();
+        }
+        iso.pause();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            logs.extend(iso.drain_logs());
+            if logs.iter().any(|line| line.contains("slow tick")) {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(
+            logs.iter().any(|line| line.contains("slow tick")),
+            "{body}: the proving native loop must be interrupted: {logs:?}"
+        );
+        iso.resume();
+        assert_eq!(
+            iso.probe("globalThis.__entered").unwrap(),
+            1,
+            "{body}: the proving tick entered exactly once"
+        );
+        iso.on_game_tick(3);
         let n = iso
             .probe("__rs_n")
-            .expect("isolate must stay usable after an interrupted native loop");
-        let elapsed = armed.elapsed();
-        assert_eq!(n, 2, "{body}: the next tick ran");
-        assert!(
-            elapsed < std::time::Duration::from_secs(3),
-            "{body}: termination took {elapsed:?}"
-        );
+            .expect("isolate must stay usable after an interrupted native loop")
+            .as_i64()
+            .unwrap_or(0);
+        assert_eq!(n, 2, "{body}: the next tick ran exactly once, n={n}");
         assert_eq!(
             iso.probe("globalThis.__after === undefined && globalThis.__finally === undefined")
                 .unwrap(),

@@ -2078,6 +2078,32 @@ fn booth_approach_collision_change_keeps_loc_id_and_moves_dest() {
     assert_eq!(next.dest, Some(tile(2721, 3494)));
 }
 
+#[test]
+fn arrival_stands_are_orthogonal_walkable_and_open_on_the_target_side() {
+    let mut scene = SceneView {
+        available: true,
+        base_x: 0,
+        base_z: 0,
+        level: 0,
+        width: 5,
+        height: 5,
+        collision_flags: vec![0; 25],
+    };
+    let target = tile(2, 2);
+    scene.collision_flags[(target.x * scene.height + target.z) as usize] =
+        CollisionFlag::SQ_BLOCKED | CollisionFlag::W_W;
+    scene.collision_flags[(3 * scene.height + 2) as usize] = CollisionFlag::SQ_BLOCKED;
+
+    let stands: Vec<_> = SceneQuery::new(&scene, None)
+        .arrival_stands(target)
+        .collect();
+    assert_eq!(
+        stands,
+        vec![tile(2, 1), tile(2, 3)],
+        "west is closed by the target wall, east is occupied, and diagonals are never stands"
+    );
+}
+
 fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),

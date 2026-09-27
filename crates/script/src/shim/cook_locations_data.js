@@ -1,54 +1,25 @@
 import Tile from '../geometry/Tile.js';
-import { host } from '../shim/_kernel.js';
+import { BANK_LOCATIONS } from '../api/bank/BankLocations.js';
 
 export const CUSTOM_LOCATION = 'Custom';
 export const MAX_SURFACE_CHEB = 20;
 
-function postedTile(p) {
-    if (!p || p.x == null || p.z == null) {
-        return null;
-    }
-    return new Tile(p.x, p.z, p.level ?? 0);
-}
+const tile = (t) => new Tile(t.x, t.z, t.level);
 
-function bankShape(name, tile) {
-    if (!name || !tile) {
-        return null;
-    }
-    return { name, tile };
-}
-
-function surfaceFromRange(range) {
-    const stand = postedTile(range);
-    if (!stand) {
-        return null;
-    }
-    return {
-        stand,
-        approach: null,
-        locName: null,
-        loc: null,
-        arriveRadius: null,
-    };
-}
-
-export const COOK_LOCATIONS = ((host().content && host().content.cook_stands) || [])
-    .map((s) => {
-        if (!s || !s.name) {
-            return null;
-        }
-        const bank = bankShape(s.name, postedTile(s.bank));
-        if (!bank) {
-            return null;
-        }
-        return {
-            name: s.name,
-            bank,
-            surface: surfaceFromRange(s.range),
-            verified: false,
-        };
-    })
-    .filter((row) => row !== null);
+// Rust pairs every bank with its cook surface (frozen `buildCookLocations`);
+// each row maps onto Tiles and the bank's own `BANK_LOCATIONS` entry.
+export const COOK_LOCATIONS = globalThis.__rs2b0t_cook_locations().map((row) => ({
+    name: row.name,
+    bank: BANK_LOCATIONS[row.bank],
+    surface: row.surface && {
+        ...row.surface,
+        stand: tile(row.surface.stand),
+        ...(row.surface.approach ? { approach: tile(row.surface.approach) } : {}),
+        loc: tile(row.surface.loc),
+    },
+    obstacles: row.obstacles,
+    verified: row.verified,
+}));
 
 export function findCookLocation(locs, name) {
     const want = String(name).trim().toLowerCase();

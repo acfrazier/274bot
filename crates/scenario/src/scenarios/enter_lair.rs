@@ -7,6 +7,17 @@ pub(crate) const ENTER_LAIR_V2_STOP: &str = "enter lair qualification complete";
 const ENTER_LAIR_DEADLINE: Duration = Duration::from_secs(180);
 const ENTER_LAIR_WATCH: u32 = 240;
 
+/// `enter_lair_v2.ts` enters the 3x3 lair around an approach tile
+/// Chebyshev 8–16 from its Start tile (the mainland landing), so it ends
+/// 7–17 away; the seed leaves the player on the landing itself.
+pub(crate) const ENTER_LAIR_INSIDE: Proof = Proof::ArrivedRing {
+    x: MAINLAND_LANDING.x,
+    z: MAINLAND_LANDING.z,
+    level: MAINLAND_LANDING.level,
+    min: 7,
+    max: 17,
+};
+
 /// Headed File witness: one awaited gateless entry. The gate needs the host's
 /// radius-0 walk to the approach tile, the end tile inside the lair box and
 /// the settled `true` receipt.
@@ -14,13 +25,13 @@ pub(crate) fn enter_lair_v2_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());
     steps.push(Step {
-        name: "watch the File card reach its named helper stop",
+        name: "watch the File card enter a lair 7-17 from its Start",
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
             budget_ticks: ENTER_LAIR_WATCH,
-            arm: Proof::Stat { id: 16, min: 0 },
+            arm: ENTER_LAIR_INSIDE,
         },
     });
     Scenario {
@@ -30,7 +41,7 @@ pub(crate) fn enter_lair_v2_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: Proof::Stat { id: 16, min: 0 },
+        proof: ENTER_LAIR_INSIDE,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,

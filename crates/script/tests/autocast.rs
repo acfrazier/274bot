@@ -143,9 +143,10 @@ fn missing_controls_throw_and_do_not_send() {
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
     let probe = iso.probe("__ok").unwrap();
-    assert!(
-        probe.as_str().unwrap_or("").contains("not impl"),
-        "missing autocast controls must throw, got {probe:?}"
+    assert_eq!(
+        probe.as_str().unwrap_or(""),
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)",
+        "missing autocast data must explain content verification"
     );
     assert!(iso.drain_interacts().is_empty());
     iso.join();

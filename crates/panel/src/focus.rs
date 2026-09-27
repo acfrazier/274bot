@@ -136,6 +136,30 @@ pub fn memory_draw_policy(
                 f.renderer_by.insert(name.clone(), true);
             }
         }
+        RenderPolicy::Stress50 => {
+            f.game_pane_open = true;
+            f.only_render_selected = true;
+            f.focused_50 = true;
+            f.sidecar_50 = false;
+            f.live_full_rate = false;
+            f.wall_open = true;
+            f.wall = names.to_vec();
+            for (index, name) in names.iter().enumerate() {
+                f.renderer_by.insert(name.clone(), index == 0);
+            }
+        }
+        RenderPolicy::Stress50Full => {
+            f.game_pane_open = true;
+            f.only_render_selected = false;
+            f.focused_50 = false;
+            f.sidecar_50 = false;
+            f.live_full_rate = true;
+            f.wall_open = true;
+            f.wall = names.to_vec();
+            for name in names {
+                f.renderer_by.insert(name.clone(), true);
+            }
+        }
     }
 }
 
@@ -251,6 +275,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn memory_stress_policies_match_the_existing_panel_wall_shapes() {
+        use host_play::memory::RenderPolicy;
+        let names: Vec<_> = (0..50).map(|i| format!("bot{i}")).collect();
+        let mut f = adverse_focus(&names);
+        super::memory_draw_policy(&mut f, &names, RenderPolicy::Stress50);
+        assert!(f.only_render_selected);
+        assert_eq!(
+            names.iter().filter(|name| draw_for_slot(&f, name)).count(),
+            1
+        );
+        assert!(full_rate_for(&f, &names[0]));
+
+        super::memory_draw_policy(&mut f, &names, RenderPolicy::Stress50Full);
+        assert!(!f.only_render_selected);
+        assert!(f.live_full_rate);
+        assert_eq!(
+            names.iter().filter(|name| draw_for_slot(&f, name)).count(),
+            50
+        );
+        assert!(names.iter().all(|name| full_rate_for(&f, name)));
     }
 
     #[cfg(feature = "memory-profile")]
