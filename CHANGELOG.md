@@ -5,6 +5,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 ## [0.1.9] — 2026-09-24
 
+### Release engineering
+
+- Promote the reproducible macOS/Linux/Windows build, finalize, and verification
+  workflow into `tools/release/release.py`: exact host/client source exports,
+  digest-pinned navigation inputs, clean-checkout gates, per-commit native
+  caches, resumable preparation/platform builds and macOS notarization,
+  archive/manifest/checksum validation, and explicit post-release cleanup.
+  Linux uses the parameterized builder SSH transport, Windows uses the
+  checked-in `windows-ssh.py`, and no operator filesystem paths or credentials
+  are tracked.
+
 ### Memory
 
 - Raw collision/NSEW navflags load only when a drawing surface needs them, stream

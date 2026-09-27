@@ -42,6 +42,7 @@ NAV_NAMES = (
 )
 FULL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 SAFE_REMOTE = re.compile(r"^[A-Za-z0-9._/-]+$")
+RELEASE_TAG = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)*$")
 
 
 class ReleaseError(RuntimeError):
@@ -100,6 +101,14 @@ def require_committed_tools(repo, commit):
                 f"{relative} differs from {commit}; run the release from the requested commit"
             )
 
+def require_clean_checkout(repo, commit, label):
+    actual = run_git(repo, "rev-parse", "--verify", "HEAD^{commit}")
+    if actual != commit:
+        raise ReleaseError(f"{label} checkout HEAD is {actual}, expected {commit}")
+    dirty = run_git(repo, "status", "--porcelain=v1", "--untracked-files=all")
+    if dirty:
+        raise ReleaseError(f"{label} checkout is dirty:\n{dirty}")
+
 
 def require_commit(value, label="commit"):
     if not isinstance(value, str) or not FULL_COMMIT.fullmatch(value):
@@ -122,6 +131,37 @@ def version_at(repo, commit):
     if not match:
         raise ReleaseError("workspace.package.version is missing from Cargo.toml")
     return match.group(1)
+
+def release_name_at(repo, commit):
+    source = run_git(repo, "show", f"{commit}:crates/panel/src/build_info.rs")
+    match = re.search(r'pub const RELEASE: &str = "([^"]+)";', source)
+    if not match:
+        raise ReleaseError("panel RELEASE is missing from build_info.rs")
+    return match.group(1).title()
+
+
+def validate_tag(tag, version):
+    if not isinstance(tag, str) or not RELEASE_TAG.fullmatch(tag):
+        raise ReleaseError("release tag must contain only numeric dot-separated components")
+    if tag != version and not tag.startswith(version + "."):
+        raise ReleaseError(f"release tag {tag} does not match package version {version}")
+
+
+def validate_release_identity(expect, manifest, tag):
+    validate_tag(tag, expect["version"])
+    if manifest.get("version") != expect["version"]:
+        raise ReleaseError("package manifest version does not match expect.json")
+    if manifest.get("release") != expect.get("release"):
+        raise ReleaseError("package manifest release name does not match expect.json")
+
+
+def validate_rustc_host(output, platform):
+    match = re.search(r"(?m)^host: (\S+)$", output)
+    if not match or match.group(1) != TARGET[platform]:
+        found = match.group(1) if match else "missing"
+        raise ReleaseError(
+            f"rustc host {found} does not match {TARGET[platform]} for {platform}"
+        )
 
 
 def validate_remote_root(value, label):
@@ -162,17 +202,29 @@ def input_paths(inputs_root, expect):
     }
 
 
-def verify_input_digests(inputs_root, expect):
+def verify_expected_input_digests(paths, expect):
     expected = expect.get("inputs")
     if not isinstance(expected, dict):
         raise ReleaseError("expect.json has no inputs object")
-    actual = {name: tree_digest(path) for name, path in input_paths(inputs_root, expect).items()}
+    actual = {name: tree_digest(path) for name, path in paths.items()}
     for name in ("pack", "content", "snapshot"):
         if actual[name] != expected.get(name):
             raise ReleaseError(
                 f"input digest mismatch for {name}: {actual[name]} != {expected.get(name)}"
             )
     return actual
+
+
+def verify_input_digests(inputs_root, expect):
+    return verify_expected_input_digests(input_paths(inputs_root, expect), expect)
+
+
+def verify_input_digests_from_roots(args, expect):
+    return verify_expected_input_digests({
+        "pack": Path(args.engine_dir) / "data/pack/client",
+        "content": Path(args.content_dir),
+        "snapshot": Path(args.snapshot_root) / expect["snapshot_version"],
+    }, expect)
 
 
 def safe_tar_members(archive):
@@ -373,45 +425,102 @@ def render_build_plan(args, commit, client_commit, version):
 
 def prepare_payload(args, repo, commit, client_commit, version):
     missing = [
-        name for name in ("work_dir", "engine_dir", "content_dir", "snapshot_root",
-                          "snapshot_version")
+        name for name in (
+            "work_dir", "engine_dir", "content_dir", "snapshot_root", "snapshot_version"
+        )
         if not getattr(args, name)
     ]
     if missing:
-        raise ReleaseError("build requires " + ", ".join("--" + name.replace("_", "-") for name in missing))
+        raise ReleaseError(
+            "build requires "
+            + ", ".join("--" + name.replace("_", "-") for name in missing)
+        )
     require_committed_tools(repo, commit)
+    require_clean_checkout(repo, commit, "host")
     client_repo = Path(args.client_root or repo / "vendor/fr-client-rust").resolve()
     if run_git(client_repo, "cat-file", "-t", client_commit) != "commit":
         raise ReleaseError(f"client repository does not contain {client_commit}")
+    require_clean_checkout(client_repo, client_commit, "client")
+    release_name = release_name_at(repo, commit)
     commit_root = Path(args.work_dir).resolve() / commit
     prepared = commit_root / "prepared"
-    if prepared.exists():
-        raise ReleaseError(f"prepared release already exists: {prepared}")
-    prepared.mkdir(parents=True)
     source_archive = prepared / "source.tar.gz"
     inputs_archive = prepared / "inputs.tar.gz"
-    source_record = create_source_archive(repo, client_repo, commit, client_commit, source_archive)
-    inputs, inputs_record = create_inputs_archive(
-        args.engine_dir, args.content_dir, args.snapshot_root, args.snapshot_version, inputs_archive
-    )
-    expect = {
-        "schema": 1,
-        "host_commit": commit,
-        "client_commit": client_commit,
-        "version": version,
-        "revision": int(args.revision),
-        "snapshot_version": args.snapshot_version,
-        "features": "default",
-        "jobs": args.jobs,
-        "inputs": inputs,
-        "archives": {"source.tar.gz": source_record, "inputs.tar.gz": inputs_record},
-    }
-    write_json(prepared / "expect.json", expect)
+    expect_path = prepared / "expect.json"
     payload = prepared / "payload.tar.gz"
-    with tarfile.open(payload, "w:gz") as archive:
-        for path in (source_archive, inputs_archive, prepared / "expect.json", Path(__file__),
-                     Path(__file__).with_name("windows-ssh.py")):
-            archive.add(path, arcname="release.py" if path == Path(__file__) else path.name)
+    if prepared.exists():
+        required = (source_archive, inputs_archive, expect_path, payload)
+        if not all(path.is_file() for path in required):
+            raise ReleaseError(
+                f"incomplete prepared release: {prepared}; "
+                "use build --reset-prepared to recreate it"
+            )
+        expect = json.loads(expect_path.read_text())
+        identity = {
+            "host_commit": commit,
+            "client_commit": client_commit,
+            "version": version,
+            "release": release_name,
+            "revision": int(args.revision),
+            "snapshot_version": args.snapshot_version,
+            "jobs": args.jobs,
+        }
+        for key, value in identity.items():
+            if expect.get(key) != value:
+                raise ReleaseError(
+                    f"prepared {key} is {expect.get(key)!r}, requested {value!r}; "
+                    "use build --reset-prepared"
+                )
+        for name, record in expect["archives"].items():
+            verify_file_record(prepared / name, record, name)
+        verify_input_digests_from_roots(args, expect)
+        return commit_root, payload, expect
+    prepared.mkdir(parents=True)
+    try:
+        source_record = create_source_archive(
+            repo, client_repo, commit, client_commit, source_archive
+        )
+        inputs, inputs_record = create_inputs_archive(
+            args.engine_dir,
+            args.content_dir,
+            args.snapshot_root,
+            args.snapshot_version,
+            inputs_archive,
+        )
+        expect = {
+            "schema": 1,
+            "host_commit": commit,
+            "client_commit": client_commit,
+            "version": version,
+            "release": release_name,
+            "revision": int(args.revision),
+            "snapshot_version": args.snapshot_version,
+            "features": "default",
+            "jobs": args.jobs,
+            "inputs": inputs,
+            "archives": {
+                "source.tar.gz": source_record,
+                "inputs.tar.gz": inputs_record,
+            },
+        }
+        write_json(expect_path, expect)
+        release_tool = Path(repo) / "tools/release/release.py"
+        windows_tool = Path(repo) / "tools/release/windows-ssh.py"
+        with tarfile.open(payload, "w:gz") as archive:
+            for path in (
+                source_archive,
+                inputs_archive,
+                expect_path,
+                release_tool,
+                windows_tool,
+            ):
+                archive.add(
+                    path,
+                    arcname="release.py" if path == release_tool else path.name,
+                )
+    except Exception:
+        shutil.rmtree(prepared, ignore_errors=True)
+        raise
     return commit_root, payload, expect
 
 
@@ -430,6 +539,34 @@ def worker_expect(root, commit, platform):
     return expect
 
 
+def native_build_environment(expect, root, target, platform, rusty_v8_archive=None):
+    environment = os.environ.copy()
+    environment.pop("RUSTY_V8_ARCHIVE", None)
+    environment.pop("AWS_LC_SYS_PREBUILT_NASM", None)
+    environment.update({
+        "GIT_COMMIT": expect["host_commit"],
+        "CLIENT_COMMIT": expect["client_commit"],
+        "GIT_DIRTY": "0",
+        "BOT_NAV_REVISION": str(expect["revision"]),
+        "BOT_NAV_BUILD": "require",
+        "BOT_NAV_ENGINE_DIR": str(root / "engine"),
+        "BOT_NAV_CONTENT_DIR": str(root / "content"),
+        "BOT_NAV_SNAPSHOT_ROOT": str(root / "snapshots"),
+        "CARGO_TARGET_DIR": str(target),
+        "CARGO_BUILD_JOBS": str(expect["jobs"]),
+        "CARGO_INCREMENTAL": "0",
+    })
+    environment["PATH"] = (
+        str(Path.home() / ".cargo/bin") + os.pathsep + environment.get("PATH", "")
+    )
+    if platform == "windows":
+        if not rusty_v8_archive:
+            raise ReleaseError("Windows build requires --rusty-v8-archive")
+        environment["AWS_LC_SYS_PREBUILT_NASM"] = "1"
+        environment["RUSTY_V8_ARCHIVE"] = rusty_v8_archive
+    return environment
+
+
 def build_worker(args):
     root = Path(args.worker_root).resolve()
     expect = worker_expect(root, args.commit, args.platform)
@@ -446,27 +583,10 @@ def build_worker(args):
     safe_extract_tar(root / "source.tar.gz", source)
     safe_extract_tar(root / "inputs.tar.gz", inputs)
     actual_inputs = verify_input_digests(inputs, expect)
-    target = root / "cache" / args.commit / "target"
-    environment = os.environ.copy()
-    environment.update({
-        "GIT_COMMIT": expect["host_commit"],
-        "CLIENT_COMMIT": expect["client_commit"],
-        "GIT_DIRTY": "0",
-        "BOT_NAV_REVISION": str(expect["revision"]),
-        "BOT_NAV_BUILD": "require",
-        "BOT_NAV_ENGINE_DIR": str(inputs / "engine"),
-        "BOT_NAV_CONTENT_DIR": str(inputs / "content"),
-        "BOT_NAV_SNAPSHOT_ROOT": str(inputs / "snapshots"),
-        "CARGO_TARGET_DIR": str(target),
-        "CARGO_BUILD_JOBS": str(expect["jobs"]),
-        "CARGO_INCREMENTAL": "0",
-    })
-    environment["PATH"] = str(Path.home() / ".cargo/bin") + os.pathsep + environment.get("PATH", "")
-    if args.platform == "windows":
-        if not args.rusty_v8_archive:
-            raise ReleaseError("Windows build requires --rusty-v8-archive")
-        environment["AWS_LC_SYS_PREBUILT_NASM"] = "1"
-        environment["RUSTY_V8_ARCHIVE"] = args.rusty_v8_archive
+    target = root / "cache/target"
+    environment = native_build_environment(
+        expect, inputs, target, args.platform, args.rusty_v8_archive
+    )
     command = [
         "cargo", "build", "--locked", "--release",
         "-p", "panel", "--bin", "panel-play",
@@ -486,11 +606,13 @@ def build_worker(args):
     for path in artifacts:
         if not path.is_file():
             raise ReleaseError(f"build omitted required artifact: {path}")
+    rustc = run(["rustc", "-Vv"], cwd=source, env=environment, capture=True)
+    validate_rustc_host(rustc, args.platform)
     receipt = {
         "host_commit": expect["host_commit"],
         "client_commit": expect["client_commit"],
         "target": TARGET[args.platform],
-        "rustc": run(["rustc", "-Vv"], cwd=source, env=environment, capture=True),
+        "rustc": rustc,
         "features": "default",
         "built_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "nav_inputs": actual_inputs,
@@ -580,7 +702,10 @@ def windows_root(args, commit):
 
 
 def powershell_quote(value):
-    return "'" + str(value).replace("'", "''") + "'"
+    value = str(value)
+    if any(character in value for character in "\x00\r\n\u2018\u2019\u201a\u201b"):
+        raise ReleaseError("PowerShell argument contains a forbidden quote or control character")
+    return "'" + value.replace("'", "''") + "'"
 
 
 def stage_payload(args, platform, commit_root, payload):
@@ -605,6 +730,21 @@ def stage_payload(args, platform, commit_root, payload):
     )
     windows_transport(args, "run", extract)
     return remote
+
+def clear_platform_stage(args, platform, commit_root):
+    if platform == "macos":
+        shutil.rmtree(commit_root / platform, ignore_errors=True)
+        return
+    if platform == "linux":
+        remote = linux_root(args, args.commit)
+        linux_run(args, f"rm -rf {shlex.quote(remote)}")
+        return
+    remote = windows_root(args, args.commit)
+    script = (
+        "$root = Join-Path $HOME {}; "
+        "if (Test-Path $root) { Remove-Item -Recurse -Force -ErrorAction Stop $root }"
+    ).format(powershell_quote(remote.replace("/", "\\")))
+    windows_transport(args, "run", script)
 
 
 def dispatch_build(args, platform, root):
@@ -647,8 +787,15 @@ def build_controller(args):
             raise ReleaseError("Windows build requires --rusty-v8-archive or RUSTY_V8_ARCHIVE")
     if "macos" in platforms and not args.sign_identity:
         raise ReleaseError("macOS build requires --sign-identity or RELEASE_SIGN_IDENTITY")
+    if args.reset_prepared:
+        if not args.work_dir:
+            raise ReleaseError("--reset-prepared requires --work-dir")
+        shutil.rmtree(Path(args.work_dir).resolve() / args.commit / "prepared",
+                      ignore_errors=True)
     commit_root, payload, _expect = prepare_payload(args, repo, args.commit, client_commit, version)
     for platform in platforms:
+        if args.force_platform:
+            clear_platform_stage(args, platform, commit_root)
         root = stage_payload(args, platform, commit_root, payload)
         dispatch_build(args, platform, root)
 
@@ -659,10 +806,23 @@ def runtime_requirements(platform):
     if platform == "linux":
         return [
             "glibc >= 2.39",
-            "libssl.so.3 and libcrypto.so.3",
+            "libssl.so.3, libcrypto.so.3, and libasound.so.2",
             "panel-play: a Wayland or X11 session and a Vulkan 1 loader/driver",
         ]
     return ["Microsoft Visual C++ x64 runtime: VCRUNTIME140.dll and VCRUNTIME140_1.dll"]
+
+
+def package_files(base, manifest_path):
+    files = []
+    for path in sorted(Path(base).rglob("*")):
+        if path.is_symlink():
+            raise ReleaseError(f"package contains a symlink: {path}")
+        relative = path.relative_to(base)
+        if any(part == ".DS_Store" or part.startswith("._") for part in relative.parts):
+            raise ReleaseError(f"package contains forbidden metadata: {relative}")
+        if path.is_file() and path != manifest_path:
+            files.append(path)
+    return files
 
 
 def finalize_manifest(base, platform, tag, notes, notarization_id=None):
@@ -692,8 +852,7 @@ def finalize_manifest(base, platform, tag, notes, notarization_id=None):
             "sha256": sha256_file(path),
             "bytes": path.stat().st_size,
         }
-        for path in sorted(base.rglob("*"))
-        if path.is_file() and path != manifest_path
+        for path in package_files(base, manifest_path)
     }
     write_json(manifest_path, manifest)
     return manifest
@@ -705,7 +864,7 @@ def create_archive(base, platform, destination):
     if destination.exists():
         raise ReleaseError(f"archive already exists: {destination}")
     if platform == "macos":
-        run(["ditto", "-c", "-k", "--keepParent", base, destination])
+        run(["ditto", "-c", "-k", "--norsrc", "--keepParent", base, destination])
     elif platform == "linux":
         made = shutil.make_archive(str(destination)[:-7], "gztar", root_dir=base.parent,
                                    base_dir=base.name)
@@ -728,29 +887,36 @@ def finalize_worker(args):
     notes = Path(args.release_notes).resolve()
     if not notes.is_file():
         raise ReleaseError(f"release notes are missing: {notes}")
+    manifest_path = base / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    validate_release_identity(expect, manifest, args.tag)
     archive = root / (base.name + ARCHIVE_SUFFIX[args.platform])
     notarization_id = args.notarization_id
-    if args.platform == "macos" and not notarization_id:
-        manifest = json.loads((base / "release-manifest.json").read_text())
+    notary_file = root / "notarization-id.txt"
+    if args.platform == "macos":
         if not manifest.get("signed"):
             raise ReleaseError("refusing to notarize an unsigned macOS package")
-        create_archive(base, "macos", archive)
-        output = run([
-            "xcrun", "notarytool", "submit", archive,
-            "--keychain-profile", args.notary_profile,
-            "--wait", "--output-format", "json",
-        ], capture=True)
-        result = json.loads(output)
-        if result.get("status") != "Accepted" or not result.get("id"):
-            raise ReleaseError(f"Apple did not accept the package: {result}")
-        notarization_id = result["id"]
+        if not notarization_id and notary_file.is_file():
+            notarization_id = notary_file.read_text().strip()
+        if not notarization_id:
+            archive.unlink(missing_ok=True)
+            create_archive(base, "macos", archive)
+            output = run([
+                "xcrun", "notarytool", "submit", archive,
+                "--keychain-profile", args.notary_profile,
+                "--wait", "--output-format", "json",
+            ], capture=True)
+            result = json.loads(output)
+            if result.get("status") != "Accepted" or not result.get("id"):
+                raise ReleaseError(f"Apple did not accept the package: {result}")
+            notarization_id = result["id"]
+            notary_file.write_text(notarization_id + "\n")
         run(["xcrun", "stapler", "staple", base / "274bot.app"])
         run(["xcrun", "stapler", "validate", base / "274bot.app"])
-        archive.unlink()
+    archive.unlink(missing_ok=True)
     finalize_manifest(base, args.platform, args.tag, notes, notarization_id)
     create_archive(base, args.platform, archive)
     if args.platform == "macos":
-        (root / "notarization-id.txt").write_text(notarization_id + "\n")
         run(["spctl", "-a", "-vv", base / "274bot.app"])
     result = {
         "platform": args.platform,
@@ -790,12 +956,29 @@ def render_finalize_plan(args):
     }
 
 
-def update_sha256s(artifact_dir):
+def expected_archive_names(expect):
+    return {
+        package_base(expect, platform) + ARCHIVE_SUFFIX[platform]
+        for platform in PLATFORMS
+    }
+
+
+def update_sha256s(artifact_dir, expect):
     artifact_dir = Path(artifact_dir)
-    archives = sorted(
-        path for path in artifact_dir.glob("274bot-*")
-        if path.is_file() and (path.name.endswith(".zip") or path.name.endswith(".tar.gz"))
-    )
+    expected = expected_archive_names(expect)
+    actual = {
+        path.name for path in artifact_dir.glob("274bot-*")
+        if path.is_file() and (
+            path.name.endswith(".zip") or path.name.endswith(".tar.gz")
+        )
+    }
+    unexpected = actual - expected
+    if unexpected:
+        raise ReleaseError(
+            "unexpected release archives beside candidate: "
+            + ", ".join(sorted(unexpected))
+        )
+    archives = [artifact_dir / name for name in sorted(actual)]
     if not archives:
         raise ReleaseError(f"no release archives in {artifact_dir}")
     text = "".join(f"{sha256_file(path)}  {path.name}\n" for path in archives)
@@ -819,6 +1002,7 @@ def finalize_controller(args):
     if not expect_path.is_file():
         raise ReleaseError(f"prepared manifest is missing: {expect_path}")
     expect = json.loads(expect_path.read_text())
+    validate_tag(args.tag, expect["version"])
     artifact_dir = Path(args.artifact_dir).resolve() if args.artifact_dir else commit_root / "artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     for platform in selected_platforms(args.platform):
@@ -829,6 +1013,7 @@ def finalize_controller(args):
         if platform == "macos":
             worker = argparse.Namespace(**vars(args))
             worker.worker_root = commit_root / "macos"
+            worker.platform = platform
             archive = finalize_worker(worker)
             shutil.copy2(archive, destination)
         elif platform == "linux":
@@ -851,15 +1036,17 @@ def finalize_controller(args):
             )
             windows_transport(args, "run", script)
             windows_transport(args, "get", f"{root}/{name}", destination)
-        update_sha256s(artifact_dir)
+        update_sha256s(artifact_dir, expect)
     print(artifact_dir / "SHA256SUMS")
 
 
 def extracted_base(destination):
-    roots = [path for path in Path(destination).iterdir() if path.is_dir()]
-    if len(roots) != 1:
-        raise ReleaseError(f"archive must contain exactly one package directory: {roots}")
-    return roots[0]
+    entries = list(Path(destination).iterdir())
+    if len(entries) != 1 or not entries[0].is_dir():
+        raise ReleaseError(
+            f"archive must contain exactly one package directory: {entries}"
+        )
+    return entries[0]
 
 
 def verify_package_archive(archive, destination, *, expected_platform=None,
@@ -919,6 +1106,65 @@ def nav_digest_set(base, manifest):
     nav = Path(base) / "nav" / revision
     return {name: {"sha256": sha256_file(nav / name), "bytes": (nav / name).stat().st_size}
             for name in NAV_NAMES}
+
+def compare_nav_sets(nav_sets):
+    if set(nav_sets) != set(PLATFORMS):
+        return "not compared (requires macos, linux, and windows)"
+    baseline = nav_sets["macos"]
+    for platform in ("linux", "windows"):
+        if nav_sets[platform] != baseline:
+            raise ReleaseError(f"navigation differs between macos and {platform}")
+    return "byte-identical across macos, linux, and windows"
+
+
+def discover_candidate_archives(artifact_dir):
+    artifact_dir = Path(artifact_dir)
+    candidates = {}
+    for platform in PLATFORMS:
+        matches = sorted(
+            artifact_dir.glob(
+                f"274bot-*-{ARCH_NAME[platform]}{ARCHIVE_SUFFIX[platform]}"
+            )
+        )
+        if len(matches) > 1:
+            raise ReleaseError(
+                f"expected at most one {platform} archive in {artifact_dir}, found {matches}"
+            )
+        if matches:
+            candidates[platform] = matches[0]
+    recognized = {path.name for path in candidates.values()}
+    actual = {
+        path.name for path in artifact_dir.glob("274bot-*")
+        if path.is_file() and (
+            path.name.endswith(".zip") or path.name.endswith(".tar.gz")
+        )
+    }
+    if actual != recognized:
+        raise ReleaseError(
+            "unexpected release archives beside candidate: "
+            + ", ".join(sorted(actual - recognized))
+        )
+    return candidates
+
+
+def verify_sha256s(artifact_dir, archives):
+    checksum_path = Path(artifact_dir) / "SHA256SUMS"
+    if not checksum_path.is_file():
+        raise ReleaseError(f"missing SHA256SUMS: {checksum_path}")
+    rows = {}
+    for line in checksum_path.read_text().splitlines():
+        match = re.fullmatch(r"([0-9a-f]{64})  ([^\r\n]+)", line)
+        if not match or match.group(2) in rows:
+            raise ReleaseError("malformed or duplicate SHA256SUMS row")
+        rows[match.group(2)] = match.group(1)
+    expected = {path.name for path in archives.values()}
+    if set(rows) != expected:
+        raise ReleaseError(
+            f"SHA256SUMS membership differs from candidate: {sorted(set(rows) ^ expected)}"
+        )
+    for path in archives.values():
+        if sha256_file(path) != rows[path.name]:
+            raise ReleaseError(f"SHA256SUMS mismatch: {path.name}")
 
 
 def verify_worker(args):
@@ -984,34 +1230,34 @@ def verify_controller(args):
         return
     if not args.artifact_dir:
         raise ReleaseError("verify requires --artifact-dir")
-    if "windows" in selected_platforms(args.platform) and not args.windows_host:
+    selected = selected_platforms(args.platform)
+    if "windows" in selected and not args.windows_host:
         raise ReleaseError("Windows verification requires --windows-host or RELEASE_WINDOWS_HOST")
     artifact_dir = Path(args.artifact_dir).resolve()
-    native_archives = {}
+    candidates = discover_candidate_archives(artifact_dir)
+    missing = set(selected) - set(candidates)
+    if missing:
+        raise ReleaseError(
+            "missing requested release archives: " + ", ".join(sorted(missing))
+        )
+    verify_sha256s(artifact_dir, candidates)
+    integrity_platforms = PLATFORMS if set(candidates) == set(PLATFORMS) else selected
     nav_sets = {}
     with tempfile.TemporaryDirectory(prefix="274bot-release-verify-") as temporary:
-        for platform in selected_platforms(args.platform):
-            matches = sorted(artifact_dir.glob(f"274bot-*-{ARCH_NAME[platform]}{ARCHIVE_SUFFIX[platform]}"))
-            if len(matches) != 1:
-                raise ReleaseError(f"expected one {platform} archive in {artifact_dir}, found {matches}")
-            archive = matches[0]
-            native_archives[platform] = archive
+        for platform in integrity_platforms:
+            archive = candidates[platform]
             destination = Path(temporary) / platform
             base, manifest, _ = verify_package_archive(
                 archive, destination, expected_platform=platform,
                 expected_commit=args.commit, run_help=False,
             )
             nav_sets[platform] = nav_digest_set(base, manifest)
-        if len(nav_sets) > 1:
-            first_platform = next(iter(nav_sets))
-            for platform, values in nav_sets.items():
-                if values != nav_sets[first_platform]:
-                    raise ReleaseError(
-                        f"navigation differs between {first_platform} and {platform}"
-                    )
+        nav_status = compare_nav_sets(nav_sets)
+    native_archives = {platform: candidates[platform] for platform in selected}
     for platform, archive in native_archives.items():
         if platform == "macos":
             worker = argparse.Namespace(**vars(args))
+            worker.platform = platform
             worker.worker_root = archive.parent
             worker.archive = archive
             verify_worker(worker)
@@ -1039,7 +1285,63 @@ def verify_controller(args):
                 "& " + " ".join(powershell_quote(value) for value in command),
             )
             windows_transport(args, "run", script)
-    print(json.dumps({"verified": sorted(native_archives), "nav": "byte-identical"}, indent=2))
+    print(json.dumps({"verified": sorted(native_archives), "nav": nav_status}, indent=2))
+
+def retain_release_outputs(root, commit, platform):
+    root = Path(root).resolve()
+    expect = worker_expect(root, commit, platform)
+    package = package_base(expect, platform)
+    keep = {
+        package,
+        package + ARCHIVE_SUFFIX[platform],
+        f"{platform}-build-receipt.json",
+        f"{platform}-build-result.json",
+        f"{platform}-finalize-result.json",
+        "notarization-id.txt",
+    }
+    for path in root.iterdir():
+        if path.name in keep:
+            continue
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    return sorted(path.name for path in root.iterdir())
+
+
+def clean_controller(args):
+    require_commit(args.commit)
+    if not args.work_dir:
+        raise ReleaseError("clean requires --work-dir")
+    commit_root = Path(args.work_dir).resolve() / args.commit
+    if args.mode == "reset-prepared":
+        shutil.rmtree(commit_root / "prepared", ignore_errors=True)
+        print(commit_root / "prepared")
+        return
+    platforms = selected_platforms(args.platform)
+    if "windows" in platforms and not args.windows_host:
+        raise ReleaseError("Windows cleanup requires --windows-host or RELEASE_WINDOWS_HOST")
+    for platform in platforms:
+        if args.mode == "reset-platform":
+            clear_platform_stage(args, platform, commit_root)
+            continue
+        if platform == "macos":
+            retained = retain_release_outputs(commit_root / platform, args.commit, platform)
+            print(json.dumps({"platform": platform, "retained": retained}, sort_keys=True))
+        elif platform == "linux":
+            root = linux_root(args, args.commit)
+            command = ["python3", "-u", "release.py", "clean", "--commit", args.commit,
+                       "--platform", platform, "--worker-root", ".", "--mode", "retain"]
+            linux_run(args, f"cd {shlex.quote(root)} && {shlex.join(command)}")
+        else:
+            root = windows_root(args, args.commit)
+            command = ["python", "-u", "release.py", "clean", "--commit", args.commit,
+                       "--platform", platform, "--worker-root", ".", "--mode", "retain"]
+            script = "$root = Join-Path $HOME {}; Set-Location $root; {}".format(
+                powershell_quote(root.replace("/", "\\")),
+                "& " + " ".join(powershell_quote(value) for value in command),
+            )
+            windows_transport(args, "run", script)
 
 
 def add_transport_arguments(parser):
@@ -1077,6 +1379,10 @@ def parser():
     build.add_argument("--app-profile", default="public-289")
     build.add_argument("--sign-identity", default=os.environ.get("RELEASE_SIGN_IDENTITY"))
     build.add_argument("--rusty-v8-archive", default=os.environ.get("RUSTY_V8_ARCHIVE"))
+    build.add_argument("--reset-prepared", action="store_true",
+                       help="discard and recreate the shared source/input payload")
+    build.add_argument("--force-platform", action="store_true",
+                       help="discard selected platform staging before rebuilding")
     build.add_argument("--worker-root", type=Path, help=argparse.SUPPRESS)
     add_transport_arguments(build)
 
@@ -1101,6 +1407,18 @@ def parser():
     verify.add_argument("--archive", type=Path, help=argparse.SUPPRESS)
     verify.add_argument("--worker-root", type=Path, help=argparse.SUPPRESS)
     add_transport_arguments(verify)
+
+    clean = commands.add_parser(
+        "clean", help="reset retry state or retain only packages and receipts"
+    )
+    clean.add_argument("--commit", required=True)
+    clean.add_argument("--platform", choices=(*PLATFORMS, "all"), default="all")
+    clean.add_argument("--work-dir", type=Path)
+    clean.add_argument(
+        "--mode", choices=("reset-prepared", "reset-platform", "retain"), required=True
+    )
+    clean.add_argument("--worker-root", type=Path, help=argparse.SUPPRESS)
+    add_transport_arguments(clean)
     return result
 
 
@@ -1112,14 +1430,24 @@ def main(argv=None):
                 build_worker(arguments)
             elif arguments.command == "finalize":
                 finalize_worker(arguments)
-            else:
+            elif arguments.command == "verify":
                 verify_worker(arguments)
+            else:
+                retained = retain_release_outputs(
+                    arguments.worker_root, arguments.commit, arguments.platform
+                )
+                print(json.dumps({
+                    "platform": arguments.platform,
+                    "retained": retained,
+                }, sort_keys=True))
         elif arguments.command == "build":
             build_controller(arguments)
         elif arguments.command == "finalize":
             finalize_controller(arguments)
-        else:
+        elif arguments.command == "verify":
             verify_controller(arguments)
+        else:
+            clean_controller(arguments)
     except (ReleaseError, OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         parser().error(str(error))
 

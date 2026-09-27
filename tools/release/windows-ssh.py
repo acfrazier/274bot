@@ -32,11 +32,16 @@ def ssh_options(identity=None, known_hosts=None, connect_timeout=15):
 
 def encoded_powershell(script):
     guarded = (
-        "$ErrorActionPreference='Stop';"
+        "$ErrorActionPreference='Continue';"
         "$ProgressPreference='SilentlyContinue';"
+        "$PSDefaultParameterValues['*:ErrorAction']='Stop';"
+        "if (Test-Path variable:PSNativeCommandUseErrorActionPreference) "
+        "{ $PSNativeCommandUseErrorActionPreference=$false };"
+        "try { "
         + script
-        + "; if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) "
-          "{ exit $LASTEXITCODE }; exit 0"
+        + "; $code=$LASTEXITCODE; "
+          "if ($code -ne $null -and $code -ne 0) { exit $code }; exit 0 "
+          "} catch { [Console]::Error.WriteLine($_); exit 1 }"
     )
     return base64.b64encode(guarded.encode("utf-16-le")).decode("ascii")
 

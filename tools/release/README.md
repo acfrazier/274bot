@@ -38,9 +38,10 @@ both exact commits into `source.tar.gz`, exports only the pinned build inputs
 into `inputs.tar.gz`, and writes `expect.json` with archive SHA-256 records and
 the SHA-256 tree digest plus file count for pack, content, and snapshot.
 `.git` metadata is excluded and symlinks are refused.
-Real builds also require `release.py` and `windows-ssh.py` in the checkout to
-match the requested commit, so an uncommitted controller cannot become the
-transported native worker.
+Real builds require both host and client checkouts to be at the requested
+commits with no tracked or untracked changes. `release.py` and
+`windows-ssh.py` must match that commit, so uncommitted controller code cannot
+become the transported native worker.
 
 Every native worker verifies both archives, extracts them into a fresh
 per-commit workspace, recomputes all three input digests, and then builds:
@@ -56,6 +57,14 @@ input digests, and every binary/nav digest in the build receipt before calling
 `package.py`. Each platform therefore ships `panel-play`, `tui-play`,
 revision-289 navigation, and the terrain baked by the staged TUI from the same
 pinned cache and snapshot.
+
+Completed `prepared/` state is reusable: a one-platform retry verifies the
+existing archives, manifest, and current input tree digests instead of
+regenerating shared payload hashes. Use `--force-platform` to discard only the
+selected native staging and rebuild it. Use `--reset-prepared` only when the
+pinned source or inputs intentionally changed; it deletes and recreates the
+shared payload before staging the requested platform. An interrupted initial
+prepare removes its partial directory automatically.
 
 ### Builders and parameters
 
@@ -98,21 +107,56 @@ python3 tools/release/release.py verify \
   --commit "$COMMIT" --platform all --artifact-dir "$ARTIFACTS"
 ```
 
-Finalization copies the release notes, records platform runtime requirements,
-rehashes every package file into `release-manifest.json`, creates the native
-archive, downloads remote archives, and regenerates `SHA256SUMS`. On macOS it
-first submits the signed zip, requires Apple's `Accepted` result, staples and
-validates `274bot.app`, then rehashes and recreates the archive. The keychain
-profile defaults to `274bot` and is parameterized by `--notary-profile` or
+Finalization first refuses a tag that is neither the Cargo version nor a
+numeric patch tag beginning with that version (for example, version `0.1.8`
+may finalize as `0.1.8.1`). It also requires the staged manifest's version and
+public release name to match the pinned source. It then copies the release
+notes, records platform runtime requirements, rehashes every package file,
+creates the native archive, downloads remote archives, and regenerates
+`SHA256SUMS` from only the candidate's expected archive names.
+
+On macOS it submits the signed zip, requires Apple's `Accepted` result, records
+the submission id immediately, staples and validates `274bot.app`, then
+rehashes and recreates the archive. A retry after stapling or Gatekeeper
+failure reuses that accepted id rather than resubmitting. The keychain profile
+defaults to `274bot` and is parameterized by `--notary-profile` or
 `RELEASE_NOTARY_PROFILE`. Credentials remain in the local keychain.
 
 Verification safely extracts every archive, rejects traversal, links, duplicate
 members, extra files, missing files, byte-count differences, and SHA-256
-differences. It checks the requested host commit, runs both executables'
-`--help` on their native platforms, validates the extracted macOS signatures,
-staple, and Gatekeeper acceptance, and requires all six navigation files to be
-byte-identical across macOS, Linux, and Windows. Verification does not publish
-anything.
+differences, and verifies `SHA256SUMS` has exactly the candidate archives. It
+checks the requested host commit, runs both executables' `--help` on their
+native platforms, and validates the extracted macOS signatures, staple, and
+Gatekeeper acceptance. Navigation is reported byte-identical only after all
+six files from all three platform archives compare equal; a partial
+per-platform verification explicitly reports that navigation was not compared.
+Verification does not publish anything.
+
+### Retry and cleanup
+
+The retry controls are deliberately scoped to the release work root:
+
+```sh
+# Rebuild one native platform without changing prepared archive identities.
+python3 tools/release/release.py build ... --platform linux --force-platform
+
+# Remove selected platform staging explicitly, keeping prepared/.
+python3 tools/release/release.py clean --commit "$COMMIT" \
+  --work-dir "$WORK" --platform linux --mode reset-platform
+
+# After release verification, retain only package directories/archives,
+# build/finalize receipts, and the macOS notarization id on each builder.
+python3 tools/release/release.py clean --commit "$COMMIT" \
+  --work-dir "$WORK" --platform all --mode retain
+
+# Deliberately discard shared preparation (local only).
+python3 tools/release/release.py clean --commit "$COMMIT" \
+  --work-dir "$WORK" --mode reset-prepared
+```
+
+Mac finalization itself is resumable as described above. Remote cleanup uses
+the same parameterized SSH settings as build/finalize and never touches paths
+outside the per-commit release root.
 
 The controller intentionally has no tag, push, upload, or GitHub-release
 operation. Those remain explicit operator actions after native verification.
