@@ -532,6 +532,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::duel::Handshake>(),
     entry::<crate::duel::Helper>(),
     entry::<crate::duel::Travel>(),
+    entry::<crate::duel::Close>(),
     entry::<crate::quest_journal::QuestJournal>(),
     entry::<crate::reach_entity::EntityOp>(),
     entry::<crate::reach_entity::WalkHops>(),

@@ -619,6 +619,8 @@ scene_pages! {
         spell_buttons: Vec<ButtonRow>,
         nearest_booth: NearestBooth,
         trade_partner: String,
+        /// The local player's name as posted (frozen `localPlayerName()`).
+        my_name: String,
         inv: Vec<ItemRow>,
         equipment: Vec<ItemRow>,
         bank: Vec<ItemRow>,
@@ -875,6 +877,9 @@ impl Scene {
         }
         if let Some(partner) = snap.trade_partner() {
             p.trade_partner(partner.to_string());
+        }
+        if let Some(name) = snap.my_name() {
+            p.my_name(name.to_string());
         }
         if snap.has_trade_accept_id() {
             p.trade_accept_id(snap.trade_accept_id());

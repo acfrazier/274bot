@@ -4,10 +4,8 @@
 // (`enabled` / `log` / `setStatus`) go through the one callback path. This file
 // never echoes snapshot pages and never enqueues a loc for an unknown kind.
 import { runMachine } from '../../../shim/_kernel.js';
-import { SettingsStore } from '../../../runtime/Settings.js';
 import { crossesClueDuel, walkAcrossClueDuel } from './duelTravel.js';
 import { Traversal } from '../../walking/Traversal.js';
-import { reader } from '../../../adapter/ClientAdapter.js';
 
 
 function clueCall(payload) {
@@ -99,11 +97,7 @@ export class SolveClue {
             if (!begin || begin.kind !== 'token') return;
             this.token = begin.token;
         }
-        const out = await runMachine('clue', {
-            token: this.token,
-            clue_duel_partner: SettingsStore.globalBag().str('clueDuelPartner', '').trim(),
-            self_name: reader.localPlayerName() || '',
-        }, this.hooks());
+        const out = await runMachine('clue', { token: this.token }, this.hooks());
         if (out.kind === 'refused' || out.kind === 'aborted') {
             this.token = null;
             return;

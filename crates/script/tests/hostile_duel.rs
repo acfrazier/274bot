@@ -758,6 +758,9 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+/// Frozen `walkAcrossClueDuel` from inside a pen to an outside tile: it
+/// forfeits (logging it), answers 'Yes', then walks the destination leg as
+/// a resilient walk whose wait settles on its own request.
 #[test]
 fn clue_duel_travel_walks_to_an_outside_destination_after_forfeit() {
     let actions = ["Forfeit".to_string()];
@@ -799,11 +802,10 @@ export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__started) return;
         globalThis.__started = true;
+        globalThis.__log = [];
         await runMachine('clue_duel_travel', {
-            partner: 'Helper',
             x: 3382, z: 3269, level: 0, radius: 2,
-            leave_only: false,
-        }, {});
+        }, { log: (line) => globalThis.__log.push(line) });
     }
 }
 "#,
@@ -841,9 +843,10 @@ export default class T extends LoopingBot {
     iso.on_game_tick(4);
     let _ = iso.probe("true");
 
+    let requests = iso.drain_interacts();
     assert_eq!(
-        iso.drain_interacts(),
-        vec![
+        requests[..2],
+        [
             script::shim::InteractReq::Loc {
                 x: 3364,
                 z: 3251,
@@ -852,18 +855,147 @@ export default class T extends LoopingBot {
                 id: Some(3203),
             },
             script::shim::InteractReq::Answer { option: 1 },
-            script::shim::InteractReq::WalkNear {
+        ]
+    );
+    assert!(
+        matches!(
+            &requests[2..],
+            [script::shim::InteractReq::WalkNear {
                 x: 3382,
                 z: 3269,
                 level: 0,
                 radius: 2,
-                allow_teleports: false,
-                allow_wilderness: false,
-                allow_bank_fetch: false,
-                request_id: 0,
-                avoid: Vec::new(),
-            },
-        ]
+                request_id,
+                ..
+            }] if *request_id != 0
+        ),
+        "{requests:?}"
     );
+    assert_eq!(
+        iso.probe("globalThis.__log").unwrap(),
+        serde_json::json!(["forfeiting the clue duel"])
+    );
+    iso.join();
+}
+
+/// A travel from the lobby into the packed clue's pen, logging to
+/// `globalThis.__log` and settling into `globalThis.__crossed`.
+const CROSS_TO_CLUE_PEN: &str = r#"
+import { walkAcrossClueDuel } from '../../api/ai/clues/duelTravel.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__log = [];
+        globalThis.__crossed = await walkAcrossClueDuel(
+            { x: 3374, z: 3250, level: 0 }, 1, (line) => globalThis.__log.push(line));
+    }
+}
+"#;
+
+/// Frozen `walkAcrossClueDuel` stops on an event signal while it waits for
+/// the helper, cancelling the duel screen only when one is open.
+#[test]
+fn clue_duel_travel_interrupt_cancels_only_an_open_duel() {
+    let offer = [WidgetTextInput {
+        component_id: 6671,
+        text: "Dueling with: Helper",
+        item_count: -1,
+    }];
+    for offer_open in [false, true] {
+        let iso = spawn(CROSS_TO_CLUE_PEN);
+        iso.post_settings_bag(
+            serde_json::json!({ "clueDuelPartner": "Helper" })
+                .as_object()
+                .unwrap(),
+        );
+        let mut snapshot = base_snapshot();
+        snapshot.here = Some(TileInput {
+            x: 3368,
+            z: 3274,
+            level: 0,
+        });
+        snapshot.my_name = Some("Solver");
+        post_snapshot_input(&iso, &snapshot);
+        iso.on_game_tick(1);
+        let _ = iso.probe("true");
+        assert!(iso.drain_interacts().is_empty(), "waiting at the lobby");
+
+        iso.probe("globalThis.__rs2b0t_event_interrupt = () => true, true")
+            .unwrap();
+        snapshot.tick = 2;
+        if offer_open {
+            snapshot.main_modal_id = 6575;
+            snapshot.widgets = &offer;
+        }
+        post_snapshot_input(&iso, &snapshot);
+        iso.on_game_tick(2);
+        let _ = iso.probe("true");
+        assert_eq!(
+            iso.drain_interacts(),
+            if offer_open {
+                vec![script::shim::InteractReq::CloseModal]
+            } else {
+                Vec::new()
+            },
+            "offer open: {offer_open}"
+        );
+        assert_eq!(
+            iso.probe("globalThis.__crossed").unwrap(),
+            false,
+            "offer open: {offer_open}"
+        );
+        assert_eq!(
+            iso.probe("globalThis.__log").unwrap(),
+            serde_json::json!(["waiting for clue helper Helper"])
+        );
+        iso.join();
+    }
+}
+
+/// Frozen `Duel.cancel()` is `Modals.close()` on an open duel screen: it
+/// resolves once the modal closed, and false with no duel screen open.
+#[test]
+fn duel_cancel_awaits_the_closed_duel_screen() {
+    let iso = spawn(
+        r#"
+import { Duel } from '../../api/duel/Duel.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__cancelled = await Duel.cancel();
+        globalThis.__again = await Duel.cancel();
+    }
+}
+"#,
+    );
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6575;
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::CloseModal]
+    );
+    assert_eq!(
+        iso.probe("globalThis.__cancelled").unwrap(),
+        serde_json::Value::Null,
+        "Duel.cancel waits for the offer screen to close"
+    );
+
+    snapshot.tick = 2;
+    snapshot.main_modal_id = -1;
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    assert_eq!(iso.probe("globalThis.__cancelled").unwrap(), true);
+    assert_eq!(
+        iso.probe("globalThis.__again").unwrap(),
+        false,
+        "no duel screen: nothing to cancel"
+    );
+    assert!(iso.drain_interacts().is_empty());
     iso.join();
 }

@@ -1,6 +1,5 @@
-import { actions } from '../../adapter/ClientAdapter.js';
 import { Input } from '../../input/Input.js';
-import { notImplValue, proxy } from '../../shim/_kernel.js';
+import { notImplValue, proxy, queue, runMachine } from '../../shim/_kernel.js';
 
 const config = () => (globalThis.__rs2b0t_host || {}).content?.duel || {};
 const selected = (name) => Number.isInteger(config()[name])
@@ -8,18 +7,17 @@ const selected = (name) => Number.isInteger(config()[name])
     : notImplValue('Duel.' + name);
 const call = (payload) => globalThis.rustyscript.functions.__rs2b0t_duel(payload);
 const facts = () => call({ op: 'facts' }) || {};
+const close = async (kind) => {
+    const out = await runMachine('duel_close', { kind });
+    return out.kind === 'done' && out.value === true;
+};
 
 export const DUEL_SELECT_MODAL = selected('select_modal');
 export const DUEL_CONFIRM_MODAL = selected('confirm_modal');
 export const DUEL_WIN_MODAL = selected('win_modal');
-export const DUEL_FIGHT_ARENAS = Object.freeze([
-    Object.freeze({ minX: 3333, maxX: 3357, minZ: 3244, maxZ: 3258 }),
-    Object.freeze({ minX: 3364, maxX: 3388, minZ: 3225, maxZ: 3239 }),
-    Object.freeze({ minX: 3333, maxX: 3357, minZ: 3206, maxZ: 3220 }),
-    Object.freeze({ minX: 3364, maxX: 3388, minZ: 3244, maxZ: 3258 }),
-    Object.freeze({ minX: 3333, maxX: 3357, minZ: 3225, maxZ: 3239 }),
-    Object.freeze({ minX: 3364, maxX: 3388, minZ: 3206, maxZ: 3220 }),
-]);
+export const DUEL_FIGHT_ARENAS = Object.freeze(
+    call({ op: 'tables' }).pens.map((pen) => Object.freeze(pen)),
+);
 
 export function parseDuelPartnerHeader(header) {
     return call({ op: 'header', text: typeof header === 'string' ? header : null });
@@ -42,17 +40,11 @@ export const Duel = proxy('Duel', {
     challenge(player) { return Input.interactPlayer(player?.index, 1); },
     fight(player) { return Input.interactPlayer(player?.index, 2); },
     accept() {
-        const value = facts();
-        if (value.offer === true) return actions.ifButton(selected('select_accept'));
-        if (value.confirm === true) return actions.ifButton(selected('confirm_accept'));
-        return false;
+        const op = call({ op: 'accept' });
+        if (!op) return false;
+        queue(op);
+        return true;
     },
-    async cancel() {
-        if (!this.active()) return false;
-        return actions.closeModal();
-    },
-    async closeWin() {
-        if (!this.winOpen()) return false;
-        return actions.closeModal();
-    },
+    cancel() { return close('cancel'); },
+    closeWin() { return close('closeWin'); },
 });

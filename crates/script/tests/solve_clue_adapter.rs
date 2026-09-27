@@ -1006,13 +1006,13 @@ export default class T extends TaskBot {
         "the casket Open is a held-item request"
     );
 
-    // The casket gone: this fixture has no profile-global partner, so 3554
-    // logs its frozen operator action and refuses before any travel or Dig.
+    // The casket gone: the 3554 crossing decides nothing until the scene
+    // posts where the player stands, so nothing is queued.
     post_page(&iso, 2, &[(CONSTRAINED_ID, 1)]);
     tick(&iso, 2);
     assert!(
         iso.drain_interacts().is_empty(),
-        "an unconfigured duel crossing queues no interaction"
+        "a crossing with no posted position queues no interaction"
     );
     let logs = iso.drain_logs();
     iso.join();
@@ -1042,9 +1042,10 @@ export default class T extends TaskBot {
             .unwrap(),
     );
     let page = [(CONSTRAINED_ID, 1), (SPADE_ITEM, 1)];
-    let scene = Scene {
+    // In the target pen, short of the packed tile.
+    let in_pen = Scene {
         here: Some(TileInput {
-            x: 3374,
+            x: 3380,
             z: 3250,
             level: 0,
         }),
@@ -1054,25 +1055,33 @@ export default class T extends TaskBot {
         ..Scene::default()
     };
 
-    post_scene(&iso, 1, &page, &scene);
+    post_scene(&iso, 1, &page, &in_pen);
     tick(&iso, 1);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::WalkNear {
+    let requests = iso.drain_interacts();
+    assert!(
+        matches!(
+            requests.as_slice(),
+            [InteractReq::WalkNear {
+                x: 3374,
+                z: 3250,
+                level: 0,
+                radius: 1,
+                request_id,
+                ..
+            }] if *request_id != 0
+        ),
+        "the family owns the crossing's resilient last leg before the clue verb: {requests:?}"
+    );
+
+    let at_tile = Scene {
+        here: Some(TileInput {
             x: 3374,
             z: 3250,
             level: 0,
-            radius: 1,
-            allow_teleports: false,
-            allow_wilderness: false,
-            allow_bank_fetch: false,
-            request_id: 0,
-            avoid: Vec::new(),
-        }],
-        "the family owns the duel crossing before the clue verb"
-    );
-
-    post_scene(&iso, 2, &page, &scene);
+        }),
+        ..in_pen
+    };
+    post_scene(&iso, 2, &page, &at_tile);
     tick(&iso, 2);
     assert_eq!(
         iso.drain_interacts(),
@@ -1153,15 +1162,90 @@ export default class T extends TaskBot {
     }
 }
 
+/// Frozen `walkAcrossClueDuel` needs the partner only to enter a pen from
+/// outside: an account already in the target pen walks the last leg and
+/// digs with no partner set.
 #[test]
-fn clue_3554_family_propagates_duel_travel_failure() {
+fn clue_3554_resumes_inside_the_target_pen_without_a_partner() {
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
     onStart() {
+        globalThis.__logs = [];
         this.solveClue = new SolveClue({
             enabled: () => true,
-            log: () => {},
+            log: (message) => { globalThis.__logs.push(String(message)); },
+            setStatus: () => {},
+        });
+        this.add(this.solveClue);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let page = [(CONSTRAINED_ID, 1), (SPADE_ITEM, 1)];
+    let in_pen = Scene {
+        here: Some(TileInput {
+            x: 3380,
+            z: 3250,
+            level: 0,
+        }),
+        names: &[(SPADE_ITEM, "Spade")],
+        my_name: Some("Solver"),
+        trio: true,
+        ..Scene::default()
+    };
+    post_scene(&iso, 1, &page, &in_pen);
+    tick(&iso, 1);
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [InteractReq::WalkNear {
+            x: 3374,
+            z: 3250,
+            ..
+        }]
+    ));
+    let at_tile = Scene {
+        here: Some(TileInput {
+            x: 3374,
+            z: 3250,
+            level: 0,
+        }),
+        ..in_pen
+    };
+    post_scene(&iso, 2, &page, &at_tile);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Held {
+            name: "Spade".into(),
+            action: "Dig".into(),
+        }]
+    );
+    let callback_logs = json(&iso, "JSON.stringify(globalThis.__logs)");
+    assert!(
+        !callback_logs
+            .to_string()
+            .contains("set Global clue duel partner"),
+        "{callback_logs}"
+    );
+    let logs = iso.drain_logs();
+    iso.join();
+    assert_clean(&logs);
+}
+
+/// Frozen `walkAcrossClueDuel` retries one wrong obstacle arena: each wrong
+/// pen is forfeited and left before the next entry, and the second is left
+/// too before the crossing fails and the clue token dies.
+#[test]
+fn clue_3554_family_leaves_each_wrong_arena_before_failing() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        globalThis.__logs = [];
+        this.solveClue = new SolveClue({
+            enabled: () => true,
+            log: (message) => { globalThis.__logs.push(String(message)); },
             setStatus: () => {},
         });
         globalThis.__solver = this.solveClue;
@@ -1176,7 +1260,19 @@ export default class T extends TaskBot {
             .unwrap(),
     );
     let page = [(CONSTRAINED_ID, 1)];
-    let ready = Scene {
+    let forfeit = ["Forfeit".to_string()];
+    let exit = [scene_loc(3203, 3345, 3243, 0, &forfeit)];
+    let yes = [
+        script::isolate_fb::ChatOptionInput {
+            text: "Yes",
+            com_id: 4883,
+        },
+        script::isolate_fb::ChatOptionInput {
+            text: "No",
+            com_id: 4884,
+        },
+    ];
+    let lobby = Scene {
         here: Some(TileInput {
             x: 3368,
             z: 3274,
@@ -1185,44 +1281,65 @@ export default class T extends TaskBot {
         my_name: Some("Solver"),
         ..Scene::default()
     };
-    post_scene(&iso, 1, &page, &ready);
-    tick(&iso, 1);
-    assert!(matches!(
-        iso.drain_interacts().as_slice(),
-        [InteractReq::WalkNear { .. }]
-    ));
-
-    post_scene(&iso, 2, &page, &ready);
-    tick(&iso, 2);
-    assert!(iso.drain_interacts().is_empty());
+    // Pen 0, not the packed clue's pen 3.
     let wrong_pen = Scene {
         here: Some(TileInput {
             x: 3340,
             z: 3250,
             level: 0,
         }),
-        my_name: Some("Solver"),
-        ..Scene::default()
+        locs: &exit,
+        ..lobby
     };
-    post_scene(&iso, 3, &page, &wrong_pen);
-    tick(&iso, 3);
-    assert!(iso.drain_interacts().is_empty());
-    post_scene(&iso, 4, &page, &ready);
-    tick(&iso, 4);
-    assert!(matches!(
-        iso.drain_interacts().as_slice(),
-        [InteractReq::WalkNear { .. }]
-    ));
-    post_scene(&iso, 5, &page, &ready);
-    tick(&iso, 5);
-    assert!(iso.drain_interacts().is_empty());
-    post_scene(&iso, 6, &page, &wrong_pen);
-    tick(&iso, 6);
-    assert!(iso.drain_interacts().is_empty());
+    let asked = Scene {
+        options: &yes,
+        ..wrong_pen
+    };
+    let forfeited = |requests: &[InteractReq]| {
+        requests
+            == [InteractReq::Loc {
+                x: 3345,
+                z: 3243,
+                level: 0,
+                action: "Forfeit".into(),
+                id: Some(3203),
+            }]
+    };
+    let mut tick_no = 0;
+    let mut step = |scene: &Scene<'_>| {
+        tick_no += 1;
+        post_scene(&iso, tick_no, &page, scene);
+        tick(&iso, tick_no);
+        iso.drain_interacts()
+    };
+    for attempt in 1..=2 {
+        step(&lobby);
+        assert!(forfeited(&step(&wrong_pen)), "attempt {attempt} forfeits");
+        assert_eq!(step(&asked), [InteractReq::Answer { option: 1 }]);
+        assert_ne!(
+            iso.probe("globalThis.__solver.token").unwrap(),
+            serde_json::Value::Null,
+            "attempt {attempt}: the token lives until the wrong pen is left"
+        );
+    }
+    step(&lobby);
     assert_eq!(
         iso.probe("globalThis.__solver.token").unwrap(),
         serde_json::Value::Null,
-        "the family propagates Travel false as a terminal clue-duel abort"
+        "the family propagates the failed crossing as a terminal clue-duel abort"
+    );
+    let callback_logs = json(&iso, "JSON.stringify(globalThis.__logs)").to_string();
+    assert_eq!(
+        callback_logs
+            .matches("assigned a different obstacle arena, retrying")
+            .count(),
+        2,
+        "{callback_logs}"
+    );
+    assert_eq!(
+        callback_logs.matches("forfeiting the clue duel").count(),
+        2,
+        "{callback_logs}"
     );
     let logs = iso.drain_logs();
     iso.join();

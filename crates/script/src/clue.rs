@@ -321,9 +321,10 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
+/// The packed constrained clue whose trail crosses the Duel Arena.
+const DUEL_CLUE_ID: i32 = crate::duel::CLUE_ID;
 /// No selected pin. The same public token the landed V8 held-step wrapper
 /// publishes: the machine refuses with it rather than calling a page empty.
-const DUEL_CLUE_ID: i32 = 3554;
 const MISSING_SELECTED_DATA: &str = "missing-selected-data";
 
 /// The token is not this machine's live one.
@@ -1453,11 +1454,12 @@ impl ClueRuntime {
         if row.id == DUEL_CLUE_ID
             && input.get("duel_crossed").and_then(Value::as_bool) != Some(true)
         {
+            let tile = crate::duel::CLUE_TILE;
             return json!({
                 "kind": "duel-travel",
-                "x": 3374,
-                "z": 3250,
-                "level": 0,
+                "x": tile.x,
+                "z": tile.z,
+                "level": tile.level,
                 "radius": ARRIVE_RADIUS,
             });
         }
@@ -1482,11 +1484,12 @@ impl ClueRuntime {
             return self.guarded(row, tile, input, selected);
         }
         if row.id == DUEL_CLUE_ID {
+            let tile = crate::duel::CLUE_TILE;
             return self.dig(
                 Tile {
-                    x: 3374,
-                    z: 3250,
-                    level: 0,
+                    x: tile.x,
+                    z: tile.z,
+                    level: tile.level,
                 },
                 input,
             );
