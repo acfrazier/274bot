@@ -6505,7 +6505,7 @@ fn withdraw_load_selects_exact_then_all_then_x() {
 }
 
 #[test]
-fn deposit_and_ordinary_withdraw_wait_for_observed_progress() {
+fn deposit_snapshot_wait_and_ordinary_withdraw_complete_in_the_same_bank_session() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -6516,7 +6516,9 @@ export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
+        const before = Bank.snapshotGeneration();
         await Bank.depositInventory();
+        globalThis.__snapshot_fresh = await Bank.waitSnapshotAfter(before, 5000);
         globalThis.__deposit_done = true;
         globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw All');
     }
@@ -6532,6 +6534,7 @@ export default class T extends LoopingBot {
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
+    let bank_session = snap.bank_session_generation();
     let posted_inv = [(1, 3)];
 
     script_observe(
@@ -6596,7 +6599,10 @@ export default class T extends LoopingBot {
 
     let mut empty_side = Packet::new(vec![2, 189, 0, 0]);
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+    let mut deposited_bank = Packet::new(vec![2, 89, 2, 0, 3, 20, 0, 2, 3]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut deposited_bank);
     snap.rebuild(&c);
+    assert_eq!(snap.bank_session_generation(), bank_session);
     assert!(
         snap.bank_side().is_empty(),
         "settlement removed the side row"
@@ -6669,6 +6675,16 @@ export default class T extends LoopingBot {
         );
         thread::sleep(Duration::from_millis(10));
     }
+    assert_eq!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__snapshot_fresh")
+            .unwrap(),
+        true,
+        "the deposited bank snapshot must resolve the wait without reopening or timing out"
+    );
     let settle_elapsed = empty_side_observed_at.elapsed();
     assert!(
         settle_elapsed >= Duration::from_millis(1_200),

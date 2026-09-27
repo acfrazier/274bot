@@ -752,6 +752,20 @@ impl GameSnapshot {
         self.bank_session_generation
     }
 
+    /// Packet generation of the open bank's item snapshot, or `None` while
+    /// closed. Full, partial and stop-transmit packets advance this counter;
+    /// opening or closing the modal alone does not. Readiness is separate.
+    pub fn bank_snapshot_generation(&self) -> Option<u64> {
+        self.bank_inventory_session?;
+        (self.bank_component_id >= 0).then_some(
+            if self.bank_last_inv_com == self.bank_component_id {
+                self.bank_last_inv_generation
+            } else {
+                0
+            },
+        )
+    }
+
     /// Whether the current bank component has a transmitting full snapshot
     /// that is current for this open session.
     pub fn bank_loaded(&self) -> bool {

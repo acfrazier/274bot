@@ -219,7 +219,10 @@ export interface Snapshot {
   bank_side: ItemRow[];
   bank_open: boolean;
   bank_loaded: boolean;
+  /** Open/close session identity for bank actions; item updates do not change it. */
   bank_generation: number;
+  /** Open bank item packet generation; -1 while closed. Not an action session identity. */
+  bank_snapshot_generation: number;
   count_dialog_open: boolean;
   withdraw_x_result_seq: number;
   withdraw_x_result: boolean;
@@ -356,6 +359,8 @@ export interface NativeSnapshot {
   bank_loaded: boolean;
   /** Pass this into withdraw-load / withdraw-x. A changed generation is stale, not exhaustion. */
   bank_generation: number;
+  /** Open bank item packet generation; -1 while closed. Not an action session identity. */
+  bank_snapshot_generation: number;
   banks: BankStand[];
   nearest_booth: NearestBooth | null;
   bank_approaches: BankApproach[];

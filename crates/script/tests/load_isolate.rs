@@ -4713,17 +4713,17 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_bank_snapshot_generation_waits_for_a_new_ready_session() {
+fn isolate_bank_snapshot_wait_requires_new_items_not_just_a_reopened_session() {
+    use script::isolate_fb::{encode_snapshot_delta_with_native, NativeFactsInput};
+
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    loop() {
+    async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        globalThis.__ready = Bank.snapshotReady();
         globalThis.__generation = Bank.snapshotGeneration();
-        Bank.waitSnapshotAfter(globalThis.__generation, 5000)
-            .then((ok) => { globalThis.__after = ok; });
+        globalThis.__after = await Bank.waitSnapshotAfter(globalThis.__generation, 5000);
     }
 }
 "#;
@@ -4732,19 +4732,32 @@ export default class T extends LoopingBot {
     snap.bank_open = true;
     snap.bank_loaded = true;
     snap.bank_generation = 7;
-    post_snapshot_input(&iso, &snap);
+    let mut native = NativeFactsInput {
+        bank_snapshot_generation: Some(10),
+        ..Default::default()
+    };
+    let (bytes, first) = encode_snapshot_delta_with_native(None, &snap, native, false);
+    iso.post_snapshot(bytes);
     iso.on_game_tick(1);
-    assert_eq!(iso.probe("__ready").unwrap(), true);
-    assert_eq!(iso.probe("__generation").unwrap(), 7);
-    assert!(
-        iso.probe("__after").is_err(),
-        "same generation stays pending"
-    );
+    assert_eq!(iso.probe("__generation").unwrap(), 10);
+    assert_eq!(iso.probe("typeof globalThis.__after").unwrap(), "undefined");
 
     snap.tick = 2;
-    snap.bank_generation = 8;
-    post_snapshot_input(&iso, &snap);
+    snap.bank_generation = 9;
+    let (bytes, reopened) = encode_snapshot_delta_with_native(Some(&first), &snap, native, false);
+    iso.post_snapshot(bytes);
     iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("typeof globalThis.__after").unwrap(),
+        "undefined",
+        "a close/reopen without newer item data cannot satisfy the wait"
+    );
+
+    snap.tick = 3;
+    native.bank_snapshot_generation = Some(11);
+    let (bytes, _) = encode_snapshot_delta_with_native(Some(&reopened), &snap, native, false);
+    iso.post_snapshot(bytes);
+    iso.on_game_tick(3);
     assert_eq!(iso.probe("__after").unwrap(), true);
     iso.join();
 }
@@ -5279,7 +5292,9 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_bank_withdraw_load_queues_one_host_owned_request() {
+fn isolate_bank_withdraw_load_keeps_item_updates_but_rejects_reopened_sessions() {
+    use script::isolate_fb::{encode_snapshot_delta_with_native, NativeFactsInput};
+
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
@@ -5290,33 +5305,48 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let ops = [
-        "Withdraw 1".into(),
-        "Withdraw All".into(),
-        "Withdraw X".into(),
-    ];
+    let ops = ["Withdraw All".into()];
     let bank = [item_row(1515, Some("Yew logs"), 80, &ops, false, -1, 0)];
-    let inv = [nc(Some("Knife"), 1)];
-    let mut snap = base_snapshot();
-    snap.inv = &inv;
-    snap.inv_size = 28;
-    snap.bank = &bank;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 12;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WithdrawLoad {
-            name: "Yew logs".into(),
-            bank_generation: 12,
-        }]
-    );
-    assert_eq!(iso.probe("typeof globalThis.__ok").unwrap(), "undefined");
-    iso.join();
+    for reopened in [false, true] {
+        let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+        let mut snap = base_snapshot();
+        snap.inv_size = 28;
+        snap.bank = &bank;
+        snap.bank_open = true;
+        snap.bank_loaded = true;
+        snap.bank_generation = 12;
+        let mut native = NativeFactsInput {
+            bank_snapshot_generation: Some(40),
+            ..Default::default()
+        };
+        let (bytes, first) = encode_snapshot_delta_with_native(None, &snap, native, false);
+        iso.post_snapshot(bytes);
+        iso.on_game_tick(1);
+        assert_eq!(iso.probe("typeof globalThis.__ok").unwrap(), "undefined");
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![script::shim::InteractReq::WithdrawLoad {
+                name: "Yew logs".into(),
+                bank_generation: 12,
+            }],
+            "the action carries the session, not item snapshot 40"
+        );
+
+        snap.tick = 2;
+        snap.bank_generation = if reopened { 14 } else { 12 };
+        snap.withdraw_load_result_seq = 1;
+        snap.withdraw_load_result = true;
+        native.bank_snapshot_generation = Some(41);
+        let (bytes, _) = encode_snapshot_delta_with_native(Some(&first), &snap, native, false);
+        iso.post_snapshot(bytes);
+        iso.on_game_tick(2);
+        assert_eq!(
+            iso.probe("__ok").unwrap(),
+            !reopened,
+            "item updates preserve the withdrawal; a replaced session invalidates it"
+        );
+        iso.join();
+    }
 }
 
 #[test]

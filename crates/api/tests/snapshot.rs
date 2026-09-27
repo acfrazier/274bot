@@ -3846,6 +3846,98 @@ fn inventory_size_and_bank_component_id_derive_from_the_ifaces() {
 }
 
 #[test]
+fn bank_snapshot_generation_tracks_item_packets_without_changing_session_identity() {
+    let mut c = client_with_npc();
+    plant_withdraw_bank(&mut c);
+    plant_obj(&mut c, 1, "Bones");
+    let mut snap = GameSnapshot::new();
+    assert_eq!(snap.bank_snapshot_generation(), None);
+
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut Packet::new(vec![2, 88]));
+    rebuild_bank(&mut snap, &c);
+    let session = snap.bank_session_generation();
+    assert_eq!(snap.bank_snapshot_generation(), Some(0));
+    assert!(!snap.bank_loaded());
+
+    c.handle_packet(
+        ServerProt::UPDATE_INV_FULL,
+        &mut Packet::new(vec![2, 89, 0]),
+    );
+    rebuild_bank(&mut snap, &c);
+    assert_eq!(snap.bank_snapshot_generation(), Some(1));
+    assert!(snap.bank_loaded());
+
+    c.handle_packet(
+        ServerProt::UPDATE_INV_FULL,
+        &mut Packet::new(vec![2, 189, 0]),
+    );
+    rebuild_bank(&mut snap, &c);
+    assert_eq!(
+        snap.bank_snapshot_generation(),
+        Some(1),
+        "deposit-side data is not bank stock"
+    );
+    assert!(!snap.rebuild_family(&c, Family::Bank));
+    assert_eq!(snap.bank_snapshot_generation(), Some(1));
+
+    c.handle_packet(
+        ServerProt::UPDATE_INV_FULL,
+        &mut Packet::new(vec![2, 89, 1, 0, 2, 3]),
+    );
+    rebuild_bank(&mut snap, &c);
+    assert_eq!(snap.bank()[0].count, 3);
+    assert_eq!(snap.bank_snapshot_generation(), Some(2));
+    assert_eq!(snap.bank_session_generation(), session);
+
+    c.handle_packet(
+        ServerProt::UPDATE_INV_PARTIAL,
+        &mut Packet::new(vec![2, 89, 0, 0, 2, 2]),
+    );
+    rebuild_bank(&mut snap, &c);
+    assert_eq!(snap.bank()[0].count, 2);
+    assert_eq!(snap.bank_snapshot_generation(), Some(3));
+    assert_eq!(snap.bank_session_generation(), session);
+
+    c.handle_packet(ServerProt::IF_CLOSE, &mut Packet::new(vec![]));
+    rebuild_bank(&mut snap, &c);
+    assert_eq!(snap.bank_snapshot_generation(), None);
+    assert!(snap.bank_session_generation() > session);
+    let closed = snap.bank_session_generation();
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut Packet::new(vec![2, 88]));
+    rebuild_bank(&mut snap, &c);
+    assert!(snap.bank_session_generation() > closed);
+    assert_eq!(
+        snap.bank_snapshot_generation(),
+        Some(3),
+        "reopening is not an item update"
+    );
+    assert!(!snap.bank_loaded(), "the pre-close full is stale");
+
+    c.handle_packet(
+        ServerProt::UPDATE_INV_FULL,
+        &mut Packet::new(vec![2, 89, 1, 0, 2, 2]),
+    );
+    rebuild_bank(&mut snap, &c);
+    assert_eq!(
+        snap.bank_snapshot_generation(),
+        Some(4),
+        "equal contents are still a newer full"
+    );
+    assert!(snap.bank_loaded());
+
+    c.handle_packet(
+        ServerProt::UPDATE_INV_STOP_TRANSMIT,
+        &mut Packet::new(vec![2, 89]),
+    );
+    rebuild_bank(&mut snap, &c);
+    assert_eq!(snap.bank_snapshot_generation(), Some(5));
+    assert!(
+        !snap.bank_loaded(),
+        "a newer counter alone does not mean ready"
+    );
+}
+
+#[test]
 fn bank_loaded_matches_native_session_full_generation_and_transmission() {
     let mut c = client_with_npc();
     plant_withdraw_bank(&mut c);

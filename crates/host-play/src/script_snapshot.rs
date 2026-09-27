@@ -1494,6 +1494,11 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         collision,
         bank_selection: Default::default(),
         self_anim: Some(local.map_or(-1, |lp| lp.player.actor.animation)),
+        bank_snapshot_generation: Some(
+            snapshot
+                .and_then(GameSnapshot::bank_snapshot_generation)
+                .map_or(-1, |generation| generation as i64),
+        ),
     };
     f(&input, native)
 }

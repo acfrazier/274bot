@@ -308,6 +308,7 @@ table Snapshot {
   trade_decline_id: int;
   shop_open: bool;
   shop_stock: [Row];
+  // Open/close session identity used to reject stale bank actions.
   bank_generation: ulong;
   count_dialog_open: bool;
   withdraw_x_result_seq: ulong;
@@ -446,6 +447,9 @@ table Snapshot {
   // 'blocked' (the player stands next to a last tile the live scene
   // refuses; WalkExecutor.ts:1039-1040, 1092-1094).
   walk_outcome_blocked: bool = false;
+  // Item snapshot packet generation, distinct from bank_generation's
+  // open/close session. -1 while closed; omitted in a delta means keep.
+  bank_snapshot_generation: long = -1;
 }
 
 table Collision {

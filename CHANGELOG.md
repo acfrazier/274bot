@@ -500,6 +500,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   forever.
 
 ### Script host
+- `Bank.snapshotGeneration()` now follows acknowledged bank item packets,
+  independently of the bank modal's session identity. `waitSnapshotAfter`
+  can complete after a deposit without closing and reopening the bank, so
+  PotionMaker restocks in the same session as its deposit. Withdraw and
+  bank-machine requests still use the original open/close session fence.
 - Catalog walking and recovery follow frozen rs2b0t more closely
   (`docs/api/script.md`, "Catalog walking and recovery"): `walkResilient`
   verifies with a route probe before giving up and honours `sceneRadius`,

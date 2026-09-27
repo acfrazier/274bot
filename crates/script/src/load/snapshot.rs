@@ -143,6 +143,13 @@ pub(super) fn materialize_snapshot(
         let bank_generation = num(&mut scope, 0.0);
         set(&mut scope, obj, "bank_generation", bank_generation)?;
     }
+    if snap.has_bank_snapshot_generation() {
+        let generation = num(&mut scope, snap.bank_snapshot_generation() as f64);
+        set(&mut scope, obj, "bank_snapshot_generation", generation)?;
+    } else if !had {
+        let generation = num(&mut scope, -1.0);
+        set(&mut scope, obj, "bank_snapshot_generation", generation)?;
+    }
     if snap.has_bank_approaches() {
         let approaches = bank_approach_array(&mut scope, &snap.bank_approaches())?;
         set(&mut scope, obj, "bank_approaches", approaches)?;

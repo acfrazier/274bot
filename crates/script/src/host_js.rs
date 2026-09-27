@@ -1412,7 +1412,13 @@ const SNAPSHOT_FIELDS: &[TsField] = &[
         name: "bank_generation",
         ty: "number",
         optional: false,
-        doc: None,
+        doc: Some("Open/close session identity for bank actions; item updates do not change it."),
+    },
+    TsField {
+        name: "bank_snapshot_generation",
+        ty: "number",
+        optional: false,
+        doc: Some("Open bank item packet generation; -1 while closed. Not an action session identity."),
     },
     TsField {
         name: "count_dialog_open",
@@ -2668,6 +2674,12 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
         ty: "number",
         optional: false,
         doc: Some("Pass this into withdraw-load / withdraw-x. A changed generation is stale, not exhaustion."),
+    },
+    TsField {
+        name: "bank_snapshot_generation",
+        ty: "number",
+        optional: false,
+        doc: Some("Open bank item packet generation; -1 while closed. Not an action session identity."),
     },
     TsField { name: "banks", ty: "BankStand[]", optional: false, doc: None },
     TsField { name: "nearest_booth", ty: "NearestBooth | null", optional: false, doc: None },

@@ -111,6 +111,12 @@ impl<'a> ReadContext<'a> {
         self.0.bank_session_generation()
     }
 
+    /// Packet generation of the open bank's item snapshot, distinct from
+    /// its open/close session identity. `None` while closed.
+    pub fn bank_snapshot_generation(&self) -> Option<u64> {
+        self.0.bank_snapshot_generation()
+    }
+
     /// The open puzzle board (identity, slot count, session generation and
     /// the identified widget's rows). `component_id` is -1 when closed.
     pub fn puzzle_board(&self) -> PuzzleBoardView<'_> {

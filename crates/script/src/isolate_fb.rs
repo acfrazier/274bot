@@ -230,6 +230,7 @@ const VT_SNAP_BANK_SELECTION_INDEX: VOffsetT = 260;
 const VT_SNAP_BANK_SELECTION_KIND: VOffsetT = 262;
 const VT_SNAP_SELF_ANIM: VOffsetT = 264;
 const VT_SNAP_WALK_OUTCOME_BLOCKED: VOffsetT = 266;
+const VT_SNAP_BANK_SNAPSHOT_GENERATION: VOffsetT = 268;
 
 // Carry: { id, count, name }
 const VT_CARRY_ID: VOffsetT = 4;
@@ -793,6 +794,9 @@ pub struct NativeFactsInput<'a> {
     /// `-1` idle or no local player). `None` omits the slot (callers that
     /// do not observe it); the isolate keeps its last value.
     pub self_anim: Option<i32>,
+    /// Bank item packet generation (`-1` while closed), not the open/close
+    /// session identity. `None` omits the slot and keeps the last value.
+    pub bank_snapshot_generation: Option<i64>,
 }
 
 /// A terminal select-only result. Its ordinal is resolved against Start's
@@ -1940,6 +1944,11 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<i32>("bank_selection_index", VT_SNAP_BANK_SELECTION_INDEX, false)?
             .visit_field::<u8>("bank_selection_kind", VT_SNAP_BANK_SELECTION_KIND, false)?
             .visit_field::<i32>("self_anim", VT_SNAP_SELF_ANIM, false)?
+            .visit_field::<i64>(
+                "bank_snapshot_generation",
+                VT_SNAP_BANK_SNAPSHOT_GENERATION,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -2067,6 +2076,16 @@ impl SnapshotReader<'_> {
     }
     pub fn bank_generation(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_SNAP_BANK_GENERATION, None) }.unwrap_or(0)
+    }
+    pub fn has_bank_snapshot_generation(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<i64>(VT_SNAP_BANK_SNAPSHOT_GENERATION, None)
+                .is_some()
+        }
+    }
+    pub fn bank_snapshot_generation(&self) -> i64 {
+        unsafe { self.tab.get::<i64>(VT_SNAP_BANK_SNAPSHOT_GENERATION, None) }.unwrap_or(-1)
     }
     pub fn has_count_dialog_open(&self) -> bool {
         unsafe {
@@ -3245,6 +3264,7 @@ pub struct SnapshotFingerprint {
     pub collision: CollisionViewFp,
     pub bank_selection: BankSelectionInput,
     pub self_anim: Option<i32>,
+    pub bank_snapshot_generation: Option<i64>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -3530,6 +3550,7 @@ impl SnapshotFingerprint {
             collision: collision_fp(None, native.collision),
             bank_selection: native.bank_selection,
             self_anim: native.self_anim,
+            bank_snapshot_generation: native.bank_snapshot_generation,
         }
     }
 }
@@ -3680,6 +3701,7 @@ pub struct DeltaMask {
     pub bank_selection: bool,
     /// The local player's animation id; written only when supplied.
     pub self_anim: bool,
+    pub bank_snapshot_generation: bool,
 }
 
 impl DeltaMask {
@@ -3770,6 +3792,7 @@ impl DeltaMask {
             puzzle_board: true,
             bank_selection: true,
             self_anim: true,
+            bank_snapshot_generation: true,
         }
     }
 
@@ -3883,6 +3906,8 @@ impl DeltaMask {
             puzzle_board: next.puzzle_board != last.puzzle_board,
             bank_selection: next.bank_selection != last.bank_selection,
             self_anim: next.self_anim != last.self_anim,
+            bank_snapshot_generation: next.bank_snapshot_generation
+                != last.bank_snapshot_generation,
         }
     }
 }
@@ -4682,6 +4707,12 @@ fn encode_snapshot_masked_into(
     }
     if let (true, Some(anim)) = (mask.self_anim, native.self_anim) {
         b.push_slot_always(VT_SNAP_SELF_ANIM, anim);
+    }
+    if let (true, Some(generation)) = (
+        mask.bank_snapshot_generation,
+        native.bank_snapshot_generation,
+    ) {
+        b.push_slot_always(VT_SNAP_BANK_SNAPSHOT_GENERATION, generation);
     }
     if mask.self_chat {
         b.push_slot_always(VT_SNAP_SELF_CHAT, self_chat_off.expect("mask checked"));

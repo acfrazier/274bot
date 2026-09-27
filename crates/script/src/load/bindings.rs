@@ -674,7 +674,7 @@ import { tick } from './bot.js';
 import { runMachine } from '../../shim/_kernel.js';
 const SNAPSHOT_KEYS = new Set([
   'ingame','here','inv','inv_size','stats','bank','bank_side','bank_open','bank_loaded',
-  'bank_generation','banks','nearest_booth','bank_approaches','count_dialog_open',
+  'bank_generation','bank_snapshot_generation','banks','nearest_booth','bank_approaches','count_dialog_open',
   'puzzle_board','puzzle_board_generation',
   'withdraw_x_result_seq','withdraw_x_result','withdraw_load_result_seq','withdraw_load_result',
   'bank_op_result_seq','bank_op_result',  'walk_outcome_seq','walk_outcome_generation',

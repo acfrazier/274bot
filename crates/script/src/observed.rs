@@ -585,6 +585,7 @@ scene_pages! {
         bank_open: bool,
         bank_loaded: bool,
         bank_generation: u64,
+        bank_snapshot_generation: i64,
         bank_op_result_seq: u64,
         bank_op_result: bool,
         withdraw_x_result_seq: u64,
@@ -839,6 +840,9 @@ impl Scene {
         }
         if snap.has_bank_generation() {
             p.bank_generation(snap.bank_generation());
+        }
+        if snap.has_bank_snapshot_generation() {
+            p.bank_snapshot_generation(snap.bank_snapshot_generation());
         }
         if snap.has_bank_op_result_seq() {
             p.bank_op_result_seq(snap.bank_op_result_seq());
