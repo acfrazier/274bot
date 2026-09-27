@@ -104,7 +104,7 @@ Refresh catalog and the MultiBox bulk script controls described below.
 | **Load** | Open a file picker; register/transpile a File card. Disabled while a script is active on the focus. |
 | **Reload** | Hash current card origin (+ siblings). Unchanged → “Nothing changed; nothing to reload”. Changed with no running/paused owners → apply. Changed with owners → **Confirm** / **Cancel reload**: running bots that still match the warned generation **restart**; named **paused** bots are **Stopped** (not left half-reloaded). |
 | **Start / Pause / Resume / Stop** | Focused profile only. |
-| **Start all / Stop all** | MultiBox rail bulk script controls (panel). Separate from **Login all / Logout all**. Start all skips already running/paused/stopping members; Stop all stops running and paused across wall members and live slots. |
+| **Start all / Stop all** | Bulk script controls (panel MultiBox rail; TUI Script tab `T` / `E`). Separate from **Login all / Logout all**. Start all skips already running/paused/stopping members; Stop all stops running and paused across wall members and live slots. |
 | **Refresh catalog** | Re-scan `$RS2B0T` / catalog root. Unchanged scan → “Nothing changed.” Changed with owners → confirm; same restart/stop policy as manual reload. |
 
 Script paint (`ScriptPaint`) draws over the Game chatbox in the panel and

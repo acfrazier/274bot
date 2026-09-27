@@ -331,7 +331,7 @@ tiles already verified).
 | `load/bindings.rs` | isolate bootstrap registration | register order and wrappers |
 | `load/callback_v8.rs` | caller-callback invocation | one mechanism for typed helpers |
 | `load/bank_tasks_v8.rs`, `load/boost_potions_v8.rs`, `load/clue_facts_v8.rs`, `load/clue_logic_v8.rs`, `load/clue_pack_v8.rs`, `load/combat_style_v8.rs`, `load/dialog_v8.rs`, `load/fire_v8.rs`, `load/gather_methods_v8.rs`, `load/hunt_v8.rs`, `load/loadout_v8.rs`, `load/machine_v8.rs`, `load/melee_weapons_v8.rs`, `load/partner_trade_v8.rs`, `load/quest_facts_v8.rs`, `load/scene_v8.rs`, `load/selected_facts_v8.rs`, `load/supply_v8.rs`, `load/targets_v8.rs`, `load/tools_v8.rs` | typed local V8 marshalling | one native call each, no machines |
-| `load/buyout_plan.rs`, `load/distance.rs`, `load/reach_query.rs`, `load/shape.rs`, `load/line_of_sight.rs` | small typed V8 helpers | planning and geometry marshalling |
+| `load/buyout_plan.rs`, `load/cake_stall_v8.rs`, `load/distance.rs`, `load/reach_query.rs`, `load/shape.rs`, `load/line_of_sight.rs` | small typed V8 helpers | planning and geometry marshalling |
 | `load/canvas_tape.rs` | canvas op tape | typed flush onto the recorder |
 | `load/snapshot.rs` | snapshot-to-V8 materializer | typed settings and event rows |
 | `load/paint_chrome.rs`, `load/paint_jive.rs` | paint payload builders | chrome and jive paints |
