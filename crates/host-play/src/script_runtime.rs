@@ -33,9 +33,9 @@ pub(super) use script_snapshot::{script_snapshot_fb, with_script_snapshot_input}
 pub(super) use script_snapshot::{slot_arrival_reach, with_script_snapshot_input_shorts};
 #[path = "script_interact.rs"]
 mod script_interact;
-#[cfg(test)]
-pub(super) use script_interact::dispatch_script_interact;
 pub(super) use script_interact::dispatch_script_interact_cached;
+#[cfg(test)]
+pub(super) use script_interact::{dispatch_script_interact, validated_duel_accept};
 #[path = "script_paint.rs"]
 mod script_paint;
 pub(super) use script_paint::{
@@ -49,14 +49,16 @@ pub(super) use route_inspect::PostedInspect;
 
 #[path = "script_observe.rs"]
 mod script_observe;
+pub(super) use script_interact::reset_duel_session;
+pub(super) use script_observe::{
+    deliver_channel_events, nav_world_state_for_observe, observe_script_inv,
+    project_npc_boxes_for_isolate_snapshot, projected_npc_boxes,
+    script_observe_cached_with_channels,
+};
 #[cfg(test)]
 pub(super) use script_observe::{
-    install_dispatch_barrier, post_script_snapshot, script_observe, script_observe_with_npc_boxes,
-    take_script_interacts, DispatchBarrier,
-};
-pub(super) use script_observe::{
-    nav_world_state_for_observe, observe_script_inv, project_npc_boxes_for_isolate_snapshot,
-    projected_npc_boxes, script_observe_cached,
+    install_dispatch_barrier, post_script_snapshot, script_observe, script_observe_cached,
+    script_observe_with_npc_boxes, take_script_interacts, DispatchBarrier,
 };
 /// Per-uid script cell on the wall. Encode/post/drain take the slot lock
 /// only — the wall map lock is held briefly for lookup/insert.

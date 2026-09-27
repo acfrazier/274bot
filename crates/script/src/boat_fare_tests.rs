@@ -143,6 +143,7 @@ fn loc(id: i32, name: &str, x: i32, z: i32, distance: i32) -> SceneRow {
         actions: vec!["Search".into()].into(),
         shape: 10,
         angle: 0,
+        in_combat: false,
     }
 }
 

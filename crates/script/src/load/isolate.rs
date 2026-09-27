@@ -121,6 +121,9 @@ enum IsolateCmd {
     /// JS object the Game/Inventory/Skills/EventSignal shims read
     /// before the next dispatched tick. Never a JSON string.
     Snapshot(SnapshotMessage),
+    /// Play-owned BroadcastChannel deliveries, encoded as an InteractBatch
+    /// on the existing FlatBuffer wire.
+    Channel(Vec<u8>),
     /// Merged operator settings bag for the prelude's `this.settings.*`,
     /// built on the isolate thread as V8 values (never JSON text).
     Settings(serde_json::Map<String, serde_json::Value>),
@@ -590,6 +593,17 @@ impl LoadIsolate {
     /// Post available loadouts before subsequent tick commands.
     pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
         self.send(IsolateCmd::Loadouts(loadouts.to_vec()));
+    }
+    /// Deliver a broker batch without allowing it to grow the isolate command
+    /// queue without bound. `false` means the recipient is stale or backlogged.
+    pub fn post_channel_events(&self, bytes: Vec<u8>) -> bool {
+        if self.backlogged()
+            || self.stopped.load(std::sync::atomic::Ordering::Acquire)
+            || self.teardown_blocks_dispatch()
+        {
+            return false;
+        }
+        self.send(IsolateCmd::Channel(bytes))
     }
 
     /// Use the slot's frozen `RecoveryHints` for this isolate, so a watchdog

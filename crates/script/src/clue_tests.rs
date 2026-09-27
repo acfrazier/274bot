@@ -1145,13 +1145,13 @@ fn non_search_rows_stay_idle_over_a_fully_posted_scene() {
         "here": here(3209, 3218, 1),
         "locs": [loc(11, 3209, 3218, 1, &["Search"])],
     });
-    // A casket is a held Open and the packed 3554 clue is the constrained
-    // refusal, so neither is in this set: 2722 is a paramless clue row and
-    // 2831 is the key-hunt riddle, which walks to its published spawn from
-    // this very scene and has its own proof below. The coord-only map is no
-    // longer one of them either: the widened dig arm walks and Digs from
-    // its own tile. The five matcher-keepers the key family publishes no
-    // packed type for are idled here too.
+    // A casket is a held Open and packed 3554 takes the separate duel-crossing
+    // path, so neither is in this set: 2722 is a paramless clue row and 2831
+    // is the key-hunt riddle, which walks to its published spawn from this very
+    // scene and has its own proof below. The coord-only map is no longer one
+    // of them either: the widened dig arm walks and Digs from its own tile. The
+    // five matcher-keepers the key family publishes no packed type for are
+    // idled here too.
     for id in std::iter::once(MAP_EMPTY).chain(MATCHER_KEEPERS) {
         let page = json!([[id, 1]]);
         let token = steady(&data, id);
@@ -1163,42 +1163,6 @@ fn non_search_rows_stay_idle_over_a_fully_posted_scene() {
             assert!(idle.get("action").is_none(), "{id} {idle}");
         }
     }
-}
-
-/// The packed 3554 `access: "constrained"` clue is not idled: the machine
-/// refuses it — `aborted` / `constrained`, no verb and no live token — and
-/// a `begin` that identifies it is refused the same way.
-#[test]
-fn a_held_constrained_row_is_refused_and_never_played() {
-    on_reset();
-    let data = selected();
-    let page = json!([[CLUE, 1]]);
-    let refused = begin(&data, page.clone());
-    assert_eq!(refused["kind"], "aborted", "{refused}");
-    assert_eq!(refused["reason"], "constrained", "{refused}");
-    // No live token: the refusal's own number is not a session.
-    let after = call(&data, token_of(&refused), page.clone(), json!({}));
-    assert_eq!(after["reason"], "stale", "{after}");
-
-    // The same row held by a live session, over a scene the dig arms would
-    // walk and Dig from: identified, then refused with no verb at all. The
-    // refusal is not the gate: the constrained check runs before any
-    // re-arm, so the previous step's identity never gets a callback.
-    let scene = json!({
-        "here": here(3209, 3218, 1),
-        "locs": [loc(11, 3209, 3218, 1, &["Search"])],
-        "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
-    });
-    let token = token_of(&begin(&data, json!([[CASKET, 1]])));
-    let denied = call(&data, token, page.clone(), scene.clone());
-    assert_eq!(denied["kind"], "aborted", "{denied}");
-    assert_eq!(denied["reason"], "constrained", "{denied}");
-    for absent in ["name", "action", "x", "z", "level", "message", "id"] {
-        assert!(denied.get(absent).is_none(), "{absent} {denied}");
-    }
-    let after = call(&data, token, page, scene);
-    assert_eq!(after["kind"], "aborted", "{after}");
-    assert_eq!(after["reason"], "stale", "{after}");
 }
 
 #[test]
@@ -1273,13 +1237,6 @@ fn the_sextant_casket_is_the_open_and_not_the_packed_clue() {
     assert_eq!(open["kind"], "held", "{open}");
     assert_eq!(open["name"], "Casket", "{open}");
     assert_eq!(open["action"], "Open", "{open}");
-    // The clue left on its own is the constrained refusal, never 3554
-    // play: casket-first is the precedence that kept it out of the Open.
-    let clue_only = call(&data, token, json!([[CLUE, 1]]), json!({}));
-    assert_eq!(clue_only["kind"], "aborted", "{clue_only}");
-    assert_eq!(clue_only["reason"], "constrained", "{clue_only}");
-    let after = call(&data, token, json!([[CLUE, 1]]), json!({}));
-    assert_eq!(after["reason"], "stale", "{after}");
 }
 
 #[test]
@@ -2363,9 +2320,9 @@ fn an_unguarded_dig_row_without_the_spade_is_supplies_needed_and_live() {
 /// matcher-keepers the key family publishes no packed type for, and the
 /// desc-only riddles no key row names. 2831 is no longer one of them: the
 /// key-keeper hunt walks to its own published spawn from that same tile.
-/// The packed constrained 3554 clue is refused instead of idled, and the
-/// guarded row is no longer one of them either: its own encounter walks and
-/// Digs from this same scene.
+/// Packed 3554 takes its separate duel-crossing path, and the guarded row is
+/// no longer one of them either: its own encounter walks and Digs from this
+/// same scene.
 #[test]
 fn rows_outside_the_dig_classify_stay_idle_over_a_walkable_dig_scene() {
     on_reset();
@@ -2395,20 +2352,6 @@ fn rows_outside_the_dig_classify_stay_idle_over_a_walkable_dig_scene() {
             assert!(idle.get("action").is_none(), "{id} {idle}");
         }
     }
-
-    // The constrained clue is not idled over that scene: it is refused,
-    // with no walk, no Dig and no token left.
-    let scene = json!({
-        "here": here(3160, 3251, 0),
-        "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
-    });
-    let page = json!([[CLUE, 1]]);
-    let token = token_of(&begin(&data, json!([[MAP_EMPTY, 1]])));
-    let refused = call(&data, token, page.clone(), scene.clone());
-    assert_eq!(refused["kind"], "aborted", "{refused}");
-    assert_eq!(refused["reason"], "constrained", "{refused}");
-    let after = call(&data, token, page, scene);
-    assert_eq!(after["reason"], "stale", "{after}");
 }
 
 /// `Steady` on a coord-only map row: the widened unguarded dig is the same
@@ -8304,4 +8247,46 @@ fn omitted_scalar_pages_fall_back_to_the_scene_and_the_echo_wins() {
     );
     assert_eq!(posted_inv_size(&echoed), Some(0));
     assert!(!posted_hold(&echoed));
+}
+
+#[test]
+fn clue_3554_requires_duel_crossing_then_digs_at_its_packed_tile() {
+    on_reset();
+    let data = selected();
+    let held = json!([[CLUE, 1]]);
+    let token = steady(&data, CLUE);
+
+    let travel = call(
+        &data,
+        token,
+        held.clone(),
+        json!({
+            "here": here(3368, 3274, 0),
+            "inv": dig_inv(true),
+        }),
+    );
+    assert_eq!(
+        travel,
+        json!({
+            "kind": "duel-travel",
+            "x": 3374,
+            "z": 3250,
+            "level": 0,
+            "radius": 1,
+        })
+    );
+
+    let dig = call(
+        &data,
+        token,
+        held,
+        json!({
+            "duel_crossed": true,
+            "here": here(3374, 3250, 0),
+            "inv": dig_inv(true),
+        }),
+    );
+    assert_eq!(dig["kind"], "held", "{dig}");
+    assert_eq!(dig["name"], SPADE_NAME, "{dig}");
+    assert_eq!(dig["action"], "Dig", "{dig}");
 }

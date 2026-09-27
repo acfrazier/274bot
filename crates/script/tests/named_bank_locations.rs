@@ -376,6 +376,7 @@ export default class T extends LoopingBot {{
         snapshot.tick = 5;
         let choices = [script::isolate_fb::ChatOptionInput {
             text: "Tell me about this village.",
+            com_id: 2493,
         }];
         snapshot.chat_open = true;
         snapshot.chat_options = &choices;

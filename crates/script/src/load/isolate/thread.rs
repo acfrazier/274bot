@@ -1154,6 +1154,61 @@ fn tick_loop(
                     }
                 }
             }
+            IsolateCmd::Channel(bytes) => match crate::isolate_fb::decode_interact_batch(&bytes) {
+                Ok(rows) => {
+                    for row in rows {
+                        let (channel_id, data, sender, status) = match row {
+                            crate::shim::InteractReq::ChannelMessage {
+                                channel_id,
+                                sender,
+                                data,
+                                ..
+                            } => match crate::channel::decode(&data) {
+                                Ok(data) => (
+                                    channel_id,
+                                    data,
+                                    serde_json::Value::String(sender),
+                                    serde_json::Value::Null,
+                                ),
+                                Err(error) => {
+                                    let _ = out.send(ThreadMsg::Log(format!(
+                                        "BroadcastChannel delivery: {error}"
+                                    )));
+                                    continue;
+                                }
+                            },
+                            crate::shim::InteractReq::ChannelStatus {
+                                channel_id,
+                                message,
+                            } => (
+                                channel_id,
+                                serde_json::Value::Null,
+                                serde_json::Value::Null,
+                                serde_json::Value::String(message),
+                            ),
+                            _ => {
+                                let _ = out.send(ThreadMsg::Log(
+                                    "BroadcastChannel delivery contained an outbound row".into(),
+                                ));
+                                continue;
+                            }
+                        };
+                        if let Err(error) = runtime.call_function_immediate::<()>(
+                            None,
+                            "__rs2b0t_channel_enqueue",
+                            json_args!(channel_id, data, sender, status),
+                        ) {
+                            let _ = out
+                                .send(ThreadMsg::Log(format!("BroadcastChannel enqueue: {error}")));
+                        }
+                    }
+                }
+                Err(error) => {
+                    let _ = out.send(ThreadMsg::Log(format!(
+                        "BroadcastChannel delivery batch: {error}"
+                    )));
+                }
+            },
             IsolateCmd::Loadouts(rows) => super::loadout_v8::post(rows),
             IsolateCmd::RecoveryHints(hints) => crate::load::post_recovery_hints(hints),
             IsolateCmd::Settings(bag) => {
@@ -1202,6 +1257,37 @@ fn tick_loop(
                 // Every shape records the tick first, so machine callbacks,
                 // listeners and waits all see this tick's number.
                 record_tick(&mut runtime, n);
+                // Broker deliveries are queued by their command and invoked only
+                // inside this bounded tick execution, before gameplay reads peers.
+                let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
+                    runtime.call_function_immediate::<()>(
+                        None,
+                        "__rs2b0t_flush_channels",
+                        json_args!(),
+                    )
+                });
+                if !machines_halted(&teardown) {
+                    let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
+                        runtime.call_function_immediate::<()>(
+                            None,
+                            "__rs2b0t_fire_tick_event",
+                            json_args!(),
+                        )
+                    });
+                }
+                let script_interrupt = if machines_halted(&teardown) {
+                    false
+                } else {
+                    call_interruptible(&mut runtime, &teardown, |runtime| {
+                        runtime.call_function_immediate::<bool>(
+                            None,
+                            "__rs2b0t_interrupt_pending",
+                            json_args!(),
+                        )
+                    })
+                    .unwrap_or(false)
+                };
+                crate::event_signal::set(script_interrupt);
                 // Step machines read the scene the Snapshot command just
                 // applied; they run before the tick's other JS, and a
                 // completion settles in this tick's pump. Join's claim is
@@ -1594,7 +1680,10 @@ fn tick_loop(
                     crate::hunt_bank::on_reset();
                     crate::quest_journal::on_reset();
                     crate::clue::on_reset();
+                    crate::duel::on_reset();
                 }
+                crate::event_signal::clear();
+                let _ = runtime.eval::<()>("globalThis.__rs2b0t_channel_pending.length = 0");
                 event_producer.reset();
                 if events_consumed {
                     // The compat runner's queue is the only holder of
@@ -1755,6 +1844,7 @@ fn tick_loop(
                 let _ = reply.send(value);
             }
             IsolateCmd::Stop { invoke_hook } => {
+                crate::event_signal::clear();
                 teardown_once(&mut runtime, &out, invoke_hook, &teardown, &proof);
                 break;
             }

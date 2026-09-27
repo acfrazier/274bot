@@ -1,5 +1,6 @@
 use script::isolate_fb::{
-    ReachViewInput, SceneEntityInput, SnapshotInput, TileInput, WidgetTextInput,
+    ChatOptionInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput, VarpInput,
+    WidgetTextInput,
 };
 use script::{LoadIsolate, LoadShape};
 
@@ -174,6 +175,7 @@ export default class T extends LoopingBot {
         const npc = Npcs.all()[0];
         globalThis.__probe = {
             hostile: npc ? isHostileAttacker(npc, 8) : false,
+            face: npc?.snap.faceEntity ?? null,
             names: HOSTILE_NAMES,
         };
     }
@@ -187,12 +189,15 @@ export default class T extends LoopingBot {
     snap.npcs = std::slice::from_ref(&guard_self);
     let probe = probe_loop(&iso, &snap);
     assert_eq!(probe["hostile"], true);
+    assert_eq!(probe["face"], 32768);
     assert_eq!(probe["names"], serde_json::json!([]));
 
     let other = npc_row(Some("Guard"), true, 2, 7, 1, &attack);
     snap.tick = 2;
     snap.npcs = std::slice::from_ref(&other);
-    assert_eq!(probe_loop(&iso, &snap)["hostile"], false);
+    let probe = probe_loop(&iso, &snap);
+    assert_eq!(probe["hostile"], false);
+    assert_eq!(probe["face"], 32775);
 
     let man = npc_row(Some("Man"), true, 2, 0, 1, &attack);
     snap.tick = 3;
@@ -245,10 +250,12 @@ export default class T extends LoopingBot {
         WidgetTextInput {
             component_id: 6671,
             text: "Zezima",
+            item_count: -1,
         },
         WidgetTextInput {
             component_id: 6684,
             text: "Waiting for other player...",
+            item_count: -1,
         },
     ];
     let mut snap = base_snapshot();
@@ -291,6 +298,7 @@ export default class T extends LoopingBot {
     let widgets = [WidgetTextInput {
         component_id: 6671,
         text: "Partner",
+        item_count: -1,
     }];
     let mut snap = base_snapshot();
     snap.hold = true;
@@ -379,5 +387,483 @@ export default class T extends LoopingBot {
     let probe = probe_loop(&iso, &snap);
     assert_eq!(probe["noMax"], false);
     assert_eq!(probe["noDistance"], false);
+    iso.join();
+}
+
+fn handshake_source(partner: &str, initiator: bool) -> String {
+    format!(
+        r#"
+import {{ ClueDuelHandshake }} from '../../api/duel/ClueDuel.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__done) return;
+        this.handshake ||= new ClueDuelHandshake({partner:?}, {initiator}, () => {{}});
+        globalThis.__result = await this.handshake.tick();
+        globalThis.__done = true;
+    }}
+}}
+"#
+    )
+}
+
+fn run_handshake(
+    partner: &str,
+    initiator: bool,
+    snapshot: &SnapshotInput<'_>,
+) -> Vec<script::shim::InteractReq> {
+    let iso = spawn(&handshake_source(partner, initiator));
+    post_snapshot_input(&iso, snapshot);
+    iso.on_game_tick(snapshot.tick);
+    let _ = iso.probe("true");
+    let requests = iso.drain_interacts();
+    iso.join();
+    requests
+}
+
+#[test]
+fn clue_duel_both_roles_challenge_the_named_visible_partner() {
+    let challenge = ["Challenge".to_string()];
+    let player = npc_row(Some("Helper_Name"), false, 0, -1, 1, &challenge);
+    let mut snapshot = base_snapshot();
+    snapshot.here = Some(TileInput {
+        x: 3368,
+        z: 3274,
+        level: 0,
+    });
+    snapshot.players = std::slice::from_ref(&player);
+    for initiator in [false, true] {
+        assert_eq!(
+            run_handshake(" helper name ", initiator, &snapshot),
+            vec![script::shim::InteractReq::Player {
+                name: "Helper_Name".into(),
+                action: "Challenge".into(),
+            }]
+        );
+    }
+}
+
+#[test]
+fn clue_duel_rejects_wrong_partner_and_any_stake() {
+    let wrong = [
+        WidgetTextInput {
+            component_id: 6671,
+            text: "Dueling with: Intruder",
+            item_count: -1,
+        },
+        WidgetTextInput {
+            component_id: 6669,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6670,
+            text: "",
+            item_count: 0,
+        },
+    ];
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6575;
+    snapshot.widgets = &wrong;
+    assert_eq!(
+        run_handshake("Helper", true, &snapshot),
+        vec![script::shim::InteractReq::CloseModal]
+    );
+
+    let staked = [
+        WidgetTextInput {
+            component_id: 6671,
+            text: "Dueling with: Helper",
+            item_count: -1,
+        },
+        WidgetTextInput {
+            component_id: 6669,
+            text: "",
+            item_count: 1,
+        },
+        WidgetTextInput {
+            component_id: 6670,
+            text: "",
+            item_count: 0,
+        },
+    ];
+    snapshot.widgets = &staked;
+    assert_eq!(
+        run_handshake("Helper", false, &snapshot),
+        vec![script::shim::InteractReq::CloseModal]
+    );
+}
+
+#[test]
+fn clue_duel_initiator_sets_obstacle_rules_when_zero_varp_is_not_transmitted() {
+    let offer = [
+        WidgetTextInput {
+            component_id: 6671,
+            text: "Dueling with: Helper",
+            item_count: -1,
+        },
+        WidgetTextInput {
+            component_id: 6669,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6670,
+            text: "",
+            item_count: 0,
+        },
+    ];
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6575;
+    snapshot.widgets = &offer;
+    snapshot.varps = &[];
+    assert_eq!(
+        run_handshake("Helper", true, &snapshot),
+        vec![script::shim::InteractReq::IfButton { component_id: 6732 }]
+    );
+    assert!(
+        run_handshake("Helper", false, &snapshot).is_empty(),
+        "the helper waits for the solver to select obstacle rules"
+    );
+}
+#[test]
+fn clue_duel_helper_accepts_only_after_the_initiator_is_observed_accepted() {
+    let options = [VarpInput {
+        index: 286,
+        value: 1024,
+    }];
+    let offer = |status: &'static str| {
+        [
+            WidgetTextInput {
+                component_id: 6671,
+                text: "Dueling with: Helper",
+                item_count: -1,
+            },
+            WidgetTextInput {
+                component_id: 6669,
+                text: "",
+                item_count: 0,
+            },
+            WidgetTextInput {
+                component_id: 6670,
+                text: "",
+                item_count: 0,
+            },
+            WidgetTextInput {
+                component_id: 6684,
+                text: status,
+                item_count: -1,
+            },
+        ]
+    };
+    let initial = offer("");
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6575;
+    snapshot.varps = &options;
+    snapshot.widgets = &initial;
+    assert!(matches!(
+        run_handshake("Helper", true, &snapshot).as_slice(),
+        [script::shim::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
+    ));
+    assert!(
+        run_handshake("Helper", false, &snapshot).is_empty(),
+        "the helper must not race the initiator's accept packet"
+    );
+
+    let accepted = offer("Other player has accepted.");
+    snapshot.widgets = &accepted;
+    assert!(matches!(
+        run_handshake("Helper", false, &snapshot).as_slice(),
+        [script::shim::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
+    ));
+}
+
+#[test]
+fn clue_duel_offer_identity_does_not_authorize_a_staked_confirm() {
+    let source = r#"
+import { ClueDuelHandshake } from '../../api/duel/ClueDuel.js';
+export default class T extends LoopingBot {
+    async loop() {
+        this.handshake ||= new ClueDuelHandshake('Helper', true, () => {});
+        globalThis.__result = await this.handshake.tick();
+    }
+}
+"#;
+    let isolate = spawn(source);
+    let options = [VarpInput {
+        index: 286,
+        value: 1024,
+    }];
+    let offer = [
+        WidgetTextInput {
+            component_id: 6671,
+            text: "Dueling with: Helper",
+            item_count: -1,
+        },
+        WidgetTextInput {
+            component_id: 6669,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6670,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6684,
+            text: "",
+            item_count: -1,
+        },
+    ];
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6575;
+    snapshot.varps = &options;
+    snapshot.widgets = &offer;
+    post_snapshot_input(&isolate, &snapshot);
+    isolate.on_game_tick(1);
+    let _ = isolate.probe("globalThis.__result");
+    assert_eq!(
+        isolate.drain_interacts(),
+        vec![script::shim::InteractReq::DuelAccept {
+            screen: "offer".into(),
+            partner: "Helper".into(),
+            rules: 1024,
+        }]
+    );
+
+    let confirm = [
+        WidgetTextInput {
+            component_id: 6507,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6508,
+            text: "",
+            item_count: 1,
+        },
+        WidgetTextInput {
+            component_id: 6571,
+            text: "",
+            item_count: -1,
+        },
+    ];
+    std::thread::sleep(std::time::Duration::from_millis(650));
+    snapshot.tick = 2;
+    snapshot.main_modal_id = 6412;
+    snapshot.widgets = &confirm;
+    post_snapshot_input(&isolate, &snapshot);
+    isolate.on_game_tick(2);
+    let _ = isolate.probe("globalThis.__result");
+    assert_eq!(
+        isolate.drain_interacts(),
+        vec![script::shim::InteractReq::CloseModal],
+        "a stake inserted after a valid offer must cancel instead of confirming"
+    );
+    isolate.join();
+}
+
+#[test]
+fn clue_duel_confirm_without_a_validated_offer_is_rejected() {
+    let widgets = [
+        WidgetTextInput {
+            component_id: 6507,
+            text: "",
+            item_count: 0,
+        },
+        WidgetTextInput {
+            component_id: 6508,
+            text: "",
+            item_count: 0,
+        },
+    ];
+    let options = [VarpInput {
+        index: 286,
+        value: 1024,
+    }];
+    let mut snapshot = base_snapshot();
+    snapshot.main_modal_id = 6412;
+    snapshot.widgets = &widgets;
+    snapshot.varps = &options;
+    assert_eq!(
+        run_handshake("Helper", true, &snapshot),
+        vec![script::shim::InteractReq::CloseModal]
+    );
+}
+
+#[test]
+fn clue_duel_leave_targets_the_nearest_forfeit_exit() {
+    let actions = ["Forfeit".to_string()];
+    let loc = |id, x, z| SceneEntityInput {
+        index: id,
+        id,
+        name: Some("Trapdoor"),
+        x,
+        z,
+        level: 0,
+        distance: 0,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: 0,
+        nz: 0,
+        shape: 0,
+        angle: 0,
+    };
+    let locs = [loc(1, 3331, 3231), loc(2, 3365, 3245)];
+    let mut snapshot = base_snapshot();
+    snapshot.here = Some(TileInput {
+        x: 3374,
+        z: 3251,
+        level: 0,
+    });
+    snapshot.locs = &locs;
+    let iso = spawn(
+        r#"
+import { leaveClueDuel } from '../../api/duel/ClueDuel.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        await leaveClueDuel(() => {});
+    }
+}
+"#,
+    );
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(snapshot.tick);
+    let _ = iso.probe("true");
+    snapshot.tick += 1;
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(snapshot.tick);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Loc {
+            x: 3365,
+            z: 3245,
+            level: 0,
+            action: "Forfeit".into(),
+            id: Some(2),
+        }]
+    );
+    iso.join();
+}
+
+#[test]
+fn clue_duel_travel_walks_to_an_outside_destination_after_forfeit() {
+    let actions = ["Forfeit".to_string()];
+    let locs = [SceneEntityInput {
+        index: 2,
+        id: 3203,
+        name: Some("Arena exit"),
+        x: 3364,
+        z: 3251,
+        level: 0,
+        distance: 10,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: 0,
+        nz: 0,
+        shape: 0,
+        angle: 0,
+    }];
+    let mut snapshot = base_snapshot();
+    snapshot.here = Some(TileInput {
+        x: 3374,
+        z: 3251,
+        level: 0,
+    });
+    snapshot.locs = &locs;
+    let iso = spawn(
+        r#"
+import { runMachine } from '../../shim/_kernel.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        await runMachine('clue_duel_travel', {
+            partner: 'Helper',
+            x: 3382, z: 3269, level: 0, radius: 2,
+            leave_only: false,
+        }, {});
+    }
+}
+"#,
+    );
+    for tick in 1..=2 {
+        snapshot.tick = tick;
+        post_snapshot_input(&iso, &snapshot);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("true");
+    }
+    let choices = [
+        ChatOptionInput {
+            text: "Yes",
+            com_id: 4883,
+        },
+        ChatOptionInput {
+            text: "No",
+            com_id: 4884,
+        },
+    ];
+    snapshot.tick = 3;
+    snapshot.chat_options = &choices;
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(3);
+    let _ = iso.probe("true");
+
+    snapshot.tick = 4;
+    snapshot.here = Some(TileInput {
+        x: 3361,
+        z: 3270,
+        level: 0,
+    });
+    snapshot.chat_options = &[];
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(4);
+    let _ = iso.probe("true");
+
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![
+            script::shim::InteractReq::Loc {
+                x: 3364,
+                z: 3251,
+                level: 0,
+                action: "Forfeit".into(),
+                id: Some(3203),
+            },
+            script::shim::InteractReq::Answer { option: 1 },
+            script::shim::InteractReq::WalkNear {
+                x: 3382,
+                z: 3269,
+                level: 0,
+                radius: 2,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 0,
+                avoid: Vec::new(),
+            },
+        ]
+    );
     iso.join();
 }

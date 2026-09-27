@@ -12013,6 +12013,135 @@ fn native_trade_controls_reach_script_accept_through_snapshot() {
     }
 }
 
+fn duel_accept_snapshot(screen: &str, partner: &str, staked: bool) -> GameSnapshot {
+    let controls = *api::game_data::for_revision(client::io::ClientRevision::R289)
+        .unwrap()
+        .duel_controls()
+        .unwrap();
+    let (root, mine, theirs, partner_component) = if screen == "offer" {
+        (
+            controls.select_modal,
+            controls.select_mine,
+            controls.select_theirs,
+            Some(controls.select_partner),
+        )
+    } else {
+        (
+            controls.confirm_modal,
+            controls.confirm_mine,
+            controls.confirm_theirs,
+            None,
+        )
+    };
+    let mut c = trade_offer_client();
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache
+            .varps
+            .resize_with(controls.options_varp as usize + 1, Default::default);
+    }
+    c.var.resize(controls.options_varp as usize + 1, 0);
+    c.var[controls.options_varp as usize] = 1024;
+    c.main_modal_id = root;
+    let mut children = vec![mine, theirs];
+    if let Some(partner_component) = partner_component {
+        children.push(partner_component);
+    }
+    c.set_iface(
+        root as usize,
+        IfType {
+            id: root,
+            layer_id: root,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(children),
+            ..Default::default()
+        },
+    );
+    for component in [mine, theirs] {
+        c.set_iface(
+            component as usize,
+            IfType {
+                id: component,
+                layer_id: root,
+                r#type: ComponentType::TYPE_INV,
+                ..Default::default()
+            },
+        );
+        if staked && component == mine {
+            c.set_iface_mut(
+                component as usize,
+                IfTypeMut {
+                    link_obj_type: Some(vec![6]),
+                    link_obj_number: Some(vec![1]),
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    if let Some(component) = partner_component {
+        c.set_iface(
+            component as usize,
+            IfType {
+                id: component,
+                layer_id: root,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            component as usize,
+            IfTypeMut {
+                text: format!("Dueling with: {partner}"),
+                ..Default::default()
+            },
+        );
+    }
+    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+    c.bump_gens(ServerProt::VARP_SYNC);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&c);
+    snapshot
+}
+
+#[test]
+fn duel_accept_requires_empty_exact_partner_session_and_obstacle_rules() {
+    use super::script_runtime::{reset_duel_session, validated_duel_accept};
+
+    reset_duel_session();
+    let offer = duel_accept_snapshot("offer", "Some_Helper", false);
+    assert_eq!(
+        validated_duel_accept(&offer, "offer", " some helper ", 1024),
+        Some(6674)
+    );
+    let confirm = duel_accept_snapshot("confirm", "", false);
+    assert_eq!(
+        validated_duel_accept(&confirm, "confirm", "SOME HELPER", 1024),
+        Some(6520),
+        "confirm is fenced to the partner validated on the offer screen"
+    );
+
+    reset_duel_session();
+    assert_eq!(
+        validated_duel_accept(&confirm, "confirm", "some helper", 1024),
+        None,
+        "a confirm without the contiguous validated offer is refused"
+    );
+    assert_eq!(
+        validated_duel_accept(&offer, "offer", "other helper", 1024),
+        None
+    );
+    assert_eq!(
+        validated_duel_accept(&offer, "offer", "some helper", 0),
+        None
+    );
+    let staked = duel_accept_snapshot("offer", "Some Helper", true);
+    assert_eq!(
+        validated_duel_accept(&staked, "offer", "some helper", 1024),
+        None,
+        "either player's stake makes acceptance fail closed"
+    );
+}
+
 #[test]
 fn script_snapshot_player_actions_preserve_native_slots() {
     fn emitted_actions(player_op: [Option<&str>; 5]) -> Vec<String> {

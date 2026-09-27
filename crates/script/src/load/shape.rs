@@ -669,11 +669,14 @@ fn order_siblings_deps_first(
     }
     let rels: HashSet<String> = nodes.iter().map(|(rel, _, _, _)| rel.clone()).collect();
     let mut deps: HashMap<String, Vec<String>> = HashMap::new();
-    for (rel, _, _, origin) in &nodes {
+    for (rel, _, js, _) in &nodes {
         let mut needed = Vec::new();
-        for imp in scan_same_folder_js_imports(origin)
+        // Order by emitted runtime imports. Type-only edges in the TypeScript
+        // origin disappear during transpilation and must not manufacture a
+        // dependency cycle (JiveKQ route ↔ party is one such graph).
+        for imp in scan_same_folder_js_imports(js)
             .into_iter()
-            .chain(scan_scripts_sibling_js_imports(origin))
+            .chain(scan_scripts_sibling_js_imports(js))
         {
             if rels.contains(&imp) && imp != *rel {
                 needed.push(imp);
@@ -725,10 +728,9 @@ pub fn is_reserved(name: &str) -> bool {
 }
 
 /// Catalog picker names that stay dim even if their imports later remap.
-/// GatheringBot rows, quest-def cards, ClueSolver, MarketMaker.
+/// GatheringBot rows, quest-def cards, and MarketMaker.
 pub const CATALOG_DIM: &[&str] = &[
     "AIOQuester",
-    "ClueSolver",
     "Woodcutter",
     "Miner",
     "Fisher",

@@ -36,11 +36,11 @@ use crate::play_status::{
 };
 use crate::play_wires::{dispatch_wires, WireCmd};
 use crate::script_runtime::{
-    hold_script_nav, nav_world_state_for_observe, observe_script_inv,
+    deliver_channel_events, hold_script_nav, nav_world_state_for_observe, observe_script_inv,
     project_npc_boxes_for_isolate_snapshot, projected_npc_boxes, publish_script_paint,
-    reset_script_nav, script_active, script_observe_cached, script_paint_of, script_running,
-    script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot, NavBot, ScriptSlot,
-    ScriptWall,
+    reset_script_nav, script_active, script_observe_cached_with_channels, script_paint_of,
+    script_running, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot, NavBot,
+    ScriptSlot, ScriptWall,
 };
 use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
@@ -363,6 +363,7 @@ impl Play {
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
             slot_script,
+            self.channels.clone(),
             Arc::clone(&self.cheats),
             Arc::clone(&self.wires),
             Arc::clone(&self.navs),
@@ -395,6 +396,7 @@ pub(super) fn reset_slot_session_work(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     reconnect: bool,
 ) {
+    crate::script_runtime::reset_duel_session();
     // `Some(carry)`: the script held its work; `carry` names the run whose
     // armed walk the relogged session re-arms.
     let held = script_slot(scripts, name).and_then(|slot| {
@@ -535,6 +537,7 @@ fn spawn_slot_thread(
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: ScriptWall,
     slot_script: ScriptSlot,
+    slot_channels: super::script_channels::ChannelBroker,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     slot_navs: Arc<Mutex<HashMap<String, NavBot>>>,
@@ -548,6 +551,10 @@ fn spawn_slot_thread(
     let username = profile.username.clone();
     let uid = profile.uid;
     let connection = connection.clone();
+    let public_world_profile = connection
+        .profile()
+        .and_then(|profile| profile.public_worlds())
+        .is_some();
     let mainland = match &connection {
         PlayConnection::Legacy(options) => options.mainland,
         PlayConnection::Bound { mainland, .. } => *mainland,
@@ -861,6 +868,7 @@ fn spawn_slot_thread(
                         let slot_cache = Arc::clone(&slot_cache);
                         let slot_navs = Arc::clone(&slot_navs);
                         let slot_world = slot_world.clone();
+                        let observe_channels = slot_channels.clone();
                         let slot_canlight = connection.profile().and_then(|p| p.canlight());
                         let map_members = connection
                             .profile()
@@ -902,6 +910,13 @@ fn spawn_slot_thread(
                                     &slot_wires,
                                     &slot_navs,
                                 );
+                                let generation = script_slot(&slot_scripts, name)
+                                    .and_then(|slot| {
+                                        slot.lock().ok().map(|slot| slot.runtime_generation())
+                                    })
+                                    .unwrap_or(0);
+                                let deliveries = observe_channels.suspend(name, generation);
+                                deliver_channel_events(&slot_scripts, deliveries);
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
@@ -995,10 +1010,11 @@ fn spawn_slot_thread(
                             // order the two mutexes may nest).
                             let paint = script_paint_of(&slot_scripts, name);
                             let login_latched = arm_latch_obs.login_latched();
-                            let (up, here) = {
+                            let (up, here, active_world) = {
                                 let mut all = lock_statuses(&slot_statuses);
                                 let mut up = false;
                                 let mut here = None;
+                                let mut active_world = None;
                                 for s in all.iter_mut() {
                                     if s.username == *name {
                                         // Keep the producer gate closed until a current
@@ -1028,9 +1044,18 @@ fn spawn_slot_thread(
                                             .and_then(|p| p.player.actor.name.clone())
                                             .unwrap_or_default();
                                         up = s.is_up();
+                                        active_world = s.world;
                                     }
                                 }
-                                (up, here)
+                                (up, here, active_world)
+                            };
+                            let broker_world = if public_world_profile {
+                                active_world.map_or(
+                                    super::script_channels::BrokerWorld::Unavailable,
+                                    super::script_channels::BrokerWorld::Public,
+                                )
+                            } else {
+                                super::script_channels::BrokerWorld::Local
                             };
                             let running = script_running(&slot_scripts, name);
                             let inv = observe_script_inv(running, tick_edge, &nav_snapshot);
@@ -1050,7 +1075,7 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 || projected_npc_boxes(c),
                             );
-                            script_observe_cached(
+                            script_observe_cached_with_channels(
                                 c,
                                 name,
                                 up,
@@ -1072,6 +1097,8 @@ fn spawn_slot_thread(
                                 Some(slot_input.as_ref()),
                                 Some(Arc::clone(&slot_cache)),
                                 Some(Arc::clone(&slot_obj_names)),
+                                Some(&observe_channels),
+                                broker_world,
                             );
                             // TUI chat / WASD sends: run the queued wire
                             // commands through `Interactions` on this
@@ -1157,6 +1184,16 @@ fn spawn_slot_thread(
                     knock,
                 );
                 publish_slot_disconnected(&slot_statuses, &username);
+                let generation = script_slot(&slot_scripts, &username)
+                    .and_then(|slot| slot.lock().ok().map(|slot| slot.runtime_generation()))
+                    .unwrap_or(0);
+                let deliveries = slot_channels.sync(
+                    &username,
+                    generation,
+                    super::script_channels::BrokerWorld::Unavailable,
+                    false,
+                );
+                deliver_channel_events(&slot_scripts, deliveries);
                 end_slot_session(
                     &username,
                     &arm,

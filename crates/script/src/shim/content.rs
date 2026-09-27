@@ -140,6 +140,12 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
                     "select_partner": controls.select_partner,
                     "select_status": controls.select_status,
                     "confirm_status": controls.confirm_status,
+                    "select_mine": controls.select_mine,
+                    "select_theirs": controls.select_theirs,
+                    "confirm_mine": controls.confirm_mine,
+                    "confirm_theirs": controls.confirm_theirs,
+                    "obstacles": controls.obstacles,
+                    "options_varp": controls.options_varp,
                 })
             })
         }),

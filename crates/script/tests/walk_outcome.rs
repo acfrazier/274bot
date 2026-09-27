@@ -165,6 +165,53 @@ fn park_walk(iso: &LoadIsolate) -> u64 {
 }
 
 #[test]
+fn synthetic_tick_drives_script_interrupt_and_stops_walk() {
+    let src = r#"
+import { EventSignal } from '../../api/execution/EventSignal.js';
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    constructor() {
+        super();
+        globalThis.__ticks = 0;
+        this.on('tick', () => { globalThis.__ticks += 1; });
+        globalThis.__checks = 0;
+        EventSignal.setInterrupt(() => {
+            globalThis.__checks += 1;
+            return globalThis.__ticks >= 2;
+        });
+    }
+    async loop() {
+        globalThis.__rs_ok = null;
+        globalThis.__rs_ok = await Traversal.walkTo(
+            { x: 2820, z: 3556, level: 0 },
+            { radius: 1, timeoutMs: 300000 },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let request_id = park_walk(&iso);
+    assert_ne!(request_id, 0);
+    assert_eq!(iso.probe("__ticks").unwrap(), 1);
+
+    iso.post_snapshot(encode_snapshot(&base_snapshot(2, far())));
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__ticks").unwrap(), 2);
+    assert_ne!(iso.probe("__checks").unwrap(), 0);
+    assert_eq!(
+        iso.probe("__rs_ok").unwrap(),
+        false,
+        "the script interrupt must settle the parked Rust walk"
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::AbortWalk { request_id }],
+        "an interrupted walk must cancel its owned host route"
+    );
+    iso.join();
+}
+
+#[test]
 fn isolate_nopath_outcome_returns_false_promptly() {
     let iso = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
     let request_id = park_walk(&iso);

@@ -1,4 +1,8 @@
-// Frozen src/bot/api/ai/clues/bankAccess.ts:5; no bank decision in JS.
-import { notImpl } from '../../../shim/_kernel.js';
+// The native nearest-world bank machine selects the bank access kind, walks,
+// opens it and waits for the fresh bank page. This adapter only preserves the
+// catalog callback signature.
+import { Bank } from '../../bank/Bank.js';
 
-export function openClueBank() { throw notImpl('bankAccess.openClueBank'); }
+export function openClueBank(_log) {
+    return Bank.openNearestWorld();
+}

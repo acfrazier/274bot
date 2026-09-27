@@ -218,6 +218,7 @@ fn talk_through_opens_continues_prefers_then_completes_on_partial_bank() {
 
     let choice = [ChatOptionInput {
         text: "I'd like to access my bank account, please.",
+        com_id: 4883,
     }];
     snap.tick = 3;
     snap.chat_continue = false;
@@ -403,8 +404,14 @@ fn missing_npc_and_unmatched_fallback_are_honest() {
     iso.drain_interacts();
 
     let opts = [
-        ChatOptionInput { text: "Hello" },
-        ChatOptionInput { text: "Goodbye" },
+        ChatOptionInput {
+            text: "Hello",
+            com_id: 201,
+        },
+        ChatOptionInput {
+            text: "Goodbye",
+            com_id: 202,
+        },
     ];
     snap.tick = 2;
     snap.chat_modal_id = 200;
@@ -479,6 +486,7 @@ fn same_continue_page_does_not_duplicate_then_transitions() {
 
     let choice = [ChatOptionInput {
         text: "I'd like to access my bank account, please.",
+        com_id: 4883,
     }];
     snap.tick = 7;
     snap.chat_continue = false;
@@ -507,6 +515,7 @@ fn same_options_page_after_answer_does_not_duplicate() {
     let npcs = [npc("Gundai", &actions, 7)];
     let choice = [ChatOptionInput {
         text: "I'd like to access my bank account, please.",
+        com_id: 4883,
     }];
     let mut snap = base();
     snap.npcs = &npcs;
@@ -590,9 +599,13 @@ fn empty_earlier_option_keeps_the_posted_answer_index() {
     let actions = ["Talk-to".to_string()];
     let npcs = [npc("Gundai", &actions, 7)];
     let opts = [
-        ChatOptionInput { text: "" },
+        ChatOptionInput {
+            text: "",
+            com_id: 4883,
+        },
         ChatOptionInput {
             text: "I'd like to access my bank account, please.",
+            com_id: 4884,
         },
     ];
     let mut snap = base();

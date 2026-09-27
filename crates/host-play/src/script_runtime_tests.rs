@@ -1,6 +1,6 @@
 use api::snapshot::GameSnapshot;
 use client::client::{Client, ClientConfig};
-use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::io::ServerProt;
 use script::isolate_fb::decode_snapshot;
 
@@ -103,6 +103,58 @@ fn post(snap: &GameSnapshot, tick: u64) -> Vec<u8> {
     .0
 }
 
+/// Direct catalog callers use each chat option's exact BUTTON_OK component,
+/// not its list position. Keep that identity across the host FlatBuffer.
+#[test]
+fn chat_option_component_identity_reaches_the_script_wire() {
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: isolated_cache_dir(),
+        members: true,
+        lowmem: false,
+    });
+    for _ in 0..3 {
+        client.push_iface(IfType::default());
+    }
+    let choice = client.push_iface(IfType {
+        id: 3,
+        layer_id: 4,
+        r#type: ComponentType::TYPE_TEXT,
+        ..IfType::default()
+    });
+    assert_eq!(choice, 3, "fixture ids");
+    client.set_iface_mut(
+        choice,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_OK,
+            text: "Al Kharid Duel Arena.".into(),
+            ..IfTypeMut::default()
+        },
+    );
+    let root = client.push_iface(IfType {
+        id: 4,
+        layer_id: 4,
+        r#type: ComponentType::TYPE_LAYER,
+        children: Some(vec![choice as i32]),
+        ..IfType::default()
+    });
+    assert_eq!(root, 4, "fixture ids");
+    client.chat_modal_id = root as i32;
+    client.bump_gens(ServerProt::IF_OPENCHAT);
+
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert_eq!(snapshot.chat_options()[0].component_id, choice as i32);
+
+    let bytes = post(&snapshot, 1);
+    let view = decode_snapshot(&bytes).expect("snapshot");
+    let options = view.chat_options();
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].text(), "Al Kharid Duel Arena.");
+    assert_eq!(options[0].com_id(), choice as i32);
+}
+
 /// The board is the `obj_ops` component (never the hint), its size is
 /// the observed `link_obj_type` length, its rows are sparse, and it is
 /// posted in the same buffer as the widget-text map — borrowing the
@@ -151,11 +203,14 @@ fn observed_board_posts_bounded_rows_beside_the_widget_texts() {
         board.generation,
         "the generation is posted with the table"
     );
-    // The widget-text map is untouched by the board: same buffer, own rows.
-    let texts = view.widgets();
-    assert_eq!(texts.len(), 1);
-    assert_eq!(texts[0].component_id(), ROOT as i32);
-    assert_eq!(texts[0].text(), "Puzzle board");
+    // The widget projection still carries the root text beside the board's
+    // typed item rows; unrelated inventory widgets may also be present.
+    let root = view
+        .widgets()
+        .into_iter()
+        .find(|widget| widget.component_id() == ROOT as i32)
+        .expect("root widget text remains posted");
+    assert_eq!(root.text(), "Puzzle board");
 }
 
 /// The session generation advances on a session open, a session close

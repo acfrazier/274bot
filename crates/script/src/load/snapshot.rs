@@ -879,8 +879,8 @@ pub(super) fn materialize_snapshot(
     set(&mut scope, host, "snapshot", snapshot)
 }
 
-/// Install the merged settings bag as `__rs2b0t_host.settingsBag`, built as
-/// V8 values from the typed map (never JSON text evaluated as source).
+/// Install the per-card and profile-global settings as distinct bags, built
+/// as V8 values from the typed map (never JSON text evaluated as source).
 pub(super) fn materialize_settings_bag(
     runtime: &mut Runtime,
     bag: &serde_json::Map<String, serde_json::Value>,
@@ -894,8 +894,16 @@ pub(super) fn materialize_settings_bag(
         .get(&mut scope, host_key)
         .and_then(|host| host.to_object(&mut scope))
         .ok_or_else(|| "settings bag: no __rs2b0t_host object".to_string())?;
-    let value = json_object(&mut scope, bag).map_err(|e| format!("settings bag: {e}"))?;
-    set(&mut scope, host, "settingsBag", value)
+    let card = json_object_without(&mut scope, bag, "clueDuelPartner")
+        .map_err(|e| format!("settings bag: {e}"))?;
+    set(&mut scope, host, "settingsBag", card)?;
+    let globals = v8::Object::new(&mut scope);
+    if let Some(partner) = bag.get("clueDuelPartner") {
+        let partner =
+            json_value(&mut scope, partner).map_err(|e| format!("global settings bag: {e}"))?;
+        set(&mut scope, globals, "clueDuelPartner", partner)?;
+    }
+    set(&mut scope, host, "globalSettingsBag", globals.into())
 }
 
 /// A JSON value as the value `JSON.parse` would give for its text: plain
@@ -930,6 +938,25 @@ fn json_object<'s>(
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let obj = v8::Object::new(scope);
     for (key, value) in map {
+        let name =
+            v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
+        let value = json_value(scope, value)?;
+        obj.create_data_property(scope, name.into(), value)
+            .ok_or_else(|| format!("v8 object set failed for {key:?}"))?;
+    }
+    Ok(obj.into())
+}
+
+fn json_object_without<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    map: &serde_json::Map<String, serde_json::Value>,
+    omitted: &str,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let obj = v8::Object::new(scope);
+    for (key, value) in map {
+        if key == omitted {
+            continue;
+        }
         let name =
             v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
         let value = json_value(scope, value)?;
@@ -1441,6 +1468,13 @@ fn scene_entity_object<'s>(
     set(scope, o, "target_kind", target_kind)?;
     let target_index = num(scope, ent.target_index() as f64);
     set(scope, o, "target_index", target_index)?;
+    let face_entity = match ent.target_kind() {
+        1 => ent.target_index(),
+        2 => ent.target_index().saturating_add(32_768),
+        _ => -1,
+    };
+    let face_entity = num(scope, face_entity as f64);
+    set(scope, o, "faceEntity", face_entity)?;
     let size = num(scope, ent.size() as f64);
     set(scope, o, "size", size)?;
     let nx = num(scope, ent.nx() as f64);
@@ -1482,6 +1516,8 @@ fn chat_option_array<'s>(
         let o = v8::Object::new(scope);
         let text = js_string(scope, opt.text())?;
         set(scope, o, "text", text)?;
+        let com_id = num(scope, opt.com_id() as f64);
+        set(scope, o, "comId", com_id)?;
         let obj = o.into();
         arr.set_index(scope, i as u32, obj)
             .ok_or_else(|| "v8 array set failed".to_string())?;
@@ -1645,6 +1681,8 @@ fn widget_text_array<'s>(
         set(scope, o, "component_id", component_id)?;
         let text = js_string(scope, row.text())?;
         set(scope, o, "text", text)?;
+        let item_count = num(scope, row.item_count() as f64);
+        set(scope, o, "item_count", item_count)?;
         arr.set_index(scope, i as u32, o.into())
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }

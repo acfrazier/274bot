@@ -247,6 +247,7 @@ pub struct SceneRow {
     pub level: i32,
     pub distance: i32,
     pub actions: Ops,
+    pub in_combat: bool,
     /// Placed loc wall shape; zero for rows that are not locs.
     pub shape: u8,
     /// Placed loc wall angle; zero for rows that are not locs.
@@ -263,6 +264,7 @@ impl SceneRow {
             level: row.level(),
             distance: row.distance(),
             actions: strings.ops(&row.actions()),
+            in_combat: row.in_combat(),
             shape: u8::try_from(row.shape()).unwrap_or_default(),
             angle: u8::try_from(row.angle()).unwrap_or_default(),
         }
@@ -411,6 +413,14 @@ pub struct BankApproach {
 pub struct ModalTexts {
     pub root: i32,
     pub texts: Vec<String>,
+}
+/// One selected widget row. Inventory components carry their observed row
+/// count, including zero; other widgets carry `-1`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WidgetRow {
+    pub component_id: i32,
+    pub text: Text,
+    pub item_count: i32,
 }
 
 /// One posted quest-tab row. `component_id` is omitted when the host did not
@@ -634,6 +644,7 @@ scene_pages! {
         /// Null tab vs a present (possibly empty) journal list.
         quest_statuses: QuestTab,
         main_modal_texts: ModalTexts,
+        widgets: Vec<WidgetRow>,
         collision: CollisionQuery,
         reach: Reach,
         puzzle_board: PuzzlePage,
@@ -1043,6 +1054,18 @@ impl Scene {
                 root: pair.root(),
                 texts: pair.texts().into_iter().map(str::to_string).collect(),
             });
+        }
+        if snap.has_widgets() {
+            p.widgets(
+                snap.widgets()
+                    .iter()
+                    .map(|row| WidgetRow {
+                        component_id: row.component_id(),
+                        text: strings.text(row.text()),
+                        item_count: row.item_count(),
+                    })
+                    .collect(),
+            );
         }
         if snap.has_quest_statuses_update() {
             if snap.quest_statuses_available() {

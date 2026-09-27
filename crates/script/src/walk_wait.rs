@@ -198,6 +198,10 @@ impl WalkSlot {
         if wait.settled.is_some() {
             return true;
         }
+        if crate::event_signal::pending() {
+            wait.settled = Some(false);
+            return true;
+        }
         if here.is_some_and(|here| Self::arrived(here, wait.key)) {
             wait.settled = Some(true);
             return true;

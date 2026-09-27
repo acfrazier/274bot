@@ -14,6 +14,116 @@ use super::{abort_script_walk, action_slot, all_slot, route_inspect, NavBot, Scr
 use crate::catalog_core::ScriptAct;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
+thread_local! {
+    /// One slot thread owns one client, so this is the contiguous
+    /// offer-to-confirm identity for that client's current duel session.
+    static DUEL_SESSION_PARTNER: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) fn reset_duel_session() {
+    DUEL_SESSION_PARTNER.with(|partner| *partner.borrow_mut() = None);
+}
+
+fn duel_name(name: &str) -> String {
+    name.replace('_', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+fn duel_partner_header(text: &str) -> String {
+    let trimmed = text.trim();
+    let name = trimmed
+        .strip_prefix("Dueling with:")
+        .or_else(|| trimmed.strip_prefix("dueling with:"))
+        .unwrap_or(trimmed);
+    duel_name(name)
+}
+
+pub(crate) fn validated_duel_accept(
+    snapshot: &GameSnapshot,
+    screen: &str,
+    partner: &str,
+    rules: i32,
+) -> Option<i32> {
+    if rules != 1024 {
+        return None;
+    }
+    for revision in [
+        client::io::ClientRevision::R274,
+        client::io::ClientRevision::R289,
+    ] {
+        let Ok(data) = api::game_data::for_revision(revision) else {
+            continue;
+        };
+        let Some(controls) = data.duel_controls() else {
+            continue;
+        };
+        let (root, mine, theirs, accept) = match screen {
+            "offer" => (
+                controls.select_modal,
+                controls.select_mine,
+                controls.select_theirs,
+                controls.select_accept,
+            ),
+            "confirm" => (
+                controls.confirm_modal,
+                controls.confirm_mine,
+                controls.confirm_theirs,
+                controls.confirm_accept,
+            ),
+            _ => continue,
+        };
+        if snapshot.modals().main != root {
+            continue;
+        }
+        let empty = |component_id| {
+            snapshot
+                .widgets()
+                .iter()
+                .find(|widget| widget.component_id == component_id && widget.type_ == 2)
+                .map(|widget| widget.items.is_empty())
+        };
+        let mine_empty = empty(mine);
+        let theirs_empty = empty(theirs);
+        if (screen == "offer" && (mine_empty != Some(true) || theirs_empty != Some(true)))
+            || mine_empty == Some(false)
+            || theirs_empty == Some(false)
+        {
+            return None;
+        }
+        if snapshot
+            .varps()
+            .iter()
+            .find(|varp| varp.index == controls.options_varp)
+            .map(|varp| varp.value)
+            != Some(rules)
+        {
+            return None;
+        }
+        let expected = duel_name(partner);
+        if screen == "offer" {
+            let actual = snapshot
+                .widgets()
+                .iter()
+                .find(|widget| widget.component_id == controls.select_partner)
+                .and_then(|widget| widget.text.as_deref())
+                .map(duel_partner_header);
+            if actual.as_deref() != Some(expected.as_str()) {
+                return None;
+            }
+            DUEL_SESSION_PARTNER.with(|stored| *stored.borrow_mut() = Some(expected));
+        } else if !DUEL_SESSION_PARTNER
+            .with(|stored| stored.borrow().as_deref() == Some(expected.as_str()))
+        {
+            return None;
+        }
+        return Some(accept);
+    }
+    None
+}
 fn act_tile(x: i32, z: i32, level: i32) -> crate::catalog_core::LineOfSightTile {
     crate::catalog_core::LineOfSightTile { x, z, level }
 }
@@ -930,7 +1040,44 @@ pub(crate) fn dispatch_script_interact_cached(
             InteractReq::IfButton { component_id } => {
                 let ctx = api::snapshot::ReadContext::new(snapshot);
                 if let Some(widget) = ctx.component(component_id) {
-                    wrote |= matches!(ix.press(widget), SendResult::Sent { .. });
+                    let sent = matches!(ix.if_button(widget), SendResult::Sent { .. });
+                    wrote |= sent;
+                    if host::debug_enabled() {
+                        eprintln!("[shim-if-button] {component_id} sent={sent}");
+                    }
+                } else if host::debug_enabled() {
+                    eprintln!("[shim-if-button] {component_id} missing");
+                }
+            }
+            InteractReq::DuelAccept {
+                screen,
+                partner,
+                rules,
+            } => {
+                if let Some(component_id) =
+                    validated_duel_accept(snapshot, &screen, &partner, rules)
+                {
+                    let ctx = api::snapshot::ReadContext::new(snapshot);
+                    if let Some(widget) = ctx.component(component_id) {
+                        let sent = matches!(ix.if_button(widget), SendResult::Sent { .. });
+                        wrote |= sent;
+                        if host::debug_enabled() {
+                            eprintln!(
+                                "[shim-duel-accept] screen={screen:?} component={component_id} sent={sent}"
+                            );
+                        }
+                        if sent && screen == "confirm" {
+                            reset_duel_session();
+                        }
+                    } else if host::debug_enabled() {
+                        eprintln!(
+                            "[shim-duel-accept] screen={screen:?} component={component_id} missing"
+                        );
+                    }
+                } else if host::debug_enabled() {
+                    eprintln!(
+                        "[shim-duel-accept] refused screen={screen:?} partner={partner:?} rules={rules}"
+                    );
                 }
             }
             InteractReq::CloseModal => {
@@ -1050,7 +1197,12 @@ pub(crate) fn dispatch_script_interact_cached(
             | InteractReq::WaitEnqueued
             | InteractReq::WaitSettled
             | InteractReq::RecoveryAnchor { .. }
-            | InteractReq::RecoveryAnchorNone => {}
+            | InteractReq::RecoveryAnchorNone
+            | InteractReq::ChannelOpen { .. }
+            | InteractReq::ChannelPost { .. }
+            | InteractReq::ChannelClose { .. }
+            | InteractReq::ChannelMessage { .. }
+            | InteractReq::ChannelStatus { .. } => {}
         }
     }
     for yaw in camera_yaws {

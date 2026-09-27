@@ -197,6 +197,18 @@ pub(super) fn wire_runtime(
         )
         .map_err(|e| format!("register common bank loot: {e}"))?;
     runtime
+        .register_function("__rs2b0t_channel_encode", |args: &[serde_json::Value]| {
+            let value = args.first().unwrap_or(&serde_json::Value::Null);
+            crate::channel::encode(value)
+                .map(|bytes| {
+                    serde_json::Value::Array(
+                        bytes.into_iter().map(serde_json::Value::from).collect(),
+                    )
+                })
+                .map_err(rustyscript::Error::Runtime)
+        })
+        .map_err(|e| format!("register BroadcastChannel codec: {e}"))?;
+    runtime
         .register_function("__rs2b0t_inspect", |args: &[serde_json::Value]| {
             Ok(crate::inspect_wait::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),
@@ -340,6 +352,14 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("register combat style row: {e}"))?;
     crate::shop::configure(game_data.clone());
     crate::supply_v2::configure(game_data.clone());
+    crate::duel::configure(game_data.as_deref());
+    runtime
+        .register_function("__rs2b0t_duel", |args: &[serde_json::Value]| {
+            Ok(crate::duel::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register duel: {e}"))?;
     let selected_autocast = game_data.clone();
     runtime
         .register_function("__rs2b0t_autocast", move |args: &[serde_json::Value]| {

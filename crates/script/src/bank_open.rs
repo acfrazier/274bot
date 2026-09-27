@@ -603,6 +603,7 @@ mod tests {
             level: 0,
             distance,
             actions: actions.iter().map(|action| Rc::from(*action)).collect(),
+            in_combat: false,
             shape: 0,
             angle: 0,
         }

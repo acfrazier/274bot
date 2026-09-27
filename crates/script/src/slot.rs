@@ -1037,6 +1037,15 @@ impl SlotScript {
         }
         accepted
     }
+    /// Deliver one broker FlatBuffer batch to the current Load runtime.
+    /// Generation/lifecycle fencing is performed by the Play broker before
+    /// this crossing; a compiled card has no BroadcastChannel surface.
+    #[cfg(feature = "load")]
+    pub fn post_channel_events(&mut self, bytes: Vec<u8>) -> bool {
+        self.load
+            .as_ref()
+            .is_some_and(|isolate| isolate.post_channel_events(bytes))
+    }
 
     /// Post the merged operator settings bag into a Load isolate.
     #[cfg(feature = "load")]

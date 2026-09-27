@@ -113,6 +113,8 @@ export interface NearestBooth {
 
 export interface ChatOption {
   text: string;
+  /** Exact BUTTON_OK component identity. */
+  comId: number;
 }
 
 /** Native on/off component identity for one toggle. */

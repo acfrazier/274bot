@@ -1222,7 +1222,13 @@ export default class T extends LoopingBot {
         let probe = iso.probe("__probe").unwrap();
         assert_eq!(
             probe["keys"],
-            serde_json::json!(["Fire giant", "Giant", "Green dragon", "Moss giant"]),
+            serde_json::json!([
+                "Fire giant",
+                "Giant",
+                "Green dragon",
+                "Kalphite Queen",
+                "Moss giant"
+            ]),
             "{revision:?} published keys"
         );
         assert!(

@@ -605,8 +605,12 @@ fn choose_option_and_make_are_rust_picked_and_wait_the_modal() {
     let options = [
         ChatOptionInput {
             text: "Yes please.",
+            com_id: 4883,
         },
-        ChatOptionInput { text: "No thanks." },
+        ChatOptionInput {
+            text: "No thanks.",
+            com_id: 4884,
+        },
     ];
     let mut snap = base();
     snap.chat_modal_id = 4882;

@@ -400,6 +400,7 @@ impl Play {
             profiles: HashMap::new(),
             focused: None,
             scripts: Arc::new(Mutex::new(HashMap::new())),
+            channels: super::script_channels::ChannelBroker::default(),
             cheats: Arc::new(Mutex::new(HashMap::new())),
             wires: Arc::new(Mutex::new(HashMap::new())),
             navs: Arc::new(Mutex::new(HashMap::new())),

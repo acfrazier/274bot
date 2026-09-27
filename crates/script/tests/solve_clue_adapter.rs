@@ -13,10 +13,10 @@ use script::{LoadIsolate, LoadShape};
 /// `trail_clue_easy_simple001`: a selected search membership whose
 /// `trail_coord` decodes to `(3209, 3218, 1)`.
 const SEARCH_ID: i32 = 2677;
-/// The packed `access: "constrained"` row: refused with `aborted` /
-/// `constrained`, never a token and never a verb.
+/// The packed `access: "constrained"` row whose special runtime crosses the
+/// Duel Arena before digging.
 const CONSTRAINED_ID: i32 = 3554;
-/// The casket the constrained row's own selected `trail_casket` names.
+/// The special row's selected `trail_casket`.
 const CASKET_ID: i32 = 3555;
 /// `trail_clue_medium_sextant001`: the unguarded-dig membership whose
 /// `trail_coord` decodes to `(3160, 3251, 0)`.
@@ -67,6 +67,8 @@ struct Scene<'a> {
     main_modal_id: i32,
     hold: bool,
     ours: bool,
+    /// The local account name read by the profile-global duel partner fence.
+    my_name: Option<&'a str>,
     /// The posted npc page the talk arm reads.
     npcs: &'a [SceneEntityInput<'a>],
     /// The posted chat modal: `-1` is the closed one the page posts itself.
@@ -102,6 +104,7 @@ impl Default for Scene<'_> {
             main_modal_id: 0,
             hold: false,
             ours: false,
+            my_name: None,
             npcs: &[],
             chat_modal_id: -1,
             chat_continue: false,
@@ -224,7 +227,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         run_energy: 0,
         run_enabled: false,
         retaliate_enabled: false,
-        my_name: None,
+        my_name: scene.my_name,
         in_combat: false,
         animating: false,
         main_modal_id: scene.main_modal_id,
@@ -334,7 +337,9 @@ fn probe_text(iso: &LoadIsolate, expr: &str) -> String {
 /// tick's JS ran and its interact batch was forwarded.
 fn tick(iso: &LoadIsolate, n: u64) {
     iso.on_game_tick(n);
-    assert!(iso.probe("true").is_ok());
+    if iso.probe("true").is_err() {
+        panic!("isolate stopped after tick {n}: {:?}", iso.drain_logs());
+    }
 }
 
 /// The isolate machine's own answer to a `next` on the token the task is
@@ -363,7 +368,7 @@ fn assert_clean(logs: &[String]) {
 fn solve_clue_adapter_surface_is_idle_and_owns_no_equipment() {
     let src = r#"
 import * as clueModule from '../../api/ai/clues/SolveClue.js';
-import { SolveClue, heldClueLikeId, walkToBank } from '../../api/ai/clues/SolveClue.js';
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
     onStart() {
         globalThis.__reached = [];
@@ -388,7 +393,6 @@ export default class T extends TaskBot {
             retry: typeof this.solveClue.retry,
             retried: this.solveClue.retry(),
             note: thrown(() => this.solveClue.noteDeath()),
-            heldClue: thrown(() => heldClueLikeId()),
             exports: Object.keys(clueModule).sort().join(','),
             reached: globalThis.__reached,
         });
@@ -416,10 +420,6 @@ export default class T extends TaskBot {
         "the machine's own latch clear answers on an idle isolate too: {value:?}"
     );
     assert_eq!(value["note"], "no throw", "{value:?}");
-    assert_eq!(
-        value["heldClue"], "not impl: SolveClue.heldClueLikeId",
-        "{value:?}"
-    );
     assert_eq!(
         value["exports"], "SolveClue,heldClueLikeId,walkToBank",
         "the module surface is the class and the two helpers: {value:?}"
@@ -459,8 +459,10 @@ export default class T extends LoopingBot {
     };
     post_scene(&iso, 1, &[], &far);
     tick(&iso, 1);
-    match &iso.drain_interacts()[..] {
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
         [InteractReq::WalkNear {
+            request_id,
             x: 2946,
             z: 3368,
             level: 0,
@@ -468,11 +470,9 @@ export default class T extends LoopingBot {
             allow_teleports: true,
             allow_wilderness: true,
             allow_bank_fetch: true,
-            request_id,
-            avoid: _,
-        }] => assert_ne!(*request_id, 0),
-        other => panic!("walkToBank must queue one trail walk: {other:?}"),
-    }
+            ..
+        }] if *request_id != 0
+    ));
     assert_eq!(iso.probe("__ok").unwrap(), serde_json::Value::Null);
     let near = Scene {
         here: Some(TileInput {
@@ -975,8 +975,8 @@ export default class T extends TaskBot {
 }
 
 /// The held casket's own Open: the machine's `held` step reaches the drain as
-/// a held-item interaction, and the constrained clue beside it is never
-/// played as a loc.
+/// a held-item interaction, and the duel-crossing clue beside it never steals
+/// the casket's precedence.
 #[test]
 fn solve_clue_adapter_opens_the_held_casket_over_the_queue() {
     let src = r#"
@@ -1006,13 +1006,223 @@ export default class T extends TaskBot {
         "the casket Open is a held-item request"
     );
 
-    // The casket gone: the constrained clue is refused instead — `aborted` /
-    // `constrained` — so it is never a held Open and never enqueued as a loc.
+    // The casket gone: this fixture has no profile-global partner, so 3554
+    // logs its frozen operator action and refuses before any travel or Dig.
     post_page(&iso, 2, &[(CONSTRAINED_ID, 1)]);
     tick(&iso, 2);
     assert!(
         iso.drain_interacts().is_empty(),
-        "the constrained row is not a held Open"
+        "an unconfigured duel crossing queues no interaction"
+    );
+    let logs = iso.drain_logs();
+    iso.join();
+    assert_clean(&logs);
+}
+
+#[test]
+fn clue_3554_family_embeds_duel_travel_then_dig() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        globalThis.__logs = [];
+        this.solveClue = new SolveClue({
+            enabled: () => true,
+            log: (message) => { globalThis.__logs.push(String(message)); },
+            setStatus: () => {},
+        });
+        this.add(this.solveClue);
+    }
+}
+"#;
+    let iso = spawn(src);
+    iso.post_settings_bag(
+        serde_json::json!({ "clueDuelPartner": "Helper" })
+            .as_object()
+            .unwrap(),
+    );
+    let page = [(CONSTRAINED_ID, 1), (SPADE_ITEM, 1)];
+    let scene = Scene {
+        here: Some(TileInput {
+            x: 3374,
+            z: 3250,
+            level: 0,
+        }),
+        names: &[(SPADE_ITEM, "Spade")],
+        my_name: Some("Solver"),
+        trio: true,
+        ..Scene::default()
+    };
+
+    post_scene(&iso, 1, &page, &scene);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkNear {
+            x: 3374,
+            z: 3250,
+            level: 0,
+            radius: 1,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+            avoid: Vec::new(),
+        }],
+        "the family owns the duel crossing before the clue verb"
+    );
+
+    post_scene(&iso, 2, &page, &scene);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Held {
+            name: "Spade".into(),
+            action: "Dig".into(),
+        }],
+        "after travel settles the same clue token reaches its Dig"
+    );
+    let callback_logs = json(&iso, "JSON.stringify(globalThis.__logs)");
+    assert!(
+        callback_logs
+            .to_string()
+            .contains("trail_clue_hard_sextant028"),
+        "{callback_logs}"
+    );
+    assert!(
+        !callback_logs
+            .to_string()
+            .contains("set Global clue duel partner"),
+        "{callback_logs}"
+    );
+    let logs = iso.drain_logs();
+    iso.join();
+    assert_clean(&logs);
+}
+
+#[test]
+fn clue_3554_family_logs_and_refuses_missing_or_self_partner() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        globalThis.__logs = [];
+        this.solveClue = new SolveClue({
+            enabled: () => true,
+            log: (message) => { globalThis.__logs.push(String(message)); },
+            setStatus: () => {},
+        });
+        this.add(this.solveClue);
+    }
+}
+"#;
+    for partner in [None, Some(" solver ")] {
+        let iso = spawn(src);
+        if let Some(partner) = partner {
+            iso.post_settings_bag(
+                serde_json::json!({ "clueDuelPartner": partner })
+                    .as_object()
+                    .unwrap(),
+            );
+        }
+        let scene = Scene {
+            here: Some(TileInput {
+                x: 3368,
+                z: 3274,
+                level: 0,
+            }),
+            my_name: Some("Solver"),
+            ..Scene::default()
+        };
+        post_scene(&iso, 1, &[(CONSTRAINED_ID, 1)], &scene);
+        tick(&iso, 1);
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "invalid partner must not start travel"
+        );
+        let callback_logs = json(&iso, "JSON.stringify(globalThis.__logs)");
+        assert!(
+            callback_logs.to_string().contains(
+                "set Global clue duel partner and run that account in Duel Arena Clue helper mode"
+            ),
+            "{callback_logs}"
+        );
+        let logs = iso.drain_logs();
+        iso.join();
+        assert_clean(&logs);
+    }
+}
+
+#[test]
+fn clue_3554_family_propagates_duel_travel_failure() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.solveClue = new SolveClue({
+            enabled: () => true,
+            log: () => {},
+            setStatus: () => {},
+        });
+        globalThis.__solver = this.solveClue;
+        this.add(this.solveClue);
+    }
+}
+"#;
+    let iso = spawn(src);
+    iso.post_settings_bag(
+        serde_json::json!({ "clueDuelPartner": "Helper" })
+            .as_object()
+            .unwrap(),
+    );
+    let page = [(CONSTRAINED_ID, 1)];
+    let ready = Scene {
+        here: Some(TileInput {
+            x: 3368,
+            z: 3274,
+            level: 0,
+        }),
+        my_name: Some("Solver"),
+        ..Scene::default()
+    };
+    post_scene(&iso, 1, &page, &ready);
+    tick(&iso, 1);
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [InteractReq::WalkNear { .. }]
+    ));
+
+    post_scene(&iso, 2, &page, &ready);
+    tick(&iso, 2);
+    assert!(iso.drain_interacts().is_empty());
+    let wrong_pen = Scene {
+        here: Some(TileInput {
+            x: 3340,
+            z: 3250,
+            level: 0,
+        }),
+        my_name: Some("Solver"),
+        ..Scene::default()
+    };
+    post_scene(&iso, 3, &page, &wrong_pen);
+    tick(&iso, 3);
+    assert!(iso.drain_interacts().is_empty());
+    post_scene(&iso, 4, &page, &ready);
+    tick(&iso, 4);
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [InteractReq::WalkNear { .. }]
+    ));
+    post_scene(&iso, 5, &page, &ready);
+    tick(&iso, 5);
+    assert!(iso.drain_interacts().is_empty());
+    post_scene(&iso, 6, &page, &wrong_pen);
+    tick(&iso, 6);
+    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(
+        iso.probe("globalThis.__solver.token").unwrap(),
+        serde_json::Value::Null,
+        "the family propagates Travel false as a terminal clue-duel abort"
     );
     let logs = iso.drain_logs();
     iso.join();
@@ -1664,9 +1874,11 @@ export default class T extends TaskBot {
     let options = [
         script::isolate_fb::ChatOptionInput {
             text: "Who are you?",
+            com_id: 4883,
         },
         script::isolate_fb::ChatOptionInput {
             text: "Talk about Treasure Trails.",
+            com_id: 4884,
         },
     ];
     post_scene(

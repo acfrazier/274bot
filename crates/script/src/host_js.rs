@@ -1114,12 +1114,20 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
     TsInterface {
         name: "ChatOption",
         doc: None,
-        fields: &[TsField {
-            name: "text",
-            ty: "string",
-            optional: false,
-            doc: None,
-        }],
+        fields: &[
+            TsField {
+                name: "text",
+                ty: "string",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "comId",
+                ty: "number",
+                optional: false,
+                doc: Some("Exact BUTTON_OK component identity."),
+            },
+        ],
     },
     TsInterface {
         name: "ToggleControls",

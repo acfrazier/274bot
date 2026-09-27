@@ -65,6 +65,12 @@ export const reader = proxy('reader', {
     worldTile() {
         return host().tile || snap().here || null;
     },
+    serverTile() {
+        return snap().here || null;
+    },
+    selfSlot() {
+        return finiteInt(snap().self_slot) ? snap().self_slot : -1;
+    },
     inventorySize() {
         return typeof host().invSize === 'number' ? host().invSize : 0;
     },

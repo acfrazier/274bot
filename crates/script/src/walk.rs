@@ -288,7 +288,8 @@ pub(crate) fn here() -> Option<WorldTile> {
 /// Frozen `EventSignal.pending()` for an owned random. Guardian `hold`
 /// freezes the row (`machine::on_hold`) instead of aborting the walk.
 pub(crate) fn interrupted() -> bool {
-    observed::with(|scene| scene.since_login().ours().unwrap_or(false))
+    crate::event_signal::pending()
+        || observed::with(|scene| scene.since_login().ours().unwrap_or(false))
 }
 
 /// Frozen `isArrived` over the cached reach view — the same helper
@@ -2790,6 +2791,7 @@ pub(crate) mod tests {
             level: 0,
             distance: dist,
             actions: vec!["Open".into(), "Examine".into()].into(),
+            in_combat: false,
             shape: client::dash3d::LocShape::CENTREPIECE_STRAIGHT as u8,
             angle: client::dash3d::LocAngle::WEST as u8,
         }

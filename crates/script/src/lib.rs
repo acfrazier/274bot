@@ -7,13 +7,19 @@
 pub mod boost_potions;
 #[cfg(feature = "load")]
 pub mod canvas;
+#[cfg(feature = "load")]
+pub mod channel;
 /// Curated script site configuration and the hostile-attacker predicate.
 pub mod content;
 pub mod ctx;
 pub mod declared_abi;
+#[cfg(feature = "load")]
+mod duel;
 /// Script-side Ent tile lookup over caller-supplied rows.
 pub mod ent;
 pub mod escape_runes;
+#[cfg(feature = "load")]
+mod event_signal;
 #[cfg(feature = "load")]
 mod events;
 pub mod food_policy;

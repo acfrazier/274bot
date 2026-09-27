@@ -995,6 +995,7 @@ mod tests {
             level: 0,
             distance,
             actions: ops(actions),
+            in_combat: false,
             shape: 0,
             angle: 0,
         }

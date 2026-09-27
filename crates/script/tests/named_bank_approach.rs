@@ -700,9 +700,11 @@ export default class T extends LoopingBot {
     let options = [
         ChatOptionInput {
             text: "Nothing thanks",
+            com_id: 2493,
         },
         ChatOptionInput {
             text: "I'd like to access my bank account, please.",
+            com_id: 2494,
         },
     ];
     snap.tick = 2;

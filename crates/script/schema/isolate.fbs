@@ -67,9 +67,11 @@ table SceneEntity {
   angle: int; // loc-only placed rotation
 }
 
-// One chat modal BUTTON_OK choice.
+// One chat modal BUTTON_OK choice. The component id is the exact button
+// identity used by direct catalog callers; Rust machines may answer by index.
 table ChatOption {
   text: string;
+  com_id: int;
 }
 
 // One combat-style varp-select button with its label.
@@ -178,6 +180,7 @@ table Reach {
 table WidgetText {
   component_id: int;
   text: string;
+  item_count: int = -1;
 }
 
 // One quest-tab text row after Rust resolves its native display colour.
@@ -542,6 +545,11 @@ table Interact {
   inspect_ack_generation: ulong = 0;
   use_mage_bank: bool = false;
   use_zanaris_bank: bool = false;
+  // In-Play BroadcastChannel transport. `data` is the bounded native
+  // structured-clone codec, never JSON text.
+  channel_id: ulong = 0;
+  data: [ubyte];
+  seq: ulong = 0;
 }
 
 // The tick's shim interact queue, forwarded to the host.

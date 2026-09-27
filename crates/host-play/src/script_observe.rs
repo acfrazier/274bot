@@ -229,6 +229,7 @@ pub(crate) fn script_observe_with_npc_boxes(
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn script_observe_cached(
     driver: &mut dyn Driver,
@@ -253,6 +254,59 @@ pub(crate) fn script_observe_cached(
     cache: Option<Arc<Cache>>,
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
 ) -> bool {
+    script_observe_cached_with_channels(
+        driver,
+        name,
+        up,
+        tick_edge,
+        tick,
+        here,
+        inv,
+        state,
+        snapshot,
+        npc_boxes,
+        obj_names,
+        scripts,
+        cheats,
+        navs,
+        world,
+        hold,
+        ours,
+        canlight,
+        slot_input,
+        cache,
+        obj_names_arc,
+        None,
+        super::script_channels::BrokerWorld::Unavailable,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn script_observe_cached_with_channels(
+    driver: &mut dyn Driver,
+    name: &str,
+    up: bool,
+    tick_edge: bool,
+    tick: u64,
+    here: Option<(i32, i32, i32)>,
+    inv: Option<&[(i32, i32)]>,
+    state: Option<WorldState>,
+    snapshot: Option<&GameSnapshot>,
+    npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    scripts: &ScriptWall,
+    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    world: &Option<Arc<NavWorld>>,
+    hold: bool,
+    ours: bool,
+    canlight: Option<&[u64]>,
+    slot_input: Option<&SlotInput>,
+    cache: Option<Arc<Cache>>,
+    obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
+    channels: Option<&super::script_channels::ChannelBroker>,
+    channel_world: super::script_channels::BrokerWorld,
+) -> bool {
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
     }
@@ -262,6 +316,8 @@ pub(crate) fn script_observe_cached(
     let mut pending_bank_op_active = false;
     let observed_slot = script_slot(scripts, name);
     let mut slot_work_epoch = None;
+    let mut channel_generation = 0;
+    let mut channel_active = false;
     'script_slot: {
         let Some(slot) = observed_slot.as_ref() else {
             break 'script_slot;
@@ -292,6 +348,15 @@ pub(crate) fn script_observe_cached(
         // same hooks for its own instance.
         slot.sync_compiled_clue(hold || ours);
         slot_work_epoch = Some(slot.work_epoch());
+        channel_generation = slot.runtime_generation();
+        // Region loads briefly clear `up`; the isolate and its browser-style
+        // channel survive them. Session boundaries suspend the broker in the
+        // slot loop before this observation runs.
+        channel_active = slot.load_active()
+            && matches!(
+                slot.state(),
+                script::RunState::Running | script::RunState::Paused
+            );
         if let Some(pending) = slot.pending_bank_op() {
             if hold || slot.state() == script::RunState::Paused {
                 slot.freeze_pending_bank_op();
@@ -841,6 +906,28 @@ pub(crate) fn script_observe_cached(
             interact.extend(take_script_interacts(slot.drain_interacts(), slot_input));
         }
     }
+    if let Some(channels) = channels {
+        let mut game = Vec::with_capacity(interact.len());
+        let mut channel_reqs = Vec::new();
+        for req in interact {
+            match req {
+                req @ (script::shim::InteractReq::ChannelOpen { .. }
+                | script::shim::InteractReq::ChannelPost { .. }
+                | script::shim::InteractReq::ChannelClose { .. }) => channel_reqs.push(req),
+                req => game.push(req),
+            }
+        }
+        interact = game;
+        let tracked = channels.tracks(name);
+        if !channel_reqs.is_empty() || (tracked && (up || !channel_active)) {
+            let mut deliveries =
+                channels.sync(name, channel_generation, channel_world, channel_active);
+            for req in channel_reqs {
+                deliveries.extend(channels.handle(name, channel_generation, channel_world, req));
+            }
+            deliver_channel_events(scripts, deliveries);
+        }
+    }
     // Dispatch the shim's interact requests through the slot's own Driver
     // (open/deposit/withdraw) and the shared walk arm (bank-stand walks
     // with default FindOptions, so wilderness/quest gates fail closed).
@@ -1191,6 +1278,38 @@ pub(crate) fn script_observe_cached(
         wrote = true;
     }
     wrote
+}
+
+pub(crate) fn deliver_channel_events(
+    scripts: &ScriptWall,
+    deliveries: Vec<super::script_channels::Delivery>,
+) {
+    let mut batches: HashMap<(String, u64), Vec<script::shim::InteractReq>> = HashMap::new();
+    for delivery in deliveries {
+        batches
+            .entry((delivery.account, delivery.generation))
+            .or_default()
+            .push(delivery.event);
+    }
+    for ((account, generation), events) in batches {
+        let Some(slot) = script_slot(scripts, &account) else {
+            continue;
+        };
+        let Ok(mut slot) = slot.lock() else {
+            continue;
+        };
+        if slot.runtime_generation() != generation
+            || !slot.load_active()
+            || !matches!(
+                slot.state(),
+                script::RunState::Running | script::RunState::Paused
+            )
+        {
+            continue;
+        }
+        let bytes = script::isolate_fb::encode_interact_batch(&events);
+        let _ = slot.post_channel_events(bytes);
+    }
 }
 
 #[cfg(test)]

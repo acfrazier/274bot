@@ -1,6 +1,6 @@
 // Host-posted selected-revision drop names (`__rs2b0t_host.content.drop_db`).
 // Import resolves without touching the catalog; reading DROP_DB throws when
-// the host omitted the required four-card tables (fail-closed at use).
+// the host omitted the required selected tables (fail-closed at use).
 const host = () => globalThis.__rs2b0t_host || {};
 
 let cached = null;

@@ -281,9 +281,10 @@ const VT_BA_DEST_X: VOffsetT = 16;
 const VT_BA_DEST_Z: VOffsetT = 18;
 const VT_BA_DEST_LEVEL: VOffsetT = 20;
 
-// WidgetText: { component_id, text }
+// WidgetText: { component_id, text, item_count }
 const VT_WT_COMPONENT: VOffsetT = 4;
 const VT_WT_TEXT: VOffsetT = 6;
+const VT_WT_ITEM_COUNT: VOffsetT = 8;
 
 // QuestStatus: { name, status, component_id }
 const VT_QUEST_NAME: VOffsetT = 4;
@@ -356,9 +357,9 @@ const VT_ENT_NZ: VOffsetT = 42;
 const VT_ENT_SHAPE: VOffsetT = 44;
 const VT_ENT_ANGLE: VOffsetT = 46;
 
-// ChatOption: { text }
+// ChatOption: { text, com_id }
 const VT_CHAT_OPT_TEXT: VOffsetT = 4;
-
+const VT_CHAT_OPT_COM: VOffsetT = 6;
 // MakeButton: { qty, com_id }
 const VT_MAKE_BTN_QTY: VOffsetT = 4;
 const VT_MAKE_BTN_COM: VOffsetT = 6;
@@ -377,10 +378,7 @@ const VT_CS_COMPONENT: VOffsetT = 8;
 const VT_VARP_INDEX: VOffsetT = 4;
 const VT_VARP_VALUE: VOffsetT = 6;
 
-// Interact: { op, x, z, level, kind, name, stand_op, choose, action,
-//             index, component_id, bank_generation, bank_item_id, lands_as_id,
-//             source_item_id, source_item_slot, target_item_id, target_item_slot,
-//             request_id, xf, yf, input_identity, allow_wilderness, allow_bank_fetch }
+// Interact: schema-order slots. New fields append; never reorder.
 const VT_IN_OP: VOffsetT = 4;
 const VT_IN_X: VOffsetT = 6;
 const VT_IN_Z: VOffsetT = 8;
@@ -414,6 +412,9 @@ const VT_IN_INSPECT_ACK_SEQ: VOffsetT = 62;
 const VT_IN_INSPECT_ACK_GENERATION: VOffsetT = 64;
 const VT_IN_USE_MAGE_BANK: VOffsetT = 66;
 const VT_IN_USE_ZANARIS_BANK: VOffsetT = 68;
+const VT_IN_CHANNEL_ID: VOffsetT = 70;
+const VT_IN_DATA: VOffsetT = 72;
+const VT_IN_SEQ: VOffsetT = 74;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -534,10 +535,12 @@ pub struct SceneEntityInput<'a> {
     pub angle: i32,
 }
 
-/// One chat modal BUTTON_OK choice.
+/// One chat modal BUTTON_OK choice, including the exact component direct
+/// catalog callers pass to `actions.ifButton`.
 #[derive(Clone, Copy)]
 pub struct ChatOptionInput<'a> {
     pub text: &'a str,
+    pub com_id: i32,
 }
 
 /// One inv/bank/equipment row posted from `ItemView`.
@@ -952,6 +955,8 @@ pub struct CarryInput<'a> {
 pub struct WidgetTextInput<'a> {
     pub component_id: i32,
     pub text: &'a str,
+    /// Number of observed TYPE_INV rows; `-1` for non-inventory widgets.
+    pub item_count: i32,
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -3189,7 +3194,7 @@ pub struct SnapshotFingerprint {
     pub chat_open: bool,
     pub chat_continue: bool,
     pub chat_text: Option<String>,
-    pub chat_options: Vec<String>,
+    pub chat_options: Vec<(String, i32)>,
     pub side_tab: i32,
     pub varps: Vec<VarpInput>,
     pub combat_styles: Vec<CombatStyleFp>,
@@ -3230,7 +3235,7 @@ pub struct SnapshotFingerprint {
     pub attacked_by_player: bool,
     pub self_target_kind: i32,
     pub self_target_index: i32,
-    pub widgets: Vec<(i32, String)>,
+    pub widgets: Vec<(i32, String, i32)>,
     pub self_chat: Option<String>,
     pub hint_tile: Option<(i32, i32)>,
     pub retaliate_controls: Option<(i32, i32)>,
@@ -3415,7 +3420,7 @@ impl SnapshotFingerprint {
             chat_options: input
                 .chat_options
                 .iter()
-                .map(|o| o.text.to_string())
+                .map(|o| (o.text.to_string(), o.com_id))
                 .collect(),
             side_tab: input.side_tab,
             varps: input.varps.to_vec(),
@@ -3506,7 +3511,7 @@ impl SnapshotFingerprint {
             widgets: input
                 .widgets
                 .iter()
-                .map(|w| (w.component_id, w.text.to_string()))
+                .map(|w| (w.component_id, w.text.to_string(), w.item_count))
                 .collect(),
             self_chat: native.self_chat.map(str::to_string),
             hint_tile: native.hint_tile,
@@ -5026,6 +5031,7 @@ fn chat_option_off<'b>(
     let text_off = b.create_string(o.text);
     let tab = b.start_table();
     b.push_slot_always(VT_CHAT_OPT_TEXT, text_off);
+    b.push_slot(VT_CHAT_OPT_COM, o.com_id, 0);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -5053,6 +5059,7 @@ fn widget_text_off<'b>(
     let tab = b.start_table();
     b.push_slot_always(VT_WT_COMPONENT, w.component_id);
     b.push_slot_always(VT_WT_TEXT, text_off);
+    b.push_slot_always(VT_WT_ITEM_COUNT, w.item_count);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -5383,12 +5390,17 @@ impl ChatOptionReader<'_> {
         }
         .unwrap_or("")
     }
+
+    pub fn com_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_CHAT_OPT_COM, None) }.unwrap_or(0)
+    }
 }
 
 impl Verifiable for ChatOptionReader<'_> {
     fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
         v.visit_table(pos)?
             .visit_field::<ForwardsUOffset<&str>>("text", VT_CHAT_OPT_TEXT, false)?
+            .visit_field::<i32>("com_id", VT_CHAT_OPT_COM, false)?
             .finish();
         Ok(())
     }
@@ -5489,6 +5501,9 @@ impl WidgetTextReader<'_> {
     pub fn text(&self) -> &str {
         unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_WT_TEXT, None) }.unwrap_or("")
     }
+    pub fn item_count(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_WT_ITEM_COUNT, Some(-1)) }.unwrap_or(-1)
+    }
 }
 
 impl Verifiable for WidgetTextReader<'_> {
@@ -5496,6 +5511,7 @@ impl Verifiable for WidgetTextReader<'_> {
         v.visit_table(pos)?
             .visit_field::<i32>("component_id", VT_WT_COMPONENT, false)?
             .visit_field::<ForwardsUOffset<&str>>("text", VT_WT_TEXT, false)?
+            .visit_field::<i32>("item_count", VT_WT_ITEM_COUNT, false)?
             .finish();
         Ok(())
     }
@@ -5973,6 +5989,19 @@ impl InteractReader<'_> {
     pub fn use_zanaris_bank(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_IN_USE_ZANARIS_BANK, None) }.unwrap_or(false)
     }
+    pub fn channel_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_IN_CHANNEL_ID, None) }.unwrap_or(0)
+    }
+    pub fn data(&self) -> Vec<u8> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<Vector<u8>>>(VT_IN_DATA, None)
+        }
+        .map_or_else(Vec::new, |data| data.iter().collect())
+    }
+    pub fn seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_IN_SEQ, None) }.unwrap_or(0)
+    }
     pub fn xf(&self) -> Option<f64> {
         unsafe { self.tab.get::<f64>(VT_IN_XF, None) }
     }
@@ -6055,6 +6084,9 @@ impl Verifiable for InteractReader<'_> {
                 VT_IN_INSPECT_ACK_GENERATION,
                 false,
             )?
+            .visit_field::<u64>("channel_id", VT_IN_CHANNEL_ID, false)?
+            .visit_field::<ForwardsUOffset<Vector<u8>>>("data", VT_IN_DATA, false)?
+            .visit_field::<u64>("seq", VT_IN_SEQ, false)?
             .finish();
         Ok(())
     }
@@ -6465,6 +6497,17 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .component_id()
                     .ok_or_else(|| "if-button has no component_id".to_string())?,
             }),
+            "duel-accept" => out.push(crate::shim::InteractReq::DuelAccept {
+                screen: row
+                    .action()
+                    .ok_or_else(|| "duel-accept has no screen".to_string())?
+                    .to_string(),
+                partner: row
+                    .name()
+                    .ok_or_else(|| "duel-accept has no partner".to_string())?
+                    .to_string(),
+                rules: row.x(),
+            }),
             "close-modal" => out.push(crate::shim::InteractReq::CloseModal),
             "side-tab" => out.push(crate::shim::InteractReq::SideTab {
                 tab: row
@@ -6503,6 +6546,56 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 level: row.level(),
             }),
             "recovery-anchor-none" => out.push(crate::shim::InteractReq::RecoveryAnchorNone),
+            "channel-open" => out.push(crate::shim::InteractReq::ChannelOpen {
+                channel_id: row.channel_id(),
+                name: row
+                    .name()
+                    .ok_or_else(|| "channel-open has no name".to_string())?
+                    .to_string(),
+            }),
+            "channel-post" => {
+                let data = row.data();
+                if data.len() > crate::channel::MAX_CHANNEL_BYTES {
+                    return Err("channel-post data exceeds cap".into());
+                }
+                out.push(crate::shim::InteractReq::ChannelPost {
+                    channel_id: row.channel_id(),
+                    name: row
+                        .name()
+                        .ok_or_else(|| "channel-post has no name".to_string())?
+                        .to_string(),
+                    data,
+                });
+            }
+            "channel-close" => out.push(crate::shim::InteractReq::ChannelClose {
+                channel_id: row.channel_id(),
+                name: row
+                    .name()
+                    .ok_or_else(|| "channel-close has no name".to_string())?
+                    .to_string(),
+            }),
+            "channel-message" => {
+                let data = row.data();
+                if data.len() > crate::channel::MAX_CHANNEL_BYTES {
+                    return Err("channel-message data exceeds cap".into());
+                }
+                out.push(crate::shim::InteractReq::ChannelMessage {
+                    channel_id: row.channel_id(),
+                    sender: row
+                        .name()
+                        .ok_or_else(|| "channel-message has no sender".to_string())?
+                        .to_string(),
+                    seq: row.seq(),
+                    data,
+                });
+            }
+            "channel-status" => out.push(crate::shim::InteractReq::ChannelStatus {
+                channel_id: row.channel_id(),
+                message: row
+                    .action()
+                    .ok_or_else(|| "channel-status has no message".to_string())?
+                    .to_string(),
+            }),
             "key" => out.push(crate::shim::InteractReq::Key {
                 down: row.index() == Some(1),
                 key: row
@@ -6560,6 +6653,7 @@ fn interact_off<'b>(
         InteractReq::Answer { .. } => "answer",
         InteractReq::AnswerCount { .. } => "answer-count",
         InteractReq::IfButton { .. } => "if-button",
+        InteractReq::DuelAccept { .. } => "duel-accept",
         InteractReq::CloseModal => "close-modal",
         InteractReq::SideTab { .. } => "side-tab",
         InteractReq::Wear { .. } => "wear",
@@ -6574,6 +6668,11 @@ fn interact_off<'b>(
         InteractReq::WaitSettled => "wait-settled",
         InteractReq::RecoveryAnchor { .. } => "recovery-anchor",
         InteractReq::RecoveryAnchorNone => "recovery-anchor-none",
+        InteractReq::ChannelOpen { .. } => "channel-open",
+        InteractReq::ChannelPost { .. } => "channel-post",
+        InteractReq::ChannelClose { .. } => "channel-close",
+        InteractReq::ChannelMessage { .. } => "channel-message",
+        InteractReq::ChannelStatus { .. } => "channel-status",
         InteractReq::Key { .. } => "key",
         InteractReq::Mouse { .. } => "mouse",
     });
@@ -6599,7 +6698,12 @@ fn interact_off<'b>(
         | InteractReq::UseOn { name, .. }
         | InteractReq::ShopButton { name, .. }
         | InteractReq::Wear { name }
-        | InteractReq::Unequip { name } => Some(b.create_string(name)),
+        | InteractReq::Unequip { name }
+        | InteractReq::ChannelOpen { name, .. }
+        | InteractReq::ChannelPost { name, .. }
+        | InteractReq::ChannelClose { name, .. }
+        | InteractReq::ChannelMessage { sender: name, .. }
+        | InteractReq::DuelAccept { partner: name, .. } => Some(b.create_string(name)),
         InteractReq::Obj { name, .. } => name.as_deref().map(|n| b.create_string(n)),
         _ => None,
     };
@@ -6633,6 +6737,8 @@ fn interact_off<'b>(
             ..
         } => Some(b.create_string("tele")),
         InteractReq::Key { key, .. } => Some(b.create_string(key)),
+        InteractReq::ChannelStatus { message, .. } => Some(b.create_string(message)),
+        InteractReq::DuelAccept { screen, .. } => Some(b.create_string(screen)),
         _ => None,
     };
     let avoid_off = match req {
@@ -6661,9 +6767,42 @@ fn interact_off<'b>(
         }
         _ => None,
     };
+    let data_off = match req {
+        InteractReq::ChannelPost { data, .. } | InteractReq::ChannelMessage { data, .. } => {
+            Some(b.create_vector(data))
+        }
+        _ => None,
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_IN_OP, op_off);
     match req {
+        InteractReq::ChannelOpen { channel_id, .. }
+        | InteractReq::ChannelClose { channel_id, .. } => {
+            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+        }
+        InteractReq::ChannelPost { channel_id, .. } => {
+            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_DATA, data_off.unwrap());
+        }
+        InteractReq::ChannelMessage {
+            channel_id, seq, ..
+        } => {
+            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_SEQ, *seq);
+            b.push_slot_always(VT_IN_DATA, data_off.unwrap());
+        }
+        InteractReq::ChannelStatus { channel_id, .. } => {
+            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+        }
+        InteractReq::DuelAccept { rules, .. } => {
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            b.push_slot_always(VT_IN_X, *rules);
+        }
         InteractReq::ShopButton {
             id,
             slot,

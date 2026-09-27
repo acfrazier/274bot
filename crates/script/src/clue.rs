@@ -99,9 +99,9 @@
 //! Every other held step — the desc-only riddles with no decodable coord that
 //! no selected key-keeper row names, and the empty-params 2722 — is identified
 //! and then idled: no action and no walk. The packed 3554
-//! `access: "constrained"` clue is the one identified row this machine refuses
-//! instead: `aborted` / `constrained`, no verb, no token — and a begin that
-//! identifies it is refused the same way.
+//! `access: "constrained"` clue is the special crossing: `Steady` first yields
+//! `duel-travel` to its fixed arena tile, then admits the ordinary coordinate
+//! tools and Dig only after the family reports that crossing complete.
 //!
 //! A posted effective `hitpoints` at or below zero is `dead` on any live
 //! call: the token dies with the player and nothing posts `'clue solved'`. A
@@ -144,9 +144,9 @@
 //! waits, and Murphy and Kojo are talk-then-continue only. A stop is done when
 //! its own chat has been posted open and then closed; a giver that is not
 //! posted, an item that does not land and a locked door all wait with the token
-//! live. Nothing is fetched, banked, shopped or dropped, the packed 3554 clue
-//! is refused before this machine ever reaches `Steady`, and the fifty rows
-//! that never carry the param are never asked for a trio at all.
+//! live. Nothing is fetched, banked, shopped or dropped. The packed 3554 clue
+//! takes its duel crossing before this acquire arm; the fifty rows that never
+//! carry the param are never asked for a trio at all.
 //!
 //! The next seam is the gate-toll shop, and it is the walk's and not an
 //! identify's: any live walk this token dispatched that has not arrived, while
@@ -323,6 +323,7 @@ use std::time::{Duration, Instant};
 
 /// No selected pin. The same public token the landed V8 held-step wrapper
 /// publishes: the machine refuses with it rather than calling a page empty.
+const DUEL_CLUE_ID: i32 = 3554;
 const MISSING_SELECTED_DATA: &str = "missing-selected-data";
 
 /// The token is not this machine's live one.
@@ -1069,10 +1070,7 @@ impl ClueRuntime {
             // above.
             return self.aborted(ABANDONED);
         }
-        if row.access.as_deref() == Some(CONSTRAINED) {
-            // The one identified row this machine will not play: the packed
-            // 3554 clue's own selected bound. The refusal is the same one a
-            // live session makes, and no token is handed out for it.
+        if row.access.as_deref() == Some(CONSTRAINED) && row.id != DUEL_CLUE_ID {
             return self.aborted(CONSTRAINED);
         }
         self.token = self.token.wrapping_add(1);
@@ -1147,9 +1145,7 @@ impl ClueRuntime {
             self.enter_collect();
             return self.collect(selected, input);
         };
-        if row.access.as_deref() == Some(CONSTRAINED) {
-            // The packed 3554 clue's own bound, held by a live session: the
-            // same refusal a begin makes — no verb, no walk and no token left.
+        if row.access.as_deref() == Some(CONSTRAINED) && row.id != DUEL_CLUE_ID {
             return self.aborted(CONSTRAINED);
         }
         if self.step_id != row.id {
@@ -1387,10 +1383,9 @@ impl ClueRuntime {
     /// family pass re-picks from its posted scene.
     fn search(&mut self, row: &TrailMembershipRow, input: &Value) -> Value {
         let Some(tile) = search_tile(row) else {
-            // Not a search membership: the coord-bearing rows without the loc
-            // pin belong to the sibling dig classify, and the desc-only rows
-            // with no decodable coord, the constrained 3554 clue and the rest
-            // are identified and then idle.
+            // Not a search membership: coordinate digs and the special 3554
+            // crossing are dispatched by `steady` before this helper, while
+            // desc-only rows idle there.
             return self.emit("wait");
         };
         let Some(here) = posted_here(input) else {
@@ -1455,6 +1450,17 @@ impl ClueRuntime {
         input: &Value,
         selected: Option<&SelectedGameData>,
     ) -> Value {
+        if row.id == DUEL_CLUE_ID
+            && input.get("duel_crossed").and_then(Value::as_bool) != Some(true)
+        {
+            return json!({
+                "kind": "duel-travel",
+                "x": 3374,
+                "z": 3250,
+                "level": 0,
+                "radius": ARRIVE_RADIUS,
+            });
+        }
         // The Entrana strip sits in front of every `Steady` arm this row owns
         // and with them in front of the walk they would make: an identified row
         // whose own selected `trail_coord` decodes inside the cap box is stripped
@@ -1474,6 +1480,16 @@ impl ClueRuntime {
         }
         if let Some(tile) = guarded_tile(row) {
             return self.guarded(row, tile, input, selected);
+        }
+        if row.id == DUEL_CLUE_ID {
+            return self.dig(
+                Tile {
+                    x: 3374,
+                    z: 3250,
+                    level: 0,
+                },
+                input,
+            );
         }
         if let Some(tile) = dig_tile(row) {
             return self.dig(tile, input);

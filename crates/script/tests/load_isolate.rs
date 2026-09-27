@@ -2607,6 +2607,39 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn isolate_reader_exposes_posted_server_tile_and_self_slot() {
+    let src = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            tile: reader.serverTile(),
+            slot: reader.selfSlot(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3508,
+        z: 9493,
+        level: 0,
+    });
+    snap.self_slot = 17;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        serde_json::json!({
+            "tile": { "x": 3508, "z": 9493, "level": 0 },
+            "slot": 17,
+        })
+    );
+    iso.join();
+}
+
+#[test]
 fn isolate_reader_locs_exposes_nested_tiles_and_preserves_flat_fields() {
     let src = r#"
 import { reader } from '../../adapter/ClientAdapter.js';
@@ -4013,7 +4046,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_reader_does_not_invent_chat_or_bank_component_ids() {
+fn isolate_reader_preserves_chat_choice_id_without_inventing_other_component_ids() {
     let src = r#"
 import { reader } from '../../adapter/ClientAdapter.js';
 export default class T extends LoopingBot {
@@ -4028,7 +4061,10 @@ export default class T extends LoopingBot {
     let mut snap = base_snapshot();
     snap.chat_continue = true;
     snap.bank_open = true;
-    let opts = [script::isolate_fb::ChatOptionInput { text: "Yes" }];
+    let opts = [script::isolate_fb::ChatOptionInput {
+        text: "Yes",
+        com_id: 2468,
+    }];
     snap.chat_options = &opts;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
@@ -4046,8 +4082,8 @@ export default class T extends LoopingBot {
     );
     assert!(
         logs.iter()
-            .any(|l| l.contains("opt:") && l.contains("\"comId\":-1")),
-        "chat option text-only rows must not invent i+1: {logs:?}"
+            .any(|l| l.contains("opt:") && l.contains("\"comId\":2468")),
+        "chat choice must retain its exact posted component id: {logs:?}"
     );
     iso.join();
 }
@@ -7255,9 +7291,8 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_silent_fakes_throw_and_rust_policy_tables_are_published() {
+fn isolate_missing_surfaces_throw_and_rust_policy_tables_are_published() {
     let src = r#"
-import { SettingsStore } from '../../runtime/Settings.js';
 import { foodOf } from '../../api/loadout/loadoutPlan.js';
 import { matchesCommonBankLoot, COMMON_BANK_LOOT } from '../../api/bank/Banking.js';
 import { safeToSteal } from '../../api/thieving/stealRules.js';
@@ -7271,7 +7306,6 @@ export default class T extends LoopingBot {
         const tryHit = async (fn) => {
             try { await fn(); hits.push('ok'); } catch (e) { hits.push(String(e.message || e)); }
         };
-        await tryHit(() => SettingsStore.globalBag());
         await tryHit(() => foodOf({ carry: ['Shark'] }, 'Shark'));
         await tryHit(() => matchesCommonBankLoot('uncut sapphire'));
         await tryHit(() => Skills.xp('prayer'));
@@ -7302,12 +7336,12 @@ export default class T extends LoopingBot {
     let hits = parsed["hits"].as_array().expect("hits");
     assert_eq!(
         hits.len(),
-        6,
-        "every silent fake must be probed: {parsed:?}"
+        5,
+        "every missing surface must be probed: {parsed:?}"
     );
     for (i, hit) in hits.iter().enumerate() {
         let s = hit.as_str().unwrap_or("");
-        if i == 2 {
+        if i == 1 {
             assert_eq!(s, "ok", "the Rust common-loot predicate is supported");
             continue;
         }

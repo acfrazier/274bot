@@ -62,7 +62,6 @@ import { CombatStyle } from '../../api/combat/CombatStyle.js';
 fn catalog_dim_names_are_locked() {
     for name in [
         "AIOQuester",
-        "ClueSolver",
         "Woodcutter",
         "Miner",
         "Fisher",
@@ -73,6 +72,7 @@ fn catalog_dim_names_are_locked() {
     ] {
         assert!(script::is_catalog_dim(name), "{name}");
     }
+    assert!(!script::is_catalog_dim("ClueSolver"));
     assert!(!script::is_catalog_dim("CookBot"));
     assert!(!script::is_catalog_dim("ChickenKiller"));
     assert!(!script::is_catalog_dim("WalkTo"));

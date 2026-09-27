@@ -966,7 +966,10 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
     let chat_options = snapshot.map(|s| {
         s.chat_options()
             .iter()
-            .map(|o| ChatOptionInput { text: &o.text })
+            .map(|o| ChatOptionInput {
+                text: &o.text,
+                com_id: o.component_id,
+            })
             .collect::<Vec<_>>()
     });
     let varps = snapshot.map(|s| {
@@ -1197,19 +1200,31 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                 .collect()
         })
         .unwrap_or_default();
-    let widget_store: Vec<(i32, String)> = snapshot
+    let widget_store: Vec<(i32, String, i32)> = snapshot
         .map(|s| {
             s.widgets()
                 .iter()
-                .filter_map(|w| w.text.as_ref().map(|text| (w.component_id, text.clone())))
+                .filter(|w| w.text.is_some() || w.type_ == 2)
+                .map(|w| {
+                    (
+                        w.component_id,
+                        w.text.clone().unwrap_or_default(),
+                        if w.type_ == 2 {
+                            w.items.len() as i32
+                        } else {
+                            -1
+                        },
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
     let widgets: Vec<WidgetTextInput<'_>> = widget_store
         .iter()
-        .map(|(component_id, text)| WidgetTextInput {
+        .map(|(component_id, text, item_count)| WidgetTextInput {
             component_id: *component_id,
             text,
+            item_count: *item_count,
         })
         .collect();
     // The open puzzle board, posted next to the widget-text map: the

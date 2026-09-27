@@ -15,6 +15,92 @@ pub(crate) const MAIN_MODULE: &str = "/rs2b0t/bot/scripts/bot/main.js";
 /// `instanceof` agree with the tick wrapper; `Bot.js` re-exports them.
 pub(crate) const PRELUDE: &str = r#"
 globalThis.__rs2b0t_host = {};
+globalThis.__rs2b0t_channel_next = 1;
+globalThis.__rs2b0t_channels = new Map();
+globalThis.BroadcastChannel = class BroadcastChannel {
+    constructor(name) {
+        this.name = String(name);
+        this.onmessage = null;
+        this.onmessageerror = null;
+        this._closed = false;
+        this._listeners = { message: [], messageerror: [] };
+        this._id = globalThis.__rs2b0t_channel_next++;
+        globalThis.__rs2b0t_channels.set(this._id, this);
+        const h = globalThis.__rs2b0t_host;
+        h.interact = h.interact || [];
+        h.interact.push({ op: 'channel-open', channel_id: this._id, name: this.name });
+    }
+    postMessage(value) {
+        if (this._closed) throw new Error('BroadcastChannel is closed');
+        const data = globalThis.rustyscript.functions.__rs2b0t_channel_encode(value);
+        const h = globalThis.__rs2b0t_host;
+        h.interact = h.interact || [];
+        h.interact.push({ op: 'channel-post', channel_id: this._id, name: this.name, data });
+    }
+    close() {
+        if (this._closed) return;
+        this._closed = true;
+        globalThis.__rs2b0t_channels.delete(this._id);
+        const h = globalThis.__rs2b0t_host;
+        h.interact = h.interact || [];
+        h.interact.push({ op: 'channel-close', channel_id: this._id, name: this.name });
+    }
+    addEventListener(type, callback) {
+        if ((type === 'message' || type === 'messageerror') && typeof callback === 'function') {
+            this._listeners[type].push(callback);
+        }
+    }
+    removeEventListener(type, callback) {
+        const rows = this._listeners[type];
+        if (!rows) return;
+        const at = rows.indexOf(callback);
+        if (at >= 0) rows.splice(at, 1);
+    }
+    dispatchEvent(event) {
+        const type = event && event.type;
+        if (type !== 'message' && type !== 'messageerror') return false;
+        const property = this['on' + type];
+        if (typeof property === 'function') property.call(this, event);
+        for (const callback of this._listeners[type].slice()) callback.call(this, event);
+        return true;
+    }
+};
+globalThis.__rs2b0t_channel_pending = [];
+globalThis.__rs2b0t_channel_enqueue = (id, data, sender, status) => {
+    const pending = globalThis.__rs2b0t_channel_pending;
+    if (pending.length >= 64) {
+        pending.shift();
+        const h = globalThis.__rs2b0t_host;
+        h.log = h.log || [];
+        h.log.push('[rs2b0t] BroadcastChannel delivery queue overflow');
+    }
+    pending.push([id, data, sender, status]);
+};
+globalThis.__rs2b0t_flush_channels = () => {
+    const pending = globalThis.__rs2b0t_channel_pending.splice(0);
+    for (const row of pending) globalThis.__rs2b0t_channel_deliver(...row);
+};
+globalThis.__rs2b0t_channel_deliver = (id, data, sender, status) => {
+    const channel = globalThis.__rs2b0t_channels.get(id);
+    if (!channel || channel._closed) return;
+    if (status) {
+        const h = globalThis.__rs2b0t_host;
+        h.log = h.log || [];
+        h.log.push('[rs2b0t] BroadcastChannel refused: ' + String(status));
+        channel.dispatchEvent({ type: 'messageerror', data: null, error: String(status) });
+        return;
+    }
+    channel.dispatchEvent({
+        type: 'message', data, origin: '', lastEventId: '', source: null, ports: [],
+        sender: String(sender || ''),
+    });
+};
+globalThis.__rs2b0t_event_interrupt = null;
+globalThis.__rs2b0t_interrupt_pending = () => {
+    const callback = globalThis.__rs2b0t_event_interrupt;
+    if (typeof callback !== 'function') return false;
+    try { return callback() === true; } catch (_) { return false; }
+};
 // Monotonic isolate clock (rustyscript's default extensions have no
 // `performance`): elapsed ms since the isolate thread started, from the
 // host-registered `__rs2b0t_now`. Execution delay/delayUntil use it.
@@ -110,6 +196,8 @@ globalThis.__rs2b0t_dispatch_native_events = (evs) => {
         }
     }
 };
+globalThis.__rs2b0t_fire_tick_event = () =>
+    globalThis.__rs2b0t_dispatch_native_events([{ type: 'tick', payload: undefined }]);
 globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     constructor() {
         super();
@@ -748,6 +836,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("clue_bank_access.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/ai/clues/ClueExecutor.js",
+            include_str!("clue_executor.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/ai/clues/duelTravel.js",
             include_str!("clue_duel_travel.js"),
         ),
@@ -762,6 +854,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         Module::new(
             "/rs2b0t/bot/api/ai/clues/data/cluedb.js",
             include_str!("cluedb.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/ai/clues/data/toolAcquire.js",
+            include_str!("clue_tool_acquire.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/ai/quests/exec/primitives.js",

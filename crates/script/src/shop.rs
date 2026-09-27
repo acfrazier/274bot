@@ -239,13 +239,21 @@ impl Family for Shop {
                 let Some((npc_name, action)) = trade_target(probe.npcs, &name) else {
                     return refused;
                 };
-                if probe.shop_open {
-                    // Already open: success with no Trade press.
-                    return Begin::Done(kind.value(true, 0));
-                }
                 shop.name = npc_name;
                 shop.npc_action = action;
                 shop.attempts_left = OPEN_ATTEMPTS;
+                if probe.shop_open {
+                    // The modal and its stock container can be published on
+                    // adjacent snapshots. Keep this one await open until the
+                    // page is usable so an immediate Shop.buy cannot observe
+                    // a transient empty row set.
+                    if probe.has_stock && !probe.stock.is_empty() {
+                        return Begin::Done(kind.value(true, 0));
+                    }
+                    shop.phase = Phase::WaitBoundary;
+                    cx.clock().arm(OPEN_WAIT_MS);
+                    return Begin::Run(shop);
+                }
                 shop.phase = Phase::WaitBoundary;
                 shop.press_trade(cx);
                 Begin::Run(shop)
@@ -467,7 +475,10 @@ impl Shop {
 
     fn open_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
         if probe.shop_open {
-            return self.done(true);
+            if probe.has_stock && !probe.stock.is_empty() || cx.clock().bound_reached() {
+                return self.done(true);
+            }
+            return Step::Wait;
         }
         // The frozen `Shop.open` presses Trade once per attempt and only
         // re-presses after that attempt's own 3000 ms window expired.
@@ -941,14 +952,18 @@ mod tests {
     }
 
     #[test]
-    fn open_reports_success_once_the_posted_shop_is_up() {
+    fn open_waits_for_the_stock_page_after_the_modal_boundary() {
         let mut rt = shop(Kind::Open, "Shop keeper", 0, Phase::WaitBoundary);
         rt.attempts_left = OPEN_ATTEMPTS;
         rt.pressed = true;
         let mut clock = armed(OPEN_WAIT_MS);
-        let open = probe(&[], None, &[]);
+        let empty_page = probe(&[], None, &[]);
+        assert_eq!(step(&mut rt, &mut clock, &empty_page), (None, vec![]));
+
+        let stock = [row("Shantay pass", 100, 15)];
+        let ready_page = probe(&stock, None, &[]);
         assert_eq!(
-            step(&mut rt, &mut clock, &open),
+            step(&mut rt, &mut clock, &ready_page),
             (Some(json!(true)), vec![])
         );
     }

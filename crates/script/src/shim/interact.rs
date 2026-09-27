@@ -256,6 +256,14 @@ pub enum InteractReq {
     /// Press an interface button by component id.
     #[serde(rename = "if-button")]
     IfButton { component_id: i32 },
+    /// Accept the exact current duel page only after host-side revalidation
+    /// of partner, empty stake containers and the expected rule mask.
+    #[serde(rename = "duel-accept")]
+    DuelAccept {
+        screen: String,
+        partner: String,
+        rules: i32,
+    },
     /// Press one fixed shop Buy/Sell op on the exact posted shop row. Rust
     /// owns the 10/5/1 batching, the packet-per-tick bound and the held-count
     /// settlement; the host re-resolves this exact row and refuses a
@@ -325,6 +333,32 @@ pub enum InteractReq {
     /// `recoveryAnchor()` missing, invalid, or threw.
     #[serde(rename = "recovery-anchor-none")]
     RecoveryAnchorNone,
+    /// Open one isolate-local BroadcastChannel handle. The Play-owned broker
+    /// authenticates the account and roster before admitting it.
+    #[serde(rename = "channel-open")]
+    ChannelOpen { channel_id: u64, name: String },
+    /// Post one bounded structured-clone value. `data` is the native channel
+    /// codec, carried as bytes in the existing FlatBuffer.
+    #[serde(rename = "channel-post")]
+    ChannelPost {
+        channel_id: u64,
+        name: String,
+        data: Vec<u8>,
+    },
+    /// Close one isolate-local BroadcastChannel handle.
+    #[serde(rename = "channel-close")]
+    ChannelClose { channel_id: u64, name: String },
+    /// Broker-to-isolate message. This variant never dispatches a game op.
+    #[serde(rename = "channel-message")]
+    ChannelMessage {
+        channel_id: u64,
+        sender: String,
+        seq: u64,
+        data: Vec<u8>,
+    },
+    /// Broker admission/lifecycle refusal delivered to the owning handle.
+    #[serde(rename = "channel-status")]
+    ChannelStatus { channel_id: u64, message: String },
     /// One canvas KeyboardEvent. `key` is the DOM key string; `code` is
     /// optional. `down` is keydown vs keyup. Host allowlists digits and
     /// Enter onto the slot Client's GameShell.

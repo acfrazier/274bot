@@ -66,6 +66,7 @@ mod play_wires;
 mod resource_view;
 mod rss;
 mod scatter;
+mod script_channels;
 mod script_runtime;
 mod walk_arm;
 mod walk_plan;
@@ -242,6 +243,8 @@ pub struct Play {
     /// [`Play::script_start`] family. Keyed by username (the identity the
     /// status rows and arms use).
     scripts: ScriptWall,
+    /// Same-process, same-world BroadcastChannel broker for paired parties.
+    channels: script_channels::ChannelBroker,
     /// Per-slot cheat commands the panel queued; each slot thread runs
     /// `api::interact::cheat` on its own Driver and flushes the socket.
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
