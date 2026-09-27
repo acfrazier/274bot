@@ -428,6 +428,12 @@ pub(super) fn reset_slot_session_work(
 /// `wantLogin = credentials && (autoLogin || scriptActive())`,
 /// `AutoRelogin.ts:175-190`), unless the slot is stopping or the operator
 /// latched it logged out (Logout, an idle logout) or asked for a logout.
+///
+/// A BroadcastChannel membership belongs to the script run, not to the
+/// connection: an isolate this boundary keeps (paused for the relog or the
+/// next Log in) holds its membership suspended, and the next session
+/// re-admits it only under the same run generation and world. A stopping
+/// slot thread observes no later session, so its member leaves now.
 pub(super) fn end_slot_session(
     name: &str,
     arm: &SlotArm,
@@ -435,10 +441,28 @@ pub(super) fn end_slot_session(
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    channels: &super::script_channels::SlotChannels,
 ) {
     arm.set_script_active(script_active(scripts, name));
-    let reconnect = !arm.stop.load(Ordering::Relaxed) && arm.relogs_after_drop();
+    let stopping = arm.stop.load(Ordering::Relaxed);
+    let reconnect = !stopping && arm.relogs_after_drop();
     reset_slot_session_work(name, scripts, cheats, wires, navs, reconnect);
+    if !channels.tracks() {
+        return;
+    }
+    let (generation, kept) = script_slot(scripts, name)
+        .and_then(|slot| {
+            slot.lock()
+                .ok()
+                .map(|slot| (slot.runtime_generation(), slot.load_active()))
+        })
+        .unwrap_or((0, false));
+    let deliveries = if kept && !stopping {
+        channels.suspend(generation)
+    } else {
+        channels.leave()
+    };
+    deliver_channel_events(scripts, deliveries);
 }
 
 /// Publish the slot's script activity to its login want, as frozen
@@ -559,6 +583,7 @@ fn spawn_slot_thread(
         PlayConnection::Legacy(options) => options.mainland,
         PlayConnection::Bound { mainland, .. } => *mainland,
     };
+    let slot_channels = slot_channels.slot(&username);
 
     handles.insert(
         username.clone(),
@@ -909,14 +934,8 @@ fn spawn_slot_thread(
                                     &slot_cheats,
                                     &slot_wires,
                                     &slot_navs,
+                                    &observe_channels,
                                 );
-                                let generation = script_slot(&slot_scripts, name)
-                                    .and_then(|slot| {
-                                        slot.lock().ok().map(|slot| slot.runtime_generation())
-                                    })
-                                    .unwrap_or(0);
-                                let deliveries = observe_channels.suspend(name, generation);
-                                deliver_channel_events(&slot_scripts, deliveries);
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
@@ -1184,16 +1203,6 @@ fn spawn_slot_thread(
                     knock,
                 );
                 publish_slot_disconnected(&slot_statuses, &username);
-                let generation = script_slot(&slot_scripts, &username)
-                    .and_then(|slot| slot.lock().ok().map(|slot| slot.runtime_generation()))
-                    .unwrap_or(0);
-                let deliveries = slot_channels.sync(
-                    &username,
-                    generation,
-                    super::script_channels::BrokerWorld::Unavailable,
-                    false,
-                );
-                deliver_channel_events(&slot_scripts, deliveries);
                 end_slot_session(
                     &username,
                     &arm,
@@ -1201,12 +1210,19 @@ fn spawn_slot_thread(
                     &slot_cheats,
                     &slot_wires,
                     &slot_navs,
+                    &slot_channels,
                 );
                 if arm.stop.load(Ordering::Relaxed) {
                     return;
                 }
             }
             }));
+            // No later session observes this slot, however the worker
+            // ended (a Stop while parked at the title never reaches the
+            // boundary above): its channel member leaves the party now.
+            if slot_channels.tracks() {
+                deliver_channel_events(&slot_scripts, slot_channels.leave());
+            }
             if !arm.stop.load(Ordering::Relaxed) {
                 match worker_outcome {
                     Ok(()) => publish_worker_terminal(

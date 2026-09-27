@@ -15052,6 +15052,9 @@ struct ReconnectRig {
     client: Client,
     snap: GameSnapshot,
     here: (i32, i32, i32),
+    /// The Play's BroadcastChannel broker and alice's slot handle on it.
+    broker: script_channels::ChannelBroker,
+    channels: script_channels::SlotChannels,
 }
 
 type ArmedWalk = (u64, Option<(WorldTile, i32, bool, bool, bool)>);
@@ -15072,6 +15075,8 @@ impl ReconnectRig {
         let client = bank_client();
         let mut snap = GameSnapshot::new();
         snap.rebuild(&client);
+        let broker = script_channels::ChannelBroker::default();
+        let channels = broker.slot("alice");
         Self {
             scripts,
             cheats: Arc::new(Mutex::new(HashMap::new())),
@@ -15081,6 +15086,8 @@ impl ReconnectRig {
             client,
             snap,
             here,
+            broker,
+            channels,
         }
     }
 
@@ -15101,9 +15108,10 @@ impl ReconnectRig {
         script_slot(&self.scripts, "alice").unwrap()
     }
 
-    /// One observed frame, then wait for the isolate to finish its work.
+    /// One observed frame (the slot pump's observe, with alice's channel
+    /// handle in a local world), then wait for the isolate to finish.
     fn frame(&mut self, tick: u64, tick_edge: bool) {
-        script_observe(
+        script_observe_cached_with_channels(
             &mut self.client,
             "alice",
             true,
@@ -15114,14 +15122,34 @@ impl ReconnectRig {
             None,
             Some(&self.snap),
             None,
+            None,
             &self.scripts,
             &self.cheats,
             &self.navs,
             &self.world,
             false,
             false,
+            None,
+            None,
+            None,
+            None,
+            Some(&self.channels),
+            script_channels::BrokerWorld::Local,
         );
         self.slot().lock().unwrap().probe("true").unwrap();
+    }
+
+    /// The slot loop's session boundary, as a drop or a relog calls it.
+    fn end_session(&self, arm: &SlotArm) {
+        end_slot_session(
+            "alice",
+            arm,
+            &self.scripts,
+            &self.cheats,
+            &self.wires,
+            &self.navs,
+            &self.channels,
+        );
     }
 
     /// A frame that posts and ticks, then one that dispatches what the
@@ -15561,27 +15589,109 @@ fn an_active_script_relogs_a_dropped_connection_with_auto_login_off() {
     rig.frames(1);
     let armed = rig.armed();
 
-    end_slot_session(
-        "alice",
-        &arm,
-        &rig.scripts,
-        &rig.cheats,
-        &rig.wires,
-        &rig.navs,
-    );
+    rig.end_session(&arm);
     assert!(should_handshake(&arm, false), "the active script relogs");
     // The relogged session's own boundary is a reconnect too.
     on_login_success(&arm, arm.login_command(false).unwrap());
-    end_slot_session(
-        "alice",
-        &arm,
-        &rig.scripts,
-        &rig.cheats,
-        &rig.wires,
-        &rig.navs,
-    );
+    rig.end_session(&arm);
     rig.frames(2);
     assert_eq!(rig.armed(), armed, "and its walk carries on");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// A JiveKQ-style member: the frozen card opens its party channel once, in
+/// onStart (`JiveKQ.ts:99`), and never again.
+const CHANNEL_PARTY_SRC: &str = r#"
+export default class T extends LoopingBot {
+    onStart() {
+        globalThis.__got = [];
+        this.channel = new BroadcastChannel('rs2b0t:kq:v1:alice,bob,carol,dave');
+        this.channel.onmessage = (event) => globalThis.__got.push(event.data);
+    }
+    async loop() {}
+}
+"#;
+
+/// A socket drop keeps the relogging isolate and the party channel its card
+/// opened in onStart. The slot loop's boundary suspends alice's membership
+/// instead of revoking it, nothing reaches her while she is away, and her
+/// relogged session resumes it under the same run: the others' posts reach
+/// her script again.
+#[test]
+fn a_reconnect_keeps_the_surviving_isolate_in_its_channel_party() {
+    use script::shim::InteractReq;
+    use script_channels::{BrokerWorld, Delivery};
+
+    let mut rig =
+        ReconnectRig::with_source(CHANNEL_PARTY_SRC.into(), open_world(64, 64), (3, 3, 0));
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.frames(1);
+    let channel = "rs2b0t:kq:v1:alice,bob,carol,dave";
+    let peers = ["bob", "carol", "dave"].map(|name| rig.broker.slot(name));
+    for (id, peer) in (10..).zip(&peers) {
+        peer.pump(
+            1,
+            BrokerWorld::Local,
+            true,
+            vec![InteractReq::ChannelOpen {
+                channel_id: id,
+                name: channel.into(),
+            }],
+        );
+    }
+    let bob_posts = |n: i32| {
+        peers[0].pump(
+            1,
+            BrokerWorld::Local,
+            true,
+            vec![InteractReq::ChannelPost {
+                channel_id: 10,
+                name: channel.into(),
+                data: script::channel::encode(&serde_json::json!({ "n": n })).unwrap(),
+            }],
+        )
+    };
+    let reaches_alice = |deliveries: &[Delivery]| {
+        deliveries.iter().any(|delivery| {
+            delivery.account == "alice"
+                && matches!(delivery.event, InteractReq::ChannelMessage { .. })
+        })
+    };
+    let before = bob_posts(1);
+    assert!(
+        reaches_alice(&before),
+        "the party is complete before the drop"
+    );
+    deliver_channel_events(&rig.scripts, before);
+    rig.frames(2);
+
+    // The socket drops: run_client returns and the slot loop ends the session.
+    rig.end_session(&arm);
+    assert!(should_handshake(&arm, false), "the active script relogs");
+    assert!(
+        !reaches_alice(&bob_posts(2)),
+        "nothing reaches a suspended member"
+    );
+    // The relogged session's first frame is a boundary too, then it observes.
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.end_session(&arm);
+    rig.frames(3);
+
+    let after = bob_posts(3);
+    assert!(reaches_alice(&after), "the relogged run is a member again");
+    deliver_channel_events(&rig.scripts, after);
+    rig.frames(4);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__got")
+            .unwrap(),
+        serde_json::json!([{ "n": 1 }, { "n": 3 }]),
+        "alice's script heard bob before the drop and after the relog"
+    );
     rig.slot().lock().unwrap().stop();
 }
 
@@ -15594,14 +15704,7 @@ fn a_script_relog_lapses_when_the_script_stops_first() {
     arm.arm_explicit_login();
     on_login_success(&arm, arm.login_command(false).unwrap());
     rig.frames(1);
-    end_slot_session(
-        "alice",
-        &arm,
-        &rig.scripts,
-        &rig.cheats,
-        &rig.wires,
-        &rig.navs,
-    );
+    rig.end_session(&arm);
     assert!(should_handshake(&arm, false));
 
     rig.slot().lock().unwrap().stop();
@@ -15627,26 +15730,12 @@ fn an_operator_logout_ends_the_script_work_and_does_not_relog() {
 
     arm.request_logout();
     arm.acknowledge_logout(arm.logout_command(true).unwrap());
-    end_slot_session(
-        "alice",
-        &arm,
-        &rig.scripts,
-        &rig.cheats,
-        &rig.wires,
-        &rig.navs,
-    );
+    rig.end_session(&arm);
     assert!(!should_handshake(&arm, false), "a Logout does not relog");
 
     arm.arm_explicit_login();
     on_login_success(&arm, arm.login_command(false).unwrap());
-    end_slot_session(
-        "alice",
-        &arm,
-        &rig.scripts,
-        &rig.cheats,
-        &rig.wires,
-        &rig.navs,
-    );
+    rig.end_session(&arm);
     rig.frames(2);
     assert_eq!(rig.armed(), (0, None), "the walk ended with the session");
     assert_eq!(rig.walks().len(), before, "and nothing re-dispatched it");

@@ -304,7 +304,7 @@ pub(crate) fn script_observe_cached_with_channels(
     slot_input: Option<&SlotInput>,
     cache: Option<Arc<Cache>>,
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
-    channels: Option<&super::script_channels::ChannelBroker>,
+    channels: Option<&super::script_channels::SlotChannels>,
     channel_world: super::script_channels::BrokerWorld,
 ) -> bool {
     if let Some(inp) = slot_input {
@@ -907,24 +907,30 @@ pub(crate) fn script_observe_cached_with_channels(
         }
     }
     if let Some(channels) = channels {
-        let mut game = Vec::with_capacity(interact.len());
-        let mut channel_reqs = Vec::new();
-        for req in interact {
-            match req {
-                req @ (script::shim::InteractReq::ChannelOpen { .. }
-                | script::shim::InteractReq::ChannelPost { .. }
-                | script::shim::InteractReq::ChannelClose { .. }) => channel_reqs.push(req),
-                req => game.push(req),
-            }
-        }
-        interact = game;
-        let tracked = channels.tracks(name);
-        if !channel_reqs.is_empty() || (tracked && (up || !channel_active)) {
-            let mut deliveries =
-                channels.sync(name, channel_generation, channel_world, channel_active);
-            for req in channel_reqs {
-                deliveries.extend(channels.handle(name, channel_generation, channel_world, req));
-            }
+        // Channel requests are the broker's, never the game's. A frame with
+        // none allocates nothing, and an untracked slot takes no lock.
+        let is_channel = |req: &script::shim::InteractReq| {
+            matches!(
+                req,
+                script::shim::InteractReq::ChannelOpen { .. }
+                    | script::shim::InteractReq::ChannelPost { .. }
+                    | script::shim::InteractReq::ChannelClose { .. }
+            )
+        };
+        let channel_reqs = if interact.iter().any(is_channel) {
+            let (reqs, game) = interact.into_iter().partition(is_channel);
+            interact = game;
+            reqs
+        } else {
+            Vec::new()
+        };
+        if !channel_reqs.is_empty() || (channels.tracks() && (up || !channel_active)) {
+            let deliveries = channels.pump(
+                channel_generation,
+                channel_world,
+                channel_active,
+                channel_reqs,
+            );
             deliver_channel_events(scripts, deliveries);
         }
     }
