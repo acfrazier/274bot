@@ -90,6 +90,19 @@ impl ClueFleetWitness {
         if !self.started || !snap.ingame() || snap.scene_state() != 2 {
             return;
         }
+        // The counterpart by its own name, not any named player nearby.
+        let saw_peer = self.slots[1 - slot_index]
+            .name
+            .as_deref()
+            .is_some_and(|peer| {
+                snap.players().iter().any(|player| {
+                    player
+                        .actor
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| same_player(name, peer))
+                })
+            });
         let slot = &mut self.slots[slot_index];
         if slot.name.is_none() {
             slot.name = pair_local_name(snap).map(str::to_owned);
@@ -100,13 +113,7 @@ impl ClueFleetWitness {
         if let Some(baseline) = slot.hp_baseline {
             slot.hp_unchanged &= pair_effective_stat(snap, 3) == baseline;
         }
-        slot.saw_peer |= snap.players().iter().any(|player| {
-            player
-                .actor
-                .name
-                .as_deref()
-                .is_some_and(|name| !name.is_empty())
-        });
+        slot.saw_peer |= saw_peer;
         slot.lobby |= pair_near(snap, DUEL_CHALLENGE, 8);
         let exact_obstacles = pair_varp(snap, 286) == Some(1024);
         slot.offer |= snap.modals().main == 6575
@@ -1223,6 +1230,21 @@ fn pair_stat(snap: &GameSnapshot, id: i32) -> i32 {
 fn pair_local_name(snap: &GameSnapshot) -> Option<&str> {
     snap.local_player()
         .and_then(|local| local.player.actor.name.as_deref())
+}
+
+/// Two posted player names are the same account: case and `_`/space
+/// spelling differ between the login name and the displayed one.
+fn same_player(a: &str, b: &str) -> bool {
+    fn fold(name: &str) -> impl Iterator<Item = char> + '_ {
+        name.trim().chars().map(|c| {
+            if c == '_' {
+                ' '
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+    }
+    fold(a).eq(fold(b))
 }
 
 fn pair_effective_stat(snap: &GameSnapshot, id: i32) -> i32 {
