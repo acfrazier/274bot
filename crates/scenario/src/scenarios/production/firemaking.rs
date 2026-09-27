@@ -15,7 +15,7 @@ const FIREMAKER_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Str("Varrock East"),
     },
 ];
-/// Whole-scenario wall for the Firemaking-1 Logs cell. The frozen card
+/// Whole-scenario wall for the full-pack Firemaker cells. The frozen card
 /// withdraws a full pack (`inventorySize - used` = 27 beside the tinderbox)
 /// and banks only once every log is burnt, so the core's restock and further
 /// light follow a whole 27-fire lane. At Firemaking 1 each light is a run of
@@ -26,7 +26,12 @@ const FIREMAKER_INJECT: &[ScriptSettingInject] = &[
 /// ~212s at the measured ~0.62s a tick (all three cells hit 180s at tick
 /// 292, having lit 24, 25 and 27 of the 27 logs). 300s is that mean plus
 /// ~3.8 SD of the 27-light sum.
-pub(crate) const FIREMAKER_LOGS_DEADLINE: Duration = Duration::from_secs(300);
+///
+/// The 7bbfab323 core-gated Oak rerun (Firemaking 15) likewise burnt all
+/// 27 logs (+1620 XP), but reached its second OpenBooth at the 180.5s
+/// deadline before the bank acknowledgement, restock, and further light.
+/// Use the same measured full-cycle budget without changing those witnesses.
+pub(crate) const FIREMAKER_CYCLE_DEADLINE: Duration = Duration::from_secs(300);
 const FIREMAKER_OAK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "logType",
@@ -45,7 +50,7 @@ pub(crate) fn firemaker_scenario() -> Scenario {
         "logs",
         LOGS_ID,
         OAK_LOGS_ID,
-        FIREMAKER_LOGS_DEADLINE,
+        FIREMAKER_CYCLE_DEADLINE,
     )
 }
 
@@ -57,7 +62,7 @@ pub(crate) fn firemaker_oak_scenario() -> Scenario {
         "oak_logs",
         OAK_LOGS_ID,
         LOGS_ID,
-        SCRIPT_GOLD_DEADLINE,
+        FIREMAKER_CYCLE_DEADLINE,
     )
 }
 

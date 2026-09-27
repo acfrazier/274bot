@@ -508,6 +508,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - The Moss Giant dart qualification opens its seeded bank once and waits
   for that opening's item acknowledgement. Start now retains the loaded
   bank instead of racing a repeated OpenBooth against the acknowledgement.
+- Oak Firemaker qualification uses the same measured 300-second full-cycle
+  budget as Logs: burn the initial pack, reopen the bank, restock, and light
+  again. Its core witnesses are unchanged.
 - Catalog walking and recovery follow frozen rs2b0t more closely
   (`docs/api/script.md`, "Catalog walking and recovery"): `walkResilient`
   verifies with a route probe before giving up and honours `sceneRadius`,
