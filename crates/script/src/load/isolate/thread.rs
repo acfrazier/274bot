@@ -1013,6 +1013,22 @@ fn sync_work_freeze(applied: &mut bool, frozen: bool) {
     crate::load::wait_clock::set_paused(frozen, Instant::now());
 }
 
+/// One broker delivery held for the script's next tick.
+enum ChannelEvent {
+    Message {
+        channel_id: u64,
+        data: serde_json::Value,
+        sender: String,
+    },
+    Refused {
+        channel_id: u64,
+        message: String,
+    },
+}
+
+/// The most deliveries held for one tick; the oldest drops first.
+const CHANNEL_EVENTS_MAX: usize = 64;
+
 /// The tick loop: commands are serialized on this thread; ticks run
 /// with a time budget, slow ticks are logged and stale queued ticks are
 /// skipped, and errors never kill the isolate.
@@ -1070,6 +1086,8 @@ fn tick_loop(
     // list, so a bot without one never sends it.
     let mut last_ignored_randoms: Vec<String> = Vec::new();
     let mut mouse_gestures = MouseGestureIdentities::default();
+    // Broker deliveries held for the next tick, oldest first.
+    let mut channel_events: VecDeque<ChannelEvent> = VecDeque::new();
     let mut runner = Runner::new(compat);
     loop {
         #[cfg(feature = "memory-profile")]
@@ -1157,19 +1175,18 @@ fn tick_loop(
             IsolateCmd::Channel(bytes) => match crate::isolate_fb::decode_interact_batch(&bytes) {
                 Ok(rows) => {
                     for row in rows {
-                        let (channel_id, data, sender, status) = match row {
+                        let event = match row {
                             crate::shim::InteractReq::ChannelMessage {
                                 channel_id,
                                 sender,
                                 data,
                                 ..
                             } => match crate::channel::decode(&data) {
-                                Ok(data) => (
+                                Ok(data) => ChannelEvent::Message {
                                     channel_id,
                                     data,
-                                    serde_json::Value::String(sender),
-                                    serde_json::Value::Null,
-                                ),
+                                    sender,
+                                },
                                 Err(error) => {
                                     let _ = out.send(ThreadMsg::Log(format!(
                                         "BroadcastChannel delivery: {error}"
@@ -1180,12 +1197,10 @@ fn tick_loop(
                             crate::shim::InteractReq::ChannelStatus {
                                 channel_id,
                                 message,
-                            } => (
+                            } => ChannelEvent::Refused {
                                 channel_id,
-                                serde_json::Value::Null,
-                                serde_json::Value::Null,
-                                serde_json::Value::String(message),
-                            ),
+                                message,
+                            },
                             _ => {
                                 let _ = out.send(ThreadMsg::Log(
                                     "BroadcastChannel delivery contained an outbound row".into(),
@@ -1193,14 +1208,13 @@ fn tick_loop(
                                 continue;
                             }
                         };
-                        if let Err(error) = runtime.call_function_immediate::<()>(
-                            None,
-                            "__rs2b0t_channel_enqueue",
-                            json_args!(channel_id, data, sender, status),
-                        ) {
-                            let _ = out
-                                .send(ThreadMsg::Log(format!("BroadcastChannel enqueue: {error}")));
+                        if channel_events.len() == CHANNEL_EVENTS_MAX {
+                            channel_events.pop_front();
+                            let _ = out.send(ThreadMsg::Log(
+                                "[rs2b0t] BroadcastChannel delivery queue overflow".into(),
+                            ));
                         }
+                        channel_events.push_back(event);
                     }
                 }
                 Err(error) => {
@@ -1257,21 +1271,45 @@ fn tick_loop(
                 // Every shape records the tick first, so machine callbacks,
                 // listeners and waits all see this tick's number.
                 record_tick(&mut runtime, n);
-                // Broker deliveries are queued by their command and invoked only
-                // inside this bounded tick execution, before gameplay reads peers.
-                let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
-                    runtime.call_function_immediate::<()>(
-                        None,
-                        "__rs2b0t_flush_channels",
-                        json_args!(),
-                    )
-                });
+                // Broker deliveries held since the last tick run inside this
+                // bounded tick execution, one call each, before gameplay
+                // reads peers.
+                for event in channel_events.drain(..) {
+                    let _ = call_interruptible(&mut runtime, &teardown, |runtime| match &event {
+                        ChannelEvent::Message {
+                            channel_id,
+                            data,
+                            sender,
+                        } => runtime.call_function_immediate::<()>(
+                            None,
+                            "__rs2b0t_channel_deliver",
+                            json_args!(channel_id, data, sender),
+                        ),
+                        ChannelEvent::Refused {
+                            channel_id,
+                            message,
+                        } => {
+                            let _ = out.send(ThreadMsg::Log(format!(
+                                "[rs2b0t] BroadcastChannel refused: {message}"
+                            )));
+                            runtime.call_function_immediate::<()>(
+                                None,
+                                "__rs2b0t_channel_refused",
+                                json_args!(channel_id, message),
+                            )
+                        }
+                    });
+                }
                 if !machines_halted(&teardown) {
+                    // Frozen producers emit `tick` with `{ tick }`
+                    // (`producers.ts:58`).
+                    let events = serde_json::json!([{ "type": "tick", "payload": { "tick": n } }]);
                     let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
+                        // One argument: the event batch.
                         runtime.call_function_immediate::<()>(
                             None,
-                            "__rs2b0t_fire_tick_event",
-                            json_args!(),
+                            "__rs2b0t_dispatch_native_events",
+                            &(events,),
                         )
                     });
                 }
@@ -1683,7 +1721,8 @@ fn tick_loop(
                     crate::duel::on_reset();
                 }
                 crate::event_signal::clear();
-                let _ = runtime.eval::<()>("globalThis.__rs2b0t_channel_pending.length = 0");
+                // Held channel deliveries stay: the channel membership
+                // belongs to the script run, not to the connection.
                 event_producer.reset();
                 if events_consumed {
                     // The compat runner's queue is the only holder of

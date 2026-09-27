@@ -65,35 +65,20 @@ globalThis.BroadcastChannel = class BroadcastChannel {
         return true;
     }
 };
-globalThis.__rs2b0t_channel_pending = [];
-globalThis.__rs2b0t_channel_enqueue = (id, data, sender, status) => {
-    const pending = globalThis.__rs2b0t_channel_pending;
-    if (pending.length >= 64) {
-        pending.shift();
-        const h = globalThis.__rs2b0t_host;
-        h.log = h.log || [];
-        h.log.push('[rs2b0t] BroadcastChannel delivery queue overflow');
-    }
-    pending.push([id, data, sender, status]);
-};
-globalThis.__rs2b0t_flush_channels = () => {
-    const pending = globalThis.__rs2b0t_channel_pending.splice(0);
-    for (const row of pending) globalThis.__rs2b0t_channel_deliver(...row);
-};
-globalThis.__rs2b0t_channel_deliver = (id, data, sender, status) => {
+// The isolate thread holds broker deliveries and calls one of these per
+// delivery inside the next tick; a refusal is logged there too.
+globalThis.__rs2b0t_channel_deliver = (id, data, sender) => {
     const channel = globalThis.__rs2b0t_channels.get(id);
     if (!channel || channel._closed) return;
-    if (status) {
-        const h = globalThis.__rs2b0t_host;
-        h.log = h.log || [];
-        h.log.push('[rs2b0t] BroadcastChannel refused: ' + String(status));
-        channel.dispatchEvent({ type: 'messageerror', data: null, error: String(status) });
-        return;
-    }
     channel.dispatchEvent({
         type: 'message', data, origin: '', lastEventId: '', source: null, ports: [],
         sender: String(sender || ''),
     });
+};
+globalThis.__rs2b0t_channel_refused = (id, error) => {
+    const channel = globalThis.__rs2b0t_channels.get(id);
+    if (!channel || channel._closed) return;
+    channel.dispatchEvent({ type: 'messageerror', data: null, error });
 };
 globalThis.__rs2b0t_event_interrupt = null;
 globalThis.__rs2b0t_interrupt_pending = () => {
@@ -196,8 +181,6 @@ globalThis.__rs2b0t_dispatch_native_events = (evs) => {
         }
     }
 };
-globalThis.__rs2b0t_fire_tick_event = () =>
-    globalThis.__rs2b0t_dispatch_native_events([{ type: 'tick', payload: undefined }]);
 globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     constructor() {
         super();

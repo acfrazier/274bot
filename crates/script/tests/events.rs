@@ -206,6 +206,39 @@ fn seed_then_bury_fires_callbacks_after_tick() {
     iso.join();
 }
 
+/// Frozen producers emit `tick` with `{ tick }` (`producers.ts:58`).
+#[test]
+fn tick_event_carries_its_tick_number() {
+    let iso = LoadIsolate::spawn(
+        r#"
+export default class T extends LoopingBot {
+    constructor() {
+        super();
+        globalThis.__ticks = [];
+        this.on('tick', (e) => { globalThis.__ticks.push(e); });
+    }
+    loop() {}
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let mut snap = base_snapshot();
+    for tick in [1, 2] {
+        snap.tick = tick;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("1");
+    }
+    assert_eq!(
+        probe_alive(&iso, "globalThis.__ticks"),
+        serde_json::json!([{ "tick": 1 }, { "tick": 2 }])
+    );
+    iso.join();
+}
+
 #[test]
 fn unchanged_examplebot_counts_delta_from_seeded_xp() {
     let js = examplebot_source();

@@ -84,3 +84,76 @@ export function tick(_api) {
     assert!(isolate.drain_logs().is_empty());
     isolate.join();
 }
+
+const LISTENER: &str = r#"
+const channel = new BroadcastChannel('rs2b0t:kq:v1:a,b,c,d');
+globalThis.__messages = [];
+globalThis.__errors = [];
+channel.onmessage = event => { globalThis.__messages.push(event.data); };
+channel.onmessageerror = event => { globalThis.__errors.push(event.error); };
+export function tick(_api) {}
+"#;
+
+fn opened_channel(isolate: &LoadIsolate) -> u64 {
+    isolate.on_game_tick(1);
+    // The probe is the tick's barrier: its batch has been forwarded.
+    isolate.probe("true").unwrap();
+    match isolate.drain_interacts().as_slice() {
+        [InteractReq::ChannelOpen { channel_id, .. }] => *channel_id,
+        other => panic!("unexpected channel requests: {other:?}"),
+    }
+}
+
+fn message(channel_id: u64, n: i32) -> InteractReq {
+    InteractReq::ChannelMessage {
+        channel_id,
+        sender: "b".into(),
+        seq: 1,
+        data: script::channel::encode(&json!({ "n": n })).unwrap(),
+    }
+}
+
+/// The isolate thread holds broker deliveries for the next tick: the
+/// oldest past 64 drop with one log line each, a refusal is logged and
+/// raised as `messageerror`, and a reconnect keeps what is held (the
+/// membership belongs to the script run, not the connection).
+#[test]
+fn held_deliveries_are_bounded_logged_and_survive_a_reconnect() {
+    let isolate = spawn_ready(LISTENER);
+    let id = opened_channel(&isolate);
+    let rows = (0..66)
+        .map(|n| message(id, n))
+        .chain([InteractReq::ChannelStatus {
+            channel_id: id,
+            message: "waiting for all four JiveKQ roster members".into(),
+        }])
+        .collect::<Vec<_>>();
+    assert!(isolate.post_channel_events(encode_interact_batch(&rows)));
+    isolate.reconnect_session_work();
+    isolate.on_game_tick(2);
+
+    let messages = isolate.probe("globalThis.__messages").unwrap();
+    let received = messages.as_array().unwrap();
+    assert_eq!(received.len(), 63, "64 held, the refusal among them");
+    assert_eq!(received[0], json!({ "n": 3 }), "the oldest dropped first");
+    assert_eq!(received[62], json!({ "n": 65 }));
+    assert_eq!(
+        isolate.probe("globalThis.__errors").unwrap(),
+        json!(["waiting for all four JiveKQ roster members"])
+    );
+    let logs = isolate.drain_logs();
+    assert_eq!(
+        logs.iter()
+            .filter(|line| line.contains("BroadcastChannel delivery queue overflow"))
+            .count(),
+        3,
+        "{logs:?}"
+    );
+    assert!(
+        logs.iter().any(|line| {
+            line.contains("BroadcastChannel refused: waiting for all four JiveKQ roster members")
+        }),
+        "{logs:?}"
+    );
+    isolate.join();
+}
