@@ -316,8 +316,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   suspends the member instead of revoking it; the next session re-admits it
   only under the same run and world, and a Stop, a new run, a world change or
   a slot that stops revokes it. Deliveries the broker already made reach the
-  script after a relog. A stale sender hears each refusal once per run, and a
-  slot with no channel open reads one flag, never the broker lock.
+  script after a relog. A stale sender hears each refusal once per run, a
+  slot with no channel open reads one flag, never the broker lock, and the
+  broker keeps nothing for a profile once it leaves.
   KQ witness 14's leader had no ropes left for a third descent after its
   second group retreated early, so the fixture now banks eight for it.
 - Clue 3554 crosses the Duel Arena through a configured, different helper

@@ -38,7 +38,10 @@ pub(crate) struct ChannelBroker(Arc<Mutex<Broker>>);
 
 /// One slot thread's handle. Its keys are normalized once, and whether the
 /// broker holds anything for the account is one atomic load, so a slot with
-/// no channel never takes the Play-wide lock.
+/// no channel never takes the Play-wide lock. The flag is the handle's own:
+/// only this account's calls change what the broker holds for it, and each
+/// of them re-reads that under the lock, so the broker keeps nothing per
+/// profile once the account leaves.
 #[derive(Clone)]
 pub(crate) struct SlotChannels {
     broker: ChannelBroker,
@@ -53,9 +56,6 @@ struct Broker {
     /// Accounts with a membership (live or suspended), or a live run the
     /// broker already told about a refused post. Nothing else is kept.
     accounts: HashMap<String, Account>,
-    /// Each account's [`SlotChannels::tracks`] flag: set exactly while
-    /// `accounts` holds the account.
-    tracked: HashMap<String, Arc<AtomicBool>>,
 }
 
 struct Account {
@@ -99,18 +99,12 @@ impl ChannelBroker {
     /// The handle the slot thread of `slot` keeps for its whole life.
     pub(crate) fn slot(&self, slot: &str) -> SlotChannels {
         let account = normalize(slot);
-        let tracked = {
-            let mut broker = self.0.lock();
-            let held = broker.accounts.contains_key(&account);
-            let tracked = Arc::clone(broker.tracked.entry(account.clone()).or_default());
-            tracked.store(held, Ordering::Release);
-            tracked
-        };
+        let held = self.0.lock().accounts.contains_key(&account);
         SlotChannels {
             broker: self.clone(),
             slot: slot.to_string(),
             account,
-            tracked,
+            tracked: Arc::new(AtomicBool::new(held)),
         }
     }
 
@@ -123,9 +117,11 @@ impl ChannelBroker {
             .map_or(0, |group| group.members.len())
     }
 
+    /// Groups and accounts the broker holds.
     #[cfg(test)]
-    fn accounts_held(&self) -> usize {
-        self.0.lock().accounts.len()
+    fn held(&self) -> (usize, usize) {
+        let broker = self.0.lock();
+        (broker.groups.len(), broker.accounts.len())
     }
 }
 
@@ -160,7 +156,7 @@ impl SlotChannels {
                 deliveries.extend(broker.handle(&self.account, &self.slot, now, req));
             }
         }
-        broker.settle(&self.account);
+        self.settle(&mut broker);
         deliveries
     }
 
@@ -170,7 +166,7 @@ impl SlotChannels {
     pub(crate) fn suspend(&self, generation: u64) -> Vec<Delivery> {
         let mut broker = self.broker.0.lock();
         let deliveries = broker.suspend(&self.account, generation);
-        broker.settle(&self.account);
+        self.settle(&mut broker);
         deliveries
     }
 
@@ -179,8 +175,17 @@ impl SlotChannels {
         let mut broker = self.broker.0.lock();
         let deliveries = broker.revoke(&self.account);
         broker.accounts.remove(&self.account);
-        broker.settle(&self.account);
+        self.settle(&mut broker);
         deliveries
+    }
+
+    /// Mirror what the broker still holds for this account onto the flag,
+    /// under the lock that changed it. Another account's leave can only
+    /// drop this one's memberships, so the flag is never falsely clear:
+    /// at worst this slot takes the lock once more and settles again.
+    fn settle(&self, broker: &mut Broker) {
+        self.tracked
+            .store(broker.settle(&self.account), Ordering::Release);
     }
 }
 
@@ -232,17 +237,15 @@ impl Broker {
     }
 
     /// Keep an account only while it holds a membership, or while its live
-    /// run holds reported refusals; mirror that onto its slot's flag.
-    fn settle(&mut self, account: &str) {
+    /// run holds reported refusals. True when the account is kept.
+    fn settle(&mut self, account: &str) -> bool {
         let keep = self.accounts.get(account).is_some_and(|state| {
             self.is_member(account) || (state.lifetime.live() && !state.reported.is_empty())
         });
         if !keep {
             self.accounts.remove(account);
         }
-        if let Some(tracked) = self.tracked.get(account) {
-            tracked.store(keep, Ordering::Release);
-        }
+        keep
     }
 
     fn is_member(&self, account: &str) -> bool {
@@ -755,9 +758,44 @@ mod tests {
             slot.leave();
         }
         assert!(party.iter().all(|slot| !slot.tracks()));
-        assert_eq!(
-            (broker.member_count(&channel()), broker.accounts_held()),
-            (0, 0)
+        assert_eq!(broker.held(), (0, 0));
+    }
+
+    /// Profiles come and go for the life of a Play, each party with its own
+    /// roster. Nothing a slot leaves behind outlives its handle.
+    #[test]
+    fn profile_churn_leaves_the_broker_nothing() {
+        let broker = ChannelBroker::default();
+        let mut flags = Vec::new();
+        for party in 0..25 {
+            let accounts = (0..4)
+                .map(|member| format!("p{party}_{member}"))
+                .collect::<Vec<_>>();
+            let name = format!("{PREFIX}{}", accounts.join(","));
+            let slots = accounts
+                .iter()
+                .map(|account| broker.slot(account))
+                .collect::<Vec<_>>();
+            for (index, slot) in slots.iter().enumerate() {
+                slot.pump(1, BrokerWorld::Local, true, Vec::new());
+                assert!(!slot.tracks(), "a frame with no channel settles untracked");
+                let open = InteractReq::ChannelOpen {
+                    channel_id: index as u64 + 1,
+                    name: name.clone(),
+                };
+                slot.pump(1, BrokerWorld::Local, true, vec![open]);
+                assert!(slot.tracks(), "an open channel is tracked again");
+            }
+            for slot in &slots {
+                slot.leave();
+                assert!(!slot.tracks());
+                flags.push(Arc::downgrade(&slot.tracked));
+            }
+        }
+        assert_eq!(broker.held(), (0, 0));
+        assert!(
+            flags.iter().all(|flag| flag.upgrade().is_none()),
+            "the broker keeps a departed slot's flag"
         );
     }
 
