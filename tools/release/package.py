@@ -2,11 +2,12 @@
 """Stage release binaries, navigation and WalkTo map terrain; optionally
 Developer-ID sign macOS.
 
-Build first with cargo build --locked --release and default features. The input
-must be the Cargo profile directory containing matching nav/<revision> outputs.
-Revision 289 packages also ship WalkTo map terrain: the staged tui-play bakes it
-from the pinned client cache the nav bundle was built from (--map-cache and
---map-unpack; by default the nav build's BOT_NAV_ENGINE_DIR / ENGINE_DIR and
+Build first with cargo build --locked --release and default features. Every
+platform ships panel-play and tui-play. The input must be the Cargo profile
+directory containing matching nav/<revision> outputs. Revision 289 packages
+also ship WalkTo map terrain: the staged tui-play bakes it from the pinned
+client cache the nav bundle was built from (--map-cache and --map-unpack; by
+default the nav build's BOT_NAV_ENGINE_DIR / ENGINE_DIR and
 BOT_NAV_SNAPSHOT_ROOT resolution), and the bake must carry the nav bundle's
 decoded content identity. --check stages into a temporary directory, verifies
 every staged file, prints a summary and removes it. This tool never publishes a
@@ -173,7 +174,9 @@ def main():
     if output.exists():
         p.error('output already exists')
     suffix = '.exe' if a.platform == 'windows' else ''
-    names = ['tui-play'] if a.platform == 'linux' else ['panel-play', 'tui-play']
+    # Every platform ships the panel beside the TUI. The panel's fonts are
+    # compiled in; it reads only the adjacent nav/ and map/ resources.
+    names = ['panel-play', 'tui-play']
     nav = a.input / 'nav' / a.revision
     nav_names = ['274bot.navpack', '274bot.navflags', '274bot.navreach',
                  '274bot.navcanlight', '274bot.navpois', '274bot.navpack.json']
