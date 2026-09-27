@@ -316,8 +316,6 @@ impl Scripts {
             .get(card_source, &lookup)
             .map(|c| c.settings_schema.as_slice())
             .unwrap_or_default();
-        // One merged bag for every live target.
-        let bag = Arc::new(script::merge_bag(schema, &overrides, self.inject.as_ref()));
         let op = core.open_operation(ActionKind::SyncSettings);
         let mut failed = Vec::new();
         let mut pending = Vec::new();
@@ -339,11 +337,13 @@ impl Scripts {
             row.settings
                 .script_settings
                 .insert(card.clone(), overrides.clone());
+            // A live target gets the card bag with its own profile-global
+            // settings, as a single parameter edit does.
             let live = super::live_fence(core, &target, &card).map(|(identity, generation)| {
                 LiveSettings {
                     identity,
                     generation,
-                    bag: Arc::clone(&bag),
+                    bag: Arc::new(self.run_bag(core, &target, schema, &overrides)),
                 }
             });
             let mirror = ArmMirror::ScriptSettings {

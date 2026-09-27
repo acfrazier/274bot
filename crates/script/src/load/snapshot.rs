@@ -894,14 +894,14 @@ pub(super) fn materialize_settings_bag(
         .get(&mut scope, host_key)
         .and_then(|host| host.to_object(&mut scope))
         .ok_or_else(|| "settings bag: no __rs2b0t_host object".to_string())?;
-    let card = json_object_without(&mut scope, bag, "clueDuelPartner")
+    let card = json_object_without(&mut scope, bag, crate::CLUE_DUEL_PARTNER)
         .map_err(|e| format!("settings bag: {e}"))?;
     set(&mut scope, host, "settingsBag", card)?;
     let globals = v8::Object::new(&mut scope);
-    if let Some(partner) = bag.get("clueDuelPartner") {
+    if let Some(partner) = bag.get(crate::CLUE_DUEL_PARTNER) {
         let partner =
             json_value(&mut scope, partner).map_err(|e| format!("global settings bag: {e}"))?;
-        set(&mut scope, globals, "clueDuelPartner", partner)?;
+        set(&mut scope, globals, crate::CLUE_DUEL_PARTNER, partner)?;
     }
     set(&mut scope, host, "globalSettingsBag", globals.into())
 }

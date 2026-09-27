@@ -271,6 +271,48 @@ fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
     assert_eq!(f.scripts.take_notice(), Some(Notice::Show(summary)));
 }
 
+/// Apply to all posts the whole bag to each live target: its own
+/// profile-global clue duel partner survives the card-parameter copy.
+#[test]
+fn apply_to_all_keeps_each_live_targets_global_clue_partner() {
+    let mut f = fixture("sync-partner", &["alice", "bob", "dave"]);
+    for (name, partner) in [("bob", "Helper"), ("dave", "Second")] {
+        let mut profile = f.core.vault().unwrap().get(name).unwrap().clone();
+        profile.settings.clue_duel_partner = partner.into();
+        f.core
+            .save_profile(profile, crate::ArmMirror::Remember, "partner")
+            .unwrap();
+    }
+    f.core.flush_writes();
+    let clue = f.card("clue.ts", LOOPING);
+    for name in ["alice", "bob", "dave"] {
+        f.assign(name, &clue);
+    }
+    f.start_running("bob");
+    f.start_running("dave");
+    f.set("alice", &clue, "target", json!("Guard"));
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    f.prepare("alice", &clue);
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    let report = f.scripts.last_settings_sync().unwrap();
+    assert_eq!(report.delivered, 2, "{report:?}");
+    for (name, partner) in [("bob", "Helper"), ("dave", "Second")] {
+        let whole = bag(&[
+            ("target", json!("Guard")),
+            ("clueDuelPartner", json!(partner)),
+        ]);
+        assert!(
+            f.run_has_bag(name, &whole),
+            "{name}'s run keeps its own global partner"
+        );
+    }
+}
+
 #[test]
 fn a_removed_catalog_card_marks_its_assignments_unavailable() {
     let mut f = fixture("catalog-removed", &["alice", "bob"]);

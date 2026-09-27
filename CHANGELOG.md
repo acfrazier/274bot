@@ -312,10 +312,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   reconnect while still revoking Stops and world changes.
 - Clue 3554 crosses the Duel Arena through a configured, different helper
   account before digging. Each profile now stores that account-wide partner in
-  the profile editor, separately from per-card parameters; missing or self
-  partners log the same operator action as the frozen client and refuse.
-  Ordinary ClueSolver bank returns retain the six-attempt, five-minute resilient
-  walk with teleport-catalog policy instead of entering the duel travel machine.
+  the profile editor, separately from per-card parameters. Start, a parameter
+  edit and Apply to all each post the running script its own profile's
+  partner with the card bag, so copying parameters from another member never
+  clears it. A missing or self partner logs the same operator action as the
+  frozen client and refuses. Ordinary ClueSolver bank returns retain the
+  six-attempt, five-minute resilient walk with teleport-catalog policy instead
+  of entering the duel travel machine.
 - One Play now brokers bounded same-world `BroadcastChannel` traffic between
   catalog isolates. The `clue_duel_3554` two-account and `jive_kq_four`
   four-account live cells mint disposable local profiles, launch their

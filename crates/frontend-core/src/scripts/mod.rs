@@ -33,8 +33,8 @@ pub struct LiveSettings {
     /// Card identity and run generation the push is fenced to.
     pub identity: String,
     pub generation: u64,
-    /// Merged bag (schema defaults, overrides, inject). Shared by every
-    /// member of one bulk sync.
+    /// The run's whole bag: the card's merged parameters and its profile's
+    /// global settings.
     pub bag: Arc<Map<String, Value>>,
 }
 
@@ -390,19 +390,37 @@ impl Scripts {
     ) -> Map<String, Value> {
         let key = script::card_identity_key(source, path, name);
         let overrides = self.profile_overrides(core, profile, &key, name);
-        let mut bag = script::merge_bag(schema, &overrides, self.inject.as_ref());
-        if !self
+        self.run_bag(core, profile, schema, &overrides)
+    }
+
+    /// The bag a run on `profile` receives, on every path (Start, a
+    /// parameter edit, Apply to all): the card's merged parameters, then
+    /// the profile-global settings unless the inject names its own. The
+    /// isolate replaces both bags on each post, so a card-only bag would
+    /// wipe the account's clue duel partner from a running script.
+    fn run_bag<Io>(
+        &self,
+        core: &OperatorSession<Io>,
+        profile: &str,
+        schema: &[script::SettingDef],
+        overrides: &Map<String, Value>,
+    ) -> Map<String, Value> {
+        let mut bag = script::merge_bag(schema, overrides, self.inject.as_ref());
+        let injected = self
             .inject
             .as_ref()
-            .is_some_and(|inject| inject.contains_key("clueDuelPartner"))
-        {
+            .is_some_and(|inject| inject.contains_key(script::CLUE_DUEL_PARTNER));
+        if !injected {
             if let Some(partner) = core
                 .vault()
                 .and_then(|vault| vault.get(profile))
                 .map(|profile| profile.settings.clue_duel_partner.trim())
                 .filter(|partner| !partner.is_empty())
             {
-                bag.insert("clueDuelPartner".into(), Value::String(partner.into()));
+                bag.insert(
+                    script::CLUE_DUEL_PARTNER.into(),
+                    Value::String(partner.into()),
+                );
             }
         }
         bag
@@ -482,21 +500,7 @@ impl Scripts {
             .get(source, &lookup_name(source, name, path))
             .map(|c| c.settings_schema.as_slice())
             .unwrap_or_default();
-        let mut bag = script::merge_bag(schema, overrides, self.inject.as_ref());
-        if !self
-            .inject
-            .as_ref()
-            .is_some_and(|inject| inject.contains_key("clueDuelPartner"))
-        {
-            if let Some(partner) = core
-                .vault()
-                .and_then(|vault| vault.get(profile))
-                .map(|profile| profile.settings.clue_duel_partner.trim())
-                .filter(|partner| !partner.is_empty())
-            {
-                bag.insert("clueDuelPartner".into(), Value::String(partner.into()));
-            }
-        }
+        let bag = self.run_bag(core, profile, schema, overrides);
         Some(LiveSettings {
             identity,
             generation,
