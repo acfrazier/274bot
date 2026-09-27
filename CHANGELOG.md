@@ -315,19 +315,28 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   boundary the card's isolate survives (a drop, a relog or a logout)
   suspends the member instead of revoking it; the next session re-admits it
   only under the same run and world, and a Stop, a new run, a world change or
-  a slot that stops revokes it. A stale sender hears each refusal once per
-  run, and a slot with no channel open reads one flag, never the broker lock.
+  a slot that stops revokes it. Deliveries the broker already made reach the
+  script after a relog. A stale sender hears each refusal once per run, and a
+  slot with no channel open reads one flag, never the broker lock.
   KQ witness 14's leader had no ropes left for a third descent after its
   second group retreated early, so the fixture now banks eight for it.
 - Clue 3554 crosses the Duel Arena through a configured, different helper
   account before digging. Each profile now stores that account-wide partner in
   the profile editor, separately from per-card parameters. Start, a parameter
-  edit and Apply to all each post the running script its own profile's
-  partner with the card bag, so copying parameters from another member never
-  clears it. A missing or self partner logs the same operator action as the
-  frozen client and refuses. Ordinary ClueSolver bank returns retain the
-  six-attempt, five-minute resilient walk with teleport-catalog policy instead
-  of entering the duel travel machine.
+  edit, Apply to all and a profile save each post the running script its own
+  profile's partner with the card bag, so it is read live and copying
+  parameters from another member never clears it. As in the frozen client,
+  the partner is needed only to enter a pen from outside (a missing or self
+  partner logs the frozen operator action and refuses); the lobby and
+  destination legs are resilient walks; a wrong obstacle arena is forfeited
+  and left before one retry, and before failing; an open duel screen is
+  cancelled on the 60 s handshake timeout or an event signal; and the
+  frozen log lines reach the card's log. `Duel.partner()` keeps the display
+  name, and `Duel.cancel()` awaits the closed screen.
+- Ordinary ClueSolver bank returns keep the six-attempt, five-minute
+  resilient walk instead of entering the duel travel machine, with the
+  teleport catalog unless the card's `ClueExecutor.setTeleports(false)` turned
+  it off.
 - One Play now brokers bounded same-world `BroadcastChannel` traffic between
   catalog isolates. The `clue_duel_3554` two-account and `jive_kq_four`
   four-account live cells mint disposable local profiles, launch their
