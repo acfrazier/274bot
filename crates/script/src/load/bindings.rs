@@ -204,13 +204,6 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register inspect: {e}"))?;
     runtime
-        .register_function("__rs2b0t_cake_stall", |args: &[serde_json::Value]| {
-            Ok(crate::cake_stall::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register cake stall: {e}"))?;
-    runtime
         .register_function(
             "__rs2b0t_selected_loadout",
             |args: &[serde_json::Value]| {
@@ -583,6 +576,7 @@ pub(super) fn wire_runtime(
     super::callback_v8::install_ops(runtime).map_err(|e| format!("callback ops: {e}"))?;
     super::tools_v8::install(runtime).map_err(|e| format!("tools v8: {e}"))?;
     super::boost_potions_v8::install(runtime).map_err(|e| format!("boost potions v8: {e}"))?;
+    super::cake_stall_v8::install(runtime).map_err(|e| format!("cake stall v8: {e}"))?;
     super::targets_v8::install(runtime).map_err(|e| format!("targets v8: {e}"))?;
     super::fire_v8::install(runtime).map_err(|e| format!("fire v8: {e}"))?;
     super::combat_style_v8::install(runtime).map_err(|e| format!("combat style v8: {e}"))?;

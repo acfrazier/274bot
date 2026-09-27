@@ -204,6 +204,10 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
         !prefs.background_bots_ack,
         "new preference defaults without resetting old prefs"
     );
+    assert!(
+        !prefs.session_log_file,
+        "session log file defaults off for a 0.1.8.1 home"
+    );
     assert_eq!(prefs.chrome.accent, "#22CC88");
     assert_eq!(prefs.chrome.bg, "#101820");
     assert_eq!(prefs.chrome.text, "#F0F4F8");

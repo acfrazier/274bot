@@ -8,7 +8,10 @@ use api::snapshot::WorldTile;
 #[cfg(feature = "load")]
 mod runtime;
 #[cfg(feature = "load")]
-pub(crate) use runtime::{dispatch, on_hold, on_pause, on_reset, on_resume, CakeStall};
+pub(crate) use runtime::{
+    carried_cakes, needs_cake_restock_from_snapshot, on_hold, on_pause, on_reset, on_resume,
+    CakeStall,
+};
 
 /// Neighborhood around the selected stall tile used to reject the other stall.
 pub const TARGET_RADIUS: i32 = 3;

@@ -212,17 +212,6 @@ impl NativeObservation {
             lockout_seq: self.lockout_seq,
         }
     }
-
-    fn with_callbacks(&self, input: &Value) -> Observation {
-        self.with_callback_values(
-            input.get("abort").and_then(Value::as_bool).unwrap_or(false),
-            input
-                .get("should_eat")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            input.get("locked_out_until").and_then(Value::as_i64),
-        )
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -989,30 +978,20 @@ pub fn on_hold(held: bool) {
     });
 }
 
-pub fn on_reset() {
-    RUNTIME.with(|runtime| runtime.borrow_mut().abort_runtime());
+pub(crate) fn carried_cakes() -> i32 {
+    observed::with(|scene| NativeObservation::from_scene(scene, false).carried)
 }
 
-pub fn dispatch(input: &Value) -> Value {
-    let observe = |pick_stall: bool| {
-        observed::with(|scene| NativeObservation::from_scene(scene, pick_stall))
-            .with_callbacks(input)
-    };
-    match input.get("op").and_then(Value::as_str).unwrap_or("") {
-        "count" => json!(observe(false).carried),
-        "needs_restock" => {
-            let obs = observe(false);
-            json!(needs_cake_restock(
-                obs.carried,
-                input
-                    .get("target")
-                    .and_then(Value::as_i64)
-                    .map(|n| n as i32),
-                pack_full(&obs),
-            ))
-        }
-        _ => json!({"kind": "done", "result": "no-progress"}),
-    }
+pub(crate) fn needs_cake_restock_from_snapshot(target: Option<i32>) -> bool {
+    observed::with(|scene| {
+        let obs = NativeObservation::from_scene(scene, false);
+        let pack_full = obs.inv_size > 0 && obs.inv_len >= obs.inv_size as usize;
+        needs_cake_restock(obs.carried, target, pack_full)
+    })
+}
+
+pub fn on_reset() {
+    RUNTIME.with(|runtime| runtime.borrow_mut().abort_runtime());
 }
 
 #[cfg(test)]

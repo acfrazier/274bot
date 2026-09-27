@@ -22,6 +22,8 @@ mod boost_potions_v8;
 #[cfg(feature = "load")]
 mod buyout_plan;
 #[cfg(feature = "load")]
+mod cake_stall_v8;
+#[cfg(feature = "load")]
 pub(crate) mod callback_v8;
 #[cfg(feature = "load")]
 mod canvas_tape;

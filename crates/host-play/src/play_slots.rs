@@ -398,7 +398,9 @@ pub(super) fn reset_slot_session_work(
     // `Some(carry)`: the script held its work; `carry` names the run whose
     // armed walk the relogged session re-arms.
     let held = script_slot(scripts, name).and_then(|slot| {
-        let mut slot = slot.lock().unwrap();
+        let Ok(mut slot) = slot.lock() else {
+            return None;
+        };
         if reconnect && slot.load_active() {
             let carry = slot.reconnect_session_work();
             Some(carry.then(|| slot.runtime_generation()))

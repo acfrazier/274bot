@@ -94,8 +94,9 @@ silently dropping the assignment.
 
 Browse / Start / Pause / Stop / Load are wired in both operator panels
 (`panel-play` script chrome and `tui-play` script pane) over the same
-`host_play::Play` dispatch. The native panel also exposes Reload, Refresh
-catalog and the MultiBox bulk script controls described below.
+`host_play::Play` dispatch. Both surfaces expose Reload and the TUI Script
+tab also exposes Start all / Stop all; the native panel additionally exposes
+Refresh catalog and the MultiBox bulk script controls described below.
 
 | Control | Behavior |
 | --- | --- |

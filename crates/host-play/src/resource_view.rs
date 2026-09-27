@@ -4,6 +4,7 @@
 
 use std::io::{self, ErrorKind};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::Play;
 
@@ -123,7 +124,46 @@ pub fn persist_background_bots_ack() -> io::Result<()> {
 pub fn persist_panel_ui_value(key: &str, value: serde_json::Value) -> io::Result<()> {
     let path = panel_ui_path();
     let mut document = match std::fs::read(&path) {
-        Ok(data) => serde_json::from_slice(&data).unwrap_or_else(|_| serde_json::json!({})),
+        Ok(data) => match serde_json::from_slice(&data) {
+            Ok(document) => document,
+            Err(error) => {
+                let stamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let backup = path.with_file_name(format!("panel-ui.json.corrupt-{stamp}"));
+                eprintln!(
+                    "host-play: refusing to clobber invalid {}; moving it to {}",
+                    path.display(),
+                    backup.display()
+                );
+                if backup.exists() {
+                    eprintln!(
+                        "host-play: refusing to overwrite existing corrupt backup {}",
+                        backup.display()
+                    );
+                    return Err(io::Error::new(
+                        ErrorKind::AlreadyExists,
+                        format!(
+                            "corrupt panel-ui backup already exists: {}",
+                            backup.display()
+                        ),
+                    ));
+                }
+                if let Err(rename_error) = std::fs::rename(&path, &backup) {
+                    eprintln!(
+                        "host-play: could not preserve invalid {} as {}: {rename_error}",
+                        path.display(),
+                        backup.display()
+                    );
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidData,
+                        format!("invalid panel-ui.json ({error}); backup failed: {rename_error}"),
+                    ));
+                }
+                serde_json::json!({})
+            }
+        },
         Err(e) if e.kind() == ErrorKind::NotFound => serde_json::json!({}),
         Err(e) => return Err(e),
     };
@@ -221,6 +261,33 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(v["last_focus"], "alice");
         assert_eq!(v["background_bots_ack"], true);
+    }
+
+    #[test]
+    fn persist_moves_corrupt_panel_ui_before_writing() {
+        let _iso = script::IsolatedEnv::enter("ack-corrupt");
+        let path = panel_ui_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let corrupt = b"{not valid json";
+        std::fs::write(&path, corrupt).unwrap();
+
+        persist_background_bots_ack().unwrap();
+
+        let mut backups = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("panel-ui.json.corrupt-")
+            });
+        let backup = backups.next().expect("corrupt panel-ui backup");
+        assert!(backups.next().is_none(), "one backup per corrupt write");
+        assert_eq!(std::fs::read(backup.path()).unwrap(), corrupt);
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(written["background_bots_ack"], true);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 import { runMachine } from '../../shim/_kernel.js';
 
-function call(payload) {
-    return globalThis.rustyscript.functions.__rs2b0t_cake_stall(payload);
+function call(...args) {
+    return globalThis.__rs2b0t_cake_stall(...args);
 }
 
 function callback(opts, name) {
@@ -25,15 +25,12 @@ function lockoutTick(opts) {
 }
 
 export function carriedCakes() {
-    return call({ op: 'count' });
+    return call('count');
 }
 
 export function needsCakeRestock(target) {
     const normalized = typeof target === 'number' && Number.isFinite(target) ? target : null;
-    return call({
-        op: 'needs_restock',
-        target: normalized,
-    });
+    return call('needs_restock', normalized);
 }
 
 export async function stealCakes(opts = {}) {
