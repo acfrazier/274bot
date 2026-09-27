@@ -66,6 +66,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   paints (new `script_receipt` proof, fed from the driven slot's published
   paint in both front ends and recorded in the evidence `receipt` field).
 
+### Distribution
+
+- The repository now carries one parameterized release controller for pinned
+  host/client exports, native macOS/Linux/Windows builds, package finalization,
+  notarization, extracted-package verification, and cross-platform navigation
+  identity. Builder overrides, paths, SSH material, signing identity, and the
+  Rusty V8 archive remain operator inputs rather than tracked machine values.
+
 ### Performance measurement
 
 - The opt-in `memory-profile` harness now accepts 50-slot runs, representative

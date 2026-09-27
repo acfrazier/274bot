@@ -1,7 +1,124 @@
 # Release packaging
 
-Alpha 3 uses host workspace version 0.1.8. The public name comes from
-`crates/panel/src/build_info.rs` `RELEASE`. Initial targets:
+## End-to-end release entry point
+
+`release.py` is the checked-in controller and native worker for all three
+platforms:
+
+```sh
+COMMIT="$(git rev-parse HEAD)"
+python3 tools/release/release.py build --commit "$COMMIT" --platform all --dry-run
+python3 tools/release/release.py finalize --commit "$COMMIT" --platform all \
+  --tag 0.1.9 --dry-run
+python3 tools/release/release.py verify --commit "$COMMIT" --platform all --dry-run
+```
+
+Dry runs only inspect the requested commit and print the complete plan. They do
+not create a work directory, connect to a builder, build, sign, notarize, tag,
+push, or publish.
+
+For a real candidate, give the controller a local work directory and the three
+canonical revision-289 input roots:
+
+```sh
+python3 tools/release/release.py build \
+  --commit "$COMMIT" --platform all --work-dir "$WORK" \
+  --engine-dir "$ENGINE" --content-dir "$CONTENT" \
+  --snapshot-root "$SNAPSHOTS" --snapshot-version "$SNAPSHOT_VERSION" \
+  --sign-identity "$RELEASE_SIGN_IDENTITY" \
+  --rusty-v8-archive "$RUSTY_V8_ARCHIVE"
+```
+
+The engine argument is the engine root containing `data/pack/client`; the
+content argument is the canonical content tree; the snapshot root contains the
+named decoded snapshot directory. `--client-root` defaults to
+`vendor/fr-client-rust`. The controller reads the client commit from the host
+commit's gitlink and refuses malformed or mismatched identities. It exports
+both exact commits into `source.tar.gz`, exports only the pinned build inputs
+into `inputs.tar.gz`, and writes `expect.json` with archive SHA-256 records and
+the SHA-256 tree digest plus file count for pack, content, and snapshot.
+`.git` metadata is excluded and symlinks are refused.
+Real builds also require `release.py` and `windows-ssh.py` in the checkout to
+match the requested commit, so an uncommitted controller cannot become the
+transported native worker.
+
+Every native worker verifies both archives, extracts them into a fresh
+per-commit workspace, recomputes all three input digests, and then builds:
+
+```text
+GIT_DIRTY=0
+BOT_NAV_BUILD=require
+cargo build --locked --release -p panel --bin panel-play -p tui --bin tui-play
+```
+
+It records the exact host/client commits, target, `rustc -Vv`, default features,
+input digests, and every binary/nav digest in the build receipt before calling
+`package.py`. Each platform therefore ships `panel-play`, `tui-play`,
+revision-289 navigation, and the terrain baked by the staged TUI from the same
+pinned cache and snapshot.
+
+### Builders and parameters
+
+- macOS arm64 builds locally. `--sign-identity` (or
+  `RELEASE_SIGN_IDENTITY`) is required for a real release build.
+- Linux x64 uses the SSH target `274bot-builder` by default. Override it with
+  `--linux-host` or `RELEASE_LINUX_HOST`.
+- Windows x64 runs over the promoted `windows-ssh.py` transport.
+  `--windows-host` or `RELEASE_WINDOWS_HOST` is required. The Rusty V8 archive
+  is supplied as `--rusty-v8-archive` or `RUSTY_V8_ARCHIVE`; no builder path is
+  stored in the repository.
+- Identity and known-hosts files are optional
+  `--linux-identity`/`--linux-known-hosts` and
+  `--windows-identity`/`--windows-known-hosts` parameters (with matching
+  `RELEASE_*` environment variables). Batch mode and strict host-key checking
+  are always enabled.
+- Remote work roots default to the home-relative `274bot-release` and can be
+  changed with `--linux-remote-root` / `--windows-remote-root`. Cargo output is
+  cached below the platform's per-commit workspace, so artifacts from different
+  commits cannot mix. Remote roots must stay below the remote home directory.
+- `--jobs` defaults to 4, `--revision` to 289, and the macOS app profile to
+  `public-289`.
+
+No username, key path, cache path, signing identity, or credential is
+hard-coded; the Linux host is only the documented, overridable builder alias.
+`windows-ssh.py --help` documents its standalone `run`, `put`, and `get`
+operations.
+
+### Finalize and verify
+
+After all native package directories exist:
+
+```sh
+python3 tools/release/release.py finalize \
+  --commit "$COMMIT" --platform all --work-dir "$WORK" \
+  --artifact-dir "$ARTIFACTS" --tag 0.1.9 \
+  --release-notes "$RELEASE_NOTES"
+
+python3 tools/release/release.py verify \
+  --commit "$COMMIT" --platform all --artifact-dir "$ARTIFACTS"
+```
+
+Finalization copies the release notes, records platform runtime requirements,
+rehashes every package file into `release-manifest.json`, creates the native
+archive, downloads remote archives, and regenerates `SHA256SUMS`. On macOS it
+first submits the signed zip, requires Apple's `Accepted` result, staples and
+validates `274bot.app`, then rehashes and recreates the archive. The keychain
+profile defaults to `274bot` and is parameterized by `--notary-profile` or
+`RELEASE_NOTARY_PROFILE`. Credentials remain in the local keychain.
+
+Verification safely extracts every archive, rejects traversal, links, duplicate
+members, extra files, missing files, byte-count differences, and SHA-256
+differences. It checks the requested host commit, runs both executables'
+`--help` on their native platforms, validates the extracted macOS signatures,
+staple, and Gatekeeper acceptance, and requires all six navigation files to be
+byte-identical across macOS, Linux, and Windows. Verification does not publish
+anything.
+
+The controller intentionally has no tag, push, upload, or GitHub-release
+operation. Those remain explicit operator actions after native verification.
+
+The package version comes from `[workspace.package]` in `Cargo.toml`; the public
+name comes from `crates/panel/src/build_info.rs` `RELEASE`. Release targets:
 
 - macOS ARM64: Developer ID signed `274bot.app`, `panel-play`, `tui-play`.
 - Windows x64: `panel-play.exe`, `tui-play.exe`.
@@ -25,9 +142,9 @@ Revision 289 packages also ship the WalkTo map terrain (operator decision
 2026-09-26). After staging the binaries, `package.py` runs the staged
 `tui-play --map-bundle` against the pinned client cache the nav bundle was
 built from: `--map-cache` (its jag directory) and `--map-unpack` (the snapshot
-root holding its decoded snapshot), by default the nav build's own resolution
-(`BOT_NAV_ENGINE_DIR`, else `ENGINE_DIR`, else the canonical engine, plus
-`/data/pack/client`; `BOT_NAV_SNAPSHOT_ROOT`, else `~/.274bot/unpack-289`).
+root holding its decoded snapshot). Both are required, either explicitly or
+through `BOT_NAV_ENGINE_DIR` (or `ENGINE_DIR`) plus
+`BOT_NAV_SNAPSHOT_ROOT`; there are no operator-filesystem defaults.
 The bake runs the production map-cache path (the same producer, writer and
 publication as a local bake) in a scratch cache and ships the published
 directory as `map/289/images/<key>/` (image `manifest.json` plus terrain
@@ -47,9 +164,9 @@ Example, after recording the build receipt:
 
 ```sh
 python3 tools/release/package.py --platform macos \
-  --input target/release --output .superpowers/release/274bot-0.1.8-macos-arm64 \
-  --build-receipt .superpowers/release/macos-build.json \
-  --app-profile public-289 --sign-identity YOUR_DEVELOPER_ID_IDENTITY_SHA1 \
+  --input target/release --output "$WORK/274bot-$VERSION-macos-arm64" \
+  --build-receipt "$WORK/macos-build.json" \
+  --app-profile public-289 --sign-identity "$RELEASE_SIGN_IDENTITY" \
   --map-cache "$ENGINE/data/pack/client" --map-unpack "$SNAPSHOTS"
 ```
 

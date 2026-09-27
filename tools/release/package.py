@@ -40,18 +40,11 @@ def digest(path):
 
 
 def nav_build_inputs(revision):
-    """The client cache the nav build reads, resolved as crates/host-play/build.rs does."""
+    """Resolve optional nav-build inputs without assuming an operator's filesystem."""
     engine = os.environ.get('BOT_NAV_ENGINE_DIR') or os.environ.get('ENGINE_DIR')
-    if engine:
-        engine = Path(engine)
-    elif revision == '289':
-        engine = Path.home() / 'experiments/lostcity-289/engine'
-    else:
-        engine = Path.home() / 'experiments/Server/engine'
     snapshots = os.environ.get('BOT_NAV_SNAPSHOT_ROOT')
-    snapshots = Path(snapshots) if snapshots else \
-        Path.home() / '.274bot' / ('unpack-289' if revision == '289' else 'unpack')
-    return engine / 'data/pack/client', snapshots
+    cache = Path(engine) / 'data/pack/client' if engine else None
+    return cache, Path(snapshots) if snapshots else None
 
 
 def ship_map_terrain(p, tool, output, revision, cache, unpack, nav_manifest):
@@ -165,9 +158,12 @@ def main():
                    if a.sign_identity in line and 'Developer ID Application:' in line]
         if not matches:
             p.error('a valid Developer ID Application identity is required')
-    map_cache, map_unpack = nav_build_inputs(a.revision)
-    map_cache = a.map_cache or map_cache
-    map_unpack = a.map_unpack or map_unpack
+    default_cache, default_unpack = nav_build_inputs(a.revision)
+    map_cache = a.map_cache or default_cache
+    map_unpack = a.map_unpack or default_unpack
+    if a.revision == '289' and (map_cache is None or map_unpack is None):
+        p.error('revision 289 requires --map-cache and --map-unpack (or '
+                'BOT_NAV_ENGINE_DIR and BOT_NAV_SNAPSHOT_ROOT)')
     # Refuse to overwrite an earlier package or mix old and new artifacts.
     if a.output and a.output.exists():
         p.error('output already exists')
