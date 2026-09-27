@@ -49,7 +49,6 @@ pub(super) use route_inspect::PostedInspect;
 
 #[path = "script_observe.rs"]
 mod script_observe;
-pub(super) use script_interact::reset_duel_session;
 pub(super) use script_observe::{
     deliver_channel_events, nav_world_state_for_observe, observe_script_inv,
     project_npc_boxes_for_isolate_snapshot, projected_npc_boxes,

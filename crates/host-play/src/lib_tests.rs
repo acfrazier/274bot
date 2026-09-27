@@ -12013,7 +12013,20 @@ fn native_trade_controls_reach_script_accept_through_snapshot() {
     }
 }
 
-fn duel_accept_snapshot(screen: &str, partner: &str, staked: bool) -> GameSnapshot {
+/// Which side of a duel screen holds a stake.
+#[derive(Clone, Copy, PartialEq)]
+enum DuelStake {
+    None,
+    Mine,
+    Theirs,
+}
+
+fn duel_accept_snapshot(
+    screen: &str,
+    partner: &str,
+    stake: DuelStake,
+    options: i32,
+) -> GameSnapshot {
     let controls = *api::game_data::for_revision(client::io::ClientRevision::R289)
         .unwrap()
         .duel_controls()
@@ -12041,7 +12054,7 @@ fn duel_accept_snapshot(screen: &str, partner: &str, staked: bool) -> GameSnapsh
             .resize_with(controls.options_varp as usize + 1, Default::default);
     }
     c.var.resize(controls.options_varp as usize + 1, 0);
-    c.var[controls.options_varp as usize] = 1024;
+    c.var[controls.options_varp as usize] = options;
     c.main_modal_id = root;
     let mut children = vec![mine, theirs];
     if let Some(partner_component) = partner_component {
@@ -12067,7 +12080,12 @@ fn duel_accept_snapshot(screen: &str, partner: &str, staked: bool) -> GameSnapsh
                 ..Default::default()
             },
         );
-        if staked && component == mine {
+        let staked = match stake {
+            DuelStake::None => false,
+            DuelStake::Mine => component == mine,
+            DuelStake::Theirs => component == theirs,
+        };
+        if staked {
             c.set_iface_mut(
                 component as usize,
                 IfTypeMut {
@@ -12105,41 +12123,67 @@ fn duel_accept_snapshot(screen: &str, partner: &str, staked: bool) -> GameSnapsh
 
 #[test]
 fn duel_accept_requires_empty_exact_partner_session_and_obstacle_rules() {
-    use super::script_runtime::{reset_duel_session, validated_duel_accept};
+    use super::script_runtime::validated_duel_accept;
 
-    reset_duel_session();
-    let offer = duel_accept_snapshot("offer", "Some_Helper", false);
+    let controls = *api::game_data::for_revision(client::io::ClientRevision::R289)
+        .unwrap()
+        .duel_controls()
+        .unwrap();
+    let accept = |snapshot: &GameSnapshot, offer: &mut Option<String>, screen, partner, rules| {
+        validated_duel_accept(snapshot, &controls, offer, screen, partner, rules)
+    };
+    let clean_offer = duel_accept_snapshot("offer", "Some_Helper", DuelStake::None, 1024);
+    let clean_confirm = duel_accept_snapshot("confirm", "", DuelStake::None, 1024);
+
+    let mut offer = None;
     assert_eq!(
-        validated_duel_accept(&offer, "offer", " some helper ", 1024),
+        accept(&clean_offer, &mut offer, "offer", " some helper ", 1024),
         Some(6674)
     );
-    let confirm = duel_accept_snapshot("confirm", "", false);
+    for stake in [DuelStake::Mine, DuelStake::Theirs] {
+        let staked = duel_accept_snapshot("confirm", "", stake, 1024);
+        assert_eq!(
+            accept(&staked, &mut offer, "confirm", "some helper", 1024),
+            None,
+            "a stake on the confirm screen fails closed after a clean offer"
+        );
+    }
     assert_eq!(
-        validated_duel_accept(&confirm, "confirm", "SOME HELPER", 1024),
+        accept(&clean_confirm, &mut offer, "confirm", "SOME HELPER", 1024),
         Some(6520),
         "confirm is fenced to the partner validated on the offer screen"
     );
 
-    reset_duel_session();
+    let mut fresh = None;
     assert_eq!(
-        validated_duel_accept(&confirm, "confirm", "some helper", 1024),
+        accept(&clean_confirm, &mut fresh, "confirm", "some helper", 1024),
         None,
         "a confirm without the contiguous validated offer is refused"
     );
     assert_eq!(
-        validated_duel_accept(&offer, "offer", "other helper", 1024),
+        accept(&clean_offer, &mut fresh, "offer", "other helper", 1024),
         None
     );
     assert_eq!(
-        validated_duel_accept(&offer, "offer", "some helper", 0),
+        accept(&clean_offer, &mut fresh, "offer", "some helper", 0),
         None
     );
-    let staked = duel_accept_snapshot("offer", "Some Helper", true);
+    for stake in [DuelStake::Mine, DuelStake::Theirs] {
+        let staked = duel_accept_snapshot("offer", "Some Helper", stake, 1024);
+        assert_eq!(
+            accept(&staked, &mut fresh, "offer", "some helper", 1024),
+            None,
+            "either player's stake makes acceptance fail closed"
+        );
+    }
+    // Obstacles plus another rule: the posted options are not the request's.
+    let other_rules = duel_accept_snapshot("offer", "Some Helper", DuelStake::None, 1024 | 1);
     assert_eq!(
-        validated_duel_accept(&staked, "offer", "some helper", 1024),
+        accept(&other_rules, &mut fresh, "offer", "some helper", 1024),
         None,
-        "either player's stake makes acceptance fail closed"
+        "the posted options varp must be exactly obstacles-only"
     );
+    assert_eq!(fresh, None, "no refused offer validates a partner");
 }
 
 #[test]

@@ -396,7 +396,6 @@ pub(super) fn reset_slot_session_work(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     reconnect: bool,
 ) {
-    crate::script_runtime::reset_duel_session();
     // `Some(carry)`: the script held its work; `carry` names the run whose
     // armed walk the relogged session re-arms.
     let held = script_slot(scripts, name).and_then(|slot| {

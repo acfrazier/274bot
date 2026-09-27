@@ -14,36 +14,14 @@ use super::{abort_script_walk, action_slot, all_slot, route_inspect, NavBot, Scr
 use crate::catalog_core::ScriptAct;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
-thread_local! {
-    /// One slot thread owns one client, so this is the contiguous
-    /// offer-to-confirm identity for that client's current duel session.
-    static DUEL_SESSION_PARTNER: std::cell::RefCell<Option<String>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-pub(crate) fn reset_duel_session() {
-    DUEL_SESSION_PARTNER.with(|partner| *partner.borrow_mut() = None);
-}
-
-fn duel_name(name: &str) -> String {
-    name.replace('_', " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase()
-}
-
-fn duel_partner_header(text: &str) -> String {
-    let trimmed = text.trim();
-    let name = trimmed
-        .strip_prefix("Dueling with:")
-        .or_else(|| trimmed.strip_prefix("dueling with:"))
-        .unwrap_or(trimmed);
-    duel_name(name)
-}
-
+/// The host's fail-closed accept gate for a clue duel `DuelAccept`: the
+/// slot's own selected duel `controls`, the exact screen, no stake on
+/// either side, obstacles-only rules, and the partner named on the offer
+/// screen (`offer_partner` holds it, per slot, until the confirm).
 pub(crate) fn validated_duel_accept(
     snapshot: &GameSnapshot,
+    controls: &api::game_data::DuelControls,
+    offer_partner: &mut Option<String>,
     screen: &str,
     partner: &str,
     rules: i32,
@@ -51,78 +29,65 @@ pub(crate) fn validated_duel_accept(
     if rules != 1024 {
         return None;
     }
-    for revision in [
-        client::io::ClientRevision::R274,
-        client::io::ClientRevision::R289,
-    ] {
-        let Ok(data) = api::game_data::for_revision(revision) else {
-            continue;
-        };
-        let Some(controls) = data.duel_controls() else {
-            continue;
-        };
-        let (root, mine, theirs, accept) = match screen {
-            "offer" => (
-                controls.select_modal,
-                controls.select_mine,
-                controls.select_theirs,
-                controls.select_accept,
-            ),
-            "confirm" => (
-                controls.confirm_modal,
-                controls.confirm_mine,
-                controls.confirm_theirs,
-                controls.confirm_accept,
-            ),
-            _ => continue,
-        };
-        if snapshot.modals().main != root {
-            continue;
-        }
-        let empty = |component_id| {
-            snapshot
-                .widgets()
-                .iter()
-                .find(|widget| widget.component_id == component_id && widget.type_ == 2)
-                .map(|widget| widget.items.is_empty())
-        };
-        let mine_empty = empty(mine);
-        let theirs_empty = empty(theirs);
-        if (screen == "offer" && (mine_empty != Some(true) || theirs_empty != Some(true)))
-            || mine_empty == Some(false)
-            || theirs_empty == Some(false)
-        {
-            return None;
-        }
-        if snapshot
-            .varps()
-            .iter()
-            .find(|varp| varp.index == controls.options_varp)
-            .map(|varp| varp.value)
-            != Some(rules)
-        {
-            return None;
-        }
-        let expected = duel_name(partner);
-        if screen == "offer" {
-            let actual = snapshot
-                .widgets()
-                .iter()
-                .find(|widget| widget.component_id == controls.select_partner)
-                .and_then(|widget| widget.text.as_deref())
-                .map(duel_partner_header);
-            if actual.as_deref() != Some(expected.as_str()) {
-                return None;
-            }
-            DUEL_SESSION_PARTNER.with(|stored| *stored.borrow_mut() = Some(expected));
-        } else if !DUEL_SESSION_PARTNER
-            .with(|stored| stored.borrow().as_deref() == Some(expected.as_str()))
-        {
-            return None;
-        }
-        return Some(accept);
+    let (root, mine, theirs, accept) = match screen {
+        "offer" => (
+            controls.select_modal,
+            controls.select_mine,
+            controls.select_theirs,
+            controls.select_accept,
+        ),
+        "confirm" => (
+            controls.confirm_modal,
+            controls.confirm_mine,
+            controls.confirm_theirs,
+            controls.confirm_accept,
+        ),
+        _ => return None,
+    };
+    if snapshot.modals().main != root {
+        return None;
     }
-    None
+    let empty = |component_id| {
+        snapshot
+            .widgets()
+            .iter()
+            .find(|widget| widget.component_id == component_id && widget.type_ == 2)
+            .map(|widget| widget.items.is_empty())
+    };
+    let mine_empty = empty(mine);
+    let theirs_empty = empty(theirs);
+    if (screen == "offer" && (mine_empty != Some(true) || theirs_empty != Some(true)))
+        || mine_empty == Some(false)
+        || theirs_empty == Some(false)
+    {
+        return None;
+    }
+    if snapshot
+        .varps()
+        .iter()
+        .find(|varp| varp.index == controls.options_varp)
+        .map(|varp| varp.value)
+        != Some(rules)
+    {
+        return None;
+    }
+    let expected = script::duel_name(partner);
+    if screen == "offer" {
+        let actual = snapshot
+            .widgets()
+            .iter()
+            .find(|widget| widget.component_id == controls.select_partner)
+            .and_then(|widget| widget.text.as_deref())
+            .and_then(script::duel_partner_name)
+            .map(|name| script::duel_name(&name));
+        if actual.as_deref() != Some(expected.as_str()) {
+            return None;
+        }
+        *offer_partner = Some(expected);
+    } else if offer_partner.as_deref() != Some(expected.as_str()) {
+        return None;
+    }
+    Some(accept)
 }
 fn act_tile(x: i32, z: i32, level: i32) -> crate::catalog_core::LineOfSightTile {
     crate::catalog_core::LineOfSightTile { x, z, level }
@@ -246,6 +211,8 @@ pub(crate) fn dispatch_script_interact_cached(
             }
         })
         .collect();
+    // The slot's own session revision selects the duel controls it accepts.
+    let revision = driver.revision();
     let mut ix = api::interact::Interactions::new(snapshot, driver);
     if api::hostlog::enabled(Category::InteractTrace) {
         for req in &reqs {
@@ -1054,9 +1021,15 @@ pub(crate) fn dispatch_script_interact_cached(
                 partner,
                 rules,
             } => {
-                if let Some(component_id) =
-                    validated_duel_accept(snapshot, &screen, &partner, rules)
-                {
+                let controls = api::game_data::for_revision(revision)
+                    .ok()
+                    .and_then(|data| data.duel_controls().copied());
+                let accept = controls.and_then(|controls| {
+                    let mut navs = navs.lock().unwrap();
+                    let offer = &mut navs.entry(slot.to_string()).or_default().duel_offer_partner;
+                    validated_duel_accept(snapshot, &controls, offer, &screen, &partner, rules)
+                });
+                if let Some(component_id) = accept {
                     let ctx = api::snapshot::ReadContext::new(snapshot);
                     if let Some(widget) = ctx.component(component_id) {
                         let sent = matches!(ix.if_button(widget), SendResult::Sent { .. });
@@ -1067,7 +1040,9 @@ pub(crate) fn dispatch_script_interact_cached(
                             );
                         }
                         if sent && screen == "confirm" {
-                            reset_duel_session();
+                            if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
+                                bot.duel_offer_partner = None;
+                            }
                         }
                     } else if host::debug_enabled() {
                         eprintln!(

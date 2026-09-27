@@ -93,6 +93,9 @@ pub(crate) struct NavBot {
     /// armed walk may settle that walk's wait.
     pub(crate) route_request_id: u64,
     pub(crate) bank_fetch: Option<PendingBankFetch>,
+    /// The clue duel partner this slot's accept gate validated on the offer
+    /// screen: its confirm accepts only that partner, in this session.
+    pub(crate) duel_offer_partner: Option<String>,
     /// Isolate-allocated walk request id for the armed / in-flight find.
     /// Distinct from `route_generation`, which remains the worker / retained-route token.
     pub(crate) walk_request_id: u64,
@@ -1256,7 +1259,8 @@ impl NavBot {
 }
 
 /// End the session's navigation: every route, find, bank-fetch session,
-/// inspect and bank pick of the slot, and a walk a reconnect was carrying.
+/// inspect and bank pick of the slot, a walk a reconnect was carrying, and
+/// the duel offer its accept gate validated.
 pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(nav) = navs.lock().unwrap().get_mut(name) {
         end_route_follow(nav);
@@ -1264,6 +1268,7 @@ pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name:
         route_inspect::reset_inspect(nav);
         nav.bank_pick.reset();
         nav.carried_walk = None;
+        nav.duel_offer_partner = None;
     }
 }
 
@@ -1300,6 +1305,8 @@ pub(crate) fn hold_script_nav(
     carry: Option<u64>,
 ) {
     if let Some(nav) = navs.lock().unwrap().get_mut(name) {
+        // A duel's screens belong to the dropped connection.
+        nav.duel_offer_partner = None;
         let armed = nav.route.is_some()
             || nav.route_worker.is_some()
             || nav.pending_route.is_some()
