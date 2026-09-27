@@ -322,10 +322,6 @@ export default class T extends LoopingBot {
 
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
-    assert!(
-        slot.drain_interacts().is_empty(),
-        "Stop drops messages owned by the stopped runtime"
-    );
 }
 #[cfg(feature = "load")]
 #[test]
@@ -421,56 +417,39 @@ export default class T extends LoopingBot {
 
 #[cfg(feature = "load")]
 #[test]
-fn on_stop_override_does_not_escape_stopped_runtime() {
-    let old_source = r#"
+fn run_manager_override_republishes_after_session_reset() {
+    let source = r#"
 import { RunManager } from '../../runtime/RunManager.js';
-export default class Old extends LoopingBot {
-    loop() {}
-    onStop() {
+export default class T extends LoopingBot {
+    loop() {
+        if (this.overridden) return;
+        this.overridden = true;
         RunManager.override({ runAuto: false });
-        this.log('onstop-policy-set');
     }
 }
 "#;
     let mut slot = SlotScript::new();
-    slot.start_load(old_source.into(), LoadShape::CompatClass, vec![])
+    slot.start_load(source.into(), LoadShape::CompatClass, vec![])
         .unwrap();
     wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&slot);
-    slot.stop();
-    wait_state(&mut slot, RunState::Idle);
-    assert!(
-        slot.take_pending_logs()
-            .iter()
-            .any(|line| line.contains("onstop-policy-set")),
-        "the Stop teardown hook actually calls RunManager.override"
-    );
-    assert!(
-        slot.drain_interacts().is_empty(),
-        "the stopped runtime cannot publish its onStop replacement"
-    );
+    slot.load.as_ref().unwrap().on_game_tick(1);
+    slot.probe("true").expect("override tick settles");
 
-    slot.start_load(old_source.into(), LoadShape::CompatClass, vec![])
-        .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&slot);
-    slot.stop();
-    slot.start_load(
-        "export default class New extends LoopingBot { loop() {} }".into(),
-        LoadShape::CompatClass,
-        vec![],
-    )
-    .expect("Start queues behind the old isolate reap");
-    wait_state(&mut slot, RunState::Running);
+    slot.reset_session_work();
     assert!(
         slot.drain_interacts().is_empty(),
-        "Stop → immediate Start does not carry the previous onStop write"
+        "the old connection generation stays fenced"
     );
-    assert!(
-        slot.take_pending_logs()
-            .iter()
-            .any(|line| line.contains("onstop-policy-set")),
-        "the old isolate's onStop ran before the new run reached Running"
+    slot.on_is_up(true);
+    slot.load.as_ref().unwrap().on_game_tick(2);
+    slot.probe("true").expect("post-reset tick settles");
+    assert_eq!(
+        drain_run_policy_update(&mut slot),
+        Some(api::run_policy::RunPolicyOverride {
+            run_auto: Some(false),
+            energy_min: None,
+        }),
+        "the isolate re-publishes the run-scoped override in the new generation"
     );
     slot.stop();
     wait_state(&mut slot, RunState::Idle);

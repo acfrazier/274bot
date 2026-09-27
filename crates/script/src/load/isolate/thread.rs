@@ -1766,11 +1766,15 @@ fn tick_loop(
                         let _ = out.send(ThreadMsg::Log(format!("session reset: {e}")));
                     }
                 }
-                // Rows queued during the reset drain go, machine ops with
-                // them.
+                // Connection-scoped rows queued during the reset drain go,
+                // machine ops with them.
                 let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                 crate::machine::drop_ops();
-                super::run_policy_v8::clear_pending();
+                // RunManager.override lasts for the script run. Re-publish its
+                // latest replacement in the new connection generation; this
+                // also covers a callback whose old-generation batch lost the
+                // race with ResetSession.
+                super::run_policy_v8::requeue_current();
                 clear_unconsumed_paint_click(&mut runtime);
                 super::paint_chrome::reset();
                 super::paint_jive::reset();

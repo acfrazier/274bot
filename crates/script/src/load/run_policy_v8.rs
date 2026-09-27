@@ -1,4 +1,4 @@
-//! Typed V8 binding for RunManager's per-session host policy overlay.
+//! Typed V8 binding for RunManager's run-scoped host policy overlay.
 //! Coercion is synchronous; the resulting replacement joins the isolate's
 //! next FlatBuffer interact batch.
 
@@ -14,6 +14,10 @@ enum PendingOverride {
 }
 
 thread_local! {
+    /// Latest replacement owned by this script run. ResetSession preserves
+    /// it so a relog can re-publish a row that straddled the generation fence.
+    static CURRENT_OVERRIDE: Cell<PendingOverride> =
+        const { Cell::new(PendingOverride::Empty) };
     static PENDING_OVERRIDE: Cell<PendingOverride> =
         const { Cell::new(PendingOverride::Empty) };
 }
@@ -21,7 +25,7 @@ thread_local! {
 /// Install the direct `__rs2b0t_run_override` callback. Its pending value is
 /// isolate-thread local and never shared with the host.
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
-    clear_pending();
+    clear();
     callback_v8::install(runtime, "__rs2b0t_run_override", run_override_callback)
 }
 
@@ -32,7 +36,9 @@ fn run_override_callback<'s, 'cb>(
 ) {
     match run_policy_override(scope, args.get(0)) {
         Ok(policy) => {
-            PENDING_OVERRIDE.with(|pending| pending.set(PendingOverride::Replace(policy)));
+            let replacement = PendingOverride::Replace(policy);
+            CURRENT_OVERRIDE.with(|current| current.set(replacement));
+            PENDING_OVERRIDE.with(|pending| pending.set(replacement));
             rv.set(v8::undefined(scope).into());
         }
         Err(error) => callback_v8::finish(scope, rv, Err(error)),
@@ -48,7 +54,15 @@ pub(super) fn take_pending() -> Option<crate::shim::InteractReq> {
     })
 }
 
-pub(super) fn clear_pending() {
+/// Re-publish the run's latest replacement after a connection generation
+/// reset. Ordinary interaction rows remain connection-scoped and are dropped.
+pub(super) fn requeue_current() {
+    let current = CURRENT_OVERRIDE.with(Cell::get);
+    PENDING_OVERRIDE.with(|pending| pending.set(current));
+}
+
+fn clear() {
+    CURRENT_OVERRIDE.with(|current| current.set(PendingOverride::Empty));
     PENDING_OVERRIDE.with(|pending| pending.set(PendingOverride::Empty));
 }
 

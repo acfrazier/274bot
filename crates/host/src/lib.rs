@@ -106,8 +106,8 @@ const WATCH_PARK_MS: Duration = Duration::from_secs(1);
 pub struct Host;
 
 /// Host-owned script auto-run overlay. Host-play identifies the active script
-/// runtime and applies only generation-matched FlatBuffer updates through this
-/// sink; script Stop/replacement and client session changes clear the value.
+/// run and applies only generation-matched FlatBuffer updates through this
+/// sink; script Stop/replacement clears the value, while relogs preserve it.
 #[derive(Debug, Default)]
 pub struct ScriptRunPolicy {
     runtime_generation: Option<u64>,
@@ -129,10 +129,6 @@ impl ScriptRunPolicy {
         if self.runtime_generation == Some(runtime_generation) {
             self.policy_override = policy;
         }
-    }
-
-    fn clear_session(&mut self) {
-        self.policy_override = None;
     }
 
     fn resolved(&self) -> RunPolicy {
@@ -209,6 +205,7 @@ impl Host {
                 None,
                 None,
                 None,
+                ScriptRunPolicy::default(),
                 |_, _, _, _, _| false,
                 |_| false,
                 |_| RandomClaim::Host,
@@ -251,7 +248,8 @@ impl Host {
     ///
     /// The host owns the script run-policy overlay; `observe` synchronizes the
     /// active runtime and applies decoded FlatBuffer updates through its final
-    /// [`ScriptRunPolicy`] argument.
+    /// [`ScriptRunPolicy`] argument. The caller passes the returned state into
+    /// the next login loop so a live script run preserves its policy on relog.
     #[allow(clippy::too_many_arguments)]
     pub fn run_client<F, P, K>(
         client: &mut Client,
@@ -263,15 +261,18 @@ impl Host {
         input: Option<Arc<SlotInput>>,
         mailbox: Option<Arc<FrameBuf>>,
         ctl: Option<Arc<SlotPark>>,
+        run_policy: ScriptRunPolicy,
         mut observe: F,
         mut probe: P,
         mut knock: K,
-    ) where
+    ) -> ScriptRunPolicy
+    where
         F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
         P: FnMut(&mut Client) -> bool,
         K: FnMut(&DetectedRandom) -> RandomClaim,
     {
-        let mut slot = SlotLoop::with_settings(settings, random_events, lamp_auto, lamp_skill);
+        let mut slot =
+            SlotLoop::with_settings(settings, random_events, lamp_auto, lamp_skill, run_policy);
         #[cfg(feature = "performance-profile")]
         {
             slot.profile = Some(performance_profile::register(username));
@@ -291,7 +292,7 @@ impl Host {
         let mut socket_stalled = false;
         loop {
             if probe(client) {
-                return;
+                return slot.run_policy;
             }
             if frame_cadence(client, input.as_deref()) || busy {
                 socket_stalled = false;
@@ -869,15 +870,15 @@ fn raster_this_tick(
     due
 }
 
-/// Per-slot post-drain state: snapshot, auto-run, the full-rate
-/// switch, the random-event guardian, and the optional `Renderer` a
-/// drawing slot owns.
+/// Per-login post-drain state: snapshot, auto-run echo, the full-rate switch,
+/// the random-event guardian, and the optional `Renderer` a drawing slot
+/// owns. The script run policy is supplied by the outer slot thread.
 struct SlotLoop {
     pump: Pump,
     snapshot: GameSnapshot,
     run_on: bool,
     run_sends: u32,
-    /// Host-owned script-session auto-run overlay and runtime fence.
+    /// Host-owned run-scoped auto-run overlay and runtime fence.
     run_policy: ScriptRunPolicy,
     /// The slot's real `ProfileSettings` (wired once by `run_client` from
     /// the vault profile; the guardian's toggle reads it). `random_events`,
@@ -944,6 +945,7 @@ impl SlotLoop {
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
             Arc::new(Mutex::new("strength".to_string())),
+            ScriptRunPolicy::default(),
         )
     }
 
@@ -952,13 +954,14 @@ impl SlotLoop {
         random_events: Arc<AtomicBool>,
         lamp_auto: Arc<AtomicBool>,
         lamp_skill: Arc<Mutex<String>>,
+        run_policy: ScriptRunPolicy,
     ) -> Self {
         Self {
             pump: Pump::new(),
             snapshot: GameSnapshot::new(),
             run_on: false,
             run_sends: 0,
-            run_policy: ScriptRunPolicy::default(),
+            run_policy,
             settings,
             random_events,
             lamp_auto,
@@ -1005,7 +1008,6 @@ impl SlotLoop {
             self.guardian = Guardian::new();
             self.guardian_status = RandomStatus::default();
             self.run_on = false;
-            self.run_policy.clear_session();
         }
         publish_snapshot(&mut self.snapshot, client, result);
 

@@ -11134,6 +11134,15 @@ fn script_observe_ticks_only_on_player_edge_while_up() {
     assert_eq!(*count.lock().unwrap(), 2);
 }
 
+fn run_policy_test_run_button_sent(client: &Client) -> bool {
+    client.out.data()[..client.out.pos]
+        .windows(3)
+        .any(|packet| {
+            packet[0] == client::io::ClientProt::IF_BUTTON.id as u8
+                && u16::from_be_bytes([packet[1], packet[2]]) == api::interact::RUN_ORB_IFACE as u16
+        })
+}
+
 #[test]
 fn script_run_policy_override_reaches_host_auto_run_and_stop_clears_it() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -11152,7 +11161,13 @@ fn script_run_policy_override_reaches_host_auto_run_and_stop_clears_it() {
 import { RunManager } from '../../runtime/RunManager.js';
 export default class T extends LoopingBot {
     loop() {
+        if (this.overridden) return;
+        this.overridden = true;
         RunManager.override({ energyMin: 80 });
+    }
+    onStop() {
+        RunManager.override({ runAuto: false });
+        this.log('onstop-policy-set');
     }
 }
 "#
@@ -11184,29 +11199,17 @@ export default class T extends LoopingBot {
     // The first frame only starts and settles the isolate tick. Auto-run is
     // armed after that, so a pre-wire host default cannot muddy the proof.
     client.runenergy = 0;
-    let run_button_sent = |client: &Client| {
-        client.out.data()[..client.out.pos]
-            .windows(3)
-            .any(|packet| {
-                packet[0] == client::io::ClientProt::IF_BUTTON.id as u8
-                    && u16::from_be_bytes([packet[1], packet[2]])
-                        == api::interact::RUN_ORB_IFACE as u16
-            })
-    };
 
     let frames = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let phase = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observe_frames = Arc::clone(&frames);
-    let observe_phase = Arc::clone(&phase);
     let observe_scripts = Arc::clone(&scripts);
     let observe_cheats = Arc::clone(&cheats);
     let observe_navs = Arc::clone(&navs);
     let observe_world = world.clone();
     let probe_frames = Arc::clone(&frames);
-    let probe_phase = Arc::clone(&phase);
     let probe_slot = Arc::clone(&slot);
 
-    Host::run_client(
+    let run_policy = Host::run_client(
         &mut client,
         "alice",
         vault::ProfileSettings::default(),
@@ -11216,15 +11219,97 @@ export default class T extends LoopingBot {
         None,
         None,
         None,
+        host::ScriptRunPolicy::default(),
         move |c, _, _, _, run_policy| {
             let frame = observe_frames.load(Ordering::Relaxed);
-            let phase = observe_phase.load(Ordering::Relaxed);
             script_observe_cached(
                 c,
                 "alice",
                 true,
-                phase == 0 && frame == 0,
+                frame == 0,
                 frame as u64 + 1,
+                Some((10, 10, 0)),
+                None,
+                None,
+                None,
+                None,
+                None,
+                &observe_scripts,
+                &observe_cheats,
+                &observe_navs,
+                &observe_world,
+                false,
+                false,
+                None,
+                None,
+                None,
+                None,
+                Some(run_policy),
+            );
+            observe_frames.fetch_add(1, Ordering::Relaxed);
+            true
+        },
+        move |c| {
+            let frames = probe_frames.load(Ordering::Relaxed);
+            if frames == 0 {
+                return false;
+            }
+            if frames == 1 {
+                probe_slot
+                    .lock()
+                    .unwrap()
+                    .probe("true")
+                    .expect("the script's policy override tick completes");
+                c.out.pos = 0;
+                c.runenergy = 20;
+                return false;
+            }
+            assert!(
+                !run_policy_test_run_button_sent(c),
+                "the FlatBuffer energyMin update suppresses auto-run below 80 energy"
+            );
+            true
+        },
+        |_| RandomClaim::Host,
+    );
+
+    // The isolate and runtime generation survive a reconnect. The second host
+    // loop receives no script tick before its first auto-run decision, so only
+    // the run-scoped host policy can preserve the 80-energy threshold.
+    slot.lock().unwrap().reconnect_session_work();
+    client.gens.session = client.gens.session.wrapping_add(1);
+    client.out.pos = 0;
+    client.runenergy = 20;
+
+    let frames = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let phase = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observe_frames = Arc::clone(&frames);
+    let observe_scripts = Arc::clone(&scripts);
+    let observe_cheats = Arc::clone(&cheats);
+    let observe_navs = Arc::clone(&navs);
+    let observe_world = world.clone();
+    let probe_frames = Arc::clone(&frames);
+    let probe_phase = Arc::clone(&phase);
+    let probe_slot = Arc::clone(&slot);
+    let _run_policy = Host::run_client(
+        &mut client,
+        "alice",
+        vault::ProfileSettings::default(),
+        Arc::new(AtomicBool::new(true)),
+        Arc::new(AtomicBool::new(true)),
+        Arc::new(Mutex::new("strength".to_string())),
+        None,
+        None,
+        None,
+        run_policy,
+        move |c, _, _, _, run_policy| {
+            let frame = observe_frames.load(Ordering::Relaxed);
+            script_observe_cached(
+                c,
+                "alice",
+                true,
+                false,
+                frame as u64 + 100,
                 Some((10, 10, 0)),
                 None,
                 None,
@@ -11250,30 +11335,39 @@ export default class T extends LoopingBot {
             let frames = probe_frames.load(Ordering::Relaxed);
             match probe_phase.load(Ordering::Relaxed) {
                 0 if frames >= 1 => {
-                    probe_slot
-                        .lock()
-                        .unwrap()
-                        .probe("true")
-                        .expect("the script's policy override tick completes");
+                    assert!(
+                        !run_policy_test_run_button_sent(c),
+                        "relog keeps the active run's 80-energy override"
+                    );
+                    probe_slot.lock().unwrap().stop();
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    loop {
+                        let mut slot = probe_slot.lock().unwrap();
+                        slot.observe_lifecycle();
+                        if slot.state() == script::RunState::Idle {
+                            assert!(
+                                slot.take_pending_logs()
+                                    .iter()
+                                    .any(|line| line.contains("onstop-policy-set")),
+                                "onStop executed its override before teardown"
+                            );
+                            break;
+                        }
+                        drop(slot);
+                        assert!(
+                            Instant::now() < deadline,
+                            "run-policy onStop did not settle"
+                        );
+                        std::thread::yield_now();
+                    }
                     c.out.pos = 0;
-                    c.runenergy = 20;
                     probe_phase.store(1, Ordering::Relaxed);
                     false
                 }
                 1 if frames >= 2 => {
                     assert!(
-                        !run_button_sent(c),
-                        "the FlatBuffer energyMin update suppresses auto-run below 80 energy"
-                    );
-                    probe_slot.lock().unwrap().stop();
-                    c.out.pos = 0;
-                    probe_phase.store(2, Ordering::Relaxed);
-                    false
-                }
-                2 if frames >= 3 => {
-                    assert!(
-                        run_button_sent(c),
-                        "Stop clears host-owned policy back to the 20-energy default"
+                        run_policy_test_run_button_sent(c),
+                        "Stop drops its onStop override and restores the 20-energy default"
                     );
                     true
                 }
@@ -11283,12 +11377,171 @@ export default class T extends LoopingBot {
         |_| RandomClaim::Host,
     );
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while slot.lock().unwrap().state() != script::RunState::Idle && Instant::now() < deadline {
-        slot.lock().unwrap().observe_lifecycle();
-        std::thread::sleep(Duration::from_millis(5));
-    }
     assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
+}
+
+#[test]
+fn script_run_policy_update_is_fenced_to_its_producer_runtime() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    cheats
+        .lock()
+        .unwrap()
+        .insert("alice".into(), VecDeque::new());
+    let (navs, world) = empty_nav();
+    let slot = script_slot_or_insert(&scripts, "alice");
+    slot.lock()
+        .unwrap()
+        .start_load_settled(
+            r#"
+import { RunManager } from '../../runtime/RunManager.js';
+export default class T extends LoopingBot {
+    loop() {
+        RunManager.override({ runAuto: false });
+    }
+}
+"#
+            .into(),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+
+    let mut client = prepare_client(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    client.ingame = true;
+    client.scene_state = 2;
+    client.local_player = Some(client::client::ClientPlayer::at(100, 100));
+    client.runenergy = 20;
+    client.gens.player = 1;
+    client.gens.player_info = 1;
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+
+    script_observe_cached(
+        &mut client,
+        "alice",
+        true,
+        true,
+        1,
+        Some((100, 100, 0)),
+        None,
+        None,
+        Some(&snapshot),
+        None,
+        None,
+        &scripts,
+        &cheats,
+        &navs,
+        &world,
+        false,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    slot.lock()
+        .unwrap()
+        .probe("true")
+        .expect("old runtime's override tick settles");
+
+    let (old_generation, update) = {
+        let mut slot = slot.lock().unwrap();
+        slot.observe_lifecycle();
+        assert_eq!(slot.state(), script::RunState::Running);
+        let old_generation = slot.runtime_generation();
+        let (update, _interacts) = drain_observed_host_interacts(&mut slot);
+        slot.restart_load_from_identity(Instant::now())
+            .expect("watchdog-style runtime replacement starts");
+        (
+            old_generation,
+            update.expect("the pre-restart policy row is drained"),
+        )
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let new_generation = loop {
+        let mut slot = slot.lock().unwrap();
+        slot.observe_lifecycle();
+        if slot.runtime_generation() != old_generation && slot.state() == script::RunState::Running
+        {
+            break slot.runtime_generation();
+        }
+        drop(slot);
+        assert!(
+            Instant::now() < deadline,
+            "replacement runtime did not become ready"
+        );
+        std::thread::yield_now();
+    };
+
+    let mut run_policy = host::ScriptRunPolicy::default();
+    run_policy.sync_runtime(Some(new_generation));
+    update.apply(&mut run_policy);
+
+    // If the drained row had been relabelled as the replacement generation,
+    // runAuto:false would suppress this default auto-run send.
+    client.out.pos = 0;
+    let frames = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observe_frames = Arc::clone(&frames);
+    let probe_frames = Arc::clone(&frames);
+    let _run_policy = Host::run_client(
+        &mut client,
+        "alice",
+        vault::ProfileSettings::default(),
+        Arc::new(AtomicBool::new(true)),
+        Arc::new(AtomicBool::new(true)),
+        Arc::new(Mutex::new("strength".to_string())),
+        None,
+        None,
+        None,
+        run_policy,
+        move |_, _, _, _, _| {
+            observe_frames.fetch_add(1, Ordering::Relaxed);
+            true
+        },
+        move |c| {
+            if probe_frames.load(Ordering::Relaxed) == 0 {
+                return false;
+            }
+            assert!(
+                run_policy_test_run_button_sent(c),
+                "an old runtime's pre-drained policy row must fail the generation fence"
+            );
+            true
+        },
+        |_| RandomClaim::Host,
+    );
+
+    slot.lock().unwrap().stop();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut slot = slot.lock().unwrap();
+        slot.observe_lifecycle();
+        if slot.state() == script::RunState::Idle {
+            break;
+        }
+        drop(slot);
+        assert!(
+            Instant::now() < deadline,
+            "replacement runtime did not stop"
+        );
+        std::thread::yield_now();
+    }
 }
 
 #[test]

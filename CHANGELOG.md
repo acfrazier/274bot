@@ -913,10 +913,10 @@ best-effort and untested in this release.
   is pending. In the ResetSession window the v2 quest journal/status return
   `snapshot-unavailable`.
 - `RunManager.override({ runAuto?, energyMin? })` crosses the existing
-  isolate-to-host FlatBuffer batch into the matching host slot's per-session
+  isolate-to-host FlatBuffer batch into the matching host slot's run-scoped
   auto-run overlay. Missing fields use host defaults (`runAuto: true`,
-  `energyMin: 20`); the host clears it on Start/Stop, runtime replacement, and
-  relog.
+  `energyMin: 20`); Start/Stop and runtime replacement clear it, while the
+  active run preserves and re-publishes it across relogs.
 
 ### Gameplay fixes (live 289)
 

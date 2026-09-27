@@ -1,5 +1,5 @@
 //! Auto-run: the host turns run on according to its true/20 defaults plus an
-//! optional script-session overlay.
+//! optional script-run overlay.
 
 use api::run_policy::{RunEnergyMin, RunPolicyOverride};
 

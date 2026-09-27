@@ -838,7 +838,7 @@ fn script_run_override_applies_until_host_receives_a_clear() {
 }
 
 #[test]
-fn script_run_override_clears_on_runtime_change_and_relog() {
+fn script_run_override_clears_on_runtime_change_and_survives_relog() {
     let mut client = prepare_client(
         cfg(),
         1,
@@ -868,8 +868,9 @@ fn script_run_override_clears_on_runtime_change_and_relog() {
     client.gens.session = client.gens.session.wrapping_add(1);
     slot.after_drain(&mut client);
     assert_eq!(
-        slot.run_policy.policy_override, None,
-        "a successful-session generation change clears the host overlay"
+        slot.run_policy.policy_override,
+        Some(override_policy),
+        "a connection generation change preserves the active script run's overlay"
     );
 }
 
@@ -1838,6 +1839,7 @@ fn idle_slot_parks_between_packets_and_wakes_on_one() {
             None,
             None,
             Some(Arc::new(park)),
+            ScriptRunPolicy::default(),
             |c, _, _, _, _| {
                 let mut v = mirror.lock().unwrap();
                 v.0 = c.loop_cycle;
@@ -1910,6 +1912,7 @@ fn focused_slot_keeps_the_twenty_ms_cadence() {
             Some(inp),
             None,
             None,
+            ScriptRunPolicy::default(),
             |c, _, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 false
@@ -1970,6 +1973,7 @@ fn busy_observe_keeps_the_slot_on_the_frame_loop() {
             None,
             None,
             None,
+            ScriptRunPolicy::default(),
             |c, _, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 true // script/cheat/nav work due: never park
@@ -2026,6 +2030,7 @@ fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
             None,
             Some(buf2),
             Some(Arc::new(park)),
+            ScriptRunPolicy::default(),
             |c, _, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 false
@@ -2109,6 +2114,7 @@ fn stop_control_wakes_a_parked_slot_and_returns() {
             None,
             None,
             Some(Arc::new(park)),
+            ScriptRunPolicy::default(),
             |_, _, _, _, _| false,
             |_| stop2.load(Ordering::Relaxed),
             |_| RandomClaim::Host,
@@ -2157,6 +2163,7 @@ fn draw_kick_wakes_a_parked_slot_into_the_frame_loop() {
             Some(Arc::clone(&inp)),
             None,
             Some(Arc::new(park)),
+            ScriptRunPolicy::default(),
             |c, _, _, _, _| {
                 let on = want2.load(Ordering::Relaxed);
                 c.set_draw(on);
@@ -2230,6 +2237,7 @@ fn spurious_kick_does_not_busy_loop_a_parked_slot() {
             None,
             None,
             Some(Arc::new(park)),
+            ScriptRunPolicy::default(),
             |c, _, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 false // stays idle after the kick

@@ -283,6 +283,35 @@ pub(crate) fn script_observe_cached(
     )
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DrainedRunPolicyUpdate {
+    producer_generation: u64,
+    policy: Option<api::run_policy::RunPolicyOverride>,
+}
+
+impl DrainedRunPolicyUpdate {
+    pub(crate) fn apply(self, run_policy: &mut ScriptRunPolicy) {
+        run_policy.apply_override(self.producer_generation, self.policy);
+    }
+}
+
+pub(crate) fn drain_observed_host_interacts(
+    slot: &mut SlotScript,
+) -> (
+    Option<DrainedRunPolicyUpdate>,
+    Vec<script::shim::InteractReq>,
+) {
+    let producer_generation = slot.runtime_generation();
+    let (update, interacts) = slot.drain_host_interacts();
+    (
+        update.map(|policy| DrainedRunPolicyUpdate {
+            producer_generation,
+            policy,
+        }),
+        interacts,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn script_observe_cached_with_channels(
     driver: &mut dyn Driver,
@@ -336,9 +365,9 @@ pub(crate) fn script_observe_cached_with_channels(
             script::RunState::Starting | script::RunState::Paused
         ) && slot.load_active()
         {
-            let (update, queued) = slot.drain_host_interacts();
-            if update.is_some() {
-                run_policy_update = update;
+            let (update, queued) = drain_observed_host_interacts(&mut slot);
+            if let Some(update) = update {
+                run_policy_update = Some(update);
             }
             slot.restore_interacts(queued);
         }
@@ -880,9 +909,9 @@ pub(crate) fn script_observe_cached_with_channels(
             slot.sync_native_input_gate();
             if slot.state() == script::RunState::Running {
                 if slot.watchdog().holds_script_actions() {
-                    let (update, _dropped) = slot.drain_host_interacts();
-                    if update.is_some() {
-                        run_policy_update = update;
+                    let (update, _dropped) = drain_observed_host_interacts(&mut slot);
+                    if let Some(update) = update {
+                        run_policy_update = Some(update);
                     }
                 } else {
                     // What a reconnect interrupted goes out first, on the
@@ -898,9 +927,9 @@ pub(crate) fn script_observe_cached_with_channels(
                         carried = take_carried_walk(navs, name, slot.runtime_generation());
                         queued.extend(slot.take_held_walks());
                     }
-                    let (update, reqs) = slot.drain_host_interacts();
-                    if update.is_some() {
-                        run_policy_update = update;
+                    let (update, reqs) = drain_observed_host_interacts(&mut slot);
+                    if let Some(update) = update {
+                        run_policy_update = Some(update);
                     }
                     queued.extend(take_script_interacts(reqs, slot_input));
                     interact.extend(resumed_walk(carried, &queued, |dest, radius| {
@@ -926,14 +955,16 @@ pub(crate) fn script_observe_cached_with_channels(
                 }
             }
         } else if slot.state() == script::RunState::Running {
-            let (update, reqs) = slot.drain_host_interacts();
-            if update.is_some() {
-                run_policy_update = update;
+            let (update, reqs) = drain_observed_host_interacts(&mut slot);
+            if let Some(update) = update {
+                run_policy_update = Some(update);
             }
             interact.extend(take_script_interacts(reqs, slot_input));
         }
         // Lifecycle/log/watchdog work above can stop or replace the runtime.
-        // Fence the update against the state that leaves this observation.
+        // Sync to the state that leaves this observation; each drained policy
+        // row retains its producer generation so a pre-restart row fails the
+        // host fence instead of being relabelled as the replacement runtime.
         policy_runtime_generation = matches!(
             slot.state(),
             script::RunState::Starting | script::RunState::Running | script::RunState::Paused
@@ -942,8 +973,8 @@ pub(crate) fn script_observe_cached_with_channels(
     }
     if let Some(run_policy) = run_policy {
         run_policy.sync_runtime(policy_runtime_generation);
-        if let (Some(generation), Some(update)) = (policy_runtime_generation, run_policy_update) {
-            run_policy.apply_override(generation, update);
+        if let Some(update) = run_policy_update {
+            update.apply(run_policy);
         }
     }
     if let Some(channels) = channels {

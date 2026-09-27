@@ -13,7 +13,7 @@ use client::config::{Cache, IfType, IfTypeMut};
 use host::login_queue::LoginBackoff;
 use host::{
     prepare_client, should_emit_tick, wake_channel, DetectedRandom, FrameBuf, Host, Pump,
-    SlotInput, SlotPark,
+    ScriptRunPolicy, SlotInput, SlotPark,
 };
 use nav::world::NavWorld;
 use vault::Profile;
@@ -669,6 +669,7 @@ fn spawn_slot_thread(
             let mut refresh_key = false;
             let mut key_refreshed = false;
             let mut script_tick: u64 = 0;
+            let mut run_policy = ScriptRunPolicy::default();
             loop {
                 if arm.stop.load(Ordering::Relaxed) {
                     return;
@@ -867,7 +868,7 @@ fn spawn_slot_thread(
                     };
                     slot.on_random(ev)
                 };
-                Host::run_client(
+                run_policy = Host::run_client(
                     &mut client,
                     &username,
                     profile.settings.clone(),
@@ -877,6 +878,7 @@ fn spawn_slot_thread(
                     Some(slot_input.clone()),
                     slot_mailbox.clone(),
                     park.clone(),
+                    run_policy,
                     {
                         let slot_frame = Arc::clone(&slot_frame);
                         let slot_statuses = Arc::clone(&slot_statuses);

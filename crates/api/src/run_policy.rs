@@ -1,7 +1,8 @@
-//! Script-session overlay values for the host's auto-run policy.
+//! Script-run overlay values for the host's auto-run policy.
 //!
 //! The isolate sends replacements over the FlatBuffer interact wire. The host
-//! owns the current value and clears it at script/runtime/session boundaries.
+//! owns the current value, clears it with the script runtime identity, and
+//! preserves it across connection sessions within that run.
 
 /// Effective JS auto-run energy floor. `NotANumber` never passes the host's
 /// energy comparison, matching JavaScript `energy >= NaN`.
