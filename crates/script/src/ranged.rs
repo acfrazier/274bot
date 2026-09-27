@@ -16,7 +16,31 @@
 use api::game_data::GameItem;
 use serde_json::Value;
 
-/// Thrown dart when `weapon` matches a selected `*_dart` name; otherwise bow-shaped.
+/// Resolve one catalog ranged setting before selecting the loadout. Frozen
+/// `src/bot/api/combat/rangedSettings.ts:8-13`: `Other` requires a nonblank
+/// custom name; all other selections (including the fallback) are trimmed.
+pub fn ranged_item<'a>(
+    selected: Option<&'a str>,
+    custom: Option<&'a str>,
+    fallback: &'a str,
+    bow: bool,
+) -> Result<&'a str, &'static str> {
+    let selected = selected.unwrap_or(fallback).trim();
+    if selected != "Other" {
+        return Ok(selected);
+    }
+    let custom = custom.unwrap_or("").trim();
+    if custom.is_empty() {
+        return Err(if bow {
+            "Enter a custom ranged weapon name"
+        } else {
+            "Enter a custom ammunition name"
+        });
+    }
+    Ok(custom)
+}
+
+/// Thrown when the weapon is a selected dart or the wanted weapon equals the ammo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RangeLoadout {
     pub weapon: String,
@@ -24,9 +48,9 @@ pub struct RangeLoadout {
     pub thrown: bool,
 }
 
-/// First selected item whose alias ends `_dart` and whose name matches
-/// `weapon.trim().to_lowercase()`. Unknown weapons, including Dragon dart,
-/// stay bow-shaped: raw weapon, raw ammo, `thrown: false`.
+/// A selected `*_dart` uses its canonical name for both slots. Otherwise the
+/// raw weapon/ammo are preserved; matching trimmed names are thrown.
+/// Frozen `src/bot/api/combat/ranged.ts:20-28`.
 pub fn range_loadout_of<'a, I>(items: I, weapon: &str, ammo: &str) -> RangeLoadout
 where
     I: IntoIterator<Item = (&'a str, &'a str)>,
@@ -44,7 +68,7 @@ where
     RangeLoadout {
         weapon: weapon.to_string(),
         projectile: ammo.to_string(),
-        thrown: false,
+        thrown: !wanted.is_empty() && wanted == ammo.trim().to_lowercase(),
     }
 }
 
@@ -143,6 +167,30 @@ mod tests {
     }
 
     #[test]
+    fn custom_other_resolution_requires_a_name() {
+        assert_eq!(
+            ranged_item(None, None, "Maple shortbow", true),
+            Ok("Maple shortbow")
+        );
+        assert_eq!(
+            ranged_item(Some("  Iron arrow "), None, "", false),
+            Ok("Iron arrow")
+        );
+        assert_eq!(
+            ranged_item(Some("Other"), Some(" Rune knife "), "", true),
+            Ok("Rune knife")
+        );
+        assert_eq!(
+            ranged_item(Some("Other"), Some("  "), "", true),
+            Err("Enter a custom ranged weapon name")
+        );
+        assert_eq!(
+            ranged_item(Some("Other"), None, "", false),
+            Err("Enter a custom ammunition name")
+        );
+    }
+
+    #[test]
     fn dart_shape_uses_canonical_name_and_unknown_stays_bow() {
         let items = [
             ("bronze_dart", "Bronze dart"),
@@ -180,6 +228,15 @@ mod tests {
             range_loadout_of(items, "", "Iron arrow").projectile,
             "Iron arrow"
         );
+        assert_eq!(
+            range_loadout_of(items, " Rune knife ", "rune KNIFE"),
+            RangeLoadout {
+                weapon: " Rune knife ".into(),
+                projectile: "rune KNIFE".into(),
+                thrown: true,
+            }
+        );
+        assert!(!range_loadout_of(items, "   ", "").thrown);
     }
 
     #[test]

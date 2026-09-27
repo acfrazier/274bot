@@ -64,10 +64,9 @@ impl Family for Teleport {
     type Args = TeleportArgs;
     /// Arrival observed (Magic XP gained and tile changed).
     type Output = bool;
-
     fn begin(args: TeleportArgs, cx: &mut Cx<'_>) -> Begin<Self> {
         let Some(selected) = crate::supply_v2::selected_data() else {
-            return Begin::Refuse("missing selected teleports".into());
+            return Begin::Refuse(crate::supply_v2::GAME_DATA_UNAVAILABLE.into());
         };
         if selected.teleports().is_empty() {
             return Begin::Refuse("missing selected teleports".into());
@@ -167,7 +166,10 @@ mod tests {
         crate::supply_v2::configure(None);
         assert_eq!(
             machine::start("teleport", json!({ "name": "Varrock" }), Vec::new(), 0),
-            Started::Refused("missing selected teleports".into())
+            Started::Refused(
+                "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+                    .into()
+            )
         );
         crate::supply_v2::configure(Some(data(ClientRevision::R274)));
         assert_eq!(

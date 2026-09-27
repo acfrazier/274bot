@@ -1,9 +1,9 @@
-//! Canonical catalog cards: herb imports evaluated from each card's script folder
-//! (same specifiers and transitive siblings as AutoFighter / HerbCleaner).
+//! Selected herb facts reach compat cards through the remapped `herbs.js`
+//! surface and same-folder sibling graphs (no optional catalog checkout).
 
 use std::path::PathBuf;
 
-use script::load::{JsLibrary, LoadIsolate, LoadShape};
+use script::load::{LoadIsolate, LoadShape};
 use script::{CacheMeta, JsCache, ScriptKind, ScriptSource};
 
 fn scratch(name: &str) -> PathBuf {
@@ -13,57 +13,42 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-fn card_origin_path(name: &str) -> (std::path::PathBuf, String) {
-    let root = script::rs2b0t_root().expect("$RS2B0T canonical reference");
-    let dir = scratch(name);
-    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("catalog register");
-    let card = lib
-        .get(ScriptSource::Catalog, name)
-        .cloned()
-        .unwrap_or_else(|| panic!("{name} listed"));
-    assert_eq!(
-        card.unloadable, None,
-        "{name} must not be import-stamped unloadable"
-    );
-    (card.path, card.origin)
+fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
+    api::game_data::for_revision(client::io::ClientRevision::R274).unwrap()
 }
 
-fn spawn_from_card_path(
-    card_path: &std::path::Path,
+fn spawn_from_card_folder(
+    card_dir: &std::path::Path,
     card_origin: &str,
     eval_src: &str,
 ) -> LoadIsolate {
     let siblings = script::resolve_sibling_modules(
-        card_path,
+        &card_dir.join("Card.ts"),
         card_origin,
-        &JsCache::new(
-            card_path
-                .parent()
-                .unwrap()
-                .join(format!("sib-cache-{}", std::process::id())),
-        ),
+        &JsCache::new(card_dir.join(format!("sib-cache-{}", std::process::id()))),
         CacheMeta {
             kind: ScriptKind::Compat,
-            source: ScriptSource::Catalog,
+            source: ScriptSource::File,
             shape: Some("CompatClass".into()),
             api_family: None,
         },
     )
-    .expect("canonical siblings resolve");
-    let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-    LoadIsolate::spawn_with_game_data(eval_src.to_string(), LoadShape::CompatClass, siblings, data)
-        .expect("spawn eval isolate")
+    .expect("siblings resolve");
+    LoadIsolate::spawn_with_game_data(
+        eval_src.to_string(),
+        LoadShape::CompatClass,
+        siblings,
+        data(),
+    )
+    .expect("spawn eval isolate")
 }
 
 #[test]
-fn autofighter_folder_evaluates_herbs_import_with_selected_facts() {
-    let Some(_) = script::rs2b0t_root() else {
-        return;
-    };
-    let (path, _origin) = card_origin_path("AutoFighter");
-    let src = r#"
+fn card_folder_evaluates_herbs_import_with_selected_facts() {
+    let dir = scratch("autofighter-shaped");
+    let card_dir = dir.join("AutoFighter");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    let origin = r#"
 import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';
 export default class T extends LoopingBot {
     loop() {
@@ -77,7 +62,8 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = spawn_from_card_path(&path, src, src);
+    std::fs::write(card_dir.join("Card.ts"), origin).unwrap();
+    let iso = spawn_from_card_folder(&card_dir, origin, origin);
     iso.on_game_tick(1);
     let probe = iso.probe("__herbProbe").unwrap();
     assert!(probe["count"].as_u64().unwrap() >= 14);
@@ -90,12 +76,26 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn herb_cleaner_folder_evaluates_transitive_logic_and_herbs() {
-    let Some(_) = script::rs2b0t_root() else {
-        return;
-    };
-    let (path, _origin) = card_origin_path("HerbCleaner");
-    let src = r#"
+fn logic_sibling_evaluates_transitive_herbs_with_selected_facts() {
+    let dir = scratch("herb-cleaner-shaped");
+    let card_dir = dir.join("HerbCleaner");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    std::fs::write(
+        card_dir.join("HerbCleanerLogic.ts"),
+        r#"
+import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';
+export function herbByUnidId(unid) {
+    return HERBS.find(h => h.unidId === unid) ?? null;
+}
+export function eligibleHerbs(level, skip) {
+    const blocked = new Set(skip || []);
+    return HERBS.filter(h => h.level <= level && !blocked.has(h.key));
+}
+export { HERBS, HERB_OPTIONS };
+"#,
+    )
+    .unwrap();
+    let origin = r#"
 import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';
 import { eligibleHerbs, herbByUnidId } from './HerbCleanerLogic.js';
 export default class T extends LoopingBot {
@@ -109,7 +109,8 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = spawn_from_card_path(&path, src, src);
+    std::fs::write(card_dir.join("Card.ts"), origin).unwrap();
+    let iso = spawn_from_card_folder(&card_dir, origin, origin);
     iso.on_game_tick(1);
     let probe = iso.probe("__herbProbe").unwrap();
     assert!(probe["count"].as_u64().unwrap() >= 14);

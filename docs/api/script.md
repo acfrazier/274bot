@@ -30,6 +30,20 @@ inventory count as “all catalog scripts / all options qualified.”
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
 
+An offline slot logs in while a login is wanted (auto-login or a Log in) or a
+script is running or paused on it (rs2b0t's `autoLogin || scriptActive()`,
+re-evaluated on every title-loop pass), unless the operator logged the slot
+out. A dropped connection relogged that way pauses a Load script whole: every
+await, step machine and task runtime stays, their clocks and the `Execution`
+wait clock stop, and the script resumes on the relogged session's first
+tick. The slot then re-sends the script walk it was following, and the last
+eight walk, walk-near and abort-walk requests the script queued that never
+reached the dropped connection. Other unsent requests are dropped; their
+owners retry on their own timeouts. An operator or idle logout, Stop or slot
+removal ends the session instead: the in-flight machine rows and task
+runtimes end (`aborted`, `reset`). Compiled scripts end their live step at
+either boundary.
+
 ### File Load and catalog cards
 
 - **Load** registers a picker card tagged **File** from an absolute/relative
@@ -39,12 +53,16 @@ instance; `want_run` distinguishes operator Pause from offline.
 - Catalog cards are **Catalog** source: static parse of
   `src/bot/scripts/index.ts` (no V8 at registration). Browse fills both
   panel and TUI pickers.
-- Isolate is its own OS thread; ~50 ms budget; **64 MB V8 heap cap**
-  (`heap_limits(0, 64 MiB)`). The isolate starts small and grows with the
-  live set — not 64 MB reserved per card. Over the cap, the isolate is
-  terminated. Extra RSS (OS thread, deno/rustyscript, code space) sits on
-  top of JS heap and is **unmeasured** at the 50-slot wall — `rss_ladder`
-  is Null/draw-off clients, not Started JS.
+- Isolate is its own OS thread; a non-yielding execution has a **600 ms
+  runaway horizon** measured from that execution's own start; **64 MB V8 heap
+  cap** (`heap_limits(0, 64 MiB)`). A confirmed watchdog, Pause-deadline, or
+  session-reset cut is logged and recreates the script runtime (still paused
+  after an operator Pause). Three cuts within five minutes stop the script
+  with an error instead of restarting forever. The isolate starts small and
+  grows with the live set — not 64 MB reserved per card. Over the heap cap,
+  the isolate is terminated. Extra RSS (OS thread, deno/rustyscript, code
+  space) sits on top of JS heap and is **unmeasured** at the 50-slot wall —
+  `rss_ladder` is Null/draw-off clients, not Started JS.
 
 ### Content-addressed transpile cache
 
@@ -76,8 +94,9 @@ silently dropping the assignment.
 
 Browse / Start / Pause / Stop / Load are wired in both operator panels
 (`panel-play` script chrome and `tui-play` script pane) over the same
-`host_play::Play` dispatch. The native panel also exposes Reload, Refresh
-catalog and the MultiBox bulk script controls described below.
+`host_play::Play` dispatch. Both surfaces expose Reload and the TUI Script
+tab also exposes Start all / Stop all; the native panel additionally exposes
+Refresh catalog and the MultiBox bulk script controls described below.
 
 | Control | Behavior |
 | --- | --- |
@@ -85,7 +104,7 @@ catalog and the MultiBox bulk script controls described below.
 | **Load** | Open a file picker; register/transpile a File card. Disabled while a script is active on the focus. |
 | **Reload** | Hash current card origin (+ siblings). Unchanged → “Nothing changed; nothing to reload”. Changed with no running/paused owners → apply. Changed with owners → **Confirm** / **Cancel reload**: running bots that still match the warned generation **restart**; named **paused** bots are **Stopped** (not left half-reloaded). |
 | **Start / Pause / Resume / Stop** | Focused profile only. |
-| **Start all / Stop all** | MultiBox rail bulk script controls (panel). Separate from **Login all / Logout all**. Start all skips already running/paused/stopping members; Stop all stops running and paused across wall members and live slots. |
+| **Start all / Stop all** | Bulk script controls (panel MultiBox rail; TUI Script tab `T` / `E`). Separate from **Login all / Logout all**. Start all skips already running/paused/stopping members; Stop all stops running and paused across wall members and live slots. |
 | **Refresh catalog** | Re-scan `$RS2B0T` / catalog root. Unchanged scan → “Nothing changed.” Changed with owners → confirm; same restart/stop policy as manual reload. |
 
 Script paint (`ScriptPaint`) draws over the Game chatbox in the panel and
@@ -126,6 +145,68 @@ arms `nav::router::find` on the shared whole-world `NavWorld` and the slot
 pump drives `nav::traveller::Traveller::follow`; `SlotStatus.walk_{x,z,level}`
 mirrors the armed dest and clears on arrival. The nav `find` runs off-pump
 (a short-lived worker); `follow` steps on the slot pump, one send per tick.
+
+## Catalog walking and recovery (compat v1)
+
+The rs2b0t walk and reach helpers are Rust step machines; the shim passes
+arguments and awaits one completion.
+
+- **`Traversal.walkResilient`** runs the frozen ladder: baked walk, scene
+  step (`sceneRadius`, default `radius + 1`), door-or-step unstick, backoff,
+  and after three no-progress passes a verify probe (one route preview from
+  here, 30 s). A probe with no route, or the same end as the last probe,
+  ends the walk as unreachable; a fresh one resets the passes. Teleports
+  follow `useTeleportCatalog` / `policy.useTeleports` (an explicit false
+  wins; unset is off) and `policy.distanceBeforeTeleport` (the route span
+  must reach it). A settled blocked route end returns true. `maxBudget` is
+  accepted: it bounds frozen's PathFinder, and the host router searches
+  every walk and the probe to its own 4,000,000-node bound, never less.
+  `avoidZones` rectangles ride the walk and the probe, and every host search
+  of the walk keeps out of them; a catalog zone id (not a host table), an
+  inverted rectangle or more than 16 fail with `not impl`.
+  `bankItemCounts` is not an input (the host bank fetch reads the bank).
+- **`Traversal.walkTo`** is one Rust walk: radius 2 and 300 s by default,
+  the same teleport rules and `avoidZones` as `walkResilient`,
+  `maxExpansions` accepted as `maxBudget` is, and the card's `Sustain` hook
+  once a tick while it walks. A random event ends it false and stops its
+  route. Walking off Karamja without the 30-coin fare (the navigator names
+  only the fare as missing), it earns the fare at Luthas's plantation and
+  walks once more. Teleport id lists, ship or shortcut exclusion,
+  `pathFollow` and `forceRepath` fail with `not impl`.
+- The host owns a script's active route. Operator Pause ends the follow
+  and keeps the route as carried state, as a reconnect does; the first
+  dispatch after Resume sends it once more under its own request id,
+  whichever script code asked for it (walks, reach, the hunt steppers, a
+  bank open's booth walk, raw v2 requests, `walkNearestBank` while it is
+  still choosing). Nothing is re-sent when the script run changed, the
+  walk was cancelled (an `AbortWalk`, a failed walk machine, Stop, or the
+  script stopping itself), the player already stands within the walk's
+  arrival radius, or a newer walk request replaces it; a bank trip planned
+  for the walk is planned again from the current pack. A late copy of the
+  request the host already follows is not sent twice. A request queued
+  but not yet dispatched when Pause lands goes out once, as queued. A
+  watchdog recovery walk interrupted by Pause is re-armed on Resume.
+  Scene clicks (`WalkTo`, `DirectNavigator`) are not host routes and are
+  not carried.
+- **`createReturnToAnchorTask`:** `validate` is beyond the bot's leash plus
+  slack. `execute` does nothing inside the arrive disk, walks a resilient leg
+  first when farther than `longRangeTiles`, opens `obstacles` on the way
+  with `walkOpening`, else walks once; `timeoutMs` defaults to 90 s.
+- **`DirectNavigator.walk`** clamps the click to 48 tiles, clicks on the
+  player's plane and returns false with no player tile or a target outside
+  the loaded scene. **`walkTo`** re-checks every two ticks and re-clicks
+  after 2400 ms or when the player did not move.
+- **`Reach.npcDialog`** walks with the resilient ladder (close-in radius 3,
+  stand radius 1, 4 attempts) and answers `unreachable` when that ladder
+  proves the tile unreachable. The talk runs up to eight rounds: it opens or
+  closes a door in front of an NPC the scene cannot reach, clears the door
+  after "I can't reach that" (no door is `unreachable`), and talks again one
+  tick after an unanswered round. A door approach is itself a resilient walk
+  (radius 1, 3 attempts, 30 s). A random-event interrupt or a newer reach
+  stops the walk the reach armed.
+- **`RecoveryHints`** outlive a watchdog restart: the restarted script's
+  `takeAnchor()` returns the anchor the stalled run latched; an unused hint
+  clears once the new `onStart` succeeds.
 
 ## Hard no
 

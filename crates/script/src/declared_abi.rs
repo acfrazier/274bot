@@ -485,6 +485,10 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { ScriptRunner } from '../../runtime/ScriptRunner.js';",
     },
     Reexport {
+        names: &["Special"],
+        line: "export { Special } from '../../api/combat/Special.js';",
+    },
+    Reexport {
         names: &["ChatDialog"],
         line: "export { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';",
     },

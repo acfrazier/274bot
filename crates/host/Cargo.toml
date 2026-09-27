@@ -12,6 +12,7 @@ vault = { path = "../vault" }
 
 [features]
 render-diagnostics = ["client/render-diagnostics"]
+performance-profile = []
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

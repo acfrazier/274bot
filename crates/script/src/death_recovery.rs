@@ -265,6 +265,7 @@ impl Family for DeathRecovery {
                         allow_wilderness: true,
                         allow_bank_fetch: true,
                         request_id: 0,
+                        avoid: Vec::new(),
                     });
                     self.phase = Phase::Walking;
                     return Step::Wait;

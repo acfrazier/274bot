@@ -5,9 +5,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::resource::sample_process;
 use crate::session::Session;
 use crate::window::{ShotState, ShotStatus};
+use host_play::live_gate::{self, CoreGate, PassHold};
+use host_play::sample_process;
 
 /// Headed live harness: null_raster (2 slots), stress50 / stress50_full
 /// (50 slots), a shared scenario (`script_<name>`), or `--smoke` (one
@@ -89,95 +90,6 @@ pub(super) enum SoakCapture {
 
 pub(super) const SOAK_POSTPASS_SUFFIX: &str = "-postpass";
 pub(super) const SOAK_FINAL_SUFFIX: &str = "-soak-final";
-pub(super) const SCRIPT_STOP_WAIT: Duration = Duration::from_secs(45);
-
-#[derive(Debug, PartialEq)]
-pub(super) enum CoreGate {
-    Disabled,
-    Pending,
-    Qualified(Option<Arc<serde_json::Value>>),
-    Failed(String),
-}
-
-pub(super) fn catalog_core_gate(
-    watch: Option<&host_play::catalog_core::CoreWatch>,
-    deadline: Option<Instant>,
-    now: Instant,
-) -> CoreGate {
-    let Some(watch) = watch else {
-        return CoreGate::Disabled;
-    };
-    use host_play::catalog_core::CoreWatchStatus;
-    match watch.status() {
-        CoreWatchStatus::Disabled => CoreGate::Disabled,
-        CoreWatchStatus::Qualified => CoreGate::Qualified(None),
-        CoreWatchStatus::Failed => CoreGate::Failed(
-            watch
-                .failure()
-                .unwrap_or_else(|| "catalog core failed".into()),
-        ),
-        CoreWatchStatus::Ready | CoreWatchStatus::Running
-            if deadline.is_some_and(|deadline| now >= deadline) =>
-        {
-            match watch.qualify() {
-                Ok(evidence) => CoreGate::Qualified(Some(evidence)),
-                Err(error) => CoreGate::Failed(format!(
-                    "catalog core did not qualify before the headed deadline: {error}"
-                )),
-            }
-        }
-        CoreWatchStatus::Ready | CoreWatchStatus::Running => CoreGate::Pending,
-    }
-}
-
-pub(super) fn external_core_gate(
-    watch: Option<&host_play::external_loader::ExternalWatch>,
-) -> CoreGate {
-    let Some(watch) = watch else {
-        return CoreGate::Disabled;
-    };
-    use host_play::external_loader::ExternalWatchStatus;
-    match watch.status() {
-        ExternalWatchStatus::Disabled => CoreGate::Disabled,
-        ExternalWatchStatus::Qualified => CoreGate::Qualified(None),
-        ExternalWatchStatus::Failed => CoreGate::Failed(
-            watch
-                .failure()
-                .unwrap_or_else(|| "external loader failed".into()),
-        ),
-        // Inner 180s/10s live on the watch. BUDGET_S must not replace them.
-        ExternalWatchStatus::Ready | ExternalWatchStatus::Running => CoreGate::Pending,
-    }
-}
-
-pub(super) fn pair_core_gate(
-    watch: Option<&host_play::paired_core::PairWatch>,
-    deadline: Option<Instant>,
-    now: Instant,
-) -> CoreGate {
-    let Some(watch) = watch else {
-        return CoreGate::Disabled;
-    };
-    use host_play::paired_core::PairWatchStatus;
-    match watch.status() {
-        PairWatchStatus::Disabled => CoreGate::Disabled,
-        PairWatchStatus::Qualified => CoreGate::Qualified(None),
-        PairWatchStatus::Failed => {
-            CoreGate::Failed(watch.failure().unwrap_or_else(|| "pair core failed".into()))
-        }
-        PairWatchStatus::Ready | PairWatchStatus::Running
-            if deadline.is_some_and(|deadline| now >= deadline) =>
-        {
-            match watch.qualify() {
-                Ok(evidence) => CoreGate::Qualified(Some(evidence)),
-                Err(error) => CoreGate::Failed(format!(
-                    "pair core did not qualify before the headed deadline: {error}"
-                )),
-            }
-        }
-        PairWatchStatus::Ready | PairWatchStatus::Running => CoreGate::Pending,
-    }
-}
 
 /// Headed `--smoke` watch. The `render_smoke` scenario's shot sink fires
 /// the tick the focused slot reaches scene 2, but the capture is held
@@ -269,16 +181,13 @@ impl LiveBoot {
                 session.live_prepare_script(scenario)?;
                 arm_scenario_shots(session, Arc::clone(&shots), shot_dir);
                 let budget = scenario::budget_s_from_env();
-                let core_deadline = {
-                    let catalog = session
-                        .catalog_core_watch()
-                        .filter(|watch| watch.configured());
-                    let pair = session
-                        .paired_core_watch()
-                        .filter(|watch| watch.configured());
-                    (catalog.is_some() || pair.is_some())
-                        .then_some(Instant::now() + budget.unwrap_or(scenario_deadline))
-                };
+                let core_deadline = live_gate::core_deadline(
+                    session.catalog_core_watch().as_ref(),
+                    session.paired_core_watch().as_ref(),
+                    budget,
+                    scenario_deadline,
+                    Instant::now(),
+                );
                 Ok(LiveHarness::Script(LiveScript {
                     name,
                     passed: false,
@@ -930,10 +839,11 @@ pub(super) fn live_script_tick(
             guard.as_ref().and_then(|r| r.terminal_shot()),
         )
     };
+    let now = Instant::now();
     let core_watch = session.catalog_core_watch();
-    let core_gate = catalog_core_gate(core_watch.as_ref(), live.core_deadline, Instant::now());
+    let core_gate = live_gate::catalog_core_gate(core_watch.as_ref(), live.core_deadline, now);
     let pair_watch = session.paired_core_watch();
-    let pair_gate = pair_core_gate(pair_watch.as_ref(), live.core_deadline, Instant::now());
+    let pair_gate = live_gate::pair_core_gate(pair_watch.as_ref(), live.core_deadline, now);
     if let Some(watch) = session.external_core_watch() {
         match &status {
             Some(scenario::RunnerStatus::Passed) => watch.note_prereq_passed(),
@@ -963,49 +873,16 @@ pub(super) fn live_script_tick(
         }
     }
     let ext_watch = session.external_core_watch();
-    let ext_gate = external_core_gate(ext_watch.as_ref());
+    let ext_gate = live_gate::external_core_gate(ext_watch.as_ref());
     let record = |evidence: &Option<scenario::Evidence>| {
         evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default()
     };
     // Compact core evidence is additive: preserve the existing scenario JSON
     // receipt byte-for-byte and emit the shared witness only at a terminal
     // decision, off the gameplay observation thread.
-    let record_core = || {
-        core_watch
-            .as_ref()
-            .filter(|watch| watch.configured())
-            .map(|watch| match &core_gate {
-                CoreGate::Qualified(Some(evidence)) => evidence.to_string(),
-                _ => watch
-                    .qualify()
-                    .map(|evidence| evidence.to_string())
-                    .unwrap_or_else(|_| watch.evidence().to_string()),
-            })
-    };
-    let record_pair = || {
-        pair_watch
-            .as_ref()
-            .filter(|watch| watch.configured())
-            .map(|watch| match &pair_gate {
-                CoreGate::Qualified(Some(evidence)) => evidence.to_string(),
-                _ => watch
-                    .qualify()
-                    .map(|evidence| evidence.to_string())
-                    .unwrap_or_else(|_| watch.evidence().to_string()),
-            })
-    };
-    let record_ext = || {
-        ext_watch
-            .as_ref()
-            .filter(|watch| watch.configured())
-            .map(|watch| match &ext_gate {
-                CoreGate::Qualified(Some(evidence)) => evidence.to_string(),
-                _ => watch
-                    .qualify()
-                    .map(|evidence| evidence.to_string())
-                    .unwrap_or_else(|_| watch.evidence().to_string()),
-            })
-    };
+    let record_core = || live_gate::catalog_core_record(core_watch.as_ref(), &core_gate);
+    let record_pair = || live_gate::pair_core_record(pair_watch.as_ref(), &pair_gate);
+    let record_ext = || live_gate::external_core_record(ext_watch.as_ref(), &ext_gate);
     let live_line = || record_ext().unwrap_or_else(|| record(&evidence));
     let failure_name = script_failure_scenario(&live.name, evidence.as_ref());
     let failure_evidence = evidence.clone();
@@ -1020,25 +897,18 @@ pub(super) fn live_script_tick(
     };
     let proof_name = live.name.clone();
     let emit_proof = |ok: bool| {
-        if let Some(core) = record_core() {
+        for (tag, witness) in [
+            (live_gate::CATALOG_CORE_TAG, record_core()),
+            (live_gate::PAIRED_CORE_TAG, record_pair()),
+            (live_gate::EXTERNAL_LOADER_TAG, record_ext()),
+        ] {
+            let Some(witness) = witness else {
+                continue;
+            };
             if ok {
-                println!("CATALOG_CORE: {proof_name} {core}");
+                println!("{tag}: {proof_name} {witness}");
             } else {
-                eprintln!("CATALOG_CORE: {proof_name} {core}");
-            }
-        }
-        if let Some(pair) = record_pair() {
-            if ok {
-                println!("PAIRED_CORE: {proof_name} {pair}");
-            } else {
-                eprintln!("PAIRED_CORE: {proof_name} {pair}");
-            }
-        }
-        if let Some(ext) = record_ext() {
-            if ok {
-                println!("EXTERNAL_LOADER: {proof_name} {ext}");
-            } else {
-                eprintln!("EXTERNAL_LOADER: {proof_name} {ext}");
+                eprintln!("{tag}: {proof_name} {witness}");
             }
         }
     };
@@ -1049,7 +919,7 @@ pub(super) fn live_script_tick(
         let guard = session.scenario.lock().unwrap();
         guard.as_ref().and_then(|runner| {
             let owned = runner.owned_profile_names();
-            host_play::owned_terminal_startup_error(&session.statuses(), &owned)
+            host_play::owned_terminal_startup_error(session.statuses(), &owned)
         })
     };
     if let Some(message) = terminal_startup_failure {
@@ -1098,45 +968,44 @@ pub(super) fn live_script_tick(
     };
     match status {
         Some(scenario::RunnerStatus::Passed) => {
-            if matches!(core_gate, CoreGate::Pending)
-                || matches!(pair_gate, CoreGate::Pending)
-                || matches!(ext_gate, CoreGate::Pending)
-            {
-                return None;
-            }
-            if let Some(needle) = wait_script_stop {
-                if !session.script_self_stop_observed(needle) {
-                    let started = session
-                        .live_script_stop_wait_started
-                        .get_or_insert_with(Instant::now);
-                    if started.elapsed() >= SCRIPT_STOP_WAIT {
-                        let message = format!(
-                            "timed out waiting for script Idle and clean stop reason {needle:?}"
-                        );
-                        request_native_failure_capture(live, session, shots, terminal_shot);
-                        match hold_script_terminal_shot(
-                            live,
-                            session,
-                            terminal_shot,
-                            terminal_shot_status,
-                            shots,
-                        ) {
-                            Ok(true) => return None,
-                            Err(error) => eprintln!("[panel] {error}"),
-                            Ok(false) => {}
-                        }
-                        emit_proof(false);
-                        eprintln!("FAIL: live {} {}", live.name, failure_line(&message));
-                        live.failed = Some(message.clone());
-                        return Some(message);
+            let mut grace = session.live_script_stop_wait_started;
+            let hold = live_gate::pass_hold(
+                &[&core_gate, &pair_gate, &ext_gate],
+                wait_script_stop,
+                |needle| session.script_self_stop_observed(needle),
+                &mut grace,
+                now,
+            );
+            session.live_script_stop_wait_started = grace;
+            match hold {
+                PassHold::Core | PassHold::CleanStop => return None,
+                PassHold::TimedOut(message) => {
+                    request_native_failure_capture(live, session, shots, terminal_shot);
+                    match hold_script_terminal_shot(
+                        live,
+                        session,
+                        terminal_shot,
+                        terminal_shot_status,
+                        shots,
+                    ) {
+                        Ok(true) => return None,
+                        Err(error) => eprintln!("[panel] {error}"),
+                        Ok(false) => {}
                     }
-                    return None;
+                    emit_proof(false);
+                    eprintln!("FAIL: live {} {}", live.name, failure_line(&message));
+                    live.failed = Some(message.clone());
+                    return Some(message);
                 }
-                if let Err(error) = request_clean_stop_capture(live, session, shots, terminal_shot)
-                {
-                    live.failed = Some(error.clone());
-                    return Some(error);
+                PassHold::Release { clean_stop: true } => {
+                    if let Err(error) =
+                        request_clean_stop_capture(live, session, shots, terminal_shot)
+                    {
+                        live.failed = Some(error.clone());
+                        return Some(error);
+                    }
                 }
+                PassHold::Release { clean_stop: false } => {}
             }
             if core_watch.as_ref().is_some_and(|watch| watch.configured())
                 && matches!(core_gate, CoreGate::Qualified(_))
@@ -1209,15 +1078,7 @@ pub(super) fn live_script_tick(
                 Err(error) => eprintln!("[panel] {error}"),
                 Ok(false) => {}
             }
-            if let Some(core) = record_core() {
-                eprintln!("CATALOG_CORE: {} {core}", live.name);
-            }
-            if let Some(pair) = record_pair() {
-                eprintln!("PAIRED_CORE: {} {pair}", live.name);
-            }
-            if let Some(ext) = record_ext() {
-                eprintln!("EXTERNAL_LOADER: {} {ext}", live.name);
-            }
+            emit_proof(false);
             eprintln!("FAIL: live {} {}", live.name, live_line());
             live.failed = Some(msg.clone());
             Some(msg)
@@ -1381,7 +1242,7 @@ impl LiveHarness {
             Self::Smoke(s) => !smoke_settled(
                 s.saw_scene2_at,
                 now,
-                focused_slot(session, &session.statuses()).is_some_and(|slot| slot.ingame),
+                focused_slot(session, session.statuses()).is_some_and(|slot| slot.ingame),
             ),
             _ => false,
         }

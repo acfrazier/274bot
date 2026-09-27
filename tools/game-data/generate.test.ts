@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertPinned, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import { assertPinned, assertRs2b0tPinned, contentDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
@@ -101,8 +101,8 @@ const lava = magicFacts.staves.find((staff) => staff.name === 'Lava battlestaff'
 assert.deepEqual(lava?.runes.map((rune) => rune.name).sort(), ['Earth rune', 'Fire rune']);
 assert.equal(magicFacts.staves.find((staff) => staff.name === 'Staff of air')?.runes.length, 1);
 fs.mkdirSync(path.join(content, 'pack'), { recursive: true });
-fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n`);
-fs.writeFileSync(path.join(content, 'pack/varp.pack'), `108=attackstyle_magic\n`);
+fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n6700=duel_select_type:inv\n6701=duel_select_type:otherinv\n6500=duel_confirm:inv\n6501=duel_confirm:otherinv\n6676=duel_select_type:obstacles\n`);
+fs.writeFileSync(path.join(content, 'pack/varp.pack'), `108=attackstyle_magic\n286=dueloptions\n`);
 const autocast = extractAutocastControls(content);
 assert.equal(autocast.staff_tab_root, 328);
 assert.equal(autocast.choose_com, 353);
@@ -119,6 +119,12 @@ assert.equal(duel.confirm_accept, 6520);
 assert.equal(duel.select_partner, 6671);
 assert.equal(duel.select_status, 6684);
 assert.equal(duel.confirm_status, 6571);
+assert.equal(duel.select_mine, 6700);
+assert.equal(duel.select_theirs, 6701);
+assert.equal(duel.confirm_mine, 6500);
+assert.equal(duel.confirm_theirs, 6501);
+assert.equal(duel.obstacles, 6676);
+assert.equal(duel.options_varp, 286);
 assert.equal(parsePack('328=combat_staff_2\n').get('combat_staff_2'), 328);
 fs.mkdirSync(path.join(content, 'scripts/skill_combat/configs'), { recursive: true });
 fs.appendFileSync(path.join(content, 'pack/interface.pack'), '425=combat_blunt\n7462=combat_blunt:specbar\n2423=combat_hacksword\n7587=combat_hacksword:specbar\n');
@@ -242,8 +248,10 @@ assert.equal(herbs.herbs[1].level_source, 'identified_herb_level');
 const dropContent = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-drop-fixture-'));
 const dropScripts = path.join(dropContent, 'scripts/drop tables/scripts');
 const npcConfigs = path.join(dropContent, 'scripts/_unpack/225');
+const kqConfigs = path.join(dropContent, 'scripts/areas/area_kalphite/configs');
 fs.mkdirSync(dropScripts, { recursive: true });
 fs.mkdirSync(npcConfigs, { recursive: true });
+fs.mkdirSync(kqConfigs, { recursive: true });
 fs.writeFileSync(path.join(npcConfigs, 'all.npc'), `[giant]
 name=Giant
 param=death_drop,big_bones
@@ -256,6 +264,9 @@ param=death_drop,big_bones
 [green_dragon]
 name=Green dragon
 param=death_drop,dragon_bones
+`);
+fs.writeFileSync(path.join(kqConfigs, 'kalphite.npc'), `[kalphite_flyingqueen]
+name=Kalphite Queen
 `);
 fs.writeFileSync(path.join(dropScripts, 'giant.rs2'), `[ai_queue3,giant]
 obj_add(npc_coord, npc_param(death_drop), 1, 100);
@@ -273,6 +284,9 @@ obj_add(npc_coord, cert_silver_ore, 1, 100);
 fs.writeFileSync(path.join(dropScripts, 'green_dragon.rs2'), `[ai_queue3,green_dragon]
 obj_add(npc_coord, npc_param(death_drop), 1, 100);
 obj_add(npc_coord, dragonhide_green, 1, 100);
+`);
+fs.writeFileSync(path.join(dropScripts, 'kalphite_queen.rs2'), `[ai_queue3,kalphite_flyingqueen]
+obj_add(npc_coord, rune_spear, 1, 100);
 `);
 fs.writeFileSync(path.join(dropScripts, 'shared_droptables.rs2'), `[proc,outer]()(namedobj, int)
 return (~inner);
@@ -297,9 +311,10 @@ const dropNpcs = [
     { id: 110, debugname: 'mossgiant', name: 'Moss giant' },
     { id: 112, debugname: 'firegiant', name: 'Fire giant' },
     { id: 941, debugname: 'green_dragon', name: 'Green dragon' },
+    { id: 1160, debugname: 'kalphite_flyingqueen', name: 'Kalphite Queen' },
 ];
 const drops = extractDropFacts(dropContent, dropItems, dropNpcs);
-assert.equal(drops.length, 4);
+assert.equal(drops.length, 5);
 assert.deepEqual(drops.find((row) => row.name === 'Giant')?.display_names, ['Big bones', 'Coins', 'Half of a key', 'Rune spear']);
 assert.deepEqual(
     drops.find((row) => row.name === 'Giant')?.items.filter((item) => item.name === 'Half of a key').map((item) => [item.alias, item.id]),
@@ -311,6 +326,7 @@ assert.deepEqual(drops.find((row) => row.name === 'Fire giant')?.items, [
     { alias: 'silver_ore', id: 443, name: 'Silver ore' },
 ]);
 assert.deepEqual(drops.find((row) => row.name === 'Green dragon')?.display_names, ['Dragon bones', 'Dragonhide']);
+assert.deepEqual(drops.find((row) => row.name === 'Kalphite Queen')?.display_names, ['Rune spear']);
 
 fs.rmSync(path.join(dropScripts, 'shared_droptables.rs2'));
 assert.throws(
@@ -1639,6 +1655,46 @@ assert.deepEqual(parseJm2NpcPlacements('==== NPC ====\n0 10 20: 669\n1 20 30: 0\
     { plane: 1, lx: 20, lz: 30, npc_id: 0 },
 ]);
 assert.deepEqual(parseJm2NpcPlacements('==== LOC ====\n0 47 62: 2662 10 1\n'), [], 'a LOC row is not an NPC placement');
+assert.deepEqual(
+    [...parseJm2LinkBelow('==== MAP ====\n0 1 1: h1 f2\n1 1 1: h1 f2\n1 2 3: h1 f1\n1 4 5: f3\n==== LOC ====\n1 6 6: 2728\n')],
+    ['1,1', '4,5'],
+    'LINK_BELOW is the level-1 MAP flag 0x2 only',
+);
+{
+    // The rs2b0t sources must be the pinned blobs: a local edit (or another commit) refuses.
+    const pinRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rs2b0t-pin-'));
+    const source = path.join(pinRoot, 'src/bot/data/cookLocations.ts');
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, 'export const MAX_SURFACE_CHEB = 20;\n');
+    const blob = execFileSync('git', ['hash-object', source], { encoding: 'utf8' }).trim();
+    const pin = { commit: 'fixture', blobs: { 'src/bot/data/cookLocations.ts': blob } };
+    assertRs2b0tPinned(pinRoot, pin);
+    fs.writeFileSync(source, 'export const MAX_SURFACE_CHEB = 21;\n');
+    assert.throws(() => assertRs2b0tPinned(pinRoot, pin), /dirty or not the pinned export/);
+    fs.rmSync(pinRoot, { recursive: true, force: true });
+
+    // Any .loc/.npc config under scripts/ and the loc/npc packs are selected-content inputs.
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'content-dirt-'));
+    const git = (...args: string[]) => execFileSync('git', ['-C', content, ...args], { encoding: 'utf8' });
+    git('init', '-q');
+    const loc = path.join(content, 'scripts/areas/area_x/configs/x.loc');
+    fs.mkdirSync(path.dirname(loc), { recursive: true });
+    fs.writeFileSync(loc, '[range]\nname=Range\n');
+    fs.mkdirSync(path.join(content, 'pack'));
+    fs.writeFileSync(path.join(content, 'pack/npc.pack'), '0=man\n');
+    git('add', '-A');
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'fixture');
+    assert.equal(contentDirt(content), '', 'a clean tree has no dirt');
+    fs.writeFileSync(loc, '[range]\nname=Oven\n');
+    assert.match(contentDirt(content), /x\.loc/, 'an edited nested .loc is dirty');
+    git('checkout', '-q', '--', '.');
+    fs.writeFileSync(path.join(content, 'scripts/new.npc'), '[a]\n');
+    assert.match(contentDirt(content), /new\.npc/, 'an untracked .npc is dirty');
+    fs.rmSync(path.join(content, 'scripts/new.npc'));
+    fs.writeFileSync(path.join(content, 'pack/npc.pack'), '0=woman\n');
+    assert.match(contentDirt(content), /npc\.pack/, 'an edited npc.pack is dirty');
+    fs.rmSync(content, { recursive: true, force: true });
+}
 assert.deepEqual(parseJm2NpcPlacements('==== OBJ ====\n0 47 62: 2662\n==== NPC ====\n0 1 2: 5\n'), [{ plane: 0, lx: 1, lz: 2, npc_id: 5 }], 'only the NPC section is a placement source');
 assert.deepEqual(parseJm2NpcPlacements('==== NPC ====\n'), []);
 assert.throws(() => parseJm2NpcPlacements('==== NPC ====\n0 10 20: 669 10 1\n'), /extra tokens/, 'a shape and an angle are not NPC row tokens');

@@ -13,6 +13,8 @@ export BOT_VAULT_PASS=bot
 cargo run --release -p tui --bin tui-play -- --profile local-289
 # same scenarios as panel-play --live:
 cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_nav_routes
+# qualify under the shared core witness (panel catalog_watch / pair_watch):
+cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_thiever --catalog-core
 ```
 
 Shared server-profile flags match host-play / panel-play
@@ -23,26 +25,109 @@ Shared server-profile flags match host-play / panel-play
 accounts keep their vault setting. Unit tests render to
 ratatui `TestBackend` (no TTY). `--live` headed when a controlling
 terminal is present; otherwise it pumps headless and still prints
-PASS/FAIL.
+PASS/FAIL. `--catalog-core` / `--pair-core` (environment form
+`BOT_LIVE_CORE=catalog|pair`) hold a `--live` PASS until the shared core
+witness qualifies, exactly as the panel watches do; see
+[the harness guide](../harness.md#core-gated-qualification).
 
-## Panes
+`--map-bundle OUT --revision 289 --cache JAG_DIR --unpack SNAPSHOT_ROOT` is a
+release-packaging run, not a panel: it bakes the WalkTo map terrain for that
+offline client cache through the production map-cache path and ships it under
+`OUT/map/<revision>/` (see [release packaging](../../tools/release/README.md)),
+then prints the shipped description (identity, key, manifest receipt, tile
+totals) as JSON and exits.
+
+## Layout
+
+The shell adapts to the terminal size:
+
+- **80×24 (compact, below 100×30):** two header rows (title, fleet counts
+  and resources; then `BOT <name> @world state` and the tabs), one main
+  pane, a three-row drawer (last message, newest log line, unread counter)
+  and the footer. The main pane shows the selected bot's tab, or the fleet
+  table while the fleet has keyboard focus (**F2**, the "fleet drawer").
+- **120×40 (standard, from 100×30):** the fleet table on the left, the
+  selected bot's tab on the right under a `BOT <name> │ world │ state │
+  script` line, the log drawer (message line plus log rows) and the footer.
+- **Large (from 160×45):** as standard, with queue and tile columns in the
+  fleet table and the selected bot's status and chat beside the tab.
+
+The footer always starts with `KEYS <scope> ▸`: the pane, text field,
+popup or overlay that receives keys. The focused pane also has a `[keys]`
+label in its border. Everything is plain text as well as colour.
 
 | Pane | What it shows |
 | --- | --- |
-| Strip | vault / running slot names with each active public world; Tab / click focuses (`Play::focus`) |
-| Map | packed collision dots, town pins, `@` here, remaining-walk `*`. Walk-confirm is `host_play::arm_walk_on`. WASD one-tile walk. Empty title is `map (no nav pack)` when no bound/bundled nav world loaded. |
-| Chat | game chat ring + NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back) |
-| Status | same `SlotStatus` + `RandomStatus` as the panel, including active world |
-| Inv / stats / locs | focused snapshot |
-| Script | Browse/Start/Pause/Stop + Load over the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
-| Settings | popup: `random_events`, `lamp_skill`, `lamp_auto` (persisted on the profile) |
+| Fleet | loaded members: `[x]` row selection, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · selected K of M`; Load+login all / Logout all buttons |
+| Overview | the selected bot's buttons (Log in, Log out, Remove, Settings, Loadouts, Manual walk), status rows (same `SlotStatus` + `RandomStatus` as the panel, including active world) and inventory / stats / nearest locs |
+| Map | packed collision dots, POIs, `@` here, remaining-walk `*`; Walk-confirm is `host_play::arm_walk_on`; Walk / Teleport / Group / Search buttons. The catalogue is requested only while this tab is open. |
+| Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start all / Stop all over the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
+| Chat | game chat ring and NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back). An open dialogue marks the tab `Chat!` and the BOT line `DIALOGUE`. |
+| Logs | the shared structured log (same filters, search, follow, Save and session file as the panel) |
+| Settings | popup: `random_events`, `lamp_skill`, `lamp_auto` (persisted on the profile); session nav opt-ins; **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`). The TUI map is catalogue-only, so it never bakes terrain or asks. |
 
-`q` quits, `s` settings, `m` spawn the rest of the MultiBox wall.
+## Keys
+
+One routing model: an open popup or overlay takes every key (the Script
+tab's Browse, Load file and catalog folder prompt included: only their own
+Up/Down, `j`/`k`, `Enter` and `Esc` act until they close); then the
+focused pane's text field (fleet filter, map search, log search) takes
+typing; then the global keys; then the focused pane's own keys. No letter
+is global, and moving the fleet cursor never changes the selected bot.
+
+| Global | |
+| --- | --- |
+| `F1` / `?` | help: the focused pane's keys first, type to search |
+| `Ctrl-P` / `:` | command palette: every command with its target and, when it cannot run, why (reaches every screen when the terminal swallows function keys) |
+| `F2` | Fleet; `F3` Overview, `F4` Map, `F5` Script, `F6` Chat, `F7` Logs (switching never starts anything) |
+| `Tab` / `Shift-Tab` | keyboard focus between fleet, tab and log drawer |
+| `Esc` | close or go back one level (never runs a command) |
+| `q` / `Ctrl-Q` | quit; asks first while bots are loaded (they log out) |
+
+| Pane | Keys |
+| --- | --- |
+| Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot; `Space` selects the row for group actions; `/` filters by name, `wN` / `world:N` or state; `m` Load+login all…; `U` Log out all… |
+| Overview | `i` Log in, `u` Log out, `x` Remove…, `o` settings, `l` loadouts, `w` Manual walk, `n` Got it (background-bots notice) |
+| Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` layers, `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
+| Script | `b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f` Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start all…, `E` Stop all…; in Browse, Up/Down pick and `Enter` or `Esc` close it (the pick stays for `t`) |
+| Chat | arrows / `j` `k` choose, `Space` / `Enter` continue or answer, `1`-`9` script paint buttons, `p` paint / game chat |
+| Logs, log drawer | `/` search, `v` level, `s` source, `b` scope, `f` follow, arrows PgUp PgDn Home End scroll, `w` save, `F` session file |
+| Manual walk | `W` `A` `S` `D` / arrows walk one tile; `Esc` disarms |
+
+Commands ending in `…` confirm first: Remove names the bot it will remove
+(and keeps the vault profile), and the fleet-wide commands list the
+members they cover. If the fleet changes before you confirm, the dialog
+shows the new scope instead of running.
+
+**Mouse** (optional; every workflow works from the keyboard): left click
+focuses the pane, selects a fleet row (its checkbox column ticks the row
+instead), presses a button or tab, answers a dialogue option or selects a
+map tile (walking it is a second action); right click opens a context menu
+for the row or pane and never acts as a left click; the wheel scrolls the
+list, log or map under the pointer. The palette's **Mouse capture off**
+hands the mouse back to the terminal for selecting and copying text. A
+resize re-lays the shell at once; click targets always come from the
+current layout. An open overlay or Script popup swallows clicks outside
+itself and takes the wheel: Browse and Load close on an outside click, the
+catalog prompt stays (dismissing it means Not now).
+
+### Changed keys (0.1.9)
+
+The old strip layout had global letters that also fired from popups.
+They now live in their pane: `i` / `u` / `x` / `o` / `l` on the Overview,
+`m` / `U` in the Fleet, the script letters in the Script tab and `p` in
+Chat. `Tab` moves keyboard focus instead of cycling the bot (select bots in
+the Fleet with `Enter`, a click, or the palette's Select next / previous
+bot). WASD walks only in the armed Manual walk box. `q` asks before
+quitting while bots are loaded. `x`, `m`, `U`, `T` and `E` confirm first.
+Esc no longer dismisses the background-bots notice (use `n` or its **Got
+it** button). A dialogue is answered from the Chat tab (`F6`). The map
+group checklist is the fleet's row selection.
 
 ## Limits
 
-Reload, Refresh catalog and bulk **Start all / Stop all** are native-panel
-controls; the TUI keeps the focused script controls above. Catalog
-compatibility remains partial. In-tree farming script *ports* are not the
-product surface — catalog/file bots run through the shim; guardian solvers
-are host-side.
+Profiles, queue, catalog warm-up / reload, evidence and bulk actions over
+the row selection are later screens; today the row selection feeds the map
+group walk. Catalog compatibility remains partial. In-tree farming script
+*ports* are not the product surface — catalog/file bots run through the
+shim; guardian solvers are host-side.

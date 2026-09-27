@@ -115,6 +115,11 @@ impl ScriptSettingsStore {
     }
 }
 
+/// The profile-global setting (frozen `SettingsStore.globalBag()`): the
+/// account's clue duel partner. It rides every settings bag a run receives
+/// and the isolate installs it as `globalSettingsBag`, apart from the card's.
+pub const CLUE_DUEL_PARTNER: &str = "clueDuelPartner";
+
 /// Build the operator bag: schema defaults, operator overrides, inject last.
 pub fn merge_bag(
     schema: &[SettingDef],

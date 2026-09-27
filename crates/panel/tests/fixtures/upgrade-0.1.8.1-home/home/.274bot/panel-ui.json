@@ -1,0 +1,79 @@
+{
+  "last_focus": "fixture-manual",
+  "collapsed": {
+    "fixture-auto": {
+      "script": false,
+      "debug": true
+    },
+    "fixture-manual": {
+      "profile": true
+    }
+  },
+  "nav": {
+    "allow_teleports": true,
+    "allow_wilderness": true,
+    "allow_bank_fetch": true,
+    "show_nav_path": true,
+    "hop_labels": false,
+    "hop_label_px": 19,
+    "color_path": "#123456",
+    "color_transport": "#654321",
+    "color_click": "#ABCDEF",
+    "color_text": "#FEDCBA",
+    "collision_fill": true,
+    "nsew_labels": true,
+    "client_trail": true,
+    "color_collision": "#112233",
+    "color_client": "#445566",
+    "color_client_run_alt": "#778899",
+    "component_flood": true,
+    "camera_follow": true
+  },
+  "rail_preview": {
+    "fixture-manual": false,
+    "fixture-auto": true
+  },
+  "raster": "cpu",
+  "lowmem": false,
+  "server_revision": 289,
+  "section_order": [
+    "profile",
+    "status",
+    "script",
+    "debug",
+    "log",
+    "parameters"
+  ],
+  "script_category_order": [
+    "Combat",
+    "Skilling",
+    "Utility"
+  ],
+  "script_load_last_dir": "fixture-scripts",
+  "script_catalog_last_dir": "fixture-catalog",
+  "show_parameters_rail": true,
+  "capture": false,
+  "panel_sections": {
+    "debug": false,
+    "log": true
+  },
+  "config_collapsed": {
+    "navigation": false,
+    "rendering": true
+  },
+  "chrome": {
+    "accent": "#22CC88",
+    "accent_hover": "#FFC14D",
+    "bg": "#101820",
+    "bg_deep": "#0A0A0A",
+    "text": "#F0F4F8",
+    "text_dim": "#666666",
+    "frame": "#1A1A1A",
+    "hover_fill": "#2E1F0A",
+    "active_fill": "#3D290A",
+    "border": "#333333",
+    "warn": "#E0D75B",
+    "error": "#FF7B7B",
+    "green": "#4CD964"
+  }
+}

@@ -81207,6 +81207,64 @@
       "fixture_id": "local-289"
     }
   ],
+  "requalification_dispositions": [
+    {
+      "display_name": "FlaxRunner",
+      "case": "flax_runner",
+      "catalog_commit": "00d39a17e056df6c5e461f3f2cfd3598ff9720b6",
+      "source_path": "src/bot/scripts/FlaxRunner/FlaxRunner.ts",
+      "revision": 289,
+      "status": "PARTIAL",
+      "status_detail": "Frozen catalog defect: first transfer, spin, Seers deposit and return proved; second delivery blocked by meet/trade geometry. This append-only requalification disposition does not replace the original catalog/revision rows or change loader availability.",
+      "foreign_defect_disposition": {
+        "card_sha256": "55600afa3850c67d3678232fa9823b299dade6f224d58e5c106410925ee21f67",
+        "helper_path": "src/bot/scripts/FlaxRunner/FlaxRunnerLogic.ts",
+        "helper_sha256": "05a07311383d8ab8121b45e0dcf56a3eefef27d94d8c23565d80fec2462cc32e",
+        "reason": "Both actors accept meet arrival radius 2 around (2719,3471,0), but require mutual trade distance <= 2. Runner (2718,3469,0) and spinner (2717,3473,0) are each arrived and mutually distance 4, so neither closes the gap.",
+        "audit": ".superpowers/release-0.1.9/live/pair-diag/pair-gate-diagnosis.md",
+        "upstream_issue_draft": ".superpowers/release-0.1.9/live/pair-diag/flax-upstream-issue.md",
+        "scope": "Exact frozen source pair, local revision-289 full-cycle claim. Users select their own rs2b0t-path catalog; no qualification-only patched catalog, host arrival/distance change, timeout extension or witness relaxation.",
+        "upstream_fix": "Separate MEET_ARRIVE=1 for atMeet and the meet walk; leave TRADE_RANGE=2."
+      },
+      "proof_refs": [
+        ".superpowers/release-0.1.9/live/requalify-7bbfab323/pair/flax_runner.log:632-634",
+        ".superpowers/release-0.1.9/live/requalify-7bbfab323/reruns-pair/flax_runner.log:635-637"
+      ]
+    },
+    {
+      "display_name": "Duel Arena Combat Trainer",
+      "case": "duel_arena",
+      "catalog_commit": "00d39a17e056df6c5e461f3f2cfd3598ff9720b6",
+      "source_path": "src/bot/scripts/DuelArena/DuelArena.ts",
+      "revision": 289,
+      "status": "QUALIFIED",
+      "status_detail": "Supported and qualified in 0.1.9: two consecutive pair-gated duel_arena passes on one build, each with full claim reset-and-further, after one earlier pass on the same build. This append-only requalification disposition does not replace the original catalog/revision rows or change loader availability.",
+      "qualification_disposition": {
+        "card_sha256": "1ad638d8b32159beee7f68096b0b20065e81e4c4724d4cd50b7a6227f16de4a3",
+        "helper_path": "src/bot/api/duel/Duel.ts",
+        "helper_sha256": "4329de4ce7cf9da55c386620e746afe040feb0486619014ec0c6cc99e618c0f8",
+        "module": "/rs2b0t/bot/api/duel/Duel.js",
+        "host_source": "crates/script/src/shim/duel.js",
+        "native_source": "crates/script/src/duel.rs",
+        "reason": "Duel.js maps the frozen Duel API onto Rust: modal and control ids, the partner header, the fight pens, and the accept and close machines. Before the pen fix, a pair-gated run reached Challenge, both offer and confirm accepts and both fight pens, but never fought. fightArenaAt answered a fresh rect per call, and the trainer compares pens by identity (DuelArena.ts observeFightState, DuelArenaLogic.ts canAttemptDuelFight), so it re-armed its 3/2/1/FIGHT signal every tick. With fightArenaAt answering the frozen DUEL_FIGHT_ARENAS entry, three pair-gated runs on one build passed with full claim reset-and-further, the last two consecutive qualification runs. In each, both actors challenged, accepted the offer and confirm screens, fought in a pen for script-caused melee XP (+40/+20, +32/+44 and +28/+44), completed duel 1, returned to the lobby and entered a second duel, where the witness saw further combat (both actors in the first two runs, one in the third).",
+        "scope": "Exact frozen catalog, revision 289, host runner, release tui-play sha256 c3a5665596fc43391399f91b7ed1e95b8b8f575f918520f0d0d880bf6231afe1, engine cc359656b4acd216ca452495874b6beba9a0ac75. Qualification runs duel-qual-1 (118.2 s) and duel-qual-2 (141.4 s) are consecutive; paired-fix-duel-8475e2bce (74.3 s) preceded them. This supersedes the unsupported-API disposition recorded for campaign 692b94858 (pair-diag/duel-validator-1). Loader availability and witness requirements are unchanged."
+      },
+      "proof_refs": [
+        ".superpowers/release-0.1.9/live/review-paired-fix-duel-08d7a3b93/summary.json:1-52",
+        ".superpowers/release-0.1.9/live/review-paired-fix-duel-08d7a3b93/duel_arena.log:46-61",
+        ".superpowers/release-0.1.9/live/review-paired-fix-duel-08d7a3b93/duel_arena.log:299-301",
+        ".superpowers/release-0.1.9/live/paired-fix-duel-8475e2bce/summary.json:1-52",
+        ".superpowers/release-0.1.9/live/paired-fix-duel-8475e2bce/duel_arena.log:44-71",
+        ".superpowers/release-0.1.9/live/paired-fix-duel-8475e2bce/duel_arena.log:118-160",
+        ".superpowers/release-0.1.9/live/duel-qual-1/summary.json:1-52",
+        ".superpowers/release-0.1.9/live/duel-qual-1/duel_arena.log:46-72",
+        ".superpowers/release-0.1.9/live/duel-qual-1/duel_arena.log:187-224",
+        ".superpowers/release-0.1.9/live/duel-qual-2/summary.json:1-52",
+        ".superpowers/release-0.1.9/live/duel-qual-2/duel_arena.log:46-80",
+        ".superpowers/release-0.1.9/live/duel-qual-2/duel_arena.log:242-287"
+      ]
+    }
+  ],
   "current_loader_dispositions": {
     "original_fixed_inventory_preserved": true,
     "fixed_enabled_card_count": 45,

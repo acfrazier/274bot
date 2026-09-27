@@ -18,10 +18,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 thread_local! {
     static HOME_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     static RS2B0T_OVERRIDE: RefCell<Option<Rs2b0tOverride>> = const { RefCell::new(None) };
-    static THREAD_PIN: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static THREAD_PIN: RefCell<Option<ThreadPin>> = const { RefCell::new(None) };
 }
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
+
+struct ThreadPin {
+    dir: PathBuf,
+    home: PathBuf,
+}
+
+impl Drop for ThreadPin {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
 
 #[derive(Clone)]
 enum Rs2b0tOverride {
@@ -105,9 +116,11 @@ impl IsolatedEnv {
                 return;
             }
             let n = SEQ.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!("274bot-test-thread-{n}"));
+            let dir =
+                std::env::temp_dir().join(format!("274bot-test-thread-{}-{n}", std::process::id()));
             let home = dir.join("home");
-            let _ = std::fs::create_dir_all(&home);
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&home).unwrap();
             HOME_OVERRIDE.with(|c| {
                 if c.borrow().is_none() {
                     *c.borrow_mut() = Some(home.clone());
@@ -118,13 +131,14 @@ impl IsolatedEnv {
                     *c.borrow_mut() = Some(Rs2b0tOverride::Cleared);
                 }
             });
-            *pin.borrow_mut() = Some(home);
+            *pin.borrow_mut() = Some(ThreadPin { dir, home });
         });
     }
 
     pub fn enter(label: &str) -> Self {
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("274bot-iso-{label}-{n}"));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-iso-{label}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let home = dir.join("home");
         std::fs::create_dir_all(&home).unwrap();
@@ -164,7 +178,7 @@ impl Drop for IsolatedEnv {
 
 fn restore_thread_pin() {
     THREAD_PIN.with(|pin| {
-        let Some(home) = pin.borrow().clone() else {
+        let Some(home) = pin.borrow().as_ref().map(|pin| pin.home.clone()) else {
             return;
         };
         HOME_OVERRIDE.with(|c| {

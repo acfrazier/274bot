@@ -110,6 +110,8 @@ fn player_row<'a>(index: i32, name: &'a str, actions: &'a [String]) -> SceneEnti
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -240,6 +242,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
@@ -288,6 +292,8 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }];
     let mut snap = base_snapshot();
     snap.locs = &locs;
@@ -302,6 +308,46 @@ export default class T extends LoopingBot {
             level: 0,
             action: "Open".into(),
             id: None,
+        }]
+    );
+    iso.join();
+}
+
+#[test]
+fn input_walk_maps_local_scene_coordinates_to_world_tile() {
+    let src = r#"
+import { Input } from '../../input/Input.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = Input.walk(10, 12); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.reach = ReachViewInput {
+        available: true,
+        base_x: 3490,
+        base_z: 9480,
+        level: 0,
+        width: 104,
+        height: 104,
+        walkable: &[],
+        reachable: &[],
+        reachable_adj: &[],
+        exact_rank: &[],
+        adjacent_rank: &[],
+        step: &[],
+        canlight: &[],
+        stamp: 0,
+    };
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__probe").unwrap(), true);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkTo {
+            x: 3500,
+            z: 9492,
+            level: 0,
         }]
     );
     iso.join();

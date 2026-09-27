@@ -1,9 +1,12 @@
 //! Rust-owned composition for the compatibility combat keep list.
 
-use api::game_data::{GameItem, SelectedGameData};
+use api::game_data::GameItem;
+#[cfg(feature = "load")]
+use api::game_data::SelectedGameData;
+#[cfg(feature = "load")]
 use serde_json::Value;
-use std::collections::HashSet;
 
+#[cfg(feature = "load")]
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct CombatKeepOptions {
     pub(crate) food: String,
@@ -14,6 +17,7 @@ pub(crate) struct CombatKeepOptions {
     pub(crate) extra: Vec<String>,
 }
 
+#[cfg(feature = "load")]
 pub(crate) fn from_args(args: &[Value]) -> CombatKeepOptions {
     let Some(object) = args.first().and_then(Value::as_object) else {
         return CombatKeepOptions::default();
@@ -45,6 +49,7 @@ pub(crate) fn from_args(args: &[Value]) -> CombatKeepOptions {
     }
 }
 
+#[cfg(feature = "load")]
 pub(crate) fn combat_keep_names(
     data: &SelectedGameData,
     options: &CombatKeepOptions,
@@ -69,49 +74,106 @@ pub(crate) fn combat_keep_names(
     keep
 }
 
-pub(crate) fn food_forms(items: &[GameItem], food: &str) -> Vec<String> {
-    let key = food.trim().to_lowercase();
-    let Some(alias) = items
+/// The alias of the whole food `key` names, when that item has forms: the
+/// first item named `key` (ASCII case-insensitive) whose alias is not itself
+/// a partial form or a bank note.
+fn parent_alias<'a>(items: &'a [GameItem], key: &str) -> Option<&'a str> {
+    let alias = items
         .iter()
         .find(|item| {
             item.name
                 .as_deref()
-                .is_some_and(|name| name.eq_ignore_ascii_case(&key))
-        })
-        .and_then(|item| item.alias.as_deref())
-    else {
-        return vec![key];
-    };
-    if alias.starts_with("partial_")
-        || alias.starts_with("half_")
-        || alias.starts_with("half_a_")
-        || alias.starts_with("half_an_")
-        || alias.ends_with("_slice")
-        || alias.starts_with("cert_")
-    {
-        return vec![key];
-    }
-
-    let aliases = [
-        alias.to_string(),
-        format!("partial_{alias}"),
-        format!("{alias}_slice"),
-    ];
-    let mut seen = HashSet::new();
-    items
+                .is_some_and(|name| name.eq_ignore_ascii_case(key))
+        })?
+        .alias
+        .as_deref()?;
+    let is_form = ["partial_", "half_", "cert_"]
         .iter()
-        .filter(|item| {
-            item.alias
-                .as_ref()
-                .is_some_and(|candidate| aliases.contains(candidate))
-        })
-        .filter_map(|item| item.name.as_deref())
-        .map(str::to_lowercase)
-        .filter(|name| seen.insert(name.clone()))
-        .collect()
+        .any(|prefix| alias.starts_with(prefix))
+        || alias.ends_with("_slice");
+    (!is_form).then_some(alias)
 }
 
-#[cfg(test)]
+/// Frozen `FOOD_FORMS` (`api/combat/food.ts:7-17`) by the selected aliases:
+/// the whole food, `2/3 cake` / `slice of cake` (`partial_`, `_slice`), the
+/// `chocolate slice` of `chocolate_cake`, `1/2 … pizza` (`half_`) and
+/// `half a/an … pie` (`half_a_`, `half_an_`).
+fn is_form_alias(parent: &str, candidate: &str) -> bool {
+    candidate == parent
+        || ["partial_", "half_", "half_a_", "half_an_"]
+            .iter()
+            .any(|prefix| candidate.strip_prefix(prefix) == Some(parent))
+        || candidate
+            .strip_suffix("_slice")
+            .is_some_and(|stem| stem == parent || parent.strip_suffix("_cake") == Some(stem))
+}
+
+/// The display names of `parent`'s forms, in item order.
+fn form_names<'a>(items: &'a [GameItem], parent: &'a str) -> impl Iterator<Item = &'a str> {
+    items.iter().filter_map(move |item| {
+        let alias = item.alias.as_deref()?;
+        is_form_alias(parent, alias)
+            .then_some(item.name.as_deref())
+            .flatten()
+    })
+}
+
+/// Frozen `foodForms(foodName)`: the lowercased names of every form of the
+/// named food, else the lowercased name alone.
+pub(crate) fn food_forms(items: &[GameItem], food: &str) -> Vec<String> {
+    let key = food.trim();
+    let Some(parent) = parent_alias(items, key) else {
+        return vec![key.to_lowercase()];
+    };
+    let mut forms: Vec<String> = Vec::new();
+    for name in form_names(items, parent) {
+        let name = name.to_lowercase();
+        if !forms.contains(&name) {
+            forms.push(name);
+        }
+    }
+    forms
+}
+
+/// The forms of one food, for matching item names without allocating.
+/// Aliases are unique and seven patterns name a form, so seven names hold
+/// every form.
+pub(crate) struct FoodForms<'a> {
+    names: [&'a str; 7],
+    len: usize,
+}
+
+impl<'a> FoodForms<'a> {
+    pub(crate) fn new(items: &'a [GameItem], food: &'a str) -> Self {
+        let key = food.trim();
+        let mut forms = Self {
+            names: [""; 7],
+            len: 0,
+        };
+        match parent_alias(items, key) {
+            Some(parent) => {
+                for name in form_names(items, parent).take(forms.names.len()) {
+                    forms.names[forms.len] = name;
+                    forms.len += 1;
+                }
+            }
+            None => {
+                forms.names[0] = key;
+                forms.len = 1;
+            }
+        }
+        forms
+    }
+
+    /// Frozen `isFoodItem(name, foodName)` (`food.ts:74-76`).
+    pub(crate) fn contains(&self, name: &str) -> bool {
+        self.names[..self.len]
+            .iter()
+            .any(|form| form.eq_ignore_ascii_case(name))
+    }
+}
+
+#[cfg(all(test, feature = "load"))]
 mod tests {
     use super::*;
     use client::io::ClientRevision;

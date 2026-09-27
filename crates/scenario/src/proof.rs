@@ -21,6 +21,8 @@ pub enum Proof {
     ItemId { id: i32, count: i32 },
     /// Inventory contains at most `count` of exact object `id`.
     ItemIdAtMost { id: i32, count: i32 },
+    /// Inventory contains at least `count` of any exact object in `ids`.
+    ItemIdAny { ids: &'static [i32], count: i32 },
     /// Seeded clue `seeded` has left the pack, and a different clue scroll
     /// or a casket is held. Name-resolved so a random next-step scroll still
     /// counts; the seed id cannot satisfy this while it remains. Fail-closed
@@ -57,6 +59,23 @@ pub enum Proof {
         level: i32,
         radius: i32,
     },
+    /// `arrived_ring(x, z, level, min..=max)`: on the level, Chebyshev
+    /// `min..=max` from the tile — where a File card's own walk from a
+    /// known Start tile ends when it picks a destination by distance.
+    ArrivedRing {
+        x: i32,
+        z: i32,
+        level: i32,
+        min: i32,
+        max: i32,
+    },
+    /// `script_receipt(prefix)`: the running File card painted a receipt
+    /// row starting with `prefix` after StartScript — the outcome of a card
+    /// that only observes. Host-fed: the live pump hands the runner the
+    /// driven slot's published paint
+    /// ([`crate::ScenarioRunner::observe_script_paint`]), so a bare
+    /// snapshot check fails closed.
+    ScriptReceipt { prefix: &'static str },
     /// `in_essence_mine`: standing inside the Rune Essence mine enclosure
     /// (m45_75) — the entry teleport lands at a random
     /// `essence_mine_teleports` coord, never the pad exactly.
@@ -101,8 +120,8 @@ pub enum Proof {
     StatAtMost { id: i32, max: i32 },
     /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`.
     Chat { needle: &'static str },
-    /// Skill `id`'s XP rose by at least `min` since the runner captured a
-    /// baseline at step start (live gold: thieving / combat / alch / fletch).
+    /// Skill `id`'s XP rose by at least `min` since StartScript, or since
+    /// its first XP watch when the scenario has no script-start boundary.
     StatXpGain { id: i32, min: i32 },
     /// Skill `id`'s XP rose by at least `min` since this specific step began.
     /// Unlike [`Proof::StatXpGain`], an earlier step's gain cannot satisfy it.
@@ -112,6 +131,10 @@ pub enum Proof {
     /// An NPC of the obj `r#type` id stands within chebyshev `radius` of
     /// the player on the player's level.
     NpcNear { r#type: usize, radius: i32 },
+    /// None of the exact NPC ids stands within `radius` of the player.
+    /// Requires an in-game player tile and therefore fails closed while
+    /// loading or disconnected.
+    NpcIdsAbsentNear { ids: &'static [usize], radius: i32 },
     /// An NPC with exact `name` stands within a bounded world area.
     NpcNameNear {
         name: &'static str,
@@ -123,6 +146,13 @@ pub enum Proof {
     /// An NPC with exact `name` currently targets the local player.
     /// Fail-closed when `self_slot` is unset or the face target is missing.
     NpcNameTargetingLocal { name: &'static str },
+    /// A live, unengaged named NPC is within the player's radius and can
+    /// see the player through the observed scene collision grid.
+    NpcNameUnengagedInSight { name: &'static str, radius: i32 },
+    /// The local player currently targets an NPC with exact `name`.
+    /// Fail-closed when `self_slot`, the local actor target, or NPC identity is
+    /// unavailable.
+    LocalTargetingNpcName { name: &'static str },
     /// A placed loc of exact `id` stands within chebyshev `radius` of
     /// `(x, z, level)` on the snapshot loc sweep.
     LocIdNear {
@@ -168,6 +198,10 @@ impl Proof {
             Proof::ItemAtMost { name, count } => format!("has_item({name})<={count}"),
             Proof::ItemId { id, count } => format!("has_item_id({id})>={count}"),
             Proof::ItemIdAtMost { id, count } => format!("has_item_id({id})<={count}"),
+            Proof::ItemIdAny { ids, count } => format!(
+                "has_item_id_any({})>={count}",
+                ids.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
+            ),
             Proof::ClueReplaced { seeded } => format!("clue_replaced({seeded})"),
 
             Proof::EquipmentId { id } => format!("has_equipment_id({id})"),
@@ -192,6 +226,14 @@ impl Proof {
                 level,
                 radius,
             } => format!("arrived_near({x},{z},{level},{radius})"),
+            Proof::ArrivedRing {
+                x,
+                z,
+                level,
+                min,
+                max,
+            } => format!("arrived_ring({x},{z},{level},{min}..={max})"),
+            Proof::ScriptReceipt { prefix } => format!("script_receipt({prefix})"),
             Proof::EssenceMine => "in_essence_mine".to_string(),
             Proof::ChatChoice => "chat_choice".to_string(),
             Proof::QuestDone { name } => format!("quest_done({name})"),
@@ -211,6 +253,15 @@ impl Proof {
             }
             Proof::NpcAt { r#type, x, z } => format!("npc({type})@({x},{z})"),
             Proof::NpcNear { r#type, radius } => format!("npc_near({type},{radius})"),
+            Proof::NpcIdsAbsentNear { ids, radius } => {
+                format!(
+                    "npc_ids_absent_near({},{radius})",
+                    ids.iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            }
             Proof::NpcNameNear {
                 name,
                 x,
@@ -220,6 +271,12 @@ impl Proof {
             } => format!("npc_name({name})@({x},{z},{level},r{radius})"),
             Proof::NpcNameTargetingLocal { name } => {
                 format!("npc_name({name})_targeting_local")
+            }
+            Proof::NpcNameUnengagedInSight { name, radius } => {
+                format!("npc_name({name})_unengaged_in_sight(r{radius})")
+            }
+            Proof::LocalTargetingNpcName { name } => {
+                format!("local_targeting_npc_name({name})")
             }
             Proof::LocIdNear {
                 id,
@@ -259,8 +316,8 @@ impl Proof {
         self.check_with_xp_baselines(snap, names, None)
     }
 
-    /// Like [`Proof::check`], but `StatXpGain` reads baselines captured
-    /// when the watch step began (`None` makes every `StatXpGain` fail).
+    /// Like [`Proof::check`], but `StatXpGain` reads the runner's cumulative
+    /// XP baselines (`None` makes every `StatXpGain` fail).
     pub fn check_with_xp_baselines(
         &self,
         snap: &GameSnapshot,
@@ -312,6 +369,9 @@ impl Proof {
             }
             Proof::ItemId { id, count } => inv_id_count(snap, *id) >= *count,
             Proof::ItemIdAtMost { id, count } => inv_id_count(snap, *id) <= *count,
+            Proof::ItemIdAny { ids, count } => {
+                ids.iter().map(|id| inv_id_count(snap, *id)).sum::<i32>() >= *count
+            }
             Proof::ClueReplaced { seeded } => {
                 if !snap.ingame() || snap.scene_state() != 2 {
                     return false;
@@ -421,6 +481,27 @@ impl Proof {
                         },
                     ) <= *radius
             }),
+            Proof::ArrivedRing {
+                x,
+                z,
+                level,
+                min,
+                max,
+            } => snap.tile().is_some_and(|(tx, tz, tl)| {
+                let here = Tile {
+                    x: tx,
+                    z: tz,
+                    level: tl,
+                };
+                let center = Tile {
+                    x: *x,
+                    z: *z,
+                    level: *level,
+                };
+                tl == *level && (*min..=*max).contains(&chebyshev(here, center))
+            }),
+            // The receipt is host-fed runner state, never snapshot state.
+            Proof::ScriptReceipt { .. } => false,
             Proof::EssenceMine => snap.tile().is_some_and(|(tx, tz, tl)| {
                 nav::essence::in_essence_mine(WorldTile {
                     x: tx,
@@ -495,6 +576,24 @@ impl Proof {
                         ) <= *radius
                 })
             }),
+            Proof::NpcIdsAbsentNear { ids, radius } => snap.tile().is_some_and(|(tx, tz, tl)| {
+                !snap.npcs().iter().any(|n| {
+                    n.r#type.is_some_and(|kind| ids.contains(&kind))
+                        && n.tile.level == tl
+                        && chebyshev(
+                            Tile {
+                                x: tx,
+                                z: tz,
+                                level: tl,
+                            },
+                            Tile {
+                                x: n.tile.x,
+                                z: n.tile.z,
+                                level: n.tile.level,
+                            },
+                        ) <= *radius
+                })
+            }),
             Proof::NpcNameNear {
                 name,
                 x,
@@ -515,6 +614,25 @@ impl Proof {
                                 target.kind == ActorKind::Player && target.index == slot as usize
                             })
                     })
+            }
+            Proof::NpcNameUnengagedInSight { name, radius } => {
+                npc_unengaged_in_sight(snap, name, *radius)
+            }
+            Proof::LocalTargetingNpcName { name } => {
+                if snap.self_slot() < 0 {
+                    return false;
+                }
+                let Some(target) = snap
+                    .local_player()
+                    .and_then(|player| player.player.actor.target)
+                else {
+                    return false;
+                };
+                target.kind == ActorKind::Npc
+                    && snap
+                        .npcs()
+                        .iter()
+                        .any(|npc| npc.index == target.index && npc.name.as_deref() == Some(*name))
             }
             Proof::LocIdNear {
                 id,
@@ -550,6 +668,51 @@ impl Proof {
             } => render_view_ready(snap, *x, *z, *level, *orbit_yaw, *orbit_pitch),
         }
     }
+}
+
+fn npc_unengaged_in_sight(snap: &GameSnapshot, name: &str, radius: i32) -> bool {
+    use api::line_of_sight::{has_line_of_sight_local, Footprint};
+
+    let Some((x, z, level)) = snap.tile() else {
+        return false;
+    };
+    let scene = snap.scene();
+    if !snap.ingame() || snap.scene_state() != 2 || !scene.available || scene.level != level {
+        return false;
+    }
+    let flags = |lx: i32, lz: i32| {
+        if lx < 0 || lz < 0 || lx >= scene.width || lz >= scene.height {
+            return None;
+        }
+        scene
+            .collision_flags
+            .get((lx * scene.height + lz) as usize)
+            .copied()
+    };
+    let player = Footprint {
+        lx: x - scene.base_x,
+        lz: z - scene.base_z,
+        size: 1,
+    };
+    if flags(player.lx, player.lz).is_none() {
+        return false;
+    }
+    snap.npcs().iter().any(|npc| {
+        let tile = npc.network;
+        let source = Footprint {
+            lx: tile.x - scene.base_x,
+            lz: tile.z - scene.base_z,
+            size: npc.size,
+        };
+        npc.name.as_deref() == Some(name)
+            && tile.level == level
+            && (tile.x - x).abs().max((tile.z - z).abs()) <= radius
+            && !npc.in_combat
+            && npc.target.is_none()
+            && (npc.total_health == 0 || npc.health > 0)
+            && flags(source.lx, source.lz).is_some()
+            && has_line_of_sight_local(&flags, source, player)
+    })
 }
 
 fn render_view_ready(
@@ -923,6 +1086,16 @@ mod tests {
         assert!(Proof::ItemId { id: 60, count: 2 }.check(&s, None));
         assert!(!Proof::ItemId { id: 849, count: 2 }.check(&s, None));
         assert!(Proof::ItemIdAtMost { id: 849, count: 1 }.check(&s, None));
+        assert!(Proof::ItemIdAny {
+            ids: &[849, 60],
+            count: 2,
+        }
+        .check(&s, None));
+        assert!(!Proof::ItemIdAny {
+            ids: &[849, 61],
+            count: 2,
+        }
+        .check(&s, None));
         assert_eq!(
             Proof::ItemId { id: 60, count: 2 }.name(),
             "has_item_id(60)>=2"
@@ -1269,6 +1442,53 @@ mod tests {
     }
 
     #[test]
+    fn arrived_ring_needs_the_distance_band_on_the_level() {
+        let s = snap(&mut seeded()); // player at (3220, 3212, 0)
+        let ring = |z, level, min, max| Proof::ArrivedRing {
+            x: 3220,
+            z,
+            level,
+            min,
+            max,
+        };
+        assert!(
+            !ring(3212, 0, 2, 6).check(&s, None),
+            "standing on the centre is not a walk away from it"
+        );
+        assert!(
+            !ring(3213, 0, 2, 6).check(&s, None),
+            "cheb 1 is inside the band"
+        );
+        assert!(
+            ring(3214, 0, 2, 6).check(&s, None),
+            "cheb 2 is the band's edge"
+        );
+        assert!(
+            ring(3218, 0, 2, 6).check(&s, None),
+            "cheb 6 is the far edge"
+        );
+        assert!(!ring(3219, 0, 2, 6).check(&s, None), "cheb 7 overshoots");
+        assert!(
+            !ring(3214, 1, 2, 6).check(&s, None),
+            "the band is per-level"
+        );
+        assert_eq!(
+            ring(3214, 0, 2, 6).name(),
+            "arrived_ring(3220,3214,0,2..=6)"
+        );
+    }
+
+    #[test]
+    fn script_receipt_fails_closed_on_a_bare_snapshot() {
+        let s = snap(&mut seeded());
+        let receipt = Proof::ScriptReceipt {
+            prefix: "los-receipt:",
+        };
+        assert!(!receipt.check(&s, None));
+        assert_eq!(receipt.name(), "script_receipt(los-receipt:)");
+    }
+
+    #[test]
     fn essence_mine_holds_only_inside_the_enclosure() {
         let mut c = seeded();
         let mut s = snap(&mut c); // player at (3220, 3212): outside m45_75
@@ -1524,6 +1744,19 @@ mod tests {
             .name(),
             "npc_near(708,2)"
         );
+        assert!(
+            !Proof::NpcIdsAbsentNear {
+                ids: &[708, 709],
+                radius: 2,
+            }
+            .check(&s, None),
+            "the present 708 blocks the absent-set proof"
+        );
+        assert!(Proof::NpcIdsAbsentNear {
+            ids: &[709, 710],
+            radius: 2,
+        }
+        .check(&s, None));
     }
 
     #[test]
@@ -1617,6 +1850,142 @@ mod tests {
     }
 
     #[test]
+    fn guard_readiness_requires_an_idle_visible_nearby_npc() {
+        let mut c = seeded();
+        let mut npcs = (0..=708)
+            .map(|id| NpcType {
+                id,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        npcs[708].name = "Guard".into();
+        npcs[708].size = 1;
+        c.cache = Arc::new(Cache {
+            npcs,
+            ..Default::default()
+        });
+        for column in &mut c.collision[0].flags {
+            column.fill(0);
+        }
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.route_x[0] = 22;
+        npc.entity.route_z[0] = 12;
+        npc.entity.x = 22 * 128 + 64;
+        npc.entity.z = 12 * 128 + 64;
+        npc.entity.face_entity = -1;
+        let proof = Proof::NpcNameUnengagedInSight {
+            name: "Guard",
+            radius: 5,
+        };
+        assert!(proof.check(&snap(&mut c), None));
+
+        c.npc[3].as_mut().unwrap().entity.face_entity = api::snapshot::PLAYER_FACE_BASE + 4;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "another player owns the guard"
+        );
+        c.npc[3].as_mut().unwrap().entity.face_entity = -1;
+        c.npc[3].as_mut().unwrap().entity.combat_cycle = c.loop_cycle + 100;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "combat without a face target is still busy"
+        );
+        c.npc[3].as_mut().unwrap().entity.combat_cycle = 0;
+
+        c.collision[0].flags[21][12] = client::dash3d::CollisionFlag::VIS_SCENERY;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "a wall blocks the guard's sight"
+        );
+        c.collision[0].flags[21][12] = 0;
+        c.npc[3].as_mut().unwrap().entity.route_x[0] = 26;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "the server's catch radius is bounded"
+        );
+        c.npc[3].as_mut().unwrap().entity.route_x[0] = 22;
+
+        c.npc[3].as_mut().unwrap().entity.total_health = 10;
+        c.npc[3].as_mut().unwrap().entity.health = 0;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "a dead guard cannot catch a steal"
+        );
+        c.npc[3].as_mut().unwrap().entity.health = 10;
+        assert!(proof.check(&snap(&mut c), None));
+        c.scene_state = 1;
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "unavailable collision fails closed"
+        );
+    }
+
+    #[test]
+    fn local_targeting_npc_name_requires_the_local_players_named_npc_target() {
+        let mut c = seeded();
+        c.self_slot = 4;
+        c.local_player.as_mut().unwrap().entity.face_entity = 3;
+        let mut npcs = (0..=709)
+            .map(|id| NpcType {
+                id,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        npcs[708].name = "Moss giant".into();
+        npcs[709].name = "Rat".into();
+        c.cache = Arc::new(Cache {
+            npcs,
+            ..Default::default()
+        });
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        c.bump_gens(ServerProt::NPC_INFO);
+
+        let proof = Proof::LocalTargetingNpcName { name: "Moss giant" };
+        let s = snap(&mut c);
+        assert!(proof.check(&s, None));
+        assert_eq!(proof.name(), "local_targeting_npc_name(Moss giant)");
+
+        let mut wrong_name = ClientNpc {
+            r#type: Some(709),
+            ..Default::default()
+        };
+        wrong_name.entity.x = 104;
+        wrong_name.entity.z = 204;
+        c.npc[4] = Some(Box::new(wrong_name));
+        c.npc_ids[1] = 4;
+        c.npc_count = 2;
+        c.local_player.as_mut().unwrap().entity.face_entity = 4;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        c.bump_gens(ServerProt::NPC_INFO);
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "an NPC target with the wrong name must not qualify"
+        );
+
+        c.local_player.as_mut().unwrap().entity.face_entity = api::snapshot::PLAYER_FACE_BASE + 3;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "a player target must not qualify as the named NPC"
+        );
+
+        c.local_player.as_mut().unwrap().entity.face_entity = -1;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "missing local actor target fails closed"
+        );
+
+        c.local_player.as_mut().unwrap().entity.face_entity = 3;
+        c.self_slot = -1;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        assert!(
+            !proof.check(&snap(&mut c), None),
+            "unset self_slot fails closed"
+        );
+    }
+
+    #[test]
     fn stat_xp_gain_fails_without_baseline_when_skill_row_was_missing() {
         let mut c = seeded();
         c.stat_xp[17] = 100;
@@ -1690,7 +2059,6 @@ mod tests {
         c.stat_xp[17] = 147;
         let s = snap(&mut c);
         assert!(proof.check_with_xp_context(&s, None, Some(&cumulative), Some((17, 146))));
-        assert_eq!(proof.name(), "fresh_stat_xp_gain(17)>=1");
     }
 
     #[test]

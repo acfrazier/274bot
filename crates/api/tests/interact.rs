@@ -1043,6 +1043,7 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         WireCommand::Close,
         WireCommand::Count { value: 16 },
         WireCommand::Walk { tile },
+        WireCommand::WalkNearest { tile },
         WireCommand::SideTab { tab: 17 },
         WireCommand::Login {
             username: "u".into(),
@@ -2304,6 +2305,34 @@ fn press_dispatches_button_and_refuses_target_client_side_only() {
                 ..
             }
         ));
+    }
+    assert_eq!(rec.actions, vec![0]);
+    assert_eq!(rec.menus, vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 102)]);
+}
+/// `if_button` preserves the script-level IF_BUTTON contract even when the
+/// interface metadata labels the component as a toggle.
+#[test]
+fn if_button_ignores_generic_button_type_for_server_script_controls() {
+    let mut s = scene();
+    plant_modal(&mut s.client);
+    set_iface_mut(
+        &mut s.client,
+        102,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_TOGGLE,
+            ..Default::default()
+        },
+    );
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        let widget = snap
+            .widgets()
+            .iter()
+            .find(|w| w.component_id == 102)
+            .unwrap();
+        assert!(matches!(ix.if_button(widget), SendResult::Sent { .. }));
     }
     assert_eq!(rec.actions, vec![0]);
     assert_eq!(rec.menus, vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 102)]);

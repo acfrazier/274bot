@@ -523,26 +523,58 @@ fn observe_first_combat(watch: &PairWatch) {
 }
 
 #[test]
-fn duel_settings_carry_targets_and_reject_a_partner_key() {
-    let bag = pair_settings(PairCase::Duel, &[], 0, "alice", "bob").unwrap();
-    assert!(
-        bag.get("partner").is_none(),
-        "Duel schema has no partner setting: {bag:?}"
+fn duel_trainer_schema_defaults_prepare_with_native_counterpart_identity() {
+    let schema = script::settings_schema_from_source(
+        r#"export const SETTINGS = {
+            mode: { type: 'string', default: 'Train', options: ['Train', 'Clue helper'] },
+            partner: { type: 'string', default: '', showIf: { key: 'mode', anyOf: ['Clue helper'] } },
+            targetAttack: { type: 'number', default: 99 },
+            targetStrength: { type: 'number', default: 99 },
+            targetDefence: { type: 'number', default: 1 }
+        };"#,
     );
     let watch = duel_watch();
-    watch
-        .install_prepared_settings("alice", bag.clone(), "bob", bag.clone())
-        .expect("target bags without partner install");
+    host_play::live_start::pair_starts(
+        &["alice".into(), "bob".into()],
+        PairCase::Duel,
+        String::new(),
+        script::LoadShape::CompatClass,
+        &schema,
+        Vec::new(),
+        &watch,
+    )
+    .expect("the training schema's hidden empty helper partner must not block preparation");
+    watch.observe_duel("alice", duel_ready("alice"), false);
+    watch.observe_duel("bob", duel_ready("bob"), false);
+    watch.begin_shared_start("alice", "bob").unwrap();
+    let evidence = watch.evidence();
+    assert_eq!(evidence["witness"]["a"]["partner"], "bob");
+    assert_eq!(evidence["witness"]["b"]["partner"], "alice");
+    assert_eq!(evidence["witness"]["a"]["settings"]["partner"], "");
+    assert_eq!(evidence["witness"]["a"]["settings"]["mode"], "Train");
+    assert_eq!(watch.status(), PairWatchStatus::Running);
+    assert!(watch.qualify().is_err(), "preparation is not combat proof");
+}
 
-    let mut with_partner = bag.clone();
-    with_partner.insert("partner".into(), serde_json::json!("bob"));
-    let error = watch
-        .install_prepared_settings("alice", with_partner, "bob", bag)
-        .unwrap_err();
-    assert!(
-        error.contains("must not carry partner"),
-        "injected Duel partner must be rejected: {error}"
-    );
+#[test]
+fn duel_trainer_rejects_helper_mode_and_any_populated_partner() {
+    for bag in [
+        serde_json::json!({"mode": "Clue helper", "partner": ""}),
+        serde_json::json!({"mode": "Train", "partner": "bob"}),
+        serde_json::json!({"mode": "Train", "partner": " "}),
+        serde_json::json!({"mode": "Train", "partner": null}),
+        serde_json::json!({"mode": "Train", "partner": 0}),
+        serde_json::json!({"partner": "bob"}),
+    ] {
+        let watch = duel_watch();
+        let bag = bag.as_object().unwrap().clone();
+        assert!(
+            watch
+                .install_prepared_settings("alice", bag.clone(), "bob", bag)
+                .is_err(),
+            "a helper or explicit partner is not the native-counterpart trainer cell"
+        );
+    }
 }
 
 #[test]

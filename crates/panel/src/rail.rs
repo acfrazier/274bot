@@ -1,5 +1,7 @@
-//! Sidecar rail chrome: window geometry, the tile size, and the traffic
-//! light that colours each member's cap dot.
+//! Sidecar rail chrome: window geometry, the tile size, and the colour of
+//! each member's status dot (its [`Light`] comes from the shared fleet row).
+
+use frontend_core::Light;
 
 /// Width of the MultiBox sidecar rail (rs2b0t's 264px strip).
 pub const RAIL_W: f32 = 264.0;
@@ -51,111 +53,39 @@ pub const FOLD_GLYPH: &str = "\u{2582}";
 /// Unfold the rail blit (raise the head).
 pub const UNFOLD_GLYPH: &str = "\u{2585}";
 
-/// Cap dot state: error red wins, then not-ingame grey (logged out),
-/// then running green, else idle yellow. A FIFO-queued login slot is not
-/// ingame, so it is grey.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Light {
-    /// Unknown / logged out — not ingame and no error.
-    Grey,
-    /// Login or runtime error.
-    Red,
-    /// Idle — ingame and nothing running (paused/stopping scripts, the
-    /// run orb).
-    Yellow,
-    /// Running — ingame and a script is Running or nav is queued.
-    Green,
-}
-
-impl Light {
-    /// The cap dot's fill color (amber CRT palette).
-    pub fn rgb(&self) -> [f32; 4] {
-        match self {
-            Light::Grey => crate::theme::TEXT_DIM,
-            Light::Red => crate::theme::ERROR,
-            Light::Yellow => crate::theme::ACCENT,
-            Light::Green => crate::theme::GREEN,
-        }
+/// The cap dot's fill colour for a row's light (amber CRT palette).
+pub fn light_rgb(light: Light) -> [f32; 4] {
+    match light {
+        Light::Grey => crate::theme::TEXT_DIM,
+        Light::Red => crate::theme::ERROR,
+        Light::Yellow => crate::theme::ACCENT,
+        Light::Green => crate::theme::GREEN,
     }
-
-    /// Short status label for the cap head title (`"{name}: {brief}"`).
-    pub fn brief(&self) -> &'static str {
-        match self {
-            Light::Grey => "logged out",
-            Light::Red => "error",
-            Light::Yellow => "idle",
-            Light::Green => "running",
-        }
-    }
-}
-
-/// The cap head title: member name plus a brief status. A grey (not ingame,
-/// no error) member names the login step it is in, so a slot that is still
-/// starting or loading does not read "logged out" until it is ready.
-pub fn cap_title(name: &str, light: Light, status: Option<&host_play::SlotStatus>) -> String {
-    use host_play::StartupPhase;
-    let step = status
-        .filter(|_| light == Light::Grey)
-        .and_then(|s| match s.startup_phase {
-            StartupPhase::Preparing => Some("starting".to_string()),
-            StartupPhase::Queueing
-                if s.queue_position >= 1 && s.queue_position <= s.queue_total =>
-            {
-                Some(format!("queued {}/{}", s.queue_position, s.queue_total))
-            }
-            StartupPhase::Connecting => Some("logging in".to_string()),
-            StartupPhase::LoadingScene => Some("loading".to_string()),
-            _ => None,
-        });
-    format!("{name}: {}", step.as_deref().unwrap_or(light.brief()))
 }
 
 /// Whether this rail/grid tile shows its blit. Sidecar + `only_selected` stays
 /// cap-only; grid + `only_selected` keeps the focused blit only (the grid *is*
 /// the Game pane). Default: grid keeps every blit; the sidecar folds the
-/// focused member (the Game pane already shows it).
+/// focused member (the Game pane already shows it). `is_focused` is whether
+/// `name` is the focused member (callers read it under the focus lock).
 pub fn rail_preview_open(
     name: &str,
-    focused: Option<&str>,
+    is_focused: bool,
     only_selected: bool,
     grid: bool,
     preview: &std::collections::HashMap<String, bool>,
 ) -> bool {
-    if only_selected {
-        if grid {
-            if focused != Some(name) {
-                return false;
-            }
-        } else {
-            return false;
-        }
+    if only_selected && !(grid && is_focused) {
+        return false;
     }
-    preview
-        .get(name)
-        .copied()
-        .unwrap_or(grid || focused != Some(name))
-}
-
-/// Map a slot's status to its tile's traffic light: error red wins, then
-/// not-ingame → grey, then running → green, else idle yellow.
-pub fn traffic_light(ingame: bool, error: bool, running: bool) -> Light {
-    if error {
-        Light::Red
-    } else if !ingame {
-        Light::Grey
-    } else if running {
-        Light::Green
-    } else {
-        Light::Yellow
-    }
+    preview.get(name).copied().unwrap_or(grid || !is_focused)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        cap_title, os_window_size, rail_preview_open, rail_split_ratio, traffic_light, Light,
-        BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, STATUS_GLYPH, TILE_H,
-        TILE_W, UNFOLD_GLYPH,
+        os_window_size, rail_preview_open, rail_split_ratio, BASE_WINDOW_H, BASE_WINDOW_W,
+        FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, STATUS_GLYPH, TILE_H, TILE_W, UNFOLD_GLYPH,
     };
 
     #[test]
@@ -170,72 +100,53 @@ mod tests {
     fn rail_preview_defaults_fold_focused() {
         let empty = std::collections::HashMap::new();
         assert!(
-            !rail_preview_open("a", Some("a"), false, false, &empty),
+            !rail_preview_open("a", true, false, false, &empty),
             "sidecar folds the focused blit by default"
         );
         assert!(
-            rail_preview_open("b", Some("a"), false, false, &empty),
+            rail_preview_open("b", false, false, false, &empty),
             "other members show a blit by default"
         );
-        assert!(!rail_preview_open("b", Some("a"), true, false, &empty));
+        assert!(!rail_preview_open("b", false, true, false, &empty));
         assert!(
-            rail_preview_open("a", Some("a"), false, true, &empty),
+            rail_preview_open("a", true, false, true, &empty),
             "grid keeps the focused blit — there is no separate Game pane"
         );
         let mut on = std::collections::HashMap::new();
         on.insert("a".into(), true);
-        assert!(rail_preview_open("a", Some("a"), false, false, &on));
+        assert!(rail_preview_open("a", true, false, false, &on));
     }
 
     #[test]
     fn rail_preview_only_selected_grid_keeps_focused_suppresses_others() {
         let empty = std::collections::HashMap::new();
         assert!(
-            rail_preview_open("a", Some("a"), true, true, &empty),
+            rail_preview_open("a", true, true, true, &empty),
             "grid + only_selected must show the focused cell blit"
         );
         assert!(
-            !rail_preview_open("b", Some("a"), true, true, &empty),
+            !rail_preview_open("b", false, true, true, &empty),
             "grid + only_selected must suppress non-focused cells"
         );
         assert!(
-            rail_preview_open("b", Some("b"), true, true, &empty),
-            "focus switch A→B: newly focused cell draws"
-        );
-        assert!(
-            !rail_preview_open("a", Some("b"), true, true, &empty),
-            "focus switch A→B: former focus stays suppressed"
-        );
-        assert!(
-            !rail_preview_open("a", None, true, true, &empty),
-            "grid + only_selected with no focus paints no blits"
-        );
-        assert!(
-            !rail_preview_open("b", Some("a"), true, false, &empty),
-            "sidecar + only_selected stays cap-only for non-focused"
-        );
-        assert!(
-            !rail_preview_open("a", Some("a"), true, false, &empty),
+            !rail_preview_open("a", true, true, false, &empty),
             "sidecar + only_selected stays cap-only even for focused"
-        );
-        assert!(
-            rail_preview_open("b", Some("a"), false, false, &empty),
-            "sidecar + only_selected off keeps ordinary non-focused preview"
-        );
-        assert!(
-            !rail_preview_open("a", Some("a"), false, false, &empty),
-            "sidecar + only_selected off still folds focused by default"
         );
         let mut folded = std::collections::HashMap::new();
         folded.insert("a".into(), false);
         assert!(
-            !rail_preview_open("a", Some("a"), true, true, &folded),
+            !rail_preview_open("a", true, true, true, &folded),
             "manual fold on focused grid cell is honored when only_selected"
         );
         folded.insert("a".into(), true);
         assert!(
-            rail_preview_open("a", Some("a"), true, true, &folded),
+            rail_preview_open("a", true, true, true, &folded),
             "manual unfold on focused grid cell is honored when only_selected"
+        );
+        folded.insert("b".into(), true);
+        assert!(
+            !rail_preview_open("b", false, true, true, &folded),
+            "only_selected overrides a manual unfold on a non-focused grid cell"
         );
     }
 
@@ -274,92 +185,6 @@ mod tests {
             super::next_os_window_size(stretched, false, false),
             stretched,
             "already-closed must not keep subtracting RAIL_W every frame"
-        );
-    }
-
-    #[test]
-    fn traffic_light_maps_all_four_states() {
-        // Unknown / logged out: not ingame, no error.
-        assert_eq!(traffic_light(false, false, false), Light::Grey);
-        // A FIFO-queued login slot is not ingame, so it is grey, not running.
-        assert_eq!(traffic_light(false, false, true), Light::Grey);
-        // Error red wins over ingame and running.
-        assert_eq!(traffic_light(false, true, false), Light::Red);
-        assert_eq!(traffic_light(true, true, true), Light::Red);
-        assert_eq!(traffic_light(false, true, true), Light::Red);
-        // Idle yellow: ingame and nothing running.
-        assert_eq!(traffic_light(true, false, false), Light::Yellow);
-        // Running green: ingame and (script running or nav queued).
-        assert_eq!(traffic_light(true, false, true), Light::Green);
-    }
-
-    #[test]
-    fn idle_is_not_running() {
-        // Paused / Stopping scripts and the run orb are not running.
-        assert_ne!(
-            traffic_light(true, false, false),
-            traffic_light(true, false, true)
-        );
-        // A queued-login (title screen) slot is not running either.
-        assert_eq!(traffic_light(false, false, true), Light::Grey);
-    }
-
-    #[test]
-    fn brief_labels_each_state() {
-        assert_eq!(Light::Grey.brief(), "logged out");
-        assert_eq!(Light::Red.brief(), "error");
-        assert_eq!(Light::Yellow.brief(), "idle");
-        assert_eq!(Light::Green.brief(), "running");
-    }
-
-    #[test]
-    fn cap_title_renders_name_and_brief() {
-        assert_eq!(cap_title("bob", Light::Grey, None), "bob: logged out");
-        assert_eq!(cap_title("bob", Light::Red, None), "bob: error");
-        assert_eq!(cap_title("bob", Light::Yellow, None), "bob: idle");
-        assert_eq!(cap_title("bob", Light::Green, None), "bob: running");
-    }
-
-    #[test]
-    fn grey_cap_names_the_login_step_until_ready() {
-        use host_play::{SlotStatus, StartupPhase};
-        let at = |phase, queue: (i32, i32)| SlotStatus {
-            username: "bob".into(),
-            startup_phase: phase,
-            queue_position: queue.0,
-            queue_total: queue.1,
-            ..Default::default()
-        };
-        let title = |s: &SlotStatus| cap_title("bob", Light::Grey, Some(s));
-        assert_eq!(
-            title(&at(StartupPhase::Preparing, (-1, -1))),
-            "bob: starting"
-        );
-        assert_eq!(
-            title(&at(StartupPhase::Queueing, (2, 5))),
-            "bob: queued 2/5"
-        );
-        assert_eq!(
-            title(&at(StartupPhase::Queueing, (-1, -1))),
-            "bob: logged out",
-            "a parked title-screen slot with no queue place is logged out"
-        );
-        assert_eq!(
-            title(&at(StartupPhase::Connecting, (-1, -1))),
-            "bob: logging in"
-        );
-        assert_eq!(
-            title(&at(StartupPhase::LoadingScene, (-1, -1))),
-            "bob: loading"
-        );
-        assert_eq!(
-            cap_title(
-                "bob",
-                Light::Red,
-                Some(&at(StartupPhase::Connecting, (-1, -1)))
-            ),
-            "bob: error",
-            "an error outranks the login step"
         );
     }
 

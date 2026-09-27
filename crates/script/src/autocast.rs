@@ -54,6 +54,7 @@ enum Reason {
     Armed,
     UnknownSpell,
     MissingControls,
+    MissingGameData,
     MissingFacts,
     StaffMissing,
     OpenTab,
@@ -71,6 +72,7 @@ impl Reason {
             Self::UnknownSpell => Some(format!(
                 "'{spell}' is not an autocastable spell — see SPELL_DB (Wind Strike … Fire Wave)"
             )),
+            Self::MissingGameData => Some(crate::supply_v2::GAME_DATA_UNAVAILABLE.into()),
             Self::MissingControls => Some(format!(
                 "not impl: Autocast.arm needs posted coms for '{spell}'"
             )),
@@ -100,6 +102,8 @@ impl Reason {
 pub(crate) struct ArmOutcome {
     ok: bool,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
     not_impl: bool,
 }
 
@@ -108,6 +112,8 @@ impl ArmOutcome {
         Self {
             ok: reason == Reason::Armed,
             message: reason.log(spell).unwrap_or_default(),
+            reason: (reason == Reason::MissingGameData)
+                .then(|| crate::supply_v2::GAME_DATA_UNAVAILABLE.to_string()),
             not_impl: reason.not_impl(),
         }
     }
@@ -166,6 +172,9 @@ impl Family for Autocast {
 
     fn begin(args: ArmArgs, cx: &mut Cx<'_>) -> Begin<Self> {
         let data = crate::supply_v2::selected_data();
+        if data.is_none() {
+            return Begin::Done(ArmOutcome::of(Reason::MissingGameData, &args.spell));
+        }
         let Some(controls) = data
             .as_deref()
             .and_then(SelectedGameData::autocast_controls)
@@ -202,6 +211,9 @@ impl Family for Autocast {
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<ArmOutcome> {
         let data = crate::supply_v2::selected_data();
+        if data.is_none() {
+            return Step::Done(ArmOutcome::of(Reason::MissingGameData, &self.spell));
+        }
         let Some(controls) = data
             .as_deref()
             .and_then(SelectedGameData::autocast_controls)
@@ -448,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_controls_refuse_with_their_own_not_impl_reason() {
+    fn missing_selected_data_explains_unverified_content() {
         machine::on_reset();
         observed::on_reset();
         crate::supply_v2::configure(None);
@@ -456,8 +468,9 @@ mod tests {
             start("Wind Strike"),
             Started::Settled(Outcome::Done(json!({
                 "ok": false,
-                "message": "not impl: Autocast.arm needs posted coms for 'Wind Strike'",
-                "not_impl": true,
+                "message": "game data unavailable: this server's content isn't verified (see profile/engine settings)",
+                "reason": "game data unavailable: this server's content isn't verified (see profile/engine settings)",
+                "not_impl": false,
             })))
         );
         assert!(drain().is_empty(), "a refused arm sends nothing");

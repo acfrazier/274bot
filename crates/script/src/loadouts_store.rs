@@ -427,7 +427,12 @@ pub fn resolve_setting_options_with_labels(
     loadouts: &LoadoutsStore,
     game_data: Option<&api::game_data::SelectedGameData>,
 ) -> ResolvedSettingOptions {
-    if !def.options.is_empty() {
+    let mixed_equipment_options = def.options.last().is_some_and(|s| s == "Other")
+        && def.options_from.as_deref().is_some_and(|from| {
+            from.split(',')
+                .all(|ident| crate::rs2b0t_registry::w1c_equipment_option_families(ident).is_some())
+        });
+    if !def.options.is_empty() && !mixed_equipment_options {
         return ResolvedSettingOptions::from_values(def.options.clone());
     }
     if def.options_from.as_deref() == Some("loadouts") {
@@ -437,6 +442,22 @@ pub fn resolve_setting_options_with_labels(
         return resolve_item_option_spec(spec, game_data);
     }
     if let Some(from) = def.options_from.as_deref() {
+        if from
+            .split(',')
+            .all(|ident| crate::rs2b0t_registry::w1c_equipment_option_families(ident).is_some())
+        {
+            let mut resolved = ResolvedSettingOptions::default();
+            for family in from.split(',') {
+                let part = resolve_w1c_equipment_options(family, game_data);
+                resolved.values.extend(part.values);
+                resolved.labels.extend(part.labels);
+            }
+            for literal in &def.options {
+                resolved.values.push(literal.clone());
+                resolved.labels.push(literal.clone());
+            }
+            return resolved;
+        }
         if crate::rs2b0t_registry::is_revision_fact_option_ident(from) {
             return resolve_w1c_equipment_options(from, game_data);
         }
@@ -642,29 +663,19 @@ pub fn weapon_of(loadout: &serde_json::Value, fallback: Option<&str>) -> serde_j
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
     use crate::rs2b0t_registry::{ItemOptionCandidate, ItemOptionSpec, SettingDef};
+    use crate::IsolatedEnv;
 
-    static TMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    fn tmp_path() -> PathBuf {
-        let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-loadouts-test-{n}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.join("loadouts.json")
+    fn tmp_path() -> (IsolatedEnv, PathBuf) {
+        let scratch = IsolatedEnv::enter("loadouts-store");
+        let path = scratch.dir.join("loadouts.json");
+        (scratch, path)
     }
 
     #[test]
     fn store_round_trips_at_private_mode() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         {
             let mut store = LoadoutsStore::at(path.clone());
             store.upsert(
@@ -697,7 +708,7 @@ mod tests {
 
     #[test]
     fn legacy_array_worn_and_carry_are_preserved_without_guessing_slots() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         std::fs::write(
             &path,
             r#"[{"name":"old","worn":["helm","plate"],"carry":["Lobster"]}]"#,
@@ -725,7 +736,7 @@ mod tests {
 
     #[test]
     fn explicit_slots_and_quantities_survive_file_round_trip() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let mut store = LoadoutsStore::at(path.clone());
         store.upsert(
             Loadout::new("melee")
@@ -746,7 +757,7 @@ mod tests {
 
     #[test]
     fn failed_save_can_restore_the_previous_file_image() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let mut store = LoadoutsStore::at(path.clone());
         store.upsert(Loadout::new("keep").with_carry("Lobster", 4));
         store.save().unwrap();
@@ -781,7 +792,7 @@ mod tests {
 
     #[test]
     fn catalog_metadata_options_when_schema_empty() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let store = LoadoutsStore::at(path);
         let def = SettingDef {
             id: "location".into(),
@@ -828,7 +839,7 @@ mod tests {
 
     #[test]
     fn w1c_equipment_options_closed_without_game_data() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let store = LoadoutsStore::at(path);
         let def = equipment_from("STAFFS");
         assert!(resolve_setting_options(&def, &store, None).is_empty());
@@ -837,7 +848,7 @@ mod tests {
 
     #[test]
     fn w1c_equipment_options_match_curated_families_on_both_pins() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let store = LoadoutsStore::at(path);
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
@@ -923,7 +934,7 @@ mod tests {
 
     #[test]
     fn recovered_inline_options_still_win_over_metadata() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let store = LoadoutsStore::at(path);
         let def = SettingDef {
             id: "surface".into(),
@@ -950,7 +961,7 @@ mod tests {
 
     #[test]
     fn resolve_setting_options_lists_loadout_names() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let mut store = LoadoutsStore::at(path);
         store.upsert(Loadout::new("fish").with_carry("net", 1));
         store.upsert(Loadout::new("mine"));
@@ -1091,7 +1102,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_matches_both_pinned_revisions() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let store = LoadoutsStore::at(path);
         let def = item_def(alcher_spec(&[]));
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1122,7 +1133,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_label_sort_orders_prefix_then_keys_on_both_pins() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let store = LoadoutsStore::at(path);
         let spec = ItemOptionSpec {
             prefix: vec!["custom".into()],
@@ -1171,7 +1182,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_none_facts_prefix_only() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let store = LoadoutsStore::at(path);
         let def = item_def(alcher_spec(&[]));
         let opts = resolve_setting_options(&def, &store, None);
@@ -1181,7 +1192,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_drops_missing_alias_and_keeps_sort() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let store = LoadoutsStore::at(path);
         let def = item_def(alcher_spec(&[cand("not_a_real_selected_item", None)]));
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1195,7 +1206,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_tie_order_and_identity_labels() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let store = LoadoutsStore::at(path);
         let def = item_def(alcher_spec(&[]));
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1229,7 +1240,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_rebounds_without_mutating_schema() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let store = LoadoutsStore::at(path);
         let def = item_def(alcher_spec(&[]));
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1245,7 +1256,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_leaves_literals_and_loadouts() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let mut store = LoadoutsStore::at(path);
         store.upsert(Loadout::new("fish"));
         let literal = SettingDef {
@@ -1275,7 +1286,7 @@ mod tests {
 
     #[test]
     fn replace_at_renames_without_duplicating() {
-        let path = tmp_path();
+        let (_scratch, path) = tmp_path();
         let mut store = LoadoutsStore::at(path);
         store.upsert(Loadout::new("melee").with_slot("hat", "helm"));
         store.upsert(Loadout::new("range"));

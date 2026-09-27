@@ -16,6 +16,10 @@ const BAD_IMPORT: &str = concat!(
     "import x from '../../event/webwalk/Something.js';\n",
     "export default class T extends LoopingBot { override loop() {} }\n"
 );
+const BAD_RUNTIME: &str = concat!(
+    "throw new Error('runtime boom');\n",
+    "export default class T extends LoopingBot { override loop() {} }\n"
+);
 const V1_ON_NATIVE: &str =
     "export const apiVersion = 1;\nexport function tick(api) { api._n = 1; }\n";
 const V2_ON_COMPAT: &str = concat!(
@@ -154,14 +158,13 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
         .to_string();
     assert!(js.load_failures().is_empty());
 
-    std::fs::write(&path, BAD_IMPORT).unwrap();
-    let err = js
-        .prepare_card(ScriptSource::File, &path.to_string_lossy())
-        .unwrap_err();
-    assert!(
-        err.contains("unloadable") || err.contains("Something.js"),
-        "{err}"
-    );
+    std::fs::write(&path, BAD_RUNTIME).unwrap();
+    let prepared = js
+        .prepare_card_unvalidated(ScriptSource::File, &path.to_string_lossy())
+        .unwrap();
+    let err = prepared.validate().unwrap_err();
+    js.record_prepared_failure(&prepared, &err);
+    assert!(err.contains("runtime boom"), "{err}");
 
     let live = js.get(ScriptSource::File, &path.to_string_lossy()).unwrap();
     assert_eq!(live.js, old_js);
@@ -171,7 +174,7 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
     assert_eq!(failures.len(), 1);
     let f = &failures[0];
     assert_eq!(f.identity_key, card.identity_key());
-    assert_eq!(f.stage, LoadStage::ImportResolution);
+    assert_eq!(f.stage, LoadStage::RuntimeLoad);
     assert_ne!(f.fingerprint, old_fp);
     assert!(!f.fingerprint.is_empty());
 }
@@ -217,8 +220,12 @@ fn catalog_mixed_batch_retains_named_failures() {
     assert!(diff.changed.iter().any(|n| n == "GoodBot"));
     let mut prepared_ok = Vec::new();
     for name in &diff.changed.clone() {
-        if let Ok(prepared) = js.prepare_card(ScriptSource::Catalog, name) {
-            prepared_ok.push(prepared);
+        if let Ok(prepared) = js.prepare_card_unvalidated(ScriptSource::Catalog, name) {
+            if let Err(error) = prepared.validate() {
+                js.record_prepared_failure(&prepared, &error);
+            } else {
+                prepared_ok.push(prepared);
+            }
         }
     }
     assert_eq!(prepared_ok.len(), 1);

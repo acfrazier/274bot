@@ -224,6 +224,13 @@ const VT_SNAP_MAIN_MODAL_TEXTS: VOffsetT = 248;
 const VT_SNAP_PUZZLE_BOARD: VOffsetT = 250;
 const VT_SNAP_PUZZLE_BOARD_GENERATION: VOffsetT = 252;
 const VT_SNAP_WALK_MISSING_CARRY: VOffsetT = 254;
+const VT_SNAP_BANK_SELECTION_REQUEST_ID: VOffsetT = 256;
+const VT_SNAP_BANK_SELECTION_GENERATION: VOffsetT = 258;
+const VT_SNAP_BANK_SELECTION_INDEX: VOffsetT = 260;
+const VT_SNAP_BANK_SELECTION_KIND: VOffsetT = 262;
+const VT_SNAP_SELF_ANIM: VOffsetT = 264;
+const VT_SNAP_WALK_OUTCOME_BLOCKED: VOffsetT = 266;
+const VT_SNAP_BANK_SNAPSHOT_GENERATION: VOffsetT = 268;
 
 // Carry: { id, count, name }
 const VT_CARRY_ID: VOffsetT = 4;
@@ -274,9 +281,10 @@ const VT_BA_DEST_X: VOffsetT = 16;
 const VT_BA_DEST_Z: VOffsetT = 18;
 const VT_BA_DEST_LEVEL: VOffsetT = 20;
 
-// WidgetText: { component_id, text }
+// WidgetText: { component_id, text, item_count }
 const VT_WT_COMPONENT: VOffsetT = 4;
 const VT_WT_TEXT: VOffsetT = 6;
+const VT_WT_ITEM_COUNT: VOffsetT = 8;
 
 // QuestStatus: { name, status, component_id }
 const VT_QUEST_NAME: VOffsetT = 4;
@@ -323,7 +331,9 @@ const VT_CL_TYPE: VOffsetT = 8;
 const VT_CL_USERNAME: VOffsetT = 10;
 
 // SceneEntity: { index, id, name, x, z, level, distance, health,
-//               max_health, in_combat, animating, actions }
+//               max_health, in_combat, animating, actions, reachable,
+//               reachable_adj, combat_level, target_kind, target_index,
+//               size, nx, nz, shape, angle }
 const VT_ENT_INDEX: VOffsetT = 4;
 const VT_ENT_ID: VOffsetT = 6;
 const VT_ENT_NAME: VOffsetT = 8;
@@ -344,10 +354,12 @@ const VT_ENT_TARGET_INDEX: VOffsetT = 36;
 const VT_ENT_SIZE: VOffsetT = 38;
 const VT_ENT_NX: VOffsetT = 40;
 const VT_ENT_NZ: VOffsetT = 42;
+const VT_ENT_SHAPE: VOffsetT = 44;
+const VT_ENT_ANGLE: VOffsetT = 46;
 
-// ChatOption: { text }
+// ChatOption: { text, com_id }
 const VT_CHAT_OPT_TEXT: VOffsetT = 4;
-
+const VT_CHAT_OPT_COM: VOffsetT = 6;
 // MakeButton: { qty, com_id }
 const VT_MAKE_BTN_QTY: VOffsetT = 4;
 const VT_MAKE_BTN_COM: VOffsetT = 6;
@@ -366,10 +378,7 @@ const VT_CS_COMPONENT: VOffsetT = 8;
 const VT_VARP_INDEX: VOffsetT = 4;
 const VT_VARP_VALUE: VOffsetT = 6;
 
-// Interact: { op, x, z, level, kind, name, stand_op, choose, action,
-//             index, component_id, bank_generation, bank_item_id, lands_as_id,
-//             source_item_id, source_item_slot, target_item_id, target_item_slot,
-//             request_id, xf, yf, input_identity, allow_wilderness, allow_bank_fetch }
+// Interact: schema-order slots. New fields append; never reorder.
 const VT_IN_OP: VOffsetT = 4;
 const VT_IN_X: VOffsetT = 6;
 const VT_IN_Z: VOffsetT = 8;
@@ -401,6 +410,19 @@ const VT_IN_ALLOW_TELEPORTS: VOffsetT = 58;
 const VT_IN_AVOID: VOffsetT = 60;
 const VT_IN_INSPECT_ACK_SEQ: VOffsetT = 62;
 const VT_IN_INSPECT_ACK_GENERATION: VOffsetT = 64;
+const VT_IN_USE_MAGE_BANK: VOffsetT = 66;
+const VT_IN_USE_ZANARIS_BANK: VOffsetT = 68;
+const VT_IN_CHANNEL_ID: VOffsetT = 70;
+const VT_IN_DATA: VOffsetT = 72;
+const VT_IN_SEQ: VOffsetT = 74;
+const VT_IN_RUN_POLICY_CLEAR: VOffsetT = 76;
+const VT_IN_RUN_AUTO_KIND: VOffsetT = 78;
+const VT_IN_RUN_ENERGY_KIND: VOffsetT = 80;
+const VT_IN_RUN_ENERGY_MIN: VOffsetT = 82;
+
+const RUN_OPTION_ABSENT: u8 = 0;
+const RUN_OPTION_FALSE_OR_FLOOR: u8 = 1;
+const RUN_OPTION_TRUE_OR_NAN: u8 = 2;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -515,12 +537,18 @@ pub struct SceneEntityInput<'a> {
     pub nx: i32,
     /// Path-head network SW z. Packed only with `size >= 1`.
     pub nz: i32,
+    /// Placed loc shape; `0` for non-loc rows and omitted from their wire table.
+    pub shape: i32,
+    /// Placed loc angle; `0` for non-loc rows and omitted from their wire table.
+    pub angle: i32,
 }
 
-/// One chat modal BUTTON_OK choice.
+/// One chat modal BUTTON_OK choice, including the exact component direct
+/// catalog callers pass to `actions.ifButton`.
 #[derive(Clone, Copy)]
 pub struct ChatOptionInput<'a> {
     pub text: &'a str,
+    pub com_id: i32,
 }
 
 /// One inv/bank/equipment row posted from `ItemView`.
@@ -759,6 +787,9 @@ pub struct NativeFactsInput<'a> {
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
+    /// The settled route end is frozen `'blocked'`: the player stands next
+    /// to a last tile the live scene refuses. Part of the walk outcome.
+    pub walk_outcome_blocked: bool,
     /// The walk outcome's navigator-named gate shorts. ALWAYS supplied — an
     /// empty slice is the observed "this outcome names no short", and the pack
     /// posts it with the family above in the same buffer, so a clear is never
@@ -769,6 +800,35 @@ pub struct NativeFactsInput<'a> {
     /// Posted collision family. `None` omits the table (old callers / first
     /// post without Collision). `Some(UNAVAILABLE)` posts a clear.
     pub collision: Option<CollisionViewInput<'a>>,
+    pub bank_selection: BankSelectionInput,
+    /// The local player's primary animation id (frozen `reader.selfAnim()`,
+    /// `-1` idle or no local player). `None` omits the slot (callers that
+    /// do not observe it); the isolate keeps its last value.
+    pub self_anim: Option<i32>,
+    /// Bank item packet generation (`-1` while closed), not the open/close
+    /// session identity. `None` omits the slot and keeps the last value.
+    pub bank_snapshot_generation: Option<i64>,
+}
+
+/// A terminal select-only result. Its ordinal is resolved against Start's
+/// immutable bank facts, never a JS-supplied bank object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BankSelectionInput {
+    pub request_id: u64,
+    pub generation: u64,
+    pub bank_index: i32,
+    pub kind: u8,
+}
+
+impl Default for BankSelectionInput {
+    fn default() -> Self {
+        Self {
+            request_id: 0,
+            generation: 0,
+            bank_index: -1,
+            kind: 0,
+        }
+    }
 }
 
 /// Host-published inspect family on the snapshot. All-zero is omitted / old buffer.
@@ -903,6 +963,8 @@ pub struct CarryInput<'a> {
 pub struct WidgetTextInput<'a> {
     pub component_id: i32,
     pub text: &'a str,
+    /// Number of observed TYPE_INV rows; `-1` for non-inventory widgets.
+    pub item_count: i32,
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -1742,6 +1804,7 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_WALK_OUTCOME_REQUEST_ID,
                 false,
             )?
+            .visit_field::<bool>("walk_outcome_blocked", VT_SNAP_WALK_OUTCOME_BLOCKED, false)?
             .visit_field::<i32>("canvas_width", VT_SNAP_CANVAS_WIDTH, false)?
             .visit_field::<i32>("canvas_height", VT_SNAP_CANVAS_HEIGHT, false)?
             .visit_field::<i32>("combat_level", VT_SNAP_COMBAT_LEVEL, false)?
@@ -1881,6 +1944,24 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_WALK_MISSING_CARRY,
                 false,
             )?
+            .visit_field::<u64>(
+                "bank_selection_request_id",
+                VT_SNAP_BANK_SELECTION_REQUEST_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "bank_selection_generation",
+                VT_SNAP_BANK_SELECTION_GENERATION,
+                false,
+            )?
+            .visit_field::<i32>("bank_selection_index", VT_SNAP_BANK_SELECTION_INDEX, false)?
+            .visit_field::<u8>("bank_selection_kind", VT_SNAP_BANK_SELECTION_KIND, false)?
+            .visit_field::<i32>("self_anim", VT_SNAP_SELF_ANIM, false)?
+            .visit_field::<i64>(
+                "bank_snapshot_generation",
+                VT_SNAP_BANK_SNAPSHOT_GENERATION,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -1890,6 +1971,37 @@ impl SnapshotReader<'_> {
     /// Interpret `buf` as a root-`Snapshot` FlatBuffer after verification.
     pub fn from_bytes(buf: &[u8]) -> Result<SnapshotReader<'_>, String> {
         verified_root::<SnapshotReader>(buf)
+    }
+
+    pub fn bank_selection(&self) -> Option<BankSelectionInput> {
+        unsafe {
+            Some(BankSelectionInput {
+                request_id: self
+                    .tab
+                    .get::<u64>(VT_SNAP_BANK_SELECTION_REQUEST_ID, None)?,
+                generation: self
+                    .tab
+                    .get::<u64>(VT_SNAP_BANK_SELECTION_GENERATION, Some(0))
+                    .unwrap_or(0),
+                bank_index: self
+                    .tab
+                    .get::<i32>(VT_SNAP_BANK_SELECTION_INDEX, Some(-1))
+                    .unwrap_or(-1),
+                kind: self
+                    .tab
+                    .get::<u8>(VT_SNAP_BANK_SELECTION_KIND, Some(0))
+                    .unwrap_or(0),
+            })
+        }
+    }
+
+    /// Whether the buffer carries the local player's animation id.
+    pub fn has_self_anim(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_ANIM, None) }.is_some()
+    }
+    /// The local player's primary animation id, `-1` when absent.
+    pub fn self_anim(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_ANIM, None) }.unwrap_or(-1)
     }
 
     pub fn tick(&self) -> u64 {
@@ -1977,6 +2089,16 @@ impl SnapshotReader<'_> {
     }
     pub fn bank_generation(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_SNAP_BANK_GENERATION, None) }.unwrap_or(0)
+    }
+    pub fn has_bank_snapshot_generation(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<i64>(VT_SNAP_BANK_SNAPSHOT_GENERATION, None)
+                .is_some()
+        }
+    }
+    pub fn bank_snapshot_generation(&self) -> i64 {
+        unsafe { self.tab.get::<i64>(VT_SNAP_BANK_SNAPSHOT_GENERATION, None) }.unwrap_or(-1)
     }
     pub fn has_count_dialog_open(&self) -> bool {
         unsafe {
@@ -2256,6 +2378,9 @@ impl SnapshotReader<'_> {
     }
     pub fn walk_outcome_request_id(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_REQUEST_ID, None) }.unwrap_or(0)
+    }
+    pub fn walk_outcome_blocked(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_WALK_OUTCOME_BLOCKED, None) }.unwrap_or(false)
     }
     pub fn has_route_inspect_seq(&self) -> bool {
         unsafe {
@@ -2884,6 +3009,8 @@ pub struct SceneEntityFp {
     pub size: i32,
     pub nx: i32,
     pub nz: i32,
+    pub shape: i32,
+    pub angle: i32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -3075,7 +3202,7 @@ pub struct SnapshotFingerprint {
     pub chat_open: bool,
     pub chat_continue: bool,
     pub chat_text: Option<String>,
-    pub chat_options: Vec<String>,
+    pub chat_options: Vec<(String, i32)>,
     pub side_tab: i32,
     pub varps: Vec<VarpInput>,
     pub combat_styles: Vec<CombatStyleFp>,
@@ -3116,7 +3243,7 @@ pub struct SnapshotFingerprint {
     pub attacked_by_player: bool,
     pub self_target_kind: i32,
     pub self_target_index: i32,
-    pub widgets: Vec<(i32, String)>,
+    pub widgets: Vec<(i32, String, i32)>,
     pub self_chat: Option<String>,
     pub hint_tile: Option<(i32, i32)>,
     pub retaliate_controls: Option<(i32, i32)>,
@@ -3141,12 +3268,16 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
+    pub walk_outcome_blocked: bool,
     /// The walk outcome's named shorts. Part of that family: a list that moved
     /// without a scalar moving still re-posts the family, so a clear is never
     /// left to a stale keep.
     pub walk_missing_carry: Vec<CarryFp>,
     pub route_inspect: RouteInspectFp,
     pub collision: CollisionViewFp,
+    pub bank_selection: BankSelectionInput,
+    pub self_anim: Option<i32>,
+    pub bank_snapshot_generation: Option<i64>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -3236,6 +3367,8 @@ impl SnapshotFingerprint {
                 size: e.size,
                 nx: e.nx,
                 nz: e.nz,
+                shape: e.shape,
+                angle: e.angle,
             }
         }
         SnapshotFingerprint {
@@ -3295,7 +3428,7 @@ impl SnapshotFingerprint {
             chat_options: input
                 .chat_options
                 .iter()
-                .map(|o| o.text.to_string())
+                .map(|o| (o.text.to_string(), o.com_id))
                 .collect(),
             side_tab: input.side_tab,
             varps: input.varps.to_vec(),
@@ -3386,7 +3519,7 @@ impl SnapshotFingerprint {
             widgets: input
                 .widgets
                 .iter()
-                .map(|w| (w.component_id, w.text.to_string()))
+                .map(|w| (w.component_id, w.text.to_string(), w.item_count))
                 .collect(),
             self_chat: native.self_chat.map(str::to_string),
             hint_tile: native.hint_tile,
@@ -3416,6 +3549,7 @@ impl SnapshotFingerprint {
             walk_outcome_radius: native.walk_outcome_radius,
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
             walk_outcome_request_id: native.walk_outcome_request_id,
+            walk_outcome_blocked: native.walk_outcome_blocked,
             walk_missing_carry: native
                 .walk_missing_carry
                 .iter()
@@ -3427,6 +3561,9 @@ impl SnapshotFingerprint {
                 .collect(),
             route_inspect: route_inspect_fp(&native.route_inspect),
             collision: collision_fp(None, native.collision),
+            bank_selection: native.bank_selection,
+            self_anim: native.self_anim,
+            bank_snapshot_generation: native.bank_snapshot_generation,
         }
     }
 }
@@ -3574,6 +3711,10 @@ pub struct DeltaMask {
     /// buffer. Never set for the generation alone — the generation is not
     /// a field of its own.
     pub puzzle_board: bool,
+    pub bank_selection: bool,
+    /// The local player's animation id; written only when supplied.
+    pub self_anim: bool,
+    pub bank_snapshot_generation: bool,
 }
 
 impl DeltaMask {
@@ -3662,6 +3803,9 @@ impl DeltaMask {
             collision: true,
             main_modal_texts: true,
             puzzle_board: true,
+            bank_selection: true,
+            self_anim: true,
+            bank_snapshot_generation: true,
         }
     }
 
@@ -3765,6 +3909,7 @@ impl DeltaMask {
                 || next.walk_outcome_radius != last.walk_outcome_radius
                 || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports
                 || next.walk_outcome_request_id != last.walk_outcome_request_id
+                || next.walk_outcome_blocked != last.walk_outcome_blocked
                 || next.walk_missing_carry != last.walk_missing_carry,
             route_inspect: next.route_inspect != last.route_inspect,
             collision: next.collision != last.collision,
@@ -3772,6 +3917,10 @@ impl DeltaMask {
             // The generation rides inside the board row, so one comparison
             // covers both slots.
             puzzle_board: next.puzzle_board != last.puzzle_board,
+            bank_selection: next.bank_selection != last.bank_selection,
+            self_anim: next.self_anim != last.self_anim,
+            bank_snapshot_generation: next.bank_snapshot_generation
+                != last.bank_snapshot_generation,
         }
     }
 }
@@ -4554,6 +4703,30 @@ fn encode_snapshot_masked_into(
     if mask.widgets {
         b.push_slot_always(VT_SNAP_WIDGETS, widgets_off.expect("mask checked"));
     }
+    if mask.bank_selection {
+        b.push_slot_always(
+            VT_SNAP_BANK_SELECTION_REQUEST_ID,
+            native.bank_selection.request_id,
+        );
+        b.push_slot_always(
+            VT_SNAP_BANK_SELECTION_GENERATION,
+            native.bank_selection.generation,
+        );
+        b.push_slot_always(
+            VT_SNAP_BANK_SELECTION_INDEX,
+            native.bank_selection.bank_index,
+        );
+        b.push_slot_always(VT_SNAP_BANK_SELECTION_KIND, native.bank_selection.kind);
+    }
+    if let (true, Some(anim)) = (mask.self_anim, native.self_anim) {
+        b.push_slot_always(VT_SNAP_SELF_ANIM, anim);
+    }
+    if let (true, Some(generation)) = (
+        mask.bank_snapshot_generation,
+        native.bank_snapshot_generation,
+    ) {
+        b.push_slot_always(VT_SNAP_BANK_SNAPSHOT_GENERATION, generation);
+    }
     if mask.self_chat {
         b.push_slot_always(VT_SNAP_SELF_CHAT, self_chat_off.expect("mask checked"));
     }
@@ -4606,6 +4779,7 @@ fn encode_snapshot_masked_into(
             VT_SNAP_WALK_OUTCOME_REQUEST_ID,
             native.walk_outcome_request_id,
         );
+        b.push_slot_always(VT_SNAP_WALK_OUTCOME_BLOCKED, native.walk_outcome_blocked);
         // The vector rides every post of the family: a supplied empty one is
         // the observed "no named short", so a clear is never omitted. Only a
         // caller that supplied no list at all omits the slot.
@@ -4853,6 +5027,8 @@ fn scene_entity_off<'b>(
         b.push_slot_always(VT_ENT_NX, e.nx);
         b.push_slot_always(VT_ENT_NZ, e.nz);
     }
+    b.push_slot(VT_ENT_SHAPE, e.shape, 0);
+    b.push_slot(VT_ENT_ANGLE, e.angle, 0);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -4863,6 +5039,7 @@ fn chat_option_off<'b>(
     let text_off = b.create_string(o.text);
     let tab = b.start_table();
     b.push_slot_always(VT_CHAT_OPT_TEXT, text_off);
+    b.push_slot(VT_CHAT_OPT_COM, o.com_id, 0);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -4890,6 +5067,7 @@ fn widget_text_off<'b>(
     let tab = b.start_table();
     b.push_slot_always(VT_WT_COMPONENT, w.component_id);
     b.push_slot_always(VT_WT_TEXT, text_off);
+    b.push_slot_always(VT_WT_ITEM_COUNT, w.item_count);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -5156,6 +5334,12 @@ impl SceneEntityReader<'_> {
     pub fn nz(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_ENT_NZ, None) }.unwrap_or(0)
     }
+    pub fn shape(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_SHAPE, None) }.unwrap_or(0)
+    }
+    pub fn angle(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_ANGLE, None) }.unwrap_or(0)
+    }
 }
 
 impl Verifiable for SceneEntityReader<'_> {
@@ -5185,6 +5369,8 @@ impl Verifiable for SceneEntityReader<'_> {
             .visit_field::<i32>("size", VT_ENT_SIZE, false)?
             .visit_field::<i32>("nx", VT_ENT_NX, false)?
             .visit_field::<i32>("nz", VT_ENT_NZ, false)?
+            .visit_field::<i32>("shape", VT_ENT_SHAPE, false)?
+            .visit_field::<i32>("angle", VT_ENT_ANGLE, false)?
             .finish();
         Ok(())
     }
@@ -5212,12 +5398,17 @@ impl ChatOptionReader<'_> {
         }
         .unwrap_or("")
     }
+
+    pub fn com_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_CHAT_OPT_COM, None) }.unwrap_or(0)
+    }
 }
 
 impl Verifiable for ChatOptionReader<'_> {
     fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
         v.visit_table(pos)?
             .visit_field::<ForwardsUOffset<&str>>("text", VT_CHAT_OPT_TEXT, false)?
+            .visit_field::<i32>("com_id", VT_CHAT_OPT_COM, false)?
             .finish();
         Ok(())
     }
@@ -5318,6 +5509,9 @@ impl WidgetTextReader<'_> {
     pub fn text(&self) -> &str {
         unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_WT_TEXT, None) }.unwrap_or("")
     }
+    pub fn item_count(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_WT_ITEM_COUNT, Some(-1)) }.unwrap_or(-1)
+    }
 }
 
 impl Verifiable for WidgetTextReader<'_> {
@@ -5325,6 +5519,7 @@ impl Verifiable for WidgetTextReader<'_> {
         v.visit_table(pos)?
             .visit_field::<i32>("component_id", VT_WT_COMPONENT, false)?
             .visit_field::<ForwardsUOffset<&str>>("text", VT_WT_TEXT, false)?
+            .visit_field::<i32>("item_count", VT_WT_ITEM_COUNT, false)?
             .finish();
         Ok(())
     }
@@ -5796,6 +5991,41 @@ impl InteractReader<'_> {
     pub fn request_id(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_IN_REQUEST_ID, None) }.unwrap_or(0)
     }
+    pub fn use_mage_bank(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_IN_USE_MAGE_BANK, None) }.unwrap_or(false)
+    }
+    pub fn use_zanaris_bank(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_IN_USE_ZANARIS_BANK, None) }.unwrap_or(false)
+    }
+    pub fn channel_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_IN_CHANNEL_ID, None) }.unwrap_or(0)
+    }
+    pub fn data(&self) -> Vec<u8> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<Vector<u8>>>(VT_IN_DATA, None)
+        }
+        .map_or_else(Vec::new, |data| data.iter().collect())
+    }
+    pub fn seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_IN_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn run_policy_clear(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_IN_RUN_POLICY_CLEAR, None)
+                .unwrap_or(false)
+        }
+    }
+    pub fn run_auto_kind(&self) -> u8 {
+        unsafe { self.tab.get::<u8>(VT_IN_RUN_AUTO_KIND, None) }.unwrap_or(RUN_OPTION_ABSENT)
+    }
+    pub fn run_energy_kind(&self) -> u8 {
+        unsafe { self.tab.get::<u8>(VT_IN_RUN_ENERGY_KIND, None) }.unwrap_or(RUN_OPTION_ABSENT)
+    }
+    pub fn run_energy_min(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IN_RUN_ENERGY_MIN, None) }.unwrap_or(0)
+    }
     pub fn xf(&self) -> Option<f64> {
         unsafe { self.tab.get::<f64>(VT_IN_XF, None) }
     }
@@ -5865,6 +6095,12 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<i32>("from_z", VT_IN_FROM_Z, false)?
             .visit_field::<i32>("from_level", VT_IN_FROM_LEVEL, false)?
             .visit_field::<bool>("allow_teleports", VT_IN_ALLOW_TELEPORTS, false)?
+            .visit_field::<bool>("use_mage_bank", VT_IN_USE_MAGE_BANK, false)?
+            .visit_field::<bool>("use_zanaris_bank", VT_IN_USE_ZANARIS_BANK, false)?
+            .visit_field::<bool>("run_policy_clear", VT_IN_RUN_POLICY_CLEAR, false)?
+            .visit_field::<u8>("run_auto_kind", VT_IN_RUN_AUTO_KIND, false)?
+            .visit_field::<u8>("run_energy_kind", VT_IN_RUN_ENERGY_KIND, false)?
+            .visit_field::<i32>("run_energy_min", VT_IN_RUN_ENERGY_MIN, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<AvoidRectReader>>>>(
                 "avoid",
                 VT_IN_AVOID,
@@ -5876,6 +6112,9 @@ impl Verifiable for InteractReader<'_> {
                 VT_IN_INSPECT_ACK_GENERATION,
                 false,
             )?
+            .visit_field::<u64>("channel_id", VT_IN_CHANNEL_ID, false)?
+            .visit_field::<ForwardsUOffset<Vector<u8>>>("data", VT_IN_DATA, false)?
+            .visit_field::<u64>("seq", VT_IN_SEQ, false)?
             .finish();
         Ok(())
     }
@@ -5981,6 +6220,50 @@ pub fn cap_paint(paint: &crate::shim::ScriptPaint) -> Result<(), String> {
 /// a missing/unknown `op` (or a request missing a required field) fails
 /// the whole batch — the host logs it and drops the batch, never fatal,
 /// exactly like the old JSON parse.
+/// A row's typed avoid rectangles (inspect route and world walks).
+fn decoded_avoid(row: &InteractReader<'_>) -> Vec<crate::shim::InspectAvoidWire> {
+    row.avoid()
+        .into_iter()
+        .map(|rect| crate::shim::InspectAvoidWire::Rect {
+            min_x: rect.min_x(),
+            max_x: rect.max_x(),
+            min_z: rect.min_z(),
+            max_z: rect.max_z(),
+            level: (rect.level() >= 0).then(|| rect.level()),
+        })
+        .collect()
+}
+
+fn decoded_run_policy(
+    row: &InteractReader<'_>,
+) -> Result<Option<api::run_policy::RunPolicyOverride>, String> {
+    use api::run_policy::{RunEnergyMin, RunPolicyOverride};
+
+    let run_auto = match row.run_auto_kind() {
+        RUN_OPTION_ABSENT => None,
+        RUN_OPTION_FALSE_OR_FLOOR => Some(false),
+        RUN_OPTION_TRUE_OR_NAN => Some(true),
+        kind => return Err(format!("run-policy has unknown run_auto kind {kind}")),
+    };
+    let energy_min = match row.run_energy_kind() {
+        RUN_OPTION_ABSENT => None,
+        RUN_OPTION_FALSE_OR_FLOOR => Some(RunEnergyMin::Floor(row.run_energy_min())),
+        RUN_OPTION_TRUE_OR_NAN => Some(RunEnergyMin::NotANumber),
+        kind => return Err(format!("run-policy has unknown energy kind {kind}")),
+    };
+    if row.run_policy_clear() {
+        if run_auto.is_some() || energy_min.is_some() {
+            return Err("run-policy clear carries fields".to_string());
+        }
+        Ok(None)
+    } else {
+        Ok(Some(RunPolicyOverride {
+            run_auto,
+            energy_min,
+        }))
+    }
+}
+
 pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>, String> {
     let batch = InteractBatchReader::from_bytes(buf)?;
     let rows = batch.reqs()?;
@@ -6023,6 +6306,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
+                avoid: decoded_avoid(&row),
             }),
             "walk-near" => out.push(crate::shim::InteractReq::WalkNear {
                 x: row.x(),
@@ -6033,8 +6317,18 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
+                avoid: decoded_avoid(&row),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
+            "select-bank" => out.push(crate::shim::InteractReq::SelectBank {
+                x: row.x(),
+                z: row.z(),
+                level: row.level(),
+                allow_wilderness: row.allow_wilderness(),
+                use_mage_bank: row.use_mage_bank(),
+                use_zanaris_bank: row.use_zanaris_bank(),
+                request_id: row.request_id(),
+            }),
             "abort-walk" => out.push(crate::shim::InteractReq::AbortWalk {
                 request_id: row.request_id(),
             }),
@@ -6048,21 +6342,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_teleports: row.allow_teleports_explicit(),
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
-                avoid: row
-                    .avoid()
-                    .into_iter()
-                    .map(|rect| crate::shim::InspectAvoidWire::Rect {
-                        min_x: rect.min_x(),
-                        max_x: rect.max_x(),
-                        min_z: rect.min_z(),
-                        max_z: rect.max_z(),
-                        level: if rect.level() < 0 {
-                            None
-                        } else {
-                            Some(rect.level())
-                        },
-                    })
-                    .collect(),
+                avoid: decoded_avoid(&row),
                 request_id: row.request_id(),
             }),
             "inspect-ack" => out.push(crate::shim::InteractReq::InspectAck {
@@ -6275,6 +6555,17 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .component_id()
                     .ok_or_else(|| "if-button has no component_id".to_string())?,
             }),
+            "duel-accept" => out.push(crate::shim::InteractReq::DuelAccept {
+                screen: row
+                    .action()
+                    .ok_or_else(|| "duel-accept has no screen".to_string())?
+                    .to_string(),
+                partner: row
+                    .name()
+                    .ok_or_else(|| "duel-accept has no partner".to_string())?
+                    .to_string(),
+                rules: row.x(),
+            }),
             "close-modal" => out.push(crate::shim::InteractReq::CloseModal),
             "side-tab" => out.push(crate::shim::InteractReq::SideTab {
                 tab: row
@@ -6313,6 +6604,56 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 level: row.level(),
             }),
             "recovery-anchor-none" => out.push(crate::shim::InteractReq::RecoveryAnchorNone),
+            "channel-open" => out.push(crate::shim::InteractReq::ChannelOpen {
+                channel_id: row.channel_id(),
+                name: row
+                    .name()
+                    .ok_or_else(|| "channel-open has no name".to_string())?
+                    .to_string(),
+            }),
+            "channel-post" => {
+                let data = row.data();
+                if data.len() > crate::channel::MAX_CHANNEL_BYTES {
+                    return Err("channel-post data exceeds cap".into());
+                }
+                out.push(crate::shim::InteractReq::ChannelPost {
+                    channel_id: row.channel_id(),
+                    name: row
+                        .name()
+                        .ok_or_else(|| "channel-post has no name".to_string())?
+                        .to_string(),
+                    data,
+                });
+            }
+            "channel-close" => out.push(crate::shim::InteractReq::ChannelClose {
+                channel_id: row.channel_id(),
+                name: row
+                    .name()
+                    .ok_or_else(|| "channel-close has no name".to_string())?
+                    .to_string(),
+            }),
+            "channel-message" => {
+                let data = row.data();
+                if data.len() > crate::channel::MAX_CHANNEL_BYTES {
+                    return Err("channel-message data exceeds cap".into());
+                }
+                out.push(crate::shim::InteractReq::ChannelMessage {
+                    channel_id: row.channel_id(),
+                    sender: row
+                        .name()
+                        .ok_or_else(|| "channel-message has no sender".to_string())?
+                        .to_string(),
+                    seq: row.seq(),
+                    data,
+                });
+            }
+            "channel-status" => out.push(crate::shim::InteractReq::ChannelStatus {
+                channel_id: row.channel_id(),
+                message: row
+                    .action()
+                    .ok_or_else(|| "channel-status has no message".to_string())?
+                    .to_string(),
+            }),
             "key" => out.push(crate::shim::InteractReq::Key {
                 down: row.index() == Some(1),
                 key: row
@@ -6327,6 +6668,9 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 y: row.yf().unwrap_or(f64::NAN),
                 button: row.level(),
                 identity: row.input_identity(),
+            }),
+            "run-policy" => out.push(crate::shim::InteractReq::RunPolicyOverride {
+                policy: decoded_run_policy(&row)?,
             }),
             other => return Err(format!("unknown interact op: {other}")),
         }
@@ -6345,6 +6689,7 @@ fn interact_off<'b>(
         InteractReq::Walk { .. } => "walk",
         InteractReq::WalkNear { .. } => "walk-near",
         InteractReq::WalkNearestBank => "walk-nearest-bank",
+        InteractReq::SelectBank { .. } => "select-bank",
         InteractReq::AbortWalk { .. } => "abort-walk",
         InteractReq::InspectRoute { .. } => "inspect-route",
         InteractReq::InspectAck { .. } => "inspect-ack",
@@ -6369,6 +6714,7 @@ fn interact_off<'b>(
         InteractReq::Answer { .. } => "answer",
         InteractReq::AnswerCount { .. } => "answer-count",
         InteractReq::IfButton { .. } => "if-button",
+        InteractReq::DuelAccept { .. } => "duel-accept",
         InteractReq::CloseModal => "close-modal",
         InteractReq::SideTab { .. } => "side-tab",
         InteractReq::Wear { .. } => "wear",
@@ -6383,8 +6729,14 @@ fn interact_off<'b>(
         InteractReq::WaitSettled => "wait-settled",
         InteractReq::RecoveryAnchor { .. } => "recovery-anchor",
         InteractReq::RecoveryAnchorNone => "recovery-anchor-none",
+        InteractReq::ChannelOpen { .. } => "channel-open",
+        InteractReq::ChannelPost { .. } => "channel-post",
+        InteractReq::ChannelClose { .. } => "channel-close",
+        InteractReq::ChannelMessage { .. } => "channel-message",
+        InteractReq::ChannelStatus { .. } => "channel-status",
         InteractReq::Key { .. } => "key",
         InteractReq::Mouse { .. } => "mouse",
+        InteractReq::RunPolicyOverride { .. } => "run-policy",
     });
     let kind_off = match req {
         InteractReq::OpenStand { kind, .. }
@@ -6408,7 +6760,12 @@ fn interact_off<'b>(
         | InteractReq::UseOn { name, .. }
         | InteractReq::ShopButton { name, .. }
         | InteractReq::Wear { name }
-        | InteractReq::Unequip { name } => Some(b.create_string(name)),
+        | InteractReq::Unequip { name }
+        | InteractReq::ChannelOpen { name, .. }
+        | InteractReq::ChannelPost { name, .. }
+        | InteractReq::ChannelClose { name, .. }
+        | InteractReq::ChannelMessage { sender: name, .. }
+        | InteractReq::DuelAccept { partner: name, .. } => Some(b.create_string(name)),
         InteractReq::Obj { name, .. } => name.as_deref().map(|n| b.create_string(n)),
         _ => None,
     };
@@ -6442,10 +6799,16 @@ fn interact_off<'b>(
             ..
         } => Some(b.create_string("tele")),
         InteractReq::Key { key, .. } => Some(b.create_string(key)),
+        InteractReq::ChannelStatus { message, .. } => Some(b.create_string(message)),
+        InteractReq::DuelAccept { screen, .. } => Some(b.create_string(screen)),
         _ => None,
     };
     let avoid_off = match req {
-        InteractReq::InspectRoute { avoid, .. } => {
+        InteractReq::InspectRoute { avoid, .. }
+        | InteractReq::Walk { avoid, .. }
+        | InteractReq::WalkNear { avoid, .. }
+            if !avoid.is_empty() || matches!(req, InteractReq::InspectRoute { .. }) =>
+        {
             let offs: Vec<_> = avoid
                 .iter()
                 .map(|entry| match entry {
@@ -6466,9 +6829,42 @@ fn interact_off<'b>(
         }
         _ => None,
     };
+    let data_off = match req {
+        InteractReq::ChannelPost { data, .. } | InteractReq::ChannelMessage { data, .. } => {
+            Some(b.create_vector(data))
+        }
+        _ => None,
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_IN_OP, op_off);
     match req {
+        InteractReq::ChannelOpen { channel_id, .. }
+        | InteractReq::ChannelClose { channel_id, .. } => {
+            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+        }
+        InteractReq::ChannelPost { channel_id, .. } => {
+            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_DATA, data_off.unwrap());
+        }
+        InteractReq::ChannelMessage {
+            channel_id, seq, ..
+        } => {
+            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_SEQ, *seq);
+            b.push_slot_always(VT_IN_DATA, data_off.unwrap());
+        }
+        InteractReq::ChannelStatus { channel_id, .. } => {
+            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+        }
+        InteractReq::DuelAccept { rules, .. } => {
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            b.push_slot_always(VT_IN_X, *rules);
+        }
         InteractReq::ShopButton {
             id,
             slot,
@@ -6546,6 +6942,23 @@ fn interact_off<'b>(
             }
         }
         InteractReq::WalkNearestBank => {}
+        InteractReq::SelectBank {
+            x,
+            z,
+            level,
+            allow_wilderness,
+            use_mage_bank,
+            use_zanaris_bank,
+            request_id,
+        } => {
+            b.push_slot_always(VT_IN_X, *x);
+            b.push_slot_always(VT_IN_Z, *z);
+            b.push_slot_always(VT_IN_LEVEL, *level);
+            b.push_slot_always(VT_IN_ALLOW_WILDERNESS, *allow_wilderness);
+            b.push_slot_always(VT_IN_USE_MAGE_BANK, *use_mage_bank);
+            b.push_slot_always(VT_IN_USE_ZANARIS_BANK, *use_zanaris_bank);
+            b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+        }
         InteractReq::AbortWalk { request_id } => {
             b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
         }
@@ -6579,9 +6992,6 @@ fn interact_off<'b>(
             }
             if *request_id != 0 {
                 b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
-            }
-            if let Some(off) = avoid_off {
-                b.push_slot_always(VT_IN_AVOID, off);
             }
         }
         InteractReq::InspectAck { seq, generation } => {
@@ -6806,6 +7216,31 @@ fn interact_off<'b>(
         InteractReq::SetCameraYaw { yaw } => {
             b.push_slot_always(VT_IN_X, *yaw);
         }
+        InteractReq::RunPolicyOverride { policy } => match policy {
+            None => b.push_slot_always(VT_IN_RUN_POLICY_CLEAR, true),
+            Some(policy) => {
+                if let Some(run_auto) = policy.run_auto {
+                    b.push_slot_always(
+                        VT_IN_RUN_AUTO_KIND,
+                        if run_auto {
+                            RUN_OPTION_TRUE_OR_NAN
+                        } else {
+                            RUN_OPTION_FALSE_OR_FLOOR
+                        },
+                    );
+                }
+                match policy.energy_min {
+                    Some(api::run_policy::RunEnergyMin::Floor(energy_min)) => {
+                        b.push_slot_always(VT_IN_RUN_ENERGY_KIND, RUN_OPTION_FALSE_OR_FLOOR);
+                        b.push_slot_always(VT_IN_RUN_ENERGY_MIN, energy_min);
+                    }
+                    Some(api::run_policy::RunEnergyMin::NotANumber) => {
+                        b.push_slot_always(VT_IN_RUN_ENERGY_KIND, RUN_OPTION_TRUE_OR_NAN);
+                    }
+                    None => {}
+                }
+            }
+        },
         InteractReq::Key { down, .. } => {
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
             if let Some(off) = kind_off {
@@ -6828,6 +7263,10 @@ fn interact_off<'b>(
                 b.push_slot_always(VT_IN_INPUT_IDENTITY, *identity);
             }
         }
+    }
+    // Inspect routes and world walks carry their avoid rectangles.
+    if let Some(off) = avoid_off {
+        b.push_slot_always(VT_IN_AVOID, off);
     }
     WIPOffset::new(b.end_table(tab).value())
 }
@@ -7001,6 +7440,8 @@ pub(crate) mod tests {
             size: 4,
             nx: 2832,
             nz: 9825,
+            shape: 0,
+            angle: 0,
         };
         let mut input = empty_input(9);
         let npcs = [npc];
@@ -7016,6 +7457,14 @@ pub(crate) mod tests {
         assert_eq!((got[0].x(), got[0].z(), got[0].level()), (3222, 3295, 0));
         assert_eq!((got[0].size(), got[0].nx(), got[0].nz()), (4, 2832, 9825));
         assert_eq!(got[0].actions(), vec!["Attack", "Pick-up"]);
+        assert!(
+            unsafe { got[0].tab.get::<i32>(VT_ENT_SHAPE, None) }.is_none(),
+            "non-loc rows omit zero-valued loc geometry slots"
+        );
+        assert!(
+            unsafe { got[0].tab.get::<i32>(VT_ENT_ANGLE, None) }.is_none(),
+            "non-loc rows omit zero-valued loc geometry slots"
+        );
     }
 
     /// Task 8 — an omitted npc table is absent, not an empty vector.
@@ -7043,6 +7492,8 @@ pub(crate) mod tests {
             size: 0,
             nx: 0,
             nz: 0,
+            shape: 0,
+            angle: 0,
         };
         let mut input = empty_input(1);
         let npcs = [npc];
@@ -7119,6 +7570,8 @@ pub(crate) mod tests {
             size: 1,
             nx: 0,
             nz: 0,
+            shape: 0,
+            angle: 0,
         };
         let mut input = empty_input(2);
         let npcs = [npc];
@@ -7153,6 +7606,8 @@ pub(crate) mod tests {
             size: 0,
             nx: 0,
             nz: 0,
+            shape: 9,
+            angle: 1,
         };
         let mut input = empty_input(3);
         let locs = [loc];
@@ -7161,6 +7616,7 @@ pub(crate) mod tests {
         let view = decode_snapshot(&bytes).expect("snapshot");
         assert_eq!(view.locs()[0].size(), 0);
         assert_eq!((view.locs()[0].nx(), view.locs()[0].nz()), (0, 0));
+        assert_eq!((view.locs()[0].shape(), view.locs()[0].angle()), (9, 1));
     }
 
     #[test]
@@ -7187,6 +7643,8 @@ pub(crate) mod tests {
             size: 1,
             nx: 10,
             nz: 10,
+            shape: 0,
+            angle: 0,
         };
         let mut input = empty_input(4);
         let npcs = [npc];
@@ -7233,6 +7691,32 @@ pub(crate) mod tests {
         assert_eq!(d2.self_target_index(), 7);
     }
 
+    /// The local player's animation id rides the keyframe, is omitted while
+    /// unchanged, posts on a change (idle `-1` included), and an old or
+    /// unsupplied buffer reads as absent `-1`.
+    #[test]
+    fn self_anim_delta_omits_when_unchanged_and_posts_on_change() {
+        let input = empty_input(5);
+        let native = |anim| NativeFactsInput {
+            self_anim: Some(anim),
+            ..NativeFactsInput::default()
+        };
+        let (kf, fp) = encode_snapshot_delta_with_native(None, &input, native(390), false);
+        let kf_view = decode_snapshot(&kf).expect("kf");
+        assert!(kf_view.has_self_anim());
+        assert_eq!(kf_view.self_anim(), 390);
+        let (same, _) = encode_snapshot_delta_with_native(Some(&fp), &input, native(390), false);
+        assert!(!decode_snapshot(&same).expect("same").has_self_anim());
+        let (idle, _) = encode_snapshot_delta_with_native(Some(&fp), &input, native(-1), false);
+        let idle = decode_snapshot(&idle).expect("idle");
+        assert!(idle.has_self_anim());
+        assert_eq!(idle.self_anim(), -1);
+        let (old, _) = encode_snapshot_delta(None, &input, false);
+        let old = decode_snapshot(&old).expect("old");
+        assert!(!old.has_self_anim());
+        assert_eq!(old.self_anim(), -1);
+    }
+
     #[test]
     fn reset_posts_empty_npcs_and_none_target() {
         let actions = ["Attack".to_string()];
@@ -7257,6 +7741,8 @@ pub(crate) mod tests {
             size: 1,
             nx: 100,
             nz: 100,
+            shape: 0,
+            angle: 0,
         };
         let mut input = empty_input(6);
         let npcs = [npc];
@@ -7285,6 +7771,33 @@ pub(crate) mod tests {
         }];
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("interact batch decodes");
+        assert_eq!(got, reqs);
+    }
+
+    #[test]
+    fn encode_decode_run_policy_replacements_round_trip() {
+        use api::run_policy::{RunEnergyMin, RunPolicyOverride};
+
+        let reqs = vec![
+            InteractReq::RunPolicyOverride {
+                policy: Some(RunPolicyOverride {
+                    run_auto: Some(false),
+                    energy_min: Some(RunEnergyMin::Floor(80)),
+                }),
+            },
+            InteractReq::RunPolicyOverride {
+                policy: Some(RunPolicyOverride {
+                    run_auto: Some(true),
+                    energy_min: Some(RunEnergyMin::NotANumber),
+                }),
+            },
+            InteractReq::RunPolicyOverride {
+                policy: Some(RunPolicyOverride::default()),
+            },
+            InteractReq::RunPolicyOverride { policy: None },
+        ];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("run-policy batch decodes");
         assert_eq!(got, reqs);
     }
 
@@ -7500,6 +8013,7 @@ pub(crate) mod tests {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 request_id: 9,
+                avoid: Vec::new(),
             },
             InteractReq::WalkNear {
                 x: 2656,
@@ -7510,6 +8024,7 @@ pub(crate) mod tests {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 request_id: 0,
+                avoid: Vec::new(),
             },
             InteractReq::WalkTo {
                 x: 3,
@@ -7543,6 +8058,7 @@ pub(crate) mod tests {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: 11,
+                avoid: Vec::new(),
             },
             InteractReq::WalkNear {
                 x: 3222,
@@ -7553,6 +8069,7 @@ pub(crate) mod tests {
                 allow_wilderness: false,
                 allow_bank_fetch: true,
                 request_id: 12,
+                avoid: Vec::new(),
             },
         ];
         let bytes = encode_interact_batch(&reqs);
@@ -7596,6 +8113,7 @@ pub(crate) mod tests {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 request_id: 7,
+                avoid: Vec::new(),
             }]
         );
     }
@@ -8175,5 +8693,30 @@ pub(crate) mod tests {
             DeltaMask::changed(&fp, &other, false).walk_outcome,
             "the family bit covers the named shorts"
         );
+    }
+
+    #[test]
+    fn a_blocked_route_end_rides_the_walk_outcome_family() {
+        let blocked = NativeFactsInput {
+            walk_outcome_blocked: true,
+            ..carry_native(&[], 3)
+        };
+        let (keyframe, fp) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), blocked, false);
+        assert!(decode_snapshot(&keyframe)
+            .expect("keyframe")
+            .walk_outcome_blocked());
+        let (delta, _) = encode_snapshot_delta_with_native(
+            Some(&fp),
+            &empty_input(2),
+            carry_native(&[], 3),
+            false,
+        );
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(
+            view.has_walk_outcome_seq(),
+            "the flag alone re-posts the family"
+        );
+        assert!(!view.walk_outcome_blocked());
     }
 }

@@ -7,6 +7,16 @@ pub(crate) const HOLD_SPOT_V2_STOP: &str = "hold spot qualification complete";
 const HOLD_SPOT_DEADLINE: Duration = Duration::from_secs(180);
 const HOLD_SPOT_WATCH: u32 = 240;
 
+/// `hold_spot_v2.ts` holds a tile Chebyshev 2–6 from its Start tile, the
+/// mainland landing; the seed leaves the player on the landing itself.
+pub(crate) const HOLD_SPOT_DEST: Proof = Proof::ArrivedRing {
+    x: MAINLAND_LANDING.x,
+    z: MAINLAND_LANDING.z,
+    level: MAINLAND_LANDING.level,
+    min: 2,
+    max: 6,
+};
+
 /// Headed File witness: one awaited hold run. The gate needs the host's world
 /// walk to dest, the end tile on dest and the settled receipt; never Attack /
 /// walk-to.
@@ -14,13 +24,13 @@ pub(crate) fn hold_spot_v2_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());
     steps.push(Step {
-        name: "watch the File card reach its named helper stop",
+        name: "watch the File card hold a tile 2-6 from its Start",
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
             budget_ticks: HOLD_SPOT_WATCH,
-            arm: Proof::Stat { id: 16, min: 0 },
+            arm: HOLD_SPOT_DEST,
         },
     });
     Scenario {
@@ -30,7 +40,7 @@ pub(crate) fn hold_spot_v2_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: Proof::Stat { id: 16, min: 0 },
+        proof: HOLD_SPOT_DEST,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,

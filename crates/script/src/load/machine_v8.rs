@@ -9,9 +9,9 @@
 //!   invoked through the one callback path (`callback_v8`), each followed
 //!   by a microtask checkpoint; a promise still pending is held and its
 //!   state polled.
-//! - [`resume`] runs after the tick's pump: rows whose callback promise
-//!   has settled step again, and outcomes they reach settle their awaits
-//!   (`__rs2b0t_settle_machines`) in the same tick.
+//! - [`resume_callbacks`] runs after the tick's pump; [`settle_waits`]
+//!   then resolves awaits for rows that ended in the same tick
+//!   (`__rs2b0t_settle_machines`).
 //!
 //! Nothing here sends to the host: machine ops join the tick's
 //! InteractReq batch in Rust.
@@ -34,13 +34,18 @@ pub(super) fn step(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) {
     machine::step(&mut RuntimeJs { runtime, claimed });
 }
 
-/// After the tick's pump: resume rows whose callback promise settled, and
-/// settle the awaits of the rows that ended.
-pub(super) fn resume(
+/// After the tick's pump, resume rows whose callback promise settled.
+/// Kept separate from [`settle_waits`] because callbacks are not the script
+/// loop continuation and must not inherit its interrupt stage.
+pub(super) fn resume_callbacks(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) {
+    machine::resume(&mut RuntimeJs { runtime, claimed });
+}
+
+/// Settle awaits for machine rows that ended during this tick.
+pub(super) fn settle_waits(
     runtime: &mut Runtime,
     claimed: &dyn Fn() -> bool,
 ) -> Result<(), rustyscript::Error> {
-    machine::resume(&mut RuntimeJs { runtime, claimed });
     if machine::any_settled() && !claimed() {
         runtime.call_function_immediate::<()>(None, "__rs2b0t_settle_machines", json_args!())?;
     }

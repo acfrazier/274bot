@@ -869,6 +869,25 @@ pub(crate) fn on_hold(held: bool) {
     });
 }
 
+/// Test seam: settle a registered waiter as the host would publish its
+/// terminal (`ok` routed, else no path), without a snapshot round trip.
+#[cfg(test)]
+pub(crate) fn settle_for_tests(token: u64, ok: bool) {
+    SLOT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if let Some(pos) = slot.unsettled.iter().position(|w| w.token == token) {
+            let mut waiter = slot.unsettled.remove(pos);
+            waiter.terminal = Some(Terminal {
+                ok,
+                reason: if ok { String::new() } else { "no-path".into() },
+                request_id: token,
+                ..Terminal::stale()
+            });
+            slot.push_settled(waiter);
+        }
+    });
+}
+
 pub(crate) fn dispatch(input: &Value) -> Value {
     let op = input.get("op").and_then(Value::as_str).unwrap_or("");
     SLOT.with(|slot| {

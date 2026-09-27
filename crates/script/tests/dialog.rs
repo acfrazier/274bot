@@ -35,6 +35,8 @@ fn npc<'a>(name: &'a str, actions: &'a [String], index: i32) -> SceneEntityInput
         size: 0,
         nx: 0,
         nz: 0,
+        shape: 0,
+        angle: 0,
     }
 }
 
@@ -216,6 +218,7 @@ fn talk_through_opens_continues_prefers_then_completes_on_partial_bank() {
 
     let choice = [ChatOptionInput {
         text: "I'd like to access my bank account, please.",
+        com_id: 4883,
     }];
     snap.tick = 3;
     snap.chat_continue = false;
@@ -401,8 +404,14 @@ fn missing_npc_and_unmatched_fallback_are_honest() {
     iso.drain_interacts();
 
     let opts = [
-        ChatOptionInput { text: "Hello" },
-        ChatOptionInput { text: "Goodbye" },
+        ChatOptionInput {
+            text: "Hello",
+            com_id: 201,
+        },
+        ChatOptionInput {
+            text: "Goodbye",
+            com_id: 202,
+        },
     ];
     snap.tick = 2;
     snap.chat_modal_id = 200;
@@ -477,6 +486,7 @@ fn same_continue_page_does_not_duplicate_then_transitions() {
 
     let choice = [ChatOptionInput {
         text: "I'd like to access my bank account, please.",
+        com_id: 4883,
     }];
     snap.tick = 7;
     snap.chat_continue = false;
@@ -505,6 +515,7 @@ fn same_options_page_after_answer_does_not_duplicate() {
     let npcs = [npc("Gundai", &actions, 7)];
     let choice = [ChatOptionInput {
         text: "I'd like to access my bank account, please.",
+        com_id: 4883,
     }];
     let mut snap = base();
     snap.npcs = &npcs;
@@ -588,9 +599,13 @@ fn empty_earlier_option_keeps_the_posted_answer_index() {
     let actions = ["Talk-to".to_string()];
     let npcs = [npc("Gundai", &actions, 7)];
     let opts = [
-        ChatOptionInput { text: "" },
+        ChatOptionInput {
+            text: "",
+            com_id: 4883,
+        },
         ChatOptionInput {
             text: "I'd like to access my bank account, please.",
+            com_id: 4884,
         },
     ];
     let mut snap = base();
@@ -695,6 +710,64 @@ export default class T extends LoopingBot {
         iso.probe("__far").unwrap(),
         Value::Null,
         "a queued walk is not an arrival: walkWithHops awaits its result"
+    );
+    iso.join();
+}
+
+#[test]
+fn walk_with_hops_log_promise_does_not_hold_the_walk() {
+    let src = r#"
+import { walkWithHops } from '../../api/ai/quests/exec/primitives.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__lines = [];
+        globalThis.__ok = null;
+        globalThis.__ok = await walkWithHops(
+            { x: 2532, z: 9600, level: 0 },
+            2,
+            [],
+            (line) => {
+                globalThis.__lines.push(line);
+                return new Promise(() => {});
+            },
+        );
+    }
+}
+"#;
+    let iso = spawn(src);
+    let mut snap = base();
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__lines").unwrap(),
+        serde_json::json!(["no hop from (2531,4712) toward z 9600 — trying the baked graph"])
+    );
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::WalkNear {
+                x: 2532,
+                z: 9600,
+                radius: 2,
+                ..
+            }]
+        ),
+        "the fallback walk is queued in the log callback's tick"
+    );
+    snap.tick = 2;
+    snap.here = Some(TileInput {
+        x: 2532,
+        z: 9600,
+        level: 0,
+    });
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        true,
+        "the never-settling log promise must not hold the walk result"
     );
     iso.join();
 }

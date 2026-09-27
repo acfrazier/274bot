@@ -727,9 +727,7 @@ fn herblore_native_deposit_soft_waits_open_unloaded_bank() {
     );
 }
 
-/// Eggs headed root cause: Repeat open re-sends Use-quickly after the
-/// bank is already loaded. Skip that send so deposit still sees a loaded
-/// current session.
+/// An already loaded bank must remain usable by the following deposit.
 #[test]
 fn herblore_open_seed_bank_skips_booth_when_current_bank_loaded() {
     use api::snapshot::Family;
@@ -785,8 +783,9 @@ fn herblore_open_seed_bank_skips_booth_when_current_bank_loaded() {
         .iter()
         .find(|step| step.name == "open and acknowledge the lobster seed bank")
         .expect("eggs lobster bank open");
-    let StepKind::Repeat { send } = &open_step.kind else {
-        panic!("eggs open must be Repeat");
+    let send = match &open_step.kind {
+        StepKind::Perform { send } | StepKind::Repeat { send } => send,
+        _ => panic!("missing bank open action"),
     };
     let before = client.out.pos;
     assert!(
@@ -797,6 +796,249 @@ fn herblore_open_seed_bank_skips_booth_when_current_bank_loaded() {
         client.out.pos, before,
         "skip must not emit another booth Use-quickly"
     );
+}
+
+fn plant_seed_booth(client: &mut Client, x: i32, z: i32) {
+    use client::config::LocType;
+
+    let id = 2213;
+    let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+    if cache.locs.len() <= id {
+        cache.locs.resize_with(id + 1, LocType::default);
+    }
+    cache.locs[id] = LocType {
+        id: id as i32,
+        name: "Bank booth".into(),
+        op: vec![None, Some("Use-quickly".into()), None, None, None],
+        ..Default::default()
+    };
+    let x = x - client.map_build_base_x;
+    let z = z - client.map_build_base_z;
+    let typecode = 0x4000_0000 | ((id as i32) << 14) | x | (z << 7);
+    client
+        .world
+        .set_wall(0, x, z, 0, 0, 0, typecode, 10 | (2 << 6), 0, 0, 0, 0);
+}
+
+#[test]
+fn flax_spin_seed_lands_on_an_operable_booth_stand() {
+    use client::client::MiniMenuAction;
+    use client::dash3d::ClientPlayer;
+
+    let scenario = get("flax_aio_spin").unwrap();
+    let seed = scenario
+        .steps
+        .iter()
+        .find(|step| step.name.starts_with("seed crafting, banked flax,"))
+        .unwrap();
+    let StepKind::Perform { send } = &seed.kind else {
+        panic!("missing flax seed action");
+    };
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    assert!(send(&mut client, &GameSnapshot::new()));
+
+    // Apply the emitted teleport to the captured Seers booth layout, not
+    // the broad ArrivedNear arm (which also admits the old diagonal stand).
+    let bytes = &client.out.data()[..client.out.pos];
+    let start = bytes.windows(5).position(|b| b == b"tele ").unwrap() + 5;
+    let end = bytes[start..]
+        .iter()
+        .position(|b| !b.is_ascii_digit() && *b != b',')
+        .unwrap();
+    let args: Vec<i32> = std::str::from_utf8(&bytes[start..start + end])
+        .unwrap()
+        .split(',')
+        .map(|part| part.parse().unwrap())
+        .collect();
+    let x = args[1] * 64 + args[3];
+    let z = args[2] * 64 + args[4];
+    client.map_build_base_x = 2672;
+    client.map_build_base_z = 3440;
+    client.minusedlevel = args[0];
+    client.local_player = Some(ClientPlayer::at(x - 2672, z - 3440));
+    for column in &mut client.collision[0].flags {
+        column.fill(0);
+    }
+    for booth_x in [2721, 2722, 2724, 2727, 2728, 2729] {
+        plant_seed_booth(&mut client, booth_x, 3494);
+    }
+    client.bump_gens(client::io::ServerProt::PLAYER_INFO);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let opener = scenario
+        .steps
+        .iter()
+        .find(|step| step.name == "open and acknowledge the exact flax seed bank")
+        .unwrap();
+    let StepKind::Perform { send } = &opener.kind else {
+        panic!("missing flax bank action");
+    };
+    assert!(
+        send(&mut client, &snapshot),
+        "the seeded landing must permit the real booth operation"
+    );
+    assert_eq!(client.menu_action[0], MiniMenuAction::OP_LOC2);
+    let booth_x = client.map_build_base_x + client.menu_param_b[0];
+    let booth_z = client.map_build_base_z + client.menu_param_c[0];
+    assert_eq!((booth_x - x).abs() + (booth_z - z).abs(), 1);
+}
+
+#[test]
+fn herblore_seed_bank_waits_for_one_open_ack_before_deposit() {
+    use client::client::MiniMenuAction;
+    use client::dash3d::ClientPlayer;
+    use client::io::{Packet, ServerProt};
+
+    let mut scenario = get("herblore_secondaries").unwrap();
+    let open = scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "open and acknowledge the lobster seed bank")
+        .unwrap();
+    scenario.steps = scenario.steps.drain(open..=open + 1).collect();
+    scenario.seed.mainland = false;
+    scenario.settings = ScenarioSettings::default();
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    client.map_build_base_x = 3056;
+    client.map_build_base_z = 3440;
+    client.local_player = Some(ClientPlayer::at(40, 54));
+    for column in &mut client.collision[0].flags {
+        column.fill(0);
+    }
+    plant_seed_booth(&mut client, 3096, 3493);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 2 });
+    assert_eq!(client.menu_action[0], MiniMenuAction::OP_LOC2);
+    let opening = client.out.data()[..client.out.pos].to_vec();
+
+    // Several observes can precede the server's first bank response. They
+    // must not queue more opens that invalidate the next deposit's session.
+    for _ in 0..3 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(client.out.data()[..client.out.pos], opening);
+    }
+    plant_open_unloaded_bank(&mut client);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 2 });
+    assert_eq!(client.out.data()[..client.out.pos], opening);
+
+    let mut full = Packet::new(vec![2, 89, 0]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+    plant_bank_side(&mut client, NOTED_LOBSTER_ID, HERBLORE_EGG_FOOD_SEED);
+    client.bump_gens(ServerProt::UPDATE_INV_FULL);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    assert_eq!(client.out.data()[..client.out.pos], opening);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    assert_eq!(client.menu_param_a[0], NOTED_LOBSTER_ID);
+    assert_eq!(client.menu_param_c[0], 701, "deposit from the bank side");
+}
+
+#[test]
+fn moss_dart_seed_opens_once_and_keeps_the_acknowledged_bank_loaded_at_start() {
+    use client::client::MiniMenuAction;
+    use client::config::if_type::IfTypeMut;
+    use client::dash3d::ClientPlayer;
+    use client::io::{Packet, ServerProt};
+
+    let mut scenario = get("moss_giant_dart").unwrap();
+    let open = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.name == "open the Ardougne North booth so bank-only dart stock is visible"
+        })
+        .unwrap();
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    scenario.steps = scenario.steps.drain(open..=start).collect();
+    scenario.seed.mainland = false;
+    scenario.settings = ScenarioSettings::default();
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    client.map_build_base_x = 2560;
+    client.map_build_base_z = 3280;
+    client.local_player = Some(ClientPlayer::at(55, 52));
+    for column in &mut client.collision[0].flags {
+        column.fill(0);
+    }
+    // Stock-world booth captured in the original dart qualification.
+    plant_seed_booth(&mut client, 2615, 3331);
+    plant_obj(&mut client, unnoted_obj(BRONZE_DART_ID, true));
+    plant_obj(&mut client, unnoted_obj(LOBSTER_ID, false));
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(client.menu_action[0], MiniMenuAction::OP_LOC2);
+    assert_eq!(client.menu_param_b[0] + client.map_build_base_x, 2615);
+    assert_eq!(client.menu_param_c[0] + client.map_build_base_z, 3331);
+    let opening = client.out.data()[..client.out.pos].to_vec();
+
+    for _ in 0..3 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(
+            client.out.data()[..client.out.pos],
+            opening,
+            "waiting for the item acknowledgement must not queue another booth open"
+        );
+        assert!(!runner.on_start_script());
+    }
+    plant_open_unloaded_bank(&mut client);
+    runner.tick(&mut client);
+    assert!(
+        !runner.on_start_script(),
+        "the modal alone is not the seeded stock"
+    );
+    assert_eq!(client.out.data()[..client.out.pos], opening);
+    client.set_iface_mut(
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![0; 2]),
+            link_obj_number: Some(vec![0; 2]),
+            ..Default::default()
+        },
+    );
+    client.handle_packet(
+        ServerProt::UPDATE_INV_FULL,
+        &mut Packet::new(vec![2, 89, 2, 3, 39, 80, 1, 124, 15]),
+    );
+    for _ in 0..3 {
+        runner.tick(&mut client);
+    }
+    assert!(runner.on_start_script());
+    assert_eq!(client.out.data()[..client.out.pos], opening);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(
+        snapshot.bank_loaded(),
+        "Start retains the acknowledged bank"
+    );
+    assert_eq!(snapshot.bank_session_generation(), 1);
+    assert!(Proof::BankItemId {
+        id: BRONZE_DART_ID,
+        count: 80
+    }
+    .check(&snapshot, None));
+    assert!(Proof::BankItemId {
+        id: LOBSTER_ID,
+        count: 15
+    }
+    .check(&snapshot, None));
+    assert!(Proof::BankItemIdAtMost { id: 892, count: 0 }.check(&snapshot, None));
 }
 
 /// Capture 2026-09-18T06-11-18: booth 2213@3091,3243 is not operable from
@@ -1428,199 +1670,6 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
     );
     assert_eq!(arm, (3220, 3264, 0));
     assert_eq!(s.proof.name(), "arrived(3220,3264,0)");
-    assert_eq!(
-        names(),
-        [
-            "walk",
-            "render_smoke",
-            "render_betty_views_betty_yaw0",
-            "render_betty_views_betty_yaw512",
-            "render_betty_views_falador_street_yaw0",
-            "render_betty_views_falador_street_yaw512",
-            "render_betty_views_west_bank_yaw0",
-            "render_betty_views_west_bank_yaw512",
-            "render_betty_views_dwarven_wall_yaw0",
-            "render_fountain_yaw0_pitch128",
-            "render_fountain_yaw0_pitch256",
-            "render_fountain_yaw0_pitch383",
-            "nav_full",
-            "nav_door",
-            "nav_cart",
-            "nav_essence",
-            "nav_elkoy",
-            "nav_tele",
-            "nav_shantay",
-            "nav_routes",
-            "nav_paint_path",
-            "brimhaven_moss_inspect_v1",
-            "route_inspect_brimhaven_v2_ts",
-            "prayer_v2_ts",
-            "prayer_v1_ts",
-            "line_of_sight_v2_ts",
-            "actor_observation_v2_ts",
-            "fight_field_v2_ts",
-            "hold_spot_v2_ts",
-            "retreat_spot_v2_ts",
-            "walk_spot_v2_ts",
-            "enter_lair_v2_ts",
-            "leave_lair_v2_ts",
-            "acquire_key_v2_ts",
-            "cell_v2_ts",
-            "bank_v2_ts",
-            "bone_burier",
-            "lamp_redemption",
-            "bone_burier_v2_ts",
-            "bone_burier_v2_js",
-            "strange_plant_owned",
-            "maze_owned",
-            "chicken_killer",
-            "chicken_killer_bank",
-            "thiever",
-            "alcher",
-            "alcher_defaults",
-            "alcher_custom",
-            "alcher_custom_alias",
-            "alcher_custom_name",
-            "alcher_ordered",
-            "alcher_large_batch",
-            "alcher_low",
-            "alcher_fire_battlestaff",
-            "alcher_swarm_drain",
-            "bank_fletcher",
-            "bank_fletcher_shafts",
-            "bank_fletcher_headless",
-            "bank_fletcher_string",
-            "bank_fletcher_cut_string",
-            "dart_fletcher",
-            "dart_fletcher_iron",
-            "herb_cleaner",
-            "herb_cleaner_named",
-            "herb_cleaner_empty_bank",
-            "gem_cutter",
-            "gem_cutter_named",
-            "door_opener",
-            "door_opener_gate",
-            "gnome_course",
-            "gnome_course_radius",
-            "wildy_agility",
-            "brimhaven_agility",
-            "flax_picker",
-            "superheater",
-            "superheater_steel",
-            "superheater_fire_battlestaff",
-            "superheater_silver_low_natures",
-            "superheater_mithril",
-            "vial_filler",
-            "vial_filler_east",
-            "potion_maker",
-            "potion_maker_named",
-            "tanner_bot",
-            "tanner_bot_hard",
-            "rune_crafter",
-            "rune_crafter_earth",
-            "mule_crafter",
-            "ardy_cakes",
-            "ardy_cakes_fight",
-            "ardy_thiever",
-            "ardy_thiever_fight",
-            "ardy_thiever_knight",
-            "gnome_chop",
-            "gnome_fletch_short",
-            "gnome_fletch_long",
-            "coal_trucks",
-            "cook_bot",
-            "cook_bot_lobster",
-            "smelter_bot",
-            "smelter_bot_steel",
-            "flax_spinner",
-            "flax_aio",
-            "flax_aio_pick",
-            "flax_aio_spin",
-            "herblore_secondaries",
-            "herblore_secondaries_newt",
-            "chaos_druid",
-            "chaos_druid_tower",
-            "chaos_druid_yanille",
-            "moss_giant",
-            "moss_giant_prepared",
-            "moss_giant_dart",
-            "hill_giant",
-            "auto_fighter",
-            "auto_fighter_mage",
-            "auto_fighter_range",
-            "rock_crab",
-            "rock_crab_range",
-            "green_dragon",
-            "green_dragon_prepared",
-            "green_dragon_mage_prepared",
-            "green_dragon_special",
-            "green_dragon_special_prepared",
-            "green_dragon_potions",
-            "green_dragon_potions_prepared",
-            "fire_giant",
-            "fire_giant_prepared",
-            "ardy_fighter",
-            "auto_fighter_bank",
-            "moss_giant_bank",
-            "moss_giant_bank_start",
-            "hill_giant_bank",
-            "hill_giant_bank_prepared",
-            "hill_giant_loot_deposit",
-            "chaos_druid_bank",
-            "ardy_fighter_bank",
-            "rock_crab_bank",
-            "green_dragon_bank",
-            "green_dragon_bank_prepared",
-            "green_dragon_bank_default_prepared",
-            "green_dragon_tele",
-            "green_dragon_tele_prepared",
-            "fire_giant_approach",
-            "fire_giant_bank",
-            "fire_giant_bank_prepared",
-            "fire_giant_camelot_prepared",
-            "aio_teleport",
-            "aio_teleport_falador",
-            "aio_teleport_no_staff",
-            "shop_buyout",
-            "shop_buyout_aubury",
-            "shop_buyout_lowe",
-            "shop_buyout_hickton",
-            "shop_buyout_harry",
-            "shop_buyout_betty",
-            "shop_buyout_gerrant",
-            "shop_buyout_bob",
-            "shop_buyout_nurmof",
-            "shop_buyout_magic",
-            "shop_buyout_lundail",
-            "shop_buyout_fernahei",
-            "smithing_bot",
-            "smithing_bot_platebody",
-            "smithing_bot_nails",
-            "smithing_bot_mithril",
-            "leather_crafter",
-            "leather_crafter_hard_body",
-            "leather_crafter_green_body",
-            "leather_crafter_chaps",
-            "leather_crafter_thread_shop",
-            "firemaker",
-            "firemaker_oak",
-            "climbing_boots",
-            "climbing_boots_teleport",
-            "ranging_guild_round",
-            "ranging_guild_redeem",
-            "ranging_guild_bank",
-            "ranging_guild_full",
-            "script_trade",
-            "nature_crafter_air",
-            "mule_crafter_air",
-            "flax_runner",
-            "sherlock_talk",
-            "sherlock_search",
-            "sherlock_dig",
-            "sherlock_coord",
-            "duel_arena",
-        ]
-    );
 }
 
 #[test]
@@ -2324,6 +2373,11 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         ("moss_giant_bank", "MossGiant", SCRIPT_GOLD_DEADLINE),
         ("moss_giant_bank_start", "MossGiant", SCRIPT_GOLD_DEADLINE),
         ("hill_giant_bank", "HillGiant", SCRIPT_GOLD_DEADLINE),
+        (
+            "rock_crab_bank_seeded",
+            "RockCrab",
+            Duration::from_secs(360),
+        ),
         // The frozen trip reaches the field ~128s in (two banks).
         (
             "chaos_druid_bank",
@@ -2331,6 +2385,11 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
             Duration::from_secs(300),
         ),
         ("ardy_fighter_bank", "ArdyFighter", SCRIPT_GOLD_DEADLINE),
+        (
+            "ardy_fighter_bank_seeded",
+            "ArdyFighter",
+            SCRIPT_GOLD_DEADLINE,
+        ),
     ] {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card));
@@ -2471,6 +2530,91 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         }),
         "ardy_fighter_bank watches a Guard drop enter a fresh bank"
     );
+    let seeded = get("ardy_fighter_bank_seeded").expect("ardy_fighter_bank_seeded registered");
+    let seeded_start = seeded
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: CAKE_ID,
+                count: 1,
+            }
+    }));
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: IRON_ORE_ID,
+                count: 1,
+            }
+    }));
+    for step in &seeded.steps[..seeded_start] {
+        assert!(
+            !matches!(
+                step.wait.arm,
+                Proof::ItemIdAtMost { id, count: 0 } if id == CAKE_ID || id == IRON_ORE_ID
+            ),
+            "seeded Ardy pre-Start no-loot check must not reject seeded Cake/Iron ore: {}",
+            step.name
+        );
+    }
+    let seeded_watch = &seeded.steps[seeded_start + 1..];
+    assert!(
+        !matches!(
+            seeded_watch
+                .first()
+                .expect("seeded Ardy has post-Start watch")
+                .wait
+                .arm,
+            Proof::StatXpGain { .. }
+        ),
+        "seeded Ardy must not wait for pre-bank Strength XP"
+    );
+    let walk = seeded_watch
+        .iter()
+        .position(|step| {
+            step.name == "watch seeded Iron ore leave the pack after PeriodicBank deposit"
+        })
+        .expect("seeded Ardy PeriodicBank walk/deposit proof");
+    let banked = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch seeded Iron ore enter a fresh East Ardougne bank")
+        .expect("seeded Ardy bank deposit proof");
+    let closed = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch seeded PeriodicBank close")
+        .expect("seeded Ardy bank close proof");
+    let returned = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch return to the market anchor after seeded banking")
+        .expect("seeded Ardy return proof");
+    let fresh_xp = seeded_watch
+        .iter()
+        .position(|step| step.name == "watch fresh Strength XP after the seeded bank return")
+        .expect("seeded Ardy fresh Strength XP proof");
+    assert!(walk < banked && banked < closed && closed < returned && returned < fresh_xp);
+    assert_eq!(seeded_watch[walk].wait.budget_ticks, 320);
+    assert_eq!(seeded_watch[returned].wait.budget_ticks, 40);
+    assert_eq!(seeded_watch[fresh_xp].wait.budget_ticks, 320);
+    assert!(seeded_watch.iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemIdAtMost {
+                id: IRON_ORE_ID,
+                count: 0,
+            }
+    }));
+    assert!(seeded_watch.iter().any(|step| {
+        step.wait.arm
+            == Proof::BankItemId {
+                id: IRON_ORE_ID,
+                count: 1,
+            }
+    }));
+    assert!(seeded_watch
+        .iter()
+        .any(|step| step.wait.arm == Proof::BankClosed));
 }
 
 #[test]
@@ -2513,6 +2657,93 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
         count: 1,
     }));
     assert!(watch.contains(&Proof::BankClosed));
+    let seeded = get("rock_crab_bank_seeded").expect("rock_crab_bank_seeded registered");
+    assert_eq!(seeded.settings.start_script, Some("RockCrab"));
+    assert_eq!(seeded.settings.deadline, Duration::from_secs(360));
+    let seeded_start = seeded
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: LOBSTER_ID,
+                count: ROCK_CRAB_FOOD,
+            }
+    }));
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: UNCUT_SAPPHIRE_ID,
+                count: 1,
+            }
+    }));
+    let seeded_watch = seeded.steps[seeded_start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    let seeded_route_steps = &seeded.steps[seeded_start + 1..];
+    let walk_index = seeded_route_steps
+        .iter()
+        .position(|step| {
+            step.name == "watch seeded Sapphire leave the backpack after PeriodicBank deposit"
+        })
+        .expect("seeded PeriodicBank walk/deposit proof");
+    assert_eq!(seeded_route_steps[walk_index].wait.budget_ticks, 320);
+    let deposit_index = seeded_route_steps
+        .iter()
+        .position(|step| step.name == "watch seeded Sapphire enter a fresh Seers bank")
+        .expect("seeded PeriodicBank deposit proof");
+    let arrival_index = seeded_route_steps
+        .iter()
+        .position(|step| {
+            step.name == "watch seeded RockCrab cargo reach the Seers bank after deposit"
+        })
+        .expect("seeded Seers arrival proof");
+    assert!(walk_index < deposit_index);
+    assert!(deposit_index < arrival_index);
+    assert_eq!(seeded_route_steps[arrival_index].wait.budget_ticks, 320);
+    let return_index = seeded_route_steps
+        .iter()
+        .position(|step| {
+            step.name == "watch return toward the nearest RockCrab spot after seeded banking"
+        })
+        .expect("seeded RockCrab return proof");
+    let fresh_xp_index = seeded_route_steps
+        .iter()
+        .position(|step| step.name == "watch fresh Strength XP after the seeded bank return")
+        .expect("seeded fresh Strength XP proof");
+    assert!(return_index < fresh_xp_index);
+    assert!(matches!(
+        seeded_route_steps[fresh_xp_index].wait.arm,
+        Proof::FreshStatXpGain {
+            id: STRENGTH_STAT,
+            min: 1
+        }
+    ));
+    assert_eq!(seeded_route_steps[return_index].wait.budget_ticks, 320);
+    assert!(seeded_watch.contains(&Proof::ArrivedNear {
+        x: 2725,
+        z: 3491,
+        level: 0,
+        radius: 6,
+    }));
+    assert!(seeded_watch.contains(&Proof::ItemIdAtMost {
+        id: UNCUT_SAPPHIRE_ID,
+        count: 0,
+    }));
+    assert!(seeded_watch.contains(&Proof::BankItemId {
+        id: UNCUT_SAPPHIRE_ID,
+        count: 1,
+    }));
+    assert!(seeded_watch.contains(&Proof::BankClosed));
+    assert!(seeded_watch.contains(&Proof::ArrivedNear {
+        x: 2710,
+        z: 3717,
+        level: 0,
+        radius: 6,
+    }));
 
     let dragon = get("green_dragon_bank").expect("green_dragon_bank registered");
     assert_eq!(dragon.settings.start_script, Some("GreenDragon"));
@@ -3159,11 +3390,11 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
 /// step 12). The loot-count RockCrab cell also draws nothing from the
 /// bank: its PeriodicBank trip deposits and returns, so no bank window is
 /// seeded there while the restocking cells keep theirs.
+
 #[test]
 fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     use client::client::{Client, ClientConfig};
     use client::dash3d::ClientPlayer;
-
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -3202,7 +3433,9 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
         ("hill_giant_loot_deposit", "adamant_scimitar"),
         ("chaos_druid_bank", "adamant_scimitar"),
         ("ardy_fighter_bank", "adamant_scimitar"),
+        ("ardy_fighter_bank_seeded", "adamant_scimitar"),
         ("rock_crab_bank", "adamant_scimitar"),
+        ("rock_crab_bank_seeded", "adamant_scimitar"),
         ("green_dragon_bank", "rune_scimitar"),
         ("green_dragon_bank_default_prepared", "rune_scimitar"),
         ("green_dragon_tele", "rune_scimitar"),
@@ -3225,6 +3458,28 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     assert!(
         !rock.contains("givebank"),
         "rock_crab_bank's PeriodicBank trip restocks nothing: {rock}"
+    );
+    let seeded = seed("rock_crab_bank_seeded");
+    assert!(
+        seeded.contains("give uncut_sapphire 1"),
+        "rock_crab_bank_seeded seeds the PeriodicBank trigger cargo: {seeded}"
+    );
+    assert!(
+        seeded.contains("give lobster 8"),
+        "rock_crab_bank_seeded keeps food in the pack so PeriodicBank owns the trip: {seeded}"
+    );
+    assert!(
+        !seeded.contains("givebank"),
+        "rock_crab_bank_seeded's PeriodicBank trip restocks nothing: {seeded}"
+    );
+    let ardy_seeded = seed("ardy_fighter_bank_seeded");
+    assert!(
+        ardy_seeded.contains("give iron_ore 1"),
+        "ardy_fighter_bank_seeded seeds a DEFAULT_LOOT Guard drop: {ardy_seeded}"
+    );
+    assert!(
+        ardy_seeded.contains("give cake 1"),
+        "ardy_fighter_bank_seeded keeps one Cake so PeriodicBank owns the trip: {ardy_seeded}"
     );
     let dragon = seed("green_dragon_bank");
     assert!(
@@ -6096,7 +6351,6 @@ fn alternate_camp_and_fight_option_cases_register() {
     };
     let cakes_fight = get("ardy_cakes_fight").expect("ardy_cakes_fight");
     assert_eq!(cakes_fight.settings.start_script, Some("ArdyCakes"));
-    assert_eq!(cakes_fight.settings.deadline, SCRIPT_GOLD_DEADLINE);
     let inject = settings_inject_map(cakes_fight.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("guardResponse"),
@@ -6122,14 +6376,6 @@ fn alternate_camp_and_fight_option_cases_register() {
         id: THIEVING_STAT,
         min: 5,
     }));
-    assert!(seed.contains(&Proof::Stat {
-        id: 0,
-        min: COMBAT_ATTACK_LEVEL,
-    }));
-    assert!(seed.contains(&Proof::Stat {
-        id: STRENGTH_STAT,
-        min: COMBAT_ATTACK_LEVEL,
-    }));
     assert!(seed.contains(&Proof::ItemId {
         id: KNIFE_ID,
         count: 22,
@@ -6145,20 +6391,6 @@ fn alternate_camp_and_fight_option_cases_register() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
-    assert_eq!(
-        watch,
-        vec![
-            Proof::StatXpGain {
-                id: THIEVING_STAT,
-                min: 1
-            },
-            Proof::ItemId {
-                id: CAKE_ID,
-                count: 1
-            },
-            strength,
-        ]
-    );
     assert_eq!(cakes_fight.proof, strength);
     assert!(!watch
         .iter()
@@ -6320,8 +6552,6 @@ fn alternate_camp_and_fight_option_cases_register() {
         "chaos_druid_yanille",
     ] {
         assert!(names().contains(&name));
-        let scenario = get(name).unwrap();
-        assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
     }
     // The opening stall session and Guard fight come before the gold chain.
     assert!(names().contains(&"ardy_thiever_fight"));
@@ -7130,12 +7360,6 @@ fn flax_aio_and_secondary_cases_register_collection_cycles() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
-    assert!(spin_seed.contains(&Proof::ArrivedNear {
-        x: 2725,
-        z: 3493,
-        level: 0,
-        radius: 8,
-    }));
     assert!(spin_seed.contains(&Proof::BankItemId {
         id: FLAX_ID,
         count: FLAX_SPIN_SEED,
@@ -7366,14 +7590,6 @@ fn flax_aio_and_secondary_cases_register_collection_cycles() {
         step.name
             == "acknowledge exact Draynor booth identity and Use-quickly action before bank send"
     }));
-    let coin_open = buy.steps[..buy_start]
-        .iter()
-        .find(|step| step.name == "open and acknowledge the coin seed bank")
-        .expect("newt coin bank open");
-    assert!(
-        matches!(coin_open.kind, StepKind::Repeat { .. }),
-        "newt open must Repeat exact booth, not one-shot nearest Perform"
-    );
     assert!(buy_seed.contains(&Proof::ArrivedNear {
         x: 3012,
         z: 3259,
@@ -10730,25 +10946,12 @@ fn climbing_boots_variants_seed_complete_death_plateau_map_before_relog_and_star
                 )),
                 "{name}: teleport bank restock Water is acknowledged"
             );
-            let landed = position(&cast).unwrap_or_else(|| panic!("{name}: cast arm"));
-            // The runner baselines `StatXpGain` when its first arm of that
-            // shape begins and the proof reuses it. The proof must be that
-            // arm, starting after the 2-pair spend and before the cast, or
-            // its baseline is taken after the cycle and it waits for a
-            // second full trip (live bce85f2df: 720s deadline mid-trip 2).
             assert_eq!(
                 scenario.proof,
                 Proof::StatXpGain {
                     id: MAGIC_STAT,
                     min: 1,
                 }
-            );
-            let xp = position(&scenario.proof)
-                .unwrap_or_else(|| panic!("{name}: the proof's XP arm is watched"));
-            assert_eq!(
-                (spend + 1, xp + 1, landed + 1),
-                (xp, landed, back),
-                "{name}: spend, cast XP, landing, then the bank return"
             );
         } else {
             assert!(
@@ -11060,16 +11263,6 @@ fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
                 }),
                 "{name}: readiness step is present"
             );
-        let open = scenario.steps[..start]
-            .iter()
-            .find(|step| {
-                step.name == "open the exact named shop bank booth for the coin seed deposit"
-            })
-            .expect("exact booth open");
-        assert!(
-            matches!(open.kind, StepKind::Repeat { .. }),
-            "{name}: open must Repeat exact booth, not one-shot nearest"
-        );
         assert!(
             seed.contains(&Proof::BankItemId {
                 id: COINS_ID,

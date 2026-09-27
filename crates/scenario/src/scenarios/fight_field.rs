@@ -7,18 +7,25 @@ pub(crate) const FIGHT_FIELD_V2_STOP: &str = "fight field qualification complete
 const FIGHT_FIELD_DEADLINE: Duration = Duration::from_secs(180);
 const FIGHT_FIELD_WATCH: u32 = 240;
 
+/// The card only observes (no Attack), so its outcome is the
+/// `fight-field-receipt:` row it paints after its field run settles `done`;
+/// no seed paints it.
+pub(crate) const FIGHT_FIELD_V2_RECEIPT: Proof = Proof::ScriptReceipt {
+    prefix: "fight-field-receipt:",
+};
+
 /// Headed File witness: field observation, no Attack.
 pub(crate) fn fight_field_v2_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());
     steps.push(Step {
-        name: "watch the File card reach its named helper stop",
+        name: "watch the File card paint its fight-field receipt",
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
             budget_ticks: FIGHT_FIELD_WATCH,
-            arm: Proof::Stat { id: 16, min: 0 },
+            arm: FIGHT_FIELD_V2_RECEIPT,
         },
     });
     Scenario {
@@ -28,7 +35,7 @@ pub(crate) fn fight_field_v2_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: Proof::Stat { id: 16, min: 0 },
+        proof: FIGHT_FIELD_V2_RECEIPT,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,

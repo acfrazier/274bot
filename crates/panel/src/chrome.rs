@@ -129,7 +129,7 @@ pub fn multibox_tooltip(on: bool) -> &'static str {
 
 /// Default strip heading order. Drag a collapsing header to reorder;
 /// unknown/missing ids are filled from this list.
-pub const HEADING_ORDER: &[&str] = &["status", "profile", "script", "debug", "log"];
+pub const HEADING_ORDER: &[&str] = &["status", "resource", "profile", "script", "debug", "log"];
 
 /// Merge a saved order with [`HEADING_ORDER`]: drop unknown ids, append
 /// any missing defaults (so old prefs still show new headings).
@@ -194,7 +194,7 @@ mod tests {
         let saved = vec!["log".into(), "nope".into(), "status".into()];
         assert_eq!(
             resolve_heading_order(&saved),
-            ["log", "status", "profile", "script", "debug"]
+            ["log", "status", "resource", "profile", "script", "debug"]
         );
         let mut order = resolve_heading_order(&[]);
         move_heading(&mut order, "profile", "status");
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn apply_amber_replaces_imgui_blue_title() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         apply_amber(ctx.style_mut(), &crate::theme::ChromeColors::default());
         let title = ctx.style().color(dear_imgui_rs::StyleColor::TitleBgActive);

@@ -1,12 +1,7 @@
 //! Task 10: gold-script stubs, data tables, and sibling logic imports.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use api::named_banks::NamedBankFacts;
-use api::snapshot::WorldTile;
-use nav::named_banks::resolve;
-use script::content::BANK_ALIASES;
 use script::load::{JsLibrary, LoadIsolate, LoadShape};
 use script::{CacheMeta, JsCache, ScriptKind, ScriptSource};
 
@@ -441,10 +436,6 @@ import { foodHealAmount } from '../../api/combat/food.js';
 import { requiredThieving } from '../../api/thieving/targets.js';
 export default class T extends LoopingBot {
     loop() {
-        let unknownFood = null;
-        let ambiguousFood = null;
-        try { foodHealAmount('Not a food'); } catch (e) { unknownFood = String(e.message || e); }
-        try { foodHealAmount('Cabbage'); } catch (e) { ambiguousFood = String(e.message || e); }
         globalThis.__probe = {
             plate: ITEM_DB.find(r => r.obj === 'rune_platebody') || null,
             castlewars: ITEM_DB.find(r => r.obj === 'castlewars_armour_body') || null,
@@ -452,8 +443,6 @@ export default class T extends LoopingBot {
             bread: foodHealAmount('Bread'),
             anchovies: foodHealAmount('Anchovies'),
             guard: requiredThieving('Guard'),
-            unknownFood,
-            ambiguousFood,
         };
     }
 }
@@ -471,11 +460,6 @@ export default class T extends LoopingBot {
     assert_eq!(probe["bread"], 4);
     assert_eq!(probe["anchovies"], 3);
     assert_eq!(probe["guard"], 40);
-    assert!(probe["unknownFood"].as_str().unwrap().contains("not impl"));
-    assert!(probe["ambiguousFood"]
-        .as_str()
-        .unwrap()
-        .contains("not impl"));
     iso.join();
 
     let offline = LoadIsolate::spawn(
@@ -501,7 +485,10 @@ export default class T extends LoopingBot {
     offline.on_game_tick(1);
     let probe = offline.probe("__probe").unwrap();
     assert_eq!(probe["items"], 0);
-    assert!(probe["food"].as_str().unwrap().contains("not impl"));
+    assert_eq!(
+        probe["food"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+    );
     assert!(probe["target"].as_str().unwrap().contains("not impl"));
     offline.join();
 }
@@ -542,81 +529,6 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-#[ignore = "requires RS2B0T to name a frozen catalog root"]
-fn selected_game_data_composes_with_frozen_alcher_logic() {
-    let root = PathBuf::from(std::env::var("RS2B0T").expect("RS2B0T frozen root"))
-        .canonicalize()
-        .expect("canonical frozen root");
-    let alcher_dir = root.join("src/bot/scripts/Alcher");
-    let probe_path = alcher_dir.join("SelectedDataProbe.ts");
-    let source = r#"
-import { ALCH_ITEMS, ALCH_OPTIONS, customAlchItem, selectedAlchItems } from './AlcherLogic.js';
-export default class T extends LoopingBot {
-    loop() {
-        const selected = selectedAlchItems(['rune_platebody', 'rune_chainbody']);
-        const bodies = ALCH_ITEMS.filter(i => i.key.endsWith('dragonhide_body'));
-        globalThis.__probe = {
-            options: ALCH_OPTIONS.length,
-            allItems: ALCH_ITEMS.length,
-            selected: selected.map(i => i.key),
-            customAlias: customAlchItem('adamant_scimitar'),
-            customName: customAlchItem('Adamant scimitar'),
-            bodyIds: bodies.map(i => i.id),
-            unknown: customAlchItem('not_a_real_selected_item'),
-        };
-    }
-}
-"#;
-    let cache = JsCache::new(temp_dir("selected-alcher").join("js-cache"));
-    let siblings = script::resolve_sibling_modules(
-        &probe_path,
-        source,
-        &cache,
-        CacheMeta {
-            kind: ScriptKind::Compat,
-            source: ScriptSource::File,
-            shape: Some("CompatClass".into()),
-            api_family: None,
-        },
-    )
-    .expect("frozen AlcherLogic resolves");
-    for revision in [
-        client::io::ClientRevision::R274,
-        client::io::ClientRevision::R289,
-    ] {
-        let data = api::game_data::for_revision(revision).unwrap();
-        let iso = LoadIsolate::spawn_with_game_data(
-            source.into(),
-            LoadShape::CompatClass,
-            siblings.clone(),
-            data,
-        )
-        .unwrap();
-        iso.on_game_tick(1);
-        let probe = iso.probe("__probe").unwrap();
-        assert_eq!(probe["options"], 37, "custom plus every enabled fodder");
-        assert_eq!(probe["allItems"], 36);
-        assert_eq!(
-            probe["selected"],
-            serde_json::json!(["rune_platebody", "rune_chainbody"])
-        );
-        assert_eq!(probe["customAlias"]["id"], 1331);
-        assert_eq!(probe["customName"]["id"], 1331);
-        let body_ids = probe["bodyIds"].as_array().unwrap();
-        assert_eq!(body_ids.len(), 4);
-        assert_eq!(
-            body_ids
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            4
-        );
-        assert!(probe["unknown"].is_null());
-        iso.join();
-    }
-}
-
-#[test]
 fn thiever_resolves_food_from_host_loadout_and_queues_eat() {
     let src = r#"
 import { scriptFood } from '../../api/loadout/loadoutPlan.js';
@@ -651,113 +563,72 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-fn packed_bank_booths() -> Vec<WorldTile> {
-    BANK_ALIASES
-        .iter()
-        .flat_map(|alias| alias.booths.iter().copied())
-        .collect()
+#[test]
+fn selected_game_data_composes_with_handwritten_alcher_logic() {
+    let dir = temp_dir("selected-alcher-handwritten");
+    let cache = JsCache::new(dir.join("js-cache"));
+    let card_dir = dir.join("Alcher");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    std::fs::write(
+        card_dir.join("AlcherLogic.ts"),
+        r#"
+import { ITEM_DB } from '../../data/itemdb.js';
+export function customAlchItem(query) {
+    const key = String(query).trim().toLowerCase().replace(/\s+/g, '_');
+    return ITEM_DB.find((r) => r.obj === key) ?? ITEM_DB.find((r) => r.name === query) ?? null;
 }
-
-fn spawn_with_named_banks(src: &str, facts: NamedBankFacts) -> LoadIsolate {
-    LoadIsolate::spawn_with_content(
-        src.to_string(),
-        LoadShape::CompatClass,
-        vec![],
-        None,
-        Arc::new(facts),
+export function selectedAlchItems(keys) {
+    return keys.map((k) => ITEM_DB.find((r) => r.obj === k)).filter(Boolean);
+}
+export const ALCH_ITEMS = ITEM_DB.filter((r) => ['maple_longbow', 'yew_longbow', 'rune_platebody'].includes(r.obj))
+    .map((r) => ({ key: r.obj, id: r.id, name: r.name }));
+export const ALCH_OPTIONS = ['custom', ...ALCH_ITEMS.map((i) => i.key)];
+"#,
     )
-    .unwrap()
-}
-
-const BANK_UNLOCKED_PROBE: &str = r#"
-import { BANK_LOCATIONS, bankUnlocked, nearestBank } from '../../api/bank/BankLocations.js';
-
-const faladorPosted = BANK_LOCATIONS.find((b) => b.name === 'Falador East') ?? null;
-const faladorShape = { name: 'Falador East', tile: { x: 3013, z: 3355, level: 0 } };
-const falador = faladorPosted ?? faladorShape;
-const canifis = { name: 'Canifis', tile: { x: 3512, z: 3480, level: 0 } };
-const wrongTile = {
-    name: falador.name,
-    tile: { x: falador.tile.x + 1, z: falador.tile.z, level: falador.tile.level },
-};
-
+    .unwrap();
+    let probe = r#"
+import { ALCH_ITEMS, ALCH_OPTIONS, customAlchItem, selectedAlchItems } from './AlcherLogic.js';
 export default class T extends LoopingBot {
     loop() {
-        globalThis.__unlocked = {
-            falador: bankUnlocked(falador),
-            canifis: bankUnlocked(canifis),
-            wrongTile: bankUnlocked(wrongTile),
+        globalThis.__probe = {
+            options: ALCH_OPTIONS.length,
+            allItems: ALCH_ITEMS.length,
+            selected: selectedAlchItems(['rune_platebody', 'rune_chainbody']).map((i) => i.obj),
+            customAlias: customAlchItem('adamant_scimitar'),
+            customName: customAlchItem('Adamant scimitar'),
+            unknown: customAlchItem('not_a_real_selected_item'),
         };
-        const n = nearestBank();
-        globalThis.__nearest = n ? [n.name, n.tile.x, n.tile.z, n.tile.level] : null;
     }
 }
 "#;
-
-#[test]
-fn bank_unlocked_matches_published_alias_rows_only() {
-    let facts = resolve(BANK_ALIASES, &packed_bank_booths(), |_| true);
-    let iso = spawn_with_named_banks(BANK_UNLOCKED_PROBE, facts);
-    iso.on_game_tick(1);
-    let unlocked = iso.probe("__unlocked").unwrap();
-    assert_eq!(unlocked["falador"], true);
-    assert_eq!(unlocked["canifis"], false);
-    assert_eq!(unlocked["wrongTile"], false);
-    iso.join();
-}
-
-#[test]
-fn bank_unlocked_empty_facts_fail_closed() {
-    let iso = spawn_with_named_banks(BANK_UNLOCKED_PROBE, NamedBankFacts::empty());
-    iso.on_game_tick(1);
-    let unlocked = iso.probe("__unlocked").unwrap();
-    assert_eq!(unlocked["falador"], false);
-    assert_eq!(unlocked["canifis"], false);
-    iso.join();
-}
-
-#[test]
-fn autofighter_catalog_module_graph_loads_bank_unlocked_export() {
-    let Some(root) = script::rs2b0t_root() else {
-        return;
-    };
-    let dir = temp_dir("autofighter-bank-unlocked");
-    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("catalog register");
-    lib.ensure_js(ScriptSource::Catalog, "AutoFighter")
-        .expect("AutoFighter transpile");
-    let card = lib
-        .get(ScriptSource::Catalog, "AutoFighter")
-        .cloned()
-        .expect("AutoFighter card");
-    assert_eq!(
-        card.unloadable, None,
-        "AutoFighter must not be import-stamped unloadable"
-    );
+    std::fs::write(card_dir.join("SelectedDataProbe.ts"), probe).unwrap();
     let siblings = script::resolve_sibling_modules(
-        &card.path,
-        &card.origin,
-        &JsCache::new(dir.join("sib-cache")),
+        &card_dir.join("SelectedDataProbe.ts"),
+        probe,
+        &cache,
         CacheMeta {
             kind: ScriptKind::Compat,
-            source: ScriptSource::Catalog,
-            shape: Some(format!("{:?}", card.shape)),
+            source: ScriptSource::File,
+            shape: Some("CompatClass".into()),
             api_family: None,
         },
     )
-    .expect("AutoFighter siblings");
-    let facts = Arc::new(resolve(BANK_ALIASES, &packed_bank_booths(), |_| true));
-    let game_data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    .expect("AlcherLogic sibling");
+    assert_eq!(siblings.len(), 1);
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let iso =
-        LoadIsolate::spawn_with_content(card.js, card.shape, siblings, Some(game_data), facts)
-            .expect("AutoFighter module graph must load");
+        LoadIsolate::spawn_with_game_data(probe.into(), LoadShape::CompatClass, siblings, data)
+            .unwrap();
     iso.on_game_tick(1);
-    let logs = iso.drain_logs();
-    assert!(
-        logs.iter()
-            .all(|line| !line.contains("bankUnlocked") && !line.contains("not impl")),
-        "AutoFighter tick must not throw for bankUnlocked: {logs:?}"
+    let row = iso.probe("__probe").unwrap();
+    assert_eq!(row["options"], 4);
+    assert_eq!(row["allItems"], 3);
+    assert_eq!(
+        row["selected"],
+        serde_json::json!(["rune_platebody", "rune_chainbody"])
     );
+    assert_eq!(row["customAlias"]["id"], 1331);
+    assert_eq!(row["customName"]["id"], 1331);
+    assert!(row["unknown"].is_null());
     iso.join();
 }

@@ -5,6 +5,10 @@ const host = () => globalThis.__rs2b0t_host || {};
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
 const snap = () => host().snapshot || {};
+const sessionGeneration = () => {
+    const generation = snap().bank_generation;
+    return Number.isFinite(generation) && generation >= 0 ? generation : 0;
+};
 const queue = (req) => {
     const h = host();
     h.interact = h.interact || [];
@@ -37,12 +41,9 @@ async function deposit(args, hooks = {}) {
     if (out.kind === 'refused') throw notImpl('Bank.depositAllMatching', out.reason);
 }
 
-// Pick the withdraw op for a requested amount (rs2b0t `withdrawOp`).
-// The posted bank rows carry no op labels; the shim maps the requested
-// amount straight to the `Withdraw …` action label the host dispatches.
+// Frozen `withdrawOp`: the row's own op matching the amount, in Rust.
 export function withdrawOp(ops, which) {
-    const labels = { all: 'Withdraw All', '10': 'Withdraw 10', '1': 'Withdraw 1' };
-    return labels[String(which)] || null;
+    return globalThis.__rs2b0t_withdraw_op(ops, which);
 }
 
 export const Bank = new Proxy(
@@ -171,8 +172,8 @@ export const Bank = new Proxy(
             return snap().bank_loaded === true;
         },
         snapshotGeneration() {
-            const generation = snap().bank_generation;
-            return Number.isFinite(generation) && generation >= 0 ? generation : 0;
+            const generation = snap().bank_snapshot_generation;
+            return Number.isFinite(generation) && generation >= 0 ? generation : -1;
         },
         async waitSnapshotAfter(generation, timeoutMs) {
             const baseline = Number(generation);
@@ -215,19 +216,19 @@ export const Bank = new Proxy(
                     Number(r.count) > 0,
             );
             if (!row) return false;
-            const generation = Bank.snapshotGeneration();
+            const generation = sessionGeneration();
             const resultSeq = Number(snap().withdraw_load_result_seq) || 0;
             queue({ op: 'withdraw-load', name: row.name, bank_generation: generation });
             await Execution.delayUntil(
                 () =>
                     (Number(snap().withdraw_load_result_seq) || 0) !== resultSeq ||
                     !Bank.isOpen() ||
-                    Bank.snapshotGeneration() !== generation,
+                    sessionGeneration() !== generation,
                 0,
             );
             return (
                 Bank.isOpen() &&
-                Bank.snapshotGeneration() === generation &&
+                sessionGeneration() === generation &&
                 (Number(snap().withdraw_load_result_seq) || 0) !== resultSeq &&
                 snap().withdraw_load_result === true
             );
@@ -248,7 +249,7 @@ export const Bank = new Proxy(
         async openNpcAccess(access, log) {
             const out = await runMachine(
                 'bank_npc_access',
-                { name: String(access.name), op: String(access.op), choose: String(access.choose) },
+                { name: String(access.name), op: String(access.op), choose: String(access.choose ?? '') },
                 { log: typeof log === 'function' ? log : undefined },
             );
             return out.kind === 'done' && out.value === true;

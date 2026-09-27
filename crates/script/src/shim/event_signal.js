@@ -12,7 +12,15 @@ export const EventSignal = new Proxy(
     {
         pending() {
             const h = host();
-            return h.hold === true || h.ours === true;
+            if (h.hold === true || h.ours === true) return true;
+            const callback = globalThis.__rs2b0t_event_interrupt;
+            return typeof callback === 'function' && callback() === true;
+        },
+        setInterrupt(callback) {
+            if (callback !== null && callback !== undefined && typeof callback !== 'function') {
+                throw new TypeError('EventSignal.setInterrupt requires a function or null');
+            }
+            globalThis.__rs2b0t_event_interrupt = callback || null;
         },
         ignoredRandoms() {
             const inst = globalThis.__rs_bot;

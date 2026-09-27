@@ -63,11 +63,15 @@ table SceneEntity {
   size: int;
   nx: int; // path-head network SW x
   nz: int; // path-head network SW z
+  shape: int; // loc-only placed shape
+  angle: int; // loc-only placed rotation
 }
 
-// One chat modal BUTTON_OK choice.
+// One chat modal BUTTON_OK choice. The component id is the exact button
+// identity used by direct catalog callers; Rust machines may answer by index.
 table ChatOption {
   text: string;
+  com_id: int;
 }
 
 // One combat-style varp-select button with its label.
@@ -176,6 +180,7 @@ table Reach {
 table WidgetText {
   component_id: int;
   text: string;
+  item_count: int = -1;
 }
 
 // One quest-tab text row after Rust resolves its native display colour.
@@ -306,6 +311,7 @@ table Snapshot {
   trade_decline_id: int;
   shop_open: bool;
   shop_stock: [Row];
+  // Open/close session identity used to reject stale bank actions.
   bank_generation: ulong;
   count_dialog_open: bool;
   withdraw_x_result_seq: ulong;
@@ -428,6 +434,25 @@ table Snapshot {
   // short and is never packed here. Dest geometry is not a shopping list:
   // only this vector names one.
   walk_missing_carry: [Carry];
+  // Select-only result, distinct from walk/inspect. Index names the immutable
+  // selected-world bank catalog supplied to this isolate at Start.
+  bank_selection_request_id: ulong = 0;
+  bank_selection_generation: ulong = 0;
+  bank_selection_index: int = -1;
+  // 0 absent, 1 near shortcut, 2 reachable, 3 air fallback, 4 no candidate.
+  bank_selection_kind: ubyte = 0;
+  // The local player's primary animation id (slot 264; frozen
+  // `reader.selfAnim()`, -1 idle). Written on the keyframe and whenever it
+  // changes; an omitted slot keeps the last id. The frozen `AttackClock`
+  // keys a swing start on this id, not on the `animating` flag above.
+  self_anim: int = -1;
+  // Slot 266, walk_outcome family: the settled route end is frozen
+  // 'blocked' (the player stands next to a last tile the live scene
+  // refuses; WalkExecutor.ts:1039-1040, 1092-1094).
+  walk_outcome_blocked: bool = false;
+  // Item snapshot packet generation, distinct from bank_generation's
+  // open/close session. -1 while closed; omitted in a delta means keep.
+  bank_snapshot_generation: long = -1;
 }
 
 table Collision {
@@ -456,7 +481,8 @@ table InspectHop {
   ticks: int;
 }
 
-// Inspect-only avoid rectangle. level -1 = every plane.
+// Avoid rectangle of an inspect route or a world walk (walk / walk-near).
+// level -1 = every plane.
 table AvoidRect {
   min_x: int;
   max_x: int;
@@ -473,7 +499,7 @@ table AvoidRect {
 // | "wear" | "unequip" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
 // | "note-progress" | "loop-settled" | "wait-enqueued" | "wait-settled"
 // | "recovery-anchor" | "recovery-anchor-none" | "key" | "mouse"
-// | "inspect-route".
+// | "inspect-route" | "select-bank" | "run-policy".
 // "key": action=DOM key, kind=code (optional), index=1 down / 0 up.
 // "mouse": xf/yf=client coordinates as doubles, level=DOM button, index=1 down / 0 up.
 // input_identity is the native permit at production (0 when absent).
@@ -517,6 +543,20 @@ table Interact {
   // Inspect session generation from the applied snapshot. Required on
   // inspect-ack so a caller cannot free terminals from another session.
   inspect_ack_generation: ulong = 0;
+  use_mage_bank: bool = false;
+  use_zanaris_bank: bool = false;
+  // In-Play BroadcastChannel transport. `data` is the bounded native
+  // structured-clone codec, never JSON text.
+  channel_id: ulong = 0;
+  data: [ubyte];
+  seq: ulong = 0;
+  // Native RunManager.override update. clear=true is override(null).
+  // Optional boolean: 0 absent, 1 false, 2 true.
+  run_policy_clear: bool = false;
+  run_auto_kind: ubyte = 0;
+  // Optional energy: 0 absent, 1 integer floor, 2 JavaScript NaN.
+  run_energy_kind: ubyte = 0;
+  run_energy_min: int = 0;
 }
 
 // The tick's shim interact queue, forwarded to the host.

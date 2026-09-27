@@ -595,16 +595,12 @@ fn loopback_tcp_pair() -> std::io::Result<(TcpStream, TcpStream)> {
     let client_local = client.local_addr()?;
     let (server, peer) = listener.accept()?;
     if peer != client_local {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("wake pair peer mismatch: accepted {peer}, expected {client_local}"),
-        ));
+        return Err(std::io::Error::other(format!(
+            "wake pair peer mismatch: accepted {peer}, expected {client_local}"
+        )));
     }
     if server.peer_addr()? != client_local {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "wake pair server peer_addr mismatch",
-        ));
+        return Err(std::io::Error::other("wake pair server peer_addr mismatch"));
     }
     // Writer end is `client` (SlotWake); set both ends.
     client.set_nodelay(true)?;

@@ -41,7 +41,7 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
   and no manual step. Missing canonical inputs fail the build:
   `BOT_NAV_BUILD=skip` opts out. `nav-pack` stays for custom bakes
   (`$NAV_PACK` or `~/.274bot/274bot.navpack`, magic `274V`, version byte
-  **9**; v8 and older are `BadVersion`). Details:
+  **10**; v9 and older are `BadVersion`). Details:
   [docs/api/nav.md](docs/api/nav.md).
 
 ## Clone and run
@@ -69,6 +69,14 @@ is the headless operator panel: ratatui + crossterm, same profile flags and
 vault layout as `panel-play`, slots spawn raster Off (no GPU).
 `--live script_<name>` runs the same scenario harness as
 `panel-play --live`.
+Paired capability gold uses disposable profiles minted by the local engine;
+never substitute public accounts. Run it headlessly with
+`tui-play --profile local-289 --live script_clue_duel_3554` or
+`script_jive_kq_four`. KQ uses disposable max-stat qualification fixtures at
+the normal 600 ms tick and intentionally continues through two kills, two bank
+returns and the second descent; do not accelerate it or stop the fleet in the
+lair. The headed twin is the `panel`
+`pair_watch` example.
 
 Shared profile flags (all three binaries):
 `--profile local-274|local-289|public-289`, `--revision 274|289`, `--prod`,
@@ -116,9 +124,11 @@ review requirements, not this checker.
 
 GitHub Actions runs the same two manifests after installing ALSA + X11
 headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
-architecture checker (no Rust toolchain). It is still a **subset**:
-`SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`.
-A green GH job is not a headed or engine pass.
+required-feature script and profiling test lanes and the architecture checker
+(no Rust toolchain). Independent test commands run as parallel matrix lanes;
+the required `test` status aggregates every lane. It is still a **subset**:
+`SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`. A green GH job is
+not a headed or engine pass.
 
 Live harnesses need the engine for the profile under test. Failures print
 `FAIL:` and `exit(1)`. Wait `ingame && scene_state == 2`. Quiet unless
@@ -128,6 +138,17 @@ Live harnesses need the engine for the profile under test. Failures print
 LIVE=1 cargo test -p e2e -- --ignored --test-threads=1
 LIVE=1 cargo test -p host-play -- --ignored --test-threads=1
 LIVE=1 cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_nav_door
+```
+
+Ordinary `cargo test` reads no content outside the repo. The nav real-map
+qualification tests are `#[ignore]`d and need the content tree and its
+client config jag named explicitly (colon-separated, one jag per root or one
+for all); a missing input fails, never skips:
+
+```bash
+NAV_CONTENT_ROOT=$HOME/experiments/lostcity-289/content \
+NAV_CACHE=$HOME/experiments/lostcity-289/engine/data/pack/client/config \
+cargo test -p nav --lib -- --ignored
 ```
 
 Nav / panel / scenario twins live in `crates/e2e`. Login / RSS / null-raster

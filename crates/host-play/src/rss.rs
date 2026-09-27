@@ -7,6 +7,7 @@
 //! CPU second field is cumulative process user+kernel seconds (panel delta).
 //! Failure sentinel remains `(0, 0.0)` for public tuple compatibility.
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn rss_bytes_from_ru_maxrss(raw: i64) -> u64 {
     if raw < 0 {
         return 0;

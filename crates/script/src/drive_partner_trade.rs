@@ -7,11 +7,11 @@
 //! offer or accept) and returns, and the next call handles what follows.
 //! This module ports that iteration branch for branch: the caller's
 //! callbacks run in the frozen order, `setStatus` gets the frozen label or
-//! `mule: …` default, and `log` gets the frozen lines. Callbacks are
-//! frozen synchronous calls ([`Family::AWAIT_CALLBACKS`] is `false`): a
-//! returned promise is used as a value, not awaited, and a throw rejects
-//! the call. Their offer, my offer, the partner header and the screens are
-//! read from the scene; sends reuse the native trade ops.
+//! `mule: …` default, and `log` gets the frozen lines. Every callback has
+//! frozen synchronous-call semantics: a returned promise is used as a
+//! value, not awaited, and a throw rejects the call. Their offer, my offer,
+//! the partner header and the screens are read from the scene; sends reuse
+//! the native trade ops.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step, Thrown};
 use crate::observed;
@@ -241,9 +241,22 @@ impl Family for PartnerTrade {
         "onDecline",
         "baseline",
     ];
+    /// Every callback in the frozen iteration is synchronous.
+    const SYNC_HOOKS: &'static [usize] = &[
+        NAMES,
+        METRIC,
+        READY,
+        MATCH,
+        SET_STATUS,
+        LOG,
+        ON_MISSING,
+        GATE,
+        ON_COMPLETE,
+        ON_DECLINE,
+        BASELINE,
+    ];
     /// The frozen iteration's synchronous stretch runs in the caller's turn.
     const KICK_ON_START: bool = true;
-    const AWAIT_CALLBACKS: bool = false;
     type Args = PartnerTradeArgs;
     /// Always void: outcomes reach the caller through its callbacks.
     type Output = Value;

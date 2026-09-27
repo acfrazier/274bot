@@ -62,7 +62,6 @@ import { CombatStyle } from '../../api/combat/CombatStyle.js';
 fn catalog_dim_names_are_locked() {
     for name in [
         "AIOQuester",
-        "ClueSolver",
         "Woodcutter",
         "Miner",
         "Fisher",
@@ -73,6 +72,7 @@ fn catalog_dim_names_are_locked() {
     ] {
         assert!(script::is_catalog_dim(name), "{name}");
     }
+    assert!(!script::is_catalog_dim("ClueSolver"));
     assert!(!script::is_catalog_dim("CookBot"));
     assert!(!script::is_catalog_dim("ChickenKiller"));
     assert!(!script::is_catalog_dim("WalkTo"));
@@ -100,9 +100,11 @@ fn catalog_dim_register_stamps_unloadable_even_when_imports_remap() {
 import Woodcutter from './Woodcutter/Woodcutter.js';
 import CookBot from './CookBot/CookBot.js';
 import BankSorter from './BankSorter/BankSorter.js';
+import JiveKQ from './JiveKQ/JiveKQ.js';
 ScriptRegistry.register({ name: 'Woodcutter', create: () => new Woodcutter() });
 ScriptRegistry.register({ name: 'CookBot', create: () => new CookBot() });
 ScriptRegistry.register({ name: 'BankSorter', create: () => new BankSorter() });
+ScriptRegistry.register({ name: 'JiveKQ', create: () => new JiveKQ() });
 "#,
     )
     .unwrap();
@@ -112,6 +114,8 @@ ScriptRegistry.register({ name: 'BankSorter', create: () => new BankSorter() });
     std::fs::write(root.join("src/bot/scripts/CookBot/CookBot.ts"), body).unwrap();
     std::fs::create_dir_all(root.join("src/bot/scripts/BankSorter")).unwrap();
     std::fs::write(root.join("src/bot/scripts/BankSorter/BankSorter.ts"), body).unwrap();
+    std::fs::create_dir_all(root.join("src/bot/scripts/JiveKQ")).unwrap();
+    std::fs::write(root.join("src/bot/scripts/JiveKQ/JiveKQ.ts"), body).unwrap();
 
     let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
@@ -131,8 +135,110 @@ ScriptRegistry.register({ name: 'BankSorter', create: () => new BankSorter() });
         sorter.unloadable.as_deref(),
         Some("dim: BankSorter is unavailable until native bank sorting is implemented")
     );
+    let jive = lib
+        .get(ScriptSource::Catalog, "JiveKQ")
+        .expect("JiveKQ stays listed for the Beta 1 witness");
+    assert_eq!(
+        jive.unloadable.as_deref(),
+        Some("dim: JiveKQ is unavailable: four-player qualification incomplete in 0.1.9")
+    );
 }
 
+#[test]
+fn catalog_flour_collector_links_murder_data_and_dims_ess_miner() {
+    use script::load::JsLibrary;
+    use script::ScriptSource;
+
+    let dir = std::env::temp_dir().join(format!(
+        "274bot-catalog-loads-{}-{}",
+        std::process::id(),
+        "murder"
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("FlourCollector")).unwrap();
+    std::fs::create_dir_all(scripts.join("EssMiner")).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        r#"
+import FlourCollector from './FlourCollector/FlourCollector.js';
+import EssMiner from './EssMiner/EssMiner.js';
+ScriptRegistry.register({ name: 'FlourCollector', create: () => new FlourCollector() });
+ScriptRegistry.register({ name: 'EssMiner', create: () => new EssMiner() });
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("FlourCollector/FlourCollector.ts"),
+        r#"
+import { MURDER_LOC, MURDER_NAME, MURDER_OBJ, MURDER_TILE } from '../../api/ai/quests/defs/murder/areas.js';
+export default class FlourCollector extends LoopingBot {
+    loop() {
+        globalThis.__murder = [MURDER_NAME, MURDER_OBJ.POT, MURDER_LOC.FLOUR_BARREL, MURDER_TILE.BANK.x];
+    }
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("EssMiner/EssMiner.ts"),
+        r#"
+import { ToolAcquire } from '../../api/acquisition/ToolAcquire.js';
+export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
+"#,
+    )
+    .unwrap();
+
+    let mut library = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    library
+        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("fixture catalog registers");
+    let flour = library
+        .get(ScriptSource::Catalog, "FlourCollector")
+        .expect("FlourCollector listed");
+    assert_eq!(flour.unloadable, None);
+    let prepared = library
+        .prepare_card_unvalidated(ScriptSource::Catalog, "FlourCollector")
+        .expect("FlourCollector transpiles and instantiates");
+    assert_eq!(prepared.card.unloadable, None);
+
+    let ess = library
+        .get(ScriptSource::Catalog, "EssMiner")
+        .expect("EssMiner listed");
+    assert_eq!(
+        ess.unloadable.as_deref(),
+        Some("dim: EssMiner is unavailable until the native Gatherer replaces it")
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn reach_loc_op_fails_closed_through_proxy() {
+    use script::{LoadIsolate, LoadShape};
+
+    let src = r#"
+import { Reach } from '../../api/walking/Reach.js';
+export default class T extends LoopingBot {
+    loop() {
+        try {
+            Reach.locOp({});
+            globalThis.__probe = 'unexpected success';
+        } catch (error) {
+            globalThis.__probe = String(error);
+        }
+    }
+}
+"#;
+    let isolate = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("Reach.locOp probe loads");
+    isolate.on_game_tick(1);
+    assert_eq!(
+        isolate.probe("__probe").expect("Reach.locOp probe"),
+        "Error: not impl: Reach.locOp"
+    );
+    isolate.join();
+}
 #[test]
 fn event_webwalk_direct_navigator_remaps() {
     let src = "import { DirectNavigator } from '../../event/webwalk/DirectNavigator.js'; export default class T extends LoopingBot { loop() {} }";

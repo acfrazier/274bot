@@ -42,6 +42,7 @@ fn run_selected_facts<'s>(
         "item-db" => item_db(scope),
         "food-forms" => food_forms(scope, args.get(1)),
         "range-loadout" => range_loadout(scope, args.get(1), args.get(2)),
+        "ranged-item" => ranged_item(scope, args.get(1), args.get(2), args.get(3), args.get(4)),
         "cert-maps" => cert_maps(scope),
         "cert-link" => cert_link(scope, args.get(1), args.get(2)),
         "obj-catalog" => obj_catalog(scope),
@@ -51,6 +52,7 @@ fn run_selected_facts<'s>(
         "cow-nearest" => cow_nearest(scope, args.get(1)),
         "pickpocket-spot" => pickpocket_spot(scope, args.get(1)),
         "required-thieving" => required_thieving(scope, args.get(1)),
+        "gas-rock-ids" => gas_rock_ids(scope),
         _ => Err("invalid selected facts op".into()),
     }
 }
@@ -114,6 +116,22 @@ fn range_loadout<'s>(
     let thrown = v8::Boolean::new(scope, loadout.thrown);
     set_key(scope, row, "thrown", thrown.into());
     Ok(row.into())
+}
+
+fn ranged_item<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    selected: v8::Local<v8::Value>,
+    custom: v8::Local<v8::Value>,
+    fallback: v8::Local<v8::Value>,
+    key: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let selected = js_to_string(scope, selected)?;
+    let custom = js_to_string(scope, custom)?;
+    let fallback = js_to_string(scope, fallback)?;
+    let key = js_to_string(scope, key)?;
+    let resolved =
+        crate::ranged::ranged_item(Some(&selected), Some(&custom), &fallback, key == "bow")?;
+    v8_str(scope, resolved)
 }
 
 fn cert_maps<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
@@ -347,6 +365,26 @@ fn required_thieving<'s>(
     };
     let level = data.required_thieving(&target).unwrap_or(1);
     Ok(v8::Integer::new(scope, level).into())
+}
+
+/// Frozen `GAS_ROCK_IDS`, sourced from the selected cache's mining rows.
+/// `undefined` keeps imports loadable without selected data while the shim's
+/// fail-closed value still throws if a card tries to use `.has`.
+fn gas_rock_ids<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(data) = supply_v2::selected_data() else {
+        return Ok(v8::undefined(scope).into());
+    };
+    let Ok(ids) = api::gather_methods::gas_rock_ids(data.gather_methods()) else {
+        return Ok(v8::undefined(scope).into());
+    };
+    let array = v8::Array::new(scope, 0);
+    for (index, id) in ids.enumerate() {
+        let id = v8::Integer::new(scope, id);
+        array
+            .set_index(scope, index as u32, id.into())
+            .ok_or_else(|| "selected facts gas rock array".to_string())?;
+    }
+    Ok(array.into())
 }
 
 fn string_array<'s>(

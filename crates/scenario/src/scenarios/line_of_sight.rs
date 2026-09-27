@@ -7,18 +7,24 @@ pub(crate) const LOS_V2_STOP: &str = "line of sight qualification complete";
 const LOS_DEADLINE: Duration = Duration::from_secs(180);
 const LOS_WATCH: u32 = 240;
 
+/// The card only observes, so its outcome is the `los-receipt:` row it
+/// paints once both pairs agree (v1 and v2); no seed paints it.
+pub(crate) const LOS_V2_RECEIPT: Proof = Proof::ScriptReceipt {
+    prefix: "los-receipt:",
+};
+
 /// Headed File witness: real NativeTick v2 plus frozen Reachability.lineOfSight.
 pub(crate) fn line_of_sight_v2_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());
     steps.push(Step {
-        name: "watch the File card reach its named helper stop",
+        name: "watch the File card paint its line-of-sight receipt",
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
             budget_ticks: LOS_WATCH,
-            arm: Proof::Stat { id: 16, min: 0 },
+            arm: LOS_V2_RECEIPT,
         },
     });
     Scenario {
@@ -28,7 +34,7 @@ pub(crate) fn line_of_sight_v2_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: Proof::Stat { id: 16, min: 0 },
+        proof: LOS_V2_RECEIPT,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,

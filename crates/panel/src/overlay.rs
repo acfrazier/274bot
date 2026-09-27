@@ -2,28 +2,29 @@
 //!
 //! The armed route's remaining tiles are painted by the client's 3D renderer
 //! and on the pack map, so this overlay draws only the queue card belonging
-//! to the bot shown in each Image.
+//! to the bot shown in each Image. The place itself comes from the shared
+//! fleet row ([`QueuePlace`]); only the rs2b0t card copy lives here.
 
 use dear_imgui_rs::Ui;
+use frontend_core::QueuePlace;
 
-use crate::queue_card::{queue_ahead_label, queue_k_of_n, QUEUE_CARD_TITLE};
 use crate::theme::ACCENT;
 
+/// Fixed card title, matching rs2b0t.
+const QUEUE_CARD_TITLE: &str = "AUTO-LOGIN QUEUE";
+
 /// Amber queue-card lines for one slot's FIFO place: title, `k of n`,
-/// ahead label. Empty when the slot is not queued, so the card disappears
+/// bots ahead. Empty when the slot is not queued, so the card disappears
 /// the moment the grant lands (`logging in…`).
-fn queue_card_lines(queue: Option<(i32, i32)>) -> Vec<String> {
-    let Some((position, total)) = queue else {
+fn queue_card_lines(queue: Option<QueuePlace>) -> Vec<String> {
+    let Some(place) = queue else {
         return Vec::new();
     };
-    let Some(place) = queue_k_of_n(position, total) else {
-        return Vec::new();
+    let ahead = match place.ahead() {
+        1 => "1 bot in front".to_string(),
+        n => format!("{n} bots in front"),
     };
-    vec![
-        QUEUE_CARD_TITLE.to_string(),
-        place,
-        queue_ahead_label(position as u32),
-    ]
+    vec![QUEUE_CARD_TITLE.to_string(), place.to_string(), ahead]
 }
 
 /// Horizontal/vertical pad inside the queue card border (equal L/R and T/B).
@@ -79,7 +80,7 @@ fn draw_queue_card(ui: &Ui, min: [f32; 2], lines: &[String]) {
 
 /// Queue card over one bot's Image. No-op when that bot is not queued, so
 /// the card disappears the moment the grant lands.
-pub fn draw_queue_card_for(ui: &Ui, queue: Option<(i32, i32)>, min: [f32; 2]) {
+pub fn draw_queue_card_for(ui: &Ui, queue: Option<QueuePlace>, min: [f32; 2]) {
     let lines = queue_card_lines(queue);
     if !lines.is_empty() {
         draw_queue_card(ui, min, &lines);
@@ -87,10 +88,10 @@ pub fn draw_queue_card_for(ui: &Ui, queue: Option<(i32, i32)>, min: [f32; 2]) {
 }
 
 /// Cached queue-card state for the bot shown by this overlay. The card must
-/// appear immediately on enqueue, so it is cached on the FIFO tuple, not a
+/// appear immediately on enqueue, so it is cached on the FIFO place, not a
 /// timer.
 pub struct PathOverlay {
-    queue: Option<(i32, i32)>,
+    queue: Option<QueuePlace>,
     queue_lines: Vec<String>,
 }
 
@@ -111,7 +112,7 @@ impl PathOverlay {
     /// Draw the displayed bot's queue card over the Image. `min` is the
     /// Image widget's top-left corner; `size` is unused now that the
     /// polyline is gone.
-    pub fn frame(&mut self, ui: &Ui, queue: Option<(i32, i32)>, min: [f32; 2], _size: [f32; 2]) {
+    pub fn frame(&mut self, ui: &Ui, queue: Option<QueuePlace>, min: [f32; 2], _size: [f32; 2]) {
         if queue != self.queue {
             self.queue = queue;
             self.queue_lines = queue_card_lines(queue);
@@ -130,11 +131,7 @@ impl Default for PathOverlay {
 
 #[cfg(test)]
 mod tests {
-    use api::snapshot::WorldTile;
-    use nav::collision::WorldCollision;
-    use nav::tile::Tile;
-    use nav::transport::TransportGraph;
-    use nav::world::NavWorld;
+    use frontend_core::QueuePlace;
 
     use super::{
         draw_queue_card, queue_card_lines, queue_card_metrics, PathOverlay, QUEUE_CARD_OUTER,
@@ -142,162 +139,32 @@ mod tests {
     };
     use crate::session::Session;
 
-    /// A `w`×`h` all-walkable level-0 world at (0,0).
-    fn open_world(w: usize, h: usize) -> NavWorld {
-        NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                width: w,
-                height: h,
-                walk: vec![0u8; w * h],
-                blocked: vec![0u64; (w * h).div_ceil(64)],
-                flags: None,
-            },
-            TransportGraph::default(),
-            Vec::new(),
-        )
-    }
-
-    #[test]
-    fn overlay_does_not_stroke_a_path_polyline() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        let mut ctx = dear_imgui_rs::Context::create();
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let ui = ctx.frame();
-        let mut s = Session::new();
-        s.focus.lock().unwrap().focused = Some("alice".into());
-        let world = open_world(3, 3);
-        s.arm_walk_on(
-            &world,
-            Tile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            Tile {
-                x: 2,
-                z: 2,
-                level: 0,
-            },
-        );
-        let mut overlay = PathOverlay::new();
-        ui.window("##overlay-test").build(|| {
-            overlay.frame(ui, None, [10.0, 10.0], [90.0, 90.0]);
-        });
-        ctx.render();
-        assert!(
-            overlay.points().is_empty(),
-            "polyline is gone; 3D paints the path"
-        );
+    fn place(position: u32, total: u32) -> Option<QueuePlace> {
+        Some(QueuePlace { position, total })
     }
 
     #[test]
     fn queue_card_lines_match_rs2b0t_copy() {
         assert_eq!(queue_card_lines(None), Vec::<String>::new());
-        let lines = queue_card_lines(Some((1, 2)));
+        let lines = queue_card_lines(place(1, 2));
         assert_eq!(lines[0], "AUTO-LOGIN QUEUE");
         assert_eq!(lines[1], "1 of 2");
         assert_eq!(lines[2], "0 bots in front");
-        let lines = queue_card_lines(Some((2, 2)));
+        let lines = queue_card_lines(place(2, 2));
         assert_eq!(lines[2], "1 bot in front");
     }
 
     #[test]
-    fn invalid_queue_tuple_does_not_paint_a_card() {
-        assert!(queue_card_lines(Some((3, 0))).is_empty());
-        assert!(queue_card_lines(Some((3, 2))).is_empty());
-    }
-
-    #[test]
-    fn each_bot_view_keeps_its_own_queue_place_when_focus_changes() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        let mut ctx = dear_imgui_rs::Context::create();
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let ui = ctx.frame();
-        let mut s = Session::new();
-        s.statuses.push(host_play::SlotStatus {
-            username: "alice".into(),
-            queue_position: 1,
-            queue_total: 3,
-            ..host_play::SlotStatus::default()
-        });
-        s.statuses.push(host_play::SlotStatus {
-            username: "bob".into(),
-            queue_position: 2,
-            queue_total: 3,
-            ..host_play::SlotStatus::default()
-        });
-        s.focus.lock().unwrap().focused = Some("alice".into());
-        let mut alice = PathOverlay::new();
-        let mut bob = PathOverlay::new();
-        ui.window("##overlay-alice").build(|| {
-            alice.frame(ui, s.queue_for("alice"), [10.0, 10.0], [90.0, 90.0]);
-        });
-        ui.window("##overlay-bob").build(|| {
-            bob.frame(ui, s.queue_for("bob"), [110.0, 10.0], [90.0, 90.0]);
-        });
-        s.focus.lock().unwrap().focused = Some("bob".into());
-        ui.window("##overlay-alice-after-focus").build(|| {
-            alice.frame(ui, s.queue_for("alice"), [10.0, 110.0], [90.0, 90.0]);
-        });
-        ui.window("##overlay-bob-after-focus").build(|| {
-            bob.frame(ui, s.queue_for("bob"), [110.0, 110.0], [90.0, 90.0]);
-        });
-        ctx.render();
-        assert_eq!(alice.queue_lines[1], "1 of 3");
-        assert_eq!(bob.queue_lines[1], "2 of 3");
-    }
-
-    #[test]
-    fn slot_without_queue_does_not_borrow_another_slots_card() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        let mut ctx = dear_imgui_rs::Context::create();
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let ui = ctx.frame();
-        let mut s = Session::new();
-        s.focus.lock().unwrap().focused = Some("s00".into());
-        s.statuses.push(host_play::SlotStatus {
-            username: "s00".into(),
-            ..host_play::SlotStatus::default()
-        });
-        s.statuses.push(host_play::SlotStatus {
-            username: "s01".into(),
-            queue_position: 1,
-            queue_total: 49,
-            ..host_play::SlotStatus::default()
-        });
-        let mut overlay = PathOverlay::new();
-        ui.window("##overlay-queue-fifo-test").build(|| {
-            overlay.frame(ui, s.queue_for("s00"), [10.0, 10.0], [90.0, 90.0]);
-        });
-        ctx.render();
-        assert!(overlay.queue_lines.is_empty());
-    }
-
-    #[test]
     fn overlay_skips_queue_card_when_not_queued() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
                 .renderer_has_textures(),
         );
         let ui = ctx.frame();
-        let s = Session::new();
-        s.focus.lock().unwrap().focused = Some("alice".into());
+        let mut s = Session::new();
+        s.set_focus_for_test("alice");
         let mut overlay = PathOverlay::new();
         ui.window("##overlay-queue-test").build(|| {
             overlay.frame(ui, None, [10.0, 10.0], [90.0, 90.0]);
@@ -308,14 +175,14 @@ mod tests {
 
     #[test]
     fn queue_card_metrics_use_measured_width_with_equal_padding() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
                 .renderer_has_textures(),
         );
         let ui = ctx.frame();
-        let lines = queue_card_lines(Some((1, 2)));
+        let lines = queue_card_lines(place(1, 2));
         let (content_w, line_h, box_w, box_h) = queue_card_metrics(ui, &lines);
         assert!(content_w > 0.0, "title must measure wider than zero");
         assert!(
@@ -347,15 +214,15 @@ mod tests {
 
     #[test]
     fn queue_card_metrics_track_longer_k_of_n_counts() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
                 .renderer_has_textures(),
         );
         let ui = ctx.frame();
-        let short = queue_card_lines(Some((1, 2)));
-        let long = queue_card_lines(Some((12, 49)));
+        let short = queue_card_lines(place(1, 2));
+        let long = queue_card_lines(place(12, 49));
         let (w_short, _, box_short, _) = queue_card_metrics(ui, &short);
         let (w_long, _, box_long, _) = queue_card_metrics(ui, &long);
         // Title still dominates both; pads stay equal either way.

@@ -3,9 +3,9 @@
 
 This script is a one-off authoring tool, not part of the runtime: the suite reads the
 derived JSON (embedded at compile time, or passed with `--manifest`). It never runs
-foreign JavaScript; it only reads the frozen 96410ec5 reference sources textually.
+foreign JavaScript; it only reads the frozen 00d39a17 reference sources textually.
 
-    python3 derive.py --reference-root <read-only 96410ec5 checkout> --out suite-manifest.json
+    python3 derive.py --reference-root <read-only 00d39a17 checkout> --out suite-manifest.json
 
 Inputs (frozen reference, read-only):
     e2e/manifest.ts         case list, statuses, budgets, args/env, coverage
@@ -27,7 +27,7 @@ import sys
 from collections import Counter, OrderedDict
 
 # --------------------------------------------------------------------------------------
-# Approved native mapping (docs/compat/p3-runner-design.md "Intended 964 enabled
+# Approved native mapping (docs/compat/p3-runner-design.md "Intended 00d39a17 enabled
 # inventory and mapping"). Only live scenarios that exist in `scenario::names()` are
 # declared runnable; everything else is an explicit unavailable row with a reason.
 # --------------------------------------------------------------------------------------
@@ -388,10 +388,9 @@ def wire_case(variant):
 
 def scenario_names(path):
     src = path.read_text()
-    block = src[src.index("pub fn names()"):]
-    block = block[:block.index("]\n}")]
-    return re.findall(r'"([a-z0-9_]+)"', block)
-
+    start = src.index("const REGISTRY")
+    block = src[start:src.index("];", start)]
+    return re.findall(r'Entry::new\(\s*"([a-z0-9_]+)"', block)
 
 def external_constants(path):
     """The producer's own external loader constants.
@@ -427,9 +426,9 @@ def main():
 
     reference_cases = parse_reference_manifest(ns.reference_root / "e2e/manifest.ts")
     by_id = {c["id"]: c for c in reference_cases}
-    core_by_live = parse_core_cases(ns.workspace_root / "crates/host-play/src/catalog_core.rs")
-    pair_by_live = parse_pair_cases(ns.workspace_root / "crates/host-play/src/paired_core.rs")
-    live_names = scenario_names(ns.workspace_root / "crates/scenario/src/lib.rs")
+    core_by_live = parse_core_cases(ns.workspace_root / "crates/host-play/src/catalog_case.rs")
+    pair_by_live = parse_pair_cases(ns.workspace_root / "crates/host-play/src/pair_case.rs")
+    live_names = scenario_names(ns.workspace_root / "crates/scenario/src/catalog.rs")
     script_names = parse_script_names(ns.reference_root / "e2e/manifestTypes.ts")
 
     intended = []
@@ -677,11 +676,11 @@ def main():
 
     manifest = OrderedDict([
         ("schema_version", 1),
-        ("suite_id", "native-suite-96410ec5"),
+        ("suite_id", "native-suite-00d39a17"),
         ("provenance", OrderedDict([
-            ("reference_commit", "96410ec5c779f3d8fe537268cae1a21c0174d16c"),
-            ("reference_tree", "026b4f960a17c8c916cb5c87996b4b4c11b1d2e1"),
-            ("reference_archive_sha256", "e7d37273b80e3eaf6075dec9c52e10a67b8f1ade5d0b8fb5df9a64f4537f1b5d"),
+            ("reference_commit", "00d39a17e056df6c5e461f3f2cfd3598ff9720b6"),
+            ("reference_tree", "3e3b35a2d938eef2aa1e66c073bd0c4875bd0c91"),
+            ("reference_archive_sha256", "45e3042284924dfa6801bb9524ca03748ff1c9a4aa81688e82733f1ca9fd0e2c"),
             ("reference_upstream", "https://github.com/rs2b2t/rs2b0t.git"),
             ("inputs", ["e2e/manifest.ts", "e2e/manifestTypes.ts", "e2e/manifestQuery.ts", "e2e/runner.ts",
                         "docs/reference/e2e-manifest.md"]),

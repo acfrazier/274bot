@@ -7,6 +7,17 @@ pub(crate) const LEAVE_LAIR_V2_STOP: &str = "leave lair qualification complete";
 const LEAVE_LAIR_DEADLINE: Duration = Duration::from_secs(180);
 const LEAVE_LAIR_WATCH: u32 = 240;
 
+/// `leave_lair_v2.ts` walks out of the Start box (its Start tile, the
+/// mainland landing, ± 2) toward a tile 8–16 away at radius 3, so it ends
+/// 3–19 away; the seed leaves the player on the landing itself.
+pub(crate) const LEAVE_LAIR_OUTSIDE: Proof = Proof::ArrivedRing {
+    x: MAINLAND_LANDING.x,
+    z: MAINLAND_LANDING.z,
+    level: MAINLAND_LANDING.level,
+    min: 3,
+    max: 19,
+};
+
 /// Headed File witness: one awaited gateless walk-out. The gate needs the
 /// host's walk-near walkOut at radius 3, the end tile out of the Start box
 /// and the settled `true` receipt.
@@ -14,13 +25,13 @@ pub(crate) fn leave_lair_v2_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());
     steps.push(Step {
-        name: "watch the File card reach its named helper stop",
+        name: "watch the File card walk out of its Start box",
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
             budget_ticks: LEAVE_LAIR_WATCH,
-            arm: Proof::Stat { id: 16, min: 0 },
+            arm: LEAVE_LAIR_OUTSIDE,
         },
     });
     Scenario {
@@ -30,7 +41,7 @@ pub(crate) fn leave_lair_v2_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: Proof::Stat { id: 16, min: 0 },
+        proof: LEAVE_LAIR_OUTSIDE,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,

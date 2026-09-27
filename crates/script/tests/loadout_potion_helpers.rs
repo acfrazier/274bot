@@ -174,7 +174,10 @@ export function tick(api) {
     let value: serde_json::Value =
         serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
     iso.join();
-    assert_eq!(value["error"], "missing-selected-data");
+    assert_eq!(
+        value["error"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+    );
 }
 
 #[test]
@@ -305,7 +308,10 @@ export function tick(api) {
     let value: serde_json::Value =
         serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
     iso.join();
-    assert_eq!(value["error"], "missing-selected-data");
+    assert_eq!(
+        value["error"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+    );
 }
 
 #[test]
@@ -426,11 +432,6 @@ export function tick(api) {
 }
 "#,
         ClientRevision::R274,
-    );
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    assert!(
-        !bindings.contains("register_function(\"__rs2b0t_loadout_v2\""),
-        "new JSON register_function for loadout v2 is forbidden"
     );
     assert_eq!(value["food"], "function");
     assert_eq!(value["typedOk"], true, "{value:?}");

@@ -1,0 +1,513 @@
+// The engine procs a stage-door crossing ends in, and every proc they call,
+// verbatim from lostcity-289 content 92649430f (source file:line above each).
+// `stage_doors` admits a crossing proc only while the content's own body of
+// it and of every proc it calls equals the body here (comments and whitespace
+// aside); any drift makes the proc unsupported and its openers edge-less.
+
+// doors/scripts/open_and_close_doors.rs2:9
+[proc,open_and_close_door](loc $replacement, boolean $entering, boolean $play_locked_synth)
+def_int $x;
+def_int $z;
+
+def_coord $loc_coord = loc_coord;
+def_int $angle = loc_angle;
+def_locshape $shape = loc_shape;
+
+$x, $z = ~door_open($angle, loc_shape);
+
+// walk through door, but if entering, walk next to door and then through
+def_coord $dest = $loc_coord;
+if ($entering = true) {
+    // mes(~coord_tostring($loc_coord));
+    // mes(~coord_tostring(coord));
+    if ($play_locked_synth =  true) {
+        sound_synth(locked, 1, 0);
+    }
+    if (coord ! $loc_coord) {
+        p_teleport($loc_coord);
+        // initially thought p_delay(0); was the right speed.
+        // but it seems to have buggy clipping; you move through too early
+        p_delay(1);
+    }
+    $dest = movecoord($loc_coord, $x, 0, $z);
+}
+p_teleport($dest);
+// Temp note: dur updated
+loc_change(inviswall, 3);
+loc_add(movecoord($loc_coord, $x, 0, $z), $replacement, modulo(add($angle, 1), 4), $shape, 3);
+
+sound_synth(door_open, 1, 0);
+
+// same as the other proc but plays the sound instantly
+
+// doors/scripts/open_and_close_doors.rs2:43
+[proc,open_and_close_door2](loc $replacement, boolean $entering, synth $sound)
+def_int $x;
+def_int $z;
+def_int $angle = loc_angle;
+def_locshape $shape = loc_shape;
+def_coord $loc_coord = loc_coord;
+$x, $z = ~door_open($angle, loc_shape);
+def_coord $dest = $loc_coord;
+sound_synth($sound, 1, 0);
+if ($entering = true) {
+    if (coord ! $loc_coord) {
+        p_teleport($loc_coord);
+        p_delay(1);
+    }
+    $dest = movecoord(loc_coord, $x, 0, $z);
+}
+p_teleport($dest);
+// Temp note: dur updated
+loc_change(inviswall, 3);
+loc_add(movecoord($loc_coord, $x, 0, $z), $replacement, modulo(add($angle, 1), 4), $shape, 3);
+
+// open_and_close_door2, but with 1 less tick of delay on closing the door, used for Plague City's plague house door
+
+// doors/scripts/open_and_close_doors.rs2:87
+[proc,open_and_close_door3](loc $replacement, boolean $entering, synth $sound)
+def_int $x;
+def_int $z;
+def_int $angle = loc_angle;
+def_locshape $shape = loc_shape;
+def_coord $loc_coord = loc_coord;
+$x, $z = ~door_open($angle, loc_shape);
+def_coord $dest = $loc_coord;
+sound_synth($sound, 1, 0);
+if ($entering = true) {
+    if (coord ! $loc_coord) {
+        p_teleport($loc_coord);
+        p_delay(0);
+    }
+    $dest = movecoord(loc_coord, $x, 0, $z);
+}
+p_teleport($dest);
+// Temp note: dur updated
+loc_change(inviswall, 3);
+loc_add(movecoord($loc_coord, $x, 0, $z), $replacement, modulo(add($angle, 1), 4), $shape, 3);
+
+// doors/scripts/open_and_close_doors.rs2:65
+[proc,open_and_close_door_fast](loc $replacement, boolean $entering, synth $sound)
+def_int $x;
+def_int $z;
+def_int $angle = loc_angle;
+def_locshape $shape = loc_shape;
+def_coord $loc_coord = loc_coord;
+$x, $z = ~door_open($angle, loc_shape);
+def_coord $dest = $loc_coord;
+sound_synth($sound, 1, 0);
+if ($entering = true) {
+    if (coord ! $loc_coord) {
+        p_teleport($loc_coord);
+        p_delay(1);
+    }
+    $dest = movecoord(loc_coord, $x, 0, $z);
+}
+p_teleport($dest);
+// Temp note: dur updated
+loc_change(inviswall, 2);
+loc_add(movecoord($loc_coord, $x, 0, $z), $replacement, modulo(add($angle, 1), 4), $shape, 2);
+
+// Same as other proc but uses delay of 0 for outside doors, example: https://youtu.be/n_ip_vEDbCA?si=6WmhtFdrgVyPhvNQ&t=1219
+
+// doors/scripts/open_and_close_doors.rs2:108
+[proc,open_and_close_door_dir](loc $replacement, boolean $entering, int $dir, synth $sound)
+def_int $x;
+def_int $z;
+def_int $angle = loc_angle;
+def_locshape $shape = loc_shape;
+def_coord $loc_coord = loc_coord;
+$x, $z = ~door_open($angle, loc_shape);
+def_coord $dest = $loc_coord;
+sound_synth($sound, 1, 0);
+if ($entering = true) {
+    if (coord ! $loc_coord) {
+        p_teleport($loc_coord);
+        p_delay(1);
+    }
+    $dest = movecoord(loc_coord, $x, 0, $z);
+}
+p_teleport($dest);
+// Temp note: dur updated
+loc_change(inviswall, 3);
+loc_add(movecoord($loc_coord, $x, 0, $z), $replacement, $dir, $shape, 3);
+
+// doors/scripts/open_and_close_doors.rs2:129
+[proc,open_and_close_metal_gate](loc $replacement, boolean $entering, boolean $mirrored)
+// ~loc_shape_debug(loc_shape);
+// mes(tostring(loc_angle));
+def_int $x;
+def_int $z;
+def_int $telex;
+def_int $telez;
+
+def_coord $loc_coord = loc_coord;
+def_int $angle = loc_angle;
+if ($mirrored = true) {
+    $x, $z = ~door_open_mirrored($angle);
+} else {
+    $x, $z = ~door_open($angle, loc_shape);
+}
+def_locshape $shape = loc_shape;
+
+$telex, $telez = ~door_open($angle, loc_shape);
+// walk through door, but if entering, walk next to door and then through
+def_coord $dest = $loc_coord;
+if ($entering = true) {
+    // mes(~coord_tostring($loc_coord));
+    // mes(~coord_tostring(coord));
+    if (coord ! $loc_coord) {
+        p_teleport($loc_coord);
+        // initially thought p_delay(0); was the right speed.
+        // but it seems to have buggy clipping; you move through too early
+        p_delay(1);
+    }
+    $dest = movecoord($loc_coord, $telex, 0, $telez);
+}
+p_teleport($dest);
+
+// Temp note: dur updated
+loc_change(inviswall, 3);
+loc_add(movecoord($loc_coord, $x, 0, $z), $replacement, modulo(add($angle, 1), 4), $shape, 3);
+
+sound_synth(grate_open, 1, 0);
+
+// doors/scripts/open_and_close_doors.rs2:168
+[proc,open_and_close_metal_gate2](loc $replacement, boolean $entering, boolean $mirrored)
+// ~loc_shape_debug(loc_shape);
+// mes(tostring(loc_angle));
+def_int $x;
+def_int $z;
+def_int $telex;
+def_int $telez;
+
+def_coord $loc_coord = loc_coord;
+def_int $angle = loc_angle;
+$x, $z = ~door_open($angle, loc_shape);
+def_locshape $shape = loc_shape;
+
+$telex, $telez = ~door_open($angle, loc_shape);
+sound_synth(grate_open, 1, 0);
+// walk through door, but if entering, walk next to door and then through
+def_coord $dest = $loc_coord;
+if ($entering = true) {
+    // mes(~coord_tostring($loc_coord));
+    // mes(~coord_tostring(coord));
+    if (coord ! $loc_coord) {
+        p_teleport($loc_coord);
+        // initially thought p_delay(0); was the right speed.
+        // but it seems to have buggy clipping; you move through too early
+        p_delay(1);
+    }
+    $dest = movecoord($loc_coord, $telex, 0, $telez);
+}
+p_teleport($dest);
+
+// Temp note: dur updated
+loc_change(inviswall, 3);
+def_int $rotation = modulo(add($angle, 1), 4);
+if($mirrored = true) $rotation = modulo(add($angle, 3), 4);
+loc_add(movecoord($loc_coord, $x, 0, $z), $replacement, $rotation, $shape, 3);
+
+// doors/scripts/open_and_close_double_doors.rs2:9
+[proc,open_and_close_double_door](boolean $entering, int $side)
+def_int $x;
+def_int $z;
+
+def_coord $loc_coord = loc_coord;
+def_int $angle = loc_angle;
+def_locshape $shape = loc_shape;
+def_loc $next_loc = lc_param(loc_type, next_loc_stage);
+def_loc $opposite_loc = $next_loc;
+
+def_synth $loc_sound = loc_param(open_sound);
+def_category $category = double_door_open_and_close_right;
+
+def_coord $opposite_coord = loc_coord;
+if ($side = ^left) {
+    $opposite_coord = ~movecoord_loc_return(~door_close(loc_angle, loc_shape));
+    $category = double_door_open_and_close_right;
+} else if ($side = ^right) {
+    $opposite_coord = ~movecoord_loc_return(~multiply2(~door_close(loc_angle, loc_shape), -1));
+    $category = double_door_open_and_close_left;
+}
+
+loc_findallzone($opposite_coord);
+while (.loc_findnext = true) {
+    if (.loc_coord = $opposite_coord & .loc_category = $category) {
+        $opposite_loc = lc_param(.loc_type, next_loc_stage);
+    }
+}
+
+// walk through door, but if entering, walk next to door and then through
+$x, $z = ~door_open($angle, loc_shape);
+def_coord $dest = $loc_coord;
+if ($entering = true) {
+    // mes(~coord_tostring($loc_coord));
+    // mes(~coord_tostring(coord));
+    if (coord ! $loc_coord & coord ! $opposite_coord) {
+        p_teleport($loc_coord);
+        // initially thought p_delay(0); was the right speed.
+        // but it seems to have buggy clipping; you move through too early
+        p_delay(1);
+    }
+    $dest = movecoord($loc_coord, $x, 0, $z);
+}
+p_teleport($dest);
+
+if ($side = ^left) {
+    // Temp note: dur updated
+    ~open_double_doors_left2(3, double_door_open_and_close_right, $next_loc, $opposite_loc, $loc_sound);
+} else if ($side = ^right) {
+    // Temp note: dur updated
+    ~open_double_doors_right2(3, double_door_open_and_close_left, $next_loc, $opposite_loc, $loc_sound);
+}
+
+// variation that plays sound instantly
+
+// doors/scripts/open_and_close_double_doors.rs2:63
+[proc,open_and_close_double_door2](boolean $entering, int $side, synth $sound)
+def_int $x;
+def_int $z;
+
+def_coord $loc_coord = loc_coord;
+def_int $angle = loc_angle;
+def_locshape $shape = loc_shape;
+def_loc $next_loc = lc_param(loc_type, next_loc_stage);
+def_loc $opposite_loc = $next_loc;
+
+def_category $category = double_door_open_and_close_right;
+
+def_coord $opposite_coord = loc_coord;
+if ($side = ^left) {
+    $opposite_coord = ~movecoord_loc_return(~door_close(loc_angle, loc_shape));
+    $category = double_door_open_and_close_right;
+} else if ($side = ^right) {
+    $opposite_coord = ~movecoord_loc_return(~multiply2(~door_close(loc_angle, loc_shape), -1));
+    $category = double_door_open_and_close_left;
+}
+
+loc_findallzone($opposite_coord);
+while (.loc_findnext = true) {
+    if (.loc_coord = $opposite_coord & .loc_category = $category) {
+        $opposite_loc = lc_param(.loc_type, next_loc_stage);
+    }
+}
+
+// walk through door, but if entering, walk next to door and then through
+$x, $z = ~door_open($angle, loc_shape);
+if ($sound ! null) {
+    sound_synth($sound, 1, 0);
+}
+def_coord $dest = $loc_coord;
+if ($entering = true) {
+    // mes(~coord_tostring($loc_coord));
+    // mes(~coord_tostring(coord));
+    if (coord ! $loc_coord & coord ! $opposite_coord) {
+        p_teleport($loc_coord);
+        // initially thought p_delay(0); was the right speed.
+        // but it seems to have buggy clipping; you move through too early
+        p_delay(1);
+    }
+    $dest = movecoord($loc_coord, $x, 0, $z);
+}
+p_teleport($dest);
+
+if ($side = ^left) {
+    // Temp note: dur updated
+    ~open_double_doors_left2(3, double_door_open_and_close_right, $next_loc, $opposite_loc, null);
+} else if ($side = ^right) {
+    // Temp note: dur updated
+    ~open_double_doors_right2(3, double_door_open_and_close_left, $next_loc, $opposite_loc, null);
+}
+
+// doors/scripts/open_and_close_double_doors.rs2:118
+[proc,open_and_close_double_door3](boolean $entering, loc $loc_type, locshape $shape, int $angle, coord $loc_coord, int $side, synth $sound)
+def_int $x;
+def_int $z;
+
+def_loc $next_loc = lc_param($loc_type, next_loc_stage);
+def_loc $opposite_loc = $next_loc;
+
+def_category $category = double_door_open_and_close_right;
+
+def_coord $opposite_coord = $loc_coord;
+if ($side = ^left) {
+    $opposite_coord = ~movecoord_loc_return(~door_close($angle, $shape));
+    $category = double_door_open_and_close_right;
+} else if ($side = ^right) {
+    $opposite_coord = ~movecoord_loc_return(~multiply2(~door_close($angle, $shape), -1));
+    $category = double_door_open_and_close_left;
+}
+
+loc_findallzone($opposite_coord);
+while (.loc_findnext = true) {
+    if (.loc_coord = $opposite_coord & .loc_category = $category) {
+        $opposite_loc = lc_param(.loc_type, next_loc_stage);
+    }
+}
+
+// walk through door, but if entering, walk next to door and then through
+$x, $z = ~door_open($angle, $shape);
+if ($sound ! null) {
+    sound_synth($sound, 1, 0);
+}
+def_coord $dest = $loc_coord;
+if ($entering = true) {
+    // mes(~coord_tostring($loc_coord));
+    // mes(~coord_tostring(coord));
+    if (coord ! $loc_coord & coord ! $opposite_coord) {
+        p_teleport($loc_coord);
+        // initially thought p_delay(0); was the right speed.
+        // but it seems to have buggy clipping; you move through too early
+        p_delay(1);
+    }
+    $dest = movecoord($loc_coord, $x, 0, $z);
+}
+p_teleport($dest);
+
+if ($side = ^left) {
+    // Temp note: dur updated
+    ~open_double_doors_left2(3, double_door_open_and_close_right, $next_loc, $opposite_loc, null);
+} else if ($side = ^right) {
+    // Temp note: dur updated
+    ~open_double_doors_right2(3, double_door_open_and_close_left, $next_loc, $opposite_loc, null);
+}
+
+// doors/scripts/door_procs.rs2:77
+[proc,check_axis](coord $coord, coord $loc_coord, int $angle)(boolean)
+switch_int($angle) {
+    case ^loc_north, ^loc_south :
+        if (coordz($coord) = coordz($loc_coord)) {
+            return(true);
+        }
+    case ^loc_west, ^loc_east :
+        if (coordx($coord) = coordx($loc_coord)) {
+            return(true);
+        }
+}
+return(false);
+
+// doors/scripts/door_procs.rs2:90
+[proc,check_axis_locactive](coord $coord)(boolean)
+switch_int(loc_angle) {
+    case ^loc_north, ^loc_south :
+        if (coordz($coord) = coordz(loc_coord)) {
+            return(true);
+        }
+    case ^loc_west, ^loc_east :
+        if (coordx($coord) = coordx(loc_coord)) {
+            return(true);
+        }
+}
+return(false);
+
+// ladders+stairs/scripts/ladders.rs2:154
+[proc,climb_ladder](coord $coord, boolean $up)
+if ($up = true) {
+    anim(human_reachforladder, 0);
+} else {
+    anim(human_pickupfloor, 0);
+}
+p_delay(0);
+p_telejump($coord);
+
+// doors/scripts/door_procs.rs2:1
+[proc,door_open](int $angle, locshape $shape)(int, int)
+if ($shape = wall_straight) {
+    switch_int($angle) {
+        case ^loc_west : return(-1, 0);
+        case ^loc_north : return(0, 1);
+        case ^loc_east : return(1, 0);
+        case ^loc_south : return(0, -1);
+        case default : error("angle not found for door_open: <tostring($angle)>");
+    }
+}
+if ($shape = wall_diagonal) {
+    switch_int ($angle) {
+        case ^loc_west : return(0, 1);
+        case ^loc_north : return(1, 0);
+        case ^loc_east : return(0, -1);
+        case ^loc_south : return(-1, 0);
+        case default : error("angle not found for door_close_diagonal: <tostring($angle)>");
+    }
+}
+
+// doors/scripts/door_procs.rs2:41
+[proc,door_open_mirrored](int $angle)(int, int)
+switch_int($angle) {
+    case ^loc_west : return(-1, -1);
+    case ^loc_north : return(-1, 1);
+    case ^loc_east : return(1, 1);
+    case ^loc_south : return(1, -1);
+    case default : error("angle not found for door_open_mirrored: <tostring($angle)>");
+}
+
+// doors/scripts/door_procs.rs2:103
+[proc,movecoord_loc_return](int $x, int $z)(coord)
+return(movecoord(loc_coord, $x, 0, $z));
+
+// doors/scripts/door_procs.rs2:21
+[proc,door_close](int $angle, locshape $shape)(int, int)
+if ($shape = wall_straight) {
+    switch_int($angle) {
+        case ^loc_west : return(0, 1);
+        case ^loc_north : return(1, 0);
+        case ^loc_east : return(0, -1);
+        case ^loc_south : return(-1, 0);
+        case default : error("angle not found for door_close: <tostring($angle)>");
+    }
+}
+if ($shape = wall_diagonal) {
+    switch_int ($angle) {
+        case ^loc_west : return(1, 0);
+        case ^loc_north : return(0, -1);
+        case ^loc_east : return(-1, 0);
+        case ^loc_south : return(0, 1);
+        case default : error("angle not found for door_close_diagonal: <tostring($angle)>");
+    }
+}
+
+// general/scripts/misc/math_procs.rs2:1
+[proc,multiply2](int $int1, int $int2, int $m)(int, int)
+$int1 = calc($int1 * $m);
+$int2 = calc($int2 * $m);
+return($int1, $int2);
+
+// doors/scripts/doubledoors.rs2:128
+[proc,open_double_doors_left2](int $duration, category $category, loc $next_loc, loc $opposite_next_loc, synth $sound)
+def_coord $opposite = ~movecoord_loc_return(~door_close(loc_angle, loc_shape));
+if ($sound ! null) {
+    sound_synth($sound, 1, 0);
+}
+loc_del($duration);
+loc_add(loc_coord, inviswall, loc_angle, loc_shape, 3);
+loc_add(~movecoord_loc_return(~door_open(loc_angle, loc_shape)), $next_loc, calc((loc_angle + 3) % 4), wall_straight, $duration);
+loc_findallzone($opposite);
+while (loc_findnext = true) {
+    if (loc_coord = $opposite & loc_category = $category) {
+        loc_del($duration);
+        loc_add($opposite, inviswall, loc_angle, loc_shape, 3);
+        loc_add(~movecoord_loc_return(~door_open(loc_angle, loc_shape)), $opposite_next_loc, calc((loc_angle + 1) % 4), wall_straight, $duration);
+        return;
+    }
+}
+
+// doors/scripts/doubledoors.rs2:146
+[proc,open_double_doors_right2](int $duration, category $category, loc $next_loc, loc $opposite_next_loc, synth $sound)
+def_coord $opposite = ~movecoord_loc_return(~multiply2(~door_close(loc_angle, loc_shape), -1));
+if ($sound ! null) {
+    sound_synth($sound, 1, 0);
+}
+loc_del($duration);
+loc_add(loc_coord, inviswall, loc_angle, loc_shape, 3);
+loc_add(~movecoord_loc_return(~door_open(loc_angle, loc_shape)), $next_loc, calc((loc_angle + 1) % 4), wall_straight, $duration);
+loc_findallzone($opposite);
+while (loc_findnext = true) {
+    if (loc_coord = $opposite & loc_category = $category) {
+        loc_del($duration);
+        loc_add($opposite, inviswall, loc_angle, loc_shape, 3);
+        loc_add(~movecoord_loc_return(~door_open(loc_angle, loc_shape)), $opposite_next_loc, calc((loc_angle + 3) % 4), wall_straight, $duration);
+        return;
+    }
+}

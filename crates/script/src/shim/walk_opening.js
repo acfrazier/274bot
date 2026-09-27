@@ -1,5 +1,4 @@
-import { Traversal } from '../../api/walking/Traversal.js';
-import { notImpl } from '../../shim/_kernel.js';
+import { notImpl, runMachine } from '../../shim/_kernel.js';
 
 export function openOp(actions) {
     return (actions || []).find((a) => /^open/i.test(String(a))) ?? null;
@@ -13,6 +12,16 @@ export function isOpenableObstacle(_name, _actions, _obstacles) {
     throw notImpl('isOpenableObstacle');
 }
 
-export async function walkOpening(dest, radius, _obstacles, log) {
-    return Traversal.walkResilient(dest, { radius, timeoutMs: 90_000, log: (m) => log?.(m) });
+export async function walkOpening(dest, radius, obstacles, log) {
+    const out = await runMachine(
+        'walk-opening',
+        {
+            dest: { x: dest.x, z: dest.z, level: dest.level ?? 0 },
+            radius: radius ?? 0,
+            obstacles: Array.isArray(obstacles) ? obstacles : [],
+        },
+        { log: typeof log === 'function' ? log : undefined },
+    );
+    if (out.kind === 'refused') throw notImpl('walkOpening', out.reason);
+    return out.kind === 'done' && out.value === true;
 }

@@ -37,11 +37,12 @@ impl Family for Special {
     /// The frozen `arm()` takes no arguments.
     type Args = Value;
     type Output = bool;
-
     fn begin(_args: Value, cx: &mut Cx<'_>) -> Begin<Self> {
         let selected = crate::supply_v2::selected_data();
-        let data = selected.as_deref();
-        let Some(controls) = data.and_then(SelectedGameData::special_controls) else {
+        let Some(data) = selected.as_deref() else {
+            return Begin::Refuse(crate::supply_v2::GAME_DATA_UNAVAILABLE.into());
+        };
+        let Some(controls) = SelectedGameData::special_controls(data) else {
             return Begin::Refuse("missing special controls".into());
         };
         let armed = observed::with(|scene| {
@@ -56,7 +57,7 @@ impl Family for Special {
             return Begin::Done(true);
         }
         let root = observed::with(|scene| scene.since_login().combat_tab_root());
-        let bar = root.map_or(-1, |root| data.map_or(-1, |data| data.special_bar(root)));
+        let bar = root.map_or(-1, |root| data.special_bar(root));
         if bar == -1 {
             return Begin::Done(false);
         }

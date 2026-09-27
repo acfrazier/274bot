@@ -51,15 +51,33 @@ pub struct PanelUiState {
     /// General config collapsible rows closed. Absent = open.
     #[serde(default)]
     pub config_collapsed: HashMap<String, bool>,
+    /// Operator acknowledged that other profiles keep running in the background.
+    #[serde(default)]
+    pub background_bots_ack: bool,
     /// Panel CRT palette (named theme consts). Absent = amber defaults.
     #[serde(default)]
     pub chrome: crate::theme::ChromeColors,
+    /// Remembered answer to the local WalkTo terrain bake warning, shared
+    /// with the TUI. Absent (0.1.8.1) or unknown = ask.
+    #[serde(default)]
+    pub map_bake: frontend_core::MapBakeChoice,
+    /// Write a per-session log file under `~/.274bot/logs/` (shared with the
+    /// TUI as `frontend_core::log_file::SESSION_LOG_KEY`). Absent = off.
+    #[serde(default)]
+    pub session_log_file: bool,
 }
 
 /// Panel subsection ids in General config (parameters shares
 /// [`PanelUiState::show_parameters_rail`]).
-pub const PANEL_SECTION_IDS: &[&str] =
-    &["status", "profile", "script", "debug", "log", "parameters"];
+pub const PANEL_SECTION_IDS: &[&str] = &[
+    "status",
+    "resource",
+    "profile",
+    "script",
+    "debug",
+    "log",
+    "parameters",
+];
 
 /// Whether a panel strip heading should draw in [`crate::app::panel_window`].
 pub fn panel_section_visible(state: &PanelUiState, id: &str) -> bool {
@@ -105,7 +123,10 @@ impl Default for PanelUiState {
             capture: true,
             panel_sections: HashMap::new(),
             config_collapsed: HashMap::new(),
+            background_bots_ack: false,
             chrome: crate::theme::ChromeColors::default(),
+            map_bake: frontend_core::MapBakeChoice::Ask,
+            session_log_file: false,
         }
     }
 }
@@ -172,6 +193,7 @@ thread_local! {
 #[cfg(test)]
 mod tests {
     use super::{load, load_at, path, pick_focus, save, save_at, NavSettings, PanelUiState};
+    use crate::test_support::TestDir;
     use std::collections::HashMap;
 
     #[test]
@@ -204,9 +226,7 @@ mod tests {
         // (false) instead of failing deserialize and resetting the whole
         // `PanelUiState` (`load_at` falls back to `PanelUiState::default()`,
         // wiping focus / collapsed / colors).
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-ui-old-nav-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("ui-old-nav");
         let p = dir.join("panel-ui.json");
         std::fs::write(
             &p,
@@ -234,7 +254,6 @@ mod tests {
         )
         .unwrap();
         let back = load_at(&p);
-        let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(
             back.last_focus.as_deref(),
             Some("alice"),
@@ -271,14 +290,8 @@ mod tests {
 
     #[test]
     fn load_save_roundtrip_last_focus() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-ui-roundtrip-{}-{}",
-            std::process::id(),
-            "rt"
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("ui-roundtrip");
         let p = dir.join("panel-ui.json");
-        let _ = std::fs::remove_file(&p);
 
         let mut state = PanelUiState {
             last_focus: Some("bob".into()),
@@ -296,12 +309,8 @@ mod tests {
 
     #[test]
     fn load_missing_file_is_default() {
-        let p = std::env::temp_dir().join(format!(
-            "274bot-panel-ui-missing-{}-{}.json",
-            std::process::id(),
-            "x"
-        ));
-        let _ = std::fs::remove_file(&p);
+        let dir = TestDir::new("ui-missing");
+        let p = dir.join("panel-ui.json");
         let loaded = load_at(&p);
         assert!(loaded.last_focus.is_none());
         assert!(loaded.collapsed.is_empty());
@@ -330,9 +339,7 @@ mod tests {
 
     #[test]
     fn script_category_order_persist_roundtrip() {
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-ui-cat-order-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("ui-cat-order");
         let p = dir.join("panel-ui.json");
         let state = PanelUiState {
             script_category_order: vec!["Prayer".into(), "Combat".into(), "Skilling".into()],
@@ -344,14 +351,11 @@ mod tests {
             loaded.script_category_order,
             vec!["Prayer", "Combat", "Skilling"]
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn script_catalog_last_dir_persist_roundtrip() {
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-ui-cat-dir-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("ui-cat-dir");
         let p = dir.join("panel-ui.json");
         let state = PanelUiState {
             script_catalog_last_dir: Some(std::path::PathBuf::from("/tmp/rs2b0t")),
@@ -368,7 +372,6 @@ mod tests {
             loaded.script_load_last_dir,
             Some(std::path::PathBuf::from("/tmp/scripts"))
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -379,6 +382,7 @@ mod tests {
         assert!(!default_section_closed("profile"));
         assert!(!default_section_closed("credentials"));
         assert!(!default_section_closed("status"));
+        assert!(!default_section_closed("resource"));
         assert!(!default_section_closed("log"));
         assert!(!default_section_closed("rendering"));
         assert!(!default_section_closed("input"));
@@ -391,6 +395,16 @@ mod tests {
         let back: PanelUiState =
             serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
         assert!(back.capture, "missing capture key defaults on");
+    }
+
+    #[test]
+    fn background_bots_ack_defaults_off() {
+        let back: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
+        assert!(
+            !back.background_bots_ack,
+            "missing background ack defaults to show the notice"
+        );
     }
 
     #[test]
@@ -414,9 +428,7 @@ mod tests {
 
     #[test]
     fn capture_persist_roundtrip() {
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-ui-capture-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("ui-capture");
         let p = dir.join("panel-ui.json");
         let state = PanelUiState {
             capture: false,
@@ -424,7 +436,6 @@ mod tests {
         };
         save_at(&p, &state);
         assert!(!load_at(&p).capture);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -450,6 +461,23 @@ mod tests {
     }
 
     #[test]
+    fn session_log_file_is_off_for_old_prefs_and_survives_a_panel_save() {
+        let old: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
+        assert!(!old.session_log_file, "absent key: no session file");
+        // The TUI writes the shared key; a later panel save must keep it.
+        let on: PanelUiState = serde_json::from_str(&format!(
+            r#"{{"last_focus":null,"collapsed":{{}},"{}":true}}"#,
+            frontend_core::log_file::SESSION_LOG_KEY
+        ))
+        .unwrap();
+        assert!(on.session_log_file);
+        let bytes = serde_json::to_vec(&on).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value[frontend_core::log_file::SESSION_LOG_KEY], true);
+    }
+
+    #[test]
     fn old_prefs_without_chrome_keep_theme_defaults() {
         let back: PanelUiState =
             serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
@@ -469,5 +497,26 @@ mod tests {
         let bytes = serde_json::to_vec(&state).unwrap();
         let back: PanelUiState = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(back.server_revision, 289);
+    }
+
+    #[test]
+    fn map_bake_choice_defaults_to_ask_and_a_bad_value_keeps_the_other_prefs() {
+        use frontend_core::MapBakeChoice;
+        let old: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":"alice","collapsed":{}}"#).unwrap();
+        assert_eq!(old.map_bake, MapBakeChoice::Ask, "0.1.8.1 file asks");
+        let odd: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":"alice","map_bake":7,"capture":false}"#).unwrap();
+        assert_eq!(odd.map_bake, MapBakeChoice::Ask);
+        assert_eq!(odd.last_focus.as_deref(), Some("alice"));
+        assert!(!odd.capture, "an unreadable choice does not reset the file");
+        let dir = TestDir::new("ui-map-bake");
+        let p = dir.join("panel-ui.json");
+        let state = PanelUiState {
+            map_bake: MapBakeChoice::Always,
+            ..Default::default()
+        };
+        save_at(&p, &state);
+        assert_eq!(load_at(&p).map_bake, MapBakeChoice::Always);
     }
 }

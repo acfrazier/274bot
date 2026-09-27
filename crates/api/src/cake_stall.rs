@@ -37,7 +37,7 @@ pub const BAKER_STALL: BakerStall = BakerStall {
     flee: t(2655, 3298),
 };
 
-/// Stall food names counted for restock. Chocolate cake is not a stall food.
+/// Stall food patterns counted for restock (frozen substring match over these names).
 pub const CAKE_ITEM_NAMES: &[&str] = &["Cake", "Bread", "Chocolate slice"];
 
 /// One posted loc row considered for stall selection.

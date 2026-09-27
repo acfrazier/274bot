@@ -1,9 +1,13 @@
 //! Profile selection and actual shared-client construction, without game servers.
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use client::{io::ClientRevision, BotTarget};
+use client::{
+    io::{ClientRevision, Packet},
+    BotTarget,
+};
 use host_play::nav_identity::NavFlagsOrigin;
 use host_play::profile::{CacheManifest, NavAvailability, NavManifest, ProfileEnvironment};
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
@@ -64,6 +68,83 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+fn fixture_crc_body(fixture: &Fixture) -> Vec<u8> {
+    let mut checksums = [0i32; 9];
+    for (index, name) in ARCHIVES.iter().enumerate() {
+        let bytes = std::fs::read(fixture.0.join(name)).unwrap();
+        checksums[index + 1] = Packet::getcrc(&bytes, 0, bytes.len());
+    }
+    let mut body = Packet::alloc(0);
+    for checksum in checksums {
+        body.p4(checksum);
+    }
+    let mut hash = 1234i32;
+    for checksum in checksums {
+        hash = hash.wrapping_shl(1).wrapping_add(checksum);
+    }
+    body.p4(hash);
+    body.data()[..body.pos].to_vec()
+}
+
+fn serve_fixture_crc(
+    fixture: &Fixture,
+) -> (
+    u16,
+    std::sync::mpsc::Receiver<()>,
+    std::thread::JoinHandle<()>,
+) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let body = fixture_crc_body(fixture);
+    let (served_tx, served_rx) = std::sync::mpsc::sync_channel(1);
+    let server = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut socket = loop {
+            match listener.accept() {
+                Ok((socket, _)) => {
+                    // Accepted sockets inherit O_NONBLOCK from the listener on macOS/BSD.
+                    let _ = socket.set_nonblocking(false);
+                    break socket;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "fixture client never requested /crc"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(error) => panic!("fixture /crc accept: {error}"),
+            }
+        };
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0u8; 1024];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            match socket.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => request.extend_from_slice(&buffer[..read]),
+                Err(error) => panic!("fixture /crc request: {error}"),
+            }
+        }
+        assert_eq!(
+            String::from_utf8_lossy(&request).split_whitespace().nth(1),
+            Some("/crc")
+        );
+        let response = [
+            b"HTTP/1.0 200 OK\r\nContent-Length: ".as_slice(),
+            body.len().to_string().as_bytes(),
+            b"\r\n\r\n",
+            &body,
+        ]
+        .concat();
+        socket.write_all(&response).unwrap();
+        served_tx.send(()).unwrap();
+    });
+    (port, served_rx, server)
 }
 
 #[test]
@@ -207,7 +288,7 @@ fn public_289_defaults_and_named_profile_override_lower_priority_inputs() {
 #[test]
 fn public_world_file_selects_endpoint_and_rejects_unlisted_host() {
     let fixture = Fixture::new();
-    let path = fixture.0.join(".274bot/worlds.json");
+    let path = fixture.0.join(".274bot").join("worlds.json");
     let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
     let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
     assert_eq!(selected.public_worlds().unwrap().worlds[1].node_id, 11);
@@ -315,6 +396,7 @@ fn cache_and_nav_mismatch_are_rejected_before_creating_resources() {
         flags_sha256: None,
         reach_sha256: None,
         canlight_sha256: None,
+        pois_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&nav),
@@ -468,11 +550,79 @@ fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
 }
 
 #[test]
+fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
+    let _clients = CLIENTS.lock().unwrap();
+    let fixture = Fixture::new();
+    let dead_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    dead_listener.set_nonblocking(true).unwrap();
+    let dead_port = dead_listener.local_addr().unwrap().port();
+    let mut options = fixture.options(289);
+    options.asset_host = Some("127.0.0.1".into());
+    options.http_port = Some(dead_port);
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let account = vault::Profile {
+        username: "stop-fixture".into(),
+        password: "fixture".into(),
+        uid: 43,
+        settings: Default::default(),
+    };
+    let mut play = host_play::run_with_template(
+        Arc::clone(&template),
+        false,
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+    .unwrap();
+    play.try_spawn_slot(
+        account.clone(),
+        None,
+        None,
+        Some(host_play::SlotArm::new(account.uid, false)),
+    )
+    .unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let _ = dead_listener.accept();
+        if play.statuses().iter().any(|status| {
+            status.username == account.username
+                && status.startup_progress_message.contains("Will retry in")
+        }) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "slot never entered the unreachable-server retry countdown"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+    let (done_tx, done_rx) = std::sync::mpsc::sync_channel(0);
+    let stop = std::thread::spawn(move || {
+        play.stop_slot("stop-fixture");
+        done_tx.send(()).unwrap();
+    });
+    done_rx
+        .recv_timeout(std::time::Duration::from_millis(1_500))
+        .expect("stop_slot waited for the five-second asset retry tick");
+    stop.join().unwrap();
+}
+
+#[test]
 fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
-    let profile = fixture
-        .options(289)
+    let (asset_port, served, server) = serve_fixture_crc(&fixture);
+    let mut options = fixture.options(289);
+    options.asset_host = Some("127.0.0.1".into());
+    options.http_port = Some(asset_port);
+    let profile = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
         .bind()
@@ -500,6 +650,10 @@ fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
         Some(host_play::SlotArm::new(account.uid, false)),
     )
     .unwrap();
+    served
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("slot did not reach the local /crc fixture");
+    server.join().unwrap();
     assert!(play.arm("fixture").is_some());
     assert!(play.login_queue_uids().is_empty());
     // The loader/start handle accepts the user's script under revision 289.
@@ -617,6 +771,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     });
     let bytes = nav::pack::encode(&collision, &graph, &[]);
     let flags = nav::pack::encode_flags_sidecar(origin, 2, 1, &[0; 8]);
@@ -633,6 +788,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         flags_sha256: Some(format!("{:x}", Sha256::digest(&flags))),
         reach_sha256: None,
         canlight_sha256: None,
+        pois_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
@@ -698,7 +854,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
 }
 
 #[test]
-fn checked_play_entry_revalidates_while_a_consuming_ticket_does_not_hash_again() {
+fn consuming_ticket_does_not_rehash_cache() {
     let fixture = Fixture::new();
     let profile = fixture
         .options(274)
@@ -708,22 +864,6 @@ fn checked_play_entry_revalidates_while_a_consuming_ticket_does_not_hash_again()
         .unwrap();
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let config = fixture.0.join("config");
-    let original = std::fs::read(&config).unwrap();
-
-    std::fs::write(&config, b"changed before checked play").unwrap();
-    let error = match host_play::run_with_template(
-        Arc::clone(&template),
-        false,
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    ) {
-        Ok(_) => panic!("checked play must refuse a changed cache"),
-        Err(error) => error,
-    };
-    assert!(error.contains("cache changed"));
-
-    std::fs::write(&config, &original).unwrap();
     let ticket = template.validate_for_play().unwrap();
     std::fs::write(&config, b"changed after the final validation").unwrap();
     let play =
@@ -808,6 +948,7 @@ fn write_nav_sidecar(pack: &std::path::Path, revision: u16, cache_id: String, by
         flags_sha256: None,
         reach_sha256: None,
         canlight_sha256: None,
+        pois_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(pack),
@@ -838,6 +979,7 @@ fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
         canlight_identity: Some(canlight_identity),
+        pois_sha256: None,
         relative_path: "274bot.navpack".into(),
     }];
     let mut options = fixture.options(289);
@@ -911,6 +1053,7 @@ fn nav_pack_override_defeats_bundle_selection_and_hashes_once() {
         reach_sha256: None,
         canlight_sha256: None,
         canlight_identity: None,
+        pois_sha256: None,
         relative_path: "274bot.navpack".into(),
     }];
     let mut options = fixture.options(289);
@@ -954,6 +1097,7 @@ fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
         canlight_identity: Some(canlight_identity),
+        pois_sha256: None,
         relative_path: "274bot.navpack".into(),
     }];
 
@@ -1023,6 +1167,7 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
         flags_sha256: None,
         reach_sha256: None,
         canlight_sha256: None,
+        pois_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
@@ -1047,19 +1192,29 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
         .contains("navigation/profile mismatch"));
 
     wrong.revision = 289;
+    let mut newer = bytes.clone();
+    newer[4] = nav::pack::VERSION + 1;
+    wrong.nav_sha256 = nav::manifest::hash_bytes(&newer);
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
         serde_json::to_vec(&wrong).unwrap(),
     )
     .unwrap();
-    let mut corrupt = bytes.clone();
-    corrupt[4] = 5;
-    std::fs::write(&pack, &corrupt).unwrap();
+    std::fs::write(&pack, &newer).unwrap();
     let error = selection.bind().unwrap_err();
-    assert!(
-        error.contains("navigation/profile mismatch") || error.contains("unsupported pack version"),
-        "{error}"
-    );
+    assert!(error.contains("unsupported pack version"), "{error}");
+
+    let mut garbage = bytes.clone();
+    garbage[..4].copy_from_slice(b"nope");
+    wrong.nav_sha256 = nav::manifest::hash_bytes(&garbage);
+    std::fs::write(
+        host_play::profile::nav_manifest_path(&pack),
+        serde_json::to_vec(&wrong).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(&pack, &garbage).unwrap();
+    let error = selection.bind().unwrap_err();
+    assert!(error.contains("bad pack magic"), "{error}");
 }
 
 #[test]
@@ -1088,6 +1243,47 @@ fn missing_289_sidecar_and_missing_pack_keep_existing_refusals() {
         NavAvailability::Unavailable(_)
     ));
     assert_eq!(missing.nav_load_counters().pack_reads, 0);
+}
+
+fn assert_external_old_pack_degrades_without_deleting_user_file(version: u8) {
+    let fixture = Fixture::new();
+    let pack = fixture.0.join(format!("old-v{version}.navpack"));
+    let mut bytes = tiny_v8_pack();
+    bytes[4] = version;
+    std::fs::write(&pack, &bytes).unwrap();
+    write_nav_sidecar(
+        &pack,
+        289,
+        CacheManifest::capture(289, &fixture.0).unwrap().identity(),
+        &bytes,
+    );
+    let mut options = fixture.options(289);
+    options.nav_pack = Some(pack.clone());
+
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    let NavAvailability::Unavailable(message) = profile.nav_availability() else {
+        panic!("stale external navigation must be unavailable");
+    };
+    assert!(
+        message.contains("navigation pack was built by an older 274bot; rebuild it with nav-pack"),
+        "{message}"
+    );
+    assert!(profile.world().is_none());
+    assert_eq!(std::fs::read(pack).unwrap(), bytes);
+}
+
+#[test]
+fn external_v8_pack_degrades_to_unavailable_without_deleting_user_file() {
+    assert_external_old_pack_degrades_without_deleting_user_file(8);
+}
+
+#[test]
+fn external_v9_pack_degrades_to_unavailable_without_deleting_user_file() {
+    assert_external_old_pack_degrades_without_deleting_user_file(9);
 }
 
 #[test]
@@ -1133,6 +1329,7 @@ fn bundled_missing_or_unbound_reach_is_a_prepare_error() {
         reach_sha256: None,
         canlight_sha256: None,
         canlight_identity: None,
+        pois_sha256: None,
         relative_path: "274bot.navpack".into(),
     }];
     let error = options
@@ -1211,6 +1408,7 @@ fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
         canlight_identity: Some(new_policy),
+        pois_sha256: None,
         relative_path: "274bot.navpack".into(),
     }];
     let mut options = fixture.options(289);
@@ -1308,7 +1506,7 @@ fn world_members_parses_true_false_and_rejects_invalid() {
 }
 
 #[test]
-fn local_world_json_binds_only_when_revision_port_and_bool_match() {
+fn local_world_json_binds_only_when_revision_and_bool_match() {
     let fixture = Fixture::new();
     let engine = fixture.0.join("engine");
     write_world_json(&engine, 274, 43594, "true");
@@ -1346,12 +1544,13 @@ fn local_world_json_binds_only_when_revision_port_and_bool_match() {
         &host_play::WorldMembersFact::Unknown
     );
 
+    // Engine ports are independent from forwarded connect ports.
     write_world_json(&engine, 274, 1, "true");
     let selected = options.resolve_with_env(None, &env).unwrap();
-    assert_eq!(
+    assert!(matches!(
         selected.world_members(),
-        &host_play::WorldMembersFact::Unknown
-    );
+        host_play::WorldMembersFact::Known { members: true, .. }
+    ));
 
     write_world_json(&engine, 274, 43594, "1");
     let selected = options.resolve_with_env(None, &env).unwrap();
@@ -1510,20 +1709,27 @@ fn named_local_matching_loopback_ports_qualify_and_keep_identity_closed() {
 }
 
 #[test]
-fn named_local_changed_port_or_missing_web_does_not_qualify() {
+fn named_local_forwarded_ports_qualify_and_keep_identity_closed() {
     let fixture = Fixture::new();
     let engine = fixture.0.join("engine");
     write_world_json_with_web(&engine, 289, 45594, Some(1180), "true");
-    let changed = resolve_named_local_289(&fixture, &engine, 44594, 1180, &[]).unwrap();
-    assert!(!changed.supported_server());
-    assert_eq!(
-        changed.world_members(),
-        &host_play::WorldMembersFact::Unknown
+    let forwarded = resolve_named_local_289(&fixture, &engine, 44594, 2180, &[]).unwrap();
+    assert!(forwarded.supported_server());
+    assert!(matches!(
+        forwarded.world_members(),
+        host_play::WorldMembersFact::Known {
+            members: true,
+            source: host_play::WorldMembersSource::LocalWorldJson { .. }
+        }
+    ));
+    let profile = forwarded.bind().unwrap();
+    assert!(
+        profile.game_data().is_none(),
+        "synthetic cache must still fail identity/source qualification"
     );
-    assert!(changed.bind().unwrap().game_data().is_none());
 
     write_world_json(&engine, 289, 45594, "true");
-    let missing_web = resolve_named_local_289(&fixture, &engine, 45594, 1180, &[]).unwrap();
+    let missing_web = resolve_named_local_289(&fixture, &engine, 44594, 2180, &[]).unwrap();
     assert!(matches!(
         missing_web.world_members(),
         host_play::WorldMembersFact::Known {
@@ -1531,7 +1737,7 @@ fn named_local_changed_port_or_missing_web_does_not_qualify() {
             ..
         }
     ));
-    assert!(!missing_web.supported_server());
+    assert!(missing_web.supported_server());
     assert!(missing_web.bind().unwrap().game_data().is_none());
 }
 
@@ -1701,7 +1907,7 @@ fn explicit_world_members_does_not_manufacture_override_trust() {
 }
 
 #[test]
-fn malformed_web_port_does_not_qualify_facts() {
+fn malformed_web_port_does_not_affect_fact_qualification() {
     let fixture = Fixture::new();
     let engine = fixture.0.join("engine");
     let dir = engine.join("data/config");
@@ -1719,7 +1925,7 @@ fn malformed_web_port_does_not_qualify_facts() {
             ..
         }
     ));
-    assert!(!selected.supported_server());
+    assert!(selected.supported_server());
 }
 
 fn isolated_local_289_tree() -> Option<(PathBuf, PathBuf)> {

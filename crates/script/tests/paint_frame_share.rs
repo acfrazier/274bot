@@ -163,10 +163,11 @@ fn a_session_reset_restamps_the_held_frame() {
     let before = iso.paint().expect("first frame");
     iso.reset_session_work();
     let held = iso.paint().expect("held frame");
-    assert_eq!(
-        held.generation,
-        before.generation + 1,
-        "the held frame carries the post-reset generation"
+    assert!(
+        held.generation > before.generation,
+        "the held frame carries a fresh process-wide post-reset generation: before={}, held={}",
+        before.generation,
+        held.generation
     );
     assert_eq!(held.lines, before.lines, "the frame itself is unchanged");
     assert!(
