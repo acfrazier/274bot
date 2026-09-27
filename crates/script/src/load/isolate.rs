@@ -652,6 +652,25 @@ impl LoadIsolate {
         });
     }
 
+    /// Queue a game tick directly, without sampling or arming the host
+    /// watchdog. Slow-completion regression tests place these behind the
+    /// first tick command to exercise the isolate thread's stale-window
+    /// bookkeeping; watchdog interruption has its own tests.
+    #[doc(hidden)]
+    pub fn enqueue_tick_without_watchdog_for_test(&self, snap_tick: u64) {
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        #[cfg(feature = "memory-profile")]
+        self.dispatched
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.send(IsolateCmd::Tick {
+            tick: snap_tick,
+            generation,
+            input_identity: 0,
+        });
+    }
+
     /// Interrupt the currently active execution against its own start time,
     /// never the cadence of later host dispatches. If it is still inside its
     /// horizon, arm one execution-scoped sleeper for the remaining time.

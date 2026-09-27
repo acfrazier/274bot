@@ -1,6 +1,7 @@
 //! Portable isolate tests for native skill.xp / inventory.changed delivery.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use script::isolate_fb::{
     encode_snapshot, encode_snapshot_delta, ChatLineInput, ItemRowInput, ReachViewInput,
@@ -607,7 +608,14 @@ export default class T extends LoopingBot {
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
-    std::thread::sleep(std::time::Duration::from_millis(80));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(
+            Instant::now() < deadline,
+            "runaway callback never entered execution"
+        );
+        std::thread::yield_now();
+    }
     iso.pause();
     iso.probe("true")
         .expect("Pause must settle the runaway callback");

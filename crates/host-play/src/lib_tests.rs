@@ -6400,6 +6400,9 @@ export default class T extends LoopingBot {
     c.dialog_input_open = false;
     c.bump_gens(ServerProt::P_COUNTDIALOG);
     snap.rebuild(&c);
+    // Tick 5 may drain the fixed request in this observe or leave it for the
+    // following no-edge observe; measure across both valid schedules.
+    let before_fixed = c.out.pos;
     script_observe(
         &mut c,
         "alice",
@@ -6424,7 +6427,6 @@ export default class T extends LoopingBot {
         .unwrap()
         .probe("true")
         .expect("the next loop queues the noted fixed withdraw");
-    let before_fixed = c.out.pos;
     script_observe(
         &mut c,
         "alice",
@@ -6623,49 +6625,57 @@ export default class T extends LoopingBot {
         .unwrap()
         .pending_bank_op()
         .is_none());
-    // The emptied side view is waited on for the frozen 1.2 s (a Rust
-    // deadline): let it lapse.
-    std::thread::sleep(std::time::Duration::from_millis(1_250));
-    script_observe(
-        &mut c,
-        "alice",
-        true,
-        true,
-        3,
-        Some((3205, 3205, 0)),
-        Some(&[]),
-        None,
-        Some(&snap),
-        Some(&names),
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
-    );
-    assert_eq!(
-        script_slot(&scripts, "alice")
+    // The emptied side view is waited on for the frozen 1.2 s Rust deadline.
+    // Drive ticks until the script observes that transition rather than
+    // assuming one fixed sleep lands on the right isolate schedule.
+    let before_withdraw = c.out.pos;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut next_tick = 3;
+    loop {
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            next_tick,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        next_tick += 1;
+        let deposit_done = script_slot(&scripts, "alice")
             .unwrap()
             .lock()
             .unwrap()
-            .probe("globalThis.__deposit_done")
-            .unwrap(),
-        true
-    );
-    assert!(script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .pending_bank_op()
-        .is_none());
-    let before_withdraw = c.out.pos;
+            .probe("globalThis.__deposit_done === true")
+            .unwrap()
+            .as_bool()
+            == Some(true);
+        if deposit_done {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "deposit did not finish after the empty-side deadline"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    // The tick that settles the deposit may already drain the following
+    // withdrawal. A no-edge observe drains it when the isolate lost that race.
     script_observe(
         &mut c,
         "alice",
         true,
         false,
-        3,
+        next_tick - 1,
         Some((3205, 3205, 0)),
         Some(&[]),
         None,
@@ -6682,19 +6692,22 @@ export default class T extends LoopingBot {
         c.out.pos > before_withdraw,
         "Withdraw-All reaches the driver"
     );
-    assert!(script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .pending_bank_op()
-        .is_some());
+    assert!(matches!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pending_bank_op()
+            .map(|pending| pending.kind),
+        Some(script::slot::PendingBankOpKind::Withdraw)
+    ));
 
     script_observe(
         &mut c,
         "alice",
         true,
         true,
-        4,
+        next_tick,
         Some((3205, 3205, 0)),
         Some(&[(2, 20)]),
         None,

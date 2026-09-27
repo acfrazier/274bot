@@ -62,6 +62,11 @@ jobs:
             libxi-dev \
             libxrandr-dev
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          workspaces: |
+            . -> target
+            vendor/fr-client-rust -> target
       - name: Clippy
         run: |
           cargo clippy --workspace --all-targets --no-deps -- -D warnings
@@ -83,13 +88,48 @@ jobs:
           python3 tools/schema/isolate_snapshot_check.py
           python3 tools/schema/isolate_snapshot_check.py --self-test
 
-  test:
-    name: test
+  test_lanes:
+    name: test (${{ matrix.lane }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: workspace
+            free_disk: true
+            cache_key: workspace
+            save_cache: true
+            command: "cargo test --workspace"
+          - lane: vendor
+            free_disk: false
+            cache_key: vendor
+            save_cache: true
+            command: "cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace"
+          - lane: script-load
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            command: "cargo test -p script --features load --tests"
+          - lane: host-play-memory
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            command: "cargo test -p host-play --features memory-profile --tests"
+          - lane: host-performance
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            command: "cargo test -p host --features performance-profile --lib performance_profile"
+          - lane: panel-memory
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            command: "cargo test -p panel --features memory-profile --lib focus::tests::memory_stress_policies"
     runs-on: ubuntu-latest
     env:
       SKIP_GPU: "1"
     steps:
       - name: Free runner disk
+        if: ${{ matrix.free_disk }}
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
@@ -110,13 +150,24 @@ jobs:
             libxi-dev \
             libxrandr-dev
       - uses: Swatinem/rust-cache@v2
-      - name: Test
-        run: |
-          cargo test --workspace
-          cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace
-          # Exercise targets hidden behind required-features in their manifests.
-          cargo test -p script --features load --tests
-          cargo test -p host-play --features memory-profile --tests
-          # Keep profiling feature coverage scoped to the behavioral units.
-          cargo test -p host --features performance-profile --lib performance_profile
-          cargo test -p panel --features memory-profile --lib focus::tests::memory_stress_policies
+        with:
+          shared-key: test-${{ matrix.cache_key }}
+          cache-on-failure: true
+          save-if: ${{ matrix.save_cache }}
+          workspaces: |
+            . -> target
+            vendor/fr-client-rust -> target
+      - name: Test ${{ matrix.lane }}
+        run: ${{ matrix.command }}
+
+  # Preserve the required `test` status while the expensive commands fan out.
+  test:
+    name: test
+    if: ${{ always() }}
+    needs: test_lanes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every test lane
+        env:
+          LANES_RESULT: ${{ needs.test_lanes.result }}
+        run: test "$LANES_RESULT" = success

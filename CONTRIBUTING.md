@@ -116,9 +116,11 @@ review requirements, not this checker.
 
 GitHub Actions runs the same two manifests after installing ALSA + X11
 headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
-architecture checker (no Rust toolchain). It is still a **subset**:
-`SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`.
-A green GH job is not a headed or engine pass.
+required-feature script and profiling test lanes and the architecture checker
+(no Rust toolchain). Independent test commands run as parallel matrix lanes;
+the required `test` status aggregates every lane. It is still a **subset**:
+`SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`. A green GH job is
+not a headed or engine pass.
 
 Live harnesses need the engine for the profile under test. Failures print
 `FAIL:` and `exit(1)`. Wait `ingame && scene_state == 2`. Quiet unless

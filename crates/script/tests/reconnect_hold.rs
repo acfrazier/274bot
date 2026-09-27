@@ -9,7 +9,7 @@
 //! so arrival settles the held walk.
 
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use script::isolate_fb::{ChatLineInput, SceneEntityInput, SnapshotInput, TileInput};
 use script::shim::InteractReq;
@@ -31,6 +31,14 @@ fn tick(iso: &LoadIsolate, snap: &SnapshotInput<'_>) {
 
 fn value(iso: &LoadIsolate, expr: &str) -> serde_json::Value {
     iso.probe(expr).unwrap()
+}
+
+fn wait_for_execution(iso: &LoadIsolate, message: &str) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(Instant::now() < deadline, "{message}");
+        std::thread::yield_now();
+    }
 }
 
 fn walks(reqs: &[InteractReq]) -> Vec<&InteractReq> {
@@ -530,7 +538,7 @@ export default class T extends LoopingBot {
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
-    sleep(Duration::from_millis(100));
+    wait_for_execution(&iso, "old-session tick never entered execution");
     iso.reconnect_session_work();
     // The relog dispatch wins the race against the old tick.
     let mut out = iso.take_held_walks();

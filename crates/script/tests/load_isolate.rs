@@ -1767,10 +1767,13 @@ fn slow_first_tick(ms: u32) -> String {
 fn slow_tick_skips_queued_ticks_past_their_snapshots() {
     let iso = spawn_ready(slow_first_tick(700), LoadShape::NativeTick, vec![]);
     let mut snap = base_snapshot();
-    for tick in 1..=3 {
+    snap.tick = 1;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    for tick in 2..=3 {
         snap.tick = tick;
         post_snapshot_input(&iso, &snap);
-        iso.on_game_tick(tick);
+        iso.enqueue_tick_without_watchdog_for_test(tick);
     }
     assert_eq!(
         iso.probe("__rs_n").unwrap(),
@@ -1808,10 +1811,13 @@ export function tick() {
 "#;
     let iso = spawn_ready(source.to_string(), LoadShape::NativeTick, vec![]);
     let mut snapshot = base_snapshot();
-    for tick in 1..=3 {
+    snapshot.tick = 1;
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(1);
+    for tick in 2..=3 {
         snapshot.tick = tick;
         post_snapshot_input(&iso, &snapshot);
-        iso.on_game_tick(tick);
+        iso.enqueue_tick_without_watchdog_for_test(tick);
     }
     assert_eq!(
         iso.probe("globalThis.__runs").unwrap(),
@@ -1853,8 +1859,8 @@ export function tick() {
 fn wedged_isolate_refuses_posts_past_the_backlog_cap() {
     let iso = spawn_ready(slow_first_tick(400), LoadShape::NativeTick, vec![]);
     iso.on_game_tick(1);
-    // Let the thread take tick 1 and start spinning.
-    thread::sleep(Duration::from_millis(50));
+    // Tick 1 is first in the FIFO, so it blocks consumption of every
+    // snapshot queued immediately behind it while its JS is spinning.
     let bytes = script::isolate_fb::encode_snapshot(&base_snapshot());
     let accepted = (0..200)
         .filter(|_| iso.post_snapshot(bytes.clone()))
@@ -1879,7 +1885,7 @@ fn wedged_isolate_refuses_posts_past_the_backlog_cap() {
 fn tick_after_a_refused_snapshot_is_refused_and_not_left_in_flight() {
     let iso = spawn_ready(slow_first_tick(300), LoadShape::NativeTick, vec![]);
     iso.on_game_tick(1);
-    thread::sleep(Duration::from_millis(50));
+    // Tick 1 precedes the flood in the FIFO and cannot drain it while spinning.
     let bytes = script::isolate_fb::encode_snapshot(&base_snapshot());
     assert!(
         (0..200).any(|_| !iso.post_snapshot(bytes.clone())),
@@ -1922,14 +1928,13 @@ fn stale_window_ends_at_operator_commands() {
         let iso = spawn_ready(slow_first_tick(700), LoadShape::NativeTick, vec![]);
         let mut snap = base_snapshot();
         iso.on_game_tick(1);
-        thread::sleep(Duration::from_millis(20));
         snap.tick = 2;
         assert!(iso.post_snapshot(script::isolate_fb::encode_snapshot(&snap)));
-        iso.on_game_tick(2);
+        iso.enqueue_tick_without_watchdog_for_test(2);
         close(&iso);
         snap.tick = 3;
         assert!(iso.post_snapshot(script::isolate_fb::encode_snapshot(&snap)));
-        iso.on_game_tick(3);
+        iso.enqueue_tick_without_watchdog_for_test(3);
         assert_eq!(
             iso.probe("__rs_n").unwrap(),
             2,
