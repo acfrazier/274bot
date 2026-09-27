@@ -2016,3 +2016,55 @@ mod prep_barrier_tests {
         assert!(post_seed_scene_ready(Some(7), 8, 2));
     }
 }
+
+#[cfg(test)]
+mod clue_witness_tests {
+    use super::ClueFleetWitness;
+    use api::snapshot::GameSnapshot;
+    use client::client::{Client, ClientPlayer};
+    use client::io::ServerProt;
+
+    /// An in-game snapshot of `local` with `others` in view.
+    fn seen(local: &str, others: &[&str]) -> GameSnapshot {
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.local_player = Some(ClientPlayer {
+            name: Some(local.into()),
+            ..ClientPlayer::at(20, 20)
+        });
+        client.player_count = others.len() as i32;
+        for (index, name) in others.iter().enumerate() {
+            client.player_ids[index] = index as i32;
+            client.players[index] = Some(Box::new(ClientPlayer {
+                name: Some((*name).into()),
+                ..ClientPlayer::at(22, 20)
+            }));
+        }
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        snapshot
+    }
+
+    /// The clue witness's peer is the other slot's own account: another
+    /// named player in view while the counterpart is away is not it.
+    #[test]
+    fn saw_peer_needs_the_named_counterpart() {
+        let mut witness = ClueFleetWitness::default();
+        witness.start();
+        witness.observe(0, &seen("Solver", &[]));
+        witness.observe(1, &seen("Helper_One", &["Stranger"]));
+        assert!(!witness.slots[1].saw_peer, "a stranger is not the solver");
+        witness.observe(0, &seen("Solver", &["Stranger"]));
+        assert!(!witness.slots[0].saw_peer, "a stranger is not the helper");
+        witness.observe(0, &seen("Solver", &["Stranger", "helper one"]));
+        assert!(witness.slots[0].saw_peer, "the helper by its own name");
+    }
+}

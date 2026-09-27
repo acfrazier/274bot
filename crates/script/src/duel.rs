@@ -1152,4 +1152,53 @@ mod tests {
         let mut at = Some(now - OFFER_TIMEOUT);
         assert!(offer_stalled(&mut at, now));
     }
+
+    /// Frozen duelTravel.ts:41-45: the handshake's 60 s window running out
+    /// fails the crossing, and closes the duel screen only when one is open.
+    #[test]
+    fn the_handshake_deadline_closes_only_an_open_duel_screen() {
+        let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        configure(Some(&data));
+        settings(json!({ "clueDuelPartner": "Helper" }).as_object().unwrap());
+        let post = |tick, modal| {
+            observed::post(tick, |post| {
+                post.session(true)
+                    .here(LOBBY)
+                    .my_name("Solver".into())
+                    .main_modal_id(modal);
+            });
+        };
+        for (modal, closed) in [(-1, false), (6575, true), (6412, true)] {
+            crate::walk::tests::reset();
+            post(1, -1);
+            let mut travel = Travel::clue(CLUE_TILE.x, CLUE_TILE.z, CLUE_TILE.level, 1);
+            let mut ops = Vec::new();
+            let mut clock = crate::task_clock::InstantTaskClock::new();
+            assert_eq!(
+                travel.drive(&mut Cx::test(&mut ops, &mut clock, None)),
+                None
+            );
+            assert_eq!(
+                travel.pop_log().as_deref(),
+                Some("waiting for clue helper Helper")
+            );
+            assert!(clock.deadline.is_some(), "the handshake window is armed");
+
+            post(2, modal);
+            clock.deadline = Some(Instant::now() - Duration::from_millis(1));
+            ops.clear();
+            let ended = travel.drive(&mut Cx::test(&mut ops, &mut clock, None));
+            assert_eq!(ended, Some(false), "modal {modal}");
+            let close = if closed {
+                vec![InteractReq::CloseModal]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(ops, close, "modal {modal}");
+            assert_eq!(
+                travel.pop_log().as_deref(),
+                Some("clue duel partner did not complete the handshake")
+            );
+        }
+    }
 }
