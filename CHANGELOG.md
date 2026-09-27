@@ -1,9 +1,9 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.1.8` and
+All notable public changes to 274bot. Host workspace crate versions are `0.1.9` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## [0.1.9] — 2026-09-24
+## [0.1.9] — 2026-09-27 — Alpha 4
 
 ### Release engineering
 
