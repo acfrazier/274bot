@@ -81207,6 +81207,76 @@
       "fixture_id": "local-289"
     }
   ],
+  "requalification_dispositions": [
+    {
+      "display_name": "FlaxRunner",
+      "case": "flax_runner",
+      "catalog_commit": "00d39a17e056df6c5e461f3f2cfd3598ff9720b6",
+      "source_path": "src/bot/scripts/FlaxRunner/FlaxRunner.ts",
+      "revision": 289,
+      "status": "PARTIAL",
+      "status_detail": "Frozen catalog defect: first transfer, spin, Seers deposit and return proved; second delivery blocked by meet/trade geometry. This append-only requalification disposition does not replace the original catalog/revision rows or change loader availability.",
+      "foreign_defect_disposition": {
+        "card_sha256": "55600afa3850c67d3678232fa9823b299dade6f224d58e5c106410925ee21f67",
+        "helper_path": "src/bot/scripts/FlaxRunner/FlaxRunnerLogic.ts",
+        "helper_sha256": "05a07311383d8ab8121b45e0dcf56a3eefef27d94d8c23565d80fec2462cc32e",
+        "reason": "Both actors accept meet arrival radius 2 around (2719,3471,0), but require mutual trade distance <= 2. Runner (2718,3469,0) and spinner (2717,3473,0) are each arrived and mutually distance 4, so neither closes the gap.",
+        "audit": ".superpowers/release-0.1.9/live/pair-diag/pair-gate-diagnosis.md",
+        "upstream_issue_draft": ".superpowers/release-0.1.9/live/pair-diag/flax-upstream-issue.md",
+        "scope": "Exact frozen source pair, local revision-289 full-cycle claim. Users select their own rs2b0t-path catalog; no qualification-only patched catalog, host arrival/distance change, timeout extension or witness relaxation.",
+        "upstream_fix": "Separate MEET_ARRIVE=1 for atMeet and the meet walk; leave TRADE_RANGE=2."
+      },
+      "proof_refs": [
+        ".superpowers/release-0.1.9/live/requalify-7bbfab323/pair/flax_runner.log:632-634",
+        ".superpowers/release-0.1.9/live/requalify-7bbfab323/reruns-pair/flax_runner.log:635-637"
+      ]
+    },
+    {
+      "display_name": "Duel Arena Combat Trainer",
+      "case": "duel_arena",
+      "catalog_commit": "00d39a17e056df6c5e461f3f2cfd3598ff9720b6",
+      "source_path": "src/bot/scripts/DuelArena/DuelArena.ts",
+      "revision": 289,
+      "status": "BLOCKED",
+      "status_detail": "Unsupported API disposition, not a gameplay regression: both Train-mode actors prepare and Start after the validator fix, but the campaign's Duel module remains unimplemented. No offer, combat or full-cycle support is claimed; trainer API implementation and qualification are deferred to Beta 1.",
+      "unsupported_api_disposition": {
+        "card_sha256": "1ad638d8b32159beee7f68096b0b20065e81e4c4724d4cd50b7a6227f16de4a3",
+        "helper_path": "src/bot/api/duel/Duel.ts",
+        "helper_sha256": "4329de4ce7cf9da55c386620e746afe040feb0486619014ec0c6cc99e618c0f8",
+        "module": "/rs2b0t/bot/api/duel/Duel.js",
+        "host_source": "crates/script/src/shim/duel_unimplemented.js",
+        "missing_api_members": [
+          "DUEL_SELECT_MODAL",
+          "DUEL_CONFIRM_MODAL",
+          "DUEL_WIN_MODAL",
+          "DUEL_FIGHT_ARENAS",
+          "parseDuelPartnerHeader",
+          "fightArenaAt",
+          "Duel.offerOpen",
+          "Duel.confirmOpen",
+          "Duel.winOpen",
+          "Duel.active",
+          "Duel.partner",
+          "Duel.waitingForOther",
+          "Duel.challenge",
+          "Duel.fight",
+          "Duel.accept",
+          "Duel.cancel",
+          "Duel.closeWin"
+        ],
+        "reason": "The campaign maps Duel.js to the all-not-implemented shim. Both trainers throw at fightArenaAt on their first tick and tick listener; the native witness records no offer, confirmation, combat or script-caused melee XP before its 180-second deadline.",
+        "audit": ".superpowers/release-0.1.9/live/pair-diag/pair-gate-diagnosis.md",
+        "scope": "Campaign 692b94858 plus the Train-mode validator fix, exact frozen catalog and revision 289. Loader availability and witness requirements are unchanged. A clue-duel handshake qualification is not a trainer full-cycle qualification.",
+        "follow_up_release": "Beta 1",
+        "follow_up": "Implement and qualify the complete trainer-used Duel API, then rerun paired real combat, reset and further-work proof. Do not suppress not-implemented errors or relax the witness."
+      },
+      "proof_refs": [
+        ".superpowers/release-0.1.9/live/pair-diag/duel-validator-1/summary.json:1-34",
+        ".superpowers/release-0.1.9/live/pair-diag/duel-validator-1/duel_arena.log:40-62",
+        ".superpowers/release-0.1.9/live/pair-diag/duel-validator-1/duel_arena.log:4082-4084"
+      ]
+    }
+  ],
   "current_loader_dispositions": {
     "original_fixed_inventory_preserved": true,
     "fixed_enabled_card_count": 45,

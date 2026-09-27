@@ -627,12 +627,24 @@ fn prepared_settings_match(
         return Ok(());
     }
     match case {
-        PairCase::Duel => match bag.get("partner") {
-            Some(value) => Err(format!(
-                "Duel settings for {account} must not carry partner {value}; counterpart identity is native witness-owned"
-            )),
-            None => Ok(()),
-        },
+        PairCase::Duel => {
+            if let Some(mode) = bag.get("mode") {
+                if mode.as_str() != Some("Train") {
+                    return Err(format!(
+                        "Duel settings for {account} require Train mode, not {mode}"
+                    ));
+                }
+            }
+            match bag.get("partner") {
+                // The Train schema includes the helper mode's hidden empty
+                // default. It does not select the native witness counterpart.
+                None => Ok(()),
+                Some(Value::String(name)) if name.is_empty() => Ok(()),
+                Some(value) => Err(format!(
+                    "Duel settings for {account} must not carry partner {value}; counterpart identity is native witness-owned"
+                )),
+            }
+        }
         PairCase::Air | PairCase::Mule | PairCase::Flax => {
             match bag.get("partner").and_then(Value::as_str) {
                 Some(name) if account_identity_eq(name, partner) => Ok(()),

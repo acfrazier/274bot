@@ -43,6 +43,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - The paired proofs (`nature_crafter_air`, `mule_crafter_air`,
   `flax_runner`, `duel_arena`) refuse to run without the pair gate instead
   of reporting their Start snapshot as PASS, in panel-play and tui-play.
+- Duel trainer pair preparation accepts the Train schema's inert empty helper
+  partner field while retaining native counterpart identity; helper mode and
+  populated partner settings still fail closed. The trainer itself remains
+  unsupported in this campaign because its `Duel.*` API is unimplemented.
+  The support matrix names that missing surface for Beta 1; no combat or
+  full-cycle PASS is claimed by the validator fix.
+- FlaxRunner's refrozen full-cycle row is a catalog-defect disposition: meet
+  arrival radius 2 can leave both actors arrived but outside trade range 2.
+  The support matrix preserves the first-transfer/spin/bank evidence without
+  claiming a second delivery. No qualification-only catalog patch is shipped;
+  users continue to select their own `rs2b0t-path` source.
 - Eleven v2 File-card cells no longer pass on their Start snapshot. Each
   watch and terminal proof is now the card's own outcome, which the
   pre-Start seed cannot satisfy, so the clean-stop grace starts after the

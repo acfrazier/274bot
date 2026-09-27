@@ -3,8 +3,8 @@
 //!
 //! This is proof infrastructure, not a second gameplay engine. Headed pair
 //! cells are Air, Mule, Flax, and Duel. Duel counterpart identity is native
-//! witness-owned; Duel settings carry schema target stats and have no partner
-//! key.
+//! witness-owned; Duel settings carry Train-mode schema defaults, including
+//! the helper mode's inert empty partner field.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

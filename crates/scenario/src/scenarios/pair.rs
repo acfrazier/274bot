@@ -797,7 +797,7 @@ pub(crate) fn flax_runner_scenario() -> Scenario {
 
 /// DuelArena both actors: bronze scimitar at the challenge anchor, wear it,
 /// then shared Start. Counterpart identity is native witness-owned; the
-/// frozen script has target stats and no partner setting.
+/// trainer defaults include the helper mode's inert empty partner field.
 pub(crate) fn duel_arena_scenario() -> Scenario {
     let dest = DUEL_CHALLENGE;
     let mut steps = script_live_seed_steps();
