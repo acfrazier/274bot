@@ -433,6 +433,46 @@ fn a_parameter_edit_reaches_the_run_once_durable() {
     assert!(f.run_has_bag("alice", &bag(&[("target", json!("Guard"))])));
 }
 
+/// An Apply-to-all write saved in one commit with a later edit of another
+/// setting on the same member still reaches that member's run, and the
+/// report counts it delivered, not superseded.
+#[test]
+fn a_sync_saved_together_with_another_edit_still_reaches_the_run() {
+    let mut f = fixture("sync-coalesced", &["alice", "bob"]);
+    let thiever = f.card("thiever.ts", LOOPING);
+    f.assign("alice", &thiever);
+    f.assign("bob", &thiever);
+    f.start_running("bob");
+    f.set("alice", &thiever, "target", json!("Guard"));
+    f.core.flush_writes();
+    f.prepare("alice", &thiever);
+
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    let op = f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.set_auto_login("bob", true).unwrap();
+    drop(held);
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    let want = bag(&[("target", json!("Guard"))]);
+    assert_eq!(
+        f.saved_bag("bob", &thiever.identity_key()),
+        Some(want.clone())
+    );
+    assert!(f.run_has_bag("bob", &want), "bob's run received the bag");
+    let report = f.scripts.last_settings_sync().unwrap();
+    assert_eq!(
+        (report.saved, report.delivered, report.superseded),
+        (1, 1, 0),
+        "{report:?}"
+    );
+    assert_eq!(
+        f.core.operation(op).unwrap().outcome("bob"),
+        Some(&Outcome::Completed)
+    );
+}
+
 /// Two Apply-to-all runs overlap (the first one's writes still queued when
 /// the second applies): each operation settles on its own writes, and the
 /// newest report is the one shown.

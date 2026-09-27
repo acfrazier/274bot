@@ -812,7 +812,7 @@ fn stop_scripts_drops_a_start_queued_behind_a_reap() {
 }
 
 #[test]
-fn a_superseded_write_in_the_same_commit_is_cancelled_and_its_mirror_never_runs() {
+fn a_write_replaced_in_the_same_commit_is_cancelled_and_its_mirror_never_runs() {
     let mut s = session("write-coalesce", &[("alice", 1, false)]);
     let mut surface = Recorder::default();
     s.load("alice", &mut surface);
@@ -838,6 +838,48 @@ fn a_superseded_write_in_the_same_commit_is_cancelled_and_its_mirror_never_runs(
     );
     let disk = Vault::unlock(&vault_path("write-coalesce"), "bot").unwrap();
     assert!(!disk.get("alice").unwrap().settings.auto_login);
+}
+
+#[test]
+fn coalesced_edits_of_different_settings_all_reach_the_running_slot() {
+    let mut s = session("write-coalesce-fields", &[("alice", 1, true)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let alice = arm(&s, "alice");
+    assert!(alice.auto_login.load(Ordering::Relaxed));
+    assert!(alice.random_events.load(Ordering::Relaxed));
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    let auto = s.set_auto_login("alice", false).unwrap();
+    let magic = s
+        .set_random_settings("alice", false, "Magic", false)
+        .unwrap();
+    let prayer = s
+        .set_random_settings("alice", false, "Prayer", false)
+        .unwrap();
+    drop(held);
+    s.flush_writes();
+
+    let disk = Vault::unlock(&vault_path("write-coalesce-fields"), "bot").unwrap();
+    let saved = &disk.get("alice").unwrap().settings;
+    assert!(!saved.auto_login);
+    assert!(!saved.random_events && !saved.lamp_auto);
+    assert_eq!(saved.lamp_skill, "Prayer");
+    assert!(
+        !alice.auto_login.load(Ordering::Relaxed),
+        "the auto-login edit saved in the same commit reaches the slot"
+    );
+    assert!(!alice.random_events.load(Ordering::Relaxed));
+    assert!(!alice.lamp_auto.load(Ordering::Relaxed));
+    assert_eq!(*alice.lamp_skill.lock().unwrap(), "Prayer");
+    let outcome = |op| s.operation(op).unwrap().outcome("alice").cloned();
+    assert_eq!(outcome(auto), Some(Outcome::Completed));
+    assert_eq!(
+        outcome(magic),
+        Some(Outcome::Cancelled),
+        "the same setting's newer edit in the commit replaced it"
+    );
+    assert_eq!(outcome(prayer), Some(Outcome::Completed));
 }
 
 #[test]

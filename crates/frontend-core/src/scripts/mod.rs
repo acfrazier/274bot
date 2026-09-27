@@ -54,7 +54,9 @@ pub enum LiveDelivery {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsResult {
     Saved(LiveDelivery),
-    /// A newer edit of the same profile in the same commit owns the value.
+    /// A newer edit of the same profile in the same commit owns the value,
+    /// and this edit has no push of its own: the newer one pushes the same
+    /// card's run, this edit captured no run, or the commit failed.
     Superseded,
     Failed(String),
 }

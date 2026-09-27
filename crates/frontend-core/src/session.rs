@@ -101,7 +101,9 @@ pub struct StartSettled {
     pub outcome: Option<script::StartOutcome>,
 }
 
-/// What a running slot learns once a profile write is durable.
+/// What a running slot learns once a profile write is durable. Writes of
+/// one profile saved in one commit each deliver their own effect; only a
+/// later one with the same effect replaces an earlier one's.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArmMirror {
     /// Nothing live changes (assignments, tutorial flag, render prefs).
@@ -117,6 +119,29 @@ pub enum ArmMirror {
     /// A card's parameters: posted to the run captured at edit time, if
     /// any, and reported through [`OperatorSession::take_settings_writes`].
     ScriptSettings(Option<LiveSettings>),
+}
+
+impl ArmMirror {
+    /// Whether a running slot learns anything from this mirror.
+    fn is_live(&self) -> bool {
+        !matches!(self, Self::None | Self::ScriptSettings(None))
+    }
+
+    /// Whether this mirror, on a later write committed together with
+    /// `earlier`'s, sets the same live state, so `earlier` need not reach
+    /// the slot. A push to the same card's run replaces an earlier one (a
+    /// newer generation means the earlier run is gone).
+    fn replaces(&self, earlier: &Self) -> bool {
+        match (self, earlier) {
+            (Self::AutoLogin(_), Self::AutoLogin(_))
+            | (Self::Guardian { .. }, Self::Guardian { .. })
+            | (Self::Remember, Self::Remember) => true,
+            (Self::ScriptSettings(Some(later)), Self::ScriptSettings(Some(earlier))) => {
+                later.identity == earlier.identity
+            }
+            _ => false,
+        }
+    }
 }
 
 struct PendingWrite {
@@ -1409,20 +1434,21 @@ impl<Io> OperatorSession<Io> {
         }
         let member = pending.member;
         let settings = matches!(pending.mirror, ArmMirror::ScriptSettings(_));
+        // A superseded write (later writes in this commit wrote every row it
+        // did) is durable only inside their rows. It still settles on its own
+        // when it carries a live effect that no later write of the member in
+        // the commit replaces: the slot learns every distinct change of a
+        // commit, never a replaced value. Otherwise it is Cancelled whatever
+        // the commit did: only the write owning the row fails, restores and
+        // reports, once.
+        let own_effect =
+            written.superseded && self.keeps_live_effect(&member, &pending.mirror, &written.later);
         let result = match written.result {
-            // A later write in the same commit replaced this value before it
-            // was ever durable on its own: its live mirror must not run.
-            // A superseded job is Cancelled whatever the commit did: only the
-            // job that owns the committed value succeeds or fails.
-            _ if written.superseded => {
-                self.operations.set(written.op, &member, Outcome::Cancelled);
-                SettingsResult::Superseded
-            }
-            Ok(()) => {
+            Ok(()) if !written.superseded || own_effect => {
                 self.operations.set(written.op, &member, Outcome::Completed);
                 SettingsResult::Saved(self.apply_mirror(&member, pending.mirror, committed))
             }
-            Err(error) => {
+            Err(error) if !written.superseded => {
                 if let Some(vault) = self.vault.as_mut() {
                     for (name, durable) in newest {
                         vault.restore(&name, durable);
@@ -1434,6 +1460,10 @@ impl<Io> OperatorSession<Io> {
                     .set(written.op, &member, Outcome::Failed(error.clone()));
                 SettingsResult::Failed(error)
             }
+            _ => {
+                self.operations.set(written.op, &member, Outcome::Cancelled);
+                SettingsResult::Superseded
+            }
         };
         if settings {
             self.settings_writes.push(SettingsWrite {
@@ -1442,6 +1472,16 @@ impl<Io> OperatorSession<Io> {
                 result,
             });
         }
+    }
+
+    /// Whether a superseded write still has a live effect of its own: one
+    /// that no later write of `member` in its commit (`later`) replaces.
+    fn keeps_live_effect(&self, member: &str, mirror: &ArmMirror, later: &[OperationId]) -> bool {
+        mirror.is_live()
+            && !later
+                .iter()
+                .filter_map(|op| self.writes.get(op))
+                .any(|next| next.member == member && next.mirror.replaces(mirror))
     }
 
     /// Apply a durable write's live effect. Returns what a script-parameter

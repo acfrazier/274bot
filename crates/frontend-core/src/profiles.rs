@@ -4,7 +4,9 @@
 //! transaction (a rename is its upsert and its remove together). Jobs
 //! queued while a write runs are committed in one file write; a job whose
 //! every profile a later job in that batch also writes is superseded: its
-//! value never becomes the durable one on its own.
+//! value never becomes the durable one on its own. Each result names the
+//! later jobs of its commit that wrote one of its profiles, so the session
+//! can tell which of the job's live effects they replace.
 
 use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(any(test, feature = "test-support"))]
@@ -26,6 +28,9 @@ pub(crate) struct Written {
     pub(crate) result: Result<(), String>,
     /// A later job in the same commit wrote every profile this one did.
     pub(crate) superseded: bool,
+    /// The later jobs in the same commit that wrote a profile this one
+    /// did, in submission order.
+    pub(crate) later: Vec<OperationId>,
     /// Each touched profile's durable value after the commit, so a failed
     /// write can put the in-memory view back.
     pub(crate) durable: Vec<(String, Option<Profile>)>,
@@ -63,14 +68,23 @@ impl ProfileWriter {
                         .collect();
                     let result = store.commit(&changes).map_err(|e| e.to_string());
                     for (index, job) in batch.iter().enumerate() {
-                        let later = &batch[index + 1..];
-                        let superseded = job.changes.iter().all(|change| {
-                            later.iter().any(|next| {
-                                next.changes
+                        let rest = &batch[index + 1..];
+                        let writes = |next: &Job, name: &str| {
+                            next.changes.iter().any(|c| c.username() == name)
+                        };
+                        let superseded = job
+                            .changes
+                            .iter()
+                            .all(|change| rest.iter().any(|next| writes(next, change.username())));
+                        let later = rest
+                            .iter()
+                            .filter(|next| {
+                                job.changes
                                     .iter()
-                                    .any(|c| c.username() == change.username())
+                                    .any(|change| writes(next, change.username()))
                             })
-                        });
+                            .map(|next| next.op)
+                            .collect();
                         let durable = job
                             .changes
                             .iter()
@@ -83,6 +97,7 @@ impl ProfileWriter {
                             op: job.op,
                             result: result.clone(),
                             superseded,
+                            later,
                             durable,
                         };
                         if report.send(written).is_err() {

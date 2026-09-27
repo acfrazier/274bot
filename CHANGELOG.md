@@ -440,7 +440,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   the save succeeded. A failed save is shown on the error line and the
   profile goes back to its saved value. A new or renamed profile is selected
   (and its bot started) only after its save succeeded, and a rename saves
-  the new name and removes the old one in one write.
+  the new name and removes the old one in one write. Edits made while a
+  save runs are saved together in one write, and a running bot still picks
+  up each of them (of the same setting, only the newest).
 - A saved password change now applies to a bot that is already running
   (for example parked on the login screen): its next login uses the new
   password. Before (also in 0.1.8.1), a bot kept logging in with the
