@@ -100,9 +100,11 @@ fn catalog_dim_register_stamps_unloadable_even_when_imports_remap() {
 import Woodcutter from './Woodcutter/Woodcutter.js';
 import CookBot from './CookBot/CookBot.js';
 import BankSorter from './BankSorter/BankSorter.js';
+import JiveKQ from './JiveKQ/JiveKQ.js';
 ScriptRegistry.register({ name: 'Woodcutter', create: () => new Woodcutter() });
 ScriptRegistry.register({ name: 'CookBot', create: () => new CookBot() });
 ScriptRegistry.register({ name: 'BankSorter', create: () => new BankSorter() });
+ScriptRegistry.register({ name: 'JiveKQ', create: () => new JiveKQ() });
 "#,
     )
     .unwrap();
@@ -112,6 +114,8 @@ ScriptRegistry.register({ name: 'BankSorter', create: () => new BankSorter() });
     std::fs::write(root.join("src/bot/scripts/CookBot/CookBot.ts"), body).unwrap();
     std::fs::create_dir_all(root.join("src/bot/scripts/BankSorter")).unwrap();
     std::fs::write(root.join("src/bot/scripts/BankSorter/BankSorter.ts"), body).unwrap();
+    std::fs::create_dir_all(root.join("src/bot/scripts/JiveKQ")).unwrap();
+    std::fs::write(root.join("src/bot/scripts/JiveKQ/JiveKQ.ts"), body).unwrap();
 
     let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
@@ -130,6 +134,13 @@ ScriptRegistry.register({ name: 'BankSorter', create: () => new BankSorter() });
     assert_eq!(
         sorter.unloadable.as_deref(),
         Some("dim: BankSorter is unavailable until native bank sorting is implemented")
+    );
+    let jive = lib
+        .get(ScriptSource::Catalog, "JiveKQ")
+        .expect("JiveKQ stays listed for the Beta 1 witness");
+    assert_eq!(
+        jive.unloadable.as_deref(),
+        Some("dim: JiveKQ is unavailable: four-player qualification incomplete in 0.1.9")
     );
 }
 

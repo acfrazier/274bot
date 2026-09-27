@@ -306,10 +306,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 ### Paired catalog compatibility
 
-- ClueSolver, Duel Arena Combat Trainer, and JiveKQ can run through the native
-  host. JiveKQ's bounded BroadcastChannel broker fences each four-account roster
-  to one world and now preserves a surviving card isolate across a same-world
-  reconnect while still revoking Stops and world changes.
+- ClueSolver and Duel Arena Combat Trainer run through the native host.
+- JiveKQ four-player is present but not enabled or qualified in 0.1.9: the
+  catalog lists it dim ("four-player qualification incomplete in 0.1.9") and
+  refuses its Start. Its BroadcastChannel broker, max-stat fixture and
+  `script_jive_kq_four` witness stay in place for Beta 1; the broker fences
+  each four-account roster to one world and now preserves a surviving card
+  isolate across a same-world reconnect while still revoking Stops and world
+  changes. KQ witness 14's leader had no ropes left for a third descent after
+  its second group retreated early, so the fixture now banks eight for it.
 - Clue 3554 crosses the Duel Arena through a configured, different helper
   account before digging. Each profile now stores that account-wide partner in
   the profile editor, separately from per-card parameters. Start, a parameter

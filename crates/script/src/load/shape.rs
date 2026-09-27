@@ -764,6 +764,13 @@ pub(super) fn catalog_unloadable(
                 "dim: EssMiner is unavailable until the native Gatherer replaces it".into(),
             );
         }
+        if name == "JiveKQ" {
+            // The broker, the fixture and the script_jive_kq_four witness
+            // stay for Beta 1; the live harness Starts it past this dim.
+            return Some(
+                "dim: JiveKQ is unavailable: four-player qualification incomplete in 0.1.9".into(),
+            );
+        }
         if is_catalog_dim(name) {
             return Some(format!("dim: {name}"));
         }

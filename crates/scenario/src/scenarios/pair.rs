@@ -937,7 +937,9 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
                             &tele_args(DUEL_CHALLENGE.level, DUEL_CHALLENGE.x, DUEL_CHALLENGE.z),
                         );
                     }
-                    PairCompanionKind::KqMember => seed_kq_profile(c, slot.kq_has_pass),
+                    PairCompanionKind::KqMember => {
+                        seed_kq_profile(c, slot.kq_has_pass, KQ_MEMBER_ROPES)
+                    }
                 }
                 slot.seed_sent = true;
                 slot.last_action = now;
@@ -1104,7 +1106,18 @@ fn post_seed_scene_ready(
 fn send_ok(slot: &PairCompanionSlot, now: Instant) -> bool {
     now.duration_since(slot.last_action) >= Duration::from_millis(400)
 }
-fn seed_kq_profile(c: &mut Client, has_pass: bool) {
+
+/// Ropes the leader's bank holds; it withdraws two for every descent. With
+/// four banked, KQ witness 14 (0.1.9) failed: its second group retreated on
+/// the food reserve before the second kill, a third descent still fit the
+/// 1800 s deadline, and the leader stopped on "KQ bank needs 2 more of item
+/// 954". Eight covers every descent the deadline allows; Beta 1
+/// qualification starts from here.
+const KQ_LEADER_ROPES: u32 = 8;
+/// The other members never withdraw ropes.
+const KQ_MEMBER_ROPES: u32 = 4;
+
+fn seed_kq_profile(c: &mut Client, has_pass: bool, ropes: u32) {
     cheat(c, "~clearinv");
     cheat(c, "setvar heroquest 15");
     for skill in [
@@ -1129,7 +1142,7 @@ fn seed_kq_profile(c: &mut Client, has_pass: bool) {
         ("ring_of_recoil", 4),
         ("rune_arrow", 1000),
         ("magic_shortbow", 2),
-        ("rope", 4),
+        ("rope", ropes),
         ("4doseprayerrestore", 8),
         ("4dose2antipoison", 4),
         ("4dose2attack", 4),
@@ -1778,7 +1791,9 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
 
 /// Four-account max-stat JiveKQ gold: all members share one minted roster,
 /// provision from Shantay, descend together, kill both Queen phases, collect
-/// one non-loadout drop, and carry it through the next fresh bank.
+/// one non-loadout drop, and carry it through the next fresh bank. JiveKQ is
+/// not Start-enabled in 0.1.9 (its catalog card is dim); this witness Starts
+/// it past the dim for the Beta 1 qualification (see [`KQ_LEADER_ROPES`]).
 pub(crate) fn jive_kq_four_scenario() -> Scenario {
     let witness = Arc::new(Mutex::new(KqFleetWitness::default()));
     let prep_barrier = PairPrepBarrier::new(3);
@@ -1787,7 +1802,7 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
         name: "seed four-account KQ banks and stage at Shantay",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
-                seed_kq_profile(c, true);
+                seed_kq_profile(c, true, KQ_LEADER_ROPES);
                 true
             }),
         },
