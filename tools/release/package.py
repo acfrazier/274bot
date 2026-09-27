@@ -168,10 +168,8 @@ def main():
     map_cache, map_unpack = nav_build_inputs(a.revision)
     map_cache = a.map_cache or map_cache
     map_unpack = a.map_unpack or map_unpack
-    scratch = Path(tempfile.mkdtemp(prefix='274bot-package-check-')) if a.check else None
-    output = scratch / 'package' if a.check else a.output
     # Refuse to overwrite an earlier package or mix old and new artifacts.
-    if output.exists():
+    if a.output and a.output.exists():
         p.error('output already exists')
     suffix = '.exe' if a.platform == 'windows' else ''
     # Every platform ships the panel beside the TUI. The panel's fonts are
@@ -187,6 +185,10 @@ def main():
         relative = str(path.relative_to(a.input)).replace('\\', '/')
         if receipt['files'].get(relative) != digest(path):
             p.error('artifact does not match build receipt: ' + relative)
+    # Inputs are validated: only now does --check create its scratch directory,
+    # and the finally below removes it whatever happens next.
+    scratch = Path(tempfile.mkdtemp(prefix='274bot-package-check-')) if a.check else None
+    output = scratch / 'package' if a.check else a.output
     try:
         output.mkdir(parents=True)
         for name in names:

@@ -24,6 +24,24 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+/// What the panel window needs from the graphics stack, appended to the
+/// startup errors a missing driver produces. `BOT_CPU=1` selects the game
+/// view's CPU rasterizer; the window itself always presents through wgpu.
+#[cfg(target_os = "linux")]
+const GRAPHICS_HELP: &str = "the panel window needs Vulkan: the Vulkan loader \
+(libvulkan.so.1) and a Vulkan driver (ICD). Install your GPU's Vulkan driver, or \
+mesa-vulkan-drivers for Mesa lavapipe software rendering. BOT_CPU=1 does not help: it only \
+draws the game view on the CPU";
+#[cfg(windows)]
+const GRAPHICS_HELP: &str = "the panel window needs a Direct3D 12 or Vulkan driver; update \
+the GPU driver. BOT_CPU=1 does not help: it only draws the game view on the CPU";
+#[cfg(target_os = "macos")]
+const GRAPHICS_HELP: &str = "the panel window needs Metal. BOT_CPU=1 does not help: it only \
+draws the game view on the CPU";
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+const GRAPHICS_HELP: &str = "the panel window needs a Vulkan driver (ICD). BOT_CPU=1 does not \
+help: it only draws the game view on the CPU";
+
 /// Panel window-loop error.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -34,11 +52,11 @@ pub enum PanelError {
     EventLoop(#[from] winit::error::EventLoopError),
     #[error("window creation failed: {0}")]
     WindowCreation(#[source] winit::error::OsError),
-    #[error("WGPU surface creation failed: {0}")]
+    #[error("WGPU surface creation failed: {0}; {help}", help = GRAPHICS_HELP)]
     SurfaceCreation(#[source] wgpu::CreateSurfaceError),
-    #[error("no suitable WGPU adapter found: {0}")]
+    #[error("no suitable WGPU adapter found: {0}; {help}", help = GRAPHICS_HELP)]
     AdapterUnavailable(#[source] wgpu::RequestAdapterError),
-    #[error("WGPU device request failed: {0}")]
+    #[error("WGPU device request failed: {0}; {help}", help = GRAPHICS_HELP)]
     DeviceRequest(#[source] wgpu::RequestDeviceError),
     #[error("WGPU renderer initialization failed: {0}")]
     RendererInit(#[source] imgui_wgpu::RendererError),
@@ -1234,6 +1252,9 @@ where
     /// scenario sink's requests) and the render readback.
     shots: Arc<Mutex<ShotState>>,
     last_wake: Instant,
+    /// Why the loop stopped without a window (creation or rebuild failed);
+    /// [`run`] returns it, so the process exits non-zero.
+    failure: Option<PanelError>,
 }
 
 impl<F> App<F>
@@ -1258,6 +1279,7 @@ where
             ui_frame,
             shots,
             last_wake: Instant::now(),
+            failure: None,
         }
     }
 }
@@ -1276,7 +1298,7 @@ where
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to create window: {e}");
+                    self.failure = Some(e);
                     event_loop.exit();
                 }
             }
@@ -1329,8 +1351,8 @@ where
                             }
                         }
                         Err(e) => {
-                            eprintln!("Failed to recreate window after GPU error: {e}");
                             let _ = old_window;
+                            self.failure = Some(e);
                             event_loop.exit();
                         }
                     }
@@ -1440,7 +1462,12 @@ where
 
     let mut app = App::new(cfg, on_style, on_gpu_init, shots, ui_frame);
     event_loop.run_app(&mut app)?;
-    Ok(())
+    // A window that could not be created (or rebuilt after a GPU error)
+    // ends the loop; report it so the process exits non-zero.
+    match app.failure.take() {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 fn apply_theme(ctx: &mut imgui::Context, theme: Theme) {
