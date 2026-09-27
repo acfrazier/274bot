@@ -10,7 +10,7 @@ use api::interact::Driver;
 use api::snapshot::GameSnapshot;
 use client::client::Client;
 use client::config::Cache;
-use host::SlotInput;
+use host::{ScriptRunPolicy, SlotInput};
 use nav::router::FindOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
@@ -225,7 +225,7 @@ pub(crate) fn script_observe_with_npc_boxes(
 ) -> bool {
     script_observe_cached(
         driver, name, up, tick_edge, tick, here, inv, state, snapshot, npc_boxes, obj_names,
-        scripts, cheats, navs, world, hold, ours, canlight, slot_input, None, None,
+        scripts, cheats, navs, world, hold, ours, canlight, slot_input, None, None, None,
     )
 }
 
@@ -253,6 +253,7 @@ pub(crate) fn script_observe_cached(
     slot_input: Option<&SlotInput>,
     cache: Option<Arc<Cache>>,
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
+    run_policy: Option<&mut ScriptRunPolicy>,
 ) -> bool {
     script_observe_cached_with_channels(
         driver,
@@ -278,6 +279,7 @@ pub(crate) fn script_observe_cached(
         obj_names_arc,
         None,
         super::script_channels::BrokerWorld::Unavailable,
+        run_policy,
     )
 }
 
@@ -306,6 +308,7 @@ pub(crate) fn script_observe_cached_with_channels(
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
     channels: Option<&super::script_channels::SlotChannels>,
     channel_world: super::script_channels::BrokerWorld,
+    run_policy: Option<&mut ScriptRunPolicy>,
 ) -> bool {
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
@@ -318,6 +321,8 @@ pub(crate) fn script_observe_cached_with_channels(
     let mut slot_work_epoch = None;
     let mut channel_generation = 0;
     let mut channel_active = false;
+    let mut policy_runtime_generation = None;
+    let mut run_policy_update = None;
     'script_slot: {
         let Some(slot) = observed_slot.as_ref() else {
             break 'script_slot;
@@ -326,6 +331,17 @@ pub(crate) fn script_observe_cached_with_channels(
             break 'script_slot;
         };
         slot.observe_lifecycle();
+        if matches!(
+            slot.state(),
+            script::RunState::Starting | script::RunState::Paused
+        ) && slot.load_active()
+        {
+            let (update, queued) = slot.drain_host_interacts();
+            if update.is_some() {
+                run_policy_update = update;
+            }
+            slot.restore_interacts(queued);
+        }
         // Reap a script-requested Stop before advancing host continuations.
         emit_script_debug_logs(&mut slot, name);
         // A script that stopped itself or died leaves no owner for its walk:
@@ -864,7 +880,10 @@ pub(crate) fn script_observe_cached_with_channels(
             slot.sync_native_input_gate();
             if slot.state() == script::RunState::Running {
                 if slot.watchdog().holds_script_actions() {
-                    let _dropped = slot.drain_interacts();
+                    let (update, _dropped) = slot.drain_host_interacts();
+                    if update.is_some() {
+                        run_policy_update = update;
+                    }
                 } else {
                     // What a reconnect interrupted goes out first, on the
                     // relogged session's first dispatch, ahead of what the
@@ -879,7 +898,11 @@ pub(crate) fn script_observe_cached_with_channels(
                         carried = take_carried_walk(navs, name, slot.runtime_generation());
                         queued.extend(slot.take_held_walks());
                     }
-                    queued.extend(take_script_interacts(slot.drain_interacts(), slot_input));
+                    let (update, reqs) = slot.drain_host_interacts();
+                    if update.is_some() {
+                        run_policy_update = update;
+                    }
+                    queued.extend(take_script_interacts(reqs, slot_input));
                     interact.extend(resumed_walk(carried, &queued, |dest, radius| {
                         let (Some((x, z, level)), Some(snapshot)) = (here, snapshot) else {
                             return false;
@@ -903,7 +926,24 @@ pub(crate) fn script_observe_cached_with_channels(
                 }
             }
         } else if slot.state() == script::RunState::Running {
-            interact.extend(take_script_interacts(slot.drain_interacts(), slot_input));
+            let (update, reqs) = slot.drain_host_interacts();
+            if update.is_some() {
+                run_policy_update = update;
+            }
+            interact.extend(take_script_interacts(reqs, slot_input));
+        }
+        // Lifecycle/log/watchdog work above can stop or replace the runtime.
+        // Fence the update against the state that leaves this observation.
+        policy_runtime_generation = matches!(
+            slot.state(),
+            script::RunState::Starting | script::RunState::Running | script::RunState::Paused
+        )
+        .then_some(slot.runtime_generation());
+    }
+    if let Some(run_policy) = run_policy {
+        run_policy.sync_runtime(policy_runtime_generation);
+        if let (Some(generation), Some(update)) = (policy_runtime_generation, run_policy_update) {
+            run_policy.apply_override(generation, update);
         }
     }
     if let Some(channels) = channels {
@@ -1361,6 +1401,10 @@ pub(crate) fn take_script_interacts(
                 if let Some(inp) = slot_input {
                     inp.enqueue_script_mouse_at(identity, down, x, y, button);
                 }
+            }
+            script::shim::InteractReq::RunPolicyOverride { .. } => {
+                // Host callers split these before dispatch. A raw/direct caller
+                // cannot turn host policy into a game interact.
             }
             other => out.push(other),
         }

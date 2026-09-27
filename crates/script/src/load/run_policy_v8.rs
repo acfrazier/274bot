@@ -1,21 +1,27 @@
 //! Typed V8 binding for RunManager's per-session host policy overlay.
-//! This is a local V8 callback, not a rustyscript JSON op.
+//! Coercion is synchronous; the resulting replacement joins the isolate's
+//! next FlatBuffer interact batch.
 
-use super::callback_v8::{self, JsResult, Throw};
-use api::run_policy::{RunEnergyMin, RunPolicyOverride, RunPolicyOverrideCell};
+use super::callback_v8::{self, JsResult};
+use api::run_policy::{RunEnergyMin, RunPolicyOverride};
 use rustyscript::Runtime;
-use std::sync::Arc;
+use std::cell::Cell;
 
-/// Store the slot's cell on the isolate and install `__rs2b0t_run_override`
-/// as a direct global callback.
-pub(super) fn install(
-    runtime: &mut Runtime,
-    run_policy_override: Arc<RunPolicyOverrideCell>,
-) -> Result<(), String> {
-    runtime
-        .deno_runtime()
-        .v8_isolate()
-        .set_slot(run_policy_override);
+#[derive(Clone, Copy)]
+enum PendingOverride {
+    Empty,
+    Replace(Option<RunPolicyOverride>),
+}
+
+thread_local! {
+    static PENDING_OVERRIDE: Cell<PendingOverride> =
+        const { Cell::new(PendingOverride::Empty) };
+}
+
+/// Install the direct `__rs2b0t_run_override` callback. Its pending value is
+/// isolate-thread local and never shared with the host.
+pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+    clear_pending();
     callback_v8::install(runtime, "__rs2b0t_run_override", run_override_callback)
 }
 
@@ -26,22 +32,24 @@ fn run_override_callback<'s, 'cb>(
 ) {
     match run_policy_override(scope, args.get(0)) {
         Ok(policy) => {
-            if !store_policy(scope, policy) {
-                throw_type_error(scope, rv, "run-policy cell missing from isolate");
-                return;
-            }
+            PENDING_OVERRIDE.with(|pending| pending.set(PendingOverride::Replace(policy)));
             rv.set(v8::undefined(scope).into());
         }
         Err(error) => callback_v8::finish(scope, rv, Err(error)),
     }
 }
 
-fn store_policy(scope: &mut v8::HandleScope, policy: Option<RunPolicyOverride>) -> bool {
-    let Some(cell) = scope.get_slot::<Arc<RunPolicyOverrideCell>>() else {
-        return false;
-    };
-    cell.set(policy);
-    true
+pub(super) fn take_pending() -> Option<crate::shim::InteractReq> {
+    PENDING_OVERRIDE.with(|pending| match pending.replace(PendingOverride::Empty) {
+        PendingOverride::Empty => None,
+        PendingOverride::Replace(policy) => {
+            Some(crate::shim::InteractReq::RunPolicyOverride { policy })
+        }
+    })
+}
+
+pub(super) fn clear_pending() {
+    PENDING_OVERRIDE.with(|pending| pending.set(PendingOverride::Empty));
 }
 
 fn run_policy_override<'s>(
@@ -72,10 +80,12 @@ fn run_policy_override<'s>(
     } else {
         Some(callback_v8::truthy(scope, run_auto_value))
     };
-    Ok(Some(RunPolicyOverride {
-        run_auto,
-        energy_min,
-    }))
+    Ok(
+        (run_auto.is_some() || energy_min.is_some()).then_some(RunPolicyOverride {
+            run_auto,
+            energy_min,
+        }),
+    )
 }
 
 fn clamp_energy_min(number: f64) -> RunEnergyMin {
@@ -101,13 +111,4 @@ fn property<'s>(
     let key = v8::String::new(scope, name)
         .ok_or_else(|| callback_v8::type_error(scope, "run-policy property key"))?;
     callback_v8::catching(scope, |scope| object.get(scope, key.into()))
-}
-
-fn throw_type_error<'s, 'cb>(
-    scope: &mut v8::HandleScope<'s>,
-    rv: v8::ReturnValue<'cb>,
-    message: &str,
-) {
-    let error: Throw<'s> = callback_v8::type_error(scope, message);
-    callback_v8::finish(scope, rv, Err(error));
 }

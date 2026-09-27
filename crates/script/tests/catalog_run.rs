@@ -43,7 +43,6 @@ export default class Probe extends LoopingBot {
         vec![],
         None,
         banks,
-        Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
     )
     .expect("Alcher/LeatherCrafter bank imports must link");
     let mut snapshot = common::ingame_snapshot();

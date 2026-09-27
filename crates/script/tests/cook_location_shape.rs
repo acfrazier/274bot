@@ -34,7 +34,6 @@ fn spawn_with(
         vec![],
         game_data,
         Arc::new(facts),
-        Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
     )
 }
 

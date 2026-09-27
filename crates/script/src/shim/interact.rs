@@ -315,6 +315,12 @@ pub enum InteractReq {
     /// Host-side orbit yaw write (`client.orbit_camera_yaw`); no opcode.
     #[serde(rename = "set-camera-yaw")]
     SetCameraYaw { yaw: i32 },
+    /// Native `RunManager.override` replacement. The V8 binding is the only
+    /// producer; public JS interact rows cannot forge this host policy update.
+    #[serde(rename = "run-policy", skip_deserializing)]
+    RunPolicyOverride {
+        policy: Option<api::run_policy::RunPolicyOverride>,
+    },
     /// Execution.noteProgress: stamps both watchdog clocks. Not a game op.
     #[serde(rename = "note-progress")]
     NoteProgress,

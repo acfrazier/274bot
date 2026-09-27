@@ -233,8 +233,6 @@ pub struct SlotScript {
     runtime_generation: u64,
     last_settings_fp: Option<String>,
     native_input: Arc<NativeInputAuthority>,
-    /// Script-session run policy shared with the host slot.
-    run_policy_override: Arc<api::run_policy::RunPolicyOverrideCell>,
     /// Frozen `RecoveryHints`, kept across watchdog isolate restarts.
     #[cfg(feature = "load")]
     recovery_hints: Arc<crate::load::RecoveryHintsCell>,
@@ -308,19 +306,9 @@ impl SlotScript {
             runtime_generation: 0,
             last_settings_fp: None,
             native_input: NativeInputAuthority::new(),
-            run_policy_override: Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
             #[cfg(feature = "load")]
             recovery_hints: Arc::new(crate::load::RecoveryHintsCell::new()),
         }
-    }
-
-    /// The host slot reads the same cell as this script slot's V8 binding.
-    pub fn run_policy_override_cell(&self) -> Arc<api::run_policy::RunPolicyOverrideCell> {
-        Arc::clone(&self.run_policy_override)
-    }
-
-    pub fn run_policy_override(&self) -> Option<api::run_policy::RunPolicyOverride> {
-        self.run_policy_override.get()
     }
 
     /// True when either a compiled script or a JS isolate is installed.
@@ -349,7 +337,6 @@ impl SlotScript {
                 if self.load_active() {
                     return Err("loaded script active: stop it first".to_string());
                 }
-                self.run_policy_override.clear();
                 self.compiled = Some(script);
                 self.compiled_selected = selected;
                 #[cfg(feature = "load")]
@@ -466,7 +453,6 @@ impl SlotScript {
                     // in the log instead of silently replacing it.
                     self.pending_logs.push(e.clone());
                 }
-                self.run_policy_override.clear();
                 self.load_identity = Some(SlotLoadIdentity {
                     source: Arc::from(source),
                     shape,
@@ -492,7 +478,6 @@ impl SlotScript {
                         "compiled script active: stop it first".to_string(),
                     ));
                 }
-                self.run_policy_override.clear();
                 let identity = SlotLoadIdentity {
                     source: Arc::from(source),
                     shape,
@@ -568,7 +553,6 @@ impl SlotScript {
             identity.siblings.iter().cloned().collect(),
             identity.game_data.clone(),
             Arc::clone(&identity.named_banks),
-            Arc::clone(&self.run_policy_override),
         )?;
         isolate.post_loadouts(&identity.loadouts);
         isolate.post_recovery_hints(Arc::clone(&self.recovery_hints));
@@ -746,9 +730,6 @@ impl SlotScript {
 
     #[cfg(feature = "load")]
     fn complete_stop(&mut self) {
-        // Frozen ScriptRunner.ts:389-397 runs onStop before clearing the
-        // RunManager overlay. The reaper has finished the hook at this point.
-        self.run_policy_override.clear();
         self.stop_rx = None;
         self.last_snapshot = None;
         self.last_world_id = None;
@@ -879,7 +860,6 @@ impl SlotScript {
     /// (onStop hook plus the 2 s cap) runs on a reaper; observe completes
     /// it. Compiled teardown still runs on this thread.
     pub fn stop(&mut self) {
-        self.run_policy_override.clear();
         self.lifecycle_receipt = None;
         self.revoke_native_input();
         // The compiled clue machine's abort belongs to the pump thread (its
@@ -1357,6 +1337,29 @@ impl SlotScript {
         }
     }
 
+    /// Drain one host frame's decoded isolate messages, separating the latest
+    /// run-policy replacement from game/lifecycle interacts. The outer option
+    /// is "an update was sent"; the inner option is replace versus clear.
+    #[cfg(feature = "load")]
+    pub fn drain_host_interacts(
+        &mut self,
+    ) -> (
+        Option<Option<api::run_policy::RunPolicyOverride>>,
+        Vec<crate::shim::InteractReq>,
+    ) {
+        let mut reqs = self.drain_interacts();
+        let mut policy = None;
+        reqs.retain(|req| {
+            if let crate::shim::InteractReq::RunPolicyOverride { policy: update } = req {
+                policy = Some(*update);
+                false
+            } else {
+                true
+            }
+        });
+        (policy, reqs)
+    }
+
     /// Restore a batch drained by the host when Pause wins the final
     /// dispatch fence. The drained rows precede anything queued since the
     /// drain, preserving the script's original request order.
@@ -1495,7 +1498,6 @@ impl SlotScript {
         let Some(identity) = self.load_identity.clone() else {
             return Err("watchdog restart: no retained identity".into());
         };
-        self.run_policy_override.clear();
         self.revoke_native_input();
         // Frozen StallGuard: the restarted script finds `pendingRecovery`
         // (`StallGuard.ts:34–39`).
@@ -1808,7 +1810,6 @@ impl SlotScript {
 
 impl Drop for SlotScript {
     fn drop(&mut self) {
-        self.run_policy_override.clear();
         #[cfg(feature = "load")]
         if let Some(isolate) = self.load.take() {
             let (tx, _rx) = std::sync::mpsc::channel();

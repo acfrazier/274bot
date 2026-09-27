@@ -626,6 +626,7 @@ fn observe_puzzle_frame(
         None,
         Some(Arc::clone(cache)),
         Some(Arc::clone(names)),
+        None,
     )
 }
 

@@ -499,7 +499,7 @@ table AvoidRect {
 // | "wear" | "unequip" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
 // | "note-progress" | "loop-settled" | "wait-enqueued" | "wait-settled"
 // | "recovery-anchor" | "recovery-anchor-none" | "key" | "mouse"
-// | "inspect-route" | "select-bank".
+// | "inspect-route" | "select-bank" | "run-policy".
 // "key": action=DOM key, kind=code (optional), index=1 down / 0 up.
 // "mouse": xf/yf=client coordinates as doubles, level=DOM button, index=1 down / 0 up.
 // input_identity is the native permit at production (0 when absent).
@@ -550,6 +550,13 @@ table Interact {
   channel_id: ulong = 0;
   data: [ubyte];
   seq: ulong = 0;
+  // Native RunManager.override update. clear=true is override(null).
+  // Optional boolean: 0 absent, 1 false, 2 true.
+  run_policy_clear: bool = false;
+  run_auto_kind: ubyte = 0;
+  // Optional energy: 0 absent, 1 integer floor, 2 JavaScript NaN.
+  run_energy_kind: ubyte = 0;
+  run_energy_min: int = 0;
 }
 
 // The tick's shim interact queue, forwarded to the host.

@@ -278,8 +278,24 @@ export function tick() {
     slot.stop();
 }
 
+#[cfg(feature = "load")]
+fn drain_run_policy_update(slot: &mut SlotScript) -> Option<api::run_policy::RunPolicyOverride> {
+    let mut update = None;
+    for req in slot.drain_interacts() {
+        match req {
+            crate::shim::InteractReq::RunPolicyOverride { policy } => {
+                assert!(update.is_none(), "one replacement per isolate batch");
+                update = Some(policy);
+            }
+            other => panic!("unexpected run-policy sibling: {other:?}"),
+        }
+    }
+    update.expect("run-policy replacement crosses the FlatBuffer batch")
+}
+
+#[cfg(feature = "load")]
 #[test]
-fn run_manager_override_is_session_scoped_and_last_call_replaces_snapshot() {
+fn run_manager_override_last_call_replaces_wire_snapshot() {
     let source = r#"
 import { RunManager } from '../../runtime/RunManager.js';
 export default class T extends LoopingBot {
@@ -296,39 +312,20 @@ export default class T extends LoopingBot {
     slot.load.as_ref().unwrap().on_game_tick(1);
     slot.probe("1").expect("tick settles before probe");
     assert_eq!(
-        slot.run_policy_override(),
+        drain_run_policy_update(&mut slot),
         Some(api::run_policy::RunPolicyOverride {
             run_auto: None,
             energy_min: Some(api::run_policy::RunEnergyMin::Floor(55)),
         }),
-        "the second call replaces the whole snapshot"
+        "the second call replaces the whole wire snapshot"
     );
 
     slot.stop();
-    assert_eq!(
-        slot.run_policy_override(),
-        None,
-        "Stop returns auto-run to the host defaults"
-    );
     wait_state(&mut slot, RunState::Idle);
-
-    slot.run_policy_override
-        .set(Some(api::run_policy::RunPolicyOverride {
-            run_auto: Some(false),
-            energy_min: Some(api::run_policy::RunEnergyMin::Floor(99)),
-        }));
-    slot.start_load(
-        "export default class T extends LoopingBot { loop() {} }".into(),
-        LoadShape::CompatClass,
-        vec![],
-    )
-    .unwrap();
-    assert_eq!(
-        slot.run_policy_override(),
-        None,
-        "the next Start clears a leftover harness or previous-run override"
+    assert!(
+        slot.drain_interacts().is_empty(),
+        "Stop drops messages owned by the stopped runtime"
     );
-    slot.stop();
 }
 #[cfg(feature = "load")]
 #[test]
@@ -409,7 +406,7 @@ export default class T extends LoopingBot {
         slot.load.as_ref().unwrap().on_game_tick(index as u64 + 1);
         slot.probe("true")
             .expect("override tick settles before probe");
-        assert_eq!(slot.run_policy_override(), expected, "case {index}");
+        assert_eq!(drain_run_policy_update(&mut slot), expected, "case {index}");
         if index == 0 {
             assert_eq!(
                 slot.probe("__override_return === undefined").unwrap(),
@@ -424,7 +421,7 @@ export default class T extends LoopingBot {
 
 #[cfg(feature = "load")]
 #[test]
-fn on_stop_override_is_cleared_before_idle_or_queued_start() {
+fn on_stop_override_does_not_escape_stopped_runtime() {
     let old_source = r#"
 import { RunManager } from '../../runtime/RunManager.js';
 export default class Old extends LoopingBot {
@@ -436,7 +433,6 @@ export default class Old extends LoopingBot {
 }
 "#;
     let mut slot = SlotScript::new();
-    let cell = slot.run_policy_override_cell();
     slot.start_load(old_source.into(), LoadShape::CompatClass, vec![])
         .unwrap();
     wait_state(&mut slot, RunState::Running);
@@ -447,9 +443,12 @@ export default class Old extends LoopingBot {
         slot.take_pending_logs()
             .iter()
             .any(|line| line.contains("onstop-policy-set")),
-        "the Stop teardown hook actually writes the overlay"
+        "the Stop teardown hook actually calls RunManager.override"
     );
-    assert_eq!(cell.get(), None, "Stop → Idle clears the onStop write");
+    assert!(
+        slot.drain_interacts().is_empty(),
+        "the stopped runtime cannot publish its onStop replacement"
+    );
 
     slot.start_load(old_source.into(), LoadShape::CompatClass, vec![])
         .unwrap();
@@ -463,9 +462,8 @@ export default class Old extends LoopingBot {
     )
     .expect("Start queues behind the old isolate reap");
     wait_state(&mut slot, RunState::Running);
-    assert_eq!(
-        cell.get(),
-        None,
+    assert!(
+        slot.drain_interacts().is_empty(),
         "Stop → immediate Start does not carry the previous onStop write"
     );
     assert!(

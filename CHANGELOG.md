@@ -912,9 +912,11 @@ best-effort and untested in this release.
   v2 `api.tick` advances on every eligible tick, including while an async tick
   is pending. In the ResetSession window the v2 quest journal/status return
   `snapshot-unavailable`.
-- `RunManager.override({ runAuto?, energyMin? })` supplies the matching host
-  slot's per-session auto-run overlay. Missing fields fall through to host
-  defaults (`runAuto: true`, `energyMin: 20`); Start or Stop clears the overlay.
+- `RunManager.override({ runAuto?, energyMin? })` crosses the existing
+  isolate-to-host FlatBuffer batch into the matching host slot's per-session
+  auto-run overlay. Missing fields use host defaults (`runAuto: true`,
+  `energyMin: 20`); the host clears it on Start/Stop, runtime replacement, and
+  relog.
 
 ### Gameplay fixes (live 289)
 

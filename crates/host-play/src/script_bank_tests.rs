@@ -745,8 +745,7 @@ export async function tick(api) {{
   globalThis.result = await api.bankNearestReachable({{ from: {{x:3091,z:3958,level:0}}, {options} }});
 }}
 "#), script::LoadShape::NativeTick, vec![], None,
-            Arc::new(NamedBankFacts::from_banks(banks.clone())),
-            Arc::new(api::run_policy::RunPolicyOverrideCell::new())).unwrap();
+            Arc::new(NamedBankFacts::from_banks(banks.clone()))).unwrap();
         iso.post_settings_bag(
             serde_json::json!({"useMageBank": defaults, "useZanarisBank": defaults})
                 .as_object()

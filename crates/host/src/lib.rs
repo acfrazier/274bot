@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use api::host_log;
 use api::hostlog::{Category, Level};
 use api::interact::set_run;
-use api::run_policy::RunPolicyOverrideCell;
+use api::run_policy::RunPolicyOverride;
 use api::snapshot::GameSnapshot;
 use auto_run::{auto_run_ready, auto_run_tick, resolve_run_policy, RunPolicy};
 use client::client::{Client, ClientConfig};
@@ -105,6 +105,41 @@ const WATCH_PARK_MS: Duration = Duration::from_secs(1);
 /// Host: spawns and owns per-client slot threads.
 pub struct Host;
 
+/// Host-owned script auto-run overlay. Host-play identifies the active script
+/// runtime and applies only generation-matched FlatBuffer updates through this
+/// sink; script Stop/replacement and client session changes clear the value.
+#[derive(Debug, Default)]
+pub struct ScriptRunPolicy {
+    runtime_generation: Option<u64>,
+    policy_override: Option<RunPolicyOverride>,
+}
+
+impl ScriptRunPolicy {
+    /// Synchronize the script runtime observed on this host frame. `None` is
+    /// Stop/Idle/Error. Every identity transition clears the old overlay.
+    pub fn sync_runtime(&mut self, runtime_generation: Option<u64>) {
+        if self.runtime_generation != runtime_generation {
+            self.runtime_generation = runtime_generation;
+            self.policy_override = None;
+        }
+    }
+
+    /// Apply one decoded isolate update only to the runtime that produced it.
+    pub fn apply_override(&mut self, runtime_generation: u64, policy: Option<RunPolicyOverride>) {
+        if self.runtime_generation == Some(runtime_generation) {
+            self.policy_override = policy;
+        }
+    }
+
+    fn clear_session(&mut self) {
+        self.policy_override = None;
+    }
+
+    fn resolved(&self) -> RunPolicy {
+        resolve_run_policy(self.policy_override, RunPolicy::default())
+    }
+}
+
 /// Build a slot `Client` from a process-wide cache and the shared iface
 /// decode `Arc` (no second unpack / CRC probe). `error_loading` is false
 /// after a successful `from_shared`.
@@ -174,8 +209,7 @@ impl Host {
                 None,
                 None,
                 None,
-                Arc::new(RunPolicyOverrideCell::new()),
-                |_, _, _, _| false,
+                |_, _, _, _, _| false,
                 |_| false,
                 |_| RandomClaim::Host,
             );
@@ -215,8 +249,9 @@ impl Host {
     /// (EOF, partial packet) skips the socket on the next park so it cannot
     /// busy-spin.
     ///
-    /// This is the single slot entry point. Its cell is owned by the matching
-    /// script slot and remains unset until a script calls `RunManager.override`.
+    /// The host owns the script run-policy overlay; `observe` synchronizes the
+    /// active runtime and applies decoded FlatBuffer updates through its final
+    /// [`ScriptRunPolicy`] argument.
     #[allow(clippy::too_many_arguments)]
     pub fn run_client<F, P, K>(
         client: &mut Client,
@@ -228,22 +263,15 @@ impl Host {
         input: Option<Arc<SlotInput>>,
         mailbox: Option<Arc<FrameBuf>>,
         ctl: Option<Arc<SlotPark>>,
-        run_policy_override: Arc<RunPolicyOverrideCell>,
         mut observe: F,
         mut probe: P,
         mut knock: K,
     ) where
-        F: FnMut(&mut Client, &str, u32, &RandomStatus) -> bool,
+        F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
         P: FnMut(&mut Client) -> bool,
         K: FnMut(&DetectedRandom) -> RandomClaim,
     {
-        let mut slot = SlotLoop::with_settings(
-            settings,
-            random_events,
-            lamp_auto,
-            lamp_skill,
-            run_policy_override,
-        );
+        let mut slot = SlotLoop::with_settings(settings, random_events, lamp_auto, lamp_skill);
         #[cfg(feature = "performance-profile")]
         {
             slot.profile = Some(performance_profile::register(username));
@@ -344,11 +372,17 @@ impl Host {
         prev_status: &RandomStatus,
     ) -> (bool, RandomStatus)
     where
-        F: FnMut(&mut Client, &str, u32, &RandomStatus) -> bool,
+        F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
     {
         let _profile_tick = client::profiling::CLIENT_TICK.start();
         let t_obs = Instant::now();
-        let busy = observe(client, username, *run_sends, prev_status);
+        let busy = observe(
+            client,
+            username,
+            *run_sends,
+            prev_status,
+            &mut slot.run_policy,
+        );
         let observe_ns = t_obs.elapsed().as_nanos() as u64;
         slot.observe_ns = slot.observe_ns.wrapping_add(observe_ns);
         if observe_ns > slot.observe_max_ns {
@@ -843,8 +877,8 @@ struct SlotLoop {
     snapshot: GameSnapshot,
     run_on: bool,
     run_sends: u32,
-    /// Script-session policy overlay shared with the matching script slot.
-    run_policy_override: Arc<RunPolicyOverrideCell>,
+    /// Host-owned script-session auto-run overlay and runtime fence.
+    run_policy: ScriptRunPolicy,
     /// The slot's real `ProfileSettings` (wired once by `run_client` from
     /// the vault profile; the guardian's toggle reads it). `random_events`,
     /// `lamp_auto`, and `lamp_skill` are refreshed each frame from the
@@ -910,7 +944,6 @@ impl SlotLoop {
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
             Arc::new(Mutex::new("strength".to_string())),
-            Arc::new(RunPolicyOverrideCell::new()),
         )
     }
 
@@ -919,14 +952,13 @@ impl SlotLoop {
         random_events: Arc<AtomicBool>,
         lamp_auto: Arc<AtomicBool>,
         lamp_skill: Arc<Mutex<String>>,
-        run_policy_override: Arc<RunPolicyOverrideCell>,
     ) -> Self {
         Self {
             pump: Pump::new(),
             snapshot: GameSnapshot::new(),
             run_on: false,
             run_sends: 0,
-            run_policy_override,
+            run_policy: ScriptRunPolicy::default(),
             settings,
             random_events,
             lamp_auto,
@@ -973,6 +1005,7 @@ impl SlotLoop {
             self.guardian = Guardian::new();
             self.guardian_status = RandomStatus::default();
             self.run_on = false;
+            self.run_policy.clear_session();
         }
         publish_snapshot(&mut self.snapshot, client, result);
 
@@ -986,7 +1019,7 @@ impl SlotLoop {
             // Cannot be running; wins over a stale run-on echo.
             self.run_on = false;
         }
-        let policy = resolve_run_policy(self.run_policy_override.get(), RunPolicy::default());
+        let policy = self.run_policy.resolved();
         if self.snapshot.local_player().is_some()
             && auto_run_ready(client.ingame, client.scene_state)
             && auto_run_tick(energy, self.run_on, policy)

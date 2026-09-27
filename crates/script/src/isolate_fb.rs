@@ -415,6 +415,14 @@ const VT_IN_USE_ZANARIS_BANK: VOffsetT = 68;
 const VT_IN_CHANNEL_ID: VOffsetT = 70;
 const VT_IN_DATA: VOffsetT = 72;
 const VT_IN_SEQ: VOffsetT = 74;
+const VT_IN_RUN_POLICY_CLEAR: VOffsetT = 76;
+const VT_IN_RUN_AUTO_KIND: VOffsetT = 78;
+const VT_IN_RUN_ENERGY_KIND: VOffsetT = 80;
+const VT_IN_RUN_ENERGY_MIN: VOffsetT = 82;
+
+const RUN_OPTION_ABSENT: u8 = 0;
+const RUN_OPTION_FALSE_OR_FLOOR: u8 = 1;
+const RUN_OPTION_TRUE_OR_NAN: u8 = 2;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -6002,6 +6010,22 @@ impl InteractReader<'_> {
     pub fn seq(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_IN_SEQ, None) }.unwrap_or(0)
     }
+    pub fn run_policy_clear(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_IN_RUN_POLICY_CLEAR, None)
+                .unwrap_or(false)
+        }
+    }
+    pub fn run_auto_kind(&self) -> u8 {
+        unsafe { self.tab.get::<u8>(VT_IN_RUN_AUTO_KIND, None) }.unwrap_or(RUN_OPTION_ABSENT)
+    }
+    pub fn run_energy_kind(&self) -> u8 {
+        unsafe { self.tab.get::<u8>(VT_IN_RUN_ENERGY_KIND, None) }.unwrap_or(RUN_OPTION_ABSENT)
+    }
+    pub fn run_energy_min(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IN_RUN_ENERGY_MIN, None) }.unwrap_or(0)
+    }
     pub fn xf(&self) -> Option<f64> {
         unsafe { self.tab.get::<f64>(VT_IN_XF, None) }
     }
@@ -6073,6 +6097,10 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<bool>("allow_teleports", VT_IN_ALLOW_TELEPORTS, false)?
             .visit_field::<bool>("use_mage_bank", VT_IN_USE_MAGE_BANK, false)?
             .visit_field::<bool>("use_zanaris_bank", VT_IN_USE_ZANARIS_BANK, false)?
+            .visit_field::<bool>("run_policy_clear", VT_IN_RUN_POLICY_CLEAR, false)?
+            .visit_field::<u8>("run_auto_kind", VT_IN_RUN_AUTO_KIND, false)?
+            .visit_field::<u8>("run_energy_kind", VT_IN_RUN_ENERGY_KIND, false)?
+            .visit_field::<i32>("run_energy_min", VT_IN_RUN_ENERGY_MIN, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<AvoidRectReader>>>>(
                 "avoid",
                 VT_IN_AVOID,
@@ -6204,6 +6232,36 @@ fn decoded_avoid(row: &InteractReader<'_>) -> Vec<crate::shim::InspectAvoidWire>
             level: (rect.level() >= 0).then(|| rect.level()),
         })
         .collect()
+}
+
+fn decoded_run_policy(
+    row: &InteractReader<'_>,
+) -> Result<Option<api::run_policy::RunPolicyOverride>, String> {
+    use api::run_policy::{RunEnergyMin, RunPolicyOverride};
+
+    let run_auto = match row.run_auto_kind() {
+        RUN_OPTION_ABSENT => None,
+        RUN_OPTION_FALSE_OR_FLOOR => Some(false),
+        RUN_OPTION_TRUE_OR_NAN => Some(true),
+        kind => return Err(format!("run-policy has unknown run_auto kind {kind}")),
+    };
+    let energy_min = match row.run_energy_kind() {
+        RUN_OPTION_ABSENT => None,
+        RUN_OPTION_FALSE_OR_FLOOR => Some(RunEnergyMin::Floor(row.run_energy_min())),
+        RUN_OPTION_TRUE_OR_NAN => Some(RunEnergyMin::NotANumber),
+        kind => return Err(format!("run-policy has unknown energy kind {kind}")),
+    };
+    if row.run_policy_clear() {
+        if run_auto.is_some() || energy_min.is_some() {
+            return Err("run-policy clear carries fields".to_string());
+        }
+        Ok(None)
+    } else {
+        Ok(Some(RunPolicyOverride {
+            run_auto,
+            energy_min,
+        }))
+    }
 }
 
 pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>, String> {
@@ -6611,6 +6669,9 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 button: row.level(),
                 identity: row.input_identity(),
             }),
+            "run-policy" => out.push(crate::shim::InteractReq::RunPolicyOverride {
+                policy: decoded_run_policy(&row)?,
+            }),
             other => return Err(format!("unknown interact op: {other}")),
         }
     }
@@ -6675,6 +6736,7 @@ fn interact_off<'b>(
         InteractReq::ChannelStatus { .. } => "channel-status",
         InteractReq::Key { .. } => "key",
         InteractReq::Mouse { .. } => "mouse",
+        InteractReq::RunPolicyOverride { .. } => "run-policy",
     });
     let kind_off = match req {
         InteractReq::OpenStand { kind, .. }
@@ -7154,6 +7216,31 @@ fn interact_off<'b>(
         InteractReq::SetCameraYaw { yaw } => {
             b.push_slot_always(VT_IN_X, *yaw);
         }
+        InteractReq::RunPolicyOverride { policy } => match policy {
+            None => b.push_slot_always(VT_IN_RUN_POLICY_CLEAR, true),
+            Some(policy) => {
+                if let Some(run_auto) = policy.run_auto {
+                    b.push_slot_always(
+                        VT_IN_RUN_AUTO_KIND,
+                        if run_auto {
+                            RUN_OPTION_TRUE_OR_NAN
+                        } else {
+                            RUN_OPTION_FALSE_OR_FLOOR
+                        },
+                    );
+                }
+                match policy.energy_min {
+                    Some(api::run_policy::RunEnergyMin::Floor(energy_min)) => {
+                        b.push_slot_always(VT_IN_RUN_ENERGY_KIND, RUN_OPTION_FALSE_OR_FLOOR);
+                        b.push_slot_always(VT_IN_RUN_ENERGY_MIN, energy_min);
+                    }
+                    Some(api::run_policy::RunEnergyMin::NotANumber) => {
+                        b.push_slot_always(VT_IN_RUN_ENERGY_KIND, RUN_OPTION_TRUE_OR_NAN);
+                    }
+                    None => {}
+                }
+            }
+        },
         InteractReq::Key { down, .. } => {
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
             if let Some(off) = kind_off {
@@ -7684,6 +7771,33 @@ pub(crate) mod tests {
         }];
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("interact batch decodes");
+        assert_eq!(got, reqs);
+    }
+
+    #[test]
+    fn encode_decode_run_policy_replacements_round_trip() {
+        use api::run_policy::{RunEnergyMin, RunPolicyOverride};
+
+        let reqs = vec![
+            InteractReq::RunPolicyOverride {
+                policy: Some(RunPolicyOverride {
+                    run_auto: Some(false),
+                    energy_min: Some(RunEnergyMin::Floor(80)),
+                }),
+            },
+            InteractReq::RunPolicyOverride {
+                policy: Some(RunPolicyOverride {
+                    run_auto: Some(true),
+                    energy_min: Some(RunEnergyMin::NotANumber),
+                }),
+            },
+            InteractReq::RunPolicyOverride {
+                policy: Some(RunPolicyOverride::default()),
+            },
+            InteractReq::RunPolicyOverride { policy: None },
+        ];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("run-policy batch decodes");
         assert_eq!(got, reqs);
     }
 

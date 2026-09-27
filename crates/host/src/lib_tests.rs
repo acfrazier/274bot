@@ -802,7 +802,7 @@ fn auto_run_20_0_20_sends_twice() {
 }
 
 #[test]
-fn script_run_override_applies_until_shared_cell_is_cleared() {
+fn script_run_override_applies_until_host_receives_a_clear() {
     let mut client = prepare_client(
         cfg(),
         1,
@@ -815,22 +815,61 @@ fn script_run_override_applies_until_shared_cell_is_cleared() {
     client.runenergy = 20;
     client.gens.stat = 1;
 
-    slot.run_policy_override
-        .set(Some(api::run_policy::RunPolicyOverride {
+    slot.run_policy.sync_runtime(Some(7));
+    slot.run_policy.apply_override(
+        7,
+        Some(api::run_policy::RunPolicyOverride {
             run_auto: None,
             energy_min: Some(api::run_policy::RunEnergyMin::Floor(80)),
-        }));
+        }),
+    );
     slot.after_drain(&mut client);
     assert_eq!(
         slot.run_sends, 0,
         "session threshold overrides host default 20"
     );
 
-    slot.run_policy_override.clear();
+    slot.run_policy.apply_override(7, None);
     slot.after_drain(&mut client);
     assert_eq!(
         slot.run_sends, 1,
         "clear falls back to unchanged host default 20"
+    );
+}
+
+#[test]
+fn script_run_override_clears_on_runtime_change_and_relog() {
+    let mut client = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let mut slot = SlotLoop::new();
+    ingame_scene2(&mut client);
+
+    let override_policy = api::run_policy::RunPolicyOverride {
+        run_auto: Some(false),
+        energy_min: None,
+    };
+    slot.run_policy.sync_runtime(Some(3));
+    slot.run_policy.apply_override(3, Some(override_policy));
+    slot.run_policy.sync_runtime(Some(4));
+    assert_eq!(slot.run_policy.policy_override, None);
+    slot.run_policy.apply_override(3, Some(override_policy));
+    assert_eq!(
+        slot.run_policy.policy_override, None,
+        "a stale runtime cannot repopulate the cleared host overlay"
+    );
+
+    slot.run_policy.apply_override(4, Some(override_policy));
+    slot.after_drain(&mut client);
+    client.gens.session = client.gens.session.wrapping_add(1);
+    slot.after_drain(&mut client);
+    assert_eq!(
+        slot.run_policy.policy_override, None,
+        "a successful-session generation change clears the host overlay"
     );
 }
 
@@ -1362,7 +1401,7 @@ fn client_tick_observe_runs_before_the_frame_paint() {
         None,
         Some(&buf),
         &mut sends,
-        &mut |_, _, _, _| {
+        &mut |_, _, _, _, _| {
             observed.store(true, Ordering::Relaxed);
             false
         },
@@ -1383,7 +1422,7 @@ fn client_tick_observe_runs_before_the_frame_paint() {
         None,
         Some(&buf),
         &mut sends,
-        &mut |_, _, _, _| false,
+        &mut |_, _, _, _, _| false,
         None,
         &RandomStatus::default(),
     );
@@ -1799,8 +1838,7 @@ fn idle_slot_parks_between_packets_and_wakes_on_one() {
             None,
             None,
             Some(Arc::new(park)),
-            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-            |c, _, _, _| {
+            |c, _, _, _, _| {
                 let mut v = mirror.lock().unwrap();
                 v.0 = c.loop_cycle;
                 v.1 = c.reboot_timer;
@@ -1872,8 +1910,7 @@ fn focused_slot_keeps_the_twenty_ms_cadence() {
             Some(inp),
             None,
             None,
-            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-            |c, _, _, _| {
+            |c, _, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 false
             },
@@ -1933,8 +1970,7 @@ fn busy_observe_keeps_the_slot_on_the_frame_loop() {
             None,
             None,
             None,
-            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-            |c, _, _, _| {
+            |c, _, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 true // script/cheat/nav work due: never park
             },
@@ -1990,8 +2026,7 @@ fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
             None,
             Some(buf2),
             Some(Arc::new(park)),
-            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-            |c, _, _, _| {
+            |c, _, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 false
             },
@@ -2074,8 +2109,7 @@ fn stop_control_wakes_a_parked_slot_and_returns() {
             None,
             None,
             Some(Arc::new(park)),
-            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-            |_, _, _, _| false,
+            |_, _, _, _, _| false,
             |_| stop2.load(Ordering::Relaxed),
             |_| RandomClaim::Host,
         );
@@ -2123,8 +2157,7 @@ fn draw_kick_wakes_a_parked_slot_into_the_frame_loop() {
             Some(Arc::clone(&inp)),
             None,
             Some(Arc::new(park)),
-            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-            |c, _, _, _| {
+            |c, _, _, _, _| {
                 let on = want2.load(Ordering::Relaxed);
                 c.set_draw(on);
                 inp.set_enabled(on);
@@ -2197,8 +2230,7 @@ fn spurious_kick_does_not_busy_loop_a_parked_slot() {
             None,
             None,
             Some(Arc::new(park)),
-            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-            |c, _, _, _| {
+            |c, _, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 false // stays idle after the kick
             },

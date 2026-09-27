@@ -14,7 +14,7 @@ use super::shape::LoadShape;
 use super::snapshot::{
     dispatch_native_events, key_string, materialize_settings_bag, materialize_snapshot,
 };
-use super::{loadout_v8, machine_v8, paint_chrome, paint_jive, reach_query, shape};
+use super::{loadout_v8, machine_v8, paint_chrome, paint_jive, reach_query, run_policy_v8, shape};
 use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
@@ -384,7 +384,6 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
         )
     }
 
@@ -402,28 +401,18 @@ impl LoadIsolate {
             siblings,
             Some(game_data),
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
         )
     }
 
-    /// Spawn with selected-revision facts, named aliases, and the script
-    /// slot's shared run-policy cell.
+    /// Spawn with selected-revision facts and named aliases.
     pub fn spawn_with_content(
         js: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-        run_policy_override: std::sync::Arc<api::run_policy::RunPolicyOverrideCell>,
     ) -> Result<Self, String> {
-        Self::spawn_inner(
-            js,
-            shape,
-            siblings,
-            game_data,
-            named_banks,
-            run_policy_override,
-        )
+        Self::spawn_inner(js, shape, siblings, game_data, named_banks)
     }
 
     /// Evaluate and instantiate the candidate in a throwaway Runtime
@@ -452,7 +441,6 @@ impl LoadIsolate {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-        run_policy_override: std::sync::Arc<api::run_policy::RunPolicyOverrideCell>,
     ) -> Result<Self, String> {
         ensure_platform();
         let (tx, rx) = mpsc::channel::<IsolateCmd>();
@@ -483,7 +471,6 @@ impl LoadIsolate {
                     siblings,
                     game_data,
                     named_banks,
-                    run_policy_override,
                     CmdQueue {
                         rx,
                         queued: thread_queued,

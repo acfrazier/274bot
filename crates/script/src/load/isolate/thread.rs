@@ -124,7 +124,6 @@ pub(super) fn isolate_main(
     siblings: Vec<(String, String)>,
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    run_policy_override: std::sync::Arc<api::run_policy::RunPolicyOverrideCell>,
     cmds: CmdQueue,
     out: Sender<ThreadMsg>,
     setup: Sender<SetupMessage>,
@@ -174,7 +173,6 @@ pub(super) fn isolate_main(
         &siblings,
         game_data,
         named_banks,
-        run_policy_override,
     ) {
         let _ = setup.send(SetupMessage::Ready(Err(e)));
         return;
@@ -1439,6 +1437,9 @@ fn tick_loop(
                     if !v2_native && runner.poll(&mut runtime, &out, n, generation) && compat {
                         lifecycle.push(crate::shim::InteractReq::LoopSettled);
                     }
+                    if let Some(policy) = super::run_policy_v8::take_pending() {
+                        lifecycle.push(policy);
+                    }
                     let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
                     report_interrupted_execution(interrupt, &out, n, generation);
                     if !lifecycle.is_empty() {
@@ -1583,6 +1584,9 @@ fn tick_loop(
                     .saturating_sub(taken.settled);
                 taken.log_rejected(&out, n, generation);
                 let mut reqs = crate::machine::merge_ops(taken.rows);
+                if let Some(policy) = super::run_policy_v8::take_pending() {
+                    reqs.push(policy);
+                }
                 stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
                 crate::inspect_wait::filter_public_inspect_wire(&mut reqs);
                 if v2_native
@@ -1766,6 +1770,7 @@ fn tick_loop(
                 // them.
                 let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                 crate::machine::drop_ops();
+                super::run_policy_v8::clear_pending();
                 clear_unconsumed_paint_click(&mut runtime);
                 super::paint_chrome::reset();
                 super::paint_jive::reset();

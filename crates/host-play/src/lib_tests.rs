@@ -11145,7 +11145,6 @@ fn script_run_policy_override_reaches_host_auto_run_and_stop_clears_it() {
         .insert("alice".into(), VecDeque::new());
     let (navs, world) = empty_nav();
     let slot = script_slot_or_insert(&scripts, "alice");
-    let run_policy_override = slot.lock().unwrap().run_policy_override_cell();
     {
         let mut slot = slot.lock().unwrap();
         slot.start_load_settled(
@@ -11182,60 +11181,9 @@ export default class T extends LoopingBot {
     client.local_player = Some(client::client::ClientPlayer::at(10, 10));
     client.gens.player = 1;
     client.gens.player_info = 1;
-    client.runenergy = 20;
-
-    script_observe(
-        &mut client,
-        "alice",
-        true,
-        true,
-        1,
-        Some((10, 10, 0)),
-        None,
-        None,
-        None,
-        None,
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
-    );
-    slot.lock()
-        .unwrap()
-        .probe("true")
-        .expect("the script's policy override tick completes");
-    assert_eq!(
-        slot.lock().unwrap().run_policy_override(),
-        Some(api::run_policy::RunPolicyOverride {
-            run_auto: None,
-            energy_min: Some(api::run_policy::RunEnergyMin::Floor(80)),
-        })
-    );
-
-    let drive_one_host_frame = |client: &mut Client| {
-        let done = Arc::new(AtomicBool::new(false));
-        let observed = Arc::clone(&done);
-        Host::run_client(
-            client,
-            "alice",
-            vault::ProfileSettings::default(),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(Mutex::new("strength".to_string())),
-            None,
-            None,
-            None,
-            Arc::clone(&run_policy_override),
-            move |_, _, _, _| {
-                observed.store(true, Ordering::Relaxed);
-                false
-            },
-            move |_| done.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
-        );
-    };
+    // The first frame only starts and settles the isolate tick. Auto-run is
+    // armed after that, so a pre-wire host default cannot muddy the proof.
+    client.runenergy = 0;
     let run_button_sent = |client: &Client| {
         client.out.data()[..client.out.pos]
             .windows(3)
@@ -11246,24 +11194,101 @@ export default class T extends LoopingBot {
             })
     };
 
-    drive_one_host_frame(&mut client);
-    assert!(
-        !run_button_sent(&client),
-        "the script's energyMin override suppresses auto-run below 80 energy"
+    let frames = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let phase = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observe_frames = Arc::clone(&frames);
+    let observe_phase = Arc::clone(&phase);
+    let observe_scripts = Arc::clone(&scripts);
+    let observe_cheats = Arc::clone(&cheats);
+    let observe_navs = Arc::clone(&navs);
+    let observe_world = world.clone();
+    let probe_frames = Arc::clone(&frames);
+    let probe_phase = Arc::clone(&phase);
+    let probe_slot = Arc::clone(&slot);
+
+    Host::run_client(
+        &mut client,
+        "alice",
+        vault::ProfileSettings::default(),
+        Arc::new(AtomicBool::new(true)),
+        Arc::new(AtomicBool::new(true)),
+        Arc::new(Mutex::new("strength".to_string())),
+        None,
+        None,
+        None,
+        move |c, _, _, _, run_policy| {
+            let frame = observe_frames.load(Ordering::Relaxed);
+            let phase = observe_phase.load(Ordering::Relaxed);
+            script_observe_cached(
+                c,
+                "alice",
+                true,
+                phase == 0 && frame == 0,
+                frame as u64 + 1,
+                Some((10, 10, 0)),
+                None,
+                None,
+                None,
+                None,
+                None,
+                &observe_scripts,
+                &observe_cheats,
+                &observe_navs,
+                &observe_world,
+                false,
+                false,
+                None,
+                None,
+                None,
+                None,
+                Some(run_policy),
+            );
+            observe_frames.fetch_add(1, Ordering::Relaxed);
+            true
+        },
+        move |c| {
+            let frames = probe_frames.load(Ordering::Relaxed);
+            match probe_phase.load(Ordering::Relaxed) {
+                0 if frames >= 1 => {
+                    probe_slot
+                        .lock()
+                        .unwrap()
+                        .probe("true")
+                        .expect("the script's policy override tick completes");
+                    c.out.pos = 0;
+                    c.runenergy = 20;
+                    probe_phase.store(1, Ordering::Relaxed);
+                    false
+                }
+                1 if frames >= 2 => {
+                    assert!(
+                        !run_button_sent(c),
+                        "the FlatBuffer energyMin update suppresses auto-run below 80 energy"
+                    );
+                    probe_slot.lock().unwrap().stop();
+                    c.out.pos = 0;
+                    probe_phase.store(2, Ordering::Relaxed);
+                    false
+                }
+                2 if frames >= 3 => {
+                    assert!(
+                        run_button_sent(c),
+                        "Stop clears host-owned policy back to the 20-energy default"
+                    );
+                    true
+                }
+                _ => false,
+            }
+        },
+        |_| RandomClaim::Host,
     );
 
-    slot.lock().unwrap().stop();
-    assert_eq!(
-        run_policy_override.get(),
-        None,
-        "Stop clears the shared cell"
-    );
-    client.out.pos = 0;
-    drive_one_host_frame(&mut client);
-    assert!(
-        run_button_sent(&client),
-        "after Stop, host auto-run falls back to the host's 20-energy default"
-    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while slot.lock().unwrap().state() != script::RunState::Idle && Instant::now() < deadline {
+        slot.lock().unwrap().observe_lifecycle();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
 }
 
 #[test]
@@ -15179,6 +15204,7 @@ impl ReconnectRig {
             None,
             Some(&self.channels),
             script_channels::BrokerWorld::Local,
+            None,
         );
         self.slot().lock().unwrap().probe("true").unwrap();
     }

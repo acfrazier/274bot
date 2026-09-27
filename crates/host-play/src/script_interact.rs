@@ -1167,6 +1167,9 @@ pub(crate) fn dispatch_script_interact_cached(
             }
             InteractReq::Mouse { .. } => {}
             InteractReq::SetCameraYaw { .. } => {}
+            InteractReq::RunPolicyOverride { .. } => {
+                // Applied only through Host's generation-fenced policy sink.
+            }
             InteractReq::NoteProgress
             | InteractReq::LoopSettled
             | InteractReq::WaitEnqueued

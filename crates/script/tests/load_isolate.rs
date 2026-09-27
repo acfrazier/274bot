@@ -4556,7 +4556,6 @@ export default class T extends LoopingBot {
                 },
             ),
         ])),
-        std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
     )
     .unwrap();
     let stands = [script::isolate_fb::BankStandInput {
@@ -6003,7 +6002,6 @@ export default class T extends LoopingBot { loop() {} }
                 },
             ),
         ])),
-        std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
     )
     .unwrap()
 }

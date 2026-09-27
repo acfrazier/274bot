@@ -362,7 +362,6 @@ impl Play {
             Arc::clone(&self.queue),
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
-            slot_script,
             self.channels.clone(),
             Arc::clone(&self.cheats),
             Arc::clone(&self.wires),
@@ -559,7 +558,6 @@ fn spawn_slot_thread(
     slot_queue: SharedLoginQueue,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: ScriptWall,
-    slot_script: ScriptSlot,
     slot_channels: super::script_channels::ChannelBroker,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
@@ -869,7 +867,6 @@ fn spawn_slot_thread(
                     };
                     slot.on_random(ev)
                 };
-                let run_policy_override = slot_script.lock().unwrap().run_policy_override_cell();
                 Host::run_client(
                     &mut client,
                     &username,
@@ -880,7 +877,6 @@ fn spawn_slot_thread(
                     Some(slot_input.clone()),
                     slot_mailbox.clone(),
                     park.clone(),
-                    run_policy_override,
                     {
                         let slot_frame = Arc::clone(&slot_frame);
                         let slot_statuses = Arc::clone(&slot_statuses);
@@ -914,7 +910,7 @@ fn spawn_slot_thread(
                         // The random status `client_frame` published last
                         // frame: copied onto the slot status row, and its
                         // hold freezes script tick and the nav follow.
-                        move |c, _ignored, run_sends, status: &RandomStatus| {
+                        move |c, _ignored, run_sends, status: &RandomStatus, run_policy| {
                             let name = &obs_name;
                             let drain = pump.drain_client(c);
                             let session_boundary = publish_session_boundary_status(
@@ -1117,6 +1113,7 @@ fn spawn_slot_thread(
                                 Some(Arc::clone(&slot_obj_names)),
                                 Some(&observe_channels),
                                 broker_world,
+                                Some(run_policy),
                             );
                             // TUI chat / WASD sends: run the queued wire
                             // commands through `Interactions` on this
