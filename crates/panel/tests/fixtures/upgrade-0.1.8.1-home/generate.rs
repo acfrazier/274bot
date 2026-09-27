@@ -45,6 +45,7 @@ fn main() {
                 random_events: false,
                 lamp_skill: "magic".into(),
                 lamp_auto: false,
+                clue_duel_partner: String::new(),
                 script_assignment: Some(ScriptAssignment {
                     source_kind: "catalog".into(),
                     identity: "ChickenKiller".into(),
@@ -75,6 +76,7 @@ fn main() {
                 random_events: true,
                 lamp_skill: "prayer".into(),
                 lamp_auto: true,
+                clue_duel_partner: String::new(),
                 script_assignment: Some(ScriptAssignment {
                     source_kind: "catalog".into(),
                     identity: "Thiever".into(),

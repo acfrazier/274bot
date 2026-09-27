@@ -102,6 +102,9 @@ pub struct ProfileSettings {
     /// Lamp auto-use: claim the reward without a confirmation click.
     #[serde(default = "default_lamp_auto")]
     pub lamp_auto: bool,
+    /// Account-wide partner used by clue 3554's Duel Arena traversal.
+    #[serde(default)]
+    pub clue_duel_partner: String,
     /// Last successfully started assignment. Absence is a legacy unassigned profile.
     #[serde(default)]
     pub script_assignment: Option<ScriptAssignment>,
@@ -133,6 +136,7 @@ impl Default for ProfileSettings {
             random_events: true,
             lamp_skill: "strength".into(),
             lamp_auto: true,
+            clue_duel_partner: String::new(),
             script_assignment: None,
             script_settings: BTreeMap::new(),
         }
@@ -324,6 +328,9 @@ impl Vault {
     }
 }
 
+// Change batches are short-lived and small; boxing `Upsert` would add an
+// allocation to every profile save only to shrink this transient enum.
+#[allow(clippy::large_enum_variant)]
 /// One profile change for [`VaultStore::commit`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum VaultChange {

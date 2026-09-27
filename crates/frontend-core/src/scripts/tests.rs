@@ -180,6 +180,43 @@ fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
 }
 
 #[test]
+fn merged_profile_bag_carries_profile_global_clue_partner() {
+    let mut f = fixture("clue-global", &["alice"]);
+    let mut profile = f.core.vault().unwrap().get("alice").unwrap().clone();
+    profile.settings.clue_duel_partner = "Helper".into();
+    f.core
+        .save_profile(profile, crate::ArmMirror::Remember, "clue-global")
+        .unwrap();
+    f.core.flush_writes();
+    let card = f.card("clue.ts", LOOPING);
+
+    let merged = f.scripts.merged_profile_bag(
+        &mut f.core,
+        "alice",
+        card.source,
+        &card.name,
+        &card.path,
+        &card.settings_schema,
+    );
+    assert_eq!(merged.get("clueDuelPartner"), Some(&json!("Helper")));
+
+    f.scripts.inject = Some(bag(&[("clueDuelPartner", json!("Harness"))]));
+    let injected = f.scripts.merged_profile_bag(
+        &mut f.core,
+        "alice",
+        card.source,
+        &card.name,
+        &card.path,
+        &card.settings_schema,
+    );
+    assert_eq!(
+        injected.get("clueDuelPartner"),
+        Some(&json!("Harness")),
+        "scenario inject keeps final precedence"
+    );
+}
+
+#[test]
 fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
     let mut f = fixture("sync", &["alice", "bob", "carol", "dave"]);
     let thiever = f.card("thiever.ts", LOOPING);

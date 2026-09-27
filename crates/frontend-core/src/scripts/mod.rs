@@ -390,7 +390,22 @@ impl Scripts {
     ) -> Map<String, Value> {
         let key = script::card_identity_key(source, path, name);
         let overrides = self.profile_overrides(core, profile, &key, name);
-        script::merge_bag(schema, &overrides, self.inject.as_ref())
+        let mut bag = script::merge_bag(schema, &overrides, self.inject.as_ref());
+        if !self
+            .inject
+            .as_ref()
+            .is_some_and(|inject| inject.contains_key("clueDuelPartner"))
+        {
+            if let Some(partner) = core
+                .vault()
+                .and_then(|vault| vault.get(profile))
+                .map(|profile| profile.settings.clue_duel_partner.trim())
+                .filter(|partner| !partner.is_empty())
+            {
+                bag.insert("clueDuelPartner".into(), Value::String(partner.into()));
+            }
+        }
+        bag
     }
 
     /// The legacy global bag for a card (no profile focused).
@@ -467,10 +482,25 @@ impl Scripts {
             .get(source, &lookup_name(source, name, path))
             .map(|c| c.settings_schema.as_slice())
             .unwrap_or_default();
+        let mut bag = script::merge_bag(schema, overrides, self.inject.as_ref());
+        if !self
+            .inject
+            .as_ref()
+            .is_some_and(|inject| inject.contains_key("clueDuelPartner"))
+        {
+            if let Some(partner) = core
+                .vault()
+                .and_then(|vault| vault.get(profile))
+                .map(|profile| profile.settings.clue_duel_partner.trim())
+                .filter(|partner| !partner.is_empty())
+            {
+                bag.insert("clueDuelPartner".into(), Value::String(partner.into()));
+            }
+        }
         Some(LiveSettings {
             identity,
             generation,
-            bag: Arc::new(script::merge_bag(schema, overrides, self.inject.as_ref())),
+            bag: Arc::new(bag),
         })
     }
 

@@ -45,6 +45,8 @@ impl Session {
                         let mut settings = p.settings;
                         if self.chooser_edit.is_some() {
                             settings.world = self.cred_settings.world;
+                            settings.clue_duel_partner =
+                                self.cred_settings.clue_duel_partner.trim().to_string();
                         }
                         settings
                     })

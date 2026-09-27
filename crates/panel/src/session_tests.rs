@@ -4505,6 +4505,39 @@ fn save_credentials_upserts_under_username_key_keeping_uid() {
 }
 
 #[test]
+fn profile_editor_persists_trimmed_global_clue_duel_partner() {
+    let path = tmp_vault("clue-duel-partner.vault");
+    let mut session = Session::new();
+    session
+        .core
+        .set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    session
+        .core
+        .vault_mut()
+        .unwrap()
+        .upsert(profile("alice", "pw", 42))
+        .unwrap();
+
+    session.begin_edit_profile(Some("alice"));
+    session.cred_settings.clue_duel_partner = "  Helper_Account  ".into();
+    assert!(session.save_credentials());
+    session.core.flush_writes();
+    session.pump_status();
+
+    assert_eq!(
+        session
+            .core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .clue_duel_partner,
+        "Helper_Account"
+    );
+}
+
+#[test]
 fn chooser_world_edit_persists_and_updates_running_slot() {
     let path = tmp_vault("world-choice.vault");
     let mut session = Session::new();

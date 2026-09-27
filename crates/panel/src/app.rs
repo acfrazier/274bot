@@ -4058,6 +4058,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     .build();
                 slot_capture_section(ui, session);
                 slot_random_section(ui, session);
+                slot_clue_section(ui, session);
                 let avail = ui.content_region_avail()[0];
                 let (bw, stack) = button_row_layout(avail, 2);
                 if ui.button_with_size("Save", [bw, 0.0]) && session.save_credentials() {
@@ -4135,6 +4136,22 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             });
         });
     session.global_settings_open = open;
+}
+
+/// Profile-global clue traversal partner. Unlike card parameters this follows
+/// the account across every script assignment and is persisted by Save.
+fn slot_clue_section(ui: &Ui, session: &mut Session) {
+    ui.text_disabled("clue duel partner");
+    ui.set_next_item_width(-1.0);
+    ui.input_text(
+        "##clue-duel-partner",
+        &mut session.cred_settings.clue_duel_partner,
+    )
+    .hint("other account name")
+    .build();
+    ui.text_wrapped(
+        "run this account in Duel Arena Clue helper mode when clue 3554 needs the crossing",
+    );
 }
 
 /// random: the guardian's per-profile toggles + lamp reward settings
