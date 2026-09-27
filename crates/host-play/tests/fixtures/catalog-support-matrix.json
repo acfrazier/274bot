@@ -81237,43 +81237,31 @@
       "catalog_commit": "00d39a17e056df6c5e461f3f2cfd3598ff9720b6",
       "source_path": "src/bot/scripts/DuelArena/DuelArena.ts",
       "revision": 289,
-      "status": "BLOCKED",
-      "status_detail": "Unsupported API disposition, not a gameplay regression: both Train-mode actors prepare and Start after the validator fix, but the campaign's Duel module remains unimplemented. No offer, combat or full-cycle support is claimed; trainer API implementation and qualification are deferred to Beta 1.",
-      "unsupported_api_disposition": {
+      "status": "QUALIFIED",
+      "status_detail": "Supported and qualified in 0.1.9: two consecutive pair-gated duel_arena passes on one build, each with full claim reset-and-further, after one earlier pass on the same build. This append-only requalification disposition does not replace the original catalog/revision rows or change loader availability.",
+      "qualification_disposition": {
         "card_sha256": "1ad638d8b32159beee7f68096b0b20065e81e4c4724d4cd50b7a6227f16de4a3",
         "helper_path": "src/bot/api/duel/Duel.ts",
         "helper_sha256": "4329de4ce7cf9da55c386620e746afe040feb0486619014ec0c6cc99e618c0f8",
         "module": "/rs2b0t/bot/api/duel/Duel.js",
-        "host_source": "crates/script/src/shim/duel_unimplemented.js",
-        "missing_api_members": [
-          "DUEL_SELECT_MODAL",
-          "DUEL_CONFIRM_MODAL",
-          "DUEL_WIN_MODAL",
-          "DUEL_FIGHT_ARENAS",
-          "parseDuelPartnerHeader",
-          "fightArenaAt",
-          "Duel.offerOpen",
-          "Duel.confirmOpen",
-          "Duel.winOpen",
-          "Duel.active",
-          "Duel.partner",
-          "Duel.waitingForOther",
-          "Duel.challenge",
-          "Duel.fight",
-          "Duel.accept",
-          "Duel.cancel",
-          "Duel.closeWin"
-        ],
-        "reason": "The campaign maps Duel.js to the all-not-implemented shim. Both trainers throw at fightArenaAt on their first tick and tick listener; the native witness records no offer, confirmation, combat or script-caused melee XP before its 180-second deadline.",
-        "audit": ".superpowers/release-0.1.9/live/pair-diag/pair-gate-diagnosis.md",
-        "scope": "Campaign 692b94858 plus the Train-mode validator fix, exact frozen catalog and revision 289. Loader availability and witness requirements are unchanged. A clue-duel handshake qualification is not a trainer full-cycle qualification.",
-        "follow_up_release": "Beta 1",
-        "follow_up": "Implement and qualify the complete trainer-used Duel API, then rerun paired real combat, reset and further-work proof. Do not suppress not-implemented errors or relax the witness."
+        "host_source": "crates/script/src/shim/duel.js",
+        "native_source": "crates/script/src/duel.rs",
+        "reason": "Duel.js maps the frozen Duel API onto Rust: modal and control ids, the partner header, the fight pens, and the accept and close machines. Before the pen fix, a pair-gated run reached Challenge, both offer and confirm accepts and both fight pens, but never fought. fightArenaAt answered a fresh rect per call, and the trainer compares pens by identity (DuelArena.ts observeFightState, DuelArenaLogic.ts canAttemptDuelFight), so it re-armed its 3/2/1/FIGHT signal every tick. With fightArenaAt answering the frozen DUEL_FIGHT_ARENAS entry, three pair-gated runs on one build passed with full claim reset-and-further, the last two consecutive qualification runs. In each, both actors challenged, accepted the offer and confirm screens, fought in a pen for script-caused melee XP (+40/+20, +32/+44 and +28/+44), completed duel 1, returned to the lobby and entered a second duel, where the witness saw further combat (both actors in the first two runs, one in the third).",
+        "scope": "Exact frozen catalog, revision 289, host runner, release tui-play sha256 c3a5665596fc43391399f91b7ed1e95b8b8f575f918520f0d0d880bf6231afe1, engine cc359656b4acd216ca452495874b6beba9a0ac75. Qualification runs duel-qual-1 (118.2 s) and duel-qual-2 (141.4 s) are consecutive; paired-fix-duel-8475e2bce (74.3 s) preceded them. This supersedes the unsupported-API disposition recorded for campaign 692b94858 (pair-diag/duel-validator-1). Loader availability and witness requirements are unchanged."
       },
       "proof_refs": [
-        ".superpowers/release-0.1.9/live/pair-diag/duel-validator-1/summary.json:1-34",
-        ".superpowers/release-0.1.9/live/pair-diag/duel-validator-1/duel_arena.log:40-62",
-        ".superpowers/release-0.1.9/live/pair-diag/duel-validator-1/duel_arena.log:4082-4084"
+        ".superpowers/release-0.1.9/live/review-paired-fix-duel-08d7a3b93/summary.json:1-52",
+        ".superpowers/release-0.1.9/live/review-paired-fix-duel-08d7a3b93/duel_arena.log:46-61",
+        ".superpowers/release-0.1.9/live/review-paired-fix-duel-08d7a3b93/duel_arena.log:299-301",
+        ".superpowers/release-0.1.9/live/paired-fix-duel-8475e2bce/summary.json:1-52",
+        ".superpowers/release-0.1.9/live/paired-fix-duel-8475e2bce/duel_arena.log:44-71",
+        ".superpowers/release-0.1.9/live/paired-fix-duel-8475e2bce/duel_arena.log:118-160",
+        ".superpowers/release-0.1.9/live/duel-qual-1/summary.json:1-52",
+        ".superpowers/release-0.1.9/live/duel-qual-1/duel_arena.log:46-72",
+        ".superpowers/release-0.1.9/live/duel-qual-1/duel_arena.log:187-224",
+        ".superpowers/release-0.1.9/live/duel-qual-2/summary.json:1-52",
+        ".superpowers/release-0.1.9/live/duel-qual-2/duel_arena.log:46-80",
+        ".superpowers/release-0.1.9/live/duel-qual-2/duel_arena.log:242-287"
       ]
     }
   ],

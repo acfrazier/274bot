@@ -56,10 +56,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   of reporting their Start snapshot as PASS, in panel-play and tui-play.
 - Duel trainer pair preparation accepts the Train schema's inert empty helper
   partner field while retaining native counterpart identity; helper mode and
-  populated partner settings still fail closed. The trainer itself remains
-  unsupported in this campaign because its `Duel.*` API is unimplemented.
-  The support matrix names that missing surface for Beta 1; no combat or
-  full-cycle PASS is claimed by the validator fix.
+  populated partner settings still fail closed. Duel Arena Combat Trainer
+  ships qualified in 0.1.9: its `Duel.*` API is native, and two consecutive
+  pair-gated `duel_arena` runs on one build passed the full cycle. In each,
+  both actors challenged, accepted the offer and confirm screens, fought in
+  a pen for script-caused melee XP, finished the duel and went into a second
+  one. The support matrix records the trainer as QUALIFIED with those
+  receipts.
 - FlaxRunner's refrozen full-cycle row is a catalog-defect disposition: meet
   arrival radius 2 can leave both actors arrived but outside trade range 2.
   The support matrix preserves the first-transfer/spin/bank evidence without
@@ -306,7 +309,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 ### Paired catalog compatibility
 
-- ClueSolver and Duel Arena Combat Trainer run through the native host.
+- ClueSolver and Duel Arena Combat Trainer run through the native host, and
+  the trainer is qualified in 0.1.9 (see Scenario qualification).
+  `fightArenaAt` answers with the frozen `DUEL_FIGHT_ARENAS` entry, so the
+  trainer's pen identity checks hold and it fights once inside a pen.
 - JiveKQ four-player is present but not enabled or qualified in 0.1.9: the
   catalog lists it dim ("four-player qualification incomplete in 0.1.9") and
   refuses its Start. Its BroadcastChannel broker, max-stat fixture and
@@ -341,9 +347,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - One Play now brokers bounded same-world `BroadcastChannel` traffic between
   catalog isolates. The `clue_duel_3554` two-account and `jive_kq_four`
   four-account live cells mint disposable local profiles, launch their
-  heterogeneous/shared catalog fleets, and collect per-slot evidence. Clue
-  acceptance covers both names/screens, exact obstacle rules, pen entry,
-  casket/forfeit/helper reset, unchanged HP and a new reward in a fresh bank.
+  heterogeneous/shared catalog fleets through the one
+  `host_play::live_start` fleet launch panel-play and tui-play both call,
+  and collect per-slot evidence. Clue acceptance covers both names/screens,
+  exact obstacle rules, pen entry, casket/forfeit/helper reset, unchanged HP
+  and a new reward in a fresh bank.
   KQ max-stat fixture acceptance delays the roster leader while the other
   three members prove their missing-peer bank hold, then covers both pass
   withdrawal and purchase paths, exact role packs, scene-backed rope use,
