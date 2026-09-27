@@ -330,12 +330,18 @@ process-wide map-cache images demand (catalogue first; real bake progress
 in the footer) or a grid and `map imagery unavailable — cache not bound`
 until that cache is ready. Opening WalkTo starts the demand against
 `~/.274bot/map-cache` for the bound profile; closing it releases the
-demand and GPU/CPU pixels. When the terrain for the bound client cache's
-image identity is not ready (and would be baked locally), the map first
+demand and GPU/CPU pixels. Release packages ship the 289 terrain baked
+from the pinned client cache (`map/289/` beside `nav/289/`); when its
+image identity matches the bound client cache exactly, the first open
+installs it into the map cache (progress `installing shipped terrain`)
+instead of baking, without asking. When no ready or shipped terrain
+matches (a local bake would run), the map first
 shows the bake warning from `frontend_core` (CPU for about 15 s, up to
 ~15 MiB once) with **Bake now**, **Always bake** and **Not now**; it
 stays catalogue-only until the operator bakes (**Bake terrain** after Not
-now). A ready cache, baked earlier or installed, opens without asking.
+now). Shipped terrain that fails verification is never installed and
+leads to the same warning. A ready cache, baked earlier or installed,
+opens without asking.
 **Always bake** and Nav config's **ask before baking terrain** set the
 shared `map_bake` key of `panel-ui.json` (`ask` when absent). POIs come from `Catalogue::from_ready` (client
 records, authenticated `navpois`, game-data names) plus live

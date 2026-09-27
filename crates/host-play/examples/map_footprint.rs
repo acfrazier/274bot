@@ -4,15 +4,19 @@
 //!
 //! cargo run --release -p host-play --example map_footprint -- \
 //!   <shared profile flags> --cache-root DIR [--catalogue] [--cycles N] [--pause]
-//!   [--interrupt-after SECS]
+//!   [--interrupt-after SECS] [--shipped DIR]
 //!
 //! `--cache-root` must be a scratch directory (an empty one is a cold bake;
 //! cycles after the first reopen the published cache, i.e. warm opens); the
 //! operator `~/.274bot/map-cache` is never touched. `--catalogue` measures
 //! the TUI's catalogue-only demand. `--interrupt-after` first closes a bake
-//! after SECS, so the first cycle measures the resume. `--pause` stops after
-//! the baseline and after each close until a line arrives on stdin, so an
-//! outside tool (`footprint -p`, `vmmap --summary`) can snapshot the
+//! after SECS, so the first cycle measures the resume. `--shipped DIR` gives
+//! the manager release-shipped terrain (the `map` directory of an install
+//! resource root, e.g. `target/release/map` after `tui-play --map-bundle
+//! target/release ...`): the first cycle installs it instead of baking, and
+//! later cycles are warm reopens of the installed terrain. `--pause` stops
+//! after the baseline and after each close until a line arrives on stdin, so
+//! an outside tool (`footprint -p`, `vmmap --summary`) can snapshot the
 //! process. One JSON line per sample on stdout. macOS reports
 //! `proc_pid_rusage` v4 physical footprint and `malloc_zone_statistics`;
 //! other platforms print RSS only.
@@ -23,7 +27,9 @@
 //! first thread (the bake worker, in `MapDemandManager::reap`); it lives for
 //! the process and does not grow per open. The panel initializes libobjc
 //! through its window system long before a map opens.
-use host_play::map_cache::{MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus};
+use host_play::map_cache::{
+    MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus, ShippedMapImages,
+};
 use host_play::{map_profile_descriptor, NativeMapProducer};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -105,6 +111,7 @@ fn emit(phase: &str, base: Sample, now: Sample, extra: &str) {
 fn run() -> Result<(), String> {
     let (options, rest) = host_play::parse_profile_args(std::env::args().skip(1))?;
     let mut cache_root = None;
+    let mut shipped = None;
     let mut demand = MapDemand::Images;
     let mut cycles = 1u32;
     let mut pauses = false;
@@ -113,6 +120,7 @@ fn run() -> Result<(), String> {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--cache-root" => cache_root = rest.next().map(PathBuf::from),
+            "--shipped" => shipped = rest.next().map(ShippedMapImages::at),
             "--catalogue" => demand = MapDemand::CatalogueOnly,
             "--pause" => pauses = true,
             "--interrupt-after" => {
@@ -134,10 +142,12 @@ fn run() -> Result<(), String> {
     let cache_root = cache_root.ok_or("--cache-root DIR is required (scratch directory)")?;
     let profile = options.resolve(None)?.bind_runtime()?;
     let descriptor = map_profile_descriptor(&profile).map_err(|e| e.to_string())?;
-    let manager = MapDemandManager::new(
-        MapCacheRoot::from_root(cache_root),
-        Arc::new(NativeMapProducer::new()),
-    );
+    let root = MapCacheRoot::from_root(cache_root);
+    let producer = Arc::new(NativeMapProducer::new());
+    let manager = match shipped {
+        Some(shipped) => MapDemandManager::with_shipped_images(root, producer, shipped),
+        None => MapDemandManager::new(root, producer),
+    };
     let pause = |phase: &str| {
         if pauses {
             eprintln!("map_footprint: paused {phase} pid {}", std::process::id());

@@ -254,6 +254,24 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   the panel's Nav config (**ask before baking terrain**) and the TUI settings
   popup (**map bake**). The decision is `frontend_core::MapBakeGate`, shared
   by both front ends.
+- Release packages ship the 289 WalkTo map terrain, as rs2b0t ships its map
+  images (operator decision 2026-09-26). `tools/release/package.py` bakes it
+  with the staged `tui-play --map-bundle` from the pinned client cache the nav
+  bundle was built from, through the same map-cache producer and publication
+  as a local bake, and ships it as `map/289/` beside `nav/289/` (and in the
+  macOS bundle's `Contents/Resources`), with `274bot.mapimages.json` recording
+  the image identity (revision, decoded client content, bake policy), the
+  image manifest's receipt and the tile totals; `package.py` refuses terrain
+  baked from another cache than the nav bundle, re-verifies every tile and
+  records it in `release-manifest.json` (`--check` stages, verifies and
+  discards a package). The first WalkTo open installs the shipped terrain
+  into `~/.274bot/map-cache` without a bake question, but only for exactly
+  the bound client cache's image identity: each tile's length and SHA-256 is
+  verified against the pinned manifest as it is copied, and a published
+  terrain is never replaced. Shipped terrain for another client cache is
+  left unused, and damaged or partial shipped files are never installed:
+  the local bake stays behind the existing warning and, once accepted,
+  adopts the tiles already verified.
 
 ### Rendering and client
 

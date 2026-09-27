@@ -95,6 +95,10 @@ pub struct Args {
     /// `--pair-core`: qualify a paired `--live` run under the shared pair
     /// witness (the panel `pair_watch` mode).
     pub pair_core: bool,
+    /// `--map-bundle OUT`: release packaging only; bake the shipped WalkTo
+    /// map terrain for `--revision`, `--cache` and `--unpack` under `OUT`
+    /// and exit.
+    pub map_bundle: Option<PathBuf>,
 }
 
 fn usage() -> ! {
@@ -104,7 +108,9 @@ fn usage() -> ! {
          [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass PASS] \
          [--world N] [--live script_<name> [--catalog-core | --pair-core]] [--user USER]... \
-         (default user: first vault profile)"
+         (default user: first vault profile)\n\
+         release packaging: tui-play --map-bundle OUT --revision 274|289 --cache JAG_DIR \
+         --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map terrain into OUT/map/<revision>)"
     );
     std::process::exit(2);
 }
@@ -159,6 +165,7 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
         profile,
         catalog_core,
         pair_core,
+        map_bundle: None,
     };
     let mut core_flags: Option<(bool, bool)> = None;
     let mut it = rest.into_iter();
@@ -173,6 +180,9 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
                 )?);
             }
             "--live" => parsed.live = Some(need_value(&mut it, "--live")?),
+            "--map-bundle" => {
+                parsed.map_bundle = Some(PathBuf::from(need_value(&mut it, "--map-bundle")?))
+            }
             "--catalog-core" => core_flags.get_or_insert((false, false)).0 = true,
             "--pair-core" => core_flags.get_or_insert((false, false)).1 = true,
             "--help" | "-h" => return Err("usage".into()),
@@ -186,6 +196,16 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
     if (parsed.catalog_core || parsed.pair_core) && parsed.live.is_none() {
         return Err(
             "tui-play: --catalog-core/--pair-core qualify a --live script_<name> run".into(),
+        );
+    }
+    if parsed.map_bundle.is_some()
+        && (parsed.profile.revision.is_none()
+            || parsed.profile.cache_dir.is_none()
+            || parsed.profile.unpack_dir.is_none()
+            || parsed.live.is_some())
+    {
+        return Err(
+            "tui-play: --map-bundle needs --revision, --cache and --unpack (and no --live)".into(),
         );
     }
     Ok(parsed)
@@ -2811,6 +2831,9 @@ fn set_mouse_capture(on: bool) {
 
 pub fn main() -> ExitCode {
     let args = parse_args();
+    if let Some(out) = &args.map_bundle {
+        return map_bundle(&args.profile, out);
+    }
     let mode = match args.live.clone() {
         Some(name) => RunMode::Live(name),
         None => RunMode::Interactive,
@@ -2820,6 +2843,52 @@ pub fn main() -> ExitCode {
         Ok(code) => ExitCode::from(code as u8),
         Err(e) => {
             eprintln!("tui-play: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `--map-bundle OUT` (release packaging, `tools/release/package.py`): bake
+/// the shipped WalkTo map terrain for the pinned client cache into
+/// `OUT/map/<revision>/` and print its description (JSON) on stdout.
+/// Progress goes to stderr at most once a second.
+fn map_bundle(profile: &ProfileOptions, out: &Path) -> ExitCode {
+    let (Some(revision), Some(cache), Some(unpack)) = (
+        profile.revision.as_deref(),
+        profile.cache_dir.as_deref(),
+        profile.unpack_dir.as_deref(),
+    ) else {
+        usage();
+    };
+    let revision = match host_play::parse_revision(revision) {
+        Ok(revision) => revision.as_i32() as u16,
+        Err(error) => {
+            eprintln!("tui-play: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let mut reported: Option<(Instant, MapStage)> = None;
+    let result = host_play::bake_shipped_map_images(revision, cache, unpack, out, |status| {
+        let MapJobStatus::Running(progress) = status else {
+            return;
+        };
+        if reported.is_none_or(|(at, stage)| {
+            stage != progress.stage || at.elapsed() >= Duration::from_secs(1)
+        }) {
+            eprintln!("tui-play: map bundle: {}", progress.message);
+            reported = Some((Instant::now(), progress.stage));
+        }
+    });
+    match result
+        .map_err(|error| error.to_string())
+        .and_then(|shipped| serde_json::to_string(&shipped).map_err(|error| error.to_string()))
+    {
+        Ok(json) => {
+            println!("{json}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("tui-play: map bundle: {error}");
             ExitCode::FAILURE
         }
     }

@@ -1,9 +1,14 @@
-//! Test fixtures for the map cache: a deterministic terrain PNG and a
-//! producer that publishes a real (tiny) catalogue and two terrain tiles,
-//! counting each artefact it produces. Built for this crate's tests and,
-//! behind `test-support`, for front-end tests of map demand.
+//! Test fixtures for the map cache: a deterministic terrain PNG, a producer
+//! that publishes a real (tiny) catalogue and two terrain tiles, counting
+//! each artefact it produces, that terrain shipped the way release packaging
+//! ships it, and a minimal client snapshot for the real raster. Built for
+//! this crate's tests and, behind `test-support`, for front-end tests of map
+//! demand.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use nav::map::cache::{BakeStage, UnitKey};
 use nav::map::formats::{
@@ -17,7 +22,8 @@ use nav::map::Rows;
 
 use super::{
     ArtifactKind, BakeOutput, BakePlan, BakeRequest, BakeWriter, MapBakeProducer, MapCacheError,
-    MapProfileDescriptor,
+    MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus, MapProfileDescriptor,
+    ShippedMapImages,
 };
 
 /// A 289 descriptor with a fixed content identity and fixed policies,
@@ -25,6 +31,92 @@ use super::{
 pub fn fixture_descriptor() -> MapProfileDescriptor {
     MapProfileDescriptor::new(289, Digest([7; 32]), Digest([8; 32]), Digest([9; 32]))
         .expect("fixture identities are valid")
+}
+
+/// [`fixture_descriptor`] for another client cache: same revision and
+/// policies, different decoded content.
+pub fn other_cache_descriptor() -> MapProfileDescriptor {
+    MapProfileDescriptor::new(289, Digest([6; 32]), Digest([8; 32]), Digest([9; 32]))
+        .expect("fixture identities are valid")
+}
+
+/// [`fixture_descriptor`]'s terrain shipped under `dir/map` the way release
+/// packaging ships a bake: the counting producer publishes it into a scratch
+/// cache under `dir`, which is shipped and then removed.
+pub fn ship_fixture_terrain(dir: &Path) -> ShippedMapImages {
+    let scratch = dir.join("packaging-cache");
+    let root = MapCacheRoot::from_root(&scratch);
+    let manager = MapDemandManager::new(root.clone(), Arc::new(CountingMapProducer::default()));
+    let handle = manager
+        .request(fixture_descriptor(), MapDemand::Images)
+        .expect("fixture terrain demand");
+    let started = Instant::now();
+    while handle.status() != MapJobStatus::Ready {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "fixture terrain never published: {:?}",
+            handle.status()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drop(handle);
+    while !manager.reap_idle() {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let shipped = ShippedMapImages::at(dir.join("map"));
+    shipped
+        .ship_from(&root, fixture_descriptor().image_identity())
+        .expect("ship fixture terrain");
+    let _ = std::fs::remove_dir_all(&scratch);
+    shipped
+}
+
+/// A minimal client snapshot for the real raster: one floor, one loc
+/// definition, no sprites, and three plane-0 mapsquares of that floor.
+/// Returns its jag and snapshot directories under `dir`.
+pub fn synthetic_client_snapshot(dir: &Path) -> (PathBuf, PathBuf) {
+    use client::io::cache_289::synthetic_jag;
+    let (jag, snapshot) = (dir.join("jag"), dir.join("snapshot"));
+    std::fs::create_dir_all(&jag).unwrap();
+    std::fs::create_dir_all(&snapshot).unwrap();
+    let config: [(&str, &[u8]); 3] = [
+        ("flo.dat", &[0, 1, 1, 0x40, 0x80, 0x20, 0]),
+        ("loc.dat", &[0, 1, 0]),
+        ("loc.idx", &[0, 1, 0, 1]),
+    ];
+    std::fs::write(jag.join("config"), synthetic_jag(&config)).unwrap();
+    for sprites in ["media", "textures"] {
+        std::fs::write(jag.join(sprites), synthetic_jag(&[("index.dat", &[0, 0])])).unwrap();
+    }
+    // Plane 0: underlay 1 (opcode 82) with a varied explicit height;
+    // planes 1-3 empty.
+    let mut land = Vec::new();
+    for plane in 0..4 {
+        for cell in 0..64 * 64u32 {
+            if plane == 0 {
+                land.extend([82, 1, (cell % 23) as u8 + 2]);
+            } else {
+                land.push(0);
+            }
+        }
+    }
+    let (mut index, mut maps) = (Vec::new(), Vec::new());
+    for (file, x) in [50u16, 51, 52].into_iter().enumerate() {
+        index.extend((x << 8 | 50).to_be_bytes());
+        index.extend((file as u16).to_be_bytes());
+        index.extend(u16::MAX.to_be_bytes());
+        index.push(0);
+        maps.extend((file as u32).to_le_bytes());
+        maps.extend((land.len() as u32).to_le_bytes());
+        maps.extend(&land);
+    }
+    std::fs::write(
+        jag.join("versionlist"),
+        synthetic_jag(&[("map_index", index.as_slice())]),
+    )
+    .unwrap();
+    std::fs::write(snapshot.join("maps.bin"), maps).unwrap();
+    (jag, snapshot)
 }
 
 /// Complete deterministic PNG: IHDR + a zlib stream containing one filtered

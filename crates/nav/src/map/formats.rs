@@ -26,6 +26,9 @@ pub const MAX_IMAGE_BYTES: u64 = 128 * 1024 * 1024;
 pub const NAVPOIS_MAGIC: &[u8; 4] = b"274P";
 pub const NAVPOIS_VERSION: u16 = 1;
 pub const NAVPOIS_HEADER_BYTES: usize = 77;
+pub const SHIPPED_IMAGES_SCHEMA: u16 = 1;
+/// One identity, one receipt and two totals; far below the JSON cap.
+pub const MAX_SHIPPED_IMAGES_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -339,6 +342,87 @@ impl ImageManifest {
             .binary_search_by_key(&key, |t| t.key)
             .ok()
             .map(|index| &self.tiles.as_slice()[index])
+    }
+    pub fn encode(&self) -> Result<Vec<u8>, MapError> {
+        self.validate(self.identity)?;
+        encode_json(self)
+    }
+}
+
+/// `274bot.mapimages.json`: terrain a release package ships for one image
+/// identity. It pins the shipped image directory's `manifest.json` (the
+/// published cache format) by receipt; that manifest pins every tile's
+/// length and SHA-256.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShippedImages {
+    pub schema: u16,
+    pub identity: ImageIdentity,
+    pub key: ImageKey,
+    pub manifest: PayloadReceipt,
+    pub tiles: u32,
+    pub tile_bytes: u64,
+}
+impl ShippedImages {
+    /// Describe `manifest`, whose exact encoded bytes are `manifest_bytes`.
+    pub fn describe(manifest: &ImageManifest, manifest_bytes: &[u8]) -> Result<Self, MapError> {
+        let tiles = manifest.tiles.as_slice();
+        let shipped = Self {
+            schema: SHIPPED_IMAGES_SCHEMA,
+            identity: manifest.identity,
+            key: manifest.key,
+            manifest: PayloadReceipt {
+                bytes: u32::try_from(manifest_bytes.len())
+                    .map_err(|_| MapError::Limit("image manifest bytes"))?,
+                sha256: Digest::of(manifest_bytes),
+            },
+            tiles: u32::try_from(tiles.len()).map_err(|_| MapError::Limit("tile count"))?,
+            tile_bytes: tiles.iter().map(|tile| u64::from(tile.payload.bytes)).sum(),
+        };
+        shipped.read_manifest(manifest_bytes)?;
+        Ok(shipped)
+    }
+    /// A shipped description for exactly `expected`; another client cache or
+    /// bake policy is [`MapError::Identity`].
+    pub fn decode(bytes: &[u8], expected: ImageIdentity) -> Result<Self, MapError> {
+        let shipped: Self = super::json(bytes, MAX_SHIPPED_IMAGES_BYTES)?;
+        shipped.validate(expected)?;
+        Ok(shipped)
+    }
+    pub fn validate(&self, expected: ImageIdentity) -> Result<(), MapError> {
+        super::version("shipped images", self.schema, SHIPPED_IMAGES_SCHEMA)?;
+        if self.identity != expected || self.key != expected.key()? {
+            return Err(MapError::Identity);
+        }
+        self.manifest.validate(MAX_JSON_BYTES as u32)?;
+        if self.tiles == 0 || self.tiles as usize > MAX_IMAGE_TILES {
+            return Err(MapError::Limit("shipped tile count"));
+        }
+        if self.tile_bytes == 0 || self.tile_bytes > MAX_IMAGE_BYTES {
+            return Err(MapError::Limit("shipped tile bytes"));
+        }
+        Ok(())
+    }
+    /// The image manifest these receipts describe: exactly the pinned bytes,
+    /// in canonical encoding, listing exactly the pinned tile totals.
+    pub fn read_manifest(&self, bytes: &[u8]) -> Result<ImageManifest, MapError> {
+        self.validate(self.identity)?;
+        self.manifest.verify(bytes, MAX_JSON_BYTES as u32)?;
+        let manifest = ImageManifest::decode(bytes, self.identity)?;
+        let tiles = manifest.tiles.as_slice();
+        if tiles.len() != self.tiles as usize
+            || tiles
+                .iter()
+                .map(|tile| u64::from(tile.payload.bytes))
+                .sum::<u64>()
+                != self.tile_bytes
+        {
+            return Err(MapError::Invalid("shipped tile totals"));
+        }
+        if manifest.encode()? != bytes {
+            return Err(MapError::Invalid("noncanonical shipped image manifest"));
+        }
+        Ok(manifest)
     }
     pub fn encode(&self) -> Result<Vec<u8>, MapError> {
         self.validate(self.identity)?;

@@ -1,6 +1,14 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use frontend_core::{MapBakeChoice, MapBakeGate, MapBakePrompt};
+use host_play::map_cache::fixture::{
+    fixture_descriptor, ship_fixture_terrain, CountingMapProducer,
+};
+use host_play::map_cache::{MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus};
 use panel::ui_state::{load_at, save_at};
 use script::{LoadoutsStore, ScriptSettingsStore, ScriptSource};
 use serde_json::json;
@@ -244,4 +252,74 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
         ScriptSettingsStore::at(settings_path).overrides(ScriptSource::Catalog, "ChickenKiller"),
         overrides
     );
+}
+
+/// A 0.1.8.1 home has no map cache and no `map_bake` preference. With the
+/// release's shipped terrain for the bound client cache, the first WalkTo
+/// open installs it into a new `map-cache` without a bake question or a bake,
+/// and every 0.1.8.1 file keeps its bytes.
+#[test]
+fn a_0181_home_opens_walkto_on_shipped_terrain_without_asking_and_keeps_its_files() {
+    let fixture = fixture_bot_dir();
+    let scratch = Scratch::new();
+    let home = scratch.0.join("home");
+    let bot = home.join(".274bot");
+    std::fs::create_dir_all(&bot).unwrap();
+    let names = [
+        "vault-289",
+        "panel-ui.json",
+        "loadouts.json",
+        "script-settings.json",
+    ];
+    for name in names {
+        std::fs::copy(fixture.join(name), bot.join(name)).unwrap();
+    }
+    let before: Vec<Vec<u8>> = names
+        .iter()
+        .map(|name| std::fs::read(bot.join(name)).unwrap())
+        .collect();
+
+    // The panel's gate starts from the 0.1.8.1 prefs, which never answered.
+    let prefs = load_at(&bot.join("panel-ui.json"));
+    assert_eq!(prefs.map_bake, MapBakeChoice::Ask);
+    let root = MapCacheRoot::from_home(&home);
+    assert!(!root.path().exists(), "0.1.8.1 wrote no map cache");
+    let shipped = ship_fixture_terrain(&scratch.0.join("package"));
+    let producer = Arc::new(CountingMapProducer::default());
+    let manager = MapDemandManager::with_shipped_images(root.clone(), producer.clone(), shipped);
+    let mut gate = MapBakeGate::new(prefs.map_bake);
+    let handle = gate
+        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .unwrap();
+    assert_eq!(gate.prompt(), MapBakePrompt::None, "no bake question");
+    let started = Instant::now();
+    while handle.status() != MapJobStatus::Ready {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "WalkTo never settled: {:?}",
+            handle.status()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(handle.ready().unwrap().images.is_some(), "terrain is shown");
+    assert_eq!(producer.image_runs(), 0, "installed, not baked");
+    assert!(root
+        .image_dir(fixture_descriptor().image_identity())
+        .unwrap()
+        .is_dir());
+
+    for (name, bytes) in names.iter().zip(&before) {
+        assert_eq!(
+            &std::fs::read(bot.join(name)).unwrap(),
+            bytes,
+            "{name} keeps its 0.1.8.1 bytes"
+        );
+    }
+    let entries: BTreeSet<String> = std::fs::read_dir(&bot)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    let mut expected: BTreeSet<String> = names.iter().map(|name| name.to_string()).collect();
+    expected.insert("map-cache".into());
+    assert_eq!(entries, expected, "only the map cache is new");
 }

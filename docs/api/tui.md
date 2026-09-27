@@ -30,6 +30,13 @@ PASS/FAIL. `--catalog-core` / `--pair-core` (environment form
 witness qualifies, exactly as the panel watches do; see
 [the harness guide](../harness.md#core-gated-qualification).
 
+`--map-bundle OUT --revision 289 --cache JAG_DIR --unpack SNAPSHOT_ROOT` is a
+release-packaging run, not a panel: it bakes the WalkTo map terrain for that
+offline client cache through the production map-cache path and ships it under
+`OUT/map/<revision>/` (see [release packaging](../../tools/release/README.md)),
+then prints the shipped description (identity, key, manifest receipt, tile
+totals) as JSON and exits.
+
 ## Layout
 
 The shell adapts to the terminal size:

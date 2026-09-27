@@ -1,7 +1,8 @@
 //! The operator's consent before a local WalkTo terrain bake.
 //!
 //! Terrain imagery is served from the map cache when a ready artefact matches
-//! the bound client cache's image identity (baked earlier, or pre-installed).
+//! the bound client cache's image identity (baked earlier), or installed from
+//! the terrain the release ships when that matches the identity exactly.
 //! Otherwise opening the map would bake it locally, which costs CPU for about
 //! 15 s and up to ~15 MiB once, so [`MapBakeGate`] asks first. Declining keeps
 //! the map catalogue-only (POIs, search, grid); the operator can accept later.
@@ -162,10 +163,11 @@ impl MapBakeGate {
         self.open(manager, descriptor, demand)
     }
 
-    /// Open `demand`. Only terrain readiness decides the prompt: ready
-    /// terrain opens an adopt-only demand that keeps that terrain leased and
-    /// never bakes (a missing or stale catalogue is derived silently, it is
-    /// cheap); terrain that would need a local bake without consent returns a
+    /// Open `demand`. Only terrain readiness decides the prompt: terrain that
+    /// is published, or shipped for exactly this identity, opens an
+    /// adopt-only demand that never bakes (a missing or stale catalogue is
+    /// derived silently, it is cheap; shipped terrain is installed); terrain
+    /// that would need a local bake without consent returns a
     /// catalogue-only handle and raises the prompt.
     pub fn open(
         &mut self,
@@ -189,8 +191,9 @@ impl MapBakeGate {
     }
 
     /// A ready demand settled without terrain. For an adopt-only demand (the
-    /// terrain it was admitted on vanished) that means a bake is needed:
-    /// raise the prompt instead of baking. Cheap enough for every frame.
+    /// terrain it was admitted on vanished, or the shipped terrain proved
+    /// unusable) that means a bake is needed: raise the prompt instead of
+    /// baking. Cheap enough for every frame.
     pub fn note_ready_without_terrain(&mut self, demand: MapDemand) {
         if demand == MapDemand::ReadyImages {
             self.raise();

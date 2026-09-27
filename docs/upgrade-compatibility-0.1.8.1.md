@@ -61,6 +61,13 @@ create them:
   rebuilt rather than being mistaken for current data.
 - `<snapshot-version>/ondemand/…` and bundled `274bot.navpois`: derived cache
   additions described above.
+- Package `map/289/…` (beside `nav/289/`): shipped WalkTo terrain, read-only.
+  It is installed into `map-cache/289/images/<key>/` only when the bound
+  client cache's image identity matches it exactly and that key is not
+  already published; a user's published terrain is never replaced. A 0.1.8.1
+  home (no map cache, no `map_bake` key in `panel-ui.json`, a client snapshot
+  from 0.1.8.1) opens WalkTo on matching shipped terrain without a bake
+  question and leaves every 0.1.8.1 file as it was.
 
 ## Permanent regression test
 
@@ -69,6 +76,10 @@ Run:
 ```text
 cargo test -p panel --test upgrade_compat_0181
 ```
+
+Its second test opens WalkTo from the committed 0.1.8.1 home with shipped
+terrain through the panel's `MapBakeGate` and requires no bake question, no
+bake, the terrain installed, and the 0.1.8.1 files byte-identical.
 
 The test must remain a consumer-behavior test. It must not recreate the fixture
 with current structs, compare source text, or merely check that deserialization
@@ -175,7 +186,11 @@ For each macOS arm64, Windows x64, and Linux x64 release package:
    `host-play: navigation source: packaged 274V10 bundle: <path>`. The path
    must be inside the installed package resources; inspect its first five bytes
    as `274V` plus byte 10 and verify sibling `274bot.navpois` exists. Opening
-   WalkTo must show the map or an explicit cache-building state. Then make
+   WalkTo must show the map or an explicit cache-building state; with the
+   matching engine it must open on the package's shipped `map/289` terrain
+   (progress `installing shipped terrain`, then terrain) without a bake
+   question, and `~/.274bot/map-cache/289/images/<key>` must equal the shipped
+   `map/289/images/<key>` file for file. Then make
    separate launches with `--nav-pack` pointing at protected old V8 and V9
    files. Each startup must continue, stderr must contain
    `navigation pack was built by an older 274bot; rebuild it with nav-pack`,

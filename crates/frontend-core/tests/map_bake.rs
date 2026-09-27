@@ -1,18 +1,21 @@
 //! Consent before a local WalkTo terrain bake, against a real map cache and
 //! worker: a cold images open asks and bakes nothing, Not now stays
-//! catalogue-only, accepting bakes, a ready (pre-installed or earlier) cache
+//! catalogue-only, accepting bakes, a ready (baked earlier or shipped) cache
 //! opens without asking, and the remembered choice skips the question.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use frontend_core::{
     load_map_bake_choice, persist_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt,
 };
-use host_play::map_cache::fixture::{fixture_descriptor, CountingMapProducer};
+use host_play::map_cache::fixture::{
+    fixture_descriptor, other_cache_descriptor, ship_fixture_terrain, CountingMapProducer,
+};
 use host_play::map_cache::{
-    MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus,
+    MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus, ShippedMapImages,
 };
 
 /// Scratch map-cache root, removed on drop.
@@ -43,6 +46,43 @@ fn manager(scratch: &Scratch) -> (MapDemandManager, Arc<CountingMapProducer>) {
         MapDemandManager::new(scratch.root(), producer.clone()),
         producer,
     )
+}
+
+/// A manager whose release ships the fixture terrain under `scratch/map`.
+fn shipped_manager(
+    scratch: &Scratch,
+) -> (MapDemandManager, Arc<CountingMapProducer>, ShippedMapImages) {
+    let shipped = ship_fixture_terrain(&scratch.0);
+    let producer = Arc::new(CountingMapProducer::default());
+    (
+        MapDemandManager::with_shipped_images(
+            MapCacheRoot::from_root(scratch.0.join("home")),
+            producer.clone(),
+            shipped.clone(),
+        ),
+        producer,
+        shipped,
+    )
+}
+
+/// Every file under `dir` by relative path.
+fn tree(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn walk(base: &Path, dir: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(base, &path, out);
+            } else {
+                out.insert(
+                    path.strip_prefix(base).unwrap().to_path_buf(),
+                    std::fs::read(&path).unwrap(),
+                );
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
 }
 
 fn wait_ready(handle: &MapDemandHandle) {
@@ -181,6 +221,118 @@ fn publish_terrain_without_catalogue(scratch: &Scratch) {
         .catalogue_dir(fixture_descriptor().catalogue_identity())
         .unwrap();
     std::fs::remove_dir_all(&catalogue).unwrap();
+}
+
+#[test]
+fn shipped_terrain_for_the_bound_cache_opens_without_asking_or_baking_in_both_front_ends() {
+    let scratch = Scratch::new("shipped");
+    let (manager, producer, shipped) = shipped_manager(&scratch);
+    // The TUI's catalogue-only open.
+    let mut tui = MapBakeGate::new(MapBakeChoice::Ask);
+    let catalogue = tui
+        .open(&manager, fixture_descriptor(), MapDemand::CatalogueOnly)
+        .unwrap();
+    assert_eq!(tui.prompt(), MapBakePrompt::None);
+    wait_ready(&catalogue);
+    drop(catalogue);
+    manager.reap();
+    // The panel's terrain open installs the shipped terrain.
+    let mut panel = MapBakeGate::new(MapBakeChoice::Ask);
+    let handle = panel
+        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .unwrap();
+    assert_eq!(panel.prompt(), MapBakePrompt::None, "no bake question");
+    assert_eq!(handle.demand(), MapDemand::ReadyImages, "adopt, never bake");
+    wait_ready(&handle);
+    assert!(has_terrain(&handle), "shipped terrain is shown");
+    assert_eq!(producer.image_runs(), 0, "no terrain bake");
+    let identity = fixture_descriptor().image_identity();
+    assert_eq!(
+        tree(&manager.root().image_dir(identity).unwrap()),
+        tree(&shipped.image_dir(identity).unwrap()),
+        "installed into the map cache byte for byte"
+    );
+    drop(handle);
+    manager.reap();
+    // Both front ends reopen warm, still without asking.
+    let reopened = panel
+        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .unwrap();
+    assert_eq!(reopened.status(), MapJobStatus::Ready, "served, not queued");
+    assert!(has_terrain(&reopened));
+    let catalogue = tui
+        .open(&manager, fixture_descriptor(), MapDemand::CatalogueOnly)
+        .unwrap();
+    assert_eq!(catalogue.status(), MapJobStatus::Ready);
+    assert_eq!(
+        (panel.prompt(), tui.prompt()),
+        (MapBakePrompt::None, MapBakePrompt::None)
+    );
+    assert_eq!(producer.image_runs(), 0);
+}
+
+#[test]
+fn terrain_shipped_for_another_client_cache_is_ignored_and_the_bake_asks() {
+    let scratch = Scratch::new("shipped-foreign");
+    let (manager, producer, shipped) = shipped_manager(&scratch);
+    let before = tree(shipped.path());
+    let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
+    let handle = gate
+        .open(&manager, other_cache_descriptor(), MapDemand::Images)
+        .unwrap();
+    assert_eq!(gate.prompt(), MapBakePrompt::Asking);
+    assert_eq!(handle.demand(), MapDemand::CatalogueOnly);
+    wait_ready(&handle);
+    assert!(!has_terrain(&handle));
+    assert_eq!(producer.image_runs(), 0);
+    assert_eq!(tree(shipped.path()), before, "shipped terrain left on disk");
+}
+
+#[test]
+fn damaged_shipped_terrain_raises_the_prompt_instead_of_baking() {
+    let scratch = Scratch::new("shipped-damaged");
+    let (manager, producer, shipped) = shipped_manager(&scratch);
+    let identity = fixture_descriptor().image_identity();
+    let tile = shipped
+        .image_dir(identity)
+        .unwrap()
+        .join("terrain/p0/l1/25_25.png");
+    let mut bytes = std::fs::read(&tile).unwrap();
+    let last = bytes.len() - 20;
+    bytes[last] ^= 0x01;
+    std::fs::write(&tile, bytes).unwrap();
+    let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
+    let handle = gate
+        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .unwrap();
+    assert_eq!(handle.demand(), MapDemand::ReadyImages);
+    wait_ready(&handle);
+    assert!(
+        !has_terrain(&handle),
+        "the damaged terrain is not installed"
+    );
+    gate.note_ready_without_terrain(handle.demand());
+    assert_eq!(gate.prompt(), MapBakePrompt::Asking);
+    assert_eq!(producer.image_runs(), 0, "no bake without consent");
+    drop(handle);
+    manager.reap();
+    // A reopen asks straight away and stays catalogue-only.
+    gate.decline();
+    let mut again = MapBakeGate::new(MapBakeChoice::Ask);
+    let reopened = again
+        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .unwrap();
+    assert_eq!(again.prompt(), MapBakePrompt::Asking);
+    assert_eq!(reopened.demand(), MapDemand::CatalogueOnly);
+    wait_ready(&reopened);
+    // Consent bakes locally, as without shipped terrain.
+    again.accept();
+    let baking = again
+        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .unwrap();
+    wait_ready(&baking);
+    assert!(has_terrain(&baking));
+    assert_eq!(producer.image_runs(), 1);
 }
 
 #[test]

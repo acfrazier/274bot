@@ -16,8 +16,8 @@ use nav::map::cache::{
     ReadyCatalogue as NavReadyCatalogue, ReadyImages as NavReadyImages, UnitKey, CHECKPOINT_SCHEMA,
 };
 use nav::map::formats::{
-    CatalogueManifest, ClientPois, ImageManifest, PayloadReceipt, TileReceipt, MAX_IMAGE_BYTES,
-    MAX_IMAGE_TILES, MAX_JSON_BYTES,
+    CatalogueManifest, ClientPois, ImageManifest, PayloadReceipt, ShippedImages, TileReceipt,
+    MAX_IMAGE_BYTES, MAX_IMAGE_TILES, MAX_JSON_BYTES,
 };
 use nav::map::identity::{CatalogueIdentity, Digest, ImageIdentity};
 use nav::map::MapError;
@@ -558,14 +558,27 @@ impl ArtifactKind {
     }
 }
 
-/// Immutable map input binding.  Cloning this lease clones the owning
+/// Immutable map input binding.  A runtime binding clones the owning
 /// `Arc<PreparedRuntimeCache>`; no worker stores only `jag_dir` or
-/// `snapshot_dir` after a profile can be rebound.
+/// `snapshot_dir` after a profile can be rebound.  Release packaging binds an
+/// offline client snapshot instead ([`Self::offline`]); no profile exists to
+/// rebind there, and its caller owns those directories for the whole bake.
 #[derive(Clone)]
 pub struct PreparedMapInput {
     revision: u16,
     content: Digest,
-    prepared: Arc<PreparedRuntimeCache>,
+    source: MapInputSource,
+}
+
+#[derive(Clone)]
+enum MapInputSource {
+    Prepared(Arc<PreparedRuntimeCache>),
+    Offline(Arc<OfflineSnapshot>),
+}
+
+struct OfflineSnapshot {
+    jag_dir: PathBuf,
+    snapshot_dir: PathBuf,
 }
 
 impl fmt::Debug for PreparedMapInput {
@@ -573,7 +586,13 @@ impl fmt::Debug for PreparedMapInput {
         f.debug_struct("PreparedMapInput")
             .field("revision", &self.revision)
             .field("content", &self.content)
-            .field("prepared", &"Arc<PreparedRuntimeCache>")
+            .field(
+                "source",
+                &match &self.source {
+                    MapInputSource::Prepared(_) => "Arc<PreparedRuntimeCache>",
+                    MapInputSource::Offline(_) => "offline snapshot",
+                },
+            )
             .finish()
     }
 }
@@ -592,8 +611,61 @@ impl PreparedMapInput {
         Ok(Self {
             revision,
             content: Digest(prepared.identity.content_id),
-            prepared,
+            source: MapInputSource::Prepared(prepared),
         })
+    }
+
+    /// An offline client cache, as the nav build reads it: the jag archives
+    /// in `jag_dir` and the decoded snapshot under `snapshot_root`, keyed by
+    /// the version of `jag_dir/versionlist`.  The content identity is
+    /// computed from those files exactly as runtime preparation computes it,
+    /// never declared.
+    pub fn offline(
+        revision: u16,
+        jag_dir: &Path,
+        snapshot_root: &Path,
+    ) -> Result<Self, MapCacheError> {
+        let versionlist = fs::read(jag_dir.join("versionlist"))?;
+        let snapshot_dir = snapshot_root.join(client::unpack::version_hash(&versionlist));
+        // The raster reads the jag directory's versionlist and the identity
+        // the snapshot's: they must be one file.
+        if fs::read(snapshot_dir.join("versionlist"))? != versionlist {
+            return Err(MapCacheError::Message(format!(
+                "snapshot {} does not hold the versionlist of {}",
+                snapshot_dir.display(),
+                jag_dir.display()
+            )));
+        }
+        let identity = client::content_identity::compute_decoded_content_identity(
+            revision,
+            jag_dir,
+            &snapshot_dir,
+        )
+        .map_err(|error| MapCacheError::Message(format!("decoded content identity: {error}")))?;
+        Ok(Self::with_snapshot(
+            revision,
+            Digest(identity.content_id),
+            jag_dir.to_path_buf(),
+            snapshot_dir,
+        ))
+    }
+
+    /// An offline snapshot whose content identity the caller already
+    /// established ([`Self::offline`], or a synthetic test snapshot).
+    pub(crate) fn with_snapshot(
+        revision: u16,
+        content: Digest,
+        jag_dir: PathBuf,
+        snapshot_dir: PathBuf,
+    ) -> Self {
+        Self {
+            revision,
+            content,
+            source: MapInputSource::Offline(Arc::new(OfflineSnapshot {
+                jag_dir,
+                snapshot_dir,
+            })),
+        }
     }
 
     pub fn revision(&self) -> u16 {
@@ -602,17 +674,17 @@ impl PreparedMapInput {
     pub fn content(&self) -> Digest {
         self.content
     }
-    pub fn prepared_cache(&self) -> &Arc<PreparedRuntimeCache> {
-        &self.prepared
-    }
-    pub fn clone_prepared_cache(&self) -> Arc<PreparedRuntimeCache> {
-        Arc::clone(&self.prepared)
-    }
     pub fn jag_dir(&self) -> &Path {
-        &self.prepared.jag_dir
+        match &self.source {
+            MapInputSource::Prepared(prepared) => &prepared.jag_dir,
+            MapInputSource::Offline(snapshot) => &snapshot.jag_dir,
+        }
     }
     pub fn snapshot_dir(&self) -> &Path {
-        &self.prepared.snapshot_dir
+        match &self.source {
+            MapInputSource::Prepared(prepared) => &prepared.snapshot_dir,
+            MapInputSource::Offline(snapshot) => &snapshot.snapshot_dir,
+        }
     }
 }
 
@@ -1449,6 +1521,7 @@ struct ReadyCache {
 struct ManagerInner {
     root: MapCacheRoot,
     producer: Arc<dyn MapBakeProducer>,
+    shipped: Option<Arc<ShippedSource>>,
     active: Mutex<Option<ActiveJob>>,
     ready: Mutex<ReadyCache>,
     next_generation: AtomicU64,
@@ -1471,10 +1544,29 @@ impl fmt::Debug for MapDemandManager {
 
 impl MapDemandManager {
     pub fn new(root: MapCacheRoot, producer: Arc<dyn MapBakeProducer>) -> Self {
+        Self::build(root, producer, None)
+    }
+
+    /// A manager that installs terrain shipped under `shipped` for an image
+    /// identity that matches it exactly, instead of baking that terrain.
+    pub fn with_shipped_images(
+        root: MapCacheRoot,
+        producer: Arc<dyn MapBakeProducer>,
+        shipped: ShippedMapImages,
+    ) -> Self {
+        Self::build(root, producer, Some(Arc::new(ShippedSource::new(shipped))))
+    }
+
+    fn build(
+        root: MapCacheRoot,
+        producer: Arc<dyn MapBakeProducer>,
+        shipped: Option<Arc<ShippedSource>>,
+    ) -> Self {
         Self {
             inner: Arc::new(ManagerInner {
                 root,
                 producer,
+                shipped,
                 active: Mutex::new(None),
                 next_generation: AtomicU64::new(1),
                 ready: Mutex::new(ReadyCache {
@@ -1489,16 +1581,27 @@ impl MapDemandManager {
         &self.inner.root
     }
 
-    /// Published terrain imagery for `descriptor` (baked earlier or
-    /// installed), independent of the catalogue: a missing or stale catalogue
-    /// is derived cheaply by the worker, terrain is the expensive local bake.
-    /// The returned value holds a shared lease, so capacity pruning cannot
-    /// remove that terrain while it is retained.
+    /// Published terrain imagery for `descriptor` (baked earlier, or shipped
+    /// and installed), independent of the catalogue: a missing or stale
+    /// catalogue is derived cheaply by the worker, terrain is the expensive
+    /// local bake. The returned value holds a shared lease, so capacity
+    /// pruning cannot remove that terrain while it is retained.
     pub fn ready_images(
         &self,
         descriptor: &MapProfileDescriptor,
     ) -> Result<Option<Arc<ReadyImages>>, MapCacheError> {
         self.cached_images(descriptor.image_identity())
+    }
+
+    /// Terrain shipped with this release for exactly `descriptor`'s image
+    /// identity, not yet found unusable in this process: the worker installs
+    /// it instead of baking. Reads only the small shipped description; the
+    /// worker verifies every file while installing.
+    pub fn shipped_images_available(&self, descriptor: &MapProfileDescriptor) -> bool {
+        self.inner
+            .shipped
+            .as_ref()
+            .is_some_and(|shipped| shipped.bundle(descriptor.image_identity()).is_some())
     }
 
     pub fn request(
@@ -1588,6 +1691,7 @@ impl MapDemandManager {
         };
         let thread_root = self.inner.root.clone();
         let thread_producer = Arc::clone(&self.inner.producer);
+        let thread_shipped = self.inner.shipped.clone();
         let thread_descriptor = descriptor.clone();
         let thread_predecessor = predecessor;
         let join = thread::Builder::new()
@@ -1599,6 +1703,7 @@ impl MapDemandManager {
                 run_job(
                     thread_root,
                     thread_producer,
+                    thread_shipped,
                     thread_descriptor,
                     thread_state,
                 )
@@ -1801,6 +1906,12 @@ impl MapDemandManager {
             cache.images = BTreeMap::new();
         }
     }
+
+    /// [`Self::reap`], then whether no worker is left (joined and dropped).
+    pub(crate) fn reap_idle(&self) -> bool {
+        self.reap();
+        self.inner.active.lock().is_none()
+    }
 }
 
 fn is_terminal(status: &MapJobStatus) -> bool {
@@ -1827,6 +1938,7 @@ fn retain_ready(
 fn run_job(
     root: MapCacheRoot,
     producer: Arc<dyn MapBakeProducer>,
+    shipped: Option<Arc<ShippedSource>>,
     descriptor: MapProfileDescriptor,
     state: JobThreadState,
 ) {
@@ -1844,16 +1956,20 @@ fn run_job(
         }) as Arc<dyn Fn(MapProgress) + Send + Sync>
     };
     let result = (|| {
+        let artifact = |kind, may_bake| {
+            execute_artifact(
+                &root,
+                &producer,
+                shipped.as_deref(),
+                &descriptor,
+                kind,
+                may_bake,
+                Arc::clone(&cancel),
+                Arc::clone(&progress),
+            )
+        };
         let identity = descriptor.catalogue_identity();
-        let lease = execute_artifact(
-            &root,
-            &producer,
-            &descriptor,
-            ArtifactKind::Catalogue,
-            true,
-            Arc::clone(&cancel),
-            Arc::clone(&progress),
-        )?;
+        let lease = artifact(ArtifactKind::Catalogue, true)?;
         // This shared lease keeps the catalogue from being pruned during the
         // image stage without excluding any other reader.
         let catalogue = Arc::new(ReadyCatalogue::open(
@@ -1872,29 +1988,13 @@ fn run_job(
             }
         };
         let identity = descriptor.image_identity();
-        let lease = match execute_artifact(
-            &root,
-            &producer,
-            &descriptor,
-            ArtifactKind::Images,
-            may_bake,
-            Arc::clone(&cancel),
-            Arc::clone(&progress),
-        ) {
+        let lease = match artifact(ArtifactKind::Images, may_bake) {
             Ok(lease) => lease,
             // A consented Images request joined this adopt-only job meanwhile.
             Err(MapCacheError::TerrainNotBaked)
                 if demand.load(AtomicOrdering::Acquire) == DEMAND_BAKE_IMAGES =>
             {
-                execute_artifact(
-                    &root,
-                    &producer,
-                    &descriptor,
-                    ArtifactKind::Images,
-                    true,
-                    Arc::clone(&cancel),
-                    Arc::clone(&progress),
-                )?
+                artifact(ArtifactKind::Images, true)?
             }
             Err(MapCacheError::TerrainNotBaked) => {
                 // Fail closed: an adopt-only demand never bakes terrain.
@@ -1931,17 +2031,21 @@ fn finish_job(error: MapCacheError, status: &Arc<Mutex<MapJobStatus>>, cancel: &
 }
 
 /// Bakes `artifact` unless it is already published and returns a shared lease
-/// on its ready directory.
+/// on its ready directory.  Terrain shipped with the release for exactly this
+/// image identity is installed instead of baked, with or without consent to a
+/// bake; shipped terrain found unusable falls back to `may_bake`.
 ///
-/// The exclusive per-key lock is held only while baking and publishing, and it
-/// is dropped before the lease is taken on a fresh handle.  Re-locking the
-/// exclusive handle shared is not a downgrade on Windows (LockFileEx keeps both
-/// locks), and a worker that kept an exclusive lock would exclude every other
-/// reader.  If a prune removes the directory between the two locks, the next
-/// pass finds it not ready and bakes again.
+/// The exclusive per-key lock is held only while baking (or installing) and
+/// publishing, and it is dropped before the lease is taken on a fresh handle.
+/// Re-locking the exclusive handle shared is not a downgrade on Windows
+/// (LockFileEx keeps both locks), and a worker that kept an exclusive lock
+/// would exclude every other reader.  If a prune removes the directory between
+/// the two locks, the next pass finds it not ready and bakes again.
+#[allow(clippy::too_many_arguments)]
 fn execute_artifact(
     root: &MapCacheRoot,
     producer: &Arc<dyn MapBakeProducer>,
+    shipped: Option<&ShippedSource>,
     descriptor: &MapProfileDescriptor,
     artifact: ArtifactKind,
     may_bake: bool,
@@ -1964,6 +2068,10 @@ fn execute_artifact(
     }
     required.insert(root.partial_dir(descriptor.revision(), artifact, key));
     let mut capacity_checked = false;
+    // Shipped terrain is looked up once, and only when the key is not ready;
+    // an install found unusable clears it (the source also remembers the key
+    // for later demands).
+    let mut install: Option<Option<(&ShippedSource, ShippedImages)>> = None;
     loop {
         if let Some(lease) = ready_lease(&lock_path, &ready)? {
             clear_checkpoint(&ready)?;
@@ -1972,7 +2080,13 @@ fn execute_artifact(
         if cancel.load(AtomicOrdering::Acquire) {
             return Err(MapCacheError::Cancelled);
         }
-        if !may_bake {
+        let pending = install.get_or_insert_with(|| match (artifact, shipped) {
+            (ArtifactKind::Images, Some(shipped)) => shipped
+                .bundle(descriptor.image_identity())
+                .map(|bundle| (shipped, bundle)),
+            _ => None,
+        });
+        if !may_bake && pending.is_none() {
             return Err(MapCacheError::TerrainNotBaked);
         }
         if !capacity_checked {
@@ -1996,6 +2110,23 @@ fn execute_artifact(
             artifact,
             descriptor: descriptor.clone(),
         };
+        if let Some((shipped, bundle)) = install.as_mut().and_then(Option::take) {
+            match shipped.install(
+                &bundle,
+                root,
+                &request,
+                Arc::clone(&cancel),
+                Arc::clone(&progress),
+                required.clone(),
+            )? {
+                Installed::Published(partial) => publish_partial(&partial, &ready)?,
+                // The next pass bakes with consent, or fails closed to
+                // catalogue-only without it.
+                Installed::Rejected => {}
+            }
+            drop(lock);
+            continue;
+        }
         let plan = producer.plan(&request)?.checked()?;
         let mut writer = BakeWriter::open(
             root.clone(),
@@ -2017,12 +2148,16 @@ fn execute_artifact(
                 return Err(error);
             }
         };
-        let partial = writer.finish(output)?;
-        fs::rename(partial, &ready)?;
-        sync_directory(ready.parent().unwrap())?;
-        clear_checkpoint(&ready)?;
+        publish_partial(&writer.finish(output)?, &ready)?;
         drop(lock);
     }
+}
+
+/// Atomically publish a finished partial directory as `ready`.
+fn publish_partial(partial: &Path, ready: &Path) -> Result<(), MapCacheError> {
+    fs::rename(partial, ready)?;
+    sync_directory(ready.parent().ok_or(MapCacheError::Map(MapError::Path))?)?;
+    clear_checkpoint(ready)
 }
 
 /// Ready immutable handles shared by both UI frontends.  The image handle is
@@ -2241,12 +2376,16 @@ impl MapDemandHandle {
     }
 }
 
+mod shipped;
+use shipped::{Installed, ShippedSource};
+pub use shipped::{ShippedMapImages, SHIPPED_IMAGES_NAME};
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixture;
 
 #[cfg(test)]
 mod tests {
-    use super::fixture::fixture_png;
+    use super::fixture::{fixture_png, synthetic_client_snapshot};
     use super::*;
     use nav::map::formats::{ColorFormat, Coverage, CoverageLevel, ImageManifest, PlaneBounds};
     use nav::map::identity::{CATALOGUE_SCHEMA, IMAGE_SCHEMA};
@@ -2825,53 +2964,6 @@ mod tests {
         assert!(writer.should_skip(UnitKey::Terrain { tile: key }));
         drop(writer);
         let _ = fs::remove_dir_all(root.path());
-    }
-
-    /// A minimal client snapshot for the real raster: one floor, one loc
-    /// definition, no sprites, and three plane-0 mapsquares of that floor.
-    fn synthetic_client_snapshot(dir: &Path) -> (PathBuf, PathBuf) {
-        use client::io::cache_289::synthetic_jag;
-        let (jag, snapshot) = (dir.join("jag"), dir.join("snapshot"));
-        fs::create_dir_all(&jag).unwrap();
-        fs::create_dir_all(&snapshot).unwrap();
-        let config: [(&str, &[u8]); 3] = [
-            ("flo.dat", &[0, 1, 1, 0x40, 0x80, 0x20, 0]),
-            ("loc.dat", &[0, 1, 0]),
-            ("loc.idx", &[0, 1, 0, 1]),
-        ];
-        fs::write(jag.join("config"), synthetic_jag(&config)).unwrap();
-        for sprites in ["media", "textures"] {
-            fs::write(jag.join(sprites), synthetic_jag(&[("index.dat", &[0, 0])])).unwrap();
-        }
-        // Plane 0: underlay 1 (opcode 82) with a varied explicit height;
-        // planes 1-3 empty.
-        let mut land = Vec::new();
-        for plane in 0..4 {
-            for cell in 0..64 * 64u32 {
-                if plane == 0 {
-                    land.extend([82, 1, (cell % 23) as u8 + 2]);
-                } else {
-                    land.push(0);
-                }
-            }
-        }
-        let (mut index, mut maps) = (Vec::new(), Vec::new());
-        for (file, x) in [50u16, 51, 52].into_iter().enumerate() {
-            index.extend((x << 8 | 50).to_be_bytes());
-            index.extend((file as u16).to_be_bytes());
-            index.extend(u16::MAX.to_be_bytes());
-            index.push(0);
-            maps.extend((file as u32).to_le_bytes());
-            maps.extend((land.len() as u32).to_le_bytes());
-            maps.extend(&land);
-        }
-        fs::write(
-            jag.join("versionlist"),
-            synthetic_jag(&[("map_index", index.as_slice())]),
-        )
-        .unwrap();
-        fs::write(snapshot.join("maps.bin"), maps).unwrap();
-        (jag, snapshot)
     }
 
     /// Bake the synthetic snapshot through the production image path

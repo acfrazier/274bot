@@ -199,7 +199,7 @@ owners.
 | `map/identity.rs` | map identity byte layouts | independent image/catalogue keys; exact encoder/dependency policy |
 | `map/poi.rs` | source-tagged discovery evidence | classifier, physical placements and separate nav-bound stands; not account eligibility |
 | `map/spatial.rs` | map geometry and selection | north-up transforms, 24-slot LOD selection, radius-16 optional snap |
-| `map/formats.rs` | checked map payload codecs | client catalogue, image manifest and data-only `274P`/1 navpois |
+| `map/formats.rs` | checked map payload codecs | client catalogue, image manifest, shipped-terrain description and data-only `274P`/1 navpois |
 | `map/cache.rs` | publication readers and checkpoints | typed partial/ready entries; bounded reads and requested-payload verification |
 | `map/records.rs` | offset-only maps.bin access | header index plus one reusable record buffer, not an archive/world copy |
 | `map/tests.rs` | map contract boundaries | identity, malformed data, bridge planes, publication and spatial behavior |
@@ -267,6 +267,21 @@ canonical complete directory and validated manifest; ordinary image open does
 not hash/decode the pyramid. Resume verifies completed units and their exact
 policy identity. The cache-job owner still owns the prepared-cache `Arc`, locks,
 atomic publication, cancellation and quotas. Renderer/UI integration is separate.
+
+Release packages ship the 289 terrain (operator decision 2026-09-26): release
+packaging bakes the nav bundle's pinned client cache through the production
+map-cache path and ships the published image directory as
+`map/<revision>/images/<key>/` under the install resource root (beside `nav/`),
+described by `map/<revision>/274bot.mapimages.json` (`ShippedImages`: image
+identity, key, the image manifest's receipt, tile totals). The cache job
+installs it only for exactly the bound client cache's image identity: every
+tile's length and SHA-256 is checked against the pinned manifest as it is
+copied into the key's `.partial` directory, recorded by receipt and published
+by the same writer and rename as a local bake, so readers never see a second
+loader. A published key is never replaced, and shipped files are only read.
+Foreign shipped terrain is ignored; damaged or partial shipped files fail
+closed (the local bake stays behind the operator's consent and adopts the
+tiles already verified).
 
 
 ### script
@@ -346,6 +361,8 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
 | `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
 | `walk_map.rs` | shared WalkTo map model | catalogue, selection, guarded Walk/Teleport, live/script/manual routes |
+| `map_cache.rs`, `map_cache/shipped.rs` | WalkTo map cache lifecycle | demand, bake/publication, and installing release-shipped terrain that matches the bound image identity |
+| `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake |
 | `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
 | `memory.rs` | opt-in memory harness | `BOT_MEMORY_N` only |
