@@ -6,7 +6,7 @@
 //! every profile a later job in that batch also writes is superseded: its
 //! value never becomes the durable one on its own. Each result names the
 //! later jobs of its commit that wrote one of its profiles, so the session
-//! can tell which of the job's live effects they replace.
+//! can tell which of the job's settings they replace.
 
 use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(any(test, feature = "test-support"))]

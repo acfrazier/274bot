@@ -102,8 +102,9 @@ pub struct StartSettled {
 }
 
 /// What a running slot learns once a profile write is durable. Writes of
-/// one profile saved in one commit each deliver their own effect; only a
-/// later one with the same effect replaces an earlier one's.
+/// one profile saved in one commit each settle and deliver their own
+/// setting; only a later one with the same setting replaces an earlier
+/// one's.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArmMirror {
     /// Nothing live changes (assignments, tutorial flag, render prefs).
@@ -118,26 +119,25 @@ pub enum ArmMirror {
     Remember,
     /// A card's parameters: posted to the run captured at edit time, if
     /// any, and reported through [`OperatorSession::take_settings_writes`].
-    ScriptSettings(Option<LiveSettings>),
+    ScriptSettings {
+        /// The card's identity key (its bag in the profile).
+        card: String,
+        live: Option<LiveSettings>,
+    },
 }
 
 impl ArmMirror {
-    /// Whether a running slot learns anything from this mirror.
-    fn is_live(&self) -> bool {
-        !matches!(self, Self::None | Self::ScriptSettings(None))
-    }
-
     /// Whether this mirror, on a later write committed together with
-    /// `earlier`'s, sets the same live state, so `earlier` need not reach
-    /// the slot. A push to the same card's run replaces an earlier one (a
-    /// newer generation means the earlier run is gone).
+    /// `earlier`'s, sets the same setting, so `earlier` need not settle or
+    /// reach the slot on its own. Parameters replace the same card's: the
+    /// later edit captured that card's current run, if any.
     fn replaces(&self, earlier: &Self) -> bool {
         match (self, earlier) {
             (Self::AutoLogin(_), Self::AutoLogin(_))
             | (Self::Guardian { .. }, Self::Guardian { .. })
             | (Self::Remember, Self::Remember) => true,
-            (Self::ScriptSettings(Some(later)), Self::ScriptSettings(Some(earlier))) => {
-                later.identity == earlier.identity
+            (Self::ScriptSettings { card: later, .. }, Self::ScriptSettings { card, .. }) => {
+                later == card
             }
             _ => false,
         }
@@ -1433,18 +1433,19 @@ impl<Io> OperatorSession<Io> {
             }
         }
         let member = pending.member;
-        let settings = matches!(pending.mirror, ArmMirror::ScriptSettings(_));
+        let settings = matches!(pending.mirror, ArmMirror::ScriptSettings { .. });
         // A superseded write (later writes in this commit wrote every row it
-        // did) is durable only inside their rows. It still settles on its own
-        // when it carries a live effect that no later write of the member in
-        // the commit replaces: the slot learns every distinct change of a
-        // commit, never a replaced value. Otherwise it is Cancelled whatever
-        // the commit did: only the write owning the row fails, restores and
-        // reports, once.
-        let own_effect =
-            written.superseded && self.keeps_live_effect(&member, &pending.mirror, &written.later);
+        // did) is durable only inside their rows. If the commit succeeded, it
+        // still settles on its own when it carries a setting (a live effect
+        // or a card's parameters) that no later write of the member in the
+        // commit replaces: each distinct change is saved, reported and
+        // applied, and the slot never sees a replaced value. Otherwise it is
+        // Cancelled: a failed commit fails, restores and reports once,
+        // through the write owning the row.
+        let own_setting =
+            written.superseded && self.keeps_own_setting(&member, &pending.mirror, &written.later);
         let result = match written.result {
-            Ok(()) if !written.superseded || own_effect => {
+            Ok(()) if !written.superseded || own_setting => {
                 self.operations.set(written.op, &member, Outcome::Completed);
                 SettingsResult::Saved(self.apply_mirror(&member, pending.mirror, committed))
             }
@@ -1474,10 +1475,11 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    /// Whether a superseded write still has a live effect of its own: one
-    /// that no later write of `member` in its commit (`later`) replaces.
-    fn keeps_live_effect(&self, member: &str, mirror: &ArmMirror, later: &[OperationId]) -> bool {
-        mirror.is_live()
+    /// Whether a superseded write still settles on its own: it carries a
+    /// setting (a live effect or a card's parameters) that no later write
+    /// of `member` in its commit (`later`) replaces.
+    fn keeps_own_setting(&self, member: &str, mirror: &ArmMirror, later: &[OperationId]) -> bool {
+        !matches!(mirror, ArmMirror::None)
             && !later
                 .iter()
                 .filter_map(|op| self.writes.get(op))
@@ -1521,7 +1523,7 @@ impl<Io> OperatorSession<Io> {
                     play.remember_profile(profile);
                 }
             }
-            ArmMirror::ScriptSettings(live) => return deliver_settings(play, name, live),
+            ArmMirror::ScriptSettings { live, .. } => return deliver_settings(play, name, live),
         }
         LiveDelivery::NotRunning
     }

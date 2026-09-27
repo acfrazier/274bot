@@ -53,7 +53,8 @@ pub struct SyncReport {
     pub card_name: String,
     pub skipped: Vec<(String, String)>,
     pub saved: usize,
-    /// A newer edit of the member owns its value.
+    /// A newer edit of this card's parameters on the member (on a failed
+    /// save, a newer write of the member) owns its value.
     pub superseded: usize,
     pub failed: Vec<(String, String)>,
     pub delivered: usize,
@@ -345,7 +346,11 @@ impl Scripts {
                     bag: Arc::clone(&bag),
                 }
             });
-            match core.save_profile(row, ArmMirror::ScriptSettings(live), "apply to all") {
+            let mirror = ArmMirror::ScriptSettings {
+                card: card.clone(),
+                live,
+            };
+            match core.save_profile(row, mirror, "apply to all") {
                 Ok(write) => pending.push((write, target)),
                 Err(error) => failed.push((target, error)),
             }
