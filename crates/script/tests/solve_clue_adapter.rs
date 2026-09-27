@@ -434,59 +434,70 @@ export default class T extends TaskBot {
 
 /// Frozen JiveDragons' initial bank (`walkToBank(SITE.bank, log)`, frozen
 /// `SolveClue.ts:96-105`): one resilient world walk to the bank stand at
-/// radius 3 with the trail's teleports allowed, settled by posted arrival.
+/// radius 3, settled by posted arrival, with the trail's teleport policy:
+/// allowed by default, off once the card's `ClueExecutor.setTeleports(false)`.
 #[test]
 fn walk_to_bank_is_one_trail_walk_to_the_stand() {
-    let src = r#"
-import { walkToBank } from '../../api/ai/clues/SolveClue.js';
-export default class T extends LoopingBot {
-    async loop() {
+    for (set_teleports, teleports) in [("", true), ("ClueExecutor.setTeleports(false);", false)] {
+        let src = format!(
+            r#"
+import {{ walkToBank }} from '../../api/ai/clues/SolveClue.js';
+import {{ ClueExecutor }} from '../../api/ai/clues/ClueExecutor.js';
+export default class T extends LoopingBot {{
+    async loop() {{
         if (globalThis.__did) return;
         globalThis.__did = true;
         globalThis.__ok = null;
-        globalThis.__ok = await walkToBank({ x: 2946, z: 3368, level: 0 }, () => {});
+        {set_teleports}
+        globalThis.__ok = await walkToBank({{ x: 2946, z: 3368, level: 0 }}, () => {{}});
+    }}
+}}
+"#
+        );
+        let iso = spawn(&src);
+        let far = Scene {
+            here: Some(TileInput {
+                x: 2900,
+                z: 3400,
+                level: 0,
+            }),
+            ..Scene::default()
+        };
+        post_scene(&iso, 1, &[], &far);
+        tick(&iso, 1);
+        let requests = iso.drain_interacts();
+        assert!(
+            matches!(
+                requests.as_slice(),
+                [InteractReq::WalkNear {
+                    request_id,
+                    x: 2946,
+                    z: 3368,
+                    level: 0,
+                    radius: 3,
+                    allow_teleports,
+                    allow_wilderness: true,
+                    allow_bank_fetch: true,
+                    ..
+                }] if *request_id != 0 && *allow_teleports == teleports
+            ),
+            "teleports {teleports}: {requests:?}"
+        );
+        assert_eq!(iso.probe("__ok").unwrap(), serde_json::Value::Null);
+        let near = Scene {
+            here: Some(TileInput {
+                x: 2944,
+                z: 3370,
+                level: 0,
+            }),
+            ..Scene::default()
+        };
+        post_scene(&iso, 2, &[], &near);
+        tick(&iso, 2);
+        assert_eq!(iso.probe("__ok").unwrap(), true, "arrival within 3 settles");
+        assert!(iso.drain_interacts().is_empty());
+        iso.join();
     }
-}
-"#;
-    let iso = spawn(src);
-    let far = Scene {
-        here: Some(TileInput {
-            x: 2900,
-            z: 3400,
-            level: 0,
-        }),
-        ..Scene::default()
-    };
-    post_scene(&iso, 1, &[], &far);
-    tick(&iso, 1);
-    assert!(matches!(
-        iso.drain_interacts().as_slice(),
-        [InteractReq::WalkNear {
-            request_id,
-            x: 2946,
-            z: 3368,
-            level: 0,
-            radius: 3,
-            allow_teleports: true,
-            allow_wilderness: true,
-            allow_bank_fetch: true,
-            ..
-        }] if *request_id != 0
-    ));
-    assert_eq!(iso.probe("__ok").unwrap(), serde_json::Value::Null);
-    let near = Scene {
-        here: Some(TileInput {
-            x: 2944,
-            z: 3370,
-            level: 0,
-        }),
-        ..Scene::default()
-    };
-    post_scene(&iso, 2, &[], &near);
-    tick(&iso, 2);
-    assert_eq!(iso.probe("__ok").unwrap(), true, "arrival within 3 settles");
-    assert!(iso.drain_interacts().is_empty());
-    iso.join();
 }
 
 /// Disabled is validate-false, not a begin: the held row stays unclaimed, the

@@ -119,14 +119,15 @@ export function heldClueLikeId() {
         : null;
 }
 
+// Frozen `walkToBank`: `{ ...trailWalkOpts(log, 3), attempts: 6,
+// timeoutMs: 300_000 }`; Rust owns the trail teleport policy half.
 export function walkToBank(tile, log) {
     if (crossesClueDuel(tile)) return walkAcrossClueDuel(tile, 3, log);
     return Traversal.walkResilient(tile, {
+        ...clueCall({ op: 'trailWalkOpts' }),
         radius: 3,
         attempts: 6,
         timeoutMs: 300_000,
         log,
-        useTeleportCatalog: true,
-        policy: { useTeleports: true, distanceBeforeTeleport: 40 },
     });
 }

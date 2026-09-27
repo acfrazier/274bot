@@ -1963,8 +1963,36 @@ pub fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Value {
         // live clue, read by the shim as one crossing. `[]` sends the caller's
         // own idle line, exactly as the frozen no-clue branch does.
         "paint" => RUNTIME.with(|rt| paint_rows(&rt.borrow())),
+        // Frozen `ClueExecutor.setTeleports(on)` and the policy half of
+        // `trailWalkOpts` (`ClueExecutor.ts:109-124`): the card's choice
+        // stays here for the isolate's life, and the bank return walk reads
+        // its options from it.
+        "setTeleports" => {
+            let on = input.get("on").and_then(Value::as_bool).unwrap_or(false);
+            TRAIL_TELEPORTS.with(|slot| slot.set(on));
+            Value::Null
+        }
+        "trailWalkOpts" => {
+            if TRAIL_TELEPORTS.with(std::cell::Cell::get) {
+                json!({
+                    "useTeleportCatalog": true,
+                    "policy": { "useTeleports": true, "distanceBeforeTeleport": TELEPORT_MIN_SPAN },
+                })
+            } else {
+                json!({ "useTeleportCatalog": false, "policy": { "useTeleports": false } })
+            }
+        }
         _ => json!({ "kind": "notImpl", "reason": "unknown clue op" }),
     }
+}
+
+/// Frozen `TELEPORT_MIN_SPAN` (`ClueExecutor.ts:53`).
+const TELEPORT_MIN_SPAN: i32 = 40;
+
+thread_local! {
+    /// Frozen `teleportsEnabled` (`ClueExecutor.ts:109`), true until the
+    /// card's `setTeleports` says otherwise.
+    static TRAIL_TELEPORTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
 #[cfg(test)]

@@ -1,13 +1,7 @@
-// Teleport policy is posted with each Rust-owned clue machine run; the catalog's
-// global setter is retained as a thin setting seat for source compatibility.
-let teleports = true;
-
+// Frozen `ClueExecutor.setTeleports`: the card's trail teleport choice is
+// held by the Rust clue module, where the bank return walk reads it.
 export class ClueExecutor {
     static setTeleports(enabled) {
-        teleports = enabled === true;
-    }
-
-    static teleportsEnabled() {
-        return teleports;
+        globalThis.rustyscript.functions.__rs2b0t_clue({ op: 'setTeleports', on: !!enabled });
     }
 }
