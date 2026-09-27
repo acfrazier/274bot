@@ -1680,7 +1680,13 @@ fn widget_text_array<'s>(
         let o = v8::Object::new(scope);
         let component_id = num(scope, row.component_id() as f64);
         set(scope, o, "component_id", component_id)?;
-        let text = js_string(scope, row.text())?;
+        // An inventory component (a posted item count) has no text: frozen
+        // `reader.ifText` reads null for it, never ''.
+        let text = if row.item_count() >= 0 && row.text().is_empty() {
+            v8::null(scope).into()
+        } else {
+            js_string(scope, row.text())?
+        };
         set(scope, o, "text", text)?;
         let item_count = num(scope, row.item_count() as f64);
         set(scope, o, "item_count", item_count)?;

@@ -239,6 +239,7 @@ export default class T extends LoopingBot {
             partner: reader.ifText(6671),
             waiting: reader.ifText(6684),
             confirm: reader.ifText(6571),
+            stake: reader.ifText(6669),
             missing: reader.ifText(1),
             bad: reader.ifText('nope'),
         };
@@ -257,6 +258,11 @@ export default class T extends LoopingBot {
             text: "Waiting for other player...",
             item_count: -1,
         },
+        WidgetTextInput {
+            component_id: 6669,
+            text: "",
+            item_count: 0,
+        },
     ];
     let mut snap = base_snapshot();
     snap.main_modal_id = 6575;
@@ -265,6 +271,11 @@ export default class T extends LoopingBot {
     assert_eq!(probe["partner"], "Zezima");
     assert_eq!(probe["waiting"], "Waiting for other player...");
     assert_eq!(probe["confirm"], serde_json::Value::Null);
+    assert_eq!(
+        probe["stake"],
+        serde_json::Value::Null,
+        "an inventory component has no text"
+    );
     assert_eq!(probe["missing"], serde_json::Value::Null);
     assert_eq!(probe["bad"], serde_json::Value::Null);
 
