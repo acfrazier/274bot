@@ -9,7 +9,7 @@ api = { path = "../api" }
 client = { workspace = true }
 crossterm = "0.29"
 frontend-core = { path = "../frontend-core" }
-host-play = { path = "../host-play" }
+host-play = { path = "../host-play", features = ["live-harness"] }
 libc = "0.2"
 nav = { path = "../nav" }
 ratatui = "0.30"

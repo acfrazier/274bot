@@ -223,17 +223,7 @@ impl Session {
         &self,
         card: &script::JsCard,
     ) -> Result<Vec<(String, String)>, String> {
-        script::resolve_sibling_modules(
-            &card.path,
-            &card.origin,
-            self.scripts.js.cache(),
-            script::CacheMeta {
-                kind: card.kind,
-                source: card.source,
-                shape: None,
-                api_family: Some(card.api_family.as_str().into()),
-            },
-        )
+        host_play::live_start::card_siblings(&self.scripts.js, card)
     }
 
     /// Load a local JS/TS file into the library (registers a picker card,

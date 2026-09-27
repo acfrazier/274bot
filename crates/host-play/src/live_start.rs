@@ -105,6 +105,72 @@ impl PendingCatalogStart {
     }
 }
 
+/// The same-folder sibling modules a card's isolate resolves at Start.
+pub fn card_siblings(
+    library: &script::JsLibrary,
+    card: &script::JsCard,
+) -> Result<Vec<(String, String)>, String> {
+    script::resolve_sibling_modules(
+        &card.path,
+        &card.origin,
+        library.cache(),
+        script::CacheMeta {
+            kind: card.kind,
+            source: card.source,
+            shape: None,
+            api_family: Some(card.api_family.as_str().into()),
+        },
+    )
+}
+
+/// A live fleet launch, as panel-play and tui-play both stash it: each
+/// member's catalog card transpiled, its harness bag (schema defaults,
+/// `settings` overrides, `inject`) with the member's own settings merged
+/// last, its sibling modules and the scenario's fixture `loadouts`, in the
+/// plan's Start order. The live harness Starts a card past its catalog dim.
+#[cfg(feature = "live-harness")]
+pub fn fleet_catalog_starts(
+    fleet: scenario::FleetStart,
+    names: &[String],
+    library: &mut script::JsLibrary,
+    settings: &script::ScriptSettingsStore,
+    inject: Option<&Map<String, Value>>,
+    loadouts: &[script::Loadout],
+) -> Result<Vec<PendingCatalogStart>, String> {
+    let catalog = script::ScriptSource::Catalog;
+    fleet
+        .members(names)?
+        .into_iter()
+        .map(|member| {
+            let name = member.card;
+            library
+                .ensure_js(catalog, name)
+                .map_err(|e| format!("transpile {name}: {e}"))?;
+            let card = library
+                .get(catalog, name)
+                .cloned()
+                .ok_or_else(|| format!("$RS2B0T catalog has no {name} card"))?;
+            let mut bag = settings.merged_bag(catalog, name, &card.settings_schema, inject);
+            bag.extend(
+                member
+                    .settings
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), Value::String(value))),
+            );
+            let siblings = card_siblings(library, &card)?;
+            Ok(PendingCatalogStart::load(
+                names[member.slot].clone(),
+                card.js,
+                card.shape,
+                Some(bag),
+                siblings,
+                loadouts.to_vec(),
+            )
+            .with_delay_after_peers(member.delay_after_peers))
+        })
+        .collect()
+}
+
 /// The Play-owned handles a Start or setup settlement needs. The pump asks
 /// for them only on those paths, not on every frame.
 #[derive(Clone, Default)]

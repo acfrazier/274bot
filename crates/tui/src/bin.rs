@@ -1006,45 +1006,15 @@ impl TuiSession {
         // A fleet launch Starts the scenario's own card on each member slot.
         if let Some(fleet) = fleet_start {
             self.fill_rs2b0t_cards_once();
-            let mut starts = Vec::new();
-            for member in fleet.members(&names)? {
-                let card_name = member.card;
-                self.scripts
-                    .js
-                    .ensure_js(script::ScriptSource::Catalog, card_name)
-                    .map_err(|e| format!("transpile {card_name}: {e}"))?;
-                let card = self
-                    .scripts
-                    .js
-                    .get(script::ScriptSource::Catalog, card_name)
-                    .cloned()
-                    .ok_or_else(|| format!("$RS2B0T catalog has no {card_name} card"))?;
-                let mut bag = self
-                    .pending_settings_bag(
-                        script::ScriptSource::Catalog,
-                        card_name,
-                        &card.settings_schema,
-                    )
-                    .unwrap_or_default();
-                bag.extend(
-                    member
-                        .settings
-                        .into_iter()
-                        .map(|(key, value)| (key.to_string(), serde_json::Value::String(value))),
-                );
-                let siblings = self.sibling_modules_for_card(&card)?;
-                starts.push(
-                    PendingCatalogStart::load(
-                        names[member.slot].clone(),
-                        card.js,
-                        card.shape,
-                        Some(bag),
-                        siblings,
-                        fixture_loadouts.clone(),
-                    )
-                    .with_delay_after_peers(member.delay_after_peers),
-                );
-            }
+            let scripts = &mut self.scripts;
+            let starts = live_start::fleet_catalog_starts(
+                fleet,
+                &names,
+                &mut scripts.js,
+                &scripts.legacy,
+                scripts.inject.as_ref(),
+                &fixture_loadouts,
+            )?;
             *self.pending_script.lock().unwrap() = starts;
         // Exact example files Load as File cards and select by identity_id.
         } else if let Some(file_name) = start_file {
@@ -1138,17 +1108,7 @@ impl TuiSession {
         &self,
         card: &script::JsCard,
     ) -> Result<Vec<(String, String)>, String> {
-        script::resolve_sibling_modules(
-            &card.path,
-            &card.origin,
-            self.scripts.js.cache(),
-            script::CacheMeta {
-                kind: card.kind,
-                source: card.source,
-                shape: None,
-                api_family: Some(card.api_family.as_str().into()),
-            },
-        )
+        live_start::card_siblings(&self.scripts.js, card)
     }
 
     fn map_members(&self) -> bool {

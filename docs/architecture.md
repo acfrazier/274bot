@@ -100,8 +100,9 @@ claim that `e2e` owns those crates' production behavior.
   handles a surface passes to `Play::try_spawn_slot`.
 - **`frontend-core` → `api`** carries only the `api::hostlog` facade: the
   operator log store is its sink.
-- **`host-play` → `scenario`** is optional (feature-gated harness), not a
-  default required edge. A required `[target.*.dependencies]` edge does
+- **`host-play` → `scenario`** is optional (feature-gated harness:
+  `memory-profile`, and `live-harness` for the fleet launch panel and TUI
+  share), not a default required edge. A required `[target.*.dependencies]` edge does
   **not** satisfy an optional-only allow. `optional = true` on a target
   table stays optional. `{ workspace = true, optional = true }` is read
   from the **member** table. `[workspace.dependencies]` cannot set
@@ -355,7 +356,7 @@ tiles already verified).
 | `catalog_core_ranging.rs` | ranging-guild proof witness | post-Start work only |
 | `paired_core.rs` | paired full-cycle proof witness | Air, Mule, Flax, Duel |
 | `live_gate.rs` | live proof gate for every scenario watch | which shared witness a run qualifies under (paired proofs refuse without the pair gate), per-poll core-gate verdicts, the PASS hold: Pending core first, then the 45 s clean-stop grace; panel and `tui-play` both call it |
-| `live_start.rs` | live catalog Start transaction | stashed isolate Starts fired on StartScript, witness armed immediately before each actual Start, setup failures fail the armed witness |
+| `live_start.rs` | live catalog Start transaction | stashed isolate Starts fired on StartScript, witness armed immediately before each actual Start, setup failures fail the armed witness; the fleet launch panel and `tui-play` both stash (`fleet_catalog_starts`, feature `live-harness`) |
 | `script_runtime.rs` | per-slot observe, dispatch, and nav continuation | script wall and walk continuation |
 | `route_inspect.rs` | inspect off-pump job | admission, calculation, publication |
 | `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
