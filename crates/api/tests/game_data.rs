@@ -309,7 +309,7 @@ const GREEN_DISPLAY: &[&str] = &[
 ];
 
 #[test]
-fn generated_drop_tables_publish_four_combat_rows_with_alias_evidence() {
+fn generated_drop_tables_publish_five_combat_rows_with_alias_evidence() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");
         assert_eq!(
@@ -317,7 +317,13 @@ fn generated_drop_tables_publish_four_combat_rows_with_alias_evidence() {
                 .iter()
                 .map(|row| row.name.as_str())
                 .collect::<Vec<_>>(),
-            ["Giant", "Moss giant", "Fire giant", "Green dragon"]
+            [
+                "Giant",
+                "Moss giant",
+                "Fire giant",
+                "Green dragon",
+                "Kalphite Queen"
+            ]
         );
         assert!(data.drop_table("Hill Giant").is_none());
 
@@ -365,6 +371,19 @@ fn generated_drop_tables_publish_four_combat_rows_with_alias_evidence() {
         let fire = data.drop_table("Fire giant").expect("fire row");
         assert!(fire.display_names.iter().any(|name| name == "Big bones"));
         assert!(fire.display_names.iter().any(|name| name == "Lobster"));
+        let queen = data
+            .drop_table("Kalphite Queen")
+            .expect("explicit flying-queen death-drop row");
+        assert_eq!(queen.npc_alias, "kalphite_flyingqueen");
+        assert_eq!(queen.npc_id, 1160);
+        assert_eq!(queen.source_block, "ai_queue3:kalphite_flyingqueen");
+        let noted_wine = queen
+            .items
+            .iter()
+            .find(|item| item.alias == "cert_wine_of_zamorak")
+            .expect("noted KQ wine keeps certificate identity");
+        assert_eq!(noted_wine.id, 246);
+        assert_eq!(noted_wine.name, "Wine of zamorak");
         assert!(data.drop_table("unknown").is_none());
     }
 }

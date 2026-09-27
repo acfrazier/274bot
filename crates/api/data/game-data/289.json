@@ -178,6 +178,11 @@
         "sha256": "a1fac9f721daab99848f0cb30d8eb59ee880ed01a6ce095cd5ee28496cbc3a13"
       },
       {
+        "path": "scripts/areas/area_kalphite/configs/kalphite.npc",
+        "bytes": 5651,
+        "sha256": "619c213282f6485e2687a75b1dd61b0b69e712ff058aea658d1fbed59b88835f"
+      },
+      {
         "path": "scripts/drop tables/scripts/giant.rs2",
         "bytes": 2248,
         "sha256": "ac38239a050771542e019ec1e0cc1e5b0ffb61791a2fdf4afd723971a7c2d8a6"
@@ -196,6 +201,11 @@
         "path": "scripts/drop tables/scripts/green_dragon.rs2",
         "bytes": 2051,
         "sha256": "41bdc2b9fa12af871ab98e5e0c93534a9e9299bb081271fcb32a45367d2c1637"
+      },
+      {
+        "path": "scripts/drop tables/scripts/kalphite_queen.rs2",
+        "bytes": 4036,
+        "sha256": "5e1c42893abcd571c656e417e700a9a70319919b0c35e7725ba3cadaba120865"
       },
       {
         "path": "scripts/drop tables/scripts/shared_droptables.rs2",
@@ -69651,6 +69661,195 @@
         "Uncut ruby",
         "Uncut sapphire",
         "Water rune"
+      ]
+    },
+    {
+      "npc_alias": "kalphite_flyingqueen",
+      "npc_id": 1160,
+      "name": "Kalphite Queen",
+      "source_block": "ai_queue3:kalphite_flyingqueen",
+      "items": [
+        {
+          "alias": "adamant_spear",
+          "id": 1245,
+          "name": "Adamant spear"
+        },
+        {
+          "alias": "amulet_of_power",
+          "id": 1731,
+          "name": "Amulet of power"
+        },
+        {
+          "alias": "bloodrune",
+          "id": 565,
+          "name": "Blood rune"
+        },
+        {
+          "alias": "chaos_talisman",
+          "id": 1452,
+          "name": "Chaos talisman"
+        },
+        {
+          "alias": "deathrune",
+          "id": 560,
+          "name": "Death rune"
+        },
+        {
+          "alias": "dragon_chainbody",
+          "id": 3140,
+          "name": "Dragon chainbody"
+        },
+        {
+          "alias": "dragon_spear",
+          "id": 1249,
+          "name": "Dragon spear"
+        },
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune"
+        },
+        {
+          "alias": "keyhalf1",
+          "id": 985,
+          "name": "Half of a key"
+        },
+        {
+          "alias": "keyhalf2",
+          "id": 987,
+          "name": "Half of a key"
+        },
+        {
+          "alias": "iron_arrow",
+          "id": 884,
+          "name": "Iron arrow"
+        },
+        {
+          "alias": "lava_battlestaff",
+          "id": 3053,
+          "name": "Lava battlestaff"
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune"
+        },
+        {
+          "alias": "lobster",
+          "id": 379,
+          "name": "Lobster"
+        },
+        {
+          "alias": "mithril_arrow",
+          "id": 888,
+          "name": "Mithril arrow"
+        },
+        {
+          "alias": "naturerune",
+          "id": 561,
+          "name": "Nature rune"
+        },
+        {
+          "alias": "nature_talisman",
+          "id": 1462,
+          "name": "Nature talisman"
+        },
+        {
+          "alias": "bigoysterpearls",
+          "id": 413,
+          "name": "Oyster pearls"
+        },
+        {
+          "alias": "rune_arrow",
+          "id": 892,
+          "name": "Rune arrow"
+        },
+        {
+          "alias": "rune_axe",
+          "id": 1359,
+          "name": "Rune axe"
+        },
+        {
+          "alias": "rune_chainbody",
+          "id": 1113,
+          "name": "Rune chainbody"
+        },
+        {
+          "alias": "rune_javelin",
+          "id": 830,
+          "name": "Rune javelin"
+        },
+        {
+          "alias": "rune_spear",
+          "id": 1247,
+          "name": "Rune spear"
+        },
+        {
+          "alias": "rune_warhammer",
+          "id": 1347,
+          "name": "Rune warhammer"
+        },
+        {
+          "alias": "dragonshield_a",
+          "id": 2366,
+          "name": "Shield left half"
+        },
+        {
+          "alias": "uncut_diamond",
+          "id": 1617,
+          "name": "Uncut diamond"
+        },
+        {
+          "alias": "uncut_emerald",
+          "id": 1621,
+          "name": "Uncut emerald"
+        },
+        {
+          "alias": "uncut_ruby",
+          "id": 1619,
+          "name": "Uncut ruby"
+        },
+        {
+          "alias": "uncut_sapphire",
+          "id": 1623,
+          "name": "Uncut sapphire"
+        },
+        {
+          "alias": "cert_wine_of_zamorak",
+          "id": 246,
+          "name": "Wine of zamorak"
+        }
+      ],
+      "display_names": [
+        "Adamant spear",
+        "Amulet of power",
+        "Blood rune",
+        "Chaos talisman",
+        "Death rune",
+        "Dragon chainbody",
+        "Dragon spear",
+        "Fire rune",
+        "Half of a key",
+        "Iron arrow",
+        "Lava battlestaff",
+        "Law rune",
+        "Lobster",
+        "Mithril arrow",
+        "Nature rune",
+        "Nature talisman",
+        "Oyster pearls",
+        "Rune arrow",
+        "Rune axe",
+        "Rune chainbody",
+        "Rune javelin",
+        "Rune spear",
+        "Rune warhammer",
+        "Shield left half",
+        "Uncut diamond",
+        "Uncut emerald",
+        "Uncut ruby",
+        "Uncut sapphire",
+        "Wine of zamorak"
       ]
     }
   ],
@@ -164449,7 +164648,13 @@
     "confirm_accept": 6520,
     "select_partner": 6671,
     "select_status": 6684,
-    "confirm_status": 6571
+    "confirm_status": 6571,
+    "select_mine": 6669,
+    "select_theirs": 6670,
+    "confirm_mine": 6507,
+    "confirm_theirs": 6508,
+    "obstacles": 6732,
+    "options_varp": 286
   },
   "special": {
     "energy_varp": 300,

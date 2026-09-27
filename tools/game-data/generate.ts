@@ -21,10 +21,12 @@ const decoderSources = [
 ];
 const dropContentFiles = [
     'scripts/_unpack/225/all.npc',
+    'scripts/areas/area_kalphite/configs/kalphite.npc',
     'scripts/drop tables/scripts/giant.rs2',
     'scripts/drop tables/scripts/moss_giant.rs2',
     'scripts/drop tables/scripts/fire_giant.rs2',
     'scripts/drop tables/scripts/green_dragon.rs2',
+    'scripts/drop tables/scripts/kalphite_queen.rs2',
     'scripts/drop tables/scripts/shared_droptables.rs2',
 ];
 export const gatherContentFiles = [
@@ -651,20 +653,27 @@ export function extractPrayerFacts(content: string) {
 
 export function extractDuelControls(content: string) {
     const interfaces = parsePack(fs.readFileSync(path.join(content, 'pack/interface.pack'), 'utf8'));
-    const required = (name: string) => {
-        const id = interfaces.get(name);
+    const varps = parsePack(fs.readFileSync(path.join(content, 'pack/varp.pack'), 'utf8'));
+    const required = (table: Map<string, number>, name: string) => {
+        const id = table.get(name);
         if (id === undefined) throw new Error(`duel: missing ${name}`);
         return id;
     };
     return {
-        select_modal: required('duel_select_type'),
-        confirm_modal: required('duel_confirm'),
-        win_modal: required('duel_win'),
-        select_accept: required('duel_select_type:accept'),
-        confirm_accept: required('duel_confirm:accept'),
-        select_partner: required('duel_select_type:otherplayer'),
-        select_status: required('duel_select_type:status'),
-        confirm_status: required('duel_confirm:status'),
+        select_modal: required(interfaces, 'duel_select_type'),
+        confirm_modal: required(interfaces, 'duel_confirm'),
+        win_modal: required(interfaces, 'duel_win'),
+        select_accept: required(interfaces, 'duel_select_type:accept'),
+        confirm_accept: required(interfaces, 'duel_confirm:accept'),
+        select_partner: required(interfaces, 'duel_select_type:otherplayer'),
+        select_status: required(interfaces, 'duel_select_type:status'),
+        confirm_status: required(interfaces, 'duel_confirm:status'),
+        select_mine: required(interfaces, 'duel_select_type:inv'),
+        select_theirs: required(interfaces, 'duel_select_type:otherinv'),
+        confirm_mine: required(interfaces, 'duel_confirm:inv'),
+        confirm_theirs: required(interfaces, 'duel_confirm:otherinv'),
+        obstacles: required(interfaces, 'duel_select_type:obstacles'),
+        options_varp: required(varps, 'dueloptions'),
     };
 }
 function parseNamedConstant(text: string, name: string) {
@@ -931,22 +940,23 @@ function parseDropBlocks(content: string) {
 }
 
 function parseDropNpcs(content: string) {
-    const relative = dropContentFiles.find((file) => file.endsWith('.npc'))!;
-    const file = path.join(content, relative);
-    if (!fs.existsSync(file)) throw new Error(`missing content input ${relative}`);
     const rows = new Map<string, { name?: string; death_drop?: string }>();
-    let current: string | null = null;
-    for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
-        const line = raw.trim();
-        const head = /^\[([a-z0-9_]+)\]$/.exec(line);
-        if (head) {
-            current = head[1];
-            if (rows.has(current)) throw new Error(`duplicate npc config ${current}`);
-            rows.set(current, {});
-        } else if (current && line.startsWith('name=')) {
-            rows.get(current)!.name = line.slice('name='.length);
-        } else if (current && line.startsWith('param=death_drop,')) {
-            rows.get(current)!.death_drop = line.slice('param=death_drop,'.length).split(',')[0].trim();
+    for (const relative of dropContentFiles.filter((file) => file.endsWith('.npc'))) {
+        const file = path.join(content, relative);
+        if (!fs.existsSync(file)) throw new Error(`missing content input ${relative}`);
+        let current: string | null = null;
+        for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+            const line = raw.trim();
+            const head = /^\[([a-z0-9_]+)\]$/.exec(line);
+            if (head) {
+                current = head[1];
+                if (rows.has(current)) throw new Error(`duplicate npc config ${current}`);
+                rows.set(current, {});
+            } else if (current && line.startsWith('name=')) {
+                rows.get(current)!.name = line.slice('name='.length);
+            } else if (current && line.startsWith('param=death_drop,')) {
+                rows.get(current)!.death_drop = line.slice('param=death_drop,'.length).split(',')[0].trim();
+            }
         }
     }
     return rows;
@@ -1322,18 +1332,19 @@ export function extractFlourSixFacts(content: string, items: ObjType[]) {
 }
 
 export function extractDropFacts(content: string, items: ObjType[], npcs: NpcType[]) {
-    const targets = [
+    const targets: { alias: string; block: string; explicit?: boolean }[] = [
         { alias: 'giant', block: 'ai_queue3:giant' },
         { alias: 'mossgiant', block: 'ai_queue3:mossgiant' },
         { alias: 'firegiant', block: 'ai_queue3:firegiant' },
         { alias: 'green_dragon', block: 'ai_queue3:green_dragon' },
+        { alias: 'kalphite_flyingqueen', block: 'ai_queue3:kalphite_flyingqueen', explicit: true },
     ];
     const blocks = parseDropBlocks(content);
     const npcConfigs = parseDropNpcs(content);
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, item]));
     const npcIds = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, npc]));
 
-    const resolve = (key: string, deathDrop: string, seen: Set<string>, out: Set<string>) => {
+    const resolve = (key: string, deathDrop: string | undefined, seen: Set<string>, out: Set<string>) => {
         if (seen.has(key)) return;
         const block = blocks.get(key);
         if (!block) throw new Error(`missing drop block ${key}`);
@@ -1343,7 +1354,10 @@ export function extractDropFacts(content: string, items: ObjType[], npcs: NpcTyp
                 resolve(`proc:${token.value.slice(1)}`, deathDrop, seen, out);
                 continue;
             }
-            const alias = token.value === 'npc_param' ? deathDrop : token.value;
+            if (token.value === 'npc_param' && !deathDrop) {
+                throw new Error(`${key}: npc_param(death_drop) requires a configured death_drop`);
+            }
+            const alias = token.value === 'npc_param' ? deathDrop! : token.value;
             if (itemIds.has(alias)) {
                 out.add(alias);
             } else if (alias.startsWith('cert_') && itemIds.has(alias.slice('cert_'.length))) {
@@ -1357,7 +1371,7 @@ export function extractDropFacts(content: string, items: ObjType[], npcs: NpcTyp
     return targets.map((target) => {
         const config = npcConfigs.get(target.alias);
         if (!config?.name) throw new Error(`${target.alias}: missing npc display name`);
-        if (!config.death_drop) throw new Error(`${target.alias}: missing death_drop`);
+        if (!config.death_drop && !target.explicit) throw new Error(`${target.alias}: missing death_drop`);
         const npc = npcIds.get(target.alias);
         if (!npc) throw new Error(`${target.alias}: missing decoded npc`);
         if (npc.name !== config.name) throw new Error(`${target.alias}: npc display mismatch ${npc.name}/${config.name}`);
@@ -3050,7 +3064,56 @@ async function generate(spec: Revision) {
     const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const piles = pileModels(objModule.default.configs); const items = objModule.default.configs.map((obj) => row(obj, piles)); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const gatherPlacements = extractGatherPlacementsFacts(spec.content, gatherMethods.woods); if (gatherPlacements.woods.length !== 6) throw new Error(`${spec.revision}: expected six published woods, got ${gatherPlacements.woods.length}`); if (gatherPlacements.facts.coverage.length !== 1 || gatherPlacements.facts.coverage[0].class !== 'unknown' || gatherPlacements.facts.coverage[0].family !== 'mining') throw new Error(`${spec.revision}: gather placements must record mining as unknown coverage`); const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision); if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) throw new Error(`${spec.revision}: quest identity join mismatch`); if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) throw new Error(`${spec.revision}: quest coverage mismatch`); if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`); const trails = extractTrailFacts(spec.content, objModule.default.configs); assertTrailPins(trails, spec.revision); const talkKey = extractTalkKeyFacts(spec.content, objModule.default.configs); assertTalkKeyPins(talkKey.facts, spec.revision); assertTalkKeyNpcJoins(talkKey.facts, npcModule.default.configs); const trioGivers = extractTrioGiversFacts(spec.content); assertTrioGiverPins(trioGivers.facts, spec.revision); assertTrioGiverNpcJoins(trioGivers.facts, npcModule.default.configs); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 5) throw new Error(`${spec.revision}: expected five combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: magic data mismatch`);
+    const herbs = extractHerbFacts(spec.content, objModule.default.configs);
+    if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`);
+    if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`);
+    const autocast = extractAutocastControls(spec.content);
+    const duel = extractDuelControls(spec.content);
+    const special = extractSpecialControls(spec.content, objModule.default.configs);
+    const teleports = extractTeleportSpells(spec.content, objModule.default.configs);
+    if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) {
+        throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);
+    }
+    const prayer = extractPrayerFacts(spec.content);
+    if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`);
+    const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs);
+    if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);
+    const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs);
+    if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`);
+    const objPackPath = path.join(spec.content, 'pack/obj.pack');
+    if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`);
+    const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8'));
+    if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`);
+    const equipmentNames = extractEquipmentNamesFacts(items, objPack);
+    const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision);
+    if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) {
+        throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`);
+    }
+    const gatherPlacements = extractGatherPlacementsFacts(spec.content, gatherMethods.woods);
+    if (gatherPlacements.woods.length !== 6) throw new Error(`${spec.revision}: expected six published woods, got ${gatherPlacements.woods.length}`);
+    if (gatherPlacements.facts.coverage.length !== 1 || gatherPlacements.facts.coverage[0].class !== 'unknown' || gatherPlacements.facts.coverage[0].family !== 'mining') {
+        throw new Error(`${spec.revision}: gather placements must record mining as unknown coverage`);
+    }
+    const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision);
+    if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) {
+        throw new Error(`${spec.revision}: quest identity join mismatch`);
+    }
+    if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) {
+        throw new Error(`${spec.revision}: quest coverage mismatch`);
+    }
+    if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`);
+    const trails = extractTrailFacts(spec.content, objModule.default.configs);
+    assertTrailPins(trails, spec.revision);
+    const talkKey = extractTalkKeyFacts(spec.content, objModule.default.configs);
+    assertTalkKeyPins(talkKey.facts, spec.revision);
+    assertTalkKeyNpcJoins(talkKey.facts, npcModule.default.configs);
+    const trioGivers = extractTrioGiversFacts(spec.content);
+    assertTrioGiverPins(trioGivers.facts, spec.revision);
+    assertTrioGiverNpcJoins(trioGivers.facts, npcModule.default.configs);
+    const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file));
+    const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file));
+    const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
     const rs2b0tRoot = envPath('RS2B0T', path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0'));
     assertRs2b0tPinned(rs2b0tRoot);
     const bankSource = path.join(rs2b0tRoot, 'src/bot/api/bank/BankLocations.ts');

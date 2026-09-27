@@ -101,8 +101,8 @@ const lava = magicFacts.staves.find((staff) => staff.name === 'Lava battlestaff'
 assert.deepEqual(lava?.runes.map((rune) => rune.name).sort(), ['Earth rune', 'Fire rune']);
 assert.equal(magicFacts.staves.find((staff) => staff.name === 'Staff of air')?.runes.length, 1);
 fs.mkdirSync(path.join(content, 'pack'), { recursive: true });
-fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n`);
-fs.writeFileSync(path.join(content, 'pack/varp.pack'), `108=attackstyle_magic\n`);
+fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n6700=duel_select_type:inv\n6701=duel_select_type:otherinv\n6500=duel_confirm:inv\n6501=duel_confirm:otherinv\n6676=duel_select_type:obstacles\n`);
+fs.writeFileSync(path.join(content, 'pack/varp.pack'), `108=attackstyle_magic\n286=dueloptions\n`);
 const autocast = extractAutocastControls(content);
 assert.equal(autocast.staff_tab_root, 328);
 assert.equal(autocast.choose_com, 353);
@@ -119,6 +119,12 @@ assert.equal(duel.confirm_accept, 6520);
 assert.equal(duel.select_partner, 6671);
 assert.equal(duel.select_status, 6684);
 assert.equal(duel.confirm_status, 6571);
+assert.equal(duel.select_mine, 6700);
+assert.equal(duel.select_theirs, 6701);
+assert.equal(duel.confirm_mine, 6500);
+assert.equal(duel.confirm_theirs, 6501);
+assert.equal(duel.obstacles, 6676);
+assert.equal(duel.options_varp, 286);
 assert.equal(parsePack('328=combat_staff_2\n').get('combat_staff_2'), 328);
 fs.mkdirSync(path.join(content, 'scripts/skill_combat/configs'), { recursive: true });
 fs.appendFileSync(path.join(content, 'pack/interface.pack'), '425=combat_blunt\n7462=combat_blunt:specbar\n2423=combat_hacksword\n7587=combat_hacksword:specbar\n');
@@ -242,8 +248,10 @@ assert.equal(herbs.herbs[1].level_source, 'identified_herb_level');
 const dropContent = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-drop-fixture-'));
 const dropScripts = path.join(dropContent, 'scripts/drop tables/scripts');
 const npcConfigs = path.join(dropContent, 'scripts/_unpack/225');
+const kqConfigs = path.join(dropContent, 'scripts/areas/area_kalphite/configs');
 fs.mkdirSync(dropScripts, { recursive: true });
 fs.mkdirSync(npcConfigs, { recursive: true });
+fs.mkdirSync(kqConfigs, { recursive: true });
 fs.writeFileSync(path.join(npcConfigs, 'all.npc'), `[giant]
 name=Giant
 param=death_drop,big_bones
@@ -256,6 +264,9 @@ param=death_drop,big_bones
 [green_dragon]
 name=Green dragon
 param=death_drop,dragon_bones
+`);
+fs.writeFileSync(path.join(kqConfigs, 'kalphite.npc'), `[kalphite_flyingqueen]
+name=Kalphite Queen
 `);
 fs.writeFileSync(path.join(dropScripts, 'giant.rs2'), `[ai_queue3,giant]
 obj_add(npc_coord, npc_param(death_drop), 1, 100);
@@ -273,6 +284,9 @@ obj_add(npc_coord, cert_silver_ore, 1, 100);
 fs.writeFileSync(path.join(dropScripts, 'green_dragon.rs2'), `[ai_queue3,green_dragon]
 obj_add(npc_coord, npc_param(death_drop), 1, 100);
 obj_add(npc_coord, dragonhide_green, 1, 100);
+`);
+fs.writeFileSync(path.join(dropScripts, 'kalphite_queen.rs2'), `[ai_queue3,kalphite_flyingqueen]
+obj_add(npc_coord, rune_spear, 1, 100);
 `);
 fs.writeFileSync(path.join(dropScripts, 'shared_droptables.rs2'), `[proc,outer]()(namedobj, int)
 return (~inner);
@@ -297,9 +311,10 @@ const dropNpcs = [
     { id: 110, debugname: 'mossgiant', name: 'Moss giant' },
     { id: 112, debugname: 'firegiant', name: 'Fire giant' },
     { id: 941, debugname: 'green_dragon', name: 'Green dragon' },
+    { id: 1160, debugname: 'kalphite_flyingqueen', name: 'Kalphite Queen' },
 ];
 const drops = extractDropFacts(dropContent, dropItems, dropNpcs);
-assert.equal(drops.length, 4);
+assert.equal(drops.length, 5);
 assert.deepEqual(drops.find((row) => row.name === 'Giant')?.display_names, ['Big bones', 'Coins', 'Half of a key', 'Rune spear']);
 assert.deepEqual(
     drops.find((row) => row.name === 'Giant')?.items.filter((item) => item.name === 'Half of a key').map((item) => [item.alias, item.id]),
@@ -311,6 +326,7 @@ assert.deepEqual(drops.find((row) => row.name === 'Fire giant')?.items, [
     { alias: 'silver_ore', id: 443, name: 'Silver ore' },
 ]);
 assert.deepEqual(drops.find((row) => row.name === 'Green dragon')?.display_names, ['Dragon bones', 'Dragonhide']);
+assert.deepEqual(drops.find((row) => row.name === 'Kalphite Queen')?.display_names, ['Rune spear']);
 
 fs.rmSync(path.join(dropScripts, 'shared_droptables.rs2'));
 assert.throws(

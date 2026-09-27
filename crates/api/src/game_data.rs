@@ -137,7 +137,7 @@ impl AutocastControls {
     }
 }
 
-/// Packed Duel Arena modal roots and partner/waiting/accept controls.
+/// Packed Duel Arena modal roots, offer containers, rule toggle and controls.
 #[derive(Debug, Deserialize, Clone, Copy)]
 pub struct DuelControls {
     pub select_modal: i32,
@@ -148,6 +148,12 @@ pub struct DuelControls {
     pub select_partner: i32,
     pub select_status: i32,
     pub confirm_status: i32,
+    pub select_mine: i32,
+    pub select_theirs: i32,
+    pub confirm_mine: i32,
+    pub confirm_theirs: i32,
+    pub obstacles: i32,
+    pub options_varp: i32,
 }
 
 impl DuelControls {
@@ -160,6 +166,12 @@ impl DuelControls {
             && self.select_partner >= 0
             && self.select_status >= 0
             && self.confirm_status >= 0
+            && self.select_mine >= 0
+            && self.select_theirs >= 0
+            && self.confirm_mine >= 0
+            && self.confirm_theirs >= 0
+            && self.obstacles >= 0
+            && self.options_varp >= 0
     }
 }
 

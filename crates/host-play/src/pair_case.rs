@@ -66,6 +66,12 @@ pub const EXPECTED_DUEL_CONTROLS: DuelControls = DuelControls {
     select_partner: DUEL_SELECT_PARTNER,
     select_status: DUEL_SELECT_STATUS,
     confirm_status: DUEL_CONFIRM_STATUS,
+    select_mine: 6669,
+    select_theirs: 6670,
+    confirm_mine: 6507,
+    confirm_theirs: 6508,
+    obstacles: 6732,
+    options_varp: 286,
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

@@ -605,6 +605,33 @@ impl<'a> Interactions<'a> {
             snapshot.tick() as u64,
         )
     }
+    /// Press a server `IF_BUTTON` component exactly, independent of the
+    /// component's generic `button_type`. Some content interfaces label
+    /// their controls as toggles/selectors while their server script still
+    /// listens for `IF_BUTTON` (Duel Arena rules and accept controls).
+    pub fn if_button<'t>(&mut self, widget: &WidgetView) -> SendResult<'t> {
+        let snapshot = self.snapshot;
+        if let Some(reason) = self.precondition(snapshot, false) {
+            return refuse(snapshot, reason);
+        }
+        let ctx = ReadContext::new(snapshot);
+        let Some(live) = ctx.component(widget.component_id) else {
+            return refuse(snapshot, SendReason::StaleTarget);
+        };
+        if live.client_code > 0 {
+            return refuse(snapshot, SendReason::ClientSideOnly);
+        }
+        if !component_visible(live, snapshot) {
+            return refuse(snapshot, SendReason::ComponentNotVisible);
+        }
+        self.dispatch(
+            WireCommand::Button {
+                component_id: live.component_id,
+                button_type: 1,
+            },
+            snapshot.tick() as u64,
+        )
+    }
 
     pub fn continue_dialog<'t>(&mut self) -> SendResult<'t> {
         let snapshot = self.snapshot;
