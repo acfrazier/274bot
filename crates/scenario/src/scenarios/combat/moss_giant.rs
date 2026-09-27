@@ -30,6 +30,12 @@ const MOSS_GIANT_BANK: WorldTile = WorldTile {
     z: 3332,
     level: 0,
 };
+// The open booth immediately south of the seeded stand.
+const MOSS_GIANT_BANK_BOOTH: WorldTile = WorldTile {
+    x: 2615,
+    z: 3331,
+    level: 0,
+};
 pub(super) const MOSS_GIANT_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
     name: "Scenario Moss Giant food",
     carry: &[("Lobster", MOSS_GIANT_FOOD as u32)],
@@ -240,34 +246,15 @@ pub(crate) fn moss_giant_dart_scenario() -> Scenario {
             budget_ticks: 200,
         },
     });
-    steps.push(Step {
-        name: "open the Ardougne North booth so bank-only dart stock is visible",
-        kind: StepKind::Repeat {
-            send: Box::new(|c, snapshot| {
-                if snapshot.bank_component_id() >= 0 && snapshot.bank_loaded() {
-                    return true;
-                }
-                match Interactions::new(snapshot, c).open_nearest_booth() {
-                    SendResult::Sent { .. } => true,
-                    SendResult::Refused {
-                        reason:
-                            SendReason::SceneUnavailable
-                            | SendReason::OffScene
-                            | SendReason::StaleTarget,
-                        ..
-                    } => true,
-                    SendResult::Refused { .. } => false,
-                }
-            }),
+    steps.push(herblore_open_seed_bank_at(
+        "open the Ardougne North booth so bank-only dart stock is visible",
+        Proof::BankItemId {
+            id: BRONZE_DART_ID,
+            count: MOSS_GIANT_DART_SUPPLY,
         },
-        wait: Wait {
-            arm: Proof::BankItemId {
-                id: BRONZE_DART_ID,
-                count: MOSS_GIANT_DART_SUPPLY,
-            },
-            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
-        },
-    });
+        MOSS_GIANT_BANK_BOOTH,
+        2213,
+    ));
     for (name, arm) in [
         (
             "acknowledge banked Lobster 15 while the booth stays open",

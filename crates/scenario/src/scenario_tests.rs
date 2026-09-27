@@ -942,6 +942,105 @@ fn herblore_seed_bank_waits_for_one_open_ack_before_deposit() {
     assert_eq!(client.menu_param_c[0], 701, "deposit from the bank side");
 }
 
+#[test]
+fn moss_dart_seed_opens_once_and_keeps_the_acknowledged_bank_loaded_at_start() {
+    use client::client::MiniMenuAction;
+    use client::config::if_type::IfTypeMut;
+    use client::dash3d::ClientPlayer;
+    use client::io::{Packet, ServerProt};
+
+    let mut scenario = get("moss_giant_dart").unwrap();
+    let open = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.name == "open the Ardougne North booth so bank-only dart stock is visible"
+        })
+        .unwrap();
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    scenario.steps = scenario.steps.drain(open..=start).collect();
+    scenario.seed.mainland = false;
+    scenario.settings = ScenarioSettings::default();
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    client.map_build_base_x = 2560;
+    client.map_build_base_z = 3280;
+    client.local_player = Some(ClientPlayer::at(55, 52));
+    for column in &mut client.collision[0].flags {
+        column.fill(0);
+    }
+    // Stock-world booth captured in the original dart qualification.
+    plant_seed_booth(&mut client, 2615, 3331);
+    plant_obj(&mut client, unnoted_obj(BRONZE_DART_ID, true));
+    plant_obj(&mut client, unnoted_obj(LOBSTER_ID, false));
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(client.menu_action[0], MiniMenuAction::OP_LOC2);
+    assert_eq!(client.menu_param_b[0] + client.map_build_base_x, 2615);
+    assert_eq!(client.menu_param_c[0] + client.map_build_base_z, 3331);
+    let opening = client.out.data()[..client.out.pos].to_vec();
+
+    for _ in 0..3 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(
+            client.out.data()[..client.out.pos],
+            opening,
+            "waiting for the item acknowledgement must not queue another booth open"
+        );
+        assert!(!runner.on_start_script());
+    }
+    plant_open_unloaded_bank(&mut client);
+    runner.tick(&mut client);
+    assert!(
+        !runner.on_start_script(),
+        "the modal alone is not the seeded stock"
+    );
+    assert_eq!(client.out.data()[..client.out.pos], opening);
+    client.set_iface_mut(
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![0; 2]),
+            link_obj_number: Some(vec![0; 2]),
+            ..Default::default()
+        },
+    );
+    client.handle_packet(
+        ServerProt::UPDATE_INV_FULL,
+        &mut Packet::new(vec![2, 89, 2, 3, 39, 80, 1, 124, 15]),
+    );
+    for _ in 0..3 {
+        runner.tick(&mut client);
+    }
+    assert!(runner.on_start_script());
+    assert_eq!(client.out.data()[..client.out.pos], opening);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(
+        snapshot.bank_loaded(),
+        "Start retains the acknowledged bank"
+    );
+    assert_eq!(snapshot.bank_session_generation(), 1);
+    assert!(Proof::BankItemId {
+        id: BRONZE_DART_ID,
+        count: 80
+    }
+    .check(&snapshot, None));
+    assert!(Proof::BankItemId {
+        id: LOBSTER_ID,
+        count: 15
+    }
+    .check(&snapshot, None));
+    assert!(Proof::BankItemIdAtMost { id: 892, count: 0 }.check(&snapshot, None));
+}
+
 /// Capture 2026-09-18T06-11-18: booth 2213@3091,3243 is not operable from
 /// canonical DRAYNOR_BANK 3093,3243 (Chebyshev 2). The seed stand must be
 /// the stock-facing open adjacent, or open_booth_at refuses Unreachable.

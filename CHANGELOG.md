@@ -505,6 +505,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   can complete after a deposit without closing and reopening the bank, so
   PotionMaker restocks in the same session as its deposit. Withdraw and
   bank-machine requests still use the original open/close session fence.
+- The Moss Giant dart qualification opens its seeded bank once and waits
+  for that opening's item acknowledgement. Start now retains the loaded
+  bank instead of racing a repeated OpenBooth against the acknowledgement.
 - Catalog walking and recovery follow frozen rs2b0t more closely
   (`docs/api/script.md`, "Catalog walking and recovery"): `walkResilient`
   verifies with a route probe before giving up and honours `sceneRadius`,
