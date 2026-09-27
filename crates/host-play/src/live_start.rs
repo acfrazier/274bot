@@ -5,6 +5,8 @@
 //! V8 setup, so a started card stays stashed until its setup settles and a
 //! setup failure still fails the witness that armed it.
 
+use std::time::{Duration, Instant};
+
 use serde_json::{Map, Value};
 
 use crate::catalog_core::CoreWatch;
@@ -27,6 +29,10 @@ pub struct PendingCatalogStart {
     /// Start was accepted; kept until its isolate setup settles so a setup
     /// failure still fails the core watch with its reason.
     pub started: bool,
+    /// Fleet-only hold after the earlier stashed members started (the
+    /// JiveKQ leader lets its peers prove their missing-peer bank hold).
+    delay_after_peers: Option<Duration>,
+    delay_started: Option<Instant>,
 }
 
 impl PendingCatalogStart {
@@ -48,7 +54,16 @@ impl PendingCatalogStart {
             loadouts,
             compiled: None,
             started: false,
+            delay_after_peers: None,
+            delay_started: None,
         }
+    }
+
+    /// Hold this Start until `delay` has passed since the StartScript pump
+    /// first reached it, i.e. after every member stashed before it started.
+    pub fn with_delay_after_peers(mut self, delay: Option<Duration>) -> Self {
+        self.delay_after_peers = delay;
+        self
     }
 
     /// A compiled registry card not yet started.
@@ -62,7 +77,31 @@ impl PendingCatalogStart {
             loadouts: Vec::new(),
             compiled: Some(id),
             started: false,
+            delay_after_peers: None,
+            delay_started: None,
         }
+    }
+
+    /// Whether this Start still waits out its fleet delay: the first call
+    /// starts the clock, and the Start proceeds once the delay has passed.
+    fn delaying(&mut self, now: Instant) -> bool {
+        let Some(delay) = self.delay_after_peers else {
+            return false;
+        };
+        let began = *self.delay_started.get_or_insert_with(|| {
+            eprintln!(
+                "[live] delaying fleet Start for {} by {}s",
+                self.slot,
+                delay.as_secs()
+            );
+            now
+        });
+        if now.duration_since(began) < delay {
+            return true;
+        }
+        eprintln!("[live] releasing delayed fleet Start for {}", self.slot);
+        self.delay_after_peers = None;
+        false
     }
 }
 
@@ -192,6 +231,9 @@ pub fn fire_pending_catalog_start(
     }
     let watch = arming.catalog.clone().unwrap_or_default();
     for card in pending.iter_mut().filter(|card| !card.started) {
+        if card.delaying(Instant::now()) {
+            return false;
+        }
         if start_catalog_with_core(&watch, &card.slot, || {
             start_stashed_catalog_card(handle, card)
         })

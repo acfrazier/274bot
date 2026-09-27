@@ -21,6 +21,8 @@ pub enum Proof {
     ItemId { id: i32, count: i32 },
     /// Inventory contains at most `count` of exact object `id`.
     ItemIdAtMost { id: i32, count: i32 },
+    /// Inventory contains at least `count` of any exact object in `ids`.
+    ItemIdAny { ids: &'static [i32], count: i32 },
     /// Seeded clue `seeded` has left the pack, and a different clue scroll
     /// or a casket is held. Name-resolved so a random next-step scroll still
     /// counts; the seed id cannot satisfy this while it remains. Fail-closed
@@ -129,6 +131,10 @@ pub enum Proof {
     /// An NPC of the obj `r#type` id stands within chebyshev `radius` of
     /// the player on the player's level.
     NpcNear { r#type: usize, radius: i32 },
+    /// None of the exact NPC ids stands within `radius` of the player.
+    /// Requires an in-game player tile and therefore fails closed while
+    /// loading or disconnected.
+    NpcIdsAbsentNear { ids: &'static [usize], radius: i32 },
     /// An NPC with exact `name` stands within a bounded world area.
     NpcNameNear {
         name: &'static str,
@@ -192,6 +198,10 @@ impl Proof {
             Proof::ItemAtMost { name, count } => format!("has_item({name})<={count}"),
             Proof::ItemId { id, count } => format!("has_item_id({id})>={count}"),
             Proof::ItemIdAtMost { id, count } => format!("has_item_id({id})<={count}"),
+            Proof::ItemIdAny { ids, count } => format!(
+                "has_item_id_any({})>={count}",
+                ids.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
+            ),
             Proof::ClueReplaced { seeded } => format!("clue_replaced({seeded})"),
 
             Proof::EquipmentId { id } => format!("has_equipment_id({id})"),
@@ -243,6 +253,15 @@ impl Proof {
             }
             Proof::NpcAt { r#type, x, z } => format!("npc({type})@({x},{z})"),
             Proof::NpcNear { r#type, radius } => format!("npc_near({type},{radius})"),
+            Proof::NpcIdsAbsentNear { ids, radius } => {
+                format!(
+                    "npc_ids_absent_near({},{radius})",
+                    ids.iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            }
             Proof::NpcNameNear {
                 name,
                 x,
@@ -350,6 +369,9 @@ impl Proof {
             }
             Proof::ItemId { id, count } => inv_id_count(snap, *id) >= *count,
             Proof::ItemIdAtMost { id, count } => inv_id_count(snap, *id) <= *count,
+            Proof::ItemIdAny { ids, count } => {
+                ids.iter().map(|id| inv_id_count(snap, *id)).sum::<i32>() >= *count
+            }
             Proof::ClueReplaced { seeded } => {
                 if !snap.ingame() || snap.scene_state() != 2 {
                     return false;
@@ -539,6 +561,24 @@ impl Proof {
             Proof::NpcNear { r#type, radius } => snap.tile().is_some_and(|(tx, tz, tl)| {
                 snap.npcs().iter().any(|n| {
                     n.r#type == Some(*r#type)
+                        && n.tile.level == tl
+                        && chebyshev(
+                            Tile {
+                                x: tx,
+                                z: tz,
+                                level: tl,
+                            },
+                            Tile {
+                                x: n.tile.x,
+                                z: n.tile.z,
+                                level: n.tile.level,
+                            },
+                        ) <= *radius
+                })
+            }),
+            Proof::NpcIdsAbsentNear { ids, radius } => snap.tile().is_some_and(|(tx, tz, tl)| {
+                !snap.npcs().iter().any(|n| {
+                    n.r#type.is_some_and(|kind| ids.contains(&kind))
                         && n.tile.level == tl
                         && chebyshev(
                             Tile {
@@ -1046,6 +1086,16 @@ mod tests {
         assert!(Proof::ItemId { id: 60, count: 2 }.check(&s, None));
         assert!(!Proof::ItemId { id: 849, count: 2 }.check(&s, None));
         assert!(Proof::ItemIdAtMost { id: 849, count: 1 }.check(&s, None));
+        assert!(Proof::ItemIdAny {
+            ids: &[849, 60],
+            count: 2,
+        }
+        .check(&s, None));
+        assert!(!Proof::ItemIdAny {
+            ids: &[849, 61],
+            count: 2,
+        }
+        .check(&s, None));
         assert_eq!(
             Proof::ItemId { id: 60, count: 2 }.name(),
             "has_item_id(60)>=2"
@@ -1694,6 +1744,19 @@ mod tests {
             .name(),
             "npc_near(708,2)"
         );
+        assert!(
+            !Proof::NpcIdsAbsentNear {
+                ids: &[708, 709],
+                radius: 2,
+            }
+            .check(&s, None),
+            "the present 708 blocks the absent-set proof"
+        );
+        assert!(Proof::NpcIdsAbsentNear {
+            ids: &[709, 710],
+            radius: 2,
+        }
+        .check(&s, None));
     }
 
     #[test]

@@ -158,16 +158,14 @@ fn stash_pending_starts(
     siblings: Vec<(String, String)>,
     loadouts: Vec<script::Loadout>,
 ) {
-    let mut starts = vec![PendingCatalogStart {
-        slot: names[0].clone(),
-        js: js.clone(),
+    let mut starts = vec![PendingCatalogStart::load(
+        names[0].clone(),
+        js.clone(),
         shape,
-        bag: bag.clone(),
-        siblings: siblings.clone(),
-        loadouts: loadouts.clone(),
-        compiled: None,
-        started: false,
-    }];
+        bag.clone(),
+        siblings.clone(),
+        loadouts.clone(),
+    )];
     if let Some(key) = inject_companion_as {
         if names.len() > 1 {
             let mut companion_bag = bag.unwrap_or_default();
@@ -175,16 +173,14 @@ fn stash_pending_starts(
                 key.to_string(),
                 serde_json::Value::String(partner_screen_name(&names[0])),
             );
-            starts.push(PendingCatalogStart {
-                slot: names[1].clone(),
+            starts.push(PendingCatalogStart::load(
+                names[1].clone(),
                 js,
                 shape,
-                bag: Some(companion_bag),
+                Some(companion_bag),
                 siblings,
                 loadouts,
-                compiled: None,
-                started: false,
-            });
+            ));
         }
     }
     *pending.lock().unwrap() = starts;
@@ -204,16 +200,7 @@ fn stash_compiled_start(
     names: &[String],
     id: script::CompiledId,
 ) {
-    *pending.lock().unwrap() = vec![PendingCatalogStart {
-        slot: names[0].clone(),
-        js: String::new(),
-        shape: script::LoadShape::Reject,
-        bag: None,
-        siblings: Vec::new(),
-        loadouts: Vec::new(),
-        compiled: Some(id),
-        started: false,
-    }];
+    *pending.lock().unwrap() = vec![PendingCatalogStart::compiled(names[0].clone(), id)];
 }
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
@@ -2443,14 +2430,53 @@ impl Session {
         self.live_script_stop_wait_started = None;
         // A scenario that names a script card (`start_script`) selects
         // the script; Start waits for [`scenario::StepKind::StartScript`]
-        // after seed. With `inject_companion_as` on a fleet, the same JS
-        // Starts on slot 1 too (reciprocal partner). Compiled registry
-        // ids (currently `Sherlock`) start that port; catalog cards come
-        // from `$RS2B0T`; in-tree file fixtures load from
-        // `crates/script/tests/fixtures/`. Exact example files (`start_file`)
-        // Load through normal File provenance and select by identity_id.
-
-        if let Some(file_name) = view.start_file {
+        // after seed. A fleet launch Starts the scenario's own card on each
+        // member slot.
+        if let Some(fleet) = view.fleet_start {
+            self.fill_rs2b0t_cards_once();
+            let mut starts = Vec::new();
+            for member in fleet.members(&names)? {
+                let card_name = member.card;
+                self.scripts
+                    .js
+                    .ensure_js(script::ScriptSource::Catalog, card_name)
+                    .map_err(|e| format!("transpile {card_name}: {e}"))?;
+                let card = self
+                    .scripts
+                    .js
+                    .get(script::ScriptSource::Catalog, card_name)
+                    .cloned()
+                    .ok_or_else(|| format!("$RS2B0T catalog has no {card_name} card"))?;
+                let mut bag = self
+                    .pending_settings_bag(
+                        script::ScriptSource::Catalog,
+                        card_name,
+                        &card.settings_schema,
+                    )
+                    .unwrap_or_default();
+                bag.extend(
+                    member
+                        .settings
+                        .into_iter()
+                        .map(|(key, value)| (key.to_string(), serde_json::Value::String(value))),
+                );
+                let siblings = self.sibling_modules_for_card(&card)?;
+                starts.push(
+                    PendingCatalogStart::load(
+                        names[member.slot].clone(),
+                        card.js,
+                        card.shape,
+                        Some(bag),
+                        siblings,
+                        scenario_fixture_loadouts(&view),
+                    )
+                    .with_delay_after_peers(member.delay_after_peers),
+                );
+            }
+            *self.pending_script.lock().unwrap() = starts;
+        // Exact example files (`start_file`) Load through normal File
+        // provenance and select by identity_id.
+        } else if let Some(file_name) = view.start_file {
             let card = load_live_example_card(&mut self.scripts.js, file_name)?;
             let identity = card.identity_id();
             self.script_sel = Some(script::ScriptSel::Loaded(

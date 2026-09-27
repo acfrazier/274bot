@@ -621,6 +621,10 @@ impl ScenarioRunner {
             let native_episode_holds = self.observe_lamp_redemption(hold).unwrap_or(true)
                 && self.observe_maze_completion(hold).unwrap_or(true)
                 && stall_combat_holds;
+            let arm_holds = match &self.current_step().kind {
+                StepKind::Await { ready, .. } => ready(&self.snapshot),
+                _ => arm_holds,
+            };
             if native_episode_holds && arm_holds {
                 // A nav step only advances once its follow has
                 // terminated: the arm can hold on a snapshot the
@@ -1136,6 +1140,7 @@ impl ScenarioRunner {
             }
             StepKind::Shot { .. }
             | StepKind::StartScript
+            | StepKind::Await { .. }
             | StepKind::ObserveLampRedemption { .. }
             | StepKind::ObserveStallCombat { .. } => Ok(()),
             StepKind::Relog => {
@@ -1277,7 +1282,10 @@ impl ScenarioRunner {
     /// else the proof.
     fn current_predicate_name(&self) -> String {
         if self.step < self.scenario.steps.len() {
-            self.scenario.steps[self.step].wait.arm.name()
+            match &self.scenario.steps[self.step].kind {
+                StepKind::Await { evidence, .. } => (*evidence).to_string(),
+                _ => self.scenario.steps[self.step].wait.arm.name(),
+            }
         } else {
             self.scenario.proof.name()
         }

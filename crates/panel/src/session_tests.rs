@@ -3719,6 +3719,56 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
     assert!(s.multibox, "fleet opens the MultiBox wall");
 }
 
+#[test]
+fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
+    let iso = IsolatedEnv::enter("jive-kq-fleet");
+    crate::ui_state::save(&crate::ui_state::PanelUiState {
+        last_focus: None,
+        ..Default::default()
+    });
+    let root = write_looping_catalog(&iso.dir, &[("JiveKQ", "JiveKQ")]);
+    iso.set_rs2b0t(&root);
+    let mut session = preparation_only_session();
+    session
+        .live_prepare_script(scenario::get("jive_kq_four").expect("registered"))
+        .expect("prepare four-player JiveKQ");
+
+    let names = session
+        .core
+        .vault()
+        .expect("live vault")
+        .profiles()
+        .map(|profile| profile.username.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), 4, "JiveKQ mints four fleet profiles");
+    let roster = names
+        .iter()
+        .map(|name| client::util::JString::to_screen_name(name))
+        .collect::<Vec<_>>()
+        .join(",");
+    let starts = session.pending_script.lock().unwrap();
+    assert_eq!(starts.len(), 4, "StartScript prepares all four isolates");
+    let mut prepared_slots = starts
+        .iter()
+        .map(|start| start.slot.clone())
+        .collect::<Vec<_>>();
+    prepared_slots.sort();
+    let mut fleet_slots = names.clone();
+    fleet_slots.sort();
+    assert_eq!(
+        prepared_slots, fleet_slots,
+        "each fleet profile has exactly one prepared start"
+    );
+    for start in starts.iter() {
+        assert_eq!(
+            start.bag.as_ref().and_then(|settings| settings.get("team")),
+            Some(&serde_json::json!(roster)),
+            "{} receives the complete shared roster",
+            start.slot
+        );
+    }
+}
+
 /// Thiever SETTINGS often fail to parse (`loadout: LOADOUT_SETTING`
 /// stops the object walk), so the card schema is empty. The live
 /// inject still has to post `target: Guard` or `str('target', 'Man')`

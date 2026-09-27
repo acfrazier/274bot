@@ -69,6 +69,14 @@ is the headless operator panel: ratatui + crossterm, same profile flags and
 vault layout as `panel-play`, slots spawn raster Off (no GPU).
 `--live script_<name>` runs the same scenario harness as
 `panel-play --live`.
+Paired capability gold uses disposable profiles minted by the local engine;
+never substitute public accounts. Run it headlessly with
+`tui-play --profile local-289 --live script_clue_duel_3554` or
+`script_jive_kq_four`. KQ uses disposable max-stat qualification fixtures at
+the normal 600 ms tick and intentionally continues through two kills, two bank
+returns and the second descent; do not accelerate it or stop the fleet in the
+lair. The headed twin is the `panel`
+`pair_watch` example.
 
 Shared profile flags (all three binaries):
 `--profile local-274|local-289|public-289`, `--revision 274|289`, `--prod`,

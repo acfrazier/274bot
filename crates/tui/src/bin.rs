@@ -959,6 +959,7 @@ impl TuiSession {
         )?;
         let name = scenario.name.to_string();
         let start_script = scenario.settings.start_script;
+        let fleet_start = scenario.settings.fleet_start;
         let start_file = scenario.settings.start_file;
         let wait_script_stop = scenario.settings.wait_script_stop;
         let settings_inject = scenario.settings.script_settings_inject;
@@ -1002,8 +1003,51 @@ impl TuiSession {
         // A scenario that names a script card selects the real `$RS2B0T`
         // catalog script on the driven slot (same as the panel): fill the
         // catalog from `$RS2B0T`, then Start on StartScript after seed.
+        // A fleet launch Starts the scenario's own card on each member slot.
+        if let Some(fleet) = fleet_start {
+            self.fill_rs2b0t_cards_once();
+            let mut starts = Vec::new();
+            for member in fleet.members(&names)? {
+                let card_name = member.card;
+                self.scripts
+                    .js
+                    .ensure_js(script::ScriptSource::Catalog, card_name)
+                    .map_err(|e| format!("transpile {card_name}: {e}"))?;
+                let card = self
+                    .scripts
+                    .js
+                    .get(script::ScriptSource::Catalog, card_name)
+                    .cloned()
+                    .ok_or_else(|| format!("$RS2B0T catalog has no {card_name} card"))?;
+                let mut bag = self
+                    .pending_settings_bag(
+                        script::ScriptSource::Catalog,
+                        card_name,
+                        &card.settings_schema,
+                    )
+                    .unwrap_or_default();
+                bag.extend(
+                    member
+                        .settings
+                        .into_iter()
+                        .map(|(key, value)| (key.to_string(), serde_json::Value::String(value))),
+                );
+                let siblings = self.sibling_modules_for_card(&card)?;
+                starts.push(
+                    PendingCatalogStart::load(
+                        names[member.slot].clone(),
+                        card.js,
+                        card.shape,
+                        Some(bag),
+                        siblings,
+                        fixture_loadouts.clone(),
+                    )
+                    .with_delay_after_peers(member.delay_after_peers),
+                );
+            }
+            *self.pending_script.lock().unwrap() = starts;
         // Exact example files Load as File cards and select by identity_id.
-        if let Some(file_name) = start_file {
+        } else if let Some(file_name) = start_file {
             let path = script::live_example_path(file_name)
                 .ok_or_else(|| format!("no in-tree example {file_name}"))?;
             let loaded = self

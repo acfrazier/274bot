@@ -304,6 +304,43 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   the local bake stays behind the existing warning and, once accepted,
   adopts the tiles already verified.
 
+### Paired catalog compatibility
+
+- ClueSolver, Duel Arena Combat Trainer, and JiveKQ can run through the native
+  host. JiveKQ's bounded BroadcastChannel broker fences each four-account roster
+  to one world and now preserves a surviving card isolate across a same-world
+  reconnect while still revoking Stops and world changes.
+- Clue 3554 crosses the Duel Arena through a configured, different helper
+  account before digging. Each profile now stores that account-wide partner in
+  the profile editor, separately from per-card parameters; missing or self
+  partners log the same operator action as the frozen client and refuse.
+  Ordinary ClueSolver bank returns retain the six-attempt, five-minute resilient
+  walk with teleport-catalog policy instead of entering the duel travel machine.
+- One Play now brokers bounded same-world `BroadcastChannel` traffic between
+  catalog isolates. The `clue_duel_3554` two-account and `jive_kq_four`
+  four-account live cells mint disposable local profiles, launch their
+  heterogeneous/shared catalog fleets, and collect per-slot evidence. Clue
+  acceptance covers both names/screens, exact obstacle rules, pen entry,
+  casket/forfeit/helper reset, unchanged HP and a new reward in a fresh bank.
+  KQ max-stat fixture acceptance delays the roster leader while the other
+  three members prove their missing-peer bank hold, then covers both pass
+  withdrawal and purchase paths, exact role packs, scene-backed rope use,
+  every member's protected cardinal two-form combat/XP and post-food recovery,
+  a continuous flying-form death, selected natural non-arrow
+  ground-to-inventory-to-bank loot, overlapping personal restock, Camelot and
+  dueling-ring escapes, a second four-member descent and a second safe bank
+  return.
+- Chat-option snapshots retain each `BUTTON_OK` component identity across the
+  host FlatBuffer, so direct catalog clicks such as a dueling-ring destination
+  no longer degrade to component `-1`.
+- Selected 274/289 game data now includes the explicit
+  `ai_queue3:kalphite_flyingqueen` death-drop block. It is valid without a
+  fabricated `death_drop` parameter; generated `DROP_DB["Kalphite Queen"]`
+  therefore drives the unchanged catalog collector.
+- `Shop.open` now keeps its native await pending across the modal/stock-page
+  publication boundary, so an immediate `Shop.buy` cannot mistake a transient
+  empty page for zero purchases and dissolve a JiveKQ party during restock.
+
 ### Rendering and client
 
 - Logged-out title-screen brazier flames animate again on CPU and GPU. Full-rate

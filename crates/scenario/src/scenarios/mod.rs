@@ -62,8 +62,8 @@ pub(crate) use navigation::{
     nav_shantay_scenario, nav_tele_scenario, walk_scenario,
 };
 pub(crate) use pair::{
-    duel_arena_scenario, flax_runner_scenario, mule_crafter_air_scenario,
-    nature_crafter_air_scenario, script_trade_scenario,
+    clue_duel_3554_scenario, duel_arena_scenario, flax_runner_scenario, jive_kq_four_scenario,
+    mule_crafter_air_scenario, nature_crafter_air_scenario, script_trade_scenario,
 };
 pub(crate) use prayer::{prayer_v1_scenario, prayer_v2_scenario};
 pub(crate) use production::{

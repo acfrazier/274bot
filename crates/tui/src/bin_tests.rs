@@ -829,13 +829,11 @@ fn create_profile_upsert_error_returns_err() {
     );
 }
 
-fn fake_rs2b0t_tree(dir: &Path) -> PathBuf {
+fn fake_rs2b0t_tree(dir: &Path, include_jive_kq: bool) -> PathBuf {
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
     std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
-    std::fs::write(
-        scripts.join("index.ts"),
-        r#"
+    let mut index = r#"
 import BoneBurier from './BoneBurier/BoneBurier.js';
 ScriptRegistry.register({
   name: 'BoneBurier',
@@ -844,14 +842,31 @@ ScriptRegistry.register({
   tags: ['bones'],
   create: () => new BoneBurier(),
 });
-"#,
-    )
-    .unwrap();
+"#
+    .to_string();
     std::fs::write(
         scripts.join("BoneBurier/BoneBurier.ts"),
         "export default class BoneBurier extends LoopingBot { override loop() {} }",
     )
     .unwrap();
+    if include_jive_kq {
+        std::fs::create_dir_all(scripts.join("JiveKQ")).unwrap();
+        index.push_str(
+            r#"
+import JiveKQ from './JiveKQ/JiveKQ.js';
+ScriptRegistry.register({
+  name: 'JiveKQ',
+  create: () => new JiveKQ(),
+});
+"#,
+        );
+        std::fs::write(
+            scripts.join("JiveKQ/JiveKQ.ts"),
+            "export default class JiveKQ extends LoopingBot { override loop() {} }",
+        )
+        .unwrap();
+    }
+    std::fs::write(scripts.join("index.ts"), index).unwrap();
     root
 }
 
@@ -872,7 +887,7 @@ fn live_scenario_looks_up_v2_file_ids_and_keeps_v1() {
 #[test]
 fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
     let iso = IsolatedEnv::enter("tui-bone-live");
-    let root = fake_rs2b0t_tree(&iso.dir);
+    let root = fake_rs2b0t_tree(&iso.dir, false);
     iso.set_rs2b0t(&root);
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
@@ -903,6 +918,47 @@ fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
         [name.as_str()],
         "preparation stages the selected card for StartScript"
     );
+}
+
+#[test]
+fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
+    let iso = IsolatedEnv::enter("tui-jive-kq-fleet");
+    let root = fake_rs2b0t_tree(&iso.dir, true);
+    iso.set_rs2b0t(&root);
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session
+        .live_prepare_script(scenario::get("jive_kq_four").expect("registered"))
+        .expect("prepare four-player JiveKQ");
+
+    assert_eq!(session.names.len(), 4, "JiveKQ mints four fleet profiles");
+    let roster = session
+        .names
+        .iter()
+        .map(|name| client::util::JString::to_screen_name(name))
+        .collect::<Vec<_>>()
+        .join(",");
+    let starts = session.pending_script.lock().unwrap();
+    assert_eq!(starts.len(), 4, "StartScript prepares all four isolates");
+    let mut prepared_slots = starts
+        .iter()
+        .map(|start| start.slot.clone())
+        .collect::<Vec<_>>();
+    prepared_slots.sort();
+    let mut fleet_slots = session.names.clone();
+    fleet_slots.sort();
+    assert_eq!(
+        prepared_slots, fleet_slots,
+        "each fleet profile has exactly one prepared start"
+    );
+    for start in starts.iter() {
+        assert_eq!(
+            start.bag.as_ref().and_then(|settings| settings.get("team")),
+            Some(&serde_json::json!(roster)),
+            "{} receives the complete shared roster",
+            start.slot
+        );
+    }
 }
 
 #[test]
@@ -1062,7 +1118,7 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
 #[test]
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let iso = IsolatedEnv::enter("tui-import");
-    let root = fake_rs2b0t_tree(&iso.dir);
+    let root = fake_rs2b0t_tree(&iso.dir, false);
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("274bot headless");
     let n = session
