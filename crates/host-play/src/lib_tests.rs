@@ -6601,6 +6601,7 @@ export default class T extends LoopingBot {
         snap.bank_side().is_empty(),
         "settlement removed the side row"
     );
+    let empty_side_observed_at = Instant::now();
     script_observe(
         &mut c,
         "alice",
@@ -6629,7 +6630,7 @@ export default class T extends LoopingBot {
     // Drive ticks until the script observes that transition rather than
     // assuming one fixed sleep lands on the right isolate schedule.
     let before_withdraw = c.out.pos;
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = empty_side_observed_at + Duration::from_secs(10);
     let mut next_tick = 3;
     loop {
         script_observe(
@@ -6668,6 +6669,15 @@ export default class T extends LoopingBot {
         );
         thread::sleep(Duration::from_millis(10));
     }
+    let settle_elapsed = empty_side_observed_at.elapsed();
+    assert!(
+        settle_elapsed >= Duration::from_millis(1_200),
+        "deposit settled before the 1.2 s empty-side deadline: {settle_elapsed:?}"
+    );
+    assert!(
+        settle_elapsed < Duration::from_secs(3),
+        "deposit settlement exceeded the end-to-end 3 s bound: {settle_elapsed:?}"
+    );
     // The tick that settles the deposit may already drain the following
     // withdrawal. A no-edge observe drains it when the isolate lost that race.
     script_observe(

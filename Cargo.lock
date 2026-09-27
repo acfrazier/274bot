@@ -4600,6 +4600,7 @@ dependencies = [
  "flatbuffers",
  "nav",
  "rustyscript",
+ "script",
  "serde",
  "serde_json",
  "sha2",

@@ -656,6 +656,7 @@ impl LoadIsolate {
     /// watchdog. Slow-completion regression tests place these behind the
     /// first tick command to exercise the isolate thread's stale-window
     /// bookkeeping; watchdog interruption has its own tests.
+    #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn enqueue_tick_without_watchdog_for_test(&self, snap_tick: u64) {
         let generation = self
