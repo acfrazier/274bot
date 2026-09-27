@@ -11,12 +11,23 @@ fetch into the configured cache/unpack directory.
 
 ## Downloaded Alpha 3 packages
 
-The macOS app opens on **public-289**. Standalone binaries use
-`./panel-play --profile public-289` or `./tui-play --profile public-289`
-(`.exe` on Windows). Keep the adjacent `nav/` directory; the macOS app
-contains its own resources. Initial distributed navigation targets the public
-289 cache. A custom local engine with different cache bytes needs a matching
-source build or explicit external navigation pack.
+The macOS app opens on **public-289**. Standalone binaries (macOS, Windows and
+Linux) use `./panel-play --profile public-289` or `./tui-play --profile
+public-289` (`.exe` on Windows). Keep the adjacent `nav/` and `map/`
+directories; the macOS app contains its own resources. Initial distributed
+navigation and WalkTo map terrain target the public 289 cache: the first
+WalkTo open installs the shipped terrain when your client cache matches it,
+and otherwise asks before baking terrain locally. A custom local engine with
+different cache bytes needs a matching source build or explicit external
+navigation pack.
+
+On Linux (glibc 2.39 or newer), `panel-play` needs an X11 or Wayland session
+and Vulkan: the Vulkan loader plus a GPU driver, or Mesa lavapipe for software
+rendering. `BOT_CPU=1` draws the game view on the CPU; the window still uses
+Vulkan. On Ubuntu 24.04 the libraries come from `libasound2t64 libssl3t64
+libx11-6 libx11-xcb1 libxcursor1 libxi6 libxkbcommon0 libxkbcommon-x11-0
+libwayland-client0 libwayland-cursor0 libvulkan1 mesa-vulkan-drivers`.
+`tui-play` needs only glibc and OpenSSL 3 (`libssl3t64`).
 
 No Rust toolchain or local engine is needed for the public package. Game assets
 are fetched from the configured public server, and catalog scripts still come

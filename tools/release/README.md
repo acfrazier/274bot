@@ -5,7 +5,8 @@ Alpha 3 uses host workspace version 0.1.8. The public name comes from
 
 - macOS ARM64: Developer ID signed `274bot.app`, `panel-play`, `tui-play`.
 - Windows x64: `panel-play.exe`, `tui-play.exe`.
-- Linux x64: `tui-play`.
+- Linux x64: `panel-play`, `tui-play` (the panel from 0.1.9; see
+  [Linux panel runtime](#linux-panel-runtime)).
 
 `host-play` remains a developer tool. Build default features with
 `cargo build --locked --release`; do not enable profiling features. Build from
@@ -83,3 +84,36 @@ identity was checked on 2026-09-16 via HTTPS /crc and all eight archive CRCs;
 only versionlist differs from the existing local 289 set. Both exact cache
 identities remain recognized. Local servers with another cache require their
 own matching navigation build or explicit external navigation resources.
+
+## Linux panel runtime
+
+The Linux package ships `panel-play` beside `tui-play` with the same adjacent
+`nav/289/` and `map/289/` resources as the Windows package; the panel's fonts
+are compiled in. Build both binaries in the release build (`cargo build
+--locked --release`). They are built on Ubuntu 24.04 and need glibc 2.39 or
+newer.
+
+- **Display:** an X11 or Wayland session. winit loads the display libraries at
+  runtime: libX11, libX11-xcb, libXcursor, libXi, libxcb, libxkbcommon and
+  libxkbcommon-x11 on X11; libwayland-client, libwayland-cursor and
+  libxkbcommon on Wayland.
+- **Graphics:** the panel draws with wgpu's Vulkan backend, so it needs the
+  Vulkan loader (`libvulkan.so.1`) and a Vulkan driver: the GPU vendor's, or
+  Mesa lavapipe (`libvulkan_lvp.so`) for software rendering. There is no
+  OpenGL fallback for the window. `BOT_CPU=1` draws the game view with the CPU
+  rasterizer instead of the GPU renderer; the window still presents through
+  Vulkan.
+- **Linked libraries** (`ldd` on the builder build): `panel-play` links
+  `libasound.so.2` (ALSA, game audio), `libssl.so.3` and `libcrypto.so.3`
+  (OpenSSL 3), `libgcc_s.so.1`, `libm.so.6` and `libc.so.6`; `tui-play` links
+  the same except ALSA and needs no display or Vulkan.
+- **Ubuntu 24.04 packages:** `libasound2t64 libssl3t64 libx11-6 libx11-xcb1
+  libxcursor1 libxi6 libxkbcommon0 libxkbcommon-x11-0 libwayland-client0
+  libwayland-cursor0 libvulkan1 mesa-vulkan-drivers`.
+
+Checked 2026-09-27 on the Ubuntu 24.04 builder: `package.py --check
+--platform linux` staged 1,715 files (both binaries, `nav/289`, `map/289`,
+docs), and the staged `panel-play` ran on Xvfb with Mesa lavapipe
+(`adapter name=llvmpipe … backend=Vulkan`), logged a throwaway local account
+in, and opened WalkTo on the shipped terrain (installed into the scratch
+`~/.274bot/map-cache` byte for byte) without a bake prompt.

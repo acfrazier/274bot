@@ -254,8 +254,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   the panel's Nav config (**ask before baking terrain**) and the TUI settings
   popup (**map bake**). The decision is `frontend_core::MapBakeGate`, shared
   by both front ends.
-- Release packages ship the 289 WalkTo map terrain, as rs2b0t ships its map
-  images (operator decision 2026-09-26). `tools/release/package.py` bakes it
+- Release packages (macOS, Windows and Linux) ship the 289 WalkTo map
+  terrain, as rs2b0t ships its map images (operator decision 2026-09-26).
+  `tools/release/package.py` bakes it
   with the staged `tui-play --map-bundle` from the pinned client cache the nav
   bundle was built from, through the same map-cache producer and publication
   as a local bake, and ships it as `map/289/` beside `nav/289/` (and in the
@@ -685,6 +686,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   panel/TUI startup; the old file is never deleted. Startup logs whether a
   loaded pack came from the packaged `274V10` bundle or an external path so
   release gates can prove package provenance.
+
+### Packaging
+
+- The Linux package ships `panel-play` beside `tui-play`, like macOS and
+  Windows, with the adjacent `nav/289/` and `map/289/` resources (its fonts
+  are compiled in). It needs an X11 or Wayland session and a Vulkan driver
+  (a GPU driver, or Mesa lavapipe for software rendering); `BOT_CPU=1` draws
+  the game view with the CPU rasterizer. The system libraries it links and
+  loads are listed in `tools/release/README.md` and `FIRST-START.md`.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 
