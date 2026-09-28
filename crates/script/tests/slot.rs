@@ -5,7 +5,8 @@
 
 use api::interact::Driver;
 use api::prot::Out;
-use script::{RunState, Script, ScriptCtx, SlotScript};
+use script::ctx::Script;
+use script::{RunState, ScriptCtx, SlotScript};
 
 /// Outbound writes a driver receives, as recorded by the stub.
 #[derive(Debug, Clone, PartialEq, Eq)]

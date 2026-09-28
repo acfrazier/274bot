@@ -991,7 +991,7 @@ impl SelectedGameData {
         _worker: &mut crate::selected::FamilyPreparation,
     ) -> Result<Arc<crate::quest_facts::QuestCatalog>, crate::selected::FactError> {
         Err(crate::selected::FactError::FamilyUnavailable(
-            crate::selected::FactKey::new("quests"),
+            crate::selected::QUESTS_FAMILY.clone(),
         ))
     }
 
@@ -1001,7 +1001,7 @@ impl SelectedGameData {
         _worker: &mut crate::selected::FamilyPreparation,
     ) -> Result<Arc<crate::gather_methods::GatherCatalog>, crate::selected::FactError> {
         Err(crate::selected::FactError::FamilyUnavailable(
-            crate::selected::FactKey::new("gathering"),
+            crate::selected::GATHERING_FAMILY.clone(),
         ))
     }
 

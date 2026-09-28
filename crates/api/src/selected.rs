@@ -1,9 +1,7 @@
 //! Shared selected-fact values. Loading is off-pump; gates never guess missing facts.
 
-use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::collections::HashSet;
+use std::sync::{Arc, LazyLock};
 
 pub use client::io::ClientRevision;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -14,32 +12,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 pub struct FactKey(pub Arc<str>);
 
 impl FactKey {
-    /// Intern at preparation/deserialization, not in a tick. Weak entries do not
-    /// keep a released catalog's strings alive.
+    /// Allocate an owned key off-pump. Family decoders share repeated text through
+    /// a scoped [`FactStrings`], never a process-lifetime intern table.
     pub fn new(text: &str) -> Self {
-        type InternPool = Mutex<HashMap<u64, Vec<Weak<str>>>>;
-        static POOL: LazyLock<InternPool> = LazyLock::new(Mutex::default);
-        let mut hash = DefaultHasher::new();
-        text.hash(&mut hash);
-        let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
-        let entries = pool.entry(hash.finish()).or_default();
-        let mut found = None;
-        entries.retain(|entry| {
-            if let Some(value) = entry.upgrade() {
-                if value.as_ref() == text {
-                    found = Some(value);
-                }
-                true
-            } else {
-                false
-            }
-        });
-        if let Some(value) = found {
-            return Self(value);
-        }
-        let value: Arc<str> = text.into();
-        entries.push(Arc::downgrade(&value));
-        Self(value)
+        Self(Arc::from(text))
     }
 }
 
@@ -49,6 +25,28 @@ impl<'de> Deserialize<'de> for FactKey {
         Ok(Self::new(&text))
     }
 }
+
+/// Decode-local string interning for keys, source paths and gap codes.
+/// Drop after preparation: only the returned Arcs then retain their strings.
+#[derive(Default)]
+pub struct FactStrings {
+    strings: HashSet<Arc<str>>,
+}
+
+impl FactStrings {
+    pub fn intern(&mut self, text: &str) -> Arc<str> {
+        if let Some(value) = self.strings.get(text) {
+            return Arc::clone(value);
+        }
+        let value: Arc<str> = Arc::from(text);
+        self.strings.insert(Arc::clone(&value));
+        value
+    }
+}
+
+// Refusal paths clone a fixed key, without allocating or taking an intern lock.
+pub(crate) static QUESTS_FAMILY: LazyLock<FactKey> = LazyLock::new(|| FactKey::new("quests"));
+pub(crate) static GATHERING_FAMILY: LazyLock<FactKey> = LazyLock::new(|| FactKey::new("gathering"));
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -176,7 +174,8 @@ pub enum FactError {
     },
 }
 
-/// Process-local identity; intentionally not deserializable or persistable.
+/// Process-local identity; `slot` comes from Play's worker lifetime owner only.
+/// Intentionally not deserializable or persistable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RunKey {
     pub slot: u64,
@@ -188,17 +187,6 @@ pub struct RunKey {
 pub struct GenerationExhausted;
 
 impl RunKey {
-    /// Allocate a new worker incarnation, never a username/hash. Renames keep it;
-    /// worker replacement and remove/re-add must allocate again.
-    pub fn allocate() -> Result<Self, GenerationExhausted> {
-        static NEXT_SLOT: AtomicU64 = AtomicU64::new(1);
-        Ok(Self {
-            slot: allocate_slot(&NEXT_SLOT)?,
-            run: 1,
-            session: 1,
-        })
-    }
-
     pub fn next_run(self) -> Result<Self, GenerationExhausted> {
         Ok(Self {
             run: self.run.checked_add(1).ok_or(GenerationExhausted)?,
@@ -212,13 +200,6 @@ impl RunKey {
             ..self
         })
     }
-}
-
-fn allocate_slot(next: &AtomicU64) -> Result<u64, GenerationExhausted> {
-    next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-        value.checked_add(1)
-    })
-    .map_err(|_| GenerationExhausted)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,23 +245,6 @@ pub struct StageWindow {
     pub quest: FactKey,
     pub signal: FactKey,
     pub values: InclusiveRange,
-}
-
-impl StageWindow {
-    /// Numeric gate only. The catalog additionally checks quest, pin, binding,
-    /// role and freshness before using this value calculation.
-    pub fn evaluate(&self, signals: &[SignalRange]) -> Truth {
-        let mut result = None;
-        for signal in signals.iter().filter(|signal| signal.signal == self.signal) {
-            let next = self.values.test(&signal.values);
-            result = Some(match result {
-                None => next,
-                Some(previous) if previous == next => previous,
-                Some(_) => Truth::Unknown,
-            });
-        }
-        result.unwrap_or(Truth::Unknown)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -366,17 +330,8 @@ mod tests {
     #[test]
     fn windows_require_all_possibilities_and_include_endpoints() {
         let range = |min, max| InclusiveRange { min, max };
-        let gate = StageWindow {
-            quest: FactKey::new("cook"),
-            signal: FactKey::new("cook"),
-            values: range(Some(2), Some(4)),
-        };
-        let test = |possible| {
-            gate.evaluate(&[SignalRange {
-                signal: gate.signal.clone(),
-                values: possible,
-            }])
-        };
+        let gate = range(Some(2), Some(4));
+        let test = |possible| gate.test(&possible);
         assert_eq!(test(range(Some(2), Some(4))), Truth::True);
         assert_eq!(test(range(Some(4), Some(4))), Truth::True);
         assert_eq!(test(range(Some(5), None)), Truth::False);
@@ -385,30 +340,9 @@ mod tests {
         assert_eq!(test(range(None, Some(3))), Truth::Unknown);
         assert_eq!(test(range(Some(4), Some(2))), Truth::Unknown);
         assert_eq!(
-            gate.evaluate(&[SignalRange {
-                signal: FactKey::new("other"),
-                values: range(Some(2), Some(4))
-            }]),
-            Truth::Unknown
-        );
-        assert_eq!(
-            gate.evaluate(&[
-                SignalRange {
-                    signal: gate.signal.clone(),
-                    values: range(Some(2), Some(2))
-                },
-                SignalRange {
-                    signal: gate.signal.clone(),
-                    values: range(Some(5), Some(5))
-                },
-            ]),
-            Truth::Unknown
-        );
-        assert_eq!(
             range(Some(4), Some(2)).test(&range(Some(3), Some(3))),
             Truth::Unknown
         );
-        assert_eq!(gate.evaluate(&[]), Truth::Unknown);
         assert_eq!(
             range(None, Some(4)).test(&range(None, Some(4))),
             Truth::True
@@ -424,10 +358,12 @@ mod tests {
     }
 
     #[test]
-    fn incarnations_and_generations_never_reuse_or_wrap() {
-        let original = RunKey::allocate().unwrap();
-        let replacement = RunKey::allocate().unwrap();
-        assert_ne!(original.slot, replacement.slot);
+    fn generations_never_wrap_or_change_the_worker_identity() {
+        let original = RunKey {
+            slot: 7,
+            run: 1,
+            session: 1,
+        };
         let next = original.next_run().unwrap().next_session().unwrap();
         assert_eq!(next.slot, original.slot);
         assert_eq!(
@@ -441,10 +377,6 @@ mod tests {
         };
         assert_eq!(exhausted.next_run(), Err(GenerationExhausted));
         assert_eq!(exhausted.next_session(), Err(GenerationExhausted));
-        let counter = AtomicU64::new(u64::MAX - 1);
-        assert_eq!(allocate_slot(&counter), Ok(u64::MAX - 1));
-        assert_eq!(allocate_slot(&counter), Err(GenerationExhausted));
-        assert_eq!(allocate_slot(&counter), Err(GenerationExhausted));
     }
 
     #[test]
@@ -466,5 +398,47 @@ mod tests {
                 .is_err()
         );
         assert!(serde_json::from_str::<SkillMinimum>(r#"{"skill":1,"level":2,"typo":3}"#).is_err());
+        use crate::gather_methods::ToolUse;
+        use crate::quest_facts::StageFacts;
+        use crate::WorldTile;
+        assert!(serde_json::from_str::<ToolUse>(r#"{"item":1265,"use_gate":null}"#).is_err());
+        assert!(serde_json::from_str::<ToolUse>(r#"{"item":1265,"wield_gate":null}"#).is_err());
+        let tool: ToolUse =
+            serde_json::from_str(r#"{"item":1265,"use_gate":null,"wield_gate":null}"#).unwrap();
+        assert!(tool.use_gate.is_none() && tool.wield_gate.is_none());
+        assert!(serde_json::from_str::<StageFacts>(
+            r#"{"id":"start","terminal":false,"signals":[]}"#
+        )
+        .is_err());
+        let stage: StageFacts =
+            serde_json::from_str(r#"{"id":"start","role":null,"terminal":false,"signals":[]}"#)
+                .unwrap();
+        assert!(stage.role.is_none());
+        assert!(
+            serde_json::from_str::<WorldTile>(r#"{"x":3200,"z":3200,"level":0,"plane":2}"#)
+                .is_err()
+        );
+        assert_eq!(
+            serde_json::from_str::<WorldTile>(r#"{"x":3200,"z":3200,"level":2}"#).unwrap(),
+            WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 2
+            }
+        );
+    }
+
+    #[test]
+    fn scoped_strings_share_storage_without_retaining_released_families() {
+        let mut strings = FactStrings::default();
+        let key = FactKey(strings.intern("cook"));
+        let duplicate = FactKey(strings.intern("cook"));
+        assert!(Arc::ptr_eq(&key.0, &duplicate.0));
+        let weak = Arc::downgrade(&key.0);
+        drop(strings);
+        drop(duplicate);
+        assert_eq!(key.0.as_ref(), "cook");
+        drop(key);
+        assert!(weak.upgrade().is_none());
     }
 }

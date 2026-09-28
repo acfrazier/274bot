@@ -758,7 +758,7 @@ mod tests {
 
     struct NoopScript;
 
-    impl script::Script for NoopScript {
+    impl script::ctx::Script for NoopScript {
         fn name(&self) -> &str {
             "Noop"
         }

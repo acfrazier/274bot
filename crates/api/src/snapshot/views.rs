@@ -2,6 +2,7 @@ use super::*;
 /// A world tile: absolute `x`/`z` plus the plane (`level`). The key type
 /// loc/ground-item/player families are positioned by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorldTile {
     pub x: i32,
     pub z: i32,

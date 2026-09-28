@@ -1,9 +1,13 @@
 //! Common compiled-card contract. M-297 owns installation, lifecycle and action bodies.
 //! These types do not install a second runtime or alter the existing card registry.
+//! New compiled consumers use [`Script`] here. The current registry/slot still
+//! use `crate::ctx::Script` until M-297's atomic lifecycle cutover.
+use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
 use std::sync::{Arc, LazyLock};
 use std::task::Poll;
+use std::time::{Duration, Instant};
 
 use crate::quester::pair::QuestPairPort;
 use crate::shim::{InteractReq, ScriptPaint};
@@ -11,6 +15,7 @@ use crate::{CompiledId, FindOptions, SettingDef};
 use api::game_data::SelectedGameData;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestProgress};
 use api::selected::{FactError, FamilyPreparation, QuestGate, RunKey, SelectedPin, Truth};
+use api::snapshot::SnapshotView;
 use api::{DetectedRandom, RandomClaim, WorldTile};
 
 pub type SettingsBag = serde_json::Map<String, serde_json::Value>;
@@ -60,7 +65,13 @@ pub struct ConfigError {
 
 /// Slot-owned lazy recovery cells. M-297 installs clue retention outside action/card drops.
 pub struct RetainedMemory {
-    _private: (),
+    clue: crate::clue::ClueRecovery,
+}
+
+impl RetainedMemory {
+    pub fn clue(&mut self) -> &mut crate::clue::ClueRecovery {
+        &mut self.clue
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,16 +168,25 @@ pub trait NativeOutput {
 
 /// M-297 constructs the lazy slot facility, borrowing the single admission budget.
 pub struct NativeActions {
-    _private: (),
+    unavailable: Infallible,
 }
 /// Host-only frame context; deliberately no public constructor or family preparation.
 pub struct ActionContext<'a> {
-    _frame: PhantomData<&'a mut ()>,
+    evidence: EvidenceStamp,
+    pin: &'a SelectedPin,
+    snapshot: SnapshotView<'a>,
+    retained: &'a mut RetainedMemory,
+    action_id: u64,
+    active_now: Duration,
+    wall_now: Instant,
+    // Removed when the host admission owner installs a real frame constructor.
+    unavailable: Infallible,
 }
 /// Revocable owner identity; no caller can mint a lease.
 pub struct QuietReadLease {
     _run: RunKey,
     _request_id: NonZeroU64,
+    unavailable: Infallible,
 }
 
 pub struct WalkRequest {
@@ -194,6 +214,38 @@ pub struct WalkReceipt {
 }
 
 impl ActionContext<'_> {
+    pub fn run(&self) -> RunKey {
+        self.evidence.run
+    }
+    pub fn active_now(&self) -> Duration {
+        self.active_now
+    }
+    pub fn wall_now(&self) -> Instant {
+        self.wall_now
+    }
+    pub fn evidence(&self) -> EvidenceStamp {
+        self.evidence
+    }
+    pub fn pin(&self) -> &SelectedPin {
+        self.pin
+    }
+    pub fn snapshot(&self) -> SnapshotView<'_> {
+        self.snapshot
+    }
+    pub fn retained(&mut self) -> &mut RetainedMemory {
+        self.retained
+    }
+    pub fn action_id(&self) -> u64 {
+        self.action_id
+    }
+    /// No lease can be issued before M-297 installs the admission ledger.
+    pub fn end_quiet_read(&mut self, lease: QuietReadLease) {
+        match lease.unavailable {}
+    }
+    /// No frame/request can exist before M-297 installs the admission ledger.
+    pub fn cancel_request(&mut self, _request_id: u64) {
+        match self.unavailable {}
+    }
     /// body owned by M-297
     pub fn begin_quiet_read(&mut self, _request_id: u64) -> Result<QuietReadLease, ActionError> {
         Err(unavailable())
@@ -261,9 +313,13 @@ impl NativeActions {
     ) -> Poll<Result<M::Output, ActionError>> {
         Poll::Ready(Err(unavailable()))
     }
+    /// No facility/handle can exist before M-297 installs owner revocation.
+    pub fn cancel<M: NativeMachine>(&mut self, _handle: ActionHandle<M>) {
+        match self.unavailable {}
+    }
 }
 
-fn unavailable() -> ActionError {
+pub(crate) fn unavailable() -> ActionError {
     // One process allocation, never a new error string on each poll.
     static REASON: LazyLock<Arc<str>> =
         LazyLock::new(|| Arc::from("native action facility unavailable"));

@@ -300,7 +300,7 @@ tiles already verified).
 | `content.rs` | curated sites and hostile predicate | bank aliases posted via the shim payload |
 | `ent.rs` | Ent lookup over caller rows | no scene scan |
 | `bank_access.rs`, `bank_deposit.rs`, `bank_op.rs`, `bank_open.rs`, `bank_withdraw.rs` | bank open, op, deposit, and withdraw steps | machine families, shared pieces |
-| `clue.rs` | clue session machine | token, clock, identify, verbs |
+| `clue.rs`, `clue/isolate.rs` | native recovery declaration; load-only clue session machine | isolate token, clock, identify, verbs stay private to the crate |
 | `clue/scene.rs`, `clue/puzzle.rs`, `clue/entrana.rs`, `clue/acquire.rs`, `clue/shop.rs`, `clue/talk.rs`, `clue/combat.rs`, `clue/verbs.rs`, `clue/family.rs` | clue phase helpers | one phase slice each |
 | `sherlock.rs` | Sherlock card wiring | marshals the frame, maps verbs, no second solver |
 | `hunt.rs` | hunt framework on the machine host | sessions and runs, child nesting |
@@ -322,7 +322,8 @@ tiles already verified).
 | `line_of_sight.rs` | line-of-sight over the posted table | isolate-scene reads |
 | `keep_list.rs` | combat keep-list composition | compatibility list |
 | `modals.rs` | modal helpers | dialog page helpers |
-| `quest_journal.rs`, `shop.rs`, `market_catalog.rs` | quest, shop, and market descriptors | preset and catalog tables |
+| `quest_journal.rs`, `quest_journal/isolate.rs` | no-load native journal contract; load-only journal machine | admission/transport cutover stays with the native lifecycle owner |
+| `shop.rs`, `market_catalog.rs` | shop and market descriptors | preset and catalog tables |
 | `loadout_plan.rs`, `loadouts_store.rs`, `settings_store.rs`, `params.rs` | loadout and settings stores | operator-facing descriptors |
 | `registry.rs`, `rs2b0t_registry.rs`, `rs2b0t_registry/paths.rs`, `rs2b0t_registry/settings.rs`, `declared_abi.rs`, `module_imports.rs`, `identity.rs` | card registration and identity | import scan, paths, ABI names |
 | `isolated_env.rs`, `js_cache.rs`, `memory_profile.rs`, `events.rs` | isolate env, cache, and diagnostics | support, no game actions |
