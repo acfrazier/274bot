@@ -124,7 +124,9 @@ review requirements, not this checker.
 
 GitHub Actions runs the same two manifests after installing ALSA + X11
 headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
-required-feature script and profiling test lanes and the architecture checker
+feature-gated test lanes (script `load` and V8-free `--no-default-features`,
+host `performance-profile`, host-play/panel/tui `memory-profile`, host-play
+`memory-profile-no-alloc`, panel `render-diagnostics`) and the architecture checker
 (no Rust toolchain). Independent test commands run as parallel matrix lanes;
 the required `test` status aggregates every lane. It is still a **subset**:
 `SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`. A green GH job is
