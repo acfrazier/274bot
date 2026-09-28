@@ -9345,6 +9345,91 @@ fn nav_cart_is_a_mainland_follow_that_needs_the_cart_hop() {
 }
 
 #[test]
+fn nav_brass_hut_follows_loc_1804_both_ways_with_the_brass_key() {
+    let s = get("nav_brass_hut").expect("nav_brass_hut is registered");
+    assert_eq!(s.name, "nav_brass_hut");
+    assert_eq!(s.seed.profiles, [("test", "test")]);
+    assert!(s.seed.mainland);
+    assert_eq!(
+        s.steps.len(),
+        4,
+        "give key, tele outside, follow in, follow out"
+    );
+    match &s.steps[0].kind {
+        StepKind::Perform { .. } => {}
+        _ => panic!("nav_brass_hut step 1 must be Perform"),
+    }
+    assert!(matches!(
+        s.steps[0].wait.arm,
+        Proof::ItemId { id: 983, count: 1 }
+    ));
+    match &s.steps[1].kind {
+        StepKind::Perform { .. } => {}
+        _ => panic!("nav_brass_hut step 2 must be the outside tele"),
+    }
+    assert!(matches!(
+        s.steps[1].wait.arm,
+        Proof::Arrived {
+            x: 3115,
+            z: 3449,
+            level: 0
+        }
+    ));
+    let (in_dest, in_arm) = match &s.steps[2].kind {
+        StepKind::Follow { dest } => (
+            *dest,
+            match &s.steps[2].wait.arm {
+                Proof::ArrivedNear {
+                    x,
+                    z,
+                    level,
+                    radius,
+                } => (*x, *z, *level, *radius),
+                other => panic!("inbound follow arm must be arrivedNear, got {other:?}"),
+            },
+        ),
+        _ => panic!("nav_brass_hut step 3 must be Follow into the hut"),
+    };
+    assert_eq!(
+        in_dest,
+        WorldTile {
+            x: 3116,
+            z: 3452,
+            level: 0
+        }
+    );
+    assert_eq!(in_arm, (3116, 3452, 0, 2));
+    let (out_dest, out_arm) = match &s.steps[3].kind {
+        StepKind::Follow { dest } => (
+            *dest,
+            match &s.steps[3].wait.arm {
+                Proof::ArrivedNear {
+                    x,
+                    z,
+                    level,
+                    radius,
+                } => (*x, *z, *level, *radius),
+                other => panic!("outbound follow arm must be arrivedNear, got {other:?}"),
+            },
+        ),
+        _ => panic!("nav_brass_hut step 4 must be Follow out to the bank"),
+    };
+    assert_eq!(
+        out_dest,
+        WorldTile {
+            x: 3185,
+            z: 3440,
+            level: 0
+        }
+    );
+    assert_eq!(out_arm, (3185, 3440, 0, 4));
+    assert_eq!(s.proof.name(), "arrived_near(3185,3440,0,4)");
+    assert!(s.companions.is_empty());
+    assert!(s.settings.start_script.is_none());
+    assert!(names().contains(&"nav_brass_hut"));
+}
+
+#[test]
 fn nav_tele_gives_the_ring_and_follows_the_packed_rub_with_teleports_on() {
     let s = get("nav_tele").expect("nav_tele is registered");
     assert_eq!(s.name, "nav_tele");
