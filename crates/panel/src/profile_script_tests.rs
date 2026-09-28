@@ -73,7 +73,7 @@ fn session_with_profiles(names: &[&str]) -> (Session, TestDir) {
     script::IsolatedEnv::ensure_thread();
     let dir = tmp("vault");
     let path = dir.join("v.vault");
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     for (i, name) in names.iter().enumerate() {
         vault
             .upsert(Profile {

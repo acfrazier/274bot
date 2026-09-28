@@ -19,24 +19,26 @@ Shared flags match host-play (`--engine`, `--cache`, `--vault`, `--catalog`,
 ## Run
 
 ```bash
-export BOT_VAULT_PASS=bot
 cargo run --release -p panel --bin panel-play -- --profile local-289
 # 50-head RAM:  cargo run --release -p panel --bin panel-play -- --profile local-289 --live stress50
 # 50-head 50fps Game+sidecar: --live stress50_full
 ```
 
-A passphrase is required and an empty one is rejected. First run **Create
+A passphrase is required and an empty one is rejected. A **new** vault needs
+at least 12 characters (the prompt says so); an existing vault opens with
+whatever passphrase it was created with. First run **Create
 vault** writes `~/.274bot/vault` **empty** — panel-play does **not**
 auto-create `test`/`test` (that is host-play CLI: `--user test` defaults,
 `password = username`). A wrong passphrase never replaces the file;
 **Reset vault** (confirm + I understand) is the forgotten-password wipe.
 Open **Profiles**, **New profile** or **Edit**, type a username/password,
 and **Save** to upsert, spawn that slot on the login FIFO, and select it.
-Unlike the CLI there is **no
-`--vault-pass` flag** — the passphrase comes from `BOT_VAULT_PASS`, or from
-the in-panel prompt (which also covers interactive use). When
-`BOT_VAULT_PASS` is set, the panel unlocks **before** the window opens so the
-headless path works unchanged. There is **no mainland checkbox** in the
+The passphrase is **never** an argument or an environment variable (other
+users can read both): the in-panel prompt is the interactive channel, and
+`--vault-pass-stdin` reads one line from a pipe (or asks on the launching
+terminal) and unlocks **before** the window opens, for launchers and
+harnesses that cannot type; see [vault.md](vault.md#passphrase-sourcing).
+`BOT_VAULT_PASS` and `--vault-pass` were removed. There is **no mainland checkbox** in the
 panel: `BOT_MAINLAND=1` or host-play `--mainland` still queues
 `mainland_hop` after scene 2. On a **loopback** engine the **Debug**
 section is shown: **TutSkip** (`setvar tutorial 1000`, hidden once the
@@ -202,7 +204,7 @@ never fails on size.
 
 ## Headed live
 
-`BOT_VAULT_PASS` is unused for `--live`. FAIL prints and exits 1. On PASS
+`--live` needs no vault passphrase (it makes a throwaway vault). FAIL prints and exits 1. On PASS
 the window stays up and remains interactive (operator may click). Local
 engine required.
 

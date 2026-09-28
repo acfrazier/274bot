@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use crate::js_cache::{default_js_cache_root, CacheMeta, JsCache};
 #[cfg(feature = "load")]
 use crate::rs2b0t_registry::{
-    parse_registry_with_sources, persist_rs2b0t_root_at, script_file_path,
+    absolute_clean, parse_registry_with_sources, persist_rs2b0t_root_at, script_file_path,
 };
 use crate::rs2b0t_registry::{ScriptKind, ScriptSource, SettingDef};
 
@@ -187,6 +187,60 @@ struct StoreEntry {
     path: String,
 }
 
+/// Bounds on what restore reads: the store is a short list of paths and a bot
+/// source is tens of KiB, so anything near these is not a real one.
+#[cfg(feature = "load")]
+const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
+#[cfg(feature = "load")]
+const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// A stored entry path is restorable only when absolute (a relative one would
+/// resolve against wherever the host happens to be started) and free of `..`.
+#[cfg(feature = "load")]
+fn restorable_path(stored: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(stored);
+    if !path.is_absolute() {
+        return Err("not an absolute path".into());
+    }
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err("the path contains `..`".into());
+    }
+    Ok(path)
+}
+
+#[cfg(feature = "load")]
+enum StoredSource {
+    Text(String),
+    /// Missing or unreadable: dropped quietly, as before.
+    Gone,
+    Refused(String),
+}
+
+/// Reads a script source the store names. Symlinks are followed and the checks
+/// apply to what they resolve to: a regular file within [`MAX_SOURCE_BYTES`]
+/// (a FIFO or device would hang the read or never end). There is no permission
+/// check on purpose: sources live wherever the operator keeps them, including
+/// filesystems that report every file world-writable.
+#[cfg(feature = "load")]
+fn read_stored_source(path: &Path) -> StoredSource {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return StoredSource::Gone;
+    };
+    if !meta.is_file() {
+        return StoredSource::Refused("not a regular file".into());
+    }
+    if meta.len() > MAX_SOURCE_BYTES {
+        return StoredSource::Refused(format!("larger than {MAX_SOURCE_BYTES} bytes"));
+    }
+    match std::fs::read_to_string(path) {
+        Ok(text) => StoredSource::Text(text),
+        Err(_) => StoredSource::Gone,
+    }
+}
+
 /// The out-of-tree JS library: picker cards for loaded files and the
 /// `$RS2B0T` catalog, persisted to `store`, with origin bytes cached
 /// under `cache`. Same `(source, name)` overwrites; only WalkTo is
@@ -202,6 +256,10 @@ pub struct JsLibrary {
     /// Retained per-identity load failures. One card's success does not
     /// clear another identity's record.
     failures: HashMap<String, LoadFailure>,
+    /// Set when [`JsLibrary::restore`] refused the store file. While set,
+    /// nothing is saved, so the refused file is never replaced by a library
+    /// that could not read it.
+    store_refusal: Option<String>,
 }
 
 #[cfg(feature = "load")]
@@ -219,6 +277,7 @@ impl JsLibrary {
             cards: Vec::new(),
             fingerprints: HashMap::new(),
             failures: HashMap::new(),
+            store_refusal: None,
         }
     }
 
@@ -226,18 +285,61 @@ impl JsLibrary {
     /// re-read from disk and re-classified; entries whose file is gone or
     /// that no longer look like a bot are dropped. A missing store is not
     /// an error (first run).
+    ///
+    /// The store decides which files the host loads, so it is read with
+    /// [`vault::read_private_file`]: a store another user could have written
+    /// is refused (`Err`, and nothing is saved over it afterwards), and an
+    /// entry is restored only when its path is absolute, has no `..` and names
+    /// a regular file of sane size. A refused entry is recorded as a load
+    /// failure so the operator can see why it did not come back.
     pub fn restore(&mut self) -> Result<(), String> {
-        let raw = match std::fs::read_to_string(&self.store) {
+        self.store_refusal = None;
+        let raw = match vault::read_private_file(&self.store, MAX_STORE_BYTES) {
             Ok(raw) => raw,
-            Err(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                let error = format!("js-scripts.json: {e}");
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    self.store_refusal = Some(error.clone());
+                }
+                return Err(error);
+            }
         };
         let entries: Vec<StoreEntry> =
             serde_json::from_str(&raw).map_err(|e| format!("js-scripts.json: {e}"))?;
         self.cards.clear();
         for entry in entries {
-            let path = PathBuf::from(&entry.path);
-            let Ok(origin) = std::fs::read_to_string(&path) else {
-                continue;
+            let path = match restorable_path(&entry.path) {
+                Ok(path) => path,
+                Err(reason) => {
+                    let diagnostic = format!("not restored: {reason}");
+                    let stored = Path::new(&entry.path);
+                    self.note_err(
+                        ScriptSource::File,
+                        stored,
+                        &entry.name,
+                        &diagnostic,
+                        None,
+                        None,
+                    );
+                    continue;
+                }
+            };
+            let origin = match read_stored_source(&path) {
+                StoredSource::Text(origin) => origin,
+                StoredSource::Gone => continue,
+                StoredSource::Refused(reason) => {
+                    let diagnostic = format!("not restored: {reason}");
+                    self.note_err(
+                        ScriptSource::File,
+                        &path,
+                        &entry.name,
+                        &diagnostic,
+                        None,
+                        None,
+                    );
+                    continue;
+                }
             };
             let Ok((shape, api_family)) = resolve_api_family(&origin) else {
                 continue;
@@ -287,6 +389,10 @@ impl JsLibrary {
     /// Start. Loading the same file path replaces its previous card;
     /// different paths remain distinct even when their file stems match.
     pub fn load(&mut self, path: &Path) -> Result<JsCard, String> {
+        // Stored absolute and `..`-free, so a later restore means the same file
+        // wherever the host is started from.
+        let path = absolute_clean(path).map_err(|e| format!("load {}: {e}", path.display()))?;
+        let path = path.as_path();
         match self.load_unrecorded(path) {
             Ok(card) => {
                 self.note_card_outcome(&card);
@@ -579,6 +685,11 @@ impl JsLibrary {
     }
 
     fn persist_entries(&self, entries: &[StoreEntry]) -> Result<(), String> {
+        if let Some(refusal) = &self.store_refusal {
+            return Err(format!(
+                "{refusal}; it is left untouched, so nothing is saved until it is fixed or removed"
+            ));
+        }
         let json =
             serde_json::to_string_pretty(entries).map_err(|e| format!("js-scripts.json: {e}"))?;
         vault::write_private_file(&self.store, json.as_bytes())
@@ -869,3 +980,7 @@ fn extract_sibling(diagnostic: &str) -> Option<String> {
         Some(rest.to_string())
     }
 }
+
+#[cfg(all(test, feature = "load"))]
+#[path = "library_tests.rs"]
+mod tests;

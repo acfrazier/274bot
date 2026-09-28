@@ -176,9 +176,10 @@ struct PanelState {
 enum Boot {
     #[cfg(feature = "memory-profile")]
     Memory(host_play::memory::Config),
-    /// `BOT_VAULT_PASS` interactive/headed flow. Failure is non-fatal: the
-    /// in-panel prompt covers typing.
-    Unlock { pass: String },
+    /// The vault passphrase from the in-panel prompt or `--vault-pass-stdin`.
+    /// Failure is non-fatal: the in-panel prompt covers typing. `Debug` never
+    /// prints it.
+    Unlock { pass: vault::Secret },
     /// Live harness spawns. Failure is fatal (`FAIL:` + exit).
     Live(LiveBoot),
 }
@@ -261,10 +262,11 @@ fn startup_progress(startup: &StartupPreparation, generation: u64) -> Option<Sta
     Some(StartupProgressView { phase, progress })
 }
 
-/// The deferred boot for a [`run_panel`] call, derived from the run mode
-/// and `BOT_VAULT_PASS` — pure, so the mapping is testable (the boot
-/// itself runs after GPU init; nothing here spawns or unlocks).
-fn boot_for(mode: &RunMode, vault_pass: Option<&str>) -> Option<Boot> {
+/// The deferred boot for a [`run_panel`] call, derived from the run mode and
+/// the passphrase read from `--vault-pass-stdin` — pure, so the mapping is
+/// testable (the boot itself runs after GPU init; nothing here spawns or
+/// unlocks).
+fn boot_for(mode: &RunMode, vault_pass: Option<vault::Secret>) -> Option<Boot> {
     if mode.is_smoke() {
         return Some(Boot::Live(LiveBoot::Smoke));
     }
@@ -278,9 +280,7 @@ fn boot_for(mode: &RunMode, vault_pass: Option<&str>) -> Option<Boot> {
         Some(name) if name.starts_with("script_") => Some(Boot::Live(LiveBoot::Script {
             name: name.to_string(),
         })),
-        _ => vault_pass.map(|pass| Boot::Unlock {
-            pass: pass.to_string(),
-        }),
+        _ => vault_pass.map(|pass| Boot::Unlock { pass }),
     }
 }
 
@@ -612,7 +612,7 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--prod] [--smoke] [--lowmem|--highmem] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends\n       --prepare-fixture   offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats";
+    "usage: panel-play [--prod] [--smoke] [--lowmem|--highmem] [--vault-pass-stdin] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends\n       --prepare-fixture   offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats\n       --vault-pass-stdin  read the vault passphrase from a piped stdin (or ask on the terminal) and unlock before the window opens; without it use the in-window prompt";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -648,6 +648,10 @@ pub struct PanelArgs {
     pub fixture_path: Option<std::path::PathBuf>,
     /// Server engine root for offline prepare (or `BOT_SERVER_ROOT`).
     pub server_root: Option<std::path::PathBuf>,
+    /// `--vault-pass-stdin`: read the vault passphrase from a piped stdin (or
+    /// a hidden terminal prompt) and unlock before the window opens. The
+    /// passphrase is never an argument or an environment variable.
+    pub vault_pass_stdin: bool,
 }
 
 pub fn parse_args(
@@ -655,6 +659,7 @@ pub fn parse_args(
     env_live: Option<&str>,
 ) -> Result<PanelArgs, (i32, String)> {
     let (memory_override, args) = parse_memory_override(args)?;
+    let (vault_pass_stdin, args) = parse_vault_pass_flags(args)?;
     let (profile, rest) =
         host_play::parse_profile_args(args).map_err(|msg| (2, format!("panel-play: {msg}")))?;
     let (nav_paints, rest) = parse_nav_paints(rest)?;
@@ -694,7 +699,26 @@ pub fn parse_args(
         run_prepared: fixture_flags.run_prepared,
         fixture_path: fixture_flags.fixture_path,
         server_root: fixture_flags.server_root,
+        vault_pass_stdin,
     })
+}
+
+/// Consumes `--vault-pass-stdin` and rejects the removed `--vault-pass`
+/// (either spelling) without echoing its value.
+fn parse_vault_pass_flags(args: Vec<String>) -> Result<(bool, Vec<String>), (i32, String)> {
+    let mut from_stdin = false;
+    let mut rest = Vec::with_capacity(args.len());
+    for arg in args {
+        if host_play::passphrase::is_removed_flag(&arg) {
+            return Err((2, host_play::passphrase::removed_flag_error("panel-play")));
+        }
+        if arg == "--vault-pass-stdin" {
+            from_stdin = true;
+        } else {
+            rest.push(arg);
+        }
+    }
+    Ok((from_stdin, rest))
 }
 
 #[derive(Debug, Default)]
@@ -1644,11 +1668,6 @@ fn clamp_hop_label_px(px: i32) -> i32 {
 /// Unlock / create / reset the default vault. Shared by the profile
 /// heading and the Profiles window so a locked vault is not shown as empty.
 fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
-    ui.input_text("##vault-pass", &mut session.pass_scratch)
-        .password(true)
-        .hint("vault passphrase")
-        .build();
-    let w = ui.content_region_avail()[0];
     let exists = match session.default_vault_exists() {
         Ok(exists) => exists,
         Err(error) => {
@@ -1656,13 +1675,27 @@ fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
             false
         }
     };
+    // A new vault has a passphrase floor; an existing one opens with what it has.
+    let hint = if exists {
+        "vault passphrase".to_string()
+    } else {
+        format!(
+            "new vault passphrase ({}+ characters)",
+            vault::MIN_PASSPHRASE_CHARS
+        )
+    };
+    ui.input_text("##vault-pass", &mut session.pass_scratch)
+        .password(true)
+        .hint(hint)
+        .build();
+    let w = ui.content_region_avail()[0];
     let label = if exists {
         "Unlock vault"
     } else {
         "Create vault"
     };
     if ui.button_with_size(label, [w, 0.0]) {
-        let pass = session.pass_scratch.trim().to_string();
+        let pass = vault::Secret::from(session.pass_scratch.trim());
         if !pass.is_empty() {
             session.request_unlock(pass);
             session.pass_scratch.clear();
@@ -4531,7 +4564,26 @@ fn init_panel_running(
         .session
         .configure_profile(args.profile.clone())
         .map_err(window::PanelError::ServerProfile)?;
-    let boot = boot_for(&args.mode, std::env::var("BOT_VAULT_PASS").ok().as_deref());
+    let vault_pass = if args.vault_pass_stdin && matches!(args.mode, RunMode::Interactive) {
+        let exists = state
+            .session
+            .default_vault_exists()
+            .map_err(window::PanelError::ServerProfile)?;
+        match host_play::passphrase::obtain(
+            "panel-play",
+            true,
+            host_play::passphrase::Purpose::for_vault(exists),
+        ) {
+            Ok(pass) => Some(pass),
+            Err(msg) => {
+                eprintln!("FAIL: {msg}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+    let boot = boot_for(&args.mode, vault_pass);
     #[cfg(feature = "memory-profile")]
     let boot = match host_play::memory::Config::from_env() {
         Ok(Some(config)) => {

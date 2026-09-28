@@ -83,7 +83,8 @@ rs2b0t checkout so panel/TUI can Browse/Start catalog cards.
 ## Local (TCP)
 
 ```bash
-export BOT_VAULT_PASS=bot
+# The vault passphrase is typed at the prompt (panel window / terminal); it is
+# never an environment variable or a flag. See docs/api/vault.md.
 # 289 example — adjust ENGINE_DIR if your tree is not the default
 export ENGINE_DIR="${ENGINE_DIR:-$HOME/experiments/lostcity-289/engine}"
 # optional: export RS2B0T=/path/to/rs2b0t
@@ -114,7 +115,8 @@ After local golds work. Use a real password (not username-as-password). Do
 not expect `give` / TutSkip / `tele` to work on the public world.
 
 ```bash
-export BOT_VAULT_PASS=bot
+# host-play and tui-play ask for the vault passphrase on the terminal; the panel
+# asks in its unlock window. A new vault needs at least 12 characters.
 
 cargo run --release -p host-play -- --profile public-289 --user YOUR_NAME
 cargo run --release -p panel --bin panel-play -- --profile public-289

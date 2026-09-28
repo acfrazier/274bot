@@ -1400,6 +1400,88 @@ fn launched_argv_and_cwd_match_the_bound_identity() {
     assert_eq!(launches(&tmp).len(), 1);
 }
 
+/// The launch path never hands a child a passphrase. The operator's shell may still
+/// export the retired `BOT_VAULT_PASS` (the old docs told everyone to): the suite must
+/// not carry it into the panel/tui children it launches, where any local user could read
+/// it from the process environment, and it must not land in the run directory either.
+#[test]
+fn a_stale_exported_passphrase_never_reaches_a_launched_child() {
+    let tmp = temp_dir("secret-env");
+    let run_dir = tmp.join("run");
+    let hygiene = tmp.join("hygiene.log");
+    let hygiene_arg = hygiene.display().to_string();
+    let canary = "canary-passphrase-not-a-secret";
+
+    let out = suite(
+        &tmp,
+        &run_dir,
+        &["--only", "fixture_one"],
+        &[
+            ("BOT_VAULT_PASS", canary),
+            ("E2E_SUITE_FIXTURE_CANARY", canary),
+            ("E2E_SUITE_FIXTURE_HYGIENE_LOG", &hygiene_arg),
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_OK),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+
+    let record = std::fs::read_to_string(&hygiene).expect("the child ran and reported");
+    assert_eq!(
+        record.trim(),
+        "variable=false canary_in_env=false canary_in_argv=false",
+        "the child must see neither the variable nor its value"
+    );
+    assert!(!text(&out.stdout).contains(canary) && !text(&out.stderr).contains(canary));
+    let mut pending = vec![run_dir];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if let Ok(bytes) = std::fs::read(&path) {
+                assert!(
+                    !bytes.windows(canary.len()).any(|w| w == canary.as_bytes()),
+                    "{} recorded the passphrase",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+/// The harness-facing `--child-arg` cannot be used to put a passphrase in a child's argv
+/// (and from there into the run ledger, which records each child's argv verbatim).
+#[test]
+fn child_arg_refuses_the_removed_passphrase_flag_and_launches_nothing() {
+    for spelling in [
+        &[
+            "--child-arg",
+            "--vault-pass",
+            "--child-arg",
+            "canary-passphrase",
+        ][..],
+        &["--child-arg", "--vault-pass=canary-passphrase"][..],
+    ] {
+        let tmp = temp_dir("secret-arg");
+        let run_dir = tmp.join("run");
+        let mut extra = vec!["--only", "fixture_one"];
+        extra.extend_from_slice(spelling);
+
+        let out = suite(&tmp, &run_dir, &extra, &[]);
+
+        assert_eq!(out.status.code(), Some(EXIT_USAGE), "{}", text(&out.stderr));
+        let stderr = text(&out.stderr);
+        assert!(stderr.contains("--vault-pass-stdin"), "{stderr}");
+        assert!(!stderr.contains("canary-passphrase"), "{stderr}");
+        assert!(launches(&tmp).is_empty(), "nothing may be launched");
+    }
+}
+
 /// A --child-arg that supplies --vault is bound as the effective argv, not the earlier request.
 #[test]
 fn extra_args_cannot_evade_profile_identity() {

@@ -42,7 +42,7 @@ fn empty_play() -> Play {
 fn fixture(test: &str, members: &[&str]) -> Fixture {
     let iso = script::IsolatedEnv::enter(&format!("frontend-core-scripts-{test}"));
     let dir = iso.dir.clone();
-    let mut vault = Vault::create(&dir.join("vault"), "bot").unwrap();
+    let mut vault = Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
     for (i, name) in members.iter().enumerate() {
         vault
             .upsert(Profile {
@@ -131,7 +131,7 @@ impl Fixture {
     }
 
     fn saved_bag(&self, name: &str, key: &str) -> Option<Map<String, Value>> {
-        let disk = Vault::unlock(&self.dir.join("vault"), "bot").unwrap();
+        let disk = Vault::unlock(&self.dir.join("vault"), "test-passphrase-01").unwrap();
         disk.get(name)
             .unwrap()
             .settings

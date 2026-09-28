@@ -15,7 +15,9 @@ fn parse_args() -> panel::PanelArgs {
 }
 
 fn main() {
-    if let Err(e) = panel::run_panel(parse_args()) {
+    let args = parse_args();
+    host_play::passphrase::warn_legacy_env("panel-play");
+    if let Err(e) = panel::run_panel(args) {
         eprintln!("panel: {e}");
         std::process::exit(1);
     }

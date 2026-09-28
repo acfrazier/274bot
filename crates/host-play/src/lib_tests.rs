@@ -575,15 +575,22 @@ fn mint_live_entries_prod_refuses_username_as_password() {
 }
 
 #[test]
-fn live_vault_passphrase_local_is_bot() {
-    assert_eq!(live_vault_passphrase_for(client::BotTarget::Local), "bot");
+fn every_live_vault_passphrase_can_create_a_vault() {
+    // The live harness creates a throwaway vault per run, so its passphrase
+    // must meet the vault's floor for every target.
+    for target in [client::BotTarget::Local, client::BotTarget::Prod] {
+        let pass = live_vault_passphrase_for(target);
+        vault::check_new_passphrase(&pass)
+            .unwrap_or_else(|error| panic!("{target:?} live passphrase: {error}"));
+    }
 }
 
 #[test]
-fn live_vault_passphrase_prod_is_not_bot() {
-    let pass = live_vault_passphrase_for(client::BotTarget::Prod);
-    assert_ne!(pass, "bot");
-    assert!(pass.len() >= 16, "prod temp vault passphrase: {pass}");
+fn a_public_world_live_vault_gets_a_fresh_high_entropy_passphrase() {
+    let first = live_vault_passphrase_for(client::BotTarget::Prod);
+    let second = live_vault_passphrase_for(client::BotTarget::Prod);
+    assert_ne!(first, second, "never a shared secret across runs");
+    assert!(first.len() >= 16, "prod temp vault passphrase: {first}");
 }
 
 #[test]
@@ -1003,7 +1010,7 @@ fn spawn_config_follows_profile_lowmem() {
 fn open_vault_creates_missing_parent_dirs() {
     let path = tmp_vault("create");
     assert!(!path.exists());
-    let v = open_vault(&path, "bot").unwrap();
+    let v = open_vault(&path, "open-vault-test-1").unwrap();
     drop(v);
     assert!(path.exists());
 }
@@ -1011,12 +1018,44 @@ fn open_vault_creates_missing_parent_dirs() {
 #[test]
 fn open_vault_wrong_pass_is_not_already_exists() {
     let path = tmp_vault("wrong");
-    open_vault(&path, "bot").unwrap();
+    open_vault(&path, "open-vault-test-1").unwrap();
     match open_vault(&path, "nope") {
         Err(VaultError::WrongPassphrase) => {}
         Err(e) => panic!("expected WrongPassphrase, got {e}"),
         Ok(_) => panic!("expected WrongPassphrase, unlocked"),
     }
+}
+
+#[test]
+fn open_vault_holds_a_new_vault_to_the_floor_but_never_an_old_one() {
+    // A vault written by the released code under passphrase `bot`.
+    let old = tmp_vault("old-floor");
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::write(
+        &old,
+        include_bytes!("../../vault/tests/fixtures/legacy-0.1.9.vault"),
+    )
+    .unwrap();
+    let opened = open_vault(&old, "bot").expect("an old-floor vault still opens");
+    assert_eq!(
+        opened.get("alice").unwrap().password,
+        "alice-password-legacy"
+    );
+
+    // The same passphrase cannot create a new vault, and nothing is written:
+    // not the file, and not the directories that would have held it.
+    let fresh = old.parent().unwrap().join("never-made");
+    match open_vault(&fresh.join("vault"), "bot") {
+        Err(VaultError::PassphraseTooShort { min, got: 3 }) => {
+            assert_eq!(min, vault::MIN_PASSPHRASE_CHARS);
+        }
+        Err(e) => panic!("expected PassphraseTooShort, got {e}"),
+        Ok(_) => panic!("created a vault under a 3 character passphrase"),
+    }
+    assert!(
+        !fresh.exists(),
+        "no directory is created for a rejected passphrase"
+    );
 }
 
 #[test]

@@ -35,13 +35,13 @@ fn ladder_profiles(n: usize) -> Vec<Profile> {
     if path.exists() {
         let _ = std::fs::remove_file(&path);
     }
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
         let name = format!("r{i}");
         let p = Profile {
             username: name.clone(),
-            password: name,
+            password: name.into(),
             uid: 274_000_200 + i as i32,
             settings: ProfileSettings::default(),
         };

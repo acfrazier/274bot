@@ -51,7 +51,7 @@ fn memory_override_changes_spawn_profile_without_persisting_it() {
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     let mut alice = profile("alice", "pw", 274);
     alice.settings.lowmem = true;
     vault.upsert(alice).unwrap();
@@ -703,7 +703,8 @@ fn debug_dest_greenland_tooltip_is_the_script_comment() {
 fn mark_tutorial_skipped_persists_on_focused_profile() {
     let path = tmp_vault("tutskip-pref.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -1423,8 +1424,9 @@ fn remove_only_focused_drawing_slot_releases_flags() {
 
     let vault_path = tmp_vault("flags-last-slot-remove.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&vault_path, "bot").unwrap()));
+    s.core.set_vault(Some(
+        Vault::create(&vault_path, "test-passphrase-01").unwrap(),
+    ));
     s.core
         .vault_mut()
         .unwrap()
@@ -1969,7 +1971,8 @@ fn seed_on_first_world_skips_after_reconnect() {
 fn music_toggle_mirrors_onto_the_audio_gate_live() {
     let path = tmp_vault("audio-toggle.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -2046,7 +2049,7 @@ fn profile(username: &str, password: &str, uid: i32) -> Profile {
 fn unlock_at_uses_the_given_path() {
     let path = tmp_vault("unlock-at.vault");
     let mut s = Session::new();
-    assert!(s.unlock_at(&path, "bot"));
+    assert!(s.unlock_at(&path, "test-passphrase-01"));
     assert!(s.core.vault().is_some());
 }
 
@@ -2054,7 +2057,7 @@ fn unlock_at_uses_the_given_path() {
 fn wrong_pass_does_not_delete_or_replace_the_vault() {
     let path = tmp_vault("wrong-pass.vault");
     let mut s = Session::new();
-    assert!(s.unlock_at(&path, "bot"));
+    assert!(s.unlock_at(&path, "test-passphrase-01"));
     s.core
         .vault_mut()
         .unwrap()
@@ -2066,7 +2069,7 @@ fn wrong_pass_does_not_delete_or_replace_the_vault() {
     assert!(!s.unlock_at(&path, "nope"));
     assert!(s.core.vault().is_none());
     assert!(path.is_file());
-    let v = Vault::unlock(&path, "bot").unwrap();
+    let v = Vault::unlock(&path, "test-passphrase-01").unwrap();
     assert!(v.get("alice").is_some());
 }
 
@@ -2074,7 +2077,7 @@ fn wrong_pass_does_not_delete_or_replace_the_vault() {
 fn reset_vault_at_refuses_while_unlocked() {
     let path = tmp_vault("reset-locked.vault");
     let mut s = Session::new();
-    assert!(s.unlock_at(&path, "bot"));
+    assert!(s.unlock_at(&path, "test-passphrase-01"));
     assert!(!s.reset_vault_at(&path));
     assert!(path.is_file());
     assert!(s.core.vault().is_some());
@@ -2084,11 +2087,11 @@ fn reset_vault_at_refuses_while_unlocked() {
 fn reset_vault_at_deletes_while_locked() {
     let path = tmp_vault("reset-ok.vault");
     let mut s = Session::new();
-    assert!(s.unlock_at(&path, "bot"));
+    assert!(s.unlock_at(&path, "test-passphrase-01"));
     s.core.set_vault(None);
     assert!(s.reset_vault_at(&path));
     assert!(!path.exists());
-    assert!(s.unlock_at(&path, "newpass"));
+    assert!(s.unlock_at(&path, "new-passphrase-02"));
 }
 
 #[test]
@@ -3201,7 +3204,8 @@ fn focus_first_profile_selects_first_vault_name() {
     crate::ui_state::save(&crate::ui_state::PanelUiState::default());
     let path = tmp_vault("focus-first.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -3225,7 +3229,8 @@ fn focus_first_profile_selects_first_vault_name() {
 fn focus_first_prefers_last_focus() {
     let path = tmp_vault("focus-last.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -3250,7 +3255,8 @@ fn select_saves_last_focus() {
     crate::ui_state::save(&crate::ui_state::PanelUiState::default());
     let path = tmp_vault("select-last-focus.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -3264,7 +3270,8 @@ fn select_saves_last_focus() {
 fn set_multibox_restores_last_focus_when_focus_not_on_wall() {
     let path = tmp_vault("multibox-last-focus.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -3291,7 +3298,8 @@ fn set_multibox_restores_last_focus_when_focus_not_on_wall() {
 fn select_spawns_parked_profile_once() {
     let path = tmp_vault("select-spawn.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -3314,7 +3322,7 @@ fn select_spawns_parked_profile_once() {
 fn flat_model_spawns_every_member_as_a_client() {
     let path = tmp_vault("flat-spawn.vault");
     let mut s = Session::new();
-    assert!(s.unlock_at(&path, "bot"));
+    assert!(s.unlock_at(&path, "test-passphrase-01"));
     for (n, uid) in [("alice", 1), ("bob", 2), ("carol", 3)] {
         s.core
             .vault_mut()
@@ -3368,7 +3376,8 @@ fn sidecar_select_does_not_restart_when_game_is_highmem() {
     let path = tmp_vault("select-no-restart.vault");
     let mut s = Session::new();
     s.persist_ui = false;
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -3401,7 +3410,8 @@ fn sidecar_select_does_not_restart_when_game_is_cpu() {
     let path = tmp_vault("select-no-restart-cpu.vault");
     let mut s = Session::new();
     s.persist_ui = false;
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -3427,7 +3437,7 @@ fn sidecar_select_does_not_restart_when_game_is_cpu() {
 fn logout_all_arms_every_wall_member() {
     let path = tmp_vault("logout-all-flat.vault");
     let mut s = Session::new();
-    assert!(s.unlock_at(&path, "bot"));
+    assert!(s.unlock_at(&path, "test-passphrase-01"));
     for (n, uid) in [("alice", 1), ("bob", 2)] {
         s.core
             .vault_mut()
@@ -4059,7 +4069,8 @@ fn temp_live_vault_prod_mint_does_not_persist_username_as_password() {
     let vault = Vault::unlock(&path, &pass).unwrap();
     for p in vault.profiles() {
         assert_ne!(
-            p.username, p.password,
+            p.username,
+            p.password.as_str(),
             "prod live temp vault must not store username-as-password"
         );
     }
@@ -4094,7 +4105,8 @@ fn live_prepare_script_never_upserts_the_operator_vault() {
 fn focused_lowmem_follows_the_spawned_slot_not_a_session_leftover() {
     let path = tmp_vault("mem-gate.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -4295,7 +4307,8 @@ fn live_full_rate_sync_raises_focus_and_members() {
 fn focus_first_profile_noop_when_empty() {
     let path = tmp_vault("focus-empty.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.focus_first_profile();
     assert!(s.focused_name().is_none());
 }
@@ -4390,7 +4403,7 @@ fn login_after_logout_rearms_handshake_on_fake_arm() {
 fn load_refresh_keeps_an_explicit_non_auto_login() {
     let path = tmp_vault("load-refresh-explicit-login.vault");
     let mut session = Session::new();
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     vault.upsert(profile("alice", "pw", 42)).unwrap();
     session.core.set_vault(Some(vault));
     let mut play = empty_play();
@@ -4411,7 +4424,7 @@ fn load_refresh_keeps_an_explicit_non_auto_login() {
 fn load_keeps_a_persisted_auto_login_member_logged_out() {
     let path = tmp_vault("load-persisted-logout-auto.vault");
     let mut session = Session::new();
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     let mut alice = profile("alice", "pw", 42);
     alice.settings.auto_login = true;
     vault.upsert(alice).unwrap();
@@ -4437,7 +4450,7 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
     let mut session = Session::new();
     session
         .core
-        .set_vault(Some(Vault::create(&path, "bot").unwrap()));
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     session
         .core
         .vault_mut()
@@ -4484,7 +4497,7 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
 fn login_all_recreates_terminal_worker_and_reuses_slot_io() {
     let path = tmp_vault("terminal-worker-login-all.vault");
     let mut session = Session::new();
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     vault.upsert(profile("alice", "pw", 42)).unwrap();
     session.core.set_vault(Some(vault));
     session.core.set_spawn_workers(false);
@@ -4527,7 +4540,7 @@ fn selecting_a_terminal_member_preserves_its_failure_until_explicit_login() {
     let mut session = Session::new();
     session
         .core
-        .set_vault(Some(Vault::create(&path, "bot").unwrap()));
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     session
         .core
         .vault_mut()
@@ -4575,7 +4588,7 @@ fn explicit_login_arms_a_fresh_non_auto_profile() {
     let mut session = Session::new();
     session
         .core
-        .set_vault(Some(Vault::create(&path, "bot").unwrap()));
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     let mut alice = profile("alice", "pw", 42);
     alice.settings.auto_login = false;
     session.core.vault_mut().unwrap().upsert(alice).unwrap();
@@ -4626,7 +4639,8 @@ fn arm_login_all_cancels_pending_logout() {
 fn loading_another_profile_while_editing_keeps_the_editor_on_its_profile() {
     let path = tmp_vault("edit-focus-desync.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     for p in [
         profile("aindniK", "kpass", 42),
         profile("Hans", "hpass", 43),
@@ -4641,7 +4655,7 @@ fn loading_another_profile_while_editing_keeps_the_editor_on_its_profile() {
     s.core.flush_writes();
     s.pump_status();
 
-    let disk = Vault::unlock(&path, "bot").unwrap();
+    let disk = Vault::unlock(&path, "test-passphrase-01").unwrap();
     let row = |name: &str| disk.get(name).map(|p| (p.uid, p.password.clone()));
     assert_eq!(row("Hans"), Some((43, "hpass".into())), "Hans untouched");
     assert_eq!(row("aindniK"), Some((42, "kpass".into())), "aindniK kept");
@@ -4653,7 +4667,8 @@ fn loading_another_profile_while_editing_keeps_the_editor_on_its_profile() {
 fn renaming_onto_an_existing_username_is_refused_and_writes_nothing() {
     let path = tmp_vault("rename-onto-existing.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     for p in [
         profile("aindniK", "kpass", 42),
         profile("Hans", "hpass", 43),
@@ -4668,7 +4683,7 @@ fn renaming_onto_an_existing_username_is_refused_and_writes_nothing() {
     s.core.flush_writes();
     s.pump_status();
 
-    let disk = Vault::unlock(&path, "bot").unwrap();
+    let disk = Vault::unlock(&path, "test-passphrase-01").unwrap();
     let row = |name: &str| disk.get(name).map(|p| (p.uid, p.password.clone()));
     assert_eq!(row("Hans"), Some((43, "hpass".into())), "Hans untouched");
     assert_eq!(row("aindniK"), Some((42, "kpass".into())), "aindniK kept");
@@ -4688,7 +4703,8 @@ fn renaming_onto_an_existing_username_is_refused_and_writes_nothing() {
 fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
     let path = tmp_vault("new-onto-existing.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -4702,7 +4718,7 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
     s.core.flush_writes();
     s.pump_status();
 
-    let disk = Vault::unlock(&path, "bot").unwrap();
+    let disk = Vault::unlock(&path, "test-passphrase-01").unwrap();
     let hans = disk.get("Hans").unwrap();
     assert_eq!((hans.uid, hans.password.as_str()), (43, "hpass"));
     assert!(!saved);
@@ -4721,7 +4737,8 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
 fn focus_changes_keep_the_edit_form_on_its_target() {
     let path = tmp_vault("edit-focus-keeps-target.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     for p in [
         profile("aindniK", "kpass", 42),
         profile("Hans", "hpass", 43),
@@ -4763,7 +4780,8 @@ fn focus_changes_keep_the_edit_form_on_its_target() {
 fn opening_another_profile_with_unsaved_changes_keeps_the_form_until_confirmed() {
     let path = tmp_vault("edit-switch-confirm.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     for p in [
         profile("aindniK", "kpass", 42),
         profile("Hans", "hpass", 43),
@@ -4793,7 +4811,8 @@ fn opening_another_profile_with_unsaved_changes_keeps_the_form_until_confirmed()
 fn opening_another_profile_without_unsaved_changes_switches_at_once() {
     let path = tmp_vault("edit-switch-clean.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     for p in [
         profile("aindniK", "kpass", 42),
         profile("Hans", "hpass", 43),
@@ -4821,7 +4840,8 @@ fn opening_another_profile_without_unsaved_changes_switches_at_once() {
 fn save_credentials_upserts_under_username_key_keeping_uid() {
     let path = tmp_vault("save-creds.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -4845,7 +4865,7 @@ fn profile_editor_persists_trimmed_global_clue_duel_partner() {
     let mut session = Session::new();
     session
         .core
-        .set_vault(Some(Vault::create(&path, "bot").unwrap()));
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     session
         .core
         .vault_mut()
@@ -4878,7 +4898,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
     let mut session = Session::new();
     session
         .core
-        .set_vault(Some(Vault::create(&path, "bot").unwrap()));
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     session
         .core
         .vault_mut()
@@ -4906,7 +4926,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
     assert!(session.save_credentials());
     session.core.flush_writes();
     assert_eq!(
-        Vault::unlock(&path, "bot")
+        Vault::unlock(&path, "test-passphrase-01")
             .unwrap()
             .get("alice")
             .unwrap()
@@ -4929,7 +4949,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
     session.core.flush_writes();
     session.pump_status();
     assert_eq!(
-        Vault::unlock(&path, "bot")
+        Vault::unlock(&path, "test-passphrase-01")
             .unwrap()
             .get("alice")
             .unwrap()
@@ -4949,7 +4969,8 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
 fn save_credentials_creates_new_profile_when_username_is_new() {
     let path = tmp_vault("new-user.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -4978,7 +4999,8 @@ fn save_credentials_creates_new_profile_when_username_is_new() {
 fn save_credentials_rejects_empty_username() {
     let path = tmp_vault("empty-user.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.cred_user = "  ".into();
     s.cred_pass = "x".into();
     assert!(!s.save_credentials());
@@ -4989,7 +5011,8 @@ fn save_credentials_rejects_empty_username() {
 fn save_credentials_without_focus_upserts_spawns_and_selects() {
     let path = tmp_vault("empty-first-run.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     assert!(s.focused_name().is_none());
     s.cred_user = "test".into();
     s.cred_pass = "test".into();
@@ -5005,7 +5028,8 @@ fn save_credentials_without_focus_upserts_spawns_and_selects() {
 fn save_credentials_does_not_duplicate_running_slot() {
     let path = tmp_vault("no-dup-slot.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5031,7 +5055,8 @@ fn save_credentials_does_not_duplicate_running_slot() {
 fn save_credentials_rename_editing_profile_replaces_old_key() {
     let path = tmp_vault("rename-creds.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5069,7 +5094,8 @@ fn first_time_save_spawns_nothing_until_the_write_is_durable() {
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.cred_user = "alice".into();
     s.cred_pass = "pw".into();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
@@ -5109,7 +5135,8 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
     let dir = TestDir::new("save-err");
     let path = dir.join("vault.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.cred_user = "alice".into();
     s.cred_pass = "pw".into();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
@@ -5134,7 +5161,8 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
 fn clear_credentials_empties_fields_but_keeps_vault() {
     let path = tmp_vault("clear-creds.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5156,7 +5184,8 @@ fn clear_credentials_empties_fields_but_keeps_vault() {
 fn begin_edit_profile_loads_fields_and_opens_chooser() {
     let path = tmp_vault("edit-profile.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5183,7 +5212,8 @@ fn begin_edit_profile_loads_fields_and_opens_chooser() {
 fn begin_edit_profile_loads_guardian_settings() {
     let path = tmp_vault("edit-guardian.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     let mut p = profile("alice", "secret", 42);
     p.settings.auto_login = true;
     p.settings.lamp_auto = false;
@@ -5208,7 +5238,8 @@ fn begin_edit_profile_loads_guardian_settings() {
 fn set_multibox_off_cancels_picker_edit() {
     let path = tmp_vault("edit-off.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5265,7 +5296,8 @@ fn multibox_on_never_latches_a_tv_mode() {
 fn set_auto_login_upserts_without_spawning() {
     let path = tmp_vault("auto-login.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5301,7 +5333,8 @@ fn set_auto_login_upserts_without_spawning() {
 fn set_random_settings_upserts_all_three_fields_without_spawning() {
     let path = tmp_vault("random-settings.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5327,7 +5360,8 @@ fn set_random_settings_upserts_all_three_fields_without_spawning() {
 fn set_random_settings_mirrors_running_arm() {
     let path = tmp_vault("random-settings-arm.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5384,7 +5418,8 @@ fn set_random_settings_mirrors_running_arm() {
 fn set_random_settings_rejects_unknown_or_locked_vault() {
     let path = tmp_vault("random-settings-unknown.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     assert!(
         !s.set_random_settings("nobody", false, "magic", false),
         "unknown profile must fail"
@@ -5402,7 +5437,8 @@ fn music_sfx_persists_lowmem_false() {
     let path = tmp_vault("music-sfx.vault");
     let mut s = Session::new();
     assert!(s.focused_lowmem(), "no focused profile defaults to lowmem");
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5437,7 +5473,8 @@ fn music_sfx_persists_lowmem_false() {
 fn set_auto_login_mirrors_running_arm() {
     let path = tmp_vault("auto-login-arm.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5485,7 +5522,8 @@ fn set_renderer_writes_renderer_by_for_focused() {
 fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
     let path = tmp_vault("raster-mode.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5539,7 +5577,8 @@ fn raster_switch_confirm_only_when_backend_changes_on_spawned_slot() {
 fn request_raster_cpu_on_spawned_slot_applies_immediately() {
     let path = tmp_vault("raster-no-confirm.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5564,7 +5603,8 @@ fn request_raster_cpu_on_spawned_slot_applies_immediately() {
 fn request_focused_lowmem_applies_without_confirm_and_keeps_slot() {
     let path = tmp_vault("mem-no-confirm.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5583,7 +5623,8 @@ fn request_focused_lowmem_applies_without_confirm_and_keeps_slot() {
 fn raster_switch_keeps_slot_frame_buf_and_input() {
     let path = tmp_vault("raster-no-restart.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5612,7 +5653,8 @@ fn raster_switch_keeps_slot_frame_buf_and_input() {
 fn lowmem_flip_keeps_slot_frame_buf_and_input() {
     let path = tmp_vault("mem-no-restart.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5643,7 +5685,8 @@ fn lowmem_flip_keeps_slot_frame_buf_and_input() {
 fn arm_for_profile_respects_auto_login_and_latch() {
     let path = tmp_vault("arm-for-profile.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     let mut p = profile("alice", "pw", 42);
     p.settings.auto_login = true;
     s.core.vault_mut().unwrap().upsert(p).unwrap();
@@ -5663,7 +5706,8 @@ fn arm_for_profile_respects_auto_login_and_latch() {
 fn set_auto_login_rejects_unknown_profile_without_spawning() {
     let path = tmp_vault("auto-login-missing.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     assert!(!s.set_auto_login("nobody", true));
     assert!(s.error.is_some(), "missing profile sets the banner");
     assert!(s.core.slots().is_empty());
@@ -5817,7 +5861,8 @@ fn queue_for_tracks_each_named_row_independent_of_focus() {
 fn load_and_rail_remove_sync_focus_wall() {
     let path = tmp_vault("focus-wall-sync.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5853,7 +5898,8 @@ fn load_and_rail_remove_sync_focus_wall() {
 fn rail_remove_clears_focus_when_last_member() {
     let path = tmp_vault("rail-remove-last.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -5915,7 +5961,7 @@ fn rail_remove_treats_loading_session_as_connected_without_blocking() {
 fn connected_removal_session(test_name: &str) -> (Session, Arc<SlotArm>) {
     let path = tmp_vault(test_name);
     let mut session = Session::new();
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     vault.upsert(profile("alice", "pw", 42)).unwrap();
     session.core.set_vault(Some(vault));
 
@@ -6116,7 +6162,8 @@ fn set_multibox_on_syncs_focus_wall() {
 fn load_all_loads_vault_profiles_and_syncs_focus_wall() {
     let path = tmp_vault("load-all.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -6141,7 +6188,8 @@ fn load_all_loads_vault_profiles_and_syncs_focus_wall() {
 fn chooser_vault_remove_keeps_wall_member_and_slot() {
     let path = tmp_vault("chooser-remove.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -6594,7 +6642,8 @@ fn two_live_session(label: &str) -> (Session, script::IsolatedEnv) {
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
@@ -6655,7 +6704,7 @@ fn background_ack_survives_session_restart() {
     s2.core.set_spawn_workers(false);
     s2.core.set_play(Some(empty_play()));
     s2.core.set_vault(Some(
-        Vault::create(&tmp_vault("bg-ack-restart-2"), "bot").unwrap(),
+        Vault::create(&tmp_vault("bg-ack-restart-2"), "test-passphrase-01").unwrap(),
     ));
     s2.core
         .vault_mut()
@@ -6834,7 +6883,7 @@ fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser(
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     vault.upsert(profile("alice", "pw", 42)).unwrap();
     s.core.set_vault(Some(vault));
     s.set_multibox(true);

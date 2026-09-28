@@ -16,6 +16,7 @@ pub mod map_cache;
 mod map_producer;
 pub mod nav_identity;
 pub mod paired_core;
+pub mod passphrase;
 pub mod profile;
 pub mod progress;
 pub mod public_worlds;

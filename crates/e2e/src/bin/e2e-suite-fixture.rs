@@ -184,6 +184,33 @@ fn record_launch(args: &Args) {
     }
 }
 
+/// The launch path's secret-hygiene probe. When a test names a log
+/// (`E2E_SUITE_FIXTURE_HYGIENE_LOG`) and a canary (`E2E_SUITE_FIXTURE_CANARY`),
+/// record whether the retired passphrase variable exists in this child's
+/// environment and whether the canary text appears anywhere in its environment
+/// or argv. The canary variable itself is left out of the search.
+fn record_secret_hygiene() {
+    let (Ok(log), Ok(canary)) = (
+        std::env::var("E2E_SUITE_FIXTURE_HYGIENE_LOG"),
+        std::env::var("E2E_SUITE_FIXTURE_CANARY"),
+    ) else {
+        return;
+    };
+    let holds = |text: &std::ffi::OsStr| text.to_string_lossy().contains(&canary);
+    let in_env = std::env::vars_os()
+        .any(|(name, value)| name != "E2E_SUITE_FIXTURE_CANARY" && (holds(&name) || holds(&value)));
+    let in_argv = std::env::args_os().skip(1).any(|arg| holds(&arg));
+    let variable = std::env::var_os("BOT_VAULT_PASS").is_some();
+    let line = format!("variable={variable} canary_in_env={in_env} canary_in_argv={in_argv}\n");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log)
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
 fn capture_root() -> Option<PathBuf> {
     std::env::var_os(scenario_shot_env()).map(PathBuf::from)
 }
@@ -446,6 +473,7 @@ fn external_mode(args: &Args) -> i32 {
 fn main() {
     let args = parse();
     record_launch(&args);
+    record_secret_hygiene();
     if let Some(path) = &args.report_args {
         let cwd = std::env::current_dir()
             .map(|dir| dir.display().to_string())

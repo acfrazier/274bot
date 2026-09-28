@@ -39,7 +39,7 @@ pub fn temp_vault<S: AsRef<str>>(entries: &[(S, S)]) -> PathBuf {
     if path.exists() {
         std::fs::remove_file(&path).unwrap();
     }
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     for (i, (user, pass)) in entries.iter().enumerate() {
         vault
             .upsert(Profile {
@@ -55,7 +55,7 @@ pub fn temp_vault<S: AsRef<str>>(entries: &[(S, S)]) -> PathBuf {
 
 pub fn profiles<S: AsRef<str>>(entries: &[(S, S)]) -> Vec<Profile> {
     let path = temp_vault(entries);
-    let vault = Vault::unlock(&path, "bot").unwrap();
+    let vault = Vault::unlock(&path, "test-passphrase-01").unwrap();
     entries
         .iter()
         .map(|(user, _)| vault.get(user.as_ref()).unwrap().clone())

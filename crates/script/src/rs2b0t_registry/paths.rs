@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// The registry entry file below a root: `src/bot/scripts/index.ts`.
 pub fn registry_index_path(root: &Path) -> PathBuf {
@@ -109,20 +109,62 @@ pub fn default_rs2b0t_path_file() -> PathBuf {
     crate::bot_file("rs2b0t-path")
 }
 
+/// Longest `rs2b0t-path` file accepted: it holds one path.
+const MAX_ROOT_FILE_BYTES: u64 = 8 * 1024;
+
 /// The rs2b0t checkout root: `$RS2B0T` first, else the path persisted by a
-/// previous successful parse.
+/// previous successful parse. A persisted file that is refused (see
+/// [`rs2b0t_root_checked_at`]) counts as no root and is reported once on
+/// stderr; choosing the catalog again writes a fresh, trusted file.
 pub fn rs2b0t_root_at(path_file: &Path) -> Option<PathBuf> {
-    if let Some(root) = crate::rs2b0t_env() {
-        if !root.as_os_str().is_empty() {
-            return Some(root);
+    match rs2b0t_root_checked_at(path_file) {
+        Ok(root) => root,
+        Err(refusal) => {
+            static REPORTED: std::sync::Once = std::sync::Once::new();
+            REPORTED.call_once(|| eprintln!("{refusal}"));
+            None
         }
     }
-    let persisted = std::fs::read_to_string(path_file).ok()?;
+}
+
+/// [`rs2b0t_root_at`] with a refusal returned as an error naming the reason.
+///
+/// The persisted file decides which checkout's scripts are loaded and run, so
+/// it is read with [`vault::read_private_file`] (a regular file, owned by this
+/// user, that no one else can write) and its content must be an absolute path
+/// without `..`. `$RS2B0T` is the operator's own environment and is taken as
+/// given.
+pub fn rs2b0t_root_checked_at(path_file: &Path) -> Result<Option<PathBuf>, String> {
+    if let Some(root) = crate::rs2b0t_env() {
+        if !root.as_os_str().is_empty() {
+            return Ok(Some(root));
+        }
+    }
+    let persisted = match vault::read_private_file(path_file, MAX_ROOT_FILE_BYTES) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("rs2b0t-path: {e}")),
+    };
     let root = persisted.trim();
     if root.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(PathBuf::from(root))
+    let root = PathBuf::from(root);
+    if !root.is_absolute() {
+        return Err(format!(
+            "rs2b0t-path: {} holds {}, which is not an absolute path",
+            path_file.display(),
+            root.display()
+        ));
+    }
+    if root.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err(format!(
+            "rs2b0t-path: {} holds {}, which contains `..`",
+            path_file.display(),
+            root.display()
+        ));
+    }
+    Ok(Some(root))
 }
 
 /// [`rs2b0t_root_at`] against the default persisted file.
@@ -130,9 +172,32 @@ pub fn rs2b0t_root() -> Option<PathBuf> {
     rs2b0t_root_at(&default_rs2b0t_path_file())
 }
 
+/// [`rs2b0t_root_checked_at`] against the default persisted file.
+pub fn rs2b0t_root_checked() -> Result<Option<PathBuf>, String> {
+    rs2b0t_root_checked_at(&default_rs2b0t_path_file())
+}
+
+/// `path` made absolute against the current directory and lexically cleaned
+/// (`.` dropped, `..` folded), without touching the filesystem or resolving
+/// symlinks. Persisted paths go through this so they mean the same file
+/// wherever the host is started later, and pass restore's checks.
+pub(crate) fn absolute_clean(path: &Path) -> std::io::Result<PathBuf> {
+    let mut clean = PathBuf::new();
+    for component in std::path::absolute(path)?.components() {
+        match component {
+            Component::ParentDir => {
+                clean.pop();
+            }
+            other => clean.push(other.as_os_str()),
+        }
+    }
+    Ok(clean)
+}
+
 /// Persist `root` to `path_file` (a previous successful parse recorded the
-/// checkout path). Writes only when the file would change.
+/// checkout path), as an absolute path. Writes only when the file would change.
 pub fn persist_rs2b0t_root_at(root: &Path, path_file: &Path) -> Result<(), String> {
+    let root = absolute_clean(root).map_err(|e| format!("rs2b0t-path: {}: {e}", root.display()))?;
     if let Ok(existing) = std::fs::read_to_string(path_file) {
         if existing.trim() == root.to_string_lossy() {
             return Ok(());

@@ -10,11 +10,13 @@ use std::collections::HashMap;
 mod paths;
 mod settings;
 
+#[cfg(feature = "load")]
+pub(crate) use paths::absolute_clean;
 pub use paths::{
     clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file,
     persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path, rs2b0t_import_deferred,
-    rs2b0t_import_deferred_at, rs2b0t_root, rs2b0t_root_at, script_file_path,
-    set_rs2b0t_import_deferred_at,
+    rs2b0t_import_deferred_at, rs2b0t_root, rs2b0t_root_at, rs2b0t_root_checked,
+    rs2b0t_root_checked_at, script_file_path, set_rs2b0t_import_deferred_at,
 };
 #[cfg(feature = "load")]
 pub(crate) use settings::insert_shop_db_from_root;

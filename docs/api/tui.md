@@ -9,7 +9,7 @@ This is the VPS operator panel, not a MUD client.
 ## Run
 
 ```bash
-export BOT_VAULT_PASS=bot
+# asks for the vault passphrase on the terminal (hidden; a new vault asks twice)
 cargo run --release -p tui --bin tui-play -- --profile local-289
 # same scenarios as panel-play --live:
 cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_nav_routes
@@ -19,7 +19,7 @@ cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_t
 
 Shared server-profile flags match host-play / panel-play
 (`--profile local-274|local-289|public-289`, `--revision`, `--prod`,
-`--vault`, `--vault-pass` / `BOT_VAULT_PASS`, `--host`, `--port`,
+`--vault`, `--vault-pass-stdin`, `--host`, `--port`,
 `--cache`, `--catalog`, `--user`, `--live`, …). On `public-289`,
 `--world N` chooses the starting world for accounts stored as auto; pinned
 accounts keep their vault setting. Unit tests render to
@@ -29,6 +29,14 @@ PASS/FAIL. `--catalog-core` / `--pair-core` (environment form
 `BOT_LIVE_CORE=catalog|pair`) hold a `--live` PASS until the shared core
 witness qualifies, exactly as the panel watches do; see
 [the harness guide](../harness.md#core-gated-qualification).
+
+The vault passphrase is never an argument or an environment variable:
+`tui-play` asks on the terminal, or reads one line from a pipe with
+`--vault-pass-stdin` (`printf '%s\n' "$PASS" | tui-play --profile local-289
+--vault-pass-stdin`). A new vault needs at least 12 characters; an existing one
+opens with the passphrase it was created with. In a pty, send the passphrase
+at the prompt and end it with Enter (`\r` or `\n`). `BOT_VAULT_PASS` and
+`--vault-pass` were removed; see [vault.md](vault.md#passphrase-sourcing).
 
 `--map-bundle OUT --revision 289 --cache JAG_DIR --unpack SNAPSHOT_ROOT` is a
 release-packaging run, not a panel: it bakes the WalkTo map terrain for that

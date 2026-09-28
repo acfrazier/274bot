@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 
 [dependencies]
+# The same `aes` aes-gcm already builds, with its `zeroize` feature on so the
+# expanded key schedule is wiped when a cipher is dropped.
+aes = { version = "=0.8.3", features = ["zeroize"] }
 aes-gcm = "=0.10.3"
 pbkdf2 = { version = "=0.12.2", features = ["simple"] }
 rand_core = { version = "=0.6.4", features = ["getrandom"] }
@@ -13,3 +16,7 @@ serde_json = "=1.0.140"
 sha2 = "=0.10.9"
 thiserror = "=2.0.20"
 zeroize = "=1.9.0"
+
+# Owner check (`geteuid`) and a non-blocking open for `read_private_file`.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

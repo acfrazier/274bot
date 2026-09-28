@@ -76,19 +76,22 @@ cd 274bot
 Point **`$ENGINE_DIR`** (or `--engine`) at the engine root for the revision you will run. On first `maininit` the client GETs `/crc` and jag files from the engine HTTP into the pack cache; later boots reuse disk. Stock Lost City Server uses the **Java default login RSA** for local — no key bake. If you rotated `private.pem`, login reads the public half from `$ENGINE_DIR/data/config/private.pem` (or `LOGIN_RSAN` / `LOGIN_RSAE`).
 
 ```bash
-export BOT_VAULT_PASS=bot
+# The vault passphrase is never read from the environment or the command line:
+# the panel asks in its unlock window, host-play and tui-play ask on the terminal.
 # Prefer an explicit profile. Example: local 289 engine.
 cargo run --release -p panel --bin panel-play -- --profile local-289
 # Local 274:
 # BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" cargo run --release -p panel --bin panel-play -- --profile local-274
 
-# CLI: run one or more vaulted profiles (upserts --user; default test/test)
+# CLI: run one or more vaulted profiles (upserts --user; default test/test).
+# Asks for the vault passphrase on the terminal; a new vault asks twice.
 cargo run --release -p host-play -- --profile local-289 --user test
 
-# TUI: same vault, raster Off (no GPU)
+# TUI: same vault, raster Off (no GPU). Same passphrase prompt; from a script use
+# `printf '%s\n' "$PASS" | tui-play --vault-pass-stdin ...` (see docs/api/vault.md).
 cargo run --release -p tui --bin tui-play -- --profile local-289
 
-# Headed live (BOT_VAULT_PASS unused): FAIL+exit 1
+# Headed live (no vault passphrase: it makes a throwaway vault): FAIL+exit 1
 cargo run --release -p panel --bin panel-play -- --profile local-289 --live null_raster
 # Nav execute corpus (local engine; unique live account):
 # cargo run --release -p panel --bin panel-play -- --profile local-289 --live script_nav_routes
@@ -112,7 +115,7 @@ cargo test -p api --offline
 
 The panel only starts the **focused** vault profile; switching the combo starts a parked name once. Last focus persists in `~/.274bot/panel-ui.json`. Credentials are **2×2**: Save/Clear then Log in/Logout. Unlocking the vault starts the **first** profile as a live slot; MultiBox raises the running set as a sidecar rail or a grid, with bulk **Login all / Logout all** and bulk **Start all / Stop all** (script bulk is separate from login bulk). Auto-login defaults **off** per profile.
 
-**panel-play does not auto-create `test`/`test`**: an empty first-run vault stays empty until you type a username/password and Save. **host-play** accepts `--vault-pass` (same as `BOT_VAULT_PASS`) and upserts named users (`--user test` defaults to `test`/`test`). The panel has no `--vault-pass` flag — passphrase is `BOT_VAULT_PASS` or the in-window prompt. Empty passphrase is rejected. `--debug` or `BOT_DEBUG=1` prints slot logs. `--mainland` / `BOT_MAINLAND=1` (host-play) after scene 2 sends the courtyard tele + `setvar tutorial 1000`. On a local engine the panel **TutSkip** button is omitted until `getvar tutorial` says the tutorial is still open; press is `setvar tutorial 1000` and caches `tutorial_skipped`.
+**panel-play does not auto-create `test`/`test`**: an empty first-run vault stays empty until you type a username/password and Save. **host-play** upserts named users (`--user test` defaults to `test`/`test`). **The vault passphrase is never taken from the environment or the command line** (both are readable by other users on the machine, and the environment is inherited by every child process): the panel asks in its unlock window, `host-play` and `tui-play` ask on the terminal (hidden; a new vault asks twice), and all three read one line from a pipe with `--vault-pass-stdin`. A **new** vault needs at least 12 characters; an **existing** vault opens with the passphrase it was created with, however short. `BOT_VAULT_PASS` and `--vault-pass` were removed (see [docs/api/vault.md](docs/api/vault.md)). `--debug` or `BOT_DEBUG=1` prints slot logs. `--mainland` / `BOT_MAINLAND=1` (host-play) after scene 2 sends the courtyard tele + `setvar tutorial 1000`. On a local engine the panel **TutSkip** button is omitted until `getvar tutorial` says the tutorial is still open; press is `setvar tutorial 1000` and caches `tutorial_skipped`.
 
 **Scripts:** panel **Browse / Load / Reload / Start / Pause / Stop** are live; MultiBox rail adds **Start all / Stop all**. Catalog **Refresh catalog** (with confirm when running/paused bots are affected). Successful Start persists a per-profile script assignment and settings bag in the vault. Transpile is content-addressed under `~/.274bot/js-cache` (raw-source SHA-256). WalkTo on the main chrome is host nav, not a script card. Catalog scripts come from your configured `$RS2B0T` / `--catalog` checkout; this repository does not copy their source. Details: [docs/api/script.md](docs/api/script.md).
 

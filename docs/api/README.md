@@ -17,7 +17,7 @@ tree.
 - [nav.md](nav.md) — whole-world collision + transport graph + Dijkstra
   router + `Traveller::follow` + WalkTo picker
 - [login.md](login.md) — login FIFO throttle numbers + server profiles
-- [vault.md](vault.md) — encrypted profile vault, assignments, `BOT_VAULT_PASS`
+- [vault.md](vault.md) — encrypted profile vault, assignments, passphrase policy and channels
 - [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox, scripts
 - [script.md](script.md) — compiled `tick` vs Load isolate; assignment, reload, cache
 - [js-api-v2.md](js-api-v2.md) — JS API v2 native authoring (`export const apiVersion = 2`)

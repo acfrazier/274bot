@@ -3,14 +3,34 @@
 //! Profiles are serialized to JSON and sealed with AES-256-GCM under a key
 //! derived from the passphrase via PBKDF2-HMAC-SHA256. The vault file stores
 //! only the KDF salt, nonce, and ciphertext; passphrases and profile
-//! passwords never appear in plaintext. An empty passphrase is rejected;
-//! a wrong passphrase fails the unlock without modifying the file.
+//! passwords never appear in plaintext. A wrong passphrase fails the unlock
+//! without modifying the file.
+//!
+//! # Passphrase policy and upgrades
+//!
+//! A **new** vault needs a passphrase of at least [`MIN_PASSPHRASE_CHARS`]
+//! characters ([`check_new_passphrase`]). An **existing** vault is never held
+//! to that floor: [`Vault::unlock`] accepts whatever passphrase decrypts the
+//! file, so a vault created under the old empty-only rule keeps opening, keeps
+//! saving, and loses nothing. The floor applies again wherever a new passphrase
+//! is chosen (create, and any future re-key). The KDF is untouched by an
+//! upgrade: the round count stored in the file header is kept on every save,
+//! and a header outside `1..=MAX_PBKDF2_ROUNDS` is rejected before any key
+//! derivation runs.
+//!
+//! Secrets are held in [`Secret`] (zeroed on drop) and the derived key and the
+//! serialized profiles in `zeroize` buffers, so a copy does not outlive its
+//! use in freed memory. That is best effort: see [`Secret`].
+
+mod private_file;
+mod secret;
+
+pub use private_file::{read_private_file, write_private_file};
+pub use secret::Secret;
 
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
-use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt};
 
 use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -29,12 +49,18 @@ const FORMAT_VERSION: u8 = 1;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
+/// Shortest passphrase [`Vault::create`] accepts, counted in characters
+/// (Unicode scalar values) with surrounding whitespace ignored.
+pub const MIN_PASSPHRASE_CHARS: usize = 12;
 /// PBKDF2 iterations used when creating a new vault. Unlock reads the round
-/// count from the file header, so this can be raised without breaking files.
-/// `parse_header` rejects round counts above `MAX_PBKDF2_ROUNDS` so a crafted
-/// file cannot force a long KDF.
+/// count from the file header and every save keeps it, so a file written at a
+/// different count never breaks.
 const PBKDF2_ROUNDS: u32 = 100_000;
-const MAX_PBKDF2_ROUNDS: u32 = 10_000_000;
+/// Highest round count a vault file may declare. Unlock derives the key before
+/// it can tell a wrong passphrase from a crafted file, so this bounds how long
+/// a hostile file can stall it: at most twenty times the default work.
+const MAX_PBKDF2_ROUNDS: u32 = 2_000_000;
+const _: () = assert!(PBKDF2_ROUNDS <= MAX_PBKDF2_ROUNDS);
 const HEADER_LEN: usize = MAGIC.len() + 1 + 4 + SALT_LEN + NONCE_LEN;
 
 /// Per-profile settings. Low-memory is the default for headless clients;
@@ -146,11 +172,12 @@ impl Default for ProfileSettings {
     }
 }
 
-/// A stored login profile, keyed by username.
+/// A stored login profile, keyed by username. The password is a [`Secret`]:
+/// zeroed when the profile is dropped and never printed by `Debug`.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub username: String,
-    pub password: String,
+    pub password: Secret,
     pub uid: i32,
     pub settings: ProfileSettings,
 }
@@ -172,6 +199,8 @@ impl std::fmt::Debug for Profile {
 pub enum VaultError {
     #[error("passphrase must not be empty")]
     EmptyPassphrase,
+    #[error("passphrase must be at least {min} characters (got {got})")]
+    PassphraseTooShort { min: usize, got: usize },
     #[error("vault already exists: {0}")]
     AlreadyExists(PathBuf),
     #[error("no vault at {0}")]
@@ -199,8 +228,10 @@ pub struct Vault {
 
 impl Vault {
     /// Creates a new empty vault at `path`. Fails if the file already exists.
+    /// The passphrase must satisfy [`check_new_passphrase`]; nothing is
+    /// written when it does not.
     pub fn create(path: &Path, passphrase: &str) -> Result<Self, VaultError> {
-        require_passphrase(passphrase)?;
+        check_new_passphrase(passphrase)?;
         if path.exists() {
             return Err(VaultError::AlreadyExists(path.to_path_buf()));
         }
@@ -208,8 +239,7 @@ impl Vault {
         OsRng.fill_bytes(&mut salt);
         let key = derive_key(passphrase, &salt, PBKDF2_ROUNDS);
         let empty: BTreeMap<String, Profile> = BTreeMap::new();
-        let data = serde_json::to_vec(&empty)
-            .map_err(|e| VaultError::Corrupt(format!("serialize profiles: {e}")))?;
+        let data = serialize_profiles(&empty)?;
         let blob = build_blob(&salt, &key, &data, PBKDF2_ROUNDS)?;
         atomic_write(path, &blob)?;
         Ok(Self {
@@ -221,19 +251,17 @@ impl Vault {
         })
     }
 
-    /// Opens the vault at `path` with the given passphrase.
+    /// Opens the vault at `path` with the given passphrase. Any non-empty
+    /// passphrase that decrypts the file is accepted, however short: the
+    /// [`MIN_PASSPHRASE_CHARS`] floor is for new vaults, so a vault created
+    /// before it existed is never locked out.
     pub fn unlock(path: &Path, passphrase: &str) -> Result<Self, VaultError> {
         require_passphrase(passphrase)?;
-        let blob = match std::fs::read(path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(VaultError::NotFound(path.to_path_buf()));
-            }
-            Err(e) => return Err(VaultError::Io(e)),
-        };
+        let blob = read_vault_file(path)?;
         let (salt, rounds, payload) = parse_header(&blob)?;
         let key = derive_key(passphrase, &salt, rounds);
-        let plaintext = decrypt(&key, payload).map_err(|_| VaultError::WrongPassphrase)?;
+        let plaintext =
+            Zeroizing::new(decrypt(&key, payload).map_err(|_| VaultError::WrongPassphrase)?);
         let profiles: BTreeMap<String, Profile> = serde_json::from_slice(&plaintext)
             .map_err(|e| VaultError::Corrupt(format!("deserialize profiles: {e}")))?;
         Ok(Self {
@@ -393,16 +421,86 @@ fn persist(
     rounds: u32,
     profiles: &BTreeMap<String, Profile>,
 ) -> Result<(), VaultError> {
-    let data = serde_json::to_vec(profiles)
-        .map_err(|e| VaultError::Corrupt(format!("serialize profiles: {e}")))?;
+    let data = serialize_profiles(profiles)?;
     let blob = build_blob(salt, key, &data, rounds)?;
     atomic_write(path, &blob)
+}
+
+/// The policy for a passphrase that will protect a **new** vault: not empty,
+/// and at least [`MIN_PASSPHRASE_CHARS`] characters once surrounding
+/// whitespace is ignored, so padding cannot buy length. [`Vault::create`]
+/// applies it; a caller that prompts can apply it first and ask again instead
+/// of failing late. It is not applied to unlock.
+pub fn check_new_passphrase(passphrase: &str) -> Result<(), VaultError> {
+    require_passphrase(passphrase)?;
+    let got = passphrase.trim().chars().count();
+    if got < MIN_PASSPHRASE_CHARS {
+        return Err(VaultError::PassphraseTooShort {
+            min: MIN_PASSPHRASE_CHARS,
+            got,
+        });
+    }
+    Ok(())
 }
 
 fn require_passphrase(passphrase: &str) -> Result<(), VaultError> {
     if passphrase.is_empty() {
         Err(VaultError::EmptyPassphrase)
     } else {
+        Ok(())
+    }
+}
+
+/// Upper bound on the vault file read into memory. A real vault is tens of
+/// KiB; this only stops a crafted or wrong file from being read whole.
+const MAX_VAULT_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+fn read_vault_file(path: &Path) -> Result<Vec<u8>, VaultError> {
+    use std::io::Read;
+
+    let file = std::fs::File::open(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => VaultError::NotFound(path.to_path_buf()),
+        _ => VaultError::Io(e),
+    })?;
+    let mut blob = Vec::new();
+    file.take(MAX_VAULT_FILE_BYTES + 1).read_to_end(&mut blob)?;
+    if blob.len() as u64 > MAX_VAULT_FILE_BYTES {
+        return Err(VaultError::Corrupt(format!(
+            "file is larger than {MAX_VAULT_FILE_BYTES} bytes"
+        )));
+    }
+    Ok(blob)
+}
+
+/// Serializes the profiles, every password in the clear, into a buffer that is
+/// zeroed when dropped.
+fn serialize_profiles(
+    profiles: &BTreeMap<String, Profile>,
+) -> Result<Zeroizing<Vec<u8>>, VaultError> {
+    let mut out = SecretBuf(Zeroizing::new(Vec::with_capacity(4096)));
+    serde_json::to_writer(&mut out, profiles)
+        .map_err(|e| VaultError::Corrupt(format!("serialize profiles: {e}")))?;
+    Ok(out.0)
+}
+
+/// A `Vec` writer that grows by hand: `Vec`'s own doubling would free the old
+/// allocation, plaintext and all, without zeroing it.
+struct SecretBuf(Zeroizing<Vec<u8>>);
+
+impl Write for SecretBuf {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        if self.0.capacity() - self.0.len() < data.len() {
+            let want = (self.0.len() + data.len()).max(self.0.capacity() * 2);
+            let mut bigger = Zeroizing::new(Vec::with_capacity(want));
+            bigger.extend_from_slice(&self.0);
+            // The old buffer is zeroed as it is dropped here.
+            self.0 = bigger;
+        }
+        self.0.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
 }
@@ -452,7 +550,9 @@ fn parse_header(blob: &[u8]) -> Result<([u8; SALT_LEN], u32, &[u8]), VaultError>
         .map_err(|_| VaultError::Corrupt("short rounds field".into()))?;
     let rounds = u32::from_le_bytes(rounds_bytes);
     if rounds == 0 || rounds > MAX_PBKDF2_ROUNDS {
-        return Err(VaultError::Corrupt("pbkdf2 rounds out of range".into()));
+        return Err(VaultError::Corrupt(format!(
+            "pbkdf2 rounds {rounds} outside the accepted range 1..={MAX_PBKDF2_ROUNDS}"
+        )));
     }
     let mut salt = [0u8; SALT_LEN];
     salt.copy_from_slice(&blob[MAGIC.len() + 5..HEADER_LEN - NONCE_LEN]);
@@ -467,67 +567,6 @@ fn decrypt(key: &[u8; KEY_LEN], nonce_and_payload: &[u8]) -> Result<Vec<u8>, aes
     )
 }
 
-/// Writes `data` to `path` via a same-directory `.tmp` file + rename. On Unix
-/// the parent directory is created `0o700` and the final file is `0o600`
-/// (explicit on the temp file before rename so umask cannot widen it).
-pub fn write_private_file(path: &Path, data: &[u8]) -> Result<(), std::io::Error> {
-    if let Some(parent) = path.parent() {
-        ensure_private_dir(parent)?;
-    }
-    let tmp = path.with_extension("tmp");
-    {
-        #[cfg(unix)]
-        let mut f = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)?;
-        #[cfg(not(unix))]
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(data)?;
-        f.sync_all()?;
-        #[cfg(unix)]
-        set_mode(&tmp, 0o600)?;
-    }
-    std::fs::rename(&tmp, path)?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn ensure_private_dir(dir: &Path) -> Result<(), std::io::Error> {
-    use std::os::unix::fs::DirBuilderExt;
-
-    if dir.as_os_str().is_empty() {
-        return Ok(());
-    }
-    if !dir.exists() {
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)?;
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn ensure_private_dir(dir: &Path) -> Result<(), std::io::Error> {
-    if dir.as_os_str().is_empty() {
-        return Ok(());
-    }
-    if !dir.exists() {
-        std::fs::create_dir_all(dir)?;
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
-    use std::os::unix::fs::PermissionsExt;
-
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-}
-
 /// Writes `blob` to `path` via a same-directory temp file + rename so a
 /// crash mid-write can never leave a truncated vault at `path`.
 fn atomic_write(path: &Path, blob: &[u8]) -> Result<(), VaultError> {
@@ -536,9 +575,23 @@ fn atomic_write(path: &Path, blob: &[u8]) -> Result<(), VaultError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
+    use std::time::{Duration, Instant};
 
-    use super::{Profile, ProfileSettings, Vault, VaultChange, VaultError};
+    use super::{
+        build_blob, check_new_passphrase, derive_key, parse_header, serialize_profiles, Profile,
+        ProfileSettings, Vault, VaultChange, VaultError, MAX_PBKDF2_ROUNDS, MAX_VAULT_FILE_BYTES,
+        MIN_PASSPHRASE_CHARS, SALT_LEN,
+    };
+
+    /// A passphrase that satisfies the floor, for the vaults these tests create.
+    const PASS: &str = "test-passphrase-01";
+
+    /// A real vault written by the code that shipped before the floor (0.1.9:
+    /// passphrase `bot`, 100,000 rounds, two synthetic profiles). It is that
+    /// writer's own output, not something this build produced.
+    const LEGACY_VAULT: &[u8] = include_bytes!("../tests/fixtures/legacy-0.1.9.vault");
 
     fn tmp_path(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("274bot-vault-test-{}", std::process::id()));
@@ -562,6 +615,18 @@ mod tests {
         }
     }
 
+    /// The error `Vault::create` refuses with; a created vault is a test failure.
+    fn create_err(path: &std::path::Path, passphrase: &str) -> VaultError {
+        match Vault::create(path, passphrase) {
+            Err(e) => e,
+            Ok(_) => panic!("created a vault with passphrase {passphrase:?}"),
+        }
+    }
+
+    fn header_rounds(file: &[u8]) -> u32 {
+        u32::from_le_bytes(file[9..13].try_into().unwrap())
+    }
+
     #[test]
     fn profile_debug_never_prints_the_password() {
         let text = format!("{:?}", profile("alice", "hunter22"));
@@ -573,7 +638,7 @@ mod tests {
     fn auto_login_defaults_false_and_old_json_unlocks_off() {
         assert!(!ProfileSettings::default().auto_login);
         let path = tmp_path("old-settings.vault");
-        let mut v = Vault::create(&path, "bot").unwrap();
+        let mut v = Vault::create(&path, PASS).unwrap();
         v.upsert(Profile {
             username: "a".into(),
             password: "a".into(),
@@ -613,11 +678,11 @@ mod tests {
     fn create_unlock_roundtrip() {
         let path = tmp_path("roundtrip.vault");
 
-        let mut v = Vault::create(&path, "bot").unwrap();
+        let mut v = Vault::create(&path, PASS).unwrap();
         v.upsert(profile("zezima", "hunter2")).unwrap();
         drop(v);
 
-        let v = Vault::unlock(&path, "bot").unwrap();
+        let v = Vault::unlock(&path, PASS).unwrap();
         let p = v.get("zezima").expect("profile present after unlock");
         assert_eq!(p.password, "hunter2");
         assert_eq!(p.uid, 42);
@@ -627,13 +692,13 @@ mod tests {
     #[test]
     fn selected_world_survives_encrypted_vault_roundtrip() {
         let path = tmp_path("selected-world.vault");
-        let mut v = Vault::create(&path, "bot").unwrap();
+        let mut v = Vault::create(&path, PASS).unwrap();
         let mut p = profile("alice", "secret");
         p.settings.world = Some(2);
         v.upsert(p).unwrap();
         drop(v);
         assert_eq!(
-            Vault::unlock(&path, "bot")
+            Vault::unlock(&path, PASS)
                 .unwrap()
                 .get("alice")
                 .unwrap()
@@ -647,18 +712,116 @@ mod tests {
     fn empty_passphrase_rejected() {
         let path = tmp_path("empty.vault");
 
-        assert!(matches!(
-            Vault::create(&path, ""),
-            Err(VaultError::EmptyPassphrase)
-        ));
+        assert!(matches!(create_err(&path, ""), VaultError::EmptyPassphrase));
         // Nothing written on failure.
         assert!(!path.exists());
 
         // Unlock must reject an empty passphrase too.
-        Vault::create(&path, "bot").unwrap();
+        Vault::create(&path, PASS).unwrap();
         assert!(matches!(
             Vault::unlock(&path, ""),
             Err(VaultError::EmptyPassphrase)
+        ));
+    }
+
+    #[test]
+    fn the_passphrase_floor_rejects_below_and_accepts_at_the_boundary() {
+        let path = tmp_path("floor.vault");
+        let below = "a".repeat(MIN_PASSPHRASE_CHARS - 1);
+        match create_err(&path, &below) {
+            VaultError::PassphraseTooShort { min, got } => {
+                assert_eq!((min, got), (MIN_PASSPHRASE_CHARS, MIN_PASSPHRASE_CHARS - 1));
+            }
+            other => panic!("expected PassphraseTooShort, got {other}"),
+        }
+        assert!(
+            !path.exists(),
+            "nothing is written for a rejected passphrase"
+        );
+
+        let at = "a".repeat(MIN_PASSPHRASE_CHARS);
+        Vault::create(&path, &at).unwrap();
+        Vault::unlock(&path, &at).unwrap();
+    }
+
+    #[test]
+    fn the_floor_counts_characters_and_ignores_surrounding_whitespace() {
+        // 12 characters in 36 bytes, and 11 characters in 33 bytes: the byte
+        // count is over the floor either way, the character count decides.
+        let twelve = "口令口令口令口令口令口令";
+        assert_eq!(twelve.chars().count(), MIN_PASSPHRASE_CHARS);
+        assert!(check_new_passphrase(twelve).is_ok());
+        assert!(matches!(
+            check_new_passphrase("口令口令口令口令口令口"),
+            Err(VaultError::PassphraseTooShort { got: 11, .. })
+        ));
+        // Padding buys no length; interior spaces (a phrase) count.
+        let padded = format!("   {}   ", "b".repeat(MIN_PASSPHRASE_CHARS - 1));
+        assert!(matches!(
+            check_new_passphrase(&padded),
+            Err(VaultError::PassphraseTooShort { got: 11, .. })
+        ));
+        assert!(check_new_passphrase("correct horse battery").is_ok());
+        assert!(matches!(
+            check_new_passphrase(""),
+            Err(VaultError::EmptyPassphrase)
+        ));
+    }
+
+    #[test]
+    fn a_vault_from_before_the_floor_opens_saves_and_keeps_its_data() {
+        let path = tmp_path("legacy.vault");
+        std::fs::write(&path, LEGACY_VAULT).unwrap();
+        assert!(
+            "bot".chars().count() < MIN_PASSPHRASE_CHARS,
+            "the fixture passphrase is below today's floor"
+        );
+
+        let mut v = Vault::unlock(&path, "bot").expect("an old-floor passphrase still opens");
+        let alice = v.get("alice").unwrap().clone();
+        assert_eq!(alice.password, "alice-password-legacy");
+        assert_eq!(alice.uid, 274_000_001);
+        assert!(!alice.settings.lowmem && alice.settings.auto_login);
+        assert_eq!(alice.settings.world, Some(2));
+        assert_eq!(alice.settings.tutorial_skipped, Some(true));
+        assert_eq!(alice.settings.raster, super::RasterMode::Cpu);
+        assert!(!alice.settings.random_events && !alice.settings.lamp_auto);
+        assert_eq!(alice.settings.lamp_skill, "magic");
+        assert_eq!(alice.settings.clue_duel_partner, "bob");
+        let assignment = alice.settings.script_assignment.as_ref().unwrap();
+        assert_eq!(
+            (
+                assignment.source_kind.as_str(),
+                assignment.identity.as_str()
+            ),
+            ("catalog", "ChickenKiller")
+        );
+        assert_eq!(
+            alice.settings.script_settings["catalog:ChickenKiller"]["eatAtPercent"],
+            47
+        );
+        assert_eq!(v.get("bob").unwrap().password, "bob-password-legacy");
+
+        // Saving keeps working and keeps the header the file was written with.
+        v.upsert(profile("carol", "carol-password")).unwrap();
+        assert!(v.remove("bob").unwrap());
+        drop(v);
+        let v = Vault::unlock(&path, "bot").unwrap();
+        assert_eq!(v.get("alice"), Some(&alice), "existing data is intact");
+        assert!(v.get("bob").is_none());
+        assert_eq!(v.get("carol").unwrap().password, "carol-password");
+        let saved = std::fs::read(&path).unwrap();
+        assert_eq!(&saved[..9], &LEGACY_VAULT[..9], "magic and format version");
+        assert_eq!(
+            header_rounds(&saved),
+            100_000,
+            "the KDF is not silently changed"
+        );
+
+        // The floor is for new vaults: the same passphrase cannot create one.
+        assert!(matches!(
+            create_err(&tmp_path("legacy-new.vault"), "bot"),
+            VaultError::PassphraseTooShort { got: 3, .. }
         ));
     }
 
@@ -684,7 +847,7 @@ mod tests {
     fn ciphertext_has_no_plaintext_password() {
         let path = tmp_path("plaintext.vault");
 
-        let mut v = Vault::create(&path, "bot").unwrap();
+        let mut v = Vault::create(&path, PASS).unwrap();
         v.upsert(profile("zezima", "hunter2isasecret")).unwrap();
         drop(v);
 
@@ -694,7 +857,7 @@ mod tests {
             "profile password bytes leaked into the ciphertext file"
         );
         assert!(
-            !bytes.windows(3).any(|w| w == b"bot"),
+            !bytes.windows(PASS.len()).any(|w| w == PASS.as_bytes()),
             "vault passphrase bytes leaked into the ciphertext file"
         );
     }
@@ -703,10 +866,10 @@ mod tests {
     fn create_refuses_existing_vault() {
         let path = tmp_path("exists.vault");
 
-        Vault::create(&path, "bot").unwrap();
+        Vault::create(&path, PASS).unwrap();
         assert!(matches!(
-            Vault::create(&path, "bot"),
-            Err(VaultError::AlreadyExists(_))
+            create_err(&path, PASS),
+            VaultError::AlreadyExists(_)
         ));
     }
 
@@ -714,7 +877,7 @@ mod tests {
     fn unlock_directory_is_io_not_not_found() {
         let dir = tmp_path("vault-as-dir");
         std::fs::create_dir_all(&dir).unwrap();
-        match Vault::unlock(&dir, "bot") {
+        match Vault::unlock(&dir, PASS) {
             Err(VaultError::Io(_)) => {}
             Err(e) => panic!("expected Io, got {e}"),
             Ok(_) => panic!("expected Io, unlocked a directory"),
@@ -725,12 +888,12 @@ mod tests {
     #[test]
     fn reset_file_removes_vault_missing_is_ok() {
         let path = tmp_path("reset.vault");
-        Vault::create(&path, "bot").unwrap();
+        Vault::create(&path, PASS).unwrap();
         assert!(path.is_file());
         Vault::reset_file(&path).unwrap();
         assert!(!path.exists());
         Vault::reset_file(&path).unwrap();
-        Vault::create(&path, "newpass").unwrap();
+        Vault::create(&path, "another-passphrase").unwrap();
         assert!(path.is_file());
     }
 
@@ -742,7 +905,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("vault");
 
-        let mut v = Vault::create(&file, "bot").unwrap();
+        let mut v = Vault::create(&file, PASS).unwrap();
         v.upsert(profile("alice", "pw1")).unwrap();
 
         // Block the atomic write's `.tmp` path with a directory so the next
@@ -757,21 +920,73 @@ mod tests {
         assert_eq!(v.get("alice").unwrap().password, "pw1");
     }
 
+    /// A header for `rounds` without deriving a key for it: only the header's
+    /// round field matters to these tests.
+    fn blob_with_rounds(rounds: u32) -> Vec<u8> {
+        build_blob(&[1u8; SALT_LEN], &[9u8; 32], b"{}", rounds).unwrap()
+    }
+
     #[test]
-    fn unlock_rejects_absurd_pbkdf2_rounds() {
+    fn stored_round_counts_are_accepted_only_inside_the_cap() {
+        for accepted in [1, 100_000, MAX_PBKDF2_ROUNDS] {
+            assert!(
+                parse_header(&blob_with_rounds(accepted)).is_ok(),
+                "{accepted} rounds"
+            );
+        }
+        for rejected in [0, MAX_PBKDF2_ROUNDS + 1, u32::MAX] {
+            match parse_header(&blob_with_rounds(rejected)) {
+                Err(VaultError::Corrupt(message)) => assert!(
+                    message.contains(&rejected.to_string())
+                        && message.contains(&MAX_PBKDF2_ROUNDS.to_string()),
+                    "the error names the value and the cap: {message}"
+                ),
+                other => panic!("{rejected} rounds: expected Corrupt, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn unlock_refuses_a_crafted_round_count_before_deriving_any_key() {
         let path = tmp_path("rounds.vault");
-        Vault::create(&path, "bot").unwrap();
-
-        // Patch the header's rounds field to u32::MAX.
+        Vault::create(&path, PASS).unwrap();
         let mut bytes = std::fs::read(&path).unwrap();
-        let rounds_off = b"274VAULT".len() + 1;
-        bytes[rounds_off..rounds_off + 4].copy_from_slice(&u32::MAX.to_le_bytes());
-        std::fs::write(&path, &bytes).unwrap();
 
-        assert!(matches!(
-            Vault::unlock(&path, "bot"),
-            Err(VaultError::Corrupt(_))
-        ));
+        for rounds in [MAX_PBKDF2_ROUNDS + 1, u32::MAX] {
+            bytes[9..13].copy_from_slice(&rounds.to_le_bytes());
+            std::fs::write(&path, &bytes).unwrap();
+            // Deriving first would cost minutes at these counts.
+            let started = Instant::now();
+            assert!(matches!(
+                Vault::unlock(&path, PASS),
+                Err(VaultError::Corrupt(_))
+            ));
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "{rounds} rounds"
+            );
+        }
+    }
+
+    #[test]
+    fn unlock_bounds_the_vault_file_size_at_the_boundary() {
+        let path = tmp_path("huge.vault");
+        let file = std::fs::File::create(&path).unwrap();
+
+        // Exactly at the bound the file is read, then refused as not a vault.
+        file.set_len(MAX_VAULT_FILE_BYTES).unwrap();
+        match Vault::unlock(&path, PASS) {
+            Err(VaultError::Corrupt(message)) => assert!(message.contains("magic"), "{message}"),
+            other => panic!("expected a bad-magic Corrupt, got {:?}", other.err()),
+        }
+        // One byte over is refused for its size before it is parsed.
+        file.set_len(MAX_VAULT_FILE_BYTES + 1).unwrap();
+        match Vault::unlock(&path, PASS) {
+            Err(VaultError::Corrupt(message)) => {
+                assert!(message.contains("larger than"), "{message}");
+            }
+            other => panic!("expected a size Corrupt, got {:?}", other.err()),
+        }
     }
 
     #[test]
@@ -779,10 +994,10 @@ mod tests {
         let path = tmp_path("old-rounds.vault");
         let salt = [7u8; super::SALT_LEN];
         let rounds = 50_000;
-        let key = super::derive_key("bot", &salt, rounds);
-        let empty: std::collections::BTreeMap<String, Profile> = Default::default();
-        let data = serde_json::to_vec(&empty).unwrap();
-        let blob = super::build_blob(&salt, &key, &data, rounds).unwrap();
+        let key = derive_key("bot", &salt, rounds);
+        let empty: BTreeMap<String, Profile> = Default::default();
+        let data = serialize_profiles(&empty).unwrap();
+        let blob = build_blob(&salt, &key, &data, rounds).unwrap();
         std::fs::write(&path, blob).unwrap();
 
         let mut v = Vault::unlock(&path, "bot").unwrap();
@@ -791,10 +1006,7 @@ mod tests {
 
         let v = Vault::unlock(&path, "bot").unwrap();
         assert_eq!(v.get("alice").unwrap().password, "pw");
-        let bytes = std::fs::read(&path).unwrap();
-        let rounds_off = b"274VAULT".len() + 1;
-        let stored = u32::from_le_bytes(bytes[rounds_off..rounds_off + 4].try_into().unwrap());
-        assert_eq!(stored, 50_000);
+        assert_eq!(header_rounds(&std::fs::read(&path).unwrap()), 50_000);
     }
 
     #[cfg(unix)]
@@ -803,7 +1015,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let path = tmp_path("mode.vault");
-        Vault::create(&path, "bot").unwrap();
+        Vault::create(&path, PASS).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "vault file must be owner-read/write only");
     }
@@ -811,7 +1023,7 @@ mod tests {
     #[test]
     fn remove_deletes_only_that_profile_and_persists() {
         let path = tmp_path("remove.vault");
-        let mut v = Vault::create(&path, "bot").unwrap();
+        let mut v = Vault::create(&path, PASS).unwrap();
         v.upsert(profile("alice", "pw1")).unwrap();
         v.upsert(profile("bob", "pw2")).unwrap();
         assert!(v.remove("alice").unwrap(), "chooser ✕ removes the row");
@@ -822,7 +1034,7 @@ mod tests {
         assert!(v.get("alice").is_none());
         assert_eq!(v.get("bob").unwrap().password, "pw2");
         drop(v);
-        let v = Vault::unlock(&path, "bot").unwrap();
+        let v = Vault::unlock(&path, PASS).unwrap();
         assert!(v.get("alice").is_none(), "removal persists across unlock");
         assert!(v.get("bob").is_some());
     }
@@ -871,11 +1083,11 @@ mod tests {
     #[test]
     fn store_commit_persists_changes_in_order_and_staging_stays_in_memory() {
         let path = tmp_path("store-commit.vault");
-        let mut vault = Vault::create(&path, "pw").unwrap();
+        let mut vault = Vault::create(&path, PASS).unwrap();
         let mut store = vault.store();
         vault.stage_upsert(profile("alice", "a"));
         assert!(
-            Vault::unlock(&path, "pw").unwrap().get("alice").is_none(),
+            Vault::unlock(&path, PASS).unwrap().get("alice").is_none(),
             "staging never writes"
         );
         store
@@ -885,7 +1097,7 @@ mod tests {
                 VaultChange::Remove("bob".into()),
             ])
             .unwrap();
-        let reopened = Vault::unlock(&path, "pw").unwrap();
+        let reopened = Vault::unlock(&path, PASS).unwrap();
         assert_eq!(reopened.get("alice").unwrap().password, "a");
         assert!(reopened.get("bob").is_none());
         assert_eq!(store.get("alice").unwrap().password, "a");
@@ -894,7 +1106,7 @@ mod tests {
     #[test]
     fn a_failed_store_commit_leaves_the_durable_copy_unchanged() {
         let path = tmp_path("store-fail.vault");
-        let vault = Vault::create(&path, "pw").unwrap();
+        let vault = Vault::create(&path, PASS).unwrap();
         let mut store = vault.store();
         // The temp file cannot be created where a directory sits.
         std::fs::create_dir_all(path.with_extension("tmp")).unwrap();
@@ -903,5 +1115,19 @@ mod tests {
             .is_err());
         assert!(store.get("alice").is_none());
         std::fs::remove_dir_all(path.with_extension("tmp")).unwrap();
+    }
+
+    #[test]
+    fn serialized_profiles_match_serde_across_buffer_growth() {
+        let mut profiles = BTreeMap::new();
+        for i in 0..200 {
+            let name = format!("user{i:03}");
+            profiles.insert(name.clone(), profile(&name, &"p".repeat(64 + i)));
+        }
+
+        let ours = serialize_profiles(&profiles).unwrap();
+
+        assert!(ours.len() > 4096 * 4, "large enough to regrow the buffer");
+        assert_eq!(&ours[..], &serde_json::to_vec(&profiles).unwrap()[..]);
     }
 }

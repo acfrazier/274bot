@@ -706,7 +706,7 @@ fn run_cell() -> Result<(), String> {
 
     let account_profile = Profile {
         username: account.clone(),
-        password,
+        password: password.into(),
         uid: (SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("clock: {error}"))?

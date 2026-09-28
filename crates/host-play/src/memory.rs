@@ -627,7 +627,7 @@ impl Run {
             vault
                 .upsert(Profile {
                     username: name.clone(),
-                    password: name.clone(),
+                    password: name.clone().into(),
                     uid: 274_900_000 + i as i32,
                     settings,
                 })
