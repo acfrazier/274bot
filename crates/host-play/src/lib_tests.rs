@@ -450,7 +450,13 @@ fn projected_npc_boxes_follow_the_live_clients_bounded_npc_list() {
     );
     let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
     assert!(posted.npc_boxes_available());
-    assert_eq!(posted.npc_boxes()[0].points()[0], (225, 171));
+    let points = posted
+        .npc_boxes()
+        .expect("npc box rows")
+        .get(0)
+        .points()
+        .expect("npc box points");
+    assert_eq!((points.get(0), points.get(1)), (225, 171));
 
     client.npc_count = 0;
     assert_eq!(projected_npc_boxes(&client), Some(Vec::new()));
@@ -10066,11 +10072,12 @@ fn post_snapshot_bank_side_carries_real_component_id() {
         false,
     );
     let view = script::isolate_fb::decode_snapshot(&bytes).expect("posted snap");
-    let posted = view.bank_side();
+    let posted = view.bank_side().expect("bank side rows");
     assert_eq!(posted.len(), 1);
-    assert_eq!(posted[0].id(), 1);
+    let row = posted.get(0);
+    assert_eq!(row.id(), 1);
     assert_eq!(
-        posted[0].component_id(),
+        row.component_id(),
         701,
         "posted bank_side must keep deposit component for Input.invButton"
     );
@@ -12420,38 +12427,40 @@ fn script_snapshot_fb_carries_observed_fields_only() {
     assert_eq!((here.x(), here.z(), here.level()), (3200, 3200, 0));
     assert!(view.ingame());
     assert!(view.has_inv(), "keyframe carries inv");
-    let inv = view.inv();
+    let inv = view.inv().expect("inventory rows");
     assert_eq!(inv.len(), 2);
-    assert_eq!((inv[0].name(), inv[0].count()), (Some("Bones"), 2));
+    let first = inv.get(0);
+    assert_eq!((first.name(), first.count()), (Some("Bones"), 2));
     assert_eq!(
-        (inv[1].name(), inv[1].count()),
+        (inv.get(1).name(), inv.get(1).count()),
         (None, 5),
         "an obj the table does not know posts a null name, never invented"
     );
     assert!(view.has_stats(), "keyframe carries stats");
-    let stats = view.stats();
+    let stats = view.stats().expect("stat rows");
+    let cooking = stats.get(7);
     assert_eq!(
         (
-            stats[7].index(),
-            stats[7].name(),
-            stats[7].xp(),
-            stats[7].base(),
-            stats[7].effective()
+            cooking.index(),
+            cooking.name(),
+            cooking.xp(),
+            cooking.base(),
+            cooking.effective()
         ),
-        (7, "cooking", 1300, 35, 40)
+        (7, Some("cooking"), 1300, 35, 40)
     );
     assert!(!view.bank_open(), "no bank component in the fixture");
     assert!(!view.bank_loaded());
     assert!(
-        view.booths().is_empty(),
+        view.booths().expect("booth rows").is_empty(),
         "no Use-quickly scene locs in the fixture"
     );
     assert!(
-        view.banks().is_empty(),
+        view.banks().expect("bank stands").is_empty(),
         "no nav world: no packed stands posted"
     );
-    assert!(view.bank().is_empty());
-    assert!(view.bank_side().is_empty());
+    assert!(view.bank().expect("bank rows").is_empty());
+    assert!(view.bank_side().expect("bank side rows").is_empty());
     assert!(view.hold());
     assert!(!view.ours());
     assert!(
@@ -12460,12 +12469,12 @@ fn script_snapshot_fb_carries_observed_fields_only() {
     );
     assert!(!view.attacked_by_player());
     assert!(view.has_widgets(), "keyframe carries widgets vector");
-    assert!(view.widgets().is_empty());
+    assert!(view.widgets().expect("widget rows").is_empty());
     assert!(
         view.has_bank_approaches(),
         "keyframe posts bank_approaches even when empty"
     );
-    assert!(view.bank_approaches().is_empty());
+    assert!(view.bank_approaches().expect("bank approaches").is_empty());
 
     // No tile / no snapshot: fail-closed nulls and flags.
     let (bare_bytes, _) = script_snapshot_fb(
@@ -12473,8 +12482,8 @@ fn script_snapshot_fb_carries_observed_fields_only() {
     );
     let bare = script::isolate_fb::decode_snapshot(&bare_bytes).expect("bare blob decodes");
     assert!(bare.here().is_none());
-    assert!(bare.inv().is_empty());
-    assert!(bare.stats().is_empty());
+    assert!(bare.inv().expect("inventory rows").is_empty());
+    assert!(bare.stats().expect("stat rows").is_empty());
     assert!(!bare.bank_open());
     assert!(bare.ours(), "ours rides the blob for EventSignal");
 }
@@ -12531,15 +12540,16 @@ fn script_snapshot_fb_projects_authoritative_bank_approach() {
     );
     let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
     assert!(view.has_bank_approaches());
-    let rows = view.bank_approaches();
+    let rows = view.bank_approaches().expect("bank approaches");
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].loc_id(), 2213);
-    assert_eq!((rows[0].x(), rows[0].z()), (3206, 3206));
-    assert!(!rows[0].can_operate(), "diagonal is not test_loc ready");
-    assert!(rows[0].dest_ok());
-    assert_ne!((rows[0].dest_x(), rows[0].dest_z()), (3206, 3206));
+    let row = rows.get(0);
+    assert_eq!(row.loc_id(), 2213);
+    assert_eq!((row.x(), row.z()), (3206, 3206));
+    assert!(!row.can_operate(), "diagonal is not test_loc ready");
+    assert!(row.dest_ok());
+    assert_ne!((row.dest_x(), row.dest_z()), (3206, 3206));
     assert_ne!(
-        (rows[0].dest_x(), rows[0].dest_z()),
+        (row.dest_x(), row.dest_z()),
         (3205, 3205),
         "dest is not the signum stay-put tile"
     );
@@ -12858,10 +12868,11 @@ fn script_snapshot_player_actions_preserve_native_slots() {
         );
         let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
         view.players()
-            .first()
-            .expect("native player emitted")
+            .expect("player rows")
+            .get(0)
             .actions()
-            .into_iter()
+            .expect("player actions")
+            .iter()
             .map(str::to_owned)
             .collect()
     }
@@ -12961,10 +12972,11 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
     let reach = view.reach().expect("reach posted");
     assert!(reach.available());
     assert_eq!(reach.level(), 1);
-    assert!(!reach.canlight().is_empty(), "profile plane must publish");
+    let canlight: Vec<_> = reach.canlight().expect("lighting bits").iter().collect();
+    assert!(!canlight.is_empty(), "profile plane must publish");
     assert!(
         api::query::ReachQueryView::bit_at(
-            &reach.canlight(),
+            &canlight,
             reach.width(),
             reach.height(),
             reach.base_x(),
@@ -12999,7 +13011,12 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
     );
     let missing = script::isolate_fb::decode_snapshot(&missing).expect("snapshot decodes");
     assert!(
-        missing.reach().expect("reach").canlight().is_empty(),
+        missing
+            .reach()
+            .expect("reach")
+            .canlight()
+            .expect("lighting bits")
+            .is_empty(),
         "missing profile plane posts empty canlight, not all-allowed"
     );
 }
@@ -13059,10 +13076,10 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
         (3200, 3200, 0)
     );
     assert_eq!((packed.width(), packed.height()), (104, 104));
-    let flags = packed.flags();
+    let flags = packed.flags().expect("collision flags");
     assert_eq!(flags.len(), 104 * 104);
-    assert_ne!(flags[5 * 104 + 1] & CollisionFlag::V_W, 0);
-    assert_eq!(flags[104 + 1], CollisionFlag::_OPEN);
+    assert_ne!(flags.get(5 * 104 + 1) & CollisionFlag::V_W, 0);
+    assert_eq!(flags.get(104 + 1), CollisionFlag::_OPEN);
 
     script::observed::on_reset();
     script::observed::apply(&view);
@@ -13178,7 +13195,7 @@ export function tick(api) {
     let cleared = script::isolate_fb::decode_snapshot(&cleared).expect("cleared");
     let gone = cleared.collision().expect("unpublish posts a clear");
     assert!(!gone.available());
-    assert!(gone.flags().is_empty());
+    assert!(gone.flags().expect("collision flags").is_empty());
 }
 
 #[test]
@@ -13314,10 +13331,11 @@ fn script_snapshot_posts_current_local_overhead_and_coordinate_hint() {
     assert_eq!(first.self_chat(), Some("FIGHT!"));
     assert_eq!(first.hint_tile(), Some((2761, 9546)));
     assert_eq!(first.chat_text(), Some("latest ring line"));
-    let chat = first.chat_lines();
-    assert_eq!(chat[0].seq(), 11);
-    assert_eq!(chat[0].type_(), 4);
-    assert_eq!(chat[0].username(), Some("Partner"));
+    let chat = first.chat_lines().expect("chat lines");
+    let line = chat.get(0);
+    assert_eq!(line.seq(), 11);
+    assert_eq!(line.type_(), 4);
+    assert_eq!(line.username(), Some("Partner"));
 
     c.local_player.as_mut().unwrap().entity.chat_message = None;
     c.hint_type = 0;
@@ -13519,10 +13537,10 @@ fn script_snapshot_fb_posts_tab0_aggressive_combat_style() {
         false,
     );
     let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
-    let labels: Vec<String> = view
-        .combat_styles()
+    let styles = view.combat_styles().expect("combat style rows");
+    let labels: Vec<String> = styles
         .iter()
-        .map(|s| s.label().to_string())
+        .map(|s| s.label().unwrap_or_default().to_string())
         .collect();
     assert!(
         labels
@@ -13530,10 +13548,14 @@ fn script_snapshot_fb_posts_tab0_aggressive_combat_style() {
             .any(|l| l.to_ascii_lowercase().contains("aggressive")),
         "isolate combat_styles must carry the IF style name, got {labels:?}"
     );
-    let aggressive = view
-        .combat_styles()
-        .into_iter()
-        .find(|s| s.label().to_ascii_lowercase().contains("aggressive"))
+    let aggressive = styles
+        .iter()
+        .find(|s| {
+            s.label()
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+                .contains("aggressive")
+        })
         .expect("Aggressive row");
     assert_eq!(aggressive.mode(), 1);
     assert_eq!(aggressive.component_id(), 2011);
@@ -13592,23 +13614,25 @@ fn script_snapshot_npc_behind_wall_posts_reachable_false() {
         false,
     );
     let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
-    let npcs = view.npcs();
+    let npcs = view.npcs().expect("npc rows");
     assert_eq!(npcs.len(), 1);
     assert!(
-        !npcs[0].reachable(),
+        !npcs.get(0).reachable(),
         "npc behind SQ_BLOCKED tile is not reachable"
     );
     let reach = view.reach().expect("native reach metadata");
-    assert_eq!(reach.exact_rank().len(), 104 * 104);
-    assert_eq!(reach.adjacent_rank().len(), 104 * 104);
-    assert_eq!(reach.exact_rank()[5 * 104 + 5], 0, "origin dequeues first");
+    let exact_rank = reach.exact_rank().expect("exact ranks");
+    let adjacent_rank = reach.adjacent_rank().expect("adjacent ranks");
+    assert_eq!(exact_rank.len(), 104 * 104);
+    assert_eq!(adjacent_rank.len(), 104 * 104);
+    assert_eq!(exact_rank.get(5 * 104 + 5), 0, "origin dequeues first");
     assert_eq!(
-        reach.exact_rank()[5 * 104 + 6],
+        exact_rank.get(5 * 104 + 6),
         u16::MAX,
         "blocked npc tile has no exact dequeue rank"
     );
     assert_eq!(
-        reach.adjacent_rank()[5 * 104 + 6],
+        adjacent_rank.get(5 * 104 + 6),
         0,
         "blocked npc tile is adjacent from the origin before expansion"
     );
@@ -13671,7 +13695,7 @@ fn script_snapshot_loc_behind_wall_posts_reachable_false() {
         false,
     );
     let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
-    let locs = view.locs();
+    let locs = view.locs().expect("loc rows");
     assert_eq!(locs.len(), 2);
     let blocked = locs
         .iter()
@@ -13835,7 +13859,7 @@ fn publish_script_snapshot(
 }
 
 fn posted_varp(view: &script::isolate_fb::SnapshotReader<'_>, index: i32) -> Option<i32> {
-    view.varps()
+    view.varps()?
         .iter()
         .find(|row| row.index() == index)
         .map(|row| row.value())
@@ -13865,6 +13889,7 @@ fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressu
     assert_eq!(posted_varp(&off_view, 301), Some(0));
     let extra_rows = off_view
         .varps()
+        .expect("varp rows")
         .iter()
         .filter(|row| {
             let index = row.index();
@@ -14012,10 +14037,15 @@ fn script_snapshot_posts_native_quest_rows_and_clears_them_without_a_snapshot() 
     let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
     assert!(posted.has_quest_statuses_update());
     assert!(posted.quest_statuses_available());
-    let rows = posted.quest_statuses();
+    let rows = posted.quest_statuses().expect("quest rows");
     let got = rows
         .iter()
-        .map(|row| (row.name(), row.status()))
+        .map(|row| {
+            (
+                row.name().unwrap_or_default(),
+                row.status().unwrap_or_default(),
+            )
+        })
         .collect::<Vec<_>>();
     assert_eq!(
         got,
@@ -14048,7 +14078,7 @@ fn script_snapshot_posts_native_quest_rows_and_clears_them_without_a_snapshot() 
     );
     assert!(!clear.quest_statuses_available());
     assert!(!clear.has_quest_statuses());
-    assert!(clear.quest_statuses().is_empty());
+    assert!(clear.quest_statuses().is_none());
 }
 
 #[test]
@@ -14240,7 +14270,7 @@ fn script_snapshot_fb_posts_only_changed_tables() {
     );
     let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
     assert!(view.has_inv(), "changed inv is carried");
-    assert_eq!(view.inv().len(), 2);
+    assert_eq!(view.inv().expect("inventory rows").len(), 2);
     assert!(!view.has_banks(), "unchanged banks still omitted");
 
     // NavWorld identity change (force_banks): the packed banks are

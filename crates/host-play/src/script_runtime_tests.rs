@@ -149,10 +149,11 @@ fn chat_option_component_identity_reaches_the_script_wire() {
 
     let bytes = post(&snapshot, 1);
     let view = decode_snapshot(&bytes).expect("snapshot");
-    let options = view.chat_options();
+    let options = view.chat_options().expect("chat options");
     assert_eq!(options.len(), 1);
-    assert_eq!(options[0].text(), "Al Kharid Duel Arena.");
-    assert_eq!(options[0].com_id(), choice as i32);
+    let option = options.get(0);
+    assert_eq!(option.text(), Some("Al Kharid Duel Arena."));
+    assert_eq!(option.com_id(), choice as i32);
 }
 
 /// The board is the `obj_ops` component (never the hint), its size is
@@ -190,14 +191,23 @@ fn observed_board_posts_bounded_rows_beside_the_widget_texts() {
     let posted = view.puzzle_board().expect("board posted");
     assert_eq!(posted.component_id(), BOARD as i32);
     assert_eq!(posted.size(), 3);
-    let rows = posted.items();
+    let rows = posted.items().expect("board items");
     assert_eq!(rows.len(), 2, "bounded to the stored slots");
-    assert_eq!(rows[0].id(), 2000);
-    assert_eq!(rows[0].slot(), 0);
-    assert_eq!(rows[0].component_id(), BOARD as i32);
-    assert_eq!(rows[0].ops(), vec!["Take"]);
-    assert_eq!(rows[1].id(), 2002);
-    assert_eq!(rows[1].slot(), 2);
+    let first = rows.get(0);
+    assert_eq!(first.id(), 2000);
+    assert_eq!(first.slot(), 0);
+    assert_eq!(first.component_id(), BOARD as i32);
+    assert_eq!(
+        first
+            .ops()
+            .expect("item operations")
+            .iter()
+            .collect::<Vec<_>>(),
+        vec!["Take"]
+    );
+    let second = rows.get(1);
+    assert_eq!(second.id(), 2002);
+    assert_eq!(second.slot(), 2);
     assert_eq!(
         view.puzzle_board_generation(),
         board.generation,
@@ -207,10 +217,11 @@ fn observed_board_posts_bounded_rows_beside_the_widget_texts() {
     // typed item rows; unrelated inventory widgets may also be present.
     let root = view
         .widgets()
-        .into_iter()
+        .expect("widget rows")
+        .iter()
         .find(|widget| widget.component_id() == ROOT as i32)
         .expect("root widget text remains posted");
-    assert_eq!(root.text(), "Puzzle board");
+    assert_eq!(root.text(), Some("Puzzle board"));
 }
 
 /// The session generation advances on a session open, a session close
@@ -257,7 +268,7 @@ fn generation_bumps_only_on_session_events() {
     let posted = view.puzzle_board().expect("closed board is present");
     assert_eq!(posted.component_id(), -1);
     assert_eq!(posted.size(), 0);
-    assert!(posted.items().is_empty());
+    assert!(posted.items().expect("board items").is_empty());
     assert_eq!(view.puzzle_board_generation(), opened + 1);
 }
 

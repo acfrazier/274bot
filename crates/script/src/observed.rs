@@ -30,12 +30,15 @@ use crate::isolate_fb::{
     CombatStyleReader, QuestStatusReader, RowReader, SceneEntityReader, SnapshotReader, StatReader,
 };
 use api::line_of_sight::CollisionQuery;
+use flatbuffers::{ForwardsUOffset, Vector};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::hash::{BuildHasher, RandomState};
+use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+
+type TableVector<'a, T> = Option<Vector<'a, ForwardsUOffset<T>>>;
+type StringVector<'a> = Option<Vector<'a, ForwardsUOffset<&'a str>>>;
 
 thread_local! {
     static SCENE: RefCell<Scene> = RefCell::new(Scene::fresh());
@@ -121,7 +124,7 @@ impl ItemRow {
             id: row.id(),
             count: row.count(),
             name: row.name().map(|name| strings.text(name)),
-            ops: strings.ops(&row.ops()),
+            ops: strings.ops(row.ops()),
             noted: row.noted(),
             cert: row.cert(),
             component_id: row.has_component_id().then(|| row.component_id()),
@@ -212,7 +215,7 @@ impl EntityRow {
             max_health: row.max_health(),
             in_combat: row.in_combat(),
             animating: row.animating(),
-            actions: strings.ops(&row.actions()),
+            actions: strings.ops(row.actions()),
             reachable: row.reachable(),
             reachable_adj: row.reachable_adj(),
             combat_level: row.combat_level(),
@@ -263,7 +266,7 @@ impl SceneRow {
             z: row.z(),
             level: row.level(),
             distance: row.distance(),
-            actions: strings.ops(&row.actions()),
+            actions: strings.ops(row.actions()),
             in_combat: row.in_combat(),
             shape: u8::try_from(row.shape()).unwrap_or_default(),
             angle: u8::try_from(row.angle()).unwrap_or_default(),
@@ -297,7 +300,7 @@ impl ButtonRow {
     fn read(row: &CombatStyleReader<'_>, strings: &mut Interner) -> Self {
         Self {
             mode: row.mode(),
-            label: strings.text(row.label()),
+            label: strings.text(row.label().unwrap_or_default()),
             component_id: row.component_id(),
         }
     }
@@ -328,17 +331,17 @@ pub struct Skills {
 }
 
 impl Skills {
-    fn read(rows: &[StatReader<'_>]) -> Self {
+    fn read<'a>(rows: TableVector<'a, StatReader<'a>>) -> Self {
         let mut skills = Self::default();
         // Bit `i`: stat slot `i` posted a base level above 0.
         let mut loaded = 0u64;
-        for row in rows {
+        for row in rows.into_iter().flat_map(|rows| rows.iter()) {
             if row.base() > 0 {
                 if let Ok(i) = u32::try_from(row.index()) {
                     loaded |= 1u64.checked_shl(i).unwrap_or(0);
                 }
             }
-            let name = row.name();
+            let name = row.name().unwrap_or_default();
             let slot = if name == "hitpoints" {
                 &mut skills.hitpoints
             } else if name.eq_ignore_ascii_case("prayer") {
@@ -435,8 +438,8 @@ pub struct QuestStatusRow {
 impl QuestStatusRow {
     fn read(row: &QuestStatusReader<'_>, strings: &mut Interner) -> Self {
         Self {
-            name: strings.text(row.name()),
-            status: strings.text(row.status()),
+            name: strings.text(row.name().unwrap_or_default()),
+            status: strings.text(row.status().unwrap_or_default()),
             component_id: row.component_id(),
         }
     }
@@ -704,6 +707,33 @@ impl Post<'_> {
     }
 }
 
+fn read_items<'a>(rows: TableVector<'a, RowReader<'a>>, strings: &mut Interner) -> Vec<ItemRow> {
+    rows.into_iter()
+        .flat_map(|rows| rows.iter())
+        .map(|row| ItemRow::read(&row, strings))
+        .collect()
+}
+
+fn read_places<'a>(
+    rows: TableVector<'a, SceneEntityReader<'a>>,
+    strings: &mut Interner,
+) -> Vec<SceneRow> {
+    rows.into_iter()
+        .flat_map(|rows| rows.iter())
+        .map(|row| SceneRow::read(&row, strings))
+        .collect()
+}
+
+fn read_buttons<'a>(
+    rows: TableVector<'a, CombatStyleReader<'a>>,
+    strings: &mut Interner,
+) -> Vec<ButtonRow> {
+    rows.into_iter()
+        .flat_map(|rows| rows.iter())
+        .map(|row| ButtonRow::read(&row, strings))
+        .collect()
+}
+
 impl Scene {
     fn fresh() -> Self {
         Self {
@@ -771,20 +801,6 @@ impl Scene {
     }
 
     fn apply_rows(&mut self, snap: &SnapshotReader<'_>, strings: &mut Interner) {
-        let items = |rows: Vec<RowReader<'_>>, strings: &mut Interner| -> Vec<ItemRow> {
-            rows.iter().map(|row| ItemRow::read(row, strings)).collect()
-        };
-        let places = |rows: Vec<SceneEntityReader<'_>>, strings: &mut Interner| -> Vec<SceneRow> {
-            rows.iter()
-                .map(|row| SceneRow::read(row, strings))
-                .collect()
-        };
-        let buttons =
-            |rows: Vec<CombatStyleReader<'_>>, strings: &mut Interner| -> Vec<ButtonRow> {
-                rows.iter()
-                    .map(|row| ButtonRow::read(row, strings))
-                    .collect()
-            };
         let mut post = self.begin_post(snap.tick());
         let p = &mut post;
         if snap.has_ingame() {
@@ -891,71 +907,73 @@ impl Scene {
             p.shop_open(snap.shop_open());
         }
         if snap.has_inv() {
-            p.inv(items(snap.inv(), strings));
+            p.inv(read_items(snap.inv(), strings));
         }
         if snap.has_equipment() {
-            p.equipment(items(snap.equipment(), strings));
+            p.equipment(read_items(snap.equipment(), strings));
         }
         if snap.has_bank() {
-            p.bank(items(snap.bank(), strings));
+            p.bank(read_items(snap.bank(), strings));
         }
         if snap.has_bank_side() {
-            p.bank_side(items(snap.bank_side(), strings));
+            p.bank_side(read_items(snap.bank_side(), strings));
         }
         if snap.has_trade_mine() {
-            p.trade_mine(items(snap.trade_mine(), strings));
+            p.trade_mine(read_items(snap.trade_mine(), strings));
         }
         if snap.has_trade_theirs() {
-            p.trade_theirs(items(snap.trade_theirs(), strings));
+            p.trade_theirs(read_items(snap.trade_theirs(), strings));
         }
         if snap.has_trade_side() {
-            p.trade_side(items(snap.trade_side(), strings));
+            p.trade_side(read_items(snap.trade_side(), strings));
         }
         if snap.has_shop_stock() {
-            p.shop_stock(items(snap.shop_stock(), strings));
+            p.shop_stock(read_items(snap.shop_stock(), strings));
         }
         if snap.has_shop_player_available() {
             p.shop_player(
                 snap.shop_player_available()
-                    .then(|| items(snap.shop_player(), strings)),
+                    .then(|| read_items(snap.shop_player(), strings)),
             );
         }
         if snap.has_main_make_available() {
             p.main_make(
                 snap.main_make_available()
-                    .then(|| items(snap.main_make(), strings)),
+                    .then(|| read_items(snap.main_make(), strings)),
             );
         }
         if snap.has_npcs() {
             p.npcs(
                 snap.npcs()
-                    .iter()
-                    .map(|row| EntityRow::read(row, strings))
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
+                    .map(|row| EntityRow::read(&row, strings))
                     .collect(),
             );
         }
         if snap.has_locs() {
-            p.locs(places(snap.locs(), strings));
+            p.locs(read_places(snap.locs(), strings));
         }
         if snap.has_ground() {
-            p.ground(places(snap.ground(), strings));
+            p.ground(read_places(snap.ground(), strings));
         }
         if snap.has_players() {
-            p.players(places(snap.players(), strings));
+            p.players(read_places(snap.players(), strings));
         }
         if snap.has_stats() {
-            p.stats(Skills::read(&snap.stats()));
+            p.stats(Skills::read(snap.stats()));
         }
         if snap.has_combat_styles() {
-            p.combat_styles(buttons(snap.combat_styles(), strings));
+            p.combat_styles(read_buttons(snap.combat_styles(), strings));
         }
         if snap.has_spell_buttons() {
-            p.spell_buttons(buttons(snap.spell_buttons(), strings));
+            p.spell_buttons(read_buttons(snap.spell_buttons(), strings));
         }
         if snap.has_varps() {
             p.varps(
                 snap.varps()
-                    .iter()
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
                     .map(|row| VarpRow {
                         index: row.index(),
                         value: row.value(),
@@ -966,7 +984,8 @@ impl Scene {
         if snap.has_side_tab_ifaces() {
             p.combat_tab_root(
                 snap.side_tab_ifaces()
-                    .iter()
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
                     .find(|row| row.index() == COMBAT_TAB)
                     .map_or(-1, |row| row.id()),
             );
@@ -975,18 +994,20 @@ impl Scene {
             // Empty texts stay: the 1-based answer index is the posted slot.
             p.chat_options(
                 snap.chat_options()
-                    .iter()
-                    .map(|row| row.text().to_string())
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
+                    .map(|row| row.text().unwrap_or_default().to_string())
                     .collect(),
             );
         }
         if snap.has_chat_lines() {
             p.chat_lines(
                 snap.chat_lines()
-                    .iter()
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
                     .map(|line| ChatLine {
                         seq: line.seq(),
-                        text: Text::from(line.text()),
+                        text: Text::from(line.text().unwrap_or_default()),
                     })
                     .collect(),
             );
@@ -994,12 +1015,14 @@ impl Scene {
         if snap.has_make_products() {
             p.make_products(
                 snap.make_products()
-                    .iter()
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
                     .map(|product| MakeProduct {
-                        name: product.name().to_string(),
+                        name: product.name().unwrap_or_default().to_string(),
                         buttons: product
                             .buttons()
-                            .iter()
+                            .into_iter()
+                            .flat_map(|buttons| buttons.iter())
                             .map(|button| MakeButton {
                                 qty: button.qty(),
                                 com_id: button.com_id(),
@@ -1010,7 +1033,12 @@ impl Scene {
             );
         }
         if snap.has_banks() {
-            p.has_booth_stands(snap.banks().iter().any(|stand| stand.kind() == "booth"));
+            p.has_booth_stands(
+                snap.banks()
+                    .into_iter()
+                    .flat_map(|stands| stands.iter())
+                    .any(|stand| stand.kind() == Some("booth")),
+            );
         }
         if let Some(booth) = snap.nearest_booth() {
             p.nearest_booth(NearestBooth {
@@ -1020,20 +1048,21 @@ impl Scene {
                     level: booth.level(),
                 },
                 id: booth.id(),
-                name: {
-                    let name = booth.name();
-                    (!name.is_empty()).then(|| strings.text(name))
-                },
-                op: {
-                    let op = booth.op();
-                    (!op.is_empty()).then(|| strings.text(op))
-                },
+                name: booth
+                    .name()
+                    .filter(|name| !name.is_empty())
+                    .map(|name| strings.text(name)),
+                op: booth
+                    .op()
+                    .filter(|op| !op.is_empty())
+                    .map(|op| strings.text(op)),
             });
         }
         if snap.has_bank_approaches() {
             p.bank_approaches(
                 snap.bank_approaches()
-                    .iter()
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
                     .map(|row| BankApproach {
                         loc_id: row.loc_id(),
                         tile: Tile {
@@ -1057,16 +1086,22 @@ impl Scene {
         if let Some(pair) = snap.main_modal_texts() {
             p.main_modal_texts(ModalTexts {
                 root: pair.root(),
-                texts: pair.texts().into_iter().map(str::to_string).collect(),
+                texts: pair
+                    .texts()
+                    .into_iter()
+                    .flat_map(|texts| texts.iter())
+                    .map(str::to_string)
+                    .collect(),
             });
         }
         if snap.has_widgets() {
             p.widgets(
                 snap.widgets()
-                    .iter()
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
                     .map(|row| WidgetRow {
                         component_id: row.component_id(),
-                        text: strings.text(row.text()),
+                        text: strings.text(row.text().unwrap_or_default()),
                         item_count: row.item_count(),
                     })
                     .collect(),
@@ -1076,8 +1111,9 @@ impl Scene {
             if snap.quest_statuses_available() {
                 p.quest_statuses(QuestTab::Bound(
                     snap.quest_statuses()
-                        .iter()
-                        .map(|row| QuestStatusRow::read(row, strings))
+                        .into_iter()
+                        .flat_map(|rows| rows.iter())
+                        .map(|row| QuestStatusRow::read(&row, strings))
                         .collect(),
                 ));
             } else {
@@ -1086,8 +1122,9 @@ impl Scene {
         } else if snap.has_quest_statuses() {
             p.quest_statuses(QuestTab::Bound(
                 snap.quest_statuses()
-                    .iter()
-                    .map(|row| QuestStatusRow::read(row, strings))
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
+                    .map(|row| QuestStatusRow::read(&row, strings))
                     .collect(),
             ));
         }
@@ -1099,7 +1136,11 @@ impl Scene {
                 level: c.level(),
                 width: c.width(),
                 height: c.height(),
-                flags: Arc::from(c.flags()),
+                flags: c
+                    .flags()
+                    .into_iter()
+                    .flat_map(|flags| flags.iter())
+                    .collect(),
             });
         }
         if let Some(r) = snap.reach() {
@@ -1110,9 +1151,21 @@ impl Scene {
                 level: r.level(),
                 width: r.width(),
                 height: r.height(),
-                walkable: r.walkable(),
-                step: r.step(),
-                canlight: r.canlight(),
+                walkable: r
+                    .walkable()
+                    .into_iter()
+                    .flat_map(|values| values.iter())
+                    .collect(),
+                step: r
+                    .step()
+                    .into_iter()
+                    .flat_map(|values| values.iter())
+                    .collect(),
+                canlight: r
+                    .canlight()
+                    .into_iter()
+                    .flat_map(|values| values.iter())
+                    .collect(),
             });
         }
         if snap.has_puzzle_board() {
@@ -1121,23 +1174,22 @@ impl Scene {
                 component_id: board.as_ref().map(|b| b.component_id()).unwrap_or(-1),
                 size: board.as_ref().map(|b| b.size()).unwrap_or(0),
                 items: board
-                    .map(|b| {
-                        b.items()
-                            .iter()
-                            .map(|row| PuzzlePiece {
-                                slot: row.slot(),
-                                id: row.id(),
-                            })
-                            .collect()
+                    .and_then(|board| board.items())
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
+                    .map(|row| PuzzlePiece {
+                        slot: row.slot(),
+                        id: row.id(),
                     })
-                    .unwrap_or_default(),
+                    .collect(),
                 generation: snap.puzzle_board_generation(),
             });
         }
         if snap.has_walk_missing_carry() {
             p.walk_missing_carry(
                 snap.walk_missing_carry()
-                    .iter()
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
                     .map(|row| CarryRow {
                         id: row.id(),
                         count: row.count(),
@@ -1196,13 +1248,25 @@ impl Interner {
         text
     }
 
-    fn ops(&mut self, items: &[&str]) -> Ops {
+    fn ops<'a>(&mut self, items: StringVector<'a>) -> Ops {
+        let Some(items) = items else {
+            return Rc::clone(&self.empty);
+        };
         if items.is_empty() {
             return Rc::clone(&self.empty);
         }
-        let key = self.hasher.hash_one(items);
+        let mut hasher = self.hasher.build_hasher();
+        items.len().hash(&mut hasher);
+        for item in items.iter() {
+            item.hash(&mut hasher);
+        }
+        let key = hasher.finish();
         let same = |list: &&Ops| {
-            list.len() == items.len() && list.iter().zip(items).all(|(a, b)| &**a == *b)
+            list.len() == items.len()
+                && list
+                    .iter()
+                    .zip(items.iter())
+                    .all(|(interned, item)| &**interned == item)
         };
         if let Some(list) = self
             .lists

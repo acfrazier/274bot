@@ -1,19 +1,18 @@
 //! FlatBuffers wire format for isolate IPC — schema: `crates/script/
-//! schema/isolate.fbs`. The builder and reader are hand-written against
-//! that schema (operators never need `flatc` at `cargo test` time); keep
-//! the two in sync. The PLAYER_INFO snapshot posted into each JS isolate
-//! and the shim interact batches forwarded back are FlatBuffers, not JSON:
-//! a 50+ isolate wall never stringifies or parses a JSON document per tick.
-//! Recorded paint frames cross that channel as typed `ScriptPaint` values
-//! (both ends are this crate in this process) and are capped by
-//! [`cap_paint`] before they are shared. Each slot's host encode path and
-//! each V8 isolate thread reuse one [`IsolateBuf`] (`reset`, not a fresh
-//! builder).
+//! schema/isolate.fbs`. Table codecs are generated from that schema into
+//! `schema/generated/` (checked in; operators never need `flatc` at
+//! `cargo test` time). Domain types, delta masking and [`IsolateBuf`]
+//! (`reset`, not a fresh builder) stay here. The PLAYER_INFO snapshot
+//! posted into each JS isolate and the shim interact batches forwarded
+//! back are FlatBuffers, not JSON: a 50+ isolate wall never stringifies
+//! or parses a JSON document per tick. Recorded paint frames cross that
+//! channel as typed `ScriptPaint` values (both ends are this crate in
+//! this process) and are capped by [`cap_paint`] before they are shared.
 //!
-//! The wire format is produced and consumed only by 274bot code. Host-encoded
-//! snapshots are trusted; isolate→host interact bytes are verified on decode
-//! (`flatbuffers::root_with_opts`) so truncated or malicious buffers fail
-//! closed instead of panicking or reading out of bounds.
+//! Both thread-boundary messages are fully verified once on decode with the
+//! bounded [`VerifierOptions`], so truncated or malicious buffers fail closed
+//! instead of panicking or reading out of bounds. Nested reads then borrow the
+//! already verified buffer without another pass.
 //!
 //! Posts are deltas (schema: `Snapshot`): `tick` is always carried, other
 //! fields only when they changed vs the last post — an omitted vector is
@@ -22,10 +21,48 @@
 //! (equality, not a hash) once per slot per tick.
 
 use flatbuffers::{
-    root_with_opts, FlatBufferBuilder, Follow, ForwardsUOffset, InvalidFlatbuffer, Table, VOffsetT,
-    Vector, Verifiable, Verifier, VerifierOptions, WIPOffset,
+    root_with_opts, FlatBufferBuilder, InvalidFlatbuffer, VerifierOptions, WIPOffset,
 };
 use std::sync::Arc;
+
+#[path = "../schema/generated/isolate_generated.rs"]
+#[rustfmt::skip]
+#[allow(dead_code, clippy::all, rustdoc::all)]
+pub(crate) mod generated;
+use generated::rs_2b_0t::isolate::*;
+pub use generated::rs_2b_0t::isolate::{
+    AvoidRect as AvoidRectReader, BankApproach as BankApproachReader, BankStand as BankStandReader,
+    Booth as BoothReader, Carry as CarryReader, ChatLine as ChatLineReader,
+    ChatOption as ChatOptionReader, Collision as CollisionReader, CombatStyle as CombatStyleReader,
+    InspectHop as InspectHopReader, Interact as InteractReader,
+    InteractBatch as InteractBatchReader, MainModalTexts as MainModalTextsReader,
+    MakeButton as MakeButtonReader, MakeProduct as MakeProductReader,
+    NearestBooth as NearestBoothReader, NpcBox as NpcBoxReader, PuzzleBoard as PuzzleBoardReader,
+    QuestStatus as QuestStatusReader, Reach as ReachReader, Row as RowReader,
+    SceneEntity as SceneEntityReader, SideTabIface as SideTabIfaceReader,
+    Snapshot as SnapshotReader, Stat as StatReader, Tile as TileReader, Varp as VarpReader,
+    WidgetText as WidgetTextReader,
+};
+
+fn isolate_verify_opts() -> VerifierOptions {
+    VerifierOptions {
+        max_depth: 64,
+        max_tables: 10_000,
+        max_apparent_size: 16 * 1024 * 1024,
+        ignore_missing_null_terminator: false,
+    }
+}
+
+macro_rules! presence_methods {
+    ($($method:ident => $slot:ident),+ $(,)?) => {
+        $(
+            #[inline]
+            pub fn $method(&self) -> bool {
+                self._tab.vtable().get(Self::$slot) != 0
+            }
+        )+
+    };
+}
 
 /// Max shim interact rows per tick (isolate→host).
 const MAX_INTERACT_REQS: usize = 256;
@@ -38,394 +75,13 @@ const MAX_PAINT_TABS: usize = 16;
 /// Max names on one strip/rail/tabs band.
 const MAX_CHROME_NAMES: usize = 32;
 
-fn isolate_verify_opts() -> VerifierOptions {
-    VerifierOptions {
-        max_depth: 64,
-        max_tables: 10_000,
-        max_apparent_size: 16 * 1024 * 1024,
-        ignore_missing_null_terminator: false,
-    }
-}
-
-fn verified_root<'buf, T>(buf: &'buf [u8]) -> Result<T::Inner, String>
-where
-    T: 'buf + Follow<'buf> + Verifiable,
-{
-    root_with_opts::<T>(&isolate_verify_opts(), buf).map_err(|e: InvalidFlatbuffer| e.to_string())
-}
-
-// Field slot offsets are vtable byte offsets: field id N sits at
-// `(N + 2) * SIZE_VOFFSET` (`SIZE_VOFFSET = 2`), so id 0 -> 4, 1 -> 6, ...
-
-// Tile / Booth: { x: int, z: int, level: int }
-const VT_TILE_X: VOffsetT = 4;
-const VT_TILE_Z: VOffsetT = 6;
-const VT_TILE_LEVEL: VOffsetT = 8;
-
-// Row: { name: string, count: int, id, ops, noted, cert, component_id, slot }
-const VT_ROW_NAME: VOffsetT = 4;
-const VT_ROW_COUNT: VOffsetT = 6;
-const VT_ROW_ID: VOffsetT = 8;
-const VT_ROW_OPS: VOffsetT = 10;
-const VT_ROW_NOTED: VOffsetT = 12;
-const VT_ROW_CERT: VOffsetT = 14;
-const VT_ROW_COMPONENT: VOffsetT = 16;
-const VT_ROW_SLOT: VOffsetT = 18;
-
-// Stat: { index, name, xp, base, effective }
-const VT_STAT_INDEX: VOffsetT = 4;
-const VT_STAT_NAME: VOffsetT = 6;
-const VT_STAT_XP: VOffsetT = 8;
-const VT_STAT_BASE: VOffsetT = 10;
-const VT_STAT_EFFECTIVE: VOffsetT = 12;
-
-// BankStand: { name, x, z, level, kind, op, choose }
-const VT_BANK_NAME: VOffsetT = 4;
-const VT_BANK_X: VOffsetT = 6;
-const VT_BANK_Z: VOffsetT = 8;
-const VT_BANK_LEVEL: VOffsetT = 10;
-const VT_BANK_KIND: VOffsetT = 12;
-const VT_BANK_OP: VOffsetT = 14;
-const VT_BANK_CHOOSE: VOffsetT = 16;
-
-// NearestBooth: { x, z, level, name, op }
-const VT_NEAREST_X: VOffsetT = 4;
-const VT_NEAREST_Z: VOffsetT = 6;
-const VT_NEAREST_LEVEL: VOffsetT = 8;
-const VT_NEAREST_NAME: VOffsetT = 10;
-const VT_NEAREST_OP: VOffsetT = 12;
-const VT_NEAREST_ID: VOffsetT = 14;
-
-// Snapshot: { tick, here, ingame, inv, inv_size, stats, booths, nearest_booth,
-//             bank, bank_side, bank_open, bank_loaded, hold, ours }
-const VT_SNAP_TICK: VOffsetT = 4;
-const VT_SNAP_HERE: VOffsetT = 6;
-const VT_SNAP_INGAME: VOffsetT = 8;
-const VT_SNAP_INV: VOffsetT = 10;
-const VT_SNAP_INV_SIZE: VOffsetT = 12;
-const VT_SNAP_STATS: VOffsetT = 14;
-const VT_SNAP_BOOTHS: VOffsetT = 16;
-const VT_SNAP_BANKS: VOffsetT = 18;
-const VT_SNAP_BANK: VOffsetT = 20;
-const VT_SNAP_BANK_SIDE: VOffsetT = 22;
-const VT_SNAP_BANK_OPEN: VOffsetT = 24;
-const VT_SNAP_BANK_LOADED: VOffsetT = 26;
-const VT_SNAP_HOLD: VOffsetT = 28;
-const VT_SNAP_OURS: VOffsetT = 30;
-const VT_SNAP_NPCS: VOffsetT = 32;
-const VT_SNAP_LOCS: VOffsetT = 34;
-const VT_SNAP_PLAYERS: VOffsetT = 36;
-const VT_SNAP_GROUND: VOffsetT = 38;
-const VT_SNAP_EQUIPMENT: VOffsetT = 40;
-const VT_SNAP_CHAT_OPEN: VOffsetT = 42;
-const VT_SNAP_CHAT_CONTINUE: VOffsetT = 44;
-const VT_SNAP_CHAT_TEXT: VOffsetT = 46;
-const VT_SNAP_CHAT_OPTIONS: VOffsetT = 48;
-const VT_SNAP_SIDE_TAB: VOffsetT = 50;
-const VT_SNAP_VARPS: VOffsetT = 52;
-const VT_SNAP_COMBAT_STYLES: VOffsetT = 54;
-const VT_SNAP_RUN_ENERGY: VOffsetT = 56;
-const VT_SNAP_RUN_ENABLED: VOffsetT = 58;
-const VT_SNAP_RETALIATE: VOffsetT = 60;
-const VT_SNAP_MY_NAME: VOffsetT = 62;
-const VT_SNAP_IN_COMBAT: VOffsetT = 64;
-const VT_SNAP_ANIMATING: VOffsetT = 66;
-const VT_SNAP_MAIN_MODAL: VOffsetT = 68;
-const VT_SNAP_CHAT_MODAL: VOffsetT = 70;
-const VT_SNAP_MAKE_PRODUCTS: VOffsetT = 72;
-const VT_SNAP_SIDE_TAB_IFACES: VOffsetT = 74;
-const VT_SNAP_SPELL_BUTTONS: VOffsetT = 76;
-const VT_SNAP_CHAT_LINES: VOffsetT = 78;
-const VT_SNAP_NEAREST_BOOTH: VOffsetT = 80;
-const VT_SNAP_BANK_NOTE_ON: VOffsetT = 82;
-const VT_SNAP_BANK_NOTE_OFF: VOffsetT = 84;
-const VT_SNAP_SCENE_STATE: VOffsetT = 86;
-const VT_SNAP_WEIGHT: VOffsetT = 88;
-const VT_SNAP_CAMERA_YAW: VOffsetT = 90;
-const VT_SNAP_CAMERA_PITCH: VOffsetT = 92;
-const VT_SNAP_TELEPORTS_ENABLED: VOffsetT = 94;
-const VT_SNAP_SELF_SLOT: VOffsetT = 96;
-const VT_SNAP_TRADE_OFFER_OPEN: VOffsetT = 98;
-const VT_SNAP_TRADE_CONFIRM_OPEN: VOffsetT = 100;
-const VT_SNAP_TRADE_PARTNER: VOffsetT = 102;
-const VT_SNAP_TRADE_MINE: VOffsetT = 104;
-const VT_SNAP_TRADE_THEIRS: VOffsetT = 106;
-const VT_SNAP_TRADE_SIDE: VOffsetT = 108;
-const VT_SNAP_TRADE_ACCEPT_ID: VOffsetT = 110;
-const VT_SNAP_TRADE_DECLINE_ID: VOffsetT = 112;
-const VT_SNAP_SHOP_OPEN: VOffsetT = 114;
-const VT_SNAP_SHOP_STOCK: VOffsetT = 116;
-const VT_SNAP_BANK_GENERATION: VOffsetT = 118;
-const VT_SNAP_COUNT_DIALOG_OPEN: VOffsetT = 120;
-const VT_SNAP_WITHDRAW_X_RESULT_SEQ: VOffsetT = 122;
-const VT_SNAP_WITHDRAW_X_RESULT: VOffsetT = 124;
-const VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ: VOffsetT = 126;
-const VT_SNAP_WITHDRAW_LOAD_RESULT: VOffsetT = 128;
-const VT_SNAP_BANK_OP_RESULT_SEQ: VOffsetT = 130;
-const VT_SNAP_BANK_OP_RESULT: VOffsetT = 132;
-const VT_SNAP_REACH: VOffsetT = 134;
-const VT_SNAP_ATTACKED_BY_PLAYER: VOffsetT = 136;
-const VT_SNAP_WIDGETS: VOffsetT = 138;
-const VT_SNAP_SELF_CHAT: VOffsetT = 140;
-const VT_SNAP_HINT_TILE_X: VOffsetT = 142;
-const VT_SNAP_HINT_TILE_Z: VOffsetT = 144;
-const VT_SNAP_RETALIATE_ON_COM_ID: VOffsetT = 146;
-const VT_SNAP_RETALIATE_OFF_COM_ID: VOffsetT = 148;
-const VT_SNAP_QUEST_STATUSES: VOffsetT = 150;
-const VT_SNAP_QUEST_STATUSES_AVAILABLE: VOffsetT = 152;
-const VT_SNAP_NPC_BOXES: VOffsetT = 154;
-const VT_SNAP_NPC_BOXES_AVAILABLE: VOffsetT = 156;
-const VT_SNAP_SHOP_PLAYER: VOffsetT = 158;
-const VT_SNAP_SHOP_PLAYER_AVAILABLE: VOffsetT = 160;
-const VT_SNAP_MAIN_MAKE: VOffsetT = 162;
-const VT_SNAP_MAIN_MAKE_AVAILABLE: VOffsetT = 164;
-const VT_SNAP_BANK_APPROACHES: VOffsetT = 166;
-const VT_SNAP_WALK_OUTCOME_SEQ: VOffsetT = 168;
-const VT_SNAP_WALK_OUTCOME_GENERATION: VOffsetT = 170;
-const VT_SNAP_WALK_OUTCOME_FAILED: VOffsetT = 172;
-const VT_SNAP_WALK_OUTCOME_X: VOffsetT = 174;
-const VT_SNAP_WALK_OUTCOME_Z: VOffsetT = 176;
-const VT_SNAP_WALK_OUTCOME_LEVEL: VOffsetT = 178;
-const VT_SNAP_WALK_OUTCOME_RADIUS: VOffsetT = 180;
-const VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS: VOffsetT = 182;
-const VT_SNAP_WALK_OUTCOME_REQUEST_ID: VOffsetT = 184;
-const VT_SNAP_CANVAS_WIDTH: VOffsetT = 186;
-const VT_SNAP_CANVAS_HEIGHT: VOffsetT = 188;
-const VT_SNAP_COMBAT_LEVEL: VOffsetT = 190;
-const VT_SNAP_ROUTE_INSPECT_SEQ: VOffsetT = 192;
-const VT_SNAP_ROUTE_INSPECT_GENERATION: VOffsetT = 194;
-const VT_SNAP_ROUTE_INSPECT_REQUEST_ID: VOffsetT = 196;
-const VT_SNAP_ROUTE_INSPECT_OK: VOffsetT = 198;
-const VT_SNAP_ROUTE_INSPECT_REASON: VOffsetT = 200;
-const VT_SNAP_ROUTE_INSPECT_BANK_PLANNED: VOffsetT = 202;
-const VT_SNAP_ROUTE_INSPECT_TICKS: VOffsetT = 204;
-const VT_SNAP_ROUTE_INSPECT_HOPS: VOffsetT = 206;
-const VT_SNAP_ROUTE_INSPECT_PREV_SEQ: VOffsetT = 208;
-const VT_SNAP_ROUTE_INSPECT_PREV_GENERATION: VOffsetT = 210;
-const VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID: VOffsetT = 212;
-const VT_SNAP_ROUTE_INSPECT_PREV_OK: VOffsetT = 214;
-const VT_SNAP_ROUTE_INSPECT_PREV_REASON: VOffsetT = 216;
-const VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED: VOffsetT = 218;
-const VT_SNAP_ROUTE_INSPECT_PREV_TICKS: VOffsetT = 220;
-const VT_SNAP_ROUTE_INSPECT_PREV_HOPS: VOffsetT = 222;
-const VT_SNAP_ROUTE_INSPECT_RUNNING_ID: VOffsetT = 224;
-const VT_SNAP_ROUTE_INSPECT_PENDING_ID: VOffsetT = 226;
-const VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID: VOffsetT = 228;
-const VT_SNAP_ROUTE_INSPECT_REPLACED_ID: VOffsetT = 230;
-const VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID: VOffsetT = 232;
-const VT_SNAP_ROUTE_INSPECT_REFUSED_ID: VOffsetT = 234;
-const VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2: VOffsetT = 236;
-const VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3: VOffsetT = 238;
-const VT_SNAP_ROUTE_INSPECT_UNOBSERVED: VOffsetT = 240;
-const VT_SNAP_COLLISION: VOffsetT = 242;
-const VT_SNAP_SELF_TARGET_KIND: VOffsetT = 244;
-const VT_SNAP_SELF_TARGET_INDEX: VOffsetT = 246;
-const VT_SNAP_MAIN_MODAL_TEXTS: VOffsetT = 248;
-const VT_SNAP_PUZZLE_BOARD: VOffsetT = 250;
-const VT_SNAP_PUZZLE_BOARD_GENERATION: VOffsetT = 252;
-const VT_SNAP_WALK_MISSING_CARRY: VOffsetT = 254;
-const VT_SNAP_BANK_SELECTION_REQUEST_ID: VOffsetT = 256;
-const VT_SNAP_BANK_SELECTION_GENERATION: VOffsetT = 258;
-const VT_SNAP_BANK_SELECTION_INDEX: VOffsetT = 260;
-const VT_SNAP_BANK_SELECTION_KIND: VOffsetT = 262;
-const VT_SNAP_SELF_ANIM: VOffsetT = 264;
-const VT_SNAP_WALK_OUTCOME_BLOCKED: VOffsetT = 266;
-const VT_SNAP_BANK_SNAPSHOT_GENERATION: VOffsetT = 268;
-
-// Carry: { id, count, name }
-const VT_CARRY_ID: VOffsetT = 4;
-const VT_CARRY_COUNT: VOffsetT = 6;
-const VT_CARRY_NAME: VOffsetT = 8;
-
-const VT_COL_AVAILABLE: VOffsetT = 4;
-const VT_COL_BASE_X: VOffsetT = 6;
-const VT_COL_BASE_Z: VOffsetT = 8;
-const VT_COL_LEVEL: VOffsetT = 10;
-const VT_COL_WIDTH: VOffsetT = 12;
-const VT_COL_HEIGHT: VOffsetT = 14;
-const VT_COL_FLAGS: VOffsetT = 16;
-
-// InspectHop
-const VT_IH_KIND: VOffsetT = 4;
-const VT_IH_LOC_ID: VOffsetT = 6;
-const VT_IH_LOC_NAME: VOffsetT = 8;
-const VT_IH_ACTION: VOffsetT = 10;
-const VT_IH_OPTION: VOffsetT = 12;
-const VT_IH_FROM_X: VOffsetT = 14;
-const VT_IH_FROM_Z: VOffsetT = 16;
-const VT_IH_FROM_LEVEL: VOffsetT = 18;
-const VT_IH_TO_X: VOffsetT = 20;
-const VT_IH_TO_Z: VOffsetT = 22;
-const VT_IH_TO_LEVEL: VOffsetT = 24;
-const VT_IH_TICKS: VOffsetT = 26;
-
-// AvoidRect
-const VT_AR_MIN_X: VOffsetT = 4;
-const VT_AR_MAX_X: VOffsetT = 6;
-const VT_AR_MIN_Z: VOffsetT = 8;
-const VT_AR_MAX_Z: VOffsetT = 10;
-const VT_AR_LEVEL: VOffsetT = 12;
-
 /// Logical applet posted as `canvasRect`. Bound to `api::native_input::APPLET_*`.
 pub const SNAPSHOT_CANVAS_W: i32 = api::native_input::APPLET_W;
 pub const SNAPSHOT_CANVAS_H: i32 = api::native_input::APPLET_H;
 
-// BankApproach: { loc_id, x, z, level, can_operate, dest_ok, dest_x, dest_z, dest_level }
-const VT_BA_LOC_ID: VOffsetT = 4;
-const VT_BA_X: VOffsetT = 6;
-const VT_BA_Z: VOffsetT = 8;
-const VT_BA_LEVEL: VOffsetT = 10;
-const VT_BA_CAN_OPERATE: VOffsetT = 12;
-const VT_BA_DEST_OK: VOffsetT = 14;
-const VT_BA_DEST_X: VOffsetT = 16;
-const VT_BA_DEST_Z: VOffsetT = 18;
-const VT_BA_DEST_LEVEL: VOffsetT = 20;
-
-// WidgetText: { component_id, text, item_count }
-const VT_WT_COMPONENT: VOffsetT = 4;
-const VT_WT_TEXT: VOffsetT = 6;
-const VT_WT_ITEM_COUNT: VOffsetT = 8;
-
-// QuestStatus: { name, status, component_id }
-const VT_QUEST_NAME: VOffsetT = 4;
-const VT_QUEST_STATUS: VOffsetT = 6;
-const VT_QUEST_COMPONENT: VOffsetT = 8;
-
-// MainModalTexts: { root, texts }
-const VT_MMT_ROOT: VOffsetT = 4;
-const VT_MMT_TEXTS: VOffsetT = 6;
-
-// PuzzleBoard: { component_id, size, items }
-const VT_PB_COMPONENT_ID: VOffsetT = 4;
-const VT_PB_SIZE: VOffsetT = 6;
-const VT_PB_ITEMS: VOffsetT = 8;
-
-// NpcBox: { index, points }
-const VT_NPC_BOX_INDEX: VOffsetT = 4;
-const VT_NPC_BOX_POINTS: VOffsetT = 6;
-
-// Reach: { available, base_x, base_z, level, width, height, walkable,
-//          reachable, reachable_adj, step, exact_rank, adjacent_rank }
-const VT_REACH_AVAILABLE: VOffsetT = 4;
-const VT_REACH_BASE_X: VOffsetT = 6;
-const VT_REACH_BASE_Z: VOffsetT = 8;
-const VT_REACH_LEVEL: VOffsetT = 10;
-const VT_REACH_WIDTH: VOffsetT = 12;
-const VT_REACH_HEIGHT: VOffsetT = 14;
-const VT_REACH_WALKABLE: VOffsetT = 16;
-const VT_REACH_REACHABLE: VOffsetT = 18;
-const VT_REACH_REACHABLE_ADJ: VOffsetT = 20;
-const VT_REACH_STEP: VOffsetT = 22;
-const VT_REACH_EXACT_RANK: VOffsetT = 24;
-const VT_REACH_ADJACENT_RANK: VOffsetT = 26;
-const VT_REACH_CANLIGHT: VOffsetT = 28;
-
-// SideTabIface: { index, id }
-const VT_STI_INDEX: VOffsetT = 4;
-const VT_STI_ID: VOffsetT = 6;
-
-// ChatLine: { seq, text, type, username }
-const VT_CL_SEQ: VOffsetT = 4;
-const VT_CL_TEXT: VOffsetT = 6;
-const VT_CL_TYPE: VOffsetT = 8;
-const VT_CL_USERNAME: VOffsetT = 10;
-
-// SceneEntity: { index, id, name, x, z, level, distance, health,
-//               max_health, in_combat, animating, actions, reachable,
-//               reachable_adj, combat_level, target_kind, target_index,
-//               size, nx, nz, shape, angle }
-const VT_ENT_INDEX: VOffsetT = 4;
-const VT_ENT_ID: VOffsetT = 6;
-const VT_ENT_NAME: VOffsetT = 8;
-const VT_ENT_X: VOffsetT = 10;
-const VT_ENT_Z: VOffsetT = 12;
-const VT_ENT_LEVEL: VOffsetT = 14;
-const VT_ENT_DISTANCE: VOffsetT = 16;
-const VT_ENT_HEALTH: VOffsetT = 18;
-const VT_ENT_MAX_HEALTH: VOffsetT = 20;
-const VT_ENT_IN_COMBAT: VOffsetT = 22;
-const VT_ENT_ANIMATING: VOffsetT = 24;
-const VT_ENT_ACTIONS: VOffsetT = 26;
-const VT_ENT_REACHABLE: VOffsetT = 28;
-const VT_ENT_REACHABLE_ADJ: VOffsetT = 30;
-const VT_ENT_COMBAT_LEVEL: VOffsetT = 32;
-const VT_ENT_TARGET_KIND: VOffsetT = 34;
-const VT_ENT_TARGET_INDEX: VOffsetT = 36;
-const VT_ENT_SIZE: VOffsetT = 38;
-const VT_ENT_NX: VOffsetT = 40;
-const VT_ENT_NZ: VOffsetT = 42;
-const VT_ENT_SHAPE: VOffsetT = 44;
-const VT_ENT_ANGLE: VOffsetT = 46;
-
-// ChatOption: { text, com_id }
-const VT_CHAT_OPT_TEXT: VOffsetT = 4;
-const VT_CHAT_OPT_COM: VOffsetT = 6;
-// MakeButton: { qty, com_id }
-const VT_MAKE_BTN_QTY: VOffsetT = 4;
-const VT_MAKE_BTN_COM: VOffsetT = 6;
-
-// MakeProduct: { object_id, name, buttons }
-const VT_MAKE_PROD_OID: VOffsetT = 4;
-const VT_MAKE_PROD_NAME: VOffsetT = 6;
-const VT_MAKE_PROD_BTNS: VOffsetT = 8;
-
-// CombatStyle: { mode, label, component_id }
-const VT_CS_MODE: VOffsetT = 4;
-const VT_CS_LABEL: VOffsetT = 6;
-const VT_CS_COMPONENT: VOffsetT = 8;
-
-// Varp: { index, value }
-const VT_VARP_INDEX: VOffsetT = 4;
-const VT_VARP_VALUE: VOffsetT = 6;
-
-// Interact: schema-order slots. New fields append; never reorder.
-const VT_IN_OP: VOffsetT = 4;
-const VT_IN_X: VOffsetT = 6;
-const VT_IN_Z: VOffsetT = 8;
-const VT_IN_LEVEL: VOffsetT = 10;
-const VT_IN_KIND: VOffsetT = 12;
-const VT_IN_NAME: VOffsetT = 14;
-const VT_IN_STAND_OP: VOffsetT = 16;
-const VT_IN_CHOOSE: VOffsetT = 18;
-const VT_IN_ACTION: VOffsetT = 20;
-const VT_IN_INDEX: VOffsetT = 22;
-const VT_IN_COMPONENT_ID: VOffsetT = 24;
-const VT_IN_BANK_GENERATION: VOffsetT = 26;
-const VT_IN_BANK_ITEM_ID: VOffsetT = 28;
-const VT_IN_LANDS_AS_ID: VOffsetT = 30;
-const VT_IN_SOURCE_ITEM_ID: VOffsetT = 32;
-const VT_IN_SOURCE_ITEM_SLOT: VOffsetT = 34;
-const VT_IN_TARGET_ITEM_ID: VOffsetT = 36;
-const VT_IN_TARGET_ITEM_SLOT: VOffsetT = 38;
-const VT_IN_REQUEST_ID: VOffsetT = 40;
-const VT_IN_XF: VOffsetT = 42;
-const VT_IN_YF: VOffsetT = 44;
-const VT_IN_INPUT_IDENTITY: VOffsetT = 46;
-const VT_IN_ALLOW_WILDERNESS: VOffsetT = 48;
-const VT_IN_ALLOW_BANK_FETCH: VOffsetT = 50;
-const VT_IN_FROM_X: VOffsetT = 52;
-const VT_IN_FROM_Z: VOffsetT = 54;
-const VT_IN_FROM_LEVEL: VOffsetT = 56;
-const VT_IN_ALLOW_TELEPORTS: VOffsetT = 58;
-const VT_IN_AVOID: VOffsetT = 60;
-const VT_IN_INSPECT_ACK_SEQ: VOffsetT = 62;
-const VT_IN_INSPECT_ACK_GENERATION: VOffsetT = 64;
-const VT_IN_USE_MAGE_BANK: VOffsetT = 66;
-const VT_IN_USE_ZANARIS_BANK: VOffsetT = 68;
-const VT_IN_CHANNEL_ID: VOffsetT = 70;
-const VT_IN_DATA: VOffsetT = 72;
-const VT_IN_SEQ: VOffsetT = 74;
-const VT_IN_RUN_POLICY_CLEAR: VOffsetT = 76;
-const VT_IN_RUN_AUTO_KIND: VOffsetT = 78;
-const VT_IN_RUN_ENERGY_KIND: VOffsetT = 80;
-const VT_IN_RUN_ENERGY_MIN: VOffsetT = 82;
-
 const RUN_OPTION_ABSENT: u8 = 0;
 const RUN_OPTION_FALSE_OR_FLOOR: u8 = 1;
 const RUN_OPTION_TRUE_OR_NAN: u8 = 2;
-
-// InteractBatch: { reqs: [Interact] }
-const VT_REQS: VOffsetT = 4;
 
 /// A game tile `{x, z, level}`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -966,2011 +622,245 @@ pub struct WidgetTextInput<'a> {
     /// Number of observed TYPE_INV rows; `-1` for non-inventory widgets.
     pub item_count: i32,
 }
-
-/// A `{x, z, level}` tile as decoded from a buffer.
-#[derive(Clone, Copy)]
-pub struct TileReader<'a> {
-    tab: Table<'a>,
+/// Decode `buf` as a root-`Snapshot` FlatBuffer after bounded verification.
+pub fn decode_snapshot(buf: &[u8]) -> Result<SnapshotReader<'_>, String> {
+    SnapshotReader::from_bytes(buf)
 }
 
-impl<'a> flatbuffers::Follow<'a> for TileReader<'a> {
-    type Inner = TileReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
+impl<'a> Snapshot<'a> {
+    pub fn from_bytes(buf: &'a [u8]) -> Result<Self, String> {
+        root_as_snapshot_with_opts(&isolate_verify_opts(), buf)
+            .map_err(|err: InvalidFlatbuffer| err.to_string())
     }
-}
 
-impl TileReader<'_> {
-    pub fn x(&self) -> i32 {
-        // Safety: the buffer was produced by our encoder (root checked).
-        unsafe { self.tab.get::<i32>(VT_TILE_X, None) }.unwrap_or(0)
-    }
-    pub fn z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_TILE_Z, None) }.unwrap_or(0)
-    }
-    pub fn level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_TILE_LEVEL, None) }.unwrap_or(0)
-    }
-}
-
-impl Verifiable for TileReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("x", VT_TILE_X, false)?
-            .visit_field::<i32>("z", VT_TILE_Z, false)?
-            .visit_field::<i32>("level", VT_TILE_LEVEL, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// Compact reach query as decoded from a buffer.
-#[derive(Clone, Copy)]
-pub struct ReachReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> Follow<'a> for ReachReader<'a> {
-    type Inner = ReachReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl ReachReader<'_> {
-    pub fn available(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_REACH_AVAILABLE, None) }.unwrap_or(false)
-    }
-    pub fn base_x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_REACH_BASE_X, None) }.unwrap_or(0)
-    }
-    pub fn base_z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_REACH_BASE_Z, None) }.unwrap_or(0)
-    }
-    pub fn level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_REACH_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn width(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_REACH_WIDTH, None) }.unwrap_or(0)
-    }
-    pub fn height(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_REACH_HEIGHT, None) }.unwrap_or(0)
-    }
-    pub fn walkable(&self) -> Vec<u32> {
-        u32_vec(&self.tab, VT_REACH_WALKABLE)
-    }
-    pub fn reachable(&self) -> Vec<u32> {
-        u32_vec(&self.tab, VT_REACH_REACHABLE)
-    }
-    pub fn reachable_adj(&self) -> Vec<u32> {
-        u32_vec(&self.tab, VT_REACH_REACHABLE_ADJ)
-    }
-    pub fn exact_rank(&self) -> Vec<u16> {
-        u16_vec(&self.tab, VT_REACH_EXACT_RANK)
-    }
-    pub fn adjacent_rank(&self) -> Vec<u16> {
-        u16_vec(&self.tab, VT_REACH_ADJACENT_RANK)
-    }
-    pub fn step(&self) -> Vec<u8> {
-        u8_vec(&self.tab, VT_REACH_STEP)
-    }
-    pub fn canlight(&self) -> Vec<u32> {
-        u32_vec(&self.tab, VT_REACH_CANLIGHT)
-    }
-}
-
-impl Verifiable for ReachReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<bool>("available", VT_REACH_AVAILABLE, false)?
-            .visit_field::<i32>("base_x", VT_REACH_BASE_X, false)?
-            .visit_field::<i32>("base_z", VT_REACH_BASE_Z, false)?
-            .visit_field::<i32>("level", VT_REACH_LEVEL, false)?
-            .visit_field::<i32>("width", VT_REACH_WIDTH, false)?
-            .visit_field::<i32>("height", VT_REACH_HEIGHT, false)?
-            .visit_field::<ForwardsUOffset<Vector<u32>>>("walkable", VT_REACH_WALKABLE, false)?
-            .visit_field::<ForwardsUOffset<Vector<u32>>>("reachable", VT_REACH_REACHABLE, false)?
-            .visit_field::<ForwardsUOffset<Vector<u32>>>(
-                "reachable_adj",
-                VT_REACH_REACHABLE_ADJ,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<u8>>>("step", VT_REACH_STEP, false)?
-            .visit_field::<ForwardsUOffset<Vector<u16>>>("exact_rank", VT_REACH_EXACT_RANK, false)?
-            .visit_field::<ForwardsUOffset<Vector<u16>>>(
-                "adjacent_rank",
-                VT_REACH_ADJACENT_RANK,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<u32>>>("canlight", VT_REACH_CANLIGHT, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// One current-plane collision table as decoded from a buffer.
-#[derive(Clone, Copy)]
-pub struct CollisionReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> Follow<'a> for CollisionReader<'a> {
-    type Inner = CollisionReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl CollisionReader<'_> {
-    pub fn available(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_COL_AVAILABLE, None) }.unwrap_or(false)
-    }
-    pub fn base_x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_COL_BASE_X, None) }.unwrap_or(0)
-    }
-    pub fn base_z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_COL_BASE_Z, None) }.unwrap_or(0)
-    }
-    pub fn level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_COL_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn width(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_COL_WIDTH, None) }.unwrap_or(0)
-    }
-    pub fn height(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_COL_HEIGHT, None) }.unwrap_or(0)
-    }
-    pub fn flags(&self) -> Vec<i32> {
-        i32_vec(&self.tab, VT_COL_FLAGS)
-    }
-}
-
-impl Verifiable for CollisionReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<bool>("available", VT_COL_AVAILABLE, false)?
-            .visit_field::<i32>("base_x", VT_COL_BASE_X, false)?
-            .visit_field::<i32>("base_z", VT_COL_BASE_Z, false)?
-            .visit_field::<i32>("level", VT_COL_LEVEL, false)?
-            .visit_field::<i32>("width", VT_COL_WIDTH, false)?
-            .visit_field::<i32>("height", VT_COL_HEIGHT, false)?
-            .visit_field::<ForwardsUOffset<Vector<i32>>>("flags", VT_COL_FLAGS, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// One inventory/bank row as decoded: the resolved obj name (`None` =
-/// unknown id), count, and ItemView fields (id/ops/noted/cert).
-#[derive(Clone, Copy)]
-pub struct RowReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for RowReader<'a> {
-    type Inner = RowReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl RowReader<'_> {
-    pub fn name(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_ROW_NAME, None) }
-    }
-    pub fn count(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ROW_COUNT, None) }.unwrap_or(0)
-    }
-    pub fn id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ROW_ID, None) }.unwrap_or(0)
-    }
-    pub fn ops(&self) -> Vec<&str> {
-        match unsafe {
-            self.tab
-                .get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_ROW_OPS, None)
-        } {
-            Some(v) => v.iter().collect(),
-            None => Vec::new(),
-        }
-    }
-    pub fn noted(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_ROW_NOTED, None) }.unwrap_or(false)
-    }
-    pub fn cert(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ROW_CERT, None) }.unwrap_or(-1)
-    }
-    pub fn has_component_id(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_ROW_COMPONENT, None).is_some() }
-    }
-    pub fn component_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ROW_COMPONENT, None) }.unwrap_or(-1)
-    }
-    pub fn has_slot(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_ROW_SLOT, None).is_some() }
-    }
-    pub fn slot(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ROW_SLOT, None) }.unwrap_or(-1)
-    }
-}
-
-impl Verifiable for RowReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<ForwardsUOffset<&str>>("name", VT_ROW_NAME, false)?
-            .visit_field::<i32>("count", VT_ROW_COUNT, false)?
-            .visit_field::<i32>("id", VT_ROW_ID, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
-                "ops", VT_ROW_OPS, false,
-            )?
-            .visit_field::<bool>("noted", VT_ROW_NOTED, false)?
-            .visit_field::<i32>("cert", VT_ROW_CERT, false)?
-            .visit_field::<i32>("component_id", VT_ROW_COMPONENT, false)?
-            .visit_field::<i32>("slot", VT_ROW_SLOT, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// One skill row as decoded: stat index, name, and xp.
-#[derive(Clone, Copy)]
-pub struct StatReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for StatReader<'a> {
-    type Inner = StatReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl StatReader<'_> {
-    pub fn index(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_STAT_INDEX, None) }.unwrap_or(0)
-    }
-    pub fn name(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_STAT_NAME, None) }.unwrap_or("")
-    }
-    pub fn xp(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_STAT_XP, None) }.unwrap_or(0)
-    }
-    pub fn base(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_STAT_BASE, None) }.unwrap_or(0)
-    }
-    pub fn effective(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_STAT_EFFECTIVE, None) }.unwrap_or(0)
-    }
-}
-
-impl Verifiable for StatReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("index", VT_STAT_INDEX, false)?
-            .visit_field::<ForwardsUOffset<&str>>("name", VT_STAT_NAME, false)?
-            .visit_field::<i32>("xp", VT_STAT_XP, false)?
-            .visit_field::<i32>("base", VT_STAT_BASE, false)?
-            .visit_field::<i32>("effective", VT_STAT_EFFECTIVE, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// One packed bank stand as decoded.
-#[derive(Clone, Copy)]
-pub struct BankStandReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for BankStandReader<'a> {
-    type Inner = BankStandReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl BankStandReader<'_> {
-    pub fn name(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_BANK_NAME, None) }.unwrap_or("")
-    }
-    pub fn x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_BANK_X, None) }.unwrap_or(0)
-    }
-    pub fn z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_BANK_Z, None) }.unwrap_or(0)
-    }
-    pub fn level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_BANK_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn kind(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_BANK_KIND, None) }.unwrap_or("")
-    }
-    pub fn op(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_BANK_OP, None) }.unwrap_or(0)
-    }
-    pub fn choose(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_BANK_CHOOSE, None) }
-    }
-}
-
-impl Verifiable for BankStandReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<ForwardsUOffset<&str>>("name", VT_BANK_NAME, false)?
-            .visit_field::<i32>("x", VT_BANK_X, false)?
-            .visit_field::<i32>("z", VT_BANK_Z, false)?
-            .visit_field::<i32>("level", VT_BANK_LEVEL, false)?
-            .visit_field::<ForwardsUOffset<&str>>("kind", VT_BANK_KIND, false)?
-            .visit_field::<i32>("op", VT_BANK_OP, false)?
-            .visit_field::<ForwardsUOffset<&str>>("choose", VT_BANK_CHOOSE, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// The Rust-picked nearest Use-quickly booth as decoded.
-#[derive(Clone, Copy)]
-pub struct NearestBoothReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for NearestBoothReader<'a> {
-    type Inner = NearestBoothReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl NearestBoothReader<'_> {
-    pub fn x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_NEAREST_X, None) }.unwrap_or(0)
-    }
-    pub fn z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_NEAREST_Z, None) }.unwrap_or(0)
-    }
-    pub fn level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_NEAREST_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn name(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_NEAREST_NAME, None) }.unwrap_or("")
-    }
-    pub fn op(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_NEAREST_OP, None) }.unwrap_or("")
-    }
-    pub fn id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_NEAREST_ID, None) }.unwrap_or(-1)
-    }
-}
-
-impl Verifiable for NearestBoothReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("x", VT_NEAREST_X, false)?
-            .visit_field::<i32>("z", VT_NEAREST_Z, false)?
-            .visit_field::<i32>("level", VT_NEAREST_LEVEL, false)?
-            .visit_field::<ForwardsUOffset<&str>>("name", VT_NEAREST_NAME, false)?
-            .visit_field::<ForwardsUOffset<&str>>("op", VT_NEAREST_OP, false)?
-            .visit_field::<i32>("id", VT_NEAREST_ID, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// One compact bank dest/readiness row as decoded.
-#[derive(Clone, Copy)]
-pub struct BankApproachReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for BankApproachReader<'a> {
-    type Inner = BankApproachReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl BankApproachReader<'_> {
-    pub fn loc_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_BA_LOC_ID, None) }.unwrap_or(0)
-    }
-    pub fn x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_BA_X, None) }.unwrap_or(0)
-    }
-    pub fn z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_BA_Z, None) }.unwrap_or(0)
-    }
-    pub fn level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_BA_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn can_operate(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_BA_CAN_OPERATE, None) }.unwrap_or(false)
-    }
-    pub fn dest_ok(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_BA_DEST_OK, None) }.unwrap_or(false)
-    }
-    pub fn dest_x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_BA_DEST_X, None) }.unwrap_or(0)
-    }
-    pub fn dest_z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_BA_DEST_Z, None) }.unwrap_or(0)
-    }
-    pub fn dest_level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_BA_DEST_LEVEL, None) }.unwrap_or(0)
-    }
-}
-
-impl Verifiable for BankApproachReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("loc_id", VT_BA_LOC_ID, false)?
-            .visit_field::<i32>("x", VT_BA_X, false)?
-            .visit_field::<i32>("z", VT_BA_Z, false)?
-            .visit_field::<i32>("level", VT_BA_LEVEL, false)?
-            .visit_field::<bool>("can_operate", VT_BA_CAN_OPERATE, false)?
-            .visit_field::<bool>("dest_ok", VT_BA_DEST_OK, false)?
-            .visit_field::<i32>("dest_x", VT_BA_DEST_X, false)?
-            .visit_field::<i32>("dest_z", VT_BA_DEST_Z, false)?
-            .visit_field::<i32>("dest_level", VT_BA_DEST_LEVEL, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// One inspect hop as decoded.
-#[derive(Clone, Copy)]
-pub struct InspectHopReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for InspectHopReader<'a> {
-    type Inner = InspectHopReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl InspectHopReader<'_> {
-    pub fn kind(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IH_KIND, None) }.unwrap_or("")
-    }
-    pub fn loc_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IH_LOC_ID, None) }.unwrap_or(0)
-    }
-    pub fn loc_name(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IH_LOC_NAME, None) }.unwrap_or("")
-    }
-    pub fn action(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IH_ACTION, None) }.unwrap_or("")
-    }
-    pub fn option(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IH_OPTION, None) }.unwrap_or(0)
-    }
-    pub fn from_x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IH_FROM_X, None) }.unwrap_or(0)
-    }
-    pub fn from_z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IH_FROM_Z, None) }.unwrap_or(0)
-    }
-    pub fn from_level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IH_FROM_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn to_x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IH_TO_X, None) }.unwrap_or(0)
-    }
-    pub fn to_z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IH_TO_Z, None) }.unwrap_or(0)
-    }
-    pub fn to_level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IH_TO_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn ticks(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IH_TICKS, None) }.unwrap_or(0)
-    }
-}
-
-impl Verifiable for InspectHopReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<ForwardsUOffset<&str>>("kind", VT_IH_KIND, false)?
-            .visit_field::<i32>("loc_id", VT_IH_LOC_ID, false)?
-            .visit_field::<ForwardsUOffset<&str>>("loc_name", VT_IH_LOC_NAME, false)?
-            .visit_field::<ForwardsUOffset<&str>>("action", VT_IH_ACTION, false)?
-            .visit_field::<i32>("option", VT_IH_OPTION, false)?
-            .visit_field::<i32>("from_x", VT_IH_FROM_X, false)?
-            .visit_field::<i32>("from_z", VT_IH_FROM_Z, false)?
-            .visit_field::<i32>("from_level", VT_IH_FROM_LEVEL, false)?
-            .visit_field::<i32>("to_x", VT_IH_TO_X, false)?
-            .visit_field::<i32>("to_z", VT_IH_TO_Z, false)?
-            .visit_field::<i32>("to_level", VT_IH_TO_LEVEL, false)?
-            .visit_field::<i32>("ticks", VT_IH_TICKS, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// One inspect avoid rectangle as decoded. `level() == -1` means every plane.
-#[derive(Clone, Copy)]
-pub struct AvoidRectReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for AvoidRectReader<'a> {
-    type Inner = AvoidRectReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl AvoidRectReader<'_> {
-    pub fn min_x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_AR_MIN_X, None) }.unwrap_or(0)
-    }
-    pub fn max_x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_AR_MAX_X, None) }.unwrap_or(0)
-    }
-    pub fn min_z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_AR_MIN_Z, None) }.unwrap_or(0)
-    }
-    pub fn max_z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_AR_MAX_Z, None) }.unwrap_or(0)
-    }
-    pub fn level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_AR_LEVEL, None) }.unwrap_or(-1)
-    }
-}
-
-impl Verifiable for AvoidRectReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("min_x", VT_AR_MIN_X, false)?
-            .visit_field::<i32>("max_x", VT_AR_MAX_X, false)?
-            .visit_field::<i32>("min_z", VT_AR_MIN_Z, false)?
-            .visit_field::<i32>("max_z", VT_AR_MAX_Z, false)?
-            .visit_field::<i32>("level", VT_AR_LEVEL, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// The PLAYER_INFO snapshot as decoded: read-only access to the same
-/// fields `script_snapshot_fb` encodes.
-pub struct SnapshotReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> Follow<'a> for SnapshotReader<'a> {
-    type Inner = SnapshotReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl Verifiable for SnapshotReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<u64>("tick", VT_SNAP_TICK, false)?
-            .visit_field::<ForwardsUOffset<TileReader>>("here", VT_SNAP_HERE, false)?
-            .visit_field::<bool>("ingame", VT_SNAP_INGAME, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "inv",
-                VT_SNAP_INV,
-                false,
-            )?
-            .visit_field::<i32>("inv_size", VT_SNAP_INV_SIZE, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<StatReader>>>>(
-                "stats",
-                VT_SNAP_STATS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<TileReader>>>>(
-                "booths",
-                VT_SNAP_BOOTHS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<BankStandReader>>>>(
-                "banks",
-                VT_SNAP_BANKS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "bank",
-                VT_SNAP_BANK,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "bank_side",
-                VT_SNAP_BANK_SIDE,
-                false,
-            )?
-            .visit_field::<bool>("bank_open", VT_SNAP_BANK_OPEN, false)?
-            .visit_field::<bool>("bank_loaded", VT_SNAP_BANK_LOADED, false)?
-            .visit_field::<bool>("hold", VT_SNAP_HOLD, false)?
-            .visit_field::<bool>("ours", VT_SNAP_OURS, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
-                "npcs",
-                VT_SNAP_NPCS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
-                "locs",
-                VT_SNAP_LOCS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
-                "players",
-                VT_SNAP_PLAYERS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
-                "ground",
-                VT_SNAP_GROUND,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "equipment",
-                VT_SNAP_EQUIPMENT,
-                false,
-            )?
-            .visit_field::<bool>("chat_open", VT_SNAP_CHAT_OPEN, false)?
-            .visit_field::<bool>("chat_continue", VT_SNAP_CHAT_CONTINUE, false)?
-            .visit_field::<ForwardsUOffset<&str>>("chat_text", VT_SNAP_CHAT_TEXT, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<ChatOptionReader>>>>(
-                "chat_options",
-                VT_SNAP_CHAT_OPTIONS,
-                false,
-            )?
-            .visit_field::<i32>("side_tab", VT_SNAP_SIDE_TAB, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<VarpReader>>>>(
-                "varps",
-                VT_SNAP_VARPS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CombatStyleReader>>>>(
-                "combat_styles",
-                VT_SNAP_COMBAT_STYLES,
-                false,
-            )?
-            .visit_field::<i32>("run_energy", VT_SNAP_RUN_ENERGY, false)?
-            .visit_field::<bool>("run_enabled", VT_SNAP_RUN_ENABLED, false)?
-            .visit_field::<bool>("retaliate_enabled", VT_SNAP_RETALIATE, false)?
-            .visit_field::<ForwardsUOffset<&str>>("my_name", VT_SNAP_MY_NAME, false)?
-            .visit_field::<bool>("in_combat", VT_SNAP_IN_COMBAT, false)?
-            .visit_field::<bool>("animating", VT_SNAP_ANIMATING, false)?
-            .visit_field::<i32>("main_modal_id", VT_SNAP_MAIN_MODAL, false)?
-            .visit_field::<i32>("chat_modal_id", VT_SNAP_CHAT_MODAL, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<MakeProductReader>>>>(
-                "make_products",
-                VT_SNAP_MAKE_PRODUCTS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SideTabIfaceReader>>>>(
-                "side_tab_ifaces",
-                VT_SNAP_SIDE_TAB_IFACES,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CombatStyleReader>>>>(
-                "spell_buttons",
-                VT_SNAP_SPELL_BUTTONS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<ChatLineReader>>>>(
-                "chat_lines",
-                VT_SNAP_CHAT_LINES,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<NearestBoothReader>>(
-                "nearest_booth",
-                VT_SNAP_NEAREST_BOOTH,
-                false,
-            )?
-            .visit_field::<i32>("bank_note_on", VT_SNAP_BANK_NOTE_ON, false)?
-            .visit_field::<i32>("bank_note_off", VT_SNAP_BANK_NOTE_OFF, false)?
-            .visit_field::<i32>("scene_state", VT_SNAP_SCENE_STATE, false)?
-            .visit_field::<i32>("weight", VT_SNAP_WEIGHT, false)?
-            .visit_field::<i32>("camera_yaw", VT_SNAP_CAMERA_YAW, false)?
-            .visit_field::<i32>("camera_pitch", VT_SNAP_CAMERA_PITCH, false)?
-            .visit_field::<bool>("teleports_enabled", VT_SNAP_TELEPORTS_ENABLED, false)?
-            .visit_field::<i32>("self_slot", VT_SNAP_SELF_SLOT, false)?
-            .visit_field::<bool>("trade_offer_open", VT_SNAP_TRADE_OFFER_OPEN, false)?
-            .visit_field::<bool>("trade_confirm_open", VT_SNAP_TRADE_CONFIRM_OPEN, false)?
-            .visit_field::<ForwardsUOffset<&str>>("trade_partner", VT_SNAP_TRADE_PARTNER, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "trade_mine",
-                VT_SNAP_TRADE_MINE,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "trade_theirs",
-                VT_SNAP_TRADE_THEIRS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "trade_side",
-                VT_SNAP_TRADE_SIDE,
-                false,
-            )?
-            .visit_field::<i32>("trade_accept_id", VT_SNAP_TRADE_ACCEPT_ID, false)?
-            .visit_field::<i32>("trade_decline_id", VT_SNAP_TRADE_DECLINE_ID, false)?
-            .visit_field::<bool>("shop_open", VT_SNAP_SHOP_OPEN, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "shop_stock",
-                VT_SNAP_SHOP_STOCK,
-                false,
-            )?
-            .visit_field::<u64>("bank_generation", VT_SNAP_BANK_GENERATION, false)?
-            .visit_field::<bool>("count_dialog_open", VT_SNAP_COUNT_DIALOG_OPEN, false)?
-            .visit_field::<u64>(
-                "withdraw_x_result_seq",
-                VT_SNAP_WITHDRAW_X_RESULT_SEQ,
-                false,
-            )?
-            .visit_field::<bool>("withdraw_x_result", VT_SNAP_WITHDRAW_X_RESULT, false)?
-            .visit_field::<u64>(
-                "withdraw_load_result_seq",
-                VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ,
-                false,
-            )?
-            .visit_field::<bool>("withdraw_load_result", VT_SNAP_WITHDRAW_LOAD_RESULT, false)?
-            .visit_field::<u64>("bank_op_result_seq", VT_SNAP_BANK_OP_RESULT_SEQ, false)?
-            .visit_field::<bool>("bank_op_result", VT_SNAP_BANK_OP_RESULT, false)?
-            .visit_field::<ForwardsUOffset<ReachReader>>("reach", VT_SNAP_REACH, false)?
-            .visit_field::<bool>("attacked_by_player", VT_SNAP_ATTACKED_BY_PLAYER, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<WidgetTextReader>>>>(
-                "widgets",
-                VT_SNAP_WIDGETS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<&str>>("self_chat", VT_SNAP_SELF_CHAT, false)?
-            .visit_field::<i32>("hint_tile_x", VT_SNAP_HINT_TILE_X, false)?
-            .visit_field::<i32>("hint_tile_z", VT_SNAP_HINT_TILE_Z, false)?
-            .visit_field::<i32>("retaliate_on_com_id", VT_SNAP_RETALIATE_ON_COM_ID, false)?
-            .visit_field::<i32>("retaliate_off_com_id", VT_SNAP_RETALIATE_OFF_COM_ID, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<QuestStatusReader>>>>(
-                "quest_statuses",
-                VT_SNAP_QUEST_STATUSES,
-                false,
-            )?
-            .visit_field::<bool>(
-                "quest_statuses_available",
-                VT_SNAP_QUEST_STATUSES_AVAILABLE,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<NpcBoxReader>>>>(
-                "npc_boxes",
-                VT_SNAP_NPC_BOXES,
-                false,
-            )?
-            .visit_field::<bool>("npc_boxes_available", VT_SNAP_NPC_BOXES_AVAILABLE, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "shop_player",
-                VT_SNAP_SHOP_PLAYER,
-                false,
-            )?
-            .visit_field::<bool>(
-                "shop_player_available",
-                VT_SNAP_SHOP_PLAYER_AVAILABLE,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "main_make",
-                VT_SNAP_MAIN_MAKE,
-                false,
-            )?
-            .visit_field::<bool>("main_make_available", VT_SNAP_MAIN_MAKE_AVAILABLE, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<BankApproachReader>>>>(
-                "bank_approaches",
-                VT_SNAP_BANK_APPROACHES,
-                false,
-            )?
-            .visit_field::<u64>("walk_outcome_seq", VT_SNAP_WALK_OUTCOME_SEQ, false)?
-            .visit_field::<u64>(
-                "walk_outcome_generation",
-                VT_SNAP_WALK_OUTCOME_GENERATION,
-                false,
-            )?
-            .visit_field::<bool>("walk_outcome_failed", VT_SNAP_WALK_OUTCOME_FAILED, false)?
-            .visit_field::<i32>("walk_outcome_x", VT_SNAP_WALK_OUTCOME_X, false)?
-            .visit_field::<i32>("walk_outcome_z", VT_SNAP_WALK_OUTCOME_Z, false)?
-            .visit_field::<i32>("walk_outcome_level", VT_SNAP_WALK_OUTCOME_LEVEL, false)?
-            .visit_field::<i32>("walk_outcome_radius", VT_SNAP_WALK_OUTCOME_RADIUS, false)?
-            .visit_field::<bool>(
-                "walk_outcome_allow_teleports",
-                VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS,
-                false,
-            )?
-            .visit_field::<u64>(
-                "walk_outcome_request_id",
-                VT_SNAP_WALK_OUTCOME_REQUEST_ID,
-                false,
-            )?
-            .visit_field::<bool>("walk_outcome_blocked", VT_SNAP_WALK_OUTCOME_BLOCKED, false)?
-            .visit_field::<i32>("canvas_width", VT_SNAP_CANVAS_WIDTH, false)?
-            .visit_field::<i32>("canvas_height", VT_SNAP_CANVAS_HEIGHT, false)?
-            .visit_field::<i32>("combat_level", VT_SNAP_COMBAT_LEVEL, false)?
-            .visit_field::<u64>("route_inspect_seq", VT_SNAP_ROUTE_INSPECT_SEQ, false)?
-            .visit_field::<u64>(
-                "route_inspect_generation",
-                VT_SNAP_ROUTE_INSPECT_GENERATION,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_request_id",
-                VT_SNAP_ROUTE_INSPECT_REQUEST_ID,
-                false,
-            )?
-            .visit_field::<bool>("route_inspect_ok", VT_SNAP_ROUTE_INSPECT_OK, false)?
-            .visit_field::<ForwardsUOffset<&str>>(
-                "route_inspect_reason",
-                VT_SNAP_ROUTE_INSPECT_REASON,
-                false,
-            )?
-            .visit_field::<bool>(
-                "route_inspect_bank_planned",
-                VT_SNAP_ROUTE_INSPECT_BANK_PLANNED,
-                false,
-            )?
-            .visit_field::<f64>("route_inspect_ticks", VT_SNAP_ROUTE_INSPECT_TICKS, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<InspectHopReader>>>>(
-                "route_inspect_hops",
-                VT_SNAP_ROUTE_INSPECT_HOPS,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_prev_seq",
-                VT_SNAP_ROUTE_INSPECT_PREV_SEQ,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_prev_generation",
-                VT_SNAP_ROUTE_INSPECT_PREV_GENERATION,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_prev_request_id",
-                VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID,
-                false,
-            )?
-            .visit_field::<bool>(
-                "route_inspect_prev_ok",
-                VT_SNAP_ROUTE_INSPECT_PREV_OK,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<&str>>(
-                "route_inspect_prev_reason",
-                VT_SNAP_ROUTE_INSPECT_PREV_REASON,
-                false,
-            )?
-            .visit_field::<bool>(
-                "route_inspect_prev_bank_planned",
-                VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED,
-                false,
-            )?
-            .visit_field::<f64>(
-                "route_inspect_prev_ticks",
-                VT_SNAP_ROUTE_INSPECT_PREV_TICKS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<InspectHopReader>>>>(
-                "route_inspect_prev_hops",
-                VT_SNAP_ROUTE_INSPECT_PREV_HOPS,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_running_id",
-                VT_SNAP_ROUTE_INSPECT_RUNNING_ID,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_pending_id",
-                VT_SNAP_ROUTE_INSPECT_PENDING_ID,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_accepted_id",
-                VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_replaced_id",
-                VT_SNAP_ROUTE_INSPECT_REPLACED_ID,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_replaced_prev_id",
-                VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_refused_id",
-                VT_SNAP_ROUTE_INSPECT_REFUSED_ID,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_refused_id_2",
-                VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_refused_id_3",
-                VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3,
-                false,
-            )?
-            .visit_field::<u64>(
-                "route_inspect_unobserved",
-                VT_SNAP_ROUTE_INSPECT_UNOBSERVED,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<CollisionReader>>("collision", VT_SNAP_COLLISION, false)?
-            .visit_field::<i32>("self_target_kind", VT_SNAP_SELF_TARGET_KIND, false)?
-            .visit_field::<i32>("self_target_index", VT_SNAP_SELF_TARGET_INDEX, false)?
-            .visit_field::<ForwardsUOffset<MainModalTextsReader>>(
-                "main_modal_texts",
-                VT_SNAP_MAIN_MODAL_TEXTS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<PuzzleBoardReader>>(
-                "puzzle_board",
-                VT_SNAP_PUZZLE_BOARD,
-                false,
-            )?
-            .visit_field::<u64>(
-                "puzzle_board_generation",
-                VT_SNAP_PUZZLE_BOARD_GENERATION,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CarryReader>>>>(
-                "walk_missing_carry",
-                VT_SNAP_WALK_MISSING_CARRY,
-                false,
-            )?
-            .visit_field::<u64>(
-                "bank_selection_request_id",
-                VT_SNAP_BANK_SELECTION_REQUEST_ID,
-                false,
-            )?
-            .visit_field::<u64>(
-                "bank_selection_generation",
-                VT_SNAP_BANK_SELECTION_GENERATION,
-                false,
-            )?
-            .visit_field::<i32>("bank_selection_index", VT_SNAP_BANK_SELECTION_INDEX, false)?
-            .visit_field::<u8>("bank_selection_kind", VT_SNAP_BANK_SELECTION_KIND, false)?
-            .visit_field::<i32>("self_anim", VT_SNAP_SELF_ANIM, false)?
-            .visit_field::<i64>(
-                "bank_snapshot_generation",
-                VT_SNAP_BANK_SNAPSHOT_GENERATION,
-                false,
-            )?
-            .finish();
-        Ok(())
-    }
-}
-
-impl SnapshotReader<'_> {
-    /// Interpret `buf` as a root-`Snapshot` FlatBuffer after verification.
-    pub fn from_bytes(buf: &[u8]) -> Result<SnapshotReader<'_>, String> {
-        verified_root::<SnapshotReader>(buf)
+    presence_methods! {
+        has_tick => VT_TICK,
+        has_here => VT_HERE,
+        has_ingame => VT_INGAME,
+        has_inv => VT_INV,
+        has_inv_size => VT_INV_SIZE,
+        has_stats => VT_STATS,
+        has_booths => VT_BOOTHS,
+        has_banks => VT_BANKS,
+        has_bank => VT_BANK,
+        has_bank_side => VT_BANK_SIDE,
+        has_bank_open => VT_BANK_OPEN,
+        has_bank_loaded => VT_BANK_LOADED,
+        has_hold => VT_HOLD,
+        has_ours => VT_OURS,
+        has_npcs => VT_NPCS,
+        has_locs => VT_LOCS,
+        has_players => VT_PLAYERS,
+        has_ground => VT_GROUND,
+        has_equipment => VT_EQUIPMENT,
+        has_chat_open => VT_CHAT_OPEN,
+        has_chat_continue => VT_CHAT_CONTINUE,
+        has_chat_text => VT_CHAT_TEXT,
+        has_chat_options => VT_CHAT_OPTIONS,
+        has_side_tab => VT_SIDE_TAB,
+        has_varps => VT_VARPS,
+        has_combat_styles => VT_COMBAT_STYLES,
+        has_run_energy => VT_RUN_ENERGY,
+        has_run_enabled => VT_RUN_ENABLED,
+        has_retaliate_enabled => VT_RETALIATE_ENABLED,
+        has_my_name => VT_MY_NAME,
+        has_in_combat => VT_IN_COMBAT,
+        has_animating => VT_ANIMATING,
+        has_main_modal_id => VT_MAIN_MODAL_ID,
+        has_chat_modal_id => VT_CHAT_MODAL_ID,
+        has_make_products => VT_MAKE_PRODUCTS,
+        has_side_tab_ifaces => VT_SIDE_TAB_IFACES,
+        has_spell_buttons => VT_SPELL_BUTTONS,
+        has_chat_lines => VT_CHAT_LINES,
+        has_nearest_booth => VT_NEAREST_BOOTH,
+        has_bank_note_on => VT_BANK_NOTE_ON,
+        has_bank_note_off => VT_BANK_NOTE_OFF,
+        has_scene_state => VT_SCENE_STATE,
+        has_weight => VT_WEIGHT,
+        has_camera_yaw => VT_CAMERA_YAW,
+        has_camera_pitch => VT_CAMERA_PITCH,
+        has_teleports_enabled => VT_TELEPORTS_ENABLED,
+        has_self_slot => VT_SELF_SLOT,
+        has_trade_offer_open => VT_TRADE_OFFER_OPEN,
+        has_trade_confirm_open => VT_TRADE_CONFIRM_OPEN,
+        has_trade_partner => VT_TRADE_PARTNER,
+        has_trade_mine => VT_TRADE_MINE,
+        has_trade_theirs => VT_TRADE_THEIRS,
+        has_trade_side => VT_TRADE_SIDE,
+        has_trade_accept_id => VT_TRADE_ACCEPT_ID,
+        has_trade_decline_id => VT_TRADE_DECLINE_ID,
+        has_shop_open => VT_SHOP_OPEN,
+        has_shop_stock => VT_SHOP_STOCK,
+        has_bank_generation => VT_BANK_GENERATION,
+        has_count_dialog_open => VT_COUNT_DIALOG_OPEN,
+        has_withdraw_x_result_seq => VT_WITHDRAW_X_RESULT_SEQ,
+        has_withdraw_x_result => VT_WITHDRAW_X_RESULT,
+        has_withdraw_load_result_seq => VT_WITHDRAW_LOAD_RESULT_SEQ,
+        has_withdraw_load_result => VT_WITHDRAW_LOAD_RESULT,
+        has_bank_op_result_seq => VT_BANK_OP_RESULT_SEQ,
+        has_bank_op_result => VT_BANK_OP_RESULT,
+        has_reach => VT_REACH,
+        has_attacked_by_player => VT_ATTACKED_BY_PLAYER,
+        has_widgets => VT_WIDGETS,
+        has_self_chat => VT_SELF_CHAT,
+        has_hint_tile_x => VT_HINT_TILE_X,
+        has_hint_tile_z => VT_HINT_TILE_Z,
+        has_retaliate_on_com_id => VT_RETALIATE_ON_COM_ID,
+        has_retaliate_off_com_id => VT_RETALIATE_OFF_COM_ID,
+        has_quest_statuses => VT_QUEST_STATUSES,
+        has_quest_statuses_available => VT_QUEST_STATUSES_AVAILABLE,
+        has_npc_boxes => VT_NPC_BOXES,
+        has_npc_boxes_available => VT_NPC_BOXES_AVAILABLE,
+        has_shop_player => VT_SHOP_PLAYER,
+        has_shop_player_available => VT_SHOP_PLAYER_AVAILABLE,
+        has_main_make => VT_MAIN_MAKE,
+        has_main_make_available => VT_MAIN_MAKE_AVAILABLE,
+        has_bank_approaches => VT_BANK_APPROACHES,
+        has_walk_outcome_seq => VT_WALK_OUTCOME_SEQ,
+        has_walk_outcome_generation => VT_WALK_OUTCOME_GENERATION,
+        has_walk_outcome_failed => VT_WALK_OUTCOME_FAILED,
+        has_walk_outcome_x => VT_WALK_OUTCOME_X,
+        has_walk_outcome_z => VT_WALK_OUTCOME_Z,
+        has_walk_outcome_level => VT_WALK_OUTCOME_LEVEL,
+        has_walk_outcome_radius => VT_WALK_OUTCOME_RADIUS,
+        has_walk_outcome_allow_teleports => VT_WALK_OUTCOME_ALLOW_TELEPORTS,
+        has_walk_outcome_request_id => VT_WALK_OUTCOME_REQUEST_ID,
+        has_canvas_width => VT_CANVAS_WIDTH,
+        has_canvas_height => VT_CANVAS_HEIGHT,
+        has_combat_level => VT_COMBAT_LEVEL,
+        has_route_inspect_seq => VT_ROUTE_INSPECT_SEQ,
+        has_route_inspect_generation => VT_ROUTE_INSPECT_GENERATION,
+        has_route_inspect_request_id => VT_ROUTE_INSPECT_REQUEST_ID,
+        has_route_inspect_ok => VT_ROUTE_INSPECT_OK,
+        has_route_inspect_reason => VT_ROUTE_INSPECT_REASON,
+        has_route_inspect_bank_planned => VT_ROUTE_INSPECT_BANK_PLANNED,
+        has_route_inspect_ticks => VT_ROUTE_INSPECT_TICKS,
+        has_route_inspect_hops => VT_ROUTE_INSPECT_HOPS,
+        has_route_inspect_prev_seq => VT_ROUTE_INSPECT_PREV_SEQ,
+        has_route_inspect_prev_generation => VT_ROUTE_INSPECT_PREV_GENERATION,
+        has_route_inspect_prev_request_id => VT_ROUTE_INSPECT_PREV_REQUEST_ID,
+        has_route_inspect_prev_ok => VT_ROUTE_INSPECT_PREV_OK,
+        has_route_inspect_prev_reason => VT_ROUTE_INSPECT_PREV_REASON,
+        has_route_inspect_prev_bank_planned => VT_ROUTE_INSPECT_PREV_BANK_PLANNED,
+        has_route_inspect_prev_ticks => VT_ROUTE_INSPECT_PREV_TICKS,
+        has_route_inspect_prev_hops => VT_ROUTE_INSPECT_PREV_HOPS,
+        has_route_inspect_running_id => VT_ROUTE_INSPECT_RUNNING_ID,
+        has_route_inspect_pending_id => VT_ROUTE_INSPECT_PENDING_ID,
+        has_route_inspect_accepted_id => VT_ROUTE_INSPECT_ACCEPTED_ID,
+        has_route_inspect_replaced_id => VT_ROUTE_INSPECT_REPLACED_ID,
+        has_route_inspect_replaced_prev_id => VT_ROUTE_INSPECT_REPLACED_PREV_ID,
+        has_route_inspect_refused_id => VT_ROUTE_INSPECT_REFUSED_ID,
+        has_route_inspect_refused_id_2 => VT_ROUTE_INSPECT_REFUSED_ID_2,
+        has_route_inspect_refused_id_3 => VT_ROUTE_INSPECT_REFUSED_ID_3,
+        has_route_inspect_unobserved => VT_ROUTE_INSPECT_UNOBSERVED,
+        has_collision => VT_COLLISION,
+        has_self_target_kind => VT_SELF_TARGET_KIND,
+        has_self_target_index => VT_SELF_TARGET_INDEX,
+        has_main_modal_texts => VT_MAIN_MODAL_TEXTS,
+        has_puzzle_board => VT_PUZZLE_BOARD,
+        has_puzzle_board_generation => VT_PUZZLE_BOARD_GENERATION,
+        has_walk_missing_carry => VT_WALK_MISSING_CARRY,
+        has_bank_selection_request_id => VT_BANK_SELECTION_REQUEST_ID,
+        has_bank_selection_generation => VT_BANK_SELECTION_GENERATION,
+        has_bank_selection_index => VT_BANK_SELECTION_INDEX,
+        has_bank_selection_kind => VT_BANK_SELECTION_KIND,
+        has_self_anim => VT_SELF_ANIM,
+        has_walk_outcome_blocked => VT_WALK_OUTCOME_BLOCKED,
+        has_bank_snapshot_generation => VT_BANK_SNAPSHOT_GENERATION,
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
         unsafe {
             Some(BankSelectionInput {
                 request_id: self
-                    .tab
-                    .get::<u64>(VT_SNAP_BANK_SELECTION_REQUEST_ID, None)?,
+                    ._tab
+                    .get::<u64>(Self::VT_BANK_SELECTION_REQUEST_ID, None)?,
                 generation: self
-                    .tab
-                    .get::<u64>(VT_SNAP_BANK_SELECTION_GENERATION, Some(0))
+                    ._tab
+                    .get::<u64>(Self::VT_BANK_SELECTION_GENERATION, Some(0))
                     .unwrap_or(0),
                 bank_index: self
-                    .tab
-                    .get::<i32>(VT_SNAP_BANK_SELECTION_INDEX, Some(-1))
+                    ._tab
+                    .get::<i32>(Self::VT_BANK_SELECTION_INDEX, Some(-1))
                     .unwrap_or(-1),
                 kind: self
-                    .tab
-                    .get::<u8>(VT_SNAP_BANK_SELECTION_KIND, Some(0))
+                    ._tab
+                    .get::<u8>(Self::VT_BANK_SELECTION_KIND, Some(0))
                     .unwrap_or(0),
             })
         }
     }
 
-    /// Whether the buffer carries the local player's animation id.
-    pub fn has_self_anim(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_ANIM, None) }.is_some()
-    }
-    /// The local player's primary animation id, `-1` when absent.
-    pub fn self_anim(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_ANIM, None) }.unwrap_or(-1)
+    pub fn has_hint_tile(&self) -> bool {
+        self.has_hint_tile_x() || self.has_hint_tile_z()
     }
 
-    pub fn tick(&self) -> u64 {
-        // Safety: the buffer was produced by our encoder (root checked).
-        unsafe { self.tab.get::<u64>(VT_SNAP_TICK, None) }.unwrap_or(0)
-    }
-    /// Whether the buffer carries the `here` tile. A delta omits the
-    /// fields that did not change since the last post — absent is distinct
-    /// from empty, and the isolate keeps its last JS value.
-    pub fn has_here(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<TileReader>>(VT_SNAP_HERE, None)
-                .is_some()
-        }
-    }
-    pub fn here(&self) -> Option<TileReader<'_>> {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<TileReader>>(VT_SNAP_HERE, None)
-        }
-    }
-    pub fn has_ingame(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_INGAME, None).is_some() }
-    }
-    pub fn ingame(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_INGAME, None) }.unwrap_or(false)
-    }
-    pub fn has_inv(&self) -> bool {
-        rows_present::<RowReader>(&self.tab, VT_SNAP_INV)
-    }
-    pub fn inv(&self) -> Vec<RowReader<'_>> {
-        rows::<RowReader>(&self.tab, VT_SNAP_INV)
-    }
-    pub fn has_inv_size(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_INV_SIZE, None).is_some() }
-    }
-    pub fn inv_size(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_INV_SIZE, None) }.unwrap_or(0)
-    }
-    pub fn has_stats(&self) -> bool {
-        rows_present::<StatReader>(&self.tab, VT_SNAP_STATS)
-    }
-    pub fn stats(&self) -> Vec<StatReader<'_>> {
-        rows::<StatReader>(&self.tab, VT_SNAP_STATS)
-    }
-    pub fn has_booths(&self) -> bool {
-        rows_present::<TileReader>(&self.tab, VT_SNAP_BOOTHS)
-    }
-    pub fn booths(&self) -> Vec<TileReader<'_>> {
-        rows::<TileReader>(&self.tab, VT_SNAP_BOOTHS)
-    }
-    pub fn has_banks(&self) -> bool {
-        rows_present::<BankStandReader>(&self.tab, VT_SNAP_BANKS)
-    }
-    pub fn banks(&self) -> Vec<BankStandReader<'_>> {
-        rows::<BankStandReader>(&self.tab, VT_SNAP_BANKS)
-    }
-    pub fn has_bank(&self) -> bool {
-        rows_present::<RowReader>(&self.tab, VT_SNAP_BANK)
-    }
-    pub fn bank(&self) -> Vec<RowReader<'_>> {
-        rows::<RowReader>(&self.tab, VT_SNAP_BANK)
-    }
-    pub fn has_bank_side(&self) -> bool {
-        rows_present::<RowReader>(&self.tab, VT_SNAP_BANK_SIDE)
-    }
-    pub fn bank_side(&self) -> Vec<RowReader<'_>> {
-        rows::<RowReader>(&self.tab, VT_SNAP_BANK_SIDE)
-    }
-    pub fn has_bank_open(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_BANK_OPEN, None).is_some() }
-    }
-    pub fn bank_open(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_BANK_OPEN, None) }.unwrap_or(false)
-    }
-    pub fn has_bank_loaded(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_BANK_LOADED, None).is_some() }
-    }
-    pub fn bank_loaded(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_BANK_LOADED, None) }.unwrap_or(false)
-    }
-    pub fn has_bank_generation(&self) -> bool {
-        unsafe { self.tab.get::<u64>(VT_SNAP_BANK_GENERATION, None).is_some() }
-    }
-    pub fn bank_generation(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_BANK_GENERATION, None) }.unwrap_or(0)
-    }
-    pub fn has_bank_snapshot_generation(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<i64>(VT_SNAP_BANK_SNAPSHOT_GENERATION, None)
-                .is_some()
-        }
-    }
-    pub fn bank_snapshot_generation(&self) -> i64 {
-        unsafe { self.tab.get::<i64>(VT_SNAP_BANK_SNAPSHOT_GENERATION, None) }.unwrap_or(-1)
-    }
-    pub fn has_count_dialog_open(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_COUNT_DIALOG_OPEN, None)
-                .is_some()
-        }
-    }
-    pub fn count_dialog_open(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_COUNT_DIALOG_OPEN, None) }.unwrap_or(false)
-    }
-    pub fn has_withdraw_x_result_seq(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<u64>(VT_SNAP_WITHDRAW_X_RESULT_SEQ, None)
-                .is_some()
-        }
-    }
-    pub fn withdraw_x_result_seq(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_WITHDRAW_X_RESULT_SEQ, None) }.unwrap_or(0)
-    }
-    pub fn has_withdraw_x_result(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_WITHDRAW_X_RESULT, None)
-                .is_some()
-        }
-    }
-    pub fn withdraw_x_result(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_WITHDRAW_X_RESULT, None) }.unwrap_or(false)
-    }
-    pub fn has_withdraw_load_result_seq(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<u64>(VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ, None)
-                .is_some()
-        }
-    }
-    pub fn withdraw_load_result_seq(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ, None) }.unwrap_or(0)
-    }
-    pub fn has_withdraw_load_result(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_WITHDRAW_LOAD_RESULT, None)
-                .is_some()
-        }
-    }
-    pub fn withdraw_load_result(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_WITHDRAW_LOAD_RESULT, None) }.unwrap_or(false)
-    }
-    pub fn has_bank_op_result_seq(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<u64>(VT_SNAP_BANK_OP_RESULT_SEQ, None)
-                .is_some()
-        }
-    }
-    pub fn bank_op_result_seq(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_BANK_OP_RESULT_SEQ, None) }.unwrap_or(0)
-    }
-    pub fn has_bank_op_result(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_BANK_OP_RESULT, None).is_some() }
-    }
-    pub fn bank_op_result(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_BANK_OP_RESULT, None) }.unwrap_or(false)
-    }
-    pub fn has_bank_note_on(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_ON, None).is_some() }
-    }
-    pub fn bank_note_on(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_ON, None) }.unwrap_or(-1)
-    }
-    pub fn has_bank_note_off(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_OFF, None).is_some() }
-    }
-    pub fn bank_note_off(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_OFF, None) }.unwrap_or(-1)
-    }
-    pub fn has_scene_state(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_SCENE_STATE, None).is_some() }
-    }
-    pub fn scene_state(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_SCENE_STATE, None) }.unwrap_or(0)
-    }
-    pub fn has_weight(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_WEIGHT, None).is_some() }
-    }
-    pub fn weight(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_WEIGHT, None) }.unwrap_or(0)
-    }
-    pub fn has_combat_level(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_COMBAT_LEVEL, None).is_some() }
-    }
-    pub fn combat_level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_COMBAT_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn has_camera_yaw(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_CAMERA_YAW, None).is_some() }
-    }
-    pub fn camera_yaw(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_CAMERA_YAW, None) }.unwrap_or(0)
-    }
-    pub fn has_camera_pitch(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_CAMERA_PITCH, None).is_some() }
-    }
-    pub fn camera_pitch(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_CAMERA_PITCH, None) }.unwrap_or(0)
-    }
-    pub fn has_teleports_enabled(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_TELEPORTS_ENABLED, None)
-                .is_some()
-        }
-    }
-    pub fn teleports_enabled(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_TELEPORTS_ENABLED, None) }.unwrap_or(false)
-    }
-    pub fn has_self_slot(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_SLOT, None).is_some() }
-    }
-    pub fn self_slot(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_SLOT, None) }.unwrap_or(0)
-    }
-    pub fn has_trade_offer_open(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_TRADE_OFFER_OPEN, None)
-                .is_some()
-        }
-    }
-    pub fn trade_offer_open(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_TRADE_OFFER_OPEN, None) }.unwrap_or(false)
-    }
-    pub fn has_trade_confirm_open(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_TRADE_CONFIRM_OPEN, None)
-                .is_some()
-        }
-    }
-    pub fn trade_confirm_open(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_TRADE_CONFIRM_OPEN, None) }.unwrap_or(false)
-    }
-    pub fn has_trade_partner(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_SNAP_TRADE_PARTNER, None)
-                .is_some()
-        }
-    }
-    pub fn trade_partner(&self) -> Option<&str> {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_SNAP_TRADE_PARTNER, None)
-        }
-    }
-    pub fn has_trade_mine(&self) -> bool {
-        rows_present::<RowReader>(&self.tab, VT_SNAP_TRADE_MINE)
-    }
-    pub fn trade_mine(&self) -> Vec<RowReader<'_>> {
-        rows::<RowReader>(&self.tab, VT_SNAP_TRADE_MINE)
-    }
-    pub fn has_trade_theirs(&self) -> bool {
-        rows_present::<RowReader>(&self.tab, VT_SNAP_TRADE_THEIRS)
-    }
-    pub fn trade_theirs(&self) -> Vec<RowReader<'_>> {
-        rows::<RowReader>(&self.tab, VT_SNAP_TRADE_THEIRS)
-    }
-    pub fn has_trade_side(&self) -> bool {
-        rows_present::<RowReader>(&self.tab, VT_SNAP_TRADE_SIDE)
-    }
-    pub fn trade_side(&self) -> Vec<RowReader<'_>> {
-        rows::<RowReader>(&self.tab, VT_SNAP_TRADE_SIDE)
-    }
-    pub fn has_trade_accept_id(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_TRADE_ACCEPT_ID, None).is_some() }
-    }
-    pub fn trade_accept_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_TRADE_ACCEPT_ID, None) }.unwrap_or(-1)
-    }
-    pub fn has_trade_decline_id(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<i32>(VT_SNAP_TRADE_DECLINE_ID, None)
-                .is_some()
-        }
-    }
-    pub fn trade_decline_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_TRADE_DECLINE_ID, None) }.unwrap_or(-1)
-    }
-    pub fn has_shop_open(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_SHOP_OPEN, None).is_some() }
-    }
-    pub fn shop_open(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_SHOP_OPEN, None) }.unwrap_or(false)
-    }
-    pub fn has_shop_stock(&self) -> bool {
-        rows_present::<RowReader>(&self.tab, VT_SNAP_SHOP_STOCK)
-    }
-    pub fn shop_stock(&self) -> Vec<RowReader<'_>> {
-        rows::<RowReader>(&self.tab, VT_SNAP_SHOP_STOCK)
-    }
-    pub fn has_shop_player(&self) -> bool {
-        rows_present::<RowReader>(&self.tab, VT_SNAP_SHOP_PLAYER)
-    }
-    pub fn shop_player(&self) -> Vec<RowReader<'_>> {
-        rows::<RowReader>(&self.tab, VT_SNAP_SHOP_PLAYER)
-    }
-    pub fn has_shop_player_available(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_SHOP_PLAYER_AVAILABLE, None)
-                .is_some()
-        }
-    }
-    pub fn shop_player_available(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_SHOP_PLAYER_AVAILABLE, None) }.unwrap_or(false)
-    }
-    pub fn has_main_make(&self) -> bool {
-        rows_present::<RowReader>(&self.tab, VT_SNAP_MAIN_MAKE)
-    }
-    pub fn main_make(&self) -> Vec<RowReader<'_>> {
-        rows::<RowReader>(&self.tab, VT_SNAP_MAIN_MAKE)
-    }
-    pub fn has_main_make_available(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_MAIN_MAKE_AVAILABLE, None)
-                .is_some()
-        }
-    }
-    pub fn main_make_available(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_MAIN_MAKE_AVAILABLE, None) }.unwrap_or(false)
-    }
-    pub fn has_bank_approaches(&self) -> bool {
-        rows_present::<BankApproachReader>(&self.tab, VT_SNAP_BANK_APPROACHES)
-    }
-    pub fn bank_approaches(&self) -> Vec<BankApproachReader<'_>> {
-        rows::<BankApproachReader>(&self.tab, VT_SNAP_BANK_APPROACHES)
-    }
-    pub fn has_walk_outcome_seq(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<u64>(VT_SNAP_WALK_OUTCOME_SEQ, None)
-                .is_some()
-        }
-    }
-    pub fn walk_outcome_seq(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_SEQ, None) }.unwrap_or(0)
-    }
-    pub fn walk_outcome_generation(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_GENERATION, None) }.unwrap_or(0)
-    }
-    pub fn walk_outcome_failed(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_WALK_OUTCOME_FAILED, None) }.unwrap_or(false)
-    }
-    pub fn walk_outcome_x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_WALK_OUTCOME_X, None) }.unwrap_or(0)
-    }
-    pub fn walk_outcome_z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_WALK_OUTCOME_Z, None) }.unwrap_or(0)
-    }
-    pub fn walk_outcome_level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_WALK_OUTCOME_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn walk_outcome_radius(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_WALK_OUTCOME_RADIUS, None) }.unwrap_or(0)
-    }
-    pub fn walk_outcome_allow_teleports(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS, None)
-        }
-        .unwrap_or(false)
-    }
-    pub fn walk_outcome_request_id(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_REQUEST_ID, None) }.unwrap_or(0)
-    }
-    pub fn walk_outcome_blocked(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_WALK_OUTCOME_BLOCKED, None) }.unwrap_or(false)
-    }
-    pub fn has_route_inspect_seq(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<u64>(VT_SNAP_ROUTE_INSPECT_SEQ, None)
-                .is_some()
-        }
-    }
-    pub fn route_inspect_seq(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_SEQ, None) }.unwrap_or(0)
-    }
-    pub fn route_inspect_generation(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_GENERATION, None) }.unwrap_or(0)
-    }
-    pub fn route_inspect_request_id(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REQUEST_ID, None) }.unwrap_or(0)
-    }
-    pub fn route_inspect_ok(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_OK, None) }.unwrap_or(false)
-    }
-    pub fn route_inspect_reason(&self) -> &str {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_SNAP_ROUTE_INSPECT_REASON, None)
-        }
-        .unwrap_or("")
-    }
-    pub fn route_inspect_bank_planned(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_ROUTE_INSPECT_BANK_PLANNED, None)
-        }
-        .unwrap_or(false)
-    }
-    pub fn route_inspect_ticks(&self) -> f64 {
-        unsafe { self.tab.get::<f64>(VT_SNAP_ROUTE_INSPECT_TICKS, None) }.unwrap_or(0.0)
-    }
-    pub fn route_inspect_hops(&self) -> Vec<InspectHopReader<'_>> {
-        rows::<InspectHopReader>(&self.tab, VT_SNAP_ROUTE_INSPECT_HOPS)
-    }
-    pub fn route_inspect_prev_seq(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_SEQ, None) }.unwrap_or(0)
-    }
-    pub fn route_inspect_prev_generation(&self) -> u64 {
-        unsafe {
-            self.tab
-                .get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_GENERATION, None)
-        }
-        .unwrap_or(0)
-    }
-    pub fn route_inspect_prev_request_id(&self) -> u64 {
-        unsafe {
-            self.tab
-                .get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID, None)
-        }
-        .unwrap_or(0)
-    }
-    pub fn route_inspect_prev_ok(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_PREV_OK, None) }.unwrap_or(false)
-    }
-    pub fn route_inspect_prev_reason(&self) -> &str {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_SNAP_ROUTE_INSPECT_PREV_REASON, None)
-        }
-        .unwrap_or("")
-    }
-    pub fn route_inspect_prev_bank_planned(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED, None)
-        }
-        .unwrap_or(false)
-    }
-    pub fn route_inspect_prev_ticks(&self) -> f64 {
-        unsafe { self.tab.get::<f64>(VT_SNAP_ROUTE_INSPECT_PREV_TICKS, None) }.unwrap_or(0.0)
-    }
-    pub fn route_inspect_prev_hops(&self) -> Vec<InspectHopReader<'_>> {
-        rows::<InspectHopReader>(&self.tab, VT_SNAP_ROUTE_INSPECT_PREV_HOPS)
-    }
-    pub fn route_inspect_running_id(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_RUNNING_ID, None) }.unwrap_or(0)
-    }
-    pub fn route_inspect_pending_id(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_PENDING_ID, None) }.unwrap_or(0)
-    }
-    pub fn route_inspect_accepted_id(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID, None) }.unwrap_or(0)
-    }
-    pub fn route_inspect_replaced_id(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REPLACED_ID, None) }.unwrap_or(0)
-    }
-    pub fn route_inspect_replaced_prev_id(&self) -> u64 {
-        unsafe {
-            self.tab
-                .get::<u64>(VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, None)
-        }
-        .unwrap_or(0)
-    }
-    pub fn route_inspect_refused_id(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID, None) }.unwrap_or(0)
-    }
-    pub fn route_inspect_refused_id_2(&self) -> u64 {
-        unsafe {
-            self.tab
-                .get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, None)
-        }
-        .unwrap_or(0)
-    }
-    pub fn route_inspect_refused_id_3(&self) -> u64 {
-        unsafe {
-            self.tab
-                .get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, None)
-        }
-        .unwrap_or(0)
-    }
-    pub fn route_inspect_unobserved(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_UNOBSERVED, None) }.unwrap_or(0)
-    }
-    pub fn has_canvas_width(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_CANVAS_WIDTH, None).is_some() }
-    }
-    pub fn canvas_width(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_CANVAS_WIDTH, None) }.unwrap_or(0)
-    }
-    pub fn canvas_height(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_CANVAS_HEIGHT, None) }.unwrap_or(0)
-    }
-    pub fn has_reach(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<ReachReader>>(VT_SNAP_REACH, None)
-                .is_some()
-        }
-    }
-    pub fn reach(&self) -> Option<ReachReader<'_>> {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<ReachReader>>(VT_SNAP_REACH, None)
-        }
-    }
-    pub fn has_collision(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<CollisionReader>>(VT_SNAP_COLLISION, None)
-                .is_some()
-        }
-    }
-    pub fn collision(&self) -> Option<CollisionReader<'_>> {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<CollisionReader>>(VT_SNAP_COLLISION, None)
-        }
-    }
-    pub fn has_attacked_by_player(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_ATTACKED_BY_PLAYER, None)
-                .is_some()
-        }
-    }
-    pub fn attacked_by_player(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_ATTACKED_BY_PLAYER, None) }.unwrap_or(false)
-    }
-    pub fn has_self_target_kind(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<i32>(VT_SNAP_SELF_TARGET_KIND, None)
-                .is_some()
-        }
-    }
-    pub fn self_target_kind(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_TARGET_KIND, None) }.unwrap_or(0)
-    }
-    pub fn has_self_target_index(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<i32>(VT_SNAP_SELF_TARGET_INDEX, None)
-                .is_some()
-        }
-    }
-    pub fn self_target_index(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_TARGET_INDEX, None) }.unwrap_or(-1)
-    }
-    pub fn has_widgets(&self) -> bool {
-        rows_present::<WidgetTextReader>(&self.tab, VT_SNAP_WIDGETS)
-    }
-    pub fn widgets(&self) -> Vec<WidgetTextReader<'_>> {
-        rows::<WidgetTextReader>(&self.tab, VT_SNAP_WIDGETS)
-    }
-    pub fn has_self_chat(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_SNAP_SELF_CHAT, None)
-                .is_some()
-        }
-    }
-    pub fn self_chat(&self) -> Option<&str> {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_SNAP_SELF_CHAT, None)
-        }
-    }
-    pub fn has_hint_tile(&self) -> bool {
-        unsafe {
-            self.tab.get::<i32>(VT_SNAP_HINT_TILE_X, None).is_some()
-                || self.tab.get::<i32>(VT_SNAP_HINT_TILE_Z, None).is_some()
-        }
-    }
     pub fn hint_tile(&self) -> Option<(i32, i32)> {
-        let x = unsafe { self.tab.get::<i32>(VT_SNAP_HINT_TILE_X, None) }.unwrap_or(-1);
-        let z = unsafe { self.tab.get::<i32>(VT_SNAP_HINT_TILE_Z, None) }.unwrap_or(-1);
+        let x = self.hint_tile_x();
+        let z = self.hint_tile_z();
         (x >= 0 && z >= 0).then_some((x, z))
     }
+
     pub fn has_retaliate_controls(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<i32>(VT_SNAP_RETALIATE_ON_COM_ID, None)
-                .is_some()
-                || self
-                    .tab
-                    .get::<i32>(VT_SNAP_RETALIATE_OFF_COM_ID, None)
-                    .is_some()
-        }
+        self.has_retaliate_on_com_id() || self.has_retaliate_off_com_id()
     }
+
     pub fn retaliate_controls(&self) -> Option<(i32, i32)> {
-        let on = unsafe { self.tab.get::<i32>(VT_SNAP_RETALIATE_ON_COM_ID, None) }.unwrap_or(-1);
-        let off = unsafe { self.tab.get::<i32>(VT_SNAP_RETALIATE_OFF_COM_ID, None) }.unwrap_or(-1);
+        let on = self.retaliate_on_com_id();
+        let off = self.retaliate_off_com_id();
         (on >= 0 && off >= 0).then_some((on, off))
     }
-    pub fn has_quest_statuses(&self) -> bool {
-        rows_present::<QuestStatusReader>(&self.tab, VT_SNAP_QUEST_STATUSES)
-    }
-    pub fn quest_statuses(&self) -> Vec<QuestStatusReader<'_>> {
-        rows::<QuestStatusReader>(&self.tab, VT_SNAP_QUEST_STATUSES)
-    }
+
     pub fn has_quest_statuses_update(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_QUEST_STATUSES_AVAILABLE, None)
-                .is_some()
-        }
+        self.has_quest_statuses_available()
     }
-    pub fn quest_statuses_available(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_QUEST_STATUSES_AVAILABLE, Some(false))
-        }
-        .unwrap_or(false)
-    }
-    pub fn has_npc_boxes(&self) -> bool {
-        rows_present::<NpcBoxReader>(&self.tab, VT_SNAP_NPC_BOXES)
-    }
-    pub fn npc_boxes(&self) -> Vec<NpcBoxReader<'_>> {
-        rows::<NpcBoxReader>(&self.tab, VT_SNAP_NPC_BOXES)
-    }
+
     pub fn has_npc_boxes_update(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_NPC_BOXES_AVAILABLE, None)
-                .is_some()
-        }
-    }
-    pub fn npc_boxes_available(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_SNAP_NPC_BOXES_AVAILABLE, Some(false))
-        }
-        .unwrap_or(false)
-    }
-    pub fn has_hold(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
-    }
-    pub fn hold(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None) }.unwrap_or(false)
-    }
-    pub fn has_ours(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_OURS, None).is_some() }
-    }
-    pub fn ours(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_OURS, None) }.unwrap_or(false)
-    }
-    pub fn has_npcs(&self) -> bool {
-        rows_present::<SceneEntityReader>(&self.tab, VT_SNAP_NPCS)
-    }
-    pub fn npcs(&self) -> Vec<SceneEntityReader<'_>> {
-        rows::<SceneEntityReader>(&self.tab, VT_SNAP_NPCS)
-    }
-    pub fn has_locs(&self) -> bool {
-        rows_present::<SceneEntityReader>(&self.tab, VT_SNAP_LOCS)
-    }
-    pub fn locs(&self) -> Vec<SceneEntityReader<'_>> {
-        rows::<SceneEntityReader>(&self.tab, VT_SNAP_LOCS)
-    }
-    pub fn has_players(&self) -> bool {
-        rows_present::<SceneEntityReader>(&self.tab, VT_SNAP_PLAYERS)
-    }
-    pub fn players(&self) -> Vec<SceneEntityReader<'_>> {
-        rows::<SceneEntityReader>(&self.tab, VT_SNAP_PLAYERS)
-    }
-    pub fn has_ground(&self) -> bool {
-        rows_present::<SceneEntityReader>(&self.tab, VT_SNAP_GROUND)
-    }
-    pub fn ground(&self) -> Vec<SceneEntityReader<'_>> {
-        rows::<SceneEntityReader>(&self.tab, VT_SNAP_GROUND)
-    }
-    pub fn has_equipment(&self) -> bool {
-        rows_present::<RowReader>(&self.tab, VT_SNAP_EQUIPMENT)
-    }
-    pub fn equipment(&self) -> Vec<RowReader<'_>> {
-        rows::<RowReader>(&self.tab, VT_SNAP_EQUIPMENT)
-    }
-    pub fn has_chat_open(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_CHAT_OPEN, None).is_some() }
-    }
-    pub fn chat_open(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_CHAT_OPEN, None) }.unwrap_or(false)
-    }
-    pub fn has_chat_continue(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_CHAT_CONTINUE, None).is_some() }
-    }
-    pub fn chat_continue(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_CHAT_CONTINUE, None) }.unwrap_or(false)
-    }
-    pub fn has_chat_text(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_SNAP_CHAT_TEXT, None)
-                .is_some()
-        }
-    }
-    pub fn chat_text(&self) -> Option<&str> {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_SNAP_CHAT_TEXT, None)
-        }
-    }
-    pub fn has_chat_options(&self) -> bool {
-        rows_present::<ChatOptionReader>(&self.tab, VT_SNAP_CHAT_OPTIONS)
-    }
-    pub fn chat_options(&self) -> Vec<ChatOptionReader<'_>> {
-        rows::<ChatOptionReader>(&self.tab, VT_SNAP_CHAT_OPTIONS)
-    }
-    pub fn has_side_tab(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_SIDE_TAB, None).is_some() }
-    }
-    pub fn side_tab(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_SIDE_TAB, None) }.unwrap_or(-1)
-    }
-    pub fn has_varps(&self) -> bool {
-        rows_present::<VarpReader>(&self.tab, VT_SNAP_VARPS)
-    }
-    pub fn varps(&self) -> Vec<VarpReader<'_>> {
-        rows::<VarpReader>(&self.tab, VT_SNAP_VARPS)
-    }
-    pub fn has_combat_styles(&self) -> bool {
-        rows_present::<CombatStyleReader>(&self.tab, VT_SNAP_COMBAT_STYLES)
-    }
-    pub fn combat_styles(&self) -> Vec<CombatStyleReader<'_>> {
-        rows::<CombatStyleReader>(&self.tab, VT_SNAP_COMBAT_STYLES)
-    }
-    pub fn has_run_energy(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_RUN_ENERGY, None).is_some() }
-    }
-    pub fn run_energy(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_RUN_ENERGY, None) }.unwrap_or(0)
-    }
-    pub fn has_run_enabled(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_RUN_ENABLED, None).is_some() }
-    }
-    pub fn run_enabled(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_RUN_ENABLED, None) }.unwrap_or(false)
-    }
-    pub fn has_retaliate_enabled(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_RETALIATE, None).is_some() }
-    }
-    pub fn retaliate_enabled(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_RETALIATE, None) }.unwrap_or(false)
-    }
-    pub fn has_my_name(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_SNAP_MY_NAME, None)
-                .is_some()
-        }
-    }
-    pub fn my_name(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_SNAP_MY_NAME, None) }
-    }
-    pub fn has_in_combat(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_IN_COMBAT, None).is_some() }
-    }
-    pub fn in_combat(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_IN_COMBAT, None) }.unwrap_or(false)
-    }
-    pub fn has_animating(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_ANIMATING, None).is_some() }
-    }
-    pub fn animating(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_ANIMATING, None) }.unwrap_or(false)
-    }
-    pub fn has_main_modal_id(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_MAIN_MODAL, None).is_some() }
-    }
-    pub fn main_modal_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_MAIN_MODAL, None) }.unwrap_or(-1)
-    }
-    /// Whether this buffer carries the main modal's paired text walk. An
-    /// omitted slot is NOT an observed close: the page keeps its last pair
-    /// (and an old buffer simply has no pair).
-    pub fn has_main_modal_texts(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<MainModalTextsReader>>(VT_SNAP_MAIN_MODAL_TEXTS, None)
-                .is_some()
-        }
-    }
-    pub fn main_modal_texts(&self) -> Option<MainModalTextsReader<'_>> {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<MainModalTextsReader>>(VT_SNAP_MAIN_MODAL_TEXTS, None)
-        }
-    }
-    /// Whether this buffer carries the puzzle board. An old buffer (or a
-    /// delta where the board did not change) has none, and a delta's absent
-    /// slot is a keep — the materializer fail-closes a keyframe that lacks
-    /// it to a closed board, never to "no property".
-    pub fn has_puzzle_board(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<PuzzleBoardReader>>(VT_SNAP_PUZZLE_BOARD, None)
-                .is_some()
-        }
-    }
-    pub fn puzzle_board(&self) -> Option<PuzzleBoardReader<'_>> {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<PuzzleBoardReader>>(VT_SNAP_PUZZLE_BOARD, None)
-        }
-    }
-    /// Whether this buffer carries the walk outcome's navigator-named gate
-    /// shorts. An old buffer (or a delta where the walk outcome family did not
-    /// change) has none, and an absent slot is a keep — never an empty
-    /// shopping list. A PRESENT empty vector is the observed "this outcome
-    /// names no short".
-    pub fn has_walk_missing_carry(&self) -> bool {
-        rows_present::<CarryReader>(&self.tab, VT_SNAP_WALK_MISSING_CARRY)
-    }
-    /// The named shorts in the host's own order (id, then count). Empty when
-    /// the slot is absent: callers that must tell absent from empty read
-    /// [`Self::has_walk_missing_carry`].
-    pub fn walk_missing_carry(&self) -> Vec<CarryReader<'_>> {
-        rows::<CarryReader>(&self.tab, VT_SNAP_WALK_MISSING_CARRY)
-    }
-    /// The board family's session generation. Always posted with the table;
-    /// an old buffer reads 0.
-    pub fn has_puzzle_board_generation(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<u64>(VT_SNAP_PUZZLE_BOARD_GENERATION, None)
-                .is_some()
-        }
-    }
-    pub fn puzzle_board_generation(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_PUZZLE_BOARD_GENERATION, None) }.unwrap_or(0)
-    }
-    pub fn has_chat_modal_id(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_SNAP_CHAT_MODAL, None).is_some() }
-    }
-    pub fn chat_modal_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_SNAP_CHAT_MODAL, None) }.unwrap_or(-1)
-    }
-    pub fn has_make_products(&self) -> bool {
-        rows_present::<MakeProductReader>(&self.tab, VT_SNAP_MAKE_PRODUCTS)
-    }
-    pub fn make_products(&self) -> Vec<MakeProductReader<'_>> {
-        rows::<MakeProductReader>(&self.tab, VT_SNAP_MAKE_PRODUCTS)
-    }
-    pub fn has_side_tab_ifaces(&self) -> bool {
-        rows_present::<SideTabIfaceReader>(&self.tab, VT_SNAP_SIDE_TAB_IFACES)
-    }
-    pub fn side_tab_ifaces(&self) -> Vec<SideTabIfaceReader<'_>> {
-        rows::<SideTabIfaceReader>(&self.tab, VT_SNAP_SIDE_TAB_IFACES)
-    }
-    pub fn has_spell_buttons(&self) -> bool {
-        rows_present::<CombatStyleReader>(&self.tab, VT_SNAP_SPELL_BUTTONS)
-    }
-    pub fn spell_buttons(&self) -> Vec<CombatStyleReader<'_>> {
-        rows::<CombatStyleReader>(&self.tab, VT_SNAP_SPELL_BUTTONS)
-    }
-    pub fn has_chat_lines(&self) -> bool {
-        rows_present::<ChatLineReader>(&self.tab, VT_SNAP_CHAT_LINES)
-    }
-    pub fn chat_lines(&self) -> Vec<ChatLineReader<'_>> {
-        rows::<ChatLineReader>(&self.tab, VT_SNAP_CHAT_LINES)
-    }
-    pub fn has_nearest_booth(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<NearestBoothReader>>(VT_SNAP_NEAREST_BOOTH, None)
-                .is_some()
-        }
-    }
-    pub fn nearest_booth(&self) -> Option<NearestBoothReader<'_>> {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<NearestBoothReader>>(VT_SNAP_NEAREST_BOOTH, None)
-        }
+        self.has_npc_boxes_available()
     }
 }
 
-/// Decode `buf` as a root-`Snapshot` FlatBuffer (produced by our own
-/// encoder; only the root offset is bounds-checked).
-pub fn decode_snapshot(buf: &[u8]) -> Result<SnapshotReader<'_>, String> {
-    SnapshotReader::from_bytes(buf)
-}
-
-/// Read a vector of tables at `slot` from `tab` (empty when absent).
-fn rows<'a, T>(tab: &Table<'a>, slot: VOffsetT) -> Vec<T::Inner>
-where
-    T: flatbuffers::Follow<'a> + 'a,
-{
-    // Safety: the buffer was produced by our encoder (root checked).
-    match unsafe { tab.get::<ForwardsUOffset<Vector<'a, ForwardsUOffset<T>>>>(slot, None) } {
-        Some(v) => v.iter().collect(),
-        None => Vec::new(),
+impl Row<'_> {
+    presence_methods! {
+        has_component_id => VT_COMPONENT_ID,
+        has_slot => VT_SLOT,
     }
 }
 
-fn i32_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<i32> {
-    match unsafe { tab.get::<ForwardsUOffset<Vector<i32>>>(slot, None) } {
-        Some(v) => v.iter().collect(),
-        None => Vec::new(),
+impl Carry<'_> {
+    presence_methods! {
+        has_name => VT_NAME,
     }
 }
 
-fn u32_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<u32> {
-    match unsafe { tab.get::<ForwardsUOffset<Vector<u32>>>(slot, None) } {
-        Some(v) => v.iter().collect(),
-        None => Vec::new(),
+impl<'a> Interact<'a> {
+    #[inline]
+    fn present_i32(&self, slot: flatbuffers::VOffsetT) -> Option<i32> {
+        // Safety: `Self` was constructed from a verified FlatBuffer table.
+        unsafe { self._tab.get::<i32>(slot, None) }
+    }
+
+    pub fn required_x(&self) -> Option<i32> {
+        self.present_i32(Self::VT_X)
+    }
+
+    pub fn required_z(&self) -> Option<i32> {
+        self.present_i32(Self::VT_Z)
+    }
+
+    pub fn required_level(&self) -> Option<i32> {
+        self.present_i32(Self::VT_LEVEL)
+    }
+
+    pub fn allow_teleports_explicit(&self) -> bool {
+        self.allow_teleports()
     }
 }
 
-fn u16_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<u16> {
-    match unsafe { tab.get::<ForwardsUOffset<Vector<u16>>>(slot, None) } {
-        Some(v) => v.iter().collect(),
-        None => Vec::new(),
-    }
-}
-
-fn u8_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<u8> {
-    match unsafe { tab.get::<ForwardsUOffset<Vector<u8>>>(slot, None) } {
-        Some(v) => v.iter().collect(),
-        None => Vec::new(),
-    }
-}
-
-/// Whether the buffer carries the vector at `slot` — a delta omits an
-/// unchanged table entirely, and absent must stay distinct from empty
-/// (the isolate keeps its last JS rows for an omitted table).
-fn rows_present<'a, T>(tab: &Table<'a>, slot: VOffsetT) -> bool
-where
-    T: flatbuffers::Follow<'a> + 'a,
-{
-    // Safety: verified before any accessor use.
-    unsafe {
-        tab.get::<ForwardsUOffset<Vector<'a, ForwardsUOffset<T>>>>(slot, None)
-            .is_some()
-    }
-}
-
-/// Like [`rows`], but rejects vectors longer than `max_len`.
-fn rows_capped<'a, T>(
-    tab: &Table<'a>,
-    slot: VOffsetT,
-    max_len: usize,
-) -> Result<Vec<T::Inner>, String>
-where
-    T: flatbuffers::Follow<'a> + 'a,
-{
-    // Safety: verified before any accessor use.
-    match unsafe { tab.get::<ForwardsUOffset<Vector<'a, ForwardsUOffset<T>>>>(slot, None) } {
-        Some(v) => {
-            let len = v.len();
-            if len > max_len {
-                return Err(format!("vector length {len} exceeds cap {max_len}"));
-            }
-            Ok(v.iter().collect())
-        }
-        None => Ok(Vec::new()),
+impl<'a> InteractBatch<'a> {
+    pub fn from_bytes(buf: &'a [u8]) -> Result<Self, String> {
+        root_with_opts::<Self>(&isolate_verify_opts(), buf)
+            .map_err(|err: InvalidFlatbuffer| err.to_string())
     }
 }
 
@@ -3941,9 +1831,9 @@ impl Default for IsolateBuf {
 
 impl IsolateBuf {
     pub fn new() -> Self {
-        Self {
-            builder: FlatBufferBuilder::new(),
-        }
+        let mut builder = FlatBufferBuilder::new();
+        builder.force_defaults(true);
+        Self { builder }
     }
 
     #[cfg(test)]
@@ -4090,7 +1980,7 @@ fn encode_snapshot_masked_into(
         let offs = input
             .booths
             .iter()
-            .map(|t| tile_off(b, *t))
+            .map(|t| booth_off(b, *t))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -4453,414 +2343,368 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
-    let tab = b.start_table();
-    b.push_slot_always(VT_SNAP_TICK, input.tick);
+    let mut table = SnapshotBuilder::new(b);
+    table.add_tick(input.tick);
     if mask.here {
         if let Some(off) = here_off {
-            b.push_slot_always(VT_SNAP_HERE, off);
+            table.add_here(off);
         }
     }
     if mask.ingame {
-        b.push_slot_always(VT_SNAP_INGAME, input.ingame);
+        table.add_ingame(input.ingame);
     }
     if mask.inv {
-        b.push_slot_always(VT_SNAP_INV, inv_off.expect("mask checked"));
+        table.add_inv(inv_off.expect("mask checked"));
     }
     if mask.inv_size {
-        b.push_slot_always(VT_SNAP_INV_SIZE, input.inv_size);
+        table.add_inv_size(input.inv_size);
     }
     if mask.stats {
-        b.push_slot_always(VT_SNAP_STATS, stats_off.expect("mask checked"));
+        table.add_stats(stats_off.expect("mask checked"));
     }
     if mask.booths {
-        b.push_slot_always(VT_SNAP_BOOTHS, booths_off.expect("mask checked"));
+        table.add_booths(booths_off.expect("mask checked"));
     }
     if mask.nearest_booth {
         if let Some(off) = nearest_booth_table_off {
-            b.push_slot_always(VT_SNAP_NEAREST_BOOTH, off);
+            table.add_nearest_booth(off);
         }
     }
     if mask.banks {
-        b.push_slot_always(VT_SNAP_BANKS, banks_off.expect("mask checked"));
+        table.add_banks(banks_off.expect("mask checked"));
     }
     if mask.bank {
-        b.push_slot_always(VT_SNAP_BANK, bank_off.expect("mask checked"));
+        table.add_bank(bank_off.expect("mask checked"));
     }
     if mask.bank_side {
-        b.push_slot_always(VT_SNAP_BANK_SIDE, bank_side_off.expect("mask checked"));
+        table.add_bank_side(bank_side_off.expect("mask checked"));
     }
     if mask.bank_open {
-        b.push_slot_always(VT_SNAP_BANK_OPEN, input.bank_open);
+        table.add_bank_open(input.bank_open);
     }
     if mask.bank_loaded {
-        b.push_slot_always(VT_SNAP_BANK_LOADED, input.bank_loaded);
+        table.add_bank_loaded(input.bank_loaded);
     }
     if mask.bank_generation {
-        b.push_slot_always(VT_SNAP_BANK_GENERATION, input.bank_generation);
+        table.add_bank_generation(input.bank_generation);
     }
     if mask.count_dialog_open {
-        b.push_slot_always(VT_SNAP_COUNT_DIALOG_OPEN, input.count_dialog_open);
+        table.add_count_dialog_open(input.count_dialog_open);
     }
     if mask.withdraw_x_result_seq {
-        b.push_slot_always(VT_SNAP_WITHDRAW_X_RESULT_SEQ, input.withdraw_x_result_seq);
+        table.add_withdraw_x_result_seq(input.withdraw_x_result_seq);
     }
     if mask.withdraw_x_result {
-        b.push_slot_always(VT_SNAP_WITHDRAW_X_RESULT, input.withdraw_x_result);
+        table.add_withdraw_x_result(input.withdraw_x_result);
     }
     if mask.withdraw_load_result_seq {
-        b.push_slot_always(
-            VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ,
-            input.withdraw_load_result_seq,
-        );
+        table.add_withdraw_load_result_seq(input.withdraw_load_result_seq);
     }
     if mask.withdraw_load_result {
-        b.push_slot_always(VT_SNAP_WITHDRAW_LOAD_RESULT, input.withdraw_load_result);
+        table.add_withdraw_load_result(input.withdraw_load_result);
     }
     if mask.bank_op_result_seq {
-        b.push_slot_always(VT_SNAP_BANK_OP_RESULT_SEQ, input.bank_op_result_seq);
+        table.add_bank_op_result_seq(input.bank_op_result_seq);
     }
     if mask.bank_op_result {
-        b.push_slot_always(VT_SNAP_BANK_OP_RESULT, input.bank_op_result);
+        table.add_bank_op_result(input.bank_op_result);
     }
     if mask.hold {
-        b.push_slot_always(VT_SNAP_HOLD, input.hold);
+        table.add_hold(input.hold);
     }
     if mask.ours {
-        b.push_slot_always(VT_SNAP_OURS, input.ours);
+        table.add_ours(input.ours);
     }
     if mask.npcs {
-        b.push_slot_always(VT_SNAP_NPCS, npcs_off.expect("mask checked"));
+        table.add_npcs(npcs_off.expect("mask checked"));
     }
     if mask.locs {
-        b.push_slot_always(VT_SNAP_LOCS, locs_off.expect("mask checked"));
+        table.add_locs(locs_off.expect("mask checked"));
     }
     if mask.players {
-        b.push_slot_always(VT_SNAP_PLAYERS, players_off.expect("mask checked"));
+        table.add_players(players_off.expect("mask checked"));
     }
     if mask.ground {
-        b.push_slot_always(VT_SNAP_GROUND, ground_off.expect("mask checked"));
+        table.add_ground(ground_off.expect("mask checked"));
     }
     if mask.equipment {
-        b.push_slot_always(VT_SNAP_EQUIPMENT, equipment_off.expect("mask checked"));
+        table.add_equipment(equipment_off.expect("mask checked"));
     }
     if mask.chat_open {
-        b.push_slot_always(VT_SNAP_CHAT_OPEN, input.chat_open);
+        table.add_chat_open(input.chat_open);
     }
     if mask.chat_continue {
-        b.push_slot_always(VT_SNAP_CHAT_CONTINUE, input.chat_continue);
+        table.add_chat_continue(input.chat_continue);
     }
     if mask.chat_text {
-        b.push_slot_always(VT_SNAP_CHAT_TEXT, chat_text_off.expect("mask checked"));
+        table.add_chat_text(chat_text_off.expect("mask checked"));
     }
     if mask.chat_options {
-        b.push_slot_always(
-            VT_SNAP_CHAT_OPTIONS,
-            chat_options_off.expect("mask checked"),
-        );
+        table.add_chat_options(chat_options_off.expect("mask checked"));
     }
     if mask.side_tab {
-        b.push_slot_always(VT_SNAP_SIDE_TAB, input.side_tab);
+        table.add_side_tab(input.side_tab);
     }
     if mask.varps {
-        b.push_slot_always(VT_SNAP_VARPS, varps_off.expect("mask checked"));
+        table.add_varps(varps_off.expect("mask checked"));
     }
     if mask.combat_styles {
-        b.push_slot_always(
-            VT_SNAP_COMBAT_STYLES,
-            combat_styles_off.expect("mask checked"),
-        );
+        table.add_combat_styles(combat_styles_off.expect("mask checked"));
     }
     if mask.run_energy {
-        b.push_slot_always(VT_SNAP_RUN_ENERGY, input.run_energy);
+        table.add_run_energy(input.run_energy);
     }
     if mask.run_enabled {
-        b.push_slot_always(VT_SNAP_RUN_ENABLED, input.run_enabled);
+        table.add_run_enabled(input.run_enabled);
     }
     if mask.retaliate_enabled {
-        b.push_slot_always(VT_SNAP_RETALIATE, input.retaliate_enabled);
+        table.add_retaliate_enabled(input.retaliate_enabled);
     }
     if mask.my_name {
-        b.push_slot_always(VT_SNAP_MY_NAME, my_name_off.expect("mask checked"));
+        table.add_my_name(my_name_off.expect("mask checked"));
     }
     if mask.in_combat {
-        b.push_slot_always(VT_SNAP_IN_COMBAT, input.in_combat);
+        table.add_in_combat(input.in_combat);
     }
     if mask.animating {
-        b.push_slot_always(VT_SNAP_ANIMATING, input.animating);
+        table.add_animating(input.animating);
     }
     if let Some(main_modal_id) = main_modal_id_slot {
-        b.push_slot_always(VT_SNAP_MAIN_MODAL, main_modal_id);
+        table.add_main_modal_id(main_modal_id);
     }
     if mask.chat_modal_id {
-        b.push_slot_always(VT_SNAP_CHAT_MODAL, input.chat_modal_id);
+        table.add_chat_modal_id(input.chat_modal_id);
     }
     if mask.make_products {
-        b.push_slot_always(
-            VT_SNAP_MAKE_PRODUCTS,
-            make_products_off.expect("mask checked"),
-        );
+        table.add_make_products(make_products_off.expect("mask checked"));
     }
     if mask.side_tab_ifaces {
-        b.push_slot_always(
-            VT_SNAP_SIDE_TAB_IFACES,
-            side_tab_ifaces_off.expect("mask checked"),
-        );
+        table.add_side_tab_ifaces(side_tab_ifaces_off.expect("mask checked"));
     }
     if mask.spell_buttons {
-        b.push_slot_always(
-            VT_SNAP_SPELL_BUTTONS,
-            spell_buttons_off.expect("mask checked"),
-        );
+        table.add_spell_buttons(spell_buttons_off.expect("mask checked"));
     }
     if mask.chat_lines {
-        b.push_slot_always(VT_SNAP_CHAT_LINES, chat_lines_off.expect("mask checked"));
+        table.add_chat_lines(chat_lines_off.expect("mask checked"));
     }
     if mask.bank_note_on {
-        b.push_slot_always(VT_SNAP_BANK_NOTE_ON, input.bank_note_on);
+        table.add_bank_note_on(input.bank_note_on);
     }
     if mask.bank_note_off {
-        b.push_slot_always(VT_SNAP_BANK_NOTE_OFF, input.bank_note_off);
+        table.add_bank_note_off(input.bank_note_off);
     }
     if mask.scene_state {
-        b.push_slot_always(VT_SNAP_SCENE_STATE, input.scene_state);
+        table.add_scene_state(input.scene_state);
     }
     if mask.weight {
-        b.push_slot_always(VT_SNAP_WEIGHT, input.weight);
+        table.add_weight(input.weight);
     }
     if mask.combat_level {
-        b.push_slot_always(VT_SNAP_COMBAT_LEVEL, input.combat_level);
+        table.add_combat_level(input.combat_level);
     }
     if mask.camera_yaw {
-        b.push_slot_always(VT_SNAP_CAMERA_YAW, input.camera_yaw);
+        table.add_camera_yaw(input.camera_yaw);
     }
     if mask.camera_pitch {
-        b.push_slot_always(VT_SNAP_CAMERA_PITCH, input.camera_pitch);
+        table.add_camera_pitch(input.camera_pitch);
     }
     if mask.teleports_enabled {
-        b.push_slot_always(VT_SNAP_TELEPORTS_ENABLED, input.teleports_enabled);
+        table.add_teleports_enabled(input.teleports_enabled);
     }
     if mask.self_slot {
-        b.push_slot_always(VT_SNAP_SELF_SLOT, input.self_slot);
+        table.add_self_slot(input.self_slot);
     }
     if mask.trade_offer_open {
-        b.push_slot_always(VT_SNAP_TRADE_OFFER_OPEN, input.trade_offer_open);
+        table.add_trade_offer_open(input.trade_offer_open);
     }
     if mask.trade_confirm_open {
-        b.push_slot_always(VT_SNAP_TRADE_CONFIRM_OPEN, input.trade_confirm_open);
+        table.add_trade_confirm_open(input.trade_confirm_open);
     }
     if mask.trade_partner {
-        b.push_slot_always(
-            VT_SNAP_TRADE_PARTNER,
-            trade_partner_off.expect("mask checked"),
-        );
+        table.add_trade_partner(trade_partner_off.expect("mask checked"));
     }
     if mask.trade_mine {
-        b.push_slot_always(VT_SNAP_TRADE_MINE, trade_mine_off.expect("mask checked"));
+        table.add_trade_mine(trade_mine_off.expect("mask checked"));
     }
     if mask.trade_theirs {
-        b.push_slot_always(
-            VT_SNAP_TRADE_THEIRS,
-            trade_theirs_off.expect("mask checked"),
-        );
+        table.add_trade_theirs(trade_theirs_off.expect("mask checked"));
     }
     if mask.trade_side {
-        b.push_slot_always(VT_SNAP_TRADE_SIDE, trade_side_off.expect("mask checked"));
+        table.add_trade_side(trade_side_off.expect("mask checked"));
     }
     if mask.trade_accept_id {
-        b.push_slot_always(VT_SNAP_TRADE_ACCEPT_ID, input.trade_accept_id);
+        table.add_trade_accept_id(input.trade_accept_id);
     }
     if mask.trade_decline_id {
-        b.push_slot_always(VT_SNAP_TRADE_DECLINE_ID, input.trade_decline_id);
+        table.add_trade_decline_id(input.trade_decline_id);
     }
     if mask.shop_open {
-        b.push_slot_always(VT_SNAP_SHOP_OPEN, input.shop_open);
+        table.add_shop_open(input.shop_open);
     }
     if mask.shop_stock {
-        b.push_slot_always(VT_SNAP_SHOP_STOCK, shop_stock_off.expect("mask checked"));
+        table.add_shop_stock(shop_stock_off.expect("mask checked"));
     }
     if mask.shop_player {
-        b.push_slot_always(VT_SNAP_SHOP_PLAYER_AVAILABLE, native.shop_player.is_some());
+        table.add_shop_player_available(native.shop_player.is_some());
         if let Some(off) = shop_player_off {
-            b.push_slot_always(VT_SNAP_SHOP_PLAYER, off);
+            table.add_shop_player(off);
         }
     }
     if mask.main_make {
-        b.push_slot_always(VT_SNAP_MAIN_MAKE_AVAILABLE, native.main_make.is_some());
+        table.add_main_make_available(native.main_make.is_some());
         if let Some(off) = main_make_off {
-            b.push_slot_always(VT_SNAP_MAIN_MAKE, off);
+            table.add_main_make(off);
         }
     }
     if mask.reach {
-        b.push_slot_always(VT_SNAP_REACH, reach_table_off.expect("mask checked"));
+        table.add_reach(reach_table_off.expect("mask checked"));
     }
     if mask.attacked_by_player {
-        b.push_slot_always(VT_SNAP_ATTACKED_BY_PLAYER, input.attacked_by_player);
+        table.add_attacked_by_player(input.attacked_by_player);
     }
     if mask.self_target {
-        b.push_slot_always(VT_SNAP_SELF_TARGET_KIND, input.self_target_kind);
-        b.push_slot_always(VT_SNAP_SELF_TARGET_INDEX, input.self_target_index);
+        table.add_self_target_kind(input.self_target_kind);
+        table.add_self_target_index(input.self_target_index);
     }
     if mask.widgets {
-        b.push_slot_always(VT_SNAP_WIDGETS, widgets_off.expect("mask checked"));
+        table.add_widgets(widgets_off.expect("mask checked"));
     }
     if mask.bank_selection {
-        b.push_slot_always(
-            VT_SNAP_BANK_SELECTION_REQUEST_ID,
-            native.bank_selection.request_id,
-        );
-        b.push_slot_always(
-            VT_SNAP_BANK_SELECTION_GENERATION,
-            native.bank_selection.generation,
-        );
-        b.push_slot_always(
-            VT_SNAP_BANK_SELECTION_INDEX,
-            native.bank_selection.bank_index,
-        );
-        b.push_slot_always(VT_SNAP_BANK_SELECTION_KIND, native.bank_selection.kind);
+        table.add_bank_selection_request_id(native.bank_selection.request_id);
+        table.add_bank_selection_generation(native.bank_selection.generation);
+        table.add_bank_selection_index(native.bank_selection.bank_index);
+        table.add_bank_selection_kind(native.bank_selection.kind);
     }
     if let (true, Some(anim)) = (mask.self_anim, native.self_anim) {
-        b.push_slot_always(VT_SNAP_SELF_ANIM, anim);
+        table.add_self_anim(anim);
     }
     if let (true, Some(generation)) = (
         mask.bank_snapshot_generation,
         native.bank_snapshot_generation,
     ) {
-        b.push_slot_always(VT_SNAP_BANK_SNAPSHOT_GENERATION, generation);
+        table.add_bank_snapshot_generation(generation);
     }
     if mask.self_chat {
-        b.push_slot_always(VT_SNAP_SELF_CHAT, self_chat_off.expect("mask checked"));
+        table.add_self_chat(self_chat_off.expect("mask checked"));
     }
     if mask.hint_tile {
         let (x, z) = native.hint_tile.unwrap_or((-1, -1));
-        b.push_slot_always(VT_SNAP_HINT_TILE_X, x);
-        b.push_slot_always(VT_SNAP_HINT_TILE_Z, z);
+        table.add_hint_tile_x(x);
+        table.add_hint_tile_z(z);
     }
     if mask.retaliate_controls {
         let (on, off) = native.retaliate_controls.unwrap_or((-1, -1));
-        b.push_slot_always(VT_SNAP_RETALIATE_ON_COM_ID, on);
-        b.push_slot_always(VT_SNAP_RETALIATE_OFF_COM_ID, off);
+        table.add_retaliate_on_com_id(on);
+        table.add_retaliate_off_com_id(off);
     }
     if mask.quest_statuses {
-        b.push_slot_always(
-            VT_SNAP_QUEST_STATUSES_AVAILABLE,
-            native.quest_statuses.is_some(),
-        );
+        table.add_quest_statuses_available(native.quest_statuses.is_some());
         if let Some(off) = quest_statuses_off {
-            b.push_slot_always(VT_SNAP_QUEST_STATUSES, off);
+            table.add_quest_statuses(off);
         }
     }
     if mask.npc_boxes {
-        b.push_slot_always(VT_SNAP_NPC_BOXES_AVAILABLE, native.npc_boxes.is_some());
+        table.add_npc_boxes_available(native.npc_boxes.is_some());
         if let Some(off) = npc_boxes_off {
-            b.push_slot_always(VT_SNAP_NPC_BOXES, off);
+            table.add_npc_boxes(off);
         }
     }
     if mask.bank_approaches {
         if let Some(off) = bank_approaches_off {
-            b.push_slot_always(VT_SNAP_BANK_APPROACHES, off);
+            table.add_bank_approaches(off);
         }
     }
     if mask.walk_outcome {
-        b.push_slot_always(VT_SNAP_WALK_OUTCOME_SEQ, native.walk_outcome_seq);
-        b.push_slot_always(
-            VT_SNAP_WALK_OUTCOME_GENERATION,
-            native.walk_outcome_generation,
-        );
-        b.push_slot_always(VT_SNAP_WALK_OUTCOME_FAILED, native.walk_outcome_failed);
-        b.push_slot_always(VT_SNAP_WALK_OUTCOME_X, native.walk_outcome_x);
-        b.push_slot_always(VT_SNAP_WALK_OUTCOME_Z, native.walk_outcome_z);
-        b.push_slot_always(VT_SNAP_WALK_OUTCOME_LEVEL, native.walk_outcome_level);
-        b.push_slot_always(VT_SNAP_WALK_OUTCOME_RADIUS, native.walk_outcome_radius);
-        b.push_slot_always(
-            VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS,
-            native.walk_outcome_allow_teleports,
-        );
-        b.push_slot_always(
-            VT_SNAP_WALK_OUTCOME_REQUEST_ID,
-            native.walk_outcome_request_id,
-        );
-        b.push_slot_always(VT_SNAP_WALK_OUTCOME_BLOCKED, native.walk_outcome_blocked);
+        table.add_walk_outcome_seq(native.walk_outcome_seq);
+        table.add_walk_outcome_generation(native.walk_outcome_generation);
+        table.add_walk_outcome_failed(native.walk_outcome_failed);
+        table.add_walk_outcome_x(native.walk_outcome_x);
+        table.add_walk_outcome_z(native.walk_outcome_z);
+        table.add_walk_outcome_level(native.walk_outcome_level);
+        table.add_walk_outcome_radius(native.walk_outcome_radius);
+        table.add_walk_outcome_allow_teleports(native.walk_outcome_allow_teleports);
+        table.add_walk_outcome_request_id(native.walk_outcome_request_id);
+        table.add_walk_outcome_blocked(native.walk_outcome_blocked);
         // The vector rides every post of the family: a supplied empty one is
         // the observed "no named short", so a clear is never omitted. Only a
         // caller that supplied no list at all omits the slot.
         if let Some(off) = walk_missing_carry_off {
-            b.push_slot_always(VT_SNAP_WALK_MISSING_CARRY, off);
+            table.add_walk_missing_carry(off);
         }
     }
     if mask.route_inspect {
         let facts = &native.route_inspect;
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_SEQ, facts.latest.seq);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_GENERATION, facts.latest.generation);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REQUEST_ID, facts.latest.request_id);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_OK, facts.latest.ok);
+        table.add_route_inspect_seq(facts.latest.seq);
+        table.add_route_inspect_generation(facts.latest.generation);
+        table.add_route_inspect_request_id(facts.latest.request_id);
+        table.add_route_inspect_ok(facts.latest.ok);
         if let Some(off) = inspect_reason_off {
-            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REASON, off);
+            table.add_route_inspect_reason(off);
         }
-        b.push_slot_always(
-            VT_SNAP_ROUTE_INSPECT_BANK_PLANNED,
-            facts.latest.bank_planned,
-        );
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_TICKS, facts.latest.ticks);
+        table.add_route_inspect_bank_planned(facts.latest.bank_planned);
+        table.add_route_inspect_ticks(facts.latest.ticks);
         if let Some(off) = inspect_hops_off {
-            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_HOPS, off);
+            table.add_route_inspect_hops(off);
         }
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_SEQ, facts.prev.seq);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_GENERATION, facts.prev.generation);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID, facts.prev.request_id);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_OK, facts.prev.ok);
+        table.add_route_inspect_prev_seq(facts.prev.seq);
+        table.add_route_inspect_prev_generation(facts.prev.generation);
+        table.add_route_inspect_prev_request_id(facts.prev.request_id);
+        table.add_route_inspect_prev_ok(facts.prev.ok);
         if let Some(off) = inspect_prev_reason_off {
-            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_REASON, off);
+            table.add_route_inspect_prev_reason(off);
         }
-        b.push_slot_always(
-            VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED,
-            facts.prev.bank_planned,
-        );
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_TICKS, facts.prev.ticks);
+        table.add_route_inspect_prev_bank_planned(facts.prev.bank_planned);
+        table.add_route_inspect_prev_ticks(facts.prev.ticks);
         if let Some(off) = inspect_prev_hops_off {
-            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_HOPS, off);
+            table.add_route_inspect_prev_hops(off);
         }
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_RUNNING_ID, facts.running_id);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PENDING_ID, facts.pending_id);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID, facts.accepted_id);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REPLACED_ID, facts.replaced_id);
-        b.push_slot_always(
-            VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID,
-            facts.replaced_prev_id,
-        );
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID, facts.refused_id);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, facts.refused_id_2);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, facts.refused_id_3);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_UNOBSERVED, facts.unobserved);
+        table.add_route_inspect_running_id(facts.running_id);
+        table.add_route_inspect_pending_id(facts.pending_id);
+        table.add_route_inspect_accepted_id(facts.accepted_id);
+        table.add_route_inspect_replaced_id(facts.replaced_id);
+        table.add_route_inspect_replaced_prev_id(facts.replaced_prev_id);
+        table.add_route_inspect_refused_id(facts.refused_id);
+        table.add_route_inspect_refused_id_2(facts.refused_id_2);
+        table.add_route_inspect_refused_id_3(facts.refused_id_3);
+        table.add_route_inspect_unobserved(facts.unobserved);
     }
     if mask.collision {
         if let Some(off) = collision_table_off {
-            b.push_slot_always(VT_SNAP_COLLISION, off);
+            table.add_collision(off);
         }
     }
     if mask.main_modal_texts {
         if let Some(off) = main_modal_texts_off {
-            b.push_slot_always(VT_SNAP_MAIN_MODAL_TEXTS, off);
+            table.add_main_modal_texts(off);
         }
     }
     // Both slots or neither: the generation is pushed only from the same
     // `Some` that produced the table, so no buffer can carry a generation
     // without a board (or a board without its generation).
     if let Some((off, generation)) = puzzle_board_slot {
-        b.push_slot_always(VT_SNAP_PUZZLE_BOARD, off);
-        b.push_slot_always(VT_SNAP_PUZZLE_BOARD_GENERATION, generation);
+        table.add_puzzle_board(off);
+        table.add_puzzle_board_generation(generation);
     }
-    b.push_slot_always(VT_SNAP_CANVAS_WIDTH, SNAPSHOT_CANVAS_W);
-    b.push_slot_always(VT_SNAP_CANVAS_HEIGHT, SNAPSHOT_CANVAS_H);
-    let root = b.end_table(tab);
+    table.add_canvas_width(SNAPSHOT_CANVAS_W);
+    table.add_canvas_height(SNAPSHOT_CANVAS_H);
+    let root = table.finish();
     b.finish(root, None);
 }
 
 fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<TileReader<'b>> {
-    let tab = b.start_table();
-    b.push_slot_always(VT_TILE_X, t.x);
-    b.push_slot_always(VT_TILE_Z, t.z);
-    b.push_slot_always(VT_TILE_LEVEL, t.level);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = TileBuilder::new(b);
+    table.add_x(t.x);
+    table.add_z(t.z);
+    table.add_level(t.level);
+    table.finish()
+}
+
+fn booth_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<Booth<'b>> {
+    let mut table = BoothBuilder::new(b);
+    table.add_x(t.x);
+    table.add_z(t.z);
+    table.add_level(t.level);
+    table.finish()
 }
 
 fn avoid_rect_off<'b>(
@@ -4871,13 +2715,13 @@ fn avoid_rect_off<'b>(
     max_z: i32,
     level: Option<i32>,
 ) -> WIPOffset<AvoidRectReader<'b>> {
-    let tab = b.start_table();
-    b.push_slot_always(VT_AR_MIN_X, min_x);
-    b.push_slot_always(VT_AR_MAX_X, max_x);
-    b.push_slot_always(VT_AR_MIN_Z, min_z);
-    b.push_slot_always(VT_AR_MAX_Z, max_z);
-    b.push_slot_always(VT_AR_LEVEL, level.unwrap_or(-1));
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = AvoidRectBuilder::new(b);
+    table.add_min_x(min_x);
+    table.add_max_x(max_x);
+    table.add_min_z(min_z);
+    table.add_max_z(max_z);
+    table.add_level(level.unwrap_or(-1));
+    table.finish()
 }
 
 fn inspect_hop_off<'b>(
@@ -4887,37 +2731,37 @@ fn inspect_hop_off<'b>(
     let kind = b.create_string(hop.kind);
     let loc_name = b.create_string(hop.loc_name);
     let action = b.create_string(hop.action);
-    let tab = b.start_table();
-    b.push_slot_always(VT_IH_KIND, kind);
-    b.push_slot_always(VT_IH_LOC_ID, hop.loc_id);
-    b.push_slot_always(VT_IH_LOC_NAME, loc_name);
-    b.push_slot_always(VT_IH_ACTION, action);
-    b.push_slot_always(VT_IH_OPTION, hop.option);
-    b.push_slot_always(VT_IH_FROM_X, hop.from_x);
-    b.push_slot_always(VT_IH_FROM_Z, hop.from_z);
-    b.push_slot_always(VT_IH_FROM_LEVEL, hop.from_level);
-    b.push_slot_always(VT_IH_TO_X, hop.to_x);
-    b.push_slot_always(VT_IH_TO_Z, hop.to_z);
-    b.push_slot_always(VT_IH_TO_LEVEL, hop.to_level);
-    b.push_slot_always(VT_IH_TICKS, hop.ticks);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = InspectHopBuilder::new(b);
+    table.add_kind(kind);
+    table.add_loc_id(hop.loc_id);
+    table.add_loc_name(loc_name);
+    table.add_action(action);
+    table.add_option(hop.option);
+    table.add_from_x(hop.from_x);
+    table.add_from_z(hop.from_z);
+    table.add_from_level(hop.from_level);
+    table.add_to_x(hop.to_x);
+    table.add_to_z(hop.to_z);
+    table.add_to_level(hop.to_level);
+    table.add_ticks(hop.ticks);
+    table.finish()
 }
 
 fn bank_approach_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     row: &BankApproachInput,
 ) -> WIPOffset<BankApproachReader<'b>> {
-    let tab = b.start_table();
-    b.push_slot_always(VT_BA_LOC_ID, row.loc_id);
-    b.push_slot_always(VT_BA_X, row.x);
-    b.push_slot_always(VT_BA_Z, row.z);
-    b.push_slot_always(VT_BA_LEVEL, row.level);
-    b.push_slot_always(VT_BA_CAN_OPERATE, row.can_operate);
-    b.push_slot_always(VT_BA_DEST_OK, row.dest_ok);
-    b.push_slot_always(VT_BA_DEST_X, row.dest_x);
-    b.push_slot_always(VT_BA_DEST_Z, row.dest_z);
-    b.push_slot_always(VT_BA_DEST_LEVEL, row.dest_level);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = BankApproachBuilder::new(b);
+    table.add_loc_id(row.loc_id);
+    table.add_x(row.x);
+    table.add_z(row.z);
+    table.add_level(row.level);
+    table.add_can_operate(row.can_operate);
+    table.add_dest_ok(row.dest_ok);
+    table.add_dest_x(row.dest_x);
+    table.add_dest_z(row.dest_z);
+    table.add_dest_level(row.dest_level);
+    table.finish()
 }
 
 fn collision_off<'b>(
@@ -4925,15 +2769,15 @@ fn collision_off<'b>(
     c: &CollisionViewInput<'_>,
 ) -> WIPOffset<CollisionReader<'b>> {
     let flags = b.create_vector(c.flags);
-    let tab = b.start_table();
-    b.push_slot_always(VT_COL_AVAILABLE, c.available);
-    b.push_slot_always(VT_COL_BASE_X, c.base_x);
-    b.push_slot_always(VT_COL_BASE_Z, c.base_z);
-    b.push_slot_always(VT_COL_LEVEL, c.level);
-    b.push_slot_always(VT_COL_WIDTH, c.width);
-    b.push_slot_always(VT_COL_HEIGHT, c.height);
-    b.push_slot_always(VT_COL_FLAGS, flags);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = CollisionBuilder::new(b);
+    table.add_available(c.available);
+    table.add_base_x(c.base_x);
+    table.add_base_z(c.base_z);
+    table.add_level(c.level);
+    table.add_width(c.width);
+    table.add_height(c.height);
+    table.add_flags(flags);
+    table.finish()
 }
 
 fn reach_off<'b>(
@@ -4947,52 +2791,52 @@ fn reach_off<'b>(
     let exact_rank = b.create_vector(r.exact_rank);
     let adjacent_rank = b.create_vector(r.adjacent_rank);
     let canlight = b.create_vector(r.canlight);
-    let tab = b.start_table();
-    b.push_slot_always(VT_REACH_AVAILABLE, r.available);
-    b.push_slot_always(VT_REACH_BASE_X, r.base_x);
-    b.push_slot_always(VT_REACH_BASE_Z, r.base_z);
-    b.push_slot_always(VT_REACH_LEVEL, r.level);
-    b.push_slot_always(VT_REACH_WIDTH, r.width);
-    b.push_slot_always(VT_REACH_HEIGHT, r.height);
-    b.push_slot_always(VT_REACH_WALKABLE, walkable);
-    b.push_slot_always(VT_REACH_REACHABLE, reachable);
-    b.push_slot_always(VT_REACH_REACHABLE_ADJ, reachable_adj);
-    b.push_slot_always(VT_REACH_STEP, step);
-    b.push_slot_always(VT_REACH_EXACT_RANK, exact_rank);
-    b.push_slot_always(VT_REACH_ADJACENT_RANK, adjacent_rank);
-    b.push_slot_always(VT_REACH_CANLIGHT, canlight);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = ReachBuilder::new(b);
+    table.add_available(r.available);
+    table.add_base_x(r.base_x);
+    table.add_base_z(r.base_z);
+    table.add_level(r.level);
+    table.add_width(r.width);
+    table.add_height(r.height);
+    table.add_walkable(walkable);
+    table.add_reachable(reachable);
+    table.add_reachable_adj(reachable_adj);
+    table.add_step(step);
+    table.add_exact_rank(exact_rank);
+    table.add_adjacent_rank(adjacent_rank);
+    table.add_canlight(canlight);
+    table.finish()
 }
 
 fn row_off<'b>(b: &mut FlatBufferBuilder<'b>, r: &ItemRowInput<'_>) -> WIPOffset<RowReader<'b>> {
     let name_off = r.name.map(|n| b.create_string(n));
     let ops_offs: Vec<_> = r.ops.iter().map(|a| b.create_string(a)).collect();
     let ops_off = b.create_vector(&ops_offs);
-    let tab = b.start_table();
+    let mut table = RowBuilder::new(b);
     if let Some(off) = name_off {
-        b.push_slot_always(VT_ROW_NAME, off);
+        table.add_name(off);
     }
-    b.push_slot_always(VT_ROW_COUNT, r.count);
-    b.push_slot_always(VT_ROW_ID, r.id);
-    b.push_slot_always(VT_ROW_OPS, ops_off);
-    b.push_slot_always(VT_ROW_NOTED, r.noted);
-    b.push_slot_always(VT_ROW_CERT, r.cert);
-    b.push_slot_always(VT_ROW_COMPONENT, r.component_id);
+    table.add_count(r.count);
+    table.add_id(r.id);
+    table.add_ops(ops_off);
+    table.add_noted(r.noted);
+    table.add_cert(r.cert);
+    table.add_component_id(r.component_id);
     if r.slot >= 0 {
-        b.push_slot_always(VT_ROW_SLOT, r.slot);
+        table.add_slot(r.slot);
     }
-    WIPOffset::new(b.end_table(tab).value())
+    table.finish()
 }
 
 fn stat_off<'b>(b: &mut FlatBufferBuilder<'b>, s: &StatInput<'_>) -> WIPOffset<StatReader<'b>> {
     let name_off = b.create_string(s.name);
-    let tab = b.start_table();
-    b.push_slot_always(VT_STAT_INDEX, s.index);
-    b.push_slot_always(VT_STAT_NAME, name_off);
-    b.push_slot_always(VT_STAT_XP, s.xp);
-    b.push_slot_always(VT_STAT_BASE, s.base);
-    b.push_slot_always(VT_STAT_EFFECTIVE, s.effective);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = StatBuilder::new(b);
+    table.add_index(s.index);
+    table.add_name(name_off);
+    table.add_xp(s.xp);
+    table.add_base(s.base);
+    table.add_effective(s.effective);
+    table.finish()
 }
 
 fn scene_entity_off<'b>(
@@ -5002,34 +2846,38 @@ fn scene_entity_off<'b>(
     let name_off = e.name.map(|n| b.create_string(n));
     let action_offs: Vec<_> = e.actions.iter().map(|a| b.create_string(a)).collect();
     let actions_off = b.create_vector(&action_offs);
-    let tab = b.start_table();
-    b.push_slot_always(VT_ENT_INDEX, e.index);
-    b.push_slot_always(VT_ENT_ID, e.id);
+    let mut table = SceneEntityBuilder::new(b);
+    table.add_index(e.index);
+    table.add_id(e.id);
     if let Some(off) = name_off {
-        b.push_slot_always(VT_ENT_NAME, off);
+        table.add_name(off);
     }
-    b.push_slot_always(VT_ENT_X, e.x);
-    b.push_slot_always(VT_ENT_Z, e.z);
-    b.push_slot_always(VT_ENT_LEVEL, e.level);
-    b.push_slot_always(VT_ENT_DISTANCE, e.distance);
-    b.push_slot_always(VT_ENT_HEALTH, e.health);
-    b.push_slot_always(VT_ENT_MAX_HEALTH, e.max_health);
-    b.push_slot_always(VT_ENT_IN_COMBAT, e.in_combat);
-    b.push_slot_always(VT_ENT_ANIMATING, e.animating);
-    b.push_slot_always(VT_ENT_ACTIONS, actions_off);
-    b.push_slot_always(VT_ENT_REACHABLE, e.reachable);
-    b.push_slot_always(VT_ENT_REACHABLE_ADJ, e.reachable_adj);
-    b.push_slot_always(VT_ENT_COMBAT_LEVEL, e.combat_level);
-    b.push_slot_always(VT_ENT_TARGET_KIND, e.target_kind);
-    b.push_slot_always(VT_ENT_TARGET_INDEX, e.target_index);
+    table.add_x(e.x);
+    table.add_z(e.z);
+    table.add_level(e.level);
+    table.add_distance(e.distance);
+    table.add_health(e.health);
+    table.add_max_health(e.max_health);
+    table.add_in_combat(e.in_combat);
+    table.add_animating(e.animating);
+    table.add_actions(actions_off);
+    table.add_reachable(e.reachable);
+    table.add_reachable_adj(e.reachable_adj);
+    table.add_combat_level(e.combat_level);
+    table.add_target_kind(e.target_kind);
+    table.add_target_index(e.target_index);
     if e.size >= 1 {
-        b.push_slot_always(VT_ENT_SIZE, e.size);
-        b.push_slot_always(VT_ENT_NX, e.nx);
-        b.push_slot_always(VT_ENT_NZ, e.nz);
+        table.add_size(e.size);
+        table.add_nx(e.nx);
+        table.add_nz(e.nz);
     }
-    b.push_slot(VT_ENT_SHAPE, e.shape, 0);
-    b.push_slot(VT_ENT_ANGLE, e.angle, 0);
-    WIPOffset::new(b.end_table(tab).value())
+    if e.shape != 0 {
+        table.add_shape(e.shape);
+    }
+    if e.angle != 0 {
+        table.add_angle(e.angle);
+    }
+    table.finish()
 }
 
 fn chat_option_off<'b>(
@@ -5037,10 +2885,10 @@ fn chat_option_off<'b>(
     o: &ChatOptionInput<'_>,
 ) -> WIPOffset<ChatOptionReader<'b>> {
     let text_off = b.create_string(o.text);
-    let tab = b.start_table();
-    b.push_slot_always(VT_CHAT_OPT_TEXT, text_off);
-    b.push_slot(VT_CHAT_OPT_COM, o.com_id, 0);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = ChatOptionBuilder::new(b);
+    table.add_text(text_off);
+    table.add_com_id(o.com_id);
+    table.finish()
 }
 
 fn chat_line_off<'b>(
@@ -5049,14 +2897,14 @@ fn chat_line_off<'b>(
 ) -> WIPOffset<ChatLineReader<'b>> {
     let text_off = b.create_string(l.text);
     let username_off = l.username.map(|name| b.create_string(name));
-    let tab = b.start_table();
-    b.push_slot_always(VT_CL_SEQ, l.seq);
-    b.push_slot_always(VT_CL_TEXT, text_off);
-    b.push_slot_always(VT_CL_TYPE, l.type_);
+    let mut table = ChatLineBuilder::new(b);
+    table.add_seq(l.seq);
+    table.add_text(text_off);
+    table.add_type_(l.type_);
     if let Some(off) = username_off {
-        b.push_slot_always(VT_CL_USERNAME, off);
+        table.add_username(off);
     }
-    WIPOffset::new(b.end_table(tab).value())
+    table.finish()
 }
 
 fn widget_text_off<'b>(
@@ -5064,11 +2912,11 @@ fn widget_text_off<'b>(
     w: &WidgetTextInput<'_>,
 ) -> WIPOffset<WidgetTextReader<'b>> {
     let text_off = b.create_string(w.text);
-    let tab = b.start_table();
-    b.push_slot_always(VT_WT_COMPONENT, w.component_id);
-    b.push_slot_always(VT_WT_TEXT, text_off);
-    b.push_slot_always(VT_WT_ITEM_COUNT, w.item_count);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = WidgetTextBuilder::new(b);
+    table.add_component_id(w.component_id);
+    table.add_text(text_off);
+    table.add_item_count(w.item_count);
+    table.finish()
 }
 
 fn main_modal_texts_off<'b>(
@@ -5081,10 +2929,10 @@ fn main_modal_texts_off<'b>(
         .map(|line| b.create_string(line))
         .collect::<Vec<_>>();
     let texts_off = b.create_vector(&text_offs);
-    let tab = b.start_table();
-    b.push_slot_always(VT_MMT_ROOT, pair.root);
-    b.push_slot_always(VT_MMT_TEXTS, texts_off);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = MainModalTextsBuilder::new(b);
+    table.add_root(pair.root);
+    table.add_texts(texts_off);
+    table.finish()
 }
 
 /// The puzzle board table. All three inner slots are written unconditionally
@@ -5101,11 +2949,11 @@ fn puzzle_board_off<'b>(
         .map(|row| row_off(b, row))
         .collect::<Vec<_>>();
     let items_off = b.create_vector(&item_offs);
-    let tab = b.start_table();
-    b.push_slot_always(VT_PB_COMPONENT_ID, board.component_id);
-    b.push_slot_always(VT_PB_SIZE, board.size);
-    b.push_slot_always(VT_PB_ITEMS, items_off);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = PuzzleBoardBuilder::new(b);
+    table.add_component_id(board.component_id);
+    table.add_size(board.size);
+    table.add_items(items_off);
+    table.finish()
 }
 
 /// One navigator-named gate short. `id` and `count` are always written — the
@@ -5116,13 +2964,13 @@ fn carry_off<'b>(
     row: &CarryInput<'_>,
 ) -> WIPOffset<CarryReader<'b>> {
     let name_off = row.name.map(|name| b.create_string(name));
-    let tab = b.start_table();
-    b.push_slot_always(VT_CARRY_ID, row.id);
-    b.push_slot_always(VT_CARRY_COUNT, row.count);
+    let mut table = CarryBuilder::new(b);
+    table.add_id(row.id);
+    table.add_count(row.count);
     if let Some(off) = name_off {
-        b.push_slot_always(VT_CARRY_NAME, off);
+        table.add_name(off);
     }
-    WIPOffset::new(b.end_table(tab).value())
+    table.finish()
 }
 
 fn quest_status_off<'b>(
@@ -5131,16 +2979,16 @@ fn quest_status_off<'b>(
 ) -> WIPOffset<QuestStatusReader<'b>> {
     let name_off = b.create_string(q.name);
     let status_off = b.create_string(q.status);
-    let tab = b.start_table();
-    b.push_slot_always(VT_QUEST_NAME, name_off);
-    b.push_slot_always(VT_QUEST_STATUS, status_off);
+    let mut table = QuestStatusBuilder::new(b);
+    table.add_name(name_off);
+    table.add_status(status_off);
     // Only a supplied id is written. An absent id omits the slot so the
     // page can tell "no click target" from a real component `0`; never
     // write a sentinel for it.
     if let Some(component_id) = q.component_id {
-        b.push_slot_always(VT_QUEST_COMPONENT, component_id);
+        table.add_component_id(component_id);
     }
-    WIPOffset::new(b.end_table(tab).value())
+    table.finish()
 }
 
 fn npc_box_off<'b>(
@@ -5153,30 +3001,30 @@ fn npc_box_off<'b>(
         .flat_map(|&(x, y)| [x, y])
         .collect::<Vec<_>>();
     let points_off = b.create_vector(&points);
-    let tab = b.start_table();
-    b.push_slot_always(VT_NPC_BOX_INDEX, row.index);
-    b.push_slot_always(VT_NPC_BOX_POINTS, points_off);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = NpcBoxBuilder::new(b);
+    table.add_index(row.index);
+    table.add_points(points_off);
+    table.finish()
 }
 
 fn side_tab_iface_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     t: SideTabIfaceInput,
 ) -> WIPOffset<SideTabIfaceReader<'b>> {
-    let tab = b.start_table();
-    b.push_slot_always(VT_STI_INDEX, t.index);
-    b.push_slot_always(VT_STI_ID, t.id);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = SideTabIfaceBuilder::new(b);
+    table.add_index(t.index);
+    table.add_id(t.id);
+    table.finish()
 }
 
 fn make_button_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     btn: &MakeButtonInput,
 ) -> WIPOffset<MakeButtonReader<'b>> {
-    let tab = b.start_table();
-    b.push_slot_always(VT_MAKE_BTN_QTY, btn.qty);
-    b.push_slot_always(VT_MAKE_BTN_COM, btn.com_id);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = MakeButtonBuilder::new(b);
+    table.add_qty(btn.qty);
+    table.add_com_id(btn.com_id);
+    table.finish()
 }
 
 fn make_product_off<'b>(
@@ -5190,11 +3038,11 @@ fn make_product_off<'b>(
         .map(|btn| make_button_off(b, btn))
         .collect::<Vec<_>>();
     let buttons_off = b.create_vector(&btn_offs);
-    let tab = b.start_table();
-    b.push_slot_always(VT_MAKE_PROD_OID, p.object_id);
-    b.push_slot_always(VT_MAKE_PROD_NAME, name_off);
-    b.push_slot_always(VT_MAKE_PROD_BTNS, buttons_off);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = MakeProductBuilder::new(b);
+    table.add_object_id(p.object_id);
+    table.add_name(name_off);
+    table.add_buttons(buttons_off);
+    table.finish()
 }
 
 fn combat_style_off<'b>(
@@ -5202,18 +3050,18 @@ fn combat_style_off<'b>(
     c: &CombatStyleInput<'_>,
 ) -> WIPOffset<CombatStyleReader<'b>> {
     let label_off = b.create_string(c.label);
-    let tab = b.start_table();
-    b.push_slot_always(VT_CS_MODE, c.mode);
-    b.push_slot_always(VT_CS_LABEL, label_off);
-    b.push_slot_always(VT_CS_COMPONENT, c.component_id);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = CombatStyleBuilder::new(b);
+    table.add_mode(c.mode);
+    table.add_label(label_off);
+    table.add_component_id(c.component_id);
+    table.finish()
 }
 
 fn varp_off<'b>(b: &mut FlatBufferBuilder<'b>, v: &VarpInput) -> WIPOffset<VarpReader<'b>> {
-    let tab = b.start_table();
-    b.push_slot_always(VT_VARP_INDEX, v.index);
-    b.push_slot_always(VT_VARP_VALUE, v.value);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = VarpBuilder::new(b);
+    table.add_index(v.index);
+    table.add_value(v.value);
+    table.finish()
 }
 
 fn bank_stand_off<'b>(
@@ -5223,17 +3071,17 @@ fn bank_stand_off<'b>(
     let name_off = b.create_string(s.name);
     let kind_off = b.create_string(s.kind);
     let choose_off = s.choose.map(|c| b.create_string(c));
-    let tab = b.start_table();
-    b.push_slot_always(VT_BANK_NAME, name_off);
-    b.push_slot_always(VT_BANK_X, s.x);
-    b.push_slot_always(VT_BANK_Z, s.z);
-    b.push_slot_always(VT_BANK_LEVEL, s.level);
-    b.push_slot_always(VT_BANK_KIND, kind_off);
-    b.push_slot_always(VT_BANK_OP, s.op);
+    let mut table = BankStandBuilder::new(b);
+    table.add_name(name_off);
+    table.add_x(s.x);
+    table.add_z(s.z);
+    table.add_level(s.level);
+    table.add_kind(kind_off);
+    table.add_op(s.op);
     if let Some(off) = choose_off {
-        b.push_slot_always(VT_BANK_CHOOSE, off);
+        table.add_choose(off);
     }
-    WIPOffset::new(b.end_table(tab).value())
+    table.finish()
 }
 
 fn nearest_booth_table_off<'b>(
@@ -5242,920 +3090,15 @@ fn nearest_booth_table_off<'b>(
 ) -> WIPOffset<NearestBoothReader<'b>> {
     let name_off = b.create_string(s.name);
     let op_off = b.create_string(s.op);
-    let tab = b.start_table();
-    b.push_slot_always(VT_NEAREST_X, s.x);
-    b.push_slot_always(VT_NEAREST_Z, s.z);
-    b.push_slot_always(VT_NEAREST_LEVEL, s.level);
-    b.push_slot_always(VT_NEAREST_NAME, name_off);
-    b.push_slot_always(VT_NEAREST_OP, op_off);
-    b.push_slot_always(VT_NEAREST_ID, s.id);
-    WIPOffset::new(b.end_table(tab).value())
+    let mut table = NearestBoothBuilder::new(b);
+    table.add_x(s.x);
+    table.add_z(s.z);
+    table.add_level(s.level);
+    table.add_name(name_off);
+    table.add_op(op_off);
+    table.add_id(s.id);
+    table.finish()
 }
-
-/// One scene entity view as decoded.
-#[derive(Clone, Copy)]
-pub struct SceneEntityReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for SceneEntityReader<'a> {
-    type Inner = SceneEntityReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl SceneEntityReader<'_> {
-    pub fn index(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_INDEX, None) }.unwrap_or(0)
-    }
-    pub fn id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_ID, None) }.unwrap_or(0)
-    }
-    pub fn name(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_ENT_NAME, None) }
-    }
-    pub fn x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_X, None) }.unwrap_or(0)
-    }
-    pub fn z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_Z, None) }.unwrap_or(0)
-    }
-    pub fn level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn distance(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_DISTANCE, None) }.unwrap_or(0)
-    }
-    pub fn health(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_HEALTH, None) }.unwrap_or(-1)
-    }
-    pub fn max_health(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_MAX_HEALTH, None) }.unwrap_or(-1)
-    }
-    pub fn in_combat(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_ENT_IN_COMBAT, None) }.unwrap_or(false)
-    }
-    pub fn animating(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_ENT_ANIMATING, None) }.unwrap_or(false)
-    }
-    pub fn actions(&self) -> Vec<&str> {
-        match unsafe {
-            self.tab
-                .get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_ENT_ACTIONS, None)
-        } {
-            Some(v) => v.iter().collect(),
-            None => Vec::new(),
-        }
-    }
-    pub fn reachable(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_ENT_REACHABLE, None) }.unwrap_or(false)
-    }
-    pub fn reachable_adj(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_ENT_REACHABLE_ADJ, None) }.unwrap_or(false)
-    }
-    pub fn combat_level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_COMBAT_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn target_kind(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_TARGET_KIND, None) }.unwrap_or(0)
-    }
-    pub fn target_index(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_TARGET_INDEX, None) }.unwrap_or(-1)
-    }
-    pub fn size(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_SIZE, None) }.unwrap_or(0)
-    }
-    pub fn nx(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_NX, None) }.unwrap_or(0)
-    }
-    pub fn nz(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_NZ, None) }.unwrap_or(0)
-    }
-    pub fn shape(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_SHAPE, None) }.unwrap_or(0)
-    }
-    pub fn angle(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_ENT_ANGLE, None) }.unwrap_or(0)
-    }
-}
-
-impl Verifiable for SceneEntityReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("index", VT_ENT_INDEX, false)?
-            .visit_field::<i32>("id", VT_ENT_ID, false)?
-            .visit_field::<ForwardsUOffset<&str>>("name", VT_ENT_NAME, false)?
-            .visit_field::<i32>("x", VT_ENT_X, false)?
-            .visit_field::<i32>("z", VT_ENT_Z, false)?
-            .visit_field::<i32>("level", VT_ENT_LEVEL, false)?
-            .visit_field::<i32>("distance", VT_ENT_DISTANCE, false)?
-            .visit_field::<i32>("health", VT_ENT_HEALTH, false)?
-            .visit_field::<i32>("max_health", VT_ENT_MAX_HEALTH, false)?
-            .visit_field::<bool>("in_combat", VT_ENT_IN_COMBAT, false)?
-            .visit_field::<bool>("animating", VT_ENT_ANIMATING, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
-                "actions",
-                VT_ENT_ACTIONS,
-                false,
-            )?
-            .visit_field::<bool>("reachable", VT_ENT_REACHABLE, false)?
-            .visit_field::<bool>("reachable_adj", VT_ENT_REACHABLE_ADJ, false)?
-            .visit_field::<i32>("combat_level", VT_ENT_COMBAT_LEVEL, false)?
-            .visit_field::<i32>("target_kind", VT_ENT_TARGET_KIND, false)?
-            .visit_field::<i32>("target_index", VT_ENT_TARGET_INDEX, false)?
-            .visit_field::<i32>("size", VT_ENT_SIZE, false)?
-            .visit_field::<i32>("nx", VT_ENT_NX, false)?
-            .visit_field::<i32>("nz", VT_ENT_NZ, false)?
-            .visit_field::<i32>("shape", VT_ENT_SHAPE, false)?
-            .visit_field::<i32>("angle", VT_ENT_ANGLE, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct ChatOptionReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for ChatOptionReader<'a> {
-    type Inner = ChatOptionReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl ChatOptionReader<'_> {
-    pub fn text(&self) -> &str {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_CHAT_OPT_TEXT, None)
-        }
-        .unwrap_or("")
-    }
-
-    pub fn com_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_CHAT_OPT_COM, None) }.unwrap_or(0)
-    }
-}
-
-impl Verifiable for ChatOptionReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<ForwardsUOffset<&str>>("text", VT_CHAT_OPT_TEXT, false)?
-            .visit_field::<i32>("com_id", VT_CHAT_OPT_COM, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct SideTabIfaceReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for SideTabIfaceReader<'a> {
-    type Inner = SideTabIfaceReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl SideTabIfaceReader<'_> {
-    pub fn index(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_STI_INDEX, None) }.unwrap_or(0)
-    }
-    pub fn id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_STI_ID, None) }.unwrap_or(-1)
-    }
-}
-
-impl Verifiable for SideTabIfaceReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("index", VT_STI_INDEX, false)?
-            .visit_field::<i32>("id", VT_STI_ID, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct ChatLineReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for ChatLineReader<'a> {
-    type Inner = ChatLineReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl ChatLineReader<'_> {
-    pub fn seq(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_CL_SEQ, None) }.unwrap_or(0)
-    }
-    pub fn text(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CL_TEXT, None) }.unwrap_or("")
-    }
-    pub fn type_(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_CL_TYPE, None) }.unwrap_or(0)
-    }
-    pub fn username(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CL_USERNAME, None) }
-    }
-}
-
-impl Verifiable for ChatLineReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("seq", VT_CL_SEQ, false)?
-            .visit_field::<ForwardsUOffset<&str>>("text", VT_CL_TEXT, false)?
-            .visit_field::<i32>("type", VT_CL_TYPE, false)?
-            .visit_field::<ForwardsUOffset<&str>>("username", VT_CL_USERNAME, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct WidgetTextReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for WidgetTextReader<'a> {
-    type Inner = WidgetTextReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl WidgetTextReader<'_> {
-    pub fn component_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_WT_COMPONENT, None) }.unwrap_or(0)
-    }
-    pub fn text(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_WT_TEXT, None) }.unwrap_or("")
-    }
-    pub fn item_count(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_WT_ITEM_COUNT, Some(-1)) }.unwrap_or(-1)
-    }
-}
-
-impl Verifiable for WidgetTextReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("component_id", VT_WT_COMPONENT, false)?
-            .visit_field::<ForwardsUOffset<&str>>("text", VT_WT_TEXT, false)?
-            .visit_field::<i32>("item_count", VT_WT_ITEM_COUNT, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct QuestStatusReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for QuestStatusReader<'a> {
-    type Inner = QuestStatusReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl QuestStatusReader<'_> {
-    pub fn name(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_QUEST_NAME, None) }.unwrap_or("")
-    }
-    pub fn status(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_QUEST_STATUS, None) }.unwrap_or("unknown")
-    }
-    /// Whether the row carries its walked TYPE_TEXT id. Absent on an old
-    /// buffer — distinct from a present `0`, which is a real component id.
-    pub fn has_component_id(&self) -> bool {
-        unsafe { self.tab.get::<i32>(VT_QUEST_COMPONENT, None).is_some() }
-    }
-    /// `None` when the buffer omitted the slot: the row has no click
-    /// target. Never materialize this as `0` or `-1`.
-    pub fn component_id(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_QUEST_COMPONENT, None) }
-    }
-}
-
-impl Verifiable for QuestStatusReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<ForwardsUOffset<&str>>("name", VT_QUEST_NAME, false)?
-            .visit_field::<ForwardsUOffset<&str>>("status", VT_QUEST_STATUS, false)?
-            .visit_field::<i32>("component_id", VT_QUEST_COMPONENT, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// The main modal's paired text walk as decoded: the root the walk used
-/// plus its TYPE_TEXT lines in walk order.
-#[derive(Clone, Copy)]
-pub struct MainModalTextsReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for MainModalTextsReader<'a> {
-    type Inner = MainModalTextsReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl MainModalTextsReader<'_> {
-    /// The root the lines were walked from — the same integer the buffer
-    /// posts as `main_modal_id`. `-1` is a closed modal.
-    pub fn root(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_MMT_ROOT, None) }.unwrap_or(-1)
-    }
-    /// The walk in walk order, colour tags intact. Empty is a real walk
-    /// (closed, or an open root whose tree has no text), not a missing
-    /// table — the table's presence is [`SnapshotReader::main_modal_texts`].
-    pub fn texts(&self) -> Vec<&str> {
-        match unsafe {
-            self.tab
-                .get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_MMT_TEXTS, None)
-        } {
-            Some(v) => v.iter().collect(),
-            None => Vec::new(),
-        }
-    }
-}
-
-impl Verifiable for MainModalTextsReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("root", VT_MMT_ROOT, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
-                "texts",
-                VT_MMT_TEXTS,
-                false,
-            )?
-            .finish();
-        Ok(())
-    }
-}
-
-/// The puzzle board as decoded: the identified component, its slot count and
-/// its stored rows (sparse). Every inner slot is present whenever the table
-/// is; the table's presence is [`SnapshotReader::puzzle_board`].
-#[derive(Clone, Copy)]
-pub struct PuzzleBoardReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for PuzzleBoardReader<'a> {
-    type Inner = PuzzleBoardReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl PuzzleBoardReader<'_> {
-    /// The identified TYPE_INV component, `-1` for an observed closed
-    /// board.
-    pub fn component_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_PB_COMPONENT_ID, None) }.unwrap_or(-1)
-    }
-    /// The component's `link_obj_type` slot count as observed — not the row
-    /// count. A wrong size is posted as observed, never filled to a panel
-    /// size.
-    pub fn size(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_PB_SIZE, None) }.unwrap_or(0)
-    }
-    /// The stored rows in slot order. Sparse: an empty slot contributes no
-    /// row.
-    pub fn items(&self) -> Vec<RowReader<'_>> {
-        rows::<RowReader>(&self.tab, VT_PB_ITEMS)
-    }
-}
-
-impl Verifiable for PuzzleBoardReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("component_id", VT_PB_COMPONENT_ID, false)?
-            .visit_field::<i32>("size", VT_PB_SIZE, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "items",
-                VT_PB_ITEMS,
-                false,
-            )?
-            .finish();
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct NpcBoxReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for NpcBoxReader<'a> {
-    type Inner = NpcBoxReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl NpcBoxReader<'_> {
-    pub fn index(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_NPC_BOX_INDEX, None) }.unwrap_or(-1)
-    }
-
-    pub fn points(&self) -> Vec<(i32, i32)> {
-        let values = match unsafe {
-            self.tab
-                .get::<ForwardsUOffset<Vector<i32>>>(VT_NPC_BOX_POINTS, None)
-        } {
-            Some(values) if values.len() == 16 => values,
-            _ => return Vec::new(),
-        };
-        (0..8)
-            .map(|i| (values.get(i * 2), values.get(i * 2 + 1)))
-            .collect()
-    }
-}
-
-impl Verifiable for NpcBoxReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("index", VT_NPC_BOX_INDEX, false)?
-            .visit_field::<ForwardsUOffset<Vector<i32>>>("points", VT_NPC_BOX_POINTS, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// One navigator-named gate short as decoded: the needed stack and the display
-/// name the host obj table resolves for it. The row's presence is the whole of
-/// its observation — `name` is absent when that table had none, and a row
-/// without one is still a named short.
-#[derive(Clone, Copy)]
-pub struct CarryReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for CarryReader<'a> {
-    type Inner = CarryReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl CarryReader<'_> {
-    pub fn id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_CARRY_ID, None) }.unwrap_or(0)
-    }
-    pub fn count(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_CARRY_COUNT, None) }.unwrap_or(0)
-    }
-    pub fn has_name(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_CARRY_NAME, None)
-                .is_some()
-        }
-    }
-    pub fn name(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CARRY_NAME, None) }
-    }
-}
-
-impl Verifiable for CarryReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("id", VT_CARRY_ID, false)?
-            .visit_field::<i32>("count", VT_CARRY_COUNT, false)?
-            .visit_field::<ForwardsUOffset<&str>>("name", VT_CARRY_NAME, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct MakeButtonReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for MakeButtonReader<'a> {
-    type Inner = MakeButtonReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl MakeButtonReader<'_> {
-    pub fn qty(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_MAKE_BTN_QTY, None) }.unwrap_or(0)
-    }
-    pub fn com_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_MAKE_BTN_COM, None) }.unwrap_or(-1)
-    }
-}
-
-impl Verifiable for MakeButtonReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("qty", VT_MAKE_BTN_QTY, false)?
-            .visit_field::<i32>("com_id", VT_MAKE_BTN_COM, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct MakeProductReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for MakeProductReader<'a> {
-    type Inner = MakeProductReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl MakeProductReader<'_> {
-    pub fn object_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_MAKE_PROD_OID, None) }.unwrap_or(-1)
-    }
-    pub fn name(&self) -> &str {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_MAKE_PROD_NAME, None)
-        }
-        .unwrap_or("")
-    }
-    pub fn buttons(&self) -> Vec<MakeButtonReader<'_>> {
-        rows::<MakeButtonReader>(&self.tab, VT_MAKE_PROD_BTNS)
-    }
-}
-
-impl Verifiable for MakeProductReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("object_id", VT_MAKE_PROD_OID, false)?
-            .visit_field::<ForwardsUOffset<&str>>("name", VT_MAKE_PROD_NAME, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<MakeButtonReader>>>>(
-                "buttons",
-                VT_MAKE_PROD_BTNS,
-                false,
-            )?
-            .finish();
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct CombatStyleReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for CombatStyleReader<'a> {
-    type Inner = CombatStyleReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl CombatStyleReader<'_> {
-    pub fn mode(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_CS_MODE, None) }.unwrap_or(0)
-    }
-    pub fn label(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CS_LABEL, None) }.unwrap_or("")
-    }
-    pub fn component_id(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_CS_COMPONENT, None) }.unwrap_or(0)
-    }
-}
-
-impl Verifiable for CombatStyleReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("mode", VT_CS_MODE, false)?
-            .visit_field::<ForwardsUOffset<&str>>("label", VT_CS_LABEL, false)?
-            .visit_field::<i32>("component_id", VT_CS_COMPONENT, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct VarpReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for VarpReader<'a> {
-    type Inner = VarpReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl VarpReader<'_> {
-    pub fn index(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_VARP_INDEX, None) }.unwrap_or(0)
-    }
-    pub fn value(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_VARP_VALUE, None) }.unwrap_or(0)
-    }
-}
-
-impl Verifiable for VarpReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i32>("index", VT_VARP_INDEX, false)?
-            .visit_field::<i32>("value", VT_VARP_VALUE, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// One shim interact request as decoded: the tagged `op` string plus the
-/// request's fields (absent when the request has none).
-pub struct InteractReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> flatbuffers::Follow<'a> for InteractReader<'a> {
-    type Inner = InteractReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl InteractReader<'_> {
-    pub fn op(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IN_OP, None) }
-    }
-    pub fn x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IN_X, None) }.unwrap_or(0)
-    }
-    pub fn required_x(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_X, None) }
-    }
-    pub fn z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IN_Z, None) }.unwrap_or(0)
-    }
-    pub fn required_z(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_Z, None) }
-    }
-    pub fn level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IN_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn required_level(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_LEVEL, None) }
-    }
-    pub fn kind(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IN_KIND, None) }
-    }
-    pub fn name(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IN_NAME, None) }
-    }
-    pub fn stand_op(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_STAND_OP, None) }
-    }
-    pub fn choose(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IN_CHOOSE, None) }
-    }
-    pub fn action(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IN_ACTION, None) }
-    }
-    pub fn index(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_INDEX, None) }
-    }
-    pub fn component_id(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_COMPONENT_ID, None) }
-    }
-    pub fn bank_generation(&self) -> Option<u64> {
-        unsafe { self.tab.get::<u64>(VT_IN_BANK_GENERATION, None) }
-    }
-    pub fn bank_item_id(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_BANK_ITEM_ID, None) }
-    }
-    pub fn lands_as_id(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_LANDS_AS_ID, None) }
-    }
-    pub fn source_item_id(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_SOURCE_ITEM_ID, None) }
-    }
-    pub fn source_item_slot(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_SOURCE_ITEM_SLOT, None) }
-    }
-    pub fn target_item_id(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_TARGET_ITEM_ID, None) }
-    }
-    pub fn target_item_slot(&self) -> Option<i32> {
-        unsafe { self.tab.get::<i32>(VT_IN_TARGET_ITEM_SLOT, None) }
-    }
-    pub fn request_id(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_IN_REQUEST_ID, None) }.unwrap_or(0)
-    }
-    pub fn use_mage_bank(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_IN_USE_MAGE_BANK, None) }.unwrap_or(false)
-    }
-    pub fn use_zanaris_bank(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_IN_USE_ZANARIS_BANK, None) }.unwrap_or(false)
-    }
-    pub fn channel_id(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_IN_CHANNEL_ID, None) }.unwrap_or(0)
-    }
-    pub fn data(&self) -> Vec<u8> {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<Vector<u8>>>(VT_IN_DATA, None)
-        }
-        .map_or_else(Vec::new, |data| data.iter().collect())
-    }
-    pub fn seq(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_IN_SEQ, None) }.unwrap_or(0)
-    }
-    pub fn run_policy_clear(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<bool>(VT_IN_RUN_POLICY_CLEAR, None)
-                .unwrap_or(false)
-        }
-    }
-    pub fn run_auto_kind(&self) -> u8 {
-        unsafe { self.tab.get::<u8>(VT_IN_RUN_AUTO_KIND, None) }.unwrap_or(RUN_OPTION_ABSENT)
-    }
-    pub fn run_energy_kind(&self) -> u8 {
-        unsafe { self.tab.get::<u8>(VT_IN_RUN_ENERGY_KIND, None) }.unwrap_or(RUN_OPTION_ABSENT)
-    }
-    pub fn run_energy_min(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IN_RUN_ENERGY_MIN, None) }.unwrap_or(0)
-    }
-    pub fn xf(&self) -> Option<f64> {
-        unsafe { self.tab.get::<f64>(VT_IN_XF, None) }
-    }
-    pub fn yf(&self) -> Option<f64> {
-        unsafe { self.tab.get::<f64>(VT_IN_YF, None) }
-    }
-    pub fn input_identity(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_IN_INPUT_IDENTITY, None) }.unwrap_or(0)
-    }
-    pub fn allow_wilderness(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_IN_ALLOW_WILDERNESS, None) }.unwrap_or(false)
-    }
-    pub fn allow_bank_fetch(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_IN_ALLOW_BANK_FETCH, None) }.unwrap_or(false)
-    }
-    pub fn from_x(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IN_FROM_X, None) }.unwrap_or(0)
-    }
-    pub fn from_z(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IN_FROM_Z, None) }.unwrap_or(0)
-    }
-    pub fn from_level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_IN_FROM_LEVEL, None) }.unwrap_or(0)
-    }
-    pub fn allow_teleports_explicit(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_IN_ALLOW_TELEPORTS, None) }.unwrap_or(false)
-    }
-    pub fn inspect_ack_seq(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_IN_INSPECT_ACK_SEQ, None) }.unwrap_or(0)
-    }
-    pub fn inspect_ack_generation(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_IN_INSPECT_ACK_GENERATION, None) }.unwrap_or(0)
-    }
-    pub fn avoid(&self) -> Vec<AvoidRectReader<'_>> {
-        rows::<AvoidRectReader>(&self.tab, VT_IN_AVOID)
-    }
-}
-
-impl Verifiable for InteractReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<ForwardsUOffset<&str>>("op", VT_IN_OP, false)?
-            .visit_field::<i32>("x", VT_IN_X, false)?
-            .visit_field::<i32>("z", VT_IN_Z, false)?
-            .visit_field::<i32>("level", VT_IN_LEVEL, false)?
-            .visit_field::<ForwardsUOffset<&str>>("kind", VT_IN_KIND, false)?
-            .visit_field::<ForwardsUOffset<&str>>("name", VT_IN_NAME, false)?
-            .visit_field::<i32>("stand_op", VT_IN_STAND_OP, false)?
-            .visit_field::<ForwardsUOffset<&str>>("choose", VT_IN_CHOOSE, false)?
-            .visit_field::<ForwardsUOffset<&str>>("action", VT_IN_ACTION, false)?
-            .visit_field::<i32>("index", VT_IN_INDEX, false)?
-            .visit_field::<i32>("component_id", VT_IN_COMPONENT_ID, false)?
-            .visit_field::<u64>("bank_generation", VT_IN_BANK_GENERATION, false)?
-            .visit_field::<i32>("bank_item_id", VT_IN_BANK_ITEM_ID, false)?
-            .visit_field::<i32>("lands_as_id", VT_IN_LANDS_AS_ID, false)?
-            .visit_field::<i32>("source_item_id", VT_IN_SOURCE_ITEM_ID, false)?
-            .visit_field::<i32>("source_item_slot", VT_IN_SOURCE_ITEM_SLOT, false)?
-            .visit_field::<i32>("target_item_id", VT_IN_TARGET_ITEM_ID, false)?
-            .visit_field::<i32>("target_item_slot", VT_IN_TARGET_ITEM_SLOT, false)?
-            .visit_field::<u64>("request_id", VT_IN_REQUEST_ID, false)?
-            .visit_field::<f64>("xf", VT_IN_XF, false)?
-            .visit_field::<f64>("yf", VT_IN_YF, false)?
-            .visit_field::<u64>("input_identity", VT_IN_INPUT_IDENTITY, false)?
-            .visit_field::<bool>("allow_wilderness", VT_IN_ALLOW_WILDERNESS, false)?
-            .visit_field::<bool>("allow_bank_fetch", VT_IN_ALLOW_BANK_FETCH, false)?
-            .visit_field::<i32>("from_x", VT_IN_FROM_X, false)?
-            .visit_field::<i32>("from_z", VT_IN_FROM_Z, false)?
-            .visit_field::<i32>("from_level", VT_IN_FROM_LEVEL, false)?
-            .visit_field::<bool>("allow_teleports", VT_IN_ALLOW_TELEPORTS, false)?
-            .visit_field::<bool>("use_mage_bank", VT_IN_USE_MAGE_BANK, false)?
-            .visit_field::<bool>("use_zanaris_bank", VT_IN_USE_ZANARIS_BANK, false)?
-            .visit_field::<bool>("run_policy_clear", VT_IN_RUN_POLICY_CLEAR, false)?
-            .visit_field::<u8>("run_auto_kind", VT_IN_RUN_AUTO_KIND, false)?
-            .visit_field::<u8>("run_energy_kind", VT_IN_RUN_ENERGY_KIND, false)?
-            .visit_field::<i32>("run_energy_min", VT_IN_RUN_ENERGY_MIN, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<AvoidRectReader>>>>(
-                "avoid",
-                VT_IN_AVOID,
-                false,
-            )?
-            .visit_field::<u64>("inspect_ack_seq", VT_IN_INSPECT_ACK_SEQ, false)?
-            .visit_field::<u64>(
-                "inspect_ack_generation",
-                VT_IN_INSPECT_ACK_GENERATION,
-                false,
-            )?
-            .visit_field::<u64>("channel_id", VT_IN_CHANNEL_ID, false)?
-            .visit_field::<ForwardsUOffset<Vector<u8>>>("data", VT_IN_DATA, false)?
-            .visit_field::<u64>("seq", VT_IN_SEQ, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-/// A batch of shim interact requests as decoded.
-pub struct InteractBatchReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> Follow<'a> for InteractBatchReader<'a> {
-    type Inner = InteractBatchReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl Verifiable for InteractBatchReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<InteractReader>>>>(
-                "reqs", VT_REQS, false,
-            )?
-            .finish();
-        Ok(())
-    }
-}
-
-impl InteractBatchReader<'_> {
-    /// Interpret `buf` as a root-`InteractBatch` FlatBuffer after verification.
-    pub fn from_bytes(buf: &[u8]) -> Result<InteractBatchReader<'_>, String> {
-        verified_root::<InteractBatchReader>(buf)
-    }
-
-    pub fn reqs(&self) -> Result<Vec<InteractReader<'_>>, String> {
-        rows_capped::<InteractReader>(&self.tab, VT_REQS, MAX_INTERACT_REQS)
-    }
-}
-
 /// Encode the tick's shim interact queue as a root-`InteractBatch`
 /// FlatBuffer. Tests and one-shot callers; the live path uses
 /// [`IsolateBuf`].
@@ -6169,9 +3112,9 @@ fn encode_interact_batch_into(b: &mut FlatBufferBuilder<'_>, reqs: &[crate::shim
         .map(|req| interact_off(b, req))
         .collect::<Vec<_>>();
     let reqs_off = b.create_vector(&offs);
-    let tab = b.start_table();
-    b.push_slot_always(VT_REQS, reqs_off);
-    let root = b.end_table(tab);
+    let mut table = InteractBatchBuilder::new(b);
+    table.add_reqs(reqs_off);
+    let root = table.finish();
     b.finish(root, None);
 }
 
@@ -6222,8 +3165,11 @@ pub fn cap_paint(paint: &crate::shim::ScriptPaint) -> Result<(), String> {
 /// exactly like the old JSON parse.
 /// A row's typed avoid rectangles (inspect route and world walks).
 fn decoded_avoid(row: &InteractReader<'_>) -> Vec<crate::shim::InspectAvoidWire> {
-    row.avoid()
-        .into_iter()
+    let Some(rects) = row.avoid() else {
+        return Vec::new();
+    };
+    rects
+        .iter()
         .map(|rect| crate::shim::InspectAvoidWire::Rect {
             min_x: rect.min_x(),
             max_x: rect.max_x(),
@@ -6233,7 +3179,6 @@ fn decoded_avoid(row: &InteractReader<'_>) -> Vec<crate::shim::InspectAvoidWire>
         })
         .collect()
 }
-
 fn decoded_run_policy(
     row: &InteractReader<'_>,
 ) -> Result<Option<api::run_policy::RunPolicyOverride>, String> {
@@ -6266,9 +3211,17 @@ fn decoded_run_policy(
 
 pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>, String> {
     let batch = InteractBatchReader::from_bytes(buf)?;
-    let rows = batch.reqs()?;
+    let Some(rows) = batch.reqs() else {
+        return Ok(Vec::new());
+    };
+    if rows.len() > MAX_INTERACT_REQS {
+        return Err(format!(
+            "vector length {} exceeds cap {MAX_INTERACT_REQS}",
+            rows.len()
+        ));
+    }
     let mut out = Vec::with_capacity(rows.len());
-    for row in rows {
+    for row in rows.iter() {
         let op = row
             .op()
             .ok_or_else(|| "interact row has no op".to_string())?;
@@ -6613,9 +3566,11 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
             }),
             "channel-post" => {
                 let data = row.data();
-                if data.len() > crate::channel::MAX_CHANNEL_BYTES {
+                if data.as_ref().map_or(0, |bytes| bytes.len()) > crate::channel::MAX_CHANNEL_BYTES
+                {
                     return Err("channel-post data exceeds cap".into());
                 }
+                let data = data.map(|bytes| bytes.iter().collect()).unwrap_or_default();
                 out.push(crate::shim::InteractReq::ChannelPost {
                     channel_id: row.channel_id(),
                     name: row
@@ -6634,9 +3589,11 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
             }),
             "channel-message" => {
                 let data = row.data();
-                if data.len() > crate::channel::MAX_CHANNEL_BYTES {
+                if data.as_ref().map_or(0, |bytes| bytes.len()) > crate::channel::MAX_CHANNEL_BYTES
+                {
                     return Err("channel-message data exceeds cap".into());
                 }
+                let data = data.map(|bytes| bytes.iter().collect()).unwrap_or_default();
                 out.push(crate::shim::InteractReq::ChannelMessage {
                     channel_id: row.channel_id(),
                     sender: row
@@ -6835,35 +3792,35 @@ fn interact_off<'b>(
         }
         _ => None,
     };
-    let tab = b.start_table();
-    b.push_slot_always(VT_IN_OP, op_off);
+    let mut table = InteractBuilder::new(b);
+    table.add_op(op_off);
     match req {
         InteractReq::ChannelOpen { channel_id, .. }
         | InteractReq::ChannelClose { channel_id, .. } => {
-            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            table.add_channel_id(*channel_id);
+            table.add_name(name_off.unwrap());
         }
         InteractReq::ChannelPost { channel_id, .. } => {
-            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
-            b.push_slot_always(VT_IN_DATA, data_off.unwrap());
+            table.add_channel_id(*channel_id);
+            table.add_name(name_off.unwrap());
+            table.add_data(data_off.unwrap());
         }
         InteractReq::ChannelMessage {
             channel_id, seq, ..
         } => {
-            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
-            b.push_slot_always(VT_IN_SEQ, *seq);
-            b.push_slot_always(VT_IN_DATA, data_off.unwrap());
+            table.add_channel_id(*channel_id);
+            table.add_name(name_off.unwrap());
+            table.add_seq(*seq);
+            table.add_data(data_off.unwrap());
         }
         InteractReq::ChannelStatus { channel_id, .. } => {
-            b.push_slot_always(VT_IN_CHANNEL_ID, *channel_id);
-            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            table.add_channel_id(*channel_id);
+            table.add_action(action_off.unwrap());
         }
         InteractReq::DuelAccept { rules, .. } => {
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
-            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
-            b.push_slot_always(VT_IN_X, *rules);
+            table.add_name(name_off.unwrap());
+            table.add_action(action_off.unwrap());
+            table.add_x(*rules);
         }
         InteractReq::ShopButton {
             id,
@@ -6872,25 +3829,25 @@ fn interact_off<'b>(
             chunk,
             ..
         } => {
-            b.push_slot_always(VT_IN_KIND, kind_off.unwrap());
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
-            b.push_slot_always(VT_IN_INDEX, *slot);
-            b.push_slot_always(VT_IN_BANK_ITEM_ID, *id);
-            b.push_slot_always(VT_IN_COMPONENT_ID, *component);
-            b.push_slot_always(VT_IN_STAND_OP, *chunk);
+            table.add_kind(kind_off.unwrap());
+            table.add_name(name_off.unwrap());
+            table.add_index(*slot);
+            table.add_bank_item_id(*id);
+            table.add_component_id(*component);
+            table.add_stand_op(*chunk);
         }
         InteractReq::OpenBooth {
             x, z, level, id, ..
         } => {
-            b.push_slot_always(VT_IN_X, *x);
-            b.push_slot_always(VT_IN_Z, *z);
-            b.push_slot_always(VT_IN_LEVEL, *level);
-            b.push_slot_always(VT_IN_INDEX, *id);
+            table.add_x(*x);
+            table.add_z(*z);
+            table.add_level(*level);
+            table.add_index(*id);
             if let Some(off) = name_off {
-                b.push_slot_always(VT_IN_NAME, off);
+                table.add_name(off);
             }
             if let Some(off) = action_off {
-                b.push_slot_always(VT_IN_ACTION, off);
+                table.add_action(off);
             }
         }
         InteractReq::OpenStand {
@@ -6900,18 +3857,18 @@ fn interact_off<'b>(
             stand_op,
             ..
         } => {
-            b.push_slot_always(VT_IN_X, *x);
-            b.push_slot_always(VT_IN_Z, *z);
-            b.push_slot_always(VT_IN_LEVEL, *level);
-            b.push_slot_always(VT_IN_KIND, kind_off.unwrap());
+            table.add_x(*x);
+            table.add_z(*z);
+            table.add_level(*level);
+            table.add_kind(kind_off.unwrap());
             if let Some(off) = name_off {
-                b.push_slot_always(VT_IN_NAME, off);
+                table.add_name(off);
             }
             if let Some(op) = stand_op {
-                b.push_slot_always(VT_IN_STAND_OP, *op);
+                table.add_stand_op(*op);
             }
             if let Some(off) = choose_off {
-                b.push_slot_always(VT_IN_CHOOSE, off);
+                table.add_choose(off);
             }
         }
         InteractReq::WalkNear {
@@ -6924,21 +3881,21 @@ fn interact_off<'b>(
             allow_bank_fetch,
             ..
         } => {
-            b.push_slot_always(VT_IN_X, *x);
-            b.push_slot_always(VT_IN_Z, *z);
-            b.push_slot_always(VT_IN_LEVEL, *level);
-            b.push_slot_always(VT_IN_INDEX, *radius);
+            table.add_x(*x);
+            table.add_z(*z);
+            table.add_level(*level);
+            table.add_index(*radius);
             if *request_id != 0 {
-                b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+                table.add_request_id(*request_id);
             }
             if let Some(off) = action_off {
-                b.push_slot_always(VT_IN_ACTION, off);
+                table.add_action(off);
             }
             if *allow_wilderness {
-                b.push_slot_always(VT_IN_ALLOW_WILDERNESS, true);
+                table.add_allow_wilderness(true);
             }
             if *allow_bank_fetch {
-                b.push_slot_always(VT_IN_ALLOW_BANK_FETCH, true);
+                table.add_allow_bank_fetch(true);
             }
         }
         InteractReq::WalkNearestBank => {}
@@ -6951,16 +3908,16 @@ fn interact_off<'b>(
             use_zanaris_bank,
             request_id,
         } => {
-            b.push_slot_always(VT_IN_X, *x);
-            b.push_slot_always(VT_IN_Z, *z);
-            b.push_slot_always(VT_IN_LEVEL, *level);
-            b.push_slot_always(VT_IN_ALLOW_WILDERNESS, *allow_wilderness);
-            b.push_slot_always(VT_IN_USE_MAGE_BANK, *use_mage_bank);
-            b.push_slot_always(VT_IN_USE_ZANARIS_BANK, *use_zanaris_bank);
-            b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+            table.add_x(*x);
+            table.add_z(*z);
+            table.add_level(*level);
+            table.add_allow_wilderness(*allow_wilderness);
+            table.add_use_mage_bank(*use_mage_bank);
+            table.add_use_zanaris_bank(*use_zanaris_bank);
+            table.add_request_id(*request_id);
         }
         InteractReq::AbortWalk { request_id } => {
-            b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+            table.add_request_id(*request_id);
         }
         InteractReq::InspectRoute {
             x,
@@ -6975,30 +3932,30 @@ fn interact_off<'b>(
             request_id,
             ..
         } => {
-            b.push_slot_always(VT_IN_X, *x);
-            b.push_slot_always(VT_IN_Z, *z);
-            b.push_slot_always(VT_IN_LEVEL, *level);
-            b.push_slot_always(VT_IN_FROM_X, *from_x);
-            b.push_slot_always(VT_IN_FROM_Z, *from_z);
-            b.push_slot_always(VT_IN_FROM_LEVEL, *from_level);
+            table.add_x(*x);
+            table.add_z(*z);
+            table.add_level(*level);
+            table.add_from_x(*from_x);
+            table.add_from_z(*from_z);
+            table.add_from_level(*from_level);
             if *allow_teleports {
-                b.push_slot_always(VT_IN_ALLOW_TELEPORTS, true);
+                table.add_allow_teleports(true);
             }
             if *allow_wilderness {
-                b.push_slot_always(VT_IN_ALLOW_WILDERNESS, true);
+                table.add_allow_wilderness(true);
             }
             if *allow_bank_fetch {
-                b.push_slot_always(VT_IN_ALLOW_BANK_FETCH, true);
+                table.add_allow_bank_fetch(true);
             }
             if *request_id != 0 {
-                b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+                table.add_request_id(*request_id);
             }
         }
         InteractReq::InspectAck { seq, generation } => {
             if *seq != 0 {
-                b.push_slot_always(VT_IN_INSPECT_ACK_SEQ, *seq);
+                table.add_inspect_ack_seq(*seq);
             }
-            b.push_slot_always(VT_IN_INSPECT_ACK_GENERATION, *generation);
+            table.add_inspect_ack_generation(*generation);
         }
         InteractReq::Walk {
             x,
@@ -7009,36 +3966,36 @@ fn interact_off<'b>(
             allow_bank_fetch,
             ..
         } => {
-            b.push_slot_always(VT_IN_X, *x);
-            b.push_slot_always(VT_IN_Z, *z);
-            b.push_slot_always(VT_IN_LEVEL, *level);
+            table.add_x(*x);
+            table.add_z(*z);
+            table.add_level(*level);
             if *request_id != 0 {
-                b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+                table.add_request_id(*request_id);
             }
             if let Some(off) = action_off {
-                b.push_slot_always(VT_IN_ACTION, off);
+                table.add_action(off);
             }
             if *allow_wilderness {
-                b.push_slot_always(VT_IN_ALLOW_WILDERNESS, true);
+                table.add_allow_wilderness(true);
             }
             if *allow_bank_fetch {
-                b.push_slot_always(VT_IN_ALLOW_BANK_FETCH, true);
+                table.add_allow_bank_fetch(true);
             }
         }
         InteractReq::WalkTo { x, z, level } | InteractReq::RecoveryAnchor { x, z, level } => {
-            b.push_slot_always(VT_IN_X, *x);
-            b.push_slot_always(VT_IN_Z, *z);
-            b.push_slot_always(VT_IN_LEVEL, *level);
+            table.add_x(*x);
+            table.add_z(*z);
+            table.add_level(*level);
             if let Some(off) = action_off {
-                b.push_slot_always(VT_IN_ACTION, off);
+                table.add_action(off);
             }
         }
         InteractReq::Deposit { .. } => {
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            table.add_name(name_off.unwrap());
         }
         InteractReq::Withdraw { .. } => {
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
-            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            table.add_name(name_off.unwrap());
+            table.add_action(action_off.unwrap());
         }
         InteractReq::WithdrawX {
             count,
@@ -7047,22 +4004,22 @@ fn interact_off<'b>(
             bank_generation,
             ..
         } => {
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
-            b.push_slot_always(VT_IN_X, *count);
-            b.push_slot_always(VT_IN_BANK_ITEM_ID, *bank_item_id);
-            b.push_slot_always(VT_IN_LANDS_AS_ID, *lands_as_id);
-            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
-            b.push_slot_always(VT_IN_BANK_GENERATION, *bank_generation);
+            table.add_name(name_off.unwrap());
+            table.add_x(*count);
+            table.add_bank_item_id(*bank_item_id);
+            table.add_lands_as_id(*lands_as_id);
+            table.add_action(action_off.unwrap());
+            table.add_bank_generation(*bank_generation);
         }
         InteractReq::WithdrawLoad {
             bank_generation, ..
         } => {
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
-            b.push_slot_always(VT_IN_BANK_GENERATION, *bank_generation);
+            table.add_name(name_off.unwrap());
+            table.add_bank_generation(*bank_generation);
         }
         InteractReq::Held { .. } => {
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
-            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            table.add_name(name_off.unwrap());
+            table.add_action(action_off.unwrap());
         }
         InteractReq::InvButton {
             id,
@@ -7071,11 +4028,11 @@ fn interact_off<'b>(
             operation,
             bank_generation,
         } => {
-            b.push_slot_always(VT_IN_BANK_ITEM_ID, *id);
-            b.push_slot_always(VT_IN_SOURCE_ITEM_SLOT, *slot);
-            b.push_slot_always(VT_IN_COMPONENT_ID, *component);
-            b.push_slot_always(VT_IN_STAND_OP, *operation);
-            b.push_slot_always(VT_IN_BANK_GENERATION, *bank_generation);
+            table.add_bank_item_id(*id);
+            table.add_source_item_slot(*slot);
+            table.add_component_id(*component);
+            table.add_stand_op(*operation);
+            table.add_bank_generation(*bank_generation);
         }
         InteractReq::MakePanel {
             id,
@@ -7083,10 +4040,10 @@ fn interact_off<'b>(
             component,
             operation,
         } => {
-            b.push_slot_always(VT_IN_BANK_ITEM_ID, *id);
-            b.push_slot_always(VT_IN_SOURCE_ITEM_SLOT, *slot);
-            b.push_slot_always(VT_IN_COMPONENT_ID, *component);
-            b.push_slot_always(VT_IN_STAND_OP, *operation);
+            table.add_bank_item_id(*id);
+            table.add_source_item_slot(*slot);
+            table.add_component_id(*component);
+            table.add_stand_op(*operation);
         }
         InteractReq::PuzzleMove {
             id,
@@ -7094,42 +4051,42 @@ fn interact_off<'b>(
             component,
             generation,
         } => {
-            b.push_slot_always(VT_IN_BANK_ITEM_ID, *id);
-            b.push_slot_always(VT_IN_SOURCE_ITEM_SLOT, *slot);
-            b.push_slot_always(VT_IN_COMPONENT_ID, *component);
-            b.push_slot_always(VT_IN_BANK_GENERATION, *generation);
+            table.add_bank_item_id(*id);
+            table.add_source_item_slot(*slot);
+            table.add_component_id(*component);
+            table.add_bank_generation(*generation);
         }
         InteractReq::Close => {}
         InteractReq::Npc { index, .. } => {
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
-            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            table.add_name(name_off.unwrap());
+            table.add_action(action_off.unwrap());
             if let Some(idx) = index {
-                b.push_slot_always(VT_IN_INDEX, *idx);
+                table.add_index(*idx);
             }
         }
         InteractReq::Loc {
             x, z, level, id, ..
         } => {
-            b.push_slot_always(VT_IN_X, *x);
-            b.push_slot_always(VT_IN_Z, *z);
-            b.push_slot_always(VT_IN_LEVEL, *level);
-            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            table.add_x(*x);
+            table.add_z(*z);
+            table.add_level(*level);
+            table.add_action(action_off.unwrap());
             if let Some(id) = id {
-                b.push_slot_always(VT_IN_INDEX, *id);
+                table.add_index(*id);
             }
         }
         InteractReq::Obj { x, z, level, .. } => {
-            b.push_slot_always(VT_IN_X, *x);
-            b.push_slot_always(VT_IN_Z, *z);
-            b.push_slot_always(VT_IN_LEVEL, *level);
+            table.add_x(*x);
+            table.add_z(*z);
+            table.add_level(*level);
             if let Some(off) = name_off {
-                b.push_slot_always(VT_IN_NAME, off);
+                table.add_name(off);
             }
-            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            table.add_action(action_off.unwrap());
         }
         InteractReq::Player { .. } => {
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
-            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            table.add_name(name_off.unwrap());
+            table.add_action(action_off.unwrap());
         }
         InteractReq::UseOn {
             x,
@@ -7142,28 +4099,28 @@ fn interact_off<'b>(
             target_item_slot,
             ..
         } => {
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
-            b.push_slot_always(VT_IN_KIND, kind_off.unwrap());
-            b.push_slot_always(VT_IN_X, *x);
-            b.push_slot_always(VT_IN_Z, *z);
-            b.push_slot_always(VT_IN_LEVEL, *level);
+            table.add_name(name_off.unwrap());
+            table.add_kind(kind_off.unwrap());
+            table.add_x(*x);
+            table.add_z(*z);
+            table.add_level(*level);
             if let Some(off) = choose_off {
-                b.push_slot_always(VT_IN_CHOOSE, off);
+                table.add_choose(off);
             }
             if let Some(idx) = index {
-                b.push_slot_always(VT_IN_INDEX, *idx);
+                table.add_index(*idx);
             }
             if let Some(id) = source_item_id {
-                b.push_slot_always(VT_IN_SOURCE_ITEM_ID, *id);
+                table.add_source_item_id(*id);
             }
             if let Some(slot) = source_item_slot {
-                b.push_slot_always(VT_IN_SOURCE_ITEM_SLOT, *slot);
+                table.add_source_item_slot(*slot);
             }
             if let Some(id) = target_item_id {
-                b.push_slot_always(VT_IN_TARGET_ITEM_ID, *id);
+                table.add_target_item_id(*id);
             }
             if let Some(slot) = target_item_slot {
-                b.push_slot_always(VT_IN_TARGET_ITEM_SLOT, *slot);
+                table.add_target_item_slot(*slot);
             }
         }
         InteractReq::UseWidgetOn {
@@ -7174,16 +4131,16 @@ fn interact_off<'b>(
             index,
             ..
         } => {
-            b.push_slot_always(VT_IN_COMPONENT_ID, *component_id);
-            b.push_slot_always(VT_IN_KIND, kind_off.unwrap());
-            b.push_slot_always(VT_IN_X, *x);
-            b.push_slot_always(VT_IN_Z, *z);
-            b.push_slot_always(VT_IN_LEVEL, *level);
+            table.add_component_id(*component_id);
+            table.add_kind(kind_off.unwrap());
+            table.add_x(*x);
+            table.add_z(*z);
+            table.add_level(*level);
             if let Some(off) = choose_off {
-                b.push_slot_always(VT_IN_CHOOSE, off);
+                table.add_choose(off);
             }
             if let Some(idx) = index {
-                b.push_slot_always(VT_IN_INDEX, *idx);
+                table.add_index(*idx);
             }
         }
         InteractReq::ContinueDialog
@@ -7194,59 +4151,56 @@ fn interact_off<'b>(
         | InteractReq::WaitSettled
         | InteractReq::RecoveryAnchorNone => {}
         InteractReq::Answer { option } => {
-            b.push_slot_always(VT_IN_STAND_OP, *option);
+            table.add_stand_op(*option);
         }
         InteractReq::AnswerCount { value } => {
-            b.push_slot_always(VT_IN_X, *value);
+            table.add_x(*value);
         }
         InteractReq::IfButton { component_id } => {
-            b.push_slot_always(VT_IN_COMPONENT_ID, *component_id);
+            table.add_component_id(*component_id);
         }
         InteractReq::SideTab { tab } => {
-            b.push_slot_always(VT_IN_STAND_OP, *tab);
+            table.add_stand_op(*tab);
         }
         InteractReq::Wear { .. } | InteractReq::Unequip { .. } => {
-            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            table.add_name(name_off.unwrap());
         }
         InteractReq::SetRun { .. }
         | InteractReq::SetRetaliate { .. }
         | InteractReq::SetNoteMode { .. } => {
-            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            table.add_action(action_off.unwrap());
         }
         InteractReq::SetCameraYaw { yaw } => {
-            b.push_slot_always(VT_IN_X, *yaw);
+            table.add_x(*yaw);
         }
         InteractReq::RunPolicyOverride { policy } => match policy {
-            None => b.push_slot_always(VT_IN_RUN_POLICY_CLEAR, true),
+            None => table.add_run_policy_clear(true),
             Some(policy) => {
                 if let Some(run_auto) = policy.run_auto {
-                    b.push_slot_always(
-                        VT_IN_RUN_AUTO_KIND,
-                        if run_auto {
-                            RUN_OPTION_TRUE_OR_NAN
-                        } else {
-                            RUN_OPTION_FALSE_OR_FLOOR
-                        },
-                    );
+                    table.add_run_auto_kind(if run_auto {
+                        RUN_OPTION_TRUE_OR_NAN
+                    } else {
+                        RUN_OPTION_FALSE_OR_FLOOR
+                    });
                 }
                 match policy.energy_min {
                     Some(api::run_policy::RunEnergyMin::Floor(energy_min)) => {
-                        b.push_slot_always(VT_IN_RUN_ENERGY_KIND, RUN_OPTION_FALSE_OR_FLOOR);
-                        b.push_slot_always(VT_IN_RUN_ENERGY_MIN, energy_min);
+                        table.add_run_energy_kind(RUN_OPTION_FALSE_OR_FLOOR);
+                        table.add_run_energy_min(energy_min);
                     }
                     Some(api::run_policy::RunEnergyMin::NotANumber) => {
-                        b.push_slot_always(VT_IN_RUN_ENERGY_KIND, RUN_OPTION_TRUE_OR_NAN);
+                        table.add_run_energy_kind(RUN_OPTION_TRUE_OR_NAN);
                     }
                     None => {}
                 }
             }
         },
         InteractReq::Key { down, .. } => {
-            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            table.add_action(action_off.unwrap());
             if let Some(off) = kind_off {
-                b.push_slot_always(VT_IN_KIND, off);
+                table.add_kind(off);
             }
-            b.push_slot_always(VT_IN_INDEX, if *down { 1 } else { 0 });
+            table.add_index(if *down { 1 } else { 0 });
         }
         InteractReq::Mouse {
             down,
@@ -7255,20 +4209,20 @@ fn interact_off<'b>(
             button,
             identity,
         } => {
-            b.push_slot_always(VT_IN_INDEX, if *down { 1 } else { 0 });
-            b.push_slot_always(VT_IN_LEVEL, *button);
-            b.push_slot_always(VT_IN_XF, *x);
-            b.push_slot_always(VT_IN_YF, *y);
+            table.add_index(if *down { 1 } else { 0 });
+            table.add_level(*button);
+            table.add_xf(*x);
+            table.add_yf(*y);
             if *identity != 0 {
-                b.push_slot_always(VT_IN_INPUT_IDENTITY, *identity);
+                table.add_input_identity(*identity);
             }
         }
     }
     // Inspect routes and world walks carry their avoid rectangles.
     if let Some(off) = avoid_off {
-        b.push_slot_always(VT_IN_AVOID, off);
+        table.add_avoid(off);
     }
-    WIPOffset::new(b.end_table(tab).value())
+    table.finish()
 }
 
 #[cfg(test)]
@@ -7355,9 +4309,9 @@ pub(crate) mod tests {
     #[test]
     fn omitted_walk_outcome_fields_default_safe() {
         let mut b = flatbuffers::FlatBufferBuilder::new();
-        let tab = b.start_table();
-        b.push_slot_always(VT_SNAP_TICK, 7u64);
-        let root = b.end_table(tab);
+        let mut snapshot = SnapshotBuilder::new(&mut b);
+        snapshot.add_tick(7);
+        let root = snapshot.finish();
         b.finish(root, None);
         let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
         assert!(!view.has_walk_outcome_seq());
@@ -7374,10 +4328,10 @@ pub(crate) mod tests {
         assert_eq!(view.route_inspect_seq(), 0);
         assert_eq!(view.route_inspect_request_id(), 0);
         assert!(!view.route_inspect_ok());
-        assert_eq!(view.route_inspect_reason(), "");
+        assert_eq!(view.route_inspect_reason(), None);
         assert!(!view.route_inspect_bank_planned());
         assert_eq!(view.route_inspect_ticks(), 0.0);
-        assert!(view.route_inspect_hops().is_empty());
+        assert!(view.route_inspect_hops().is_none());
         assert_eq!(view.route_inspect_prev_seq(), 0);
         assert_eq!(view.route_inspect_prev_request_id(), 0);
         assert_eq!(view.route_inspect_running_id(), 0);
@@ -7406,13 +4360,14 @@ pub(crate) mod tests {
         let bytes = encode_snapshot(&input);
         let view = decode_snapshot(&bytes).expect("snapshot decodes");
         assert!(view.has_stats());
-        let got = view.stats();
+        let got = view.stats().expect("stats vector");
         assert_eq!(got.len(), 1);
-        assert_eq!(got[0].index(), 3);
-        assert_eq!(got[0].name(), "hitpoints");
-        assert_eq!(got[0].xp(), 1500);
-        assert_eq!(got[0].base(), 10);
-        assert_eq!(got[0].effective(), 7);
+        let stat = got.get(0);
+        assert_eq!(stat.index(), 3);
+        assert_eq!(stat.name(), Some("hitpoints"));
+        assert_eq!(stat.xp(), 1500);
+        assert_eq!(stat.base(), 10);
+        assert_eq!(stat.effective(), 7);
     }
 
     /// Task 8 — an npc SceneEntity view round-trips through encode/decode.
@@ -7449,20 +4404,27 @@ pub(crate) mod tests {
         let bytes = encode_snapshot(&input);
         let view = decode_snapshot(&bytes).expect("snapshot decodes");
         assert!(view.has_npcs(), "keyframe carries npcs");
-        let got = view.npcs();
+        let got = view.npcs().expect("npc vector");
         assert_eq!(got.len(), 1);
-        assert_eq!(got[0].index(), 7);
-        assert_eq!(got[0].id(), 41);
-        assert_eq!(got[0].name(), Some("Chicken"));
-        assert_eq!((got[0].x(), got[0].z(), got[0].level()), (3222, 3295, 0));
-        assert_eq!((got[0].size(), got[0].nx(), got[0].nz()), (4, 2832, 9825));
-        assert_eq!(got[0].actions(), vec!["Attack", "Pick-up"]);
+        let npc = got.get(0);
+        assert_eq!(npc.index(), 7);
+        assert_eq!(npc.id(), 41);
+        assert_eq!(npc.name(), Some("Chicken"));
+        assert_eq!((npc.x(), npc.z(), npc.level()), (3222, 3295, 0));
+        assert_eq!((npc.size(), npc.nx(), npc.nz()), (4, 2832, 9825));
+        assert_eq!(
+            npc.actions()
+                .expect("npc actions")
+                .iter()
+                .collect::<Vec<_>>(),
+            vec!["Attack", "Pick-up"]
+        );
         assert!(
-            unsafe { got[0].tab.get::<i32>(VT_ENT_SHAPE, None) }.is_none(),
+            unsafe { npc._tab.get::<i32>(SceneEntityReader::VT_SHAPE, None) }.is_none(),
             "non-loc rows omit zero-valued loc geometry slots"
         );
         assert!(
-            unsafe { got[0].tab.get::<i32>(VT_ENT_ANGLE, None) }.is_none(),
+            unsafe { npc._tab.get::<i32>(SceneEntityReader::VT_ANGLE, None) }.is_none(),
             "non-loc rows omit zero-valued loc geometry slots"
         );
     }
@@ -7504,40 +4466,43 @@ pub(crate) mod tests {
         let (delta, _) = encode_snapshot_delta(Some(&fp), &input, false);
         let view = decode_snapshot(&delta).expect("delta");
         assert!(!view.has_npcs(), "unchanged npcs omitted from delta");
-        assert!(view.npcs().is_empty(), "absent reads as empty vec");
+        assert!(view.npcs().is_none(), "absent reads as None");
     }
 
     #[test]
     fn old_scene_entity_defaults_size_nx_nz_zero() {
         let mut snap_b = flatbuffers::FlatBufferBuilder::new();
-        let ent_tab = snap_b.start_table();
-        snap_b.push_slot_always(VT_ENT_INDEX, 7i32);
-        snap_b.push_slot_always(VT_ENT_X, 10i32);
-        snap_b.push_slot_always(VT_ENT_Z, 20i32);
-        let ent_off = snap_b.end_table(ent_tab);
-        let vec = snap_b.create_vector(&[flatbuffers::WIPOffset::<SceneEntityReader>::new(
-            ent_off.value(),
-        )]);
-        let tab = snap_b.start_table();
-        snap_b.push_slot_always(VT_SNAP_TICK, 1u64);
-        snap_b.push_slot_always(VT_SNAP_NPCS, vec);
-        let root = snap_b.end_table(tab);
+        let ent_off = {
+            let mut entity = SceneEntityBuilder::new(&mut snap_b);
+            entity.add_index(7);
+            entity.add_x(10);
+            entity.add_z(20);
+            entity.finish()
+        };
+        let entities = snap_b.create_vector(&[ent_off]);
+        let root = {
+            let mut snapshot = SnapshotBuilder::new(&mut snap_b);
+            snapshot.add_tick(1);
+            snapshot.add_npcs(entities);
+            snapshot.finish()
+        };
         snap_b.finish(root, None);
         let snap = SnapshotReader::from_bytes(snap_b.finished_data()).expect("old snap");
-        let got = snap.npcs();
+        let got = snap.npcs().expect("npc vector");
         assert_eq!(got.len(), 1);
-        assert_eq!(got[0].size(), 0);
-        assert_eq!(got[0].nx(), 0);
-        assert_eq!(got[0].nz(), 0);
-        assert_eq!(got[0].target_index(), -1);
+        let npc = got.get(0);
+        assert_eq!(npc.size(), 0);
+        assert_eq!(npc.nx(), 0);
+        assert_eq!(npc.nz(), 0);
+        assert_eq!(npc.target_index(), -1);
     }
 
     #[test]
     fn old_snapshot_self_target_defaults_none() {
         let mut b = flatbuffers::FlatBufferBuilder::new();
-        let tab = b.start_table();
-        b.push_slot_always(VT_SNAP_TICK, 7u64);
-        let root = b.end_table(tab);
+        let mut snapshot = SnapshotBuilder::new(&mut b);
+        snapshot.add_tick(7);
+        let root = snapshot.finish();
         b.finish(root, None);
         let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
         assert!(!view.has_self_target_kind());
@@ -7578,8 +4543,9 @@ pub(crate) mod tests {
         input.npcs = &npcs;
         let bytes = encode_snapshot(&input);
         let view = decode_snapshot(&bytes).expect("snapshot");
-        assert_eq!(view.npcs()[0].size(), 1);
-        assert_eq!((view.npcs()[0].nx(), view.npcs()[0].nz()), (0, 0));
+        let npc = view.npcs().expect("npc vector").get(0);
+        assert_eq!(npc.size(), 1);
+        assert_eq!((npc.nx(), npc.nz()), (0, 0));
     }
 
     #[test]
@@ -7614,9 +4580,10 @@ pub(crate) mod tests {
         input.locs = &locs;
         let bytes = encode_snapshot(&input);
         let view = decode_snapshot(&bytes).expect("snapshot");
-        assert_eq!(view.locs()[0].size(), 0);
-        assert_eq!((view.locs()[0].nx(), view.locs()[0].nz()), (0, 0));
-        assert_eq!((view.locs()[0].shape(), view.locs()[0].angle()), (9, 1));
+        let loc = view.locs().expect("loc vector").get(0);
+        assert_eq!(loc.size(), 0);
+        assert_eq!((loc.nx(), loc.nz()), (0, 0));
+        assert_eq!((loc.shape(), loc.angle()), (9, 1));
     }
 
     #[test]
@@ -7756,7 +4723,7 @@ pub(crate) mod tests {
         let (delta, _) = encode_snapshot_delta(Some(&fp), &reset, false);
         let view = decode_snapshot(&delta).expect("reset");
         assert!(view.has_npcs());
-        assert!(view.npcs().is_empty());
+        assert!(view.npcs().expect("cleared npc vector").is_empty());
         assert_eq!(view.self_target_kind(), 0);
         assert_eq!(view.self_target_index(), -1);
     }
@@ -8090,17 +5057,21 @@ pub(crate) mod tests {
     fn old_walk_buffers_default_new_find_options_false() {
         let mut b = FlatBufferBuilder::new();
         let op_off = b.create_string("walk");
-        let tab = b.start_table();
-        b.push_slot_always(VT_IN_OP, op_off);
-        b.push_slot_always(VT_IN_X, 1);
-        b.push_slot_always(VT_IN_Z, 2);
-        b.push_slot_always(VT_IN_LEVEL, 0);
-        b.push_slot_always(VT_IN_REQUEST_ID, 7u64);
-        let row = WIPOffset::<InteractReader>::new(b.end_table(tab).value());
+        let row = {
+            let mut interact = InteractBuilder::new(&mut b);
+            interact.add_op(op_off);
+            interact.add_x(1);
+            interact.add_z(2);
+            interact.add_level(0);
+            interact.add_request_id(7);
+            interact.finish()
+        };
         let reqs = b.create_vector(&[row]);
-        let batch = b.start_table();
-        b.push_slot_always(VT_REQS, reqs);
-        let root = b.end_table(batch);
+        let root = {
+            let mut batch = InteractBatchBuilder::new(&mut b);
+            batch.add_reqs(reqs);
+            batch.finish()
+        };
         b.finish(root, None);
         let got = decode_interact_batch(b.finished_data()).expect("old walk");
         assert_eq!(
@@ -8202,18 +5173,54 @@ pub(crate) mod tests {
             ),
             (3200, 3200, 0, 9, 8)
         );
-        assert_eq!(reach.walkable(), walkable);
-        assert_eq!(reach.reachable(), reachable);
-        assert_eq!(reach.reachable_adj(), adj);
-        assert_eq!(reach.exact_rank(), exact_rank);
-        assert_eq!(reach.adjacent_rank(), adjacent_rank);
-        assert_eq!(reach.step(), Vec::<u8>::new());
-        assert_eq!(reach.canlight(), walkable);
-        assert_eq!(reach.walkable()[0] & (1 << 31), 1 << 31, "bit 31 in word 0");
-        assert_eq!(reach.walkable()[1] & 1, 1, "bit 32 in word 1");
-        assert_eq!(reach.walkable()[1] & (1 << 21), 1 << 21, "bit 53 in word 1");
-        assert_eq!(reach.walkable()[1] & (1 << 31), 1 << 31, "bit 63 in word 1");
-        assert_eq!(reach.walkable()[2] & 1, 1, "bit 64 in word 2");
+        let got_walkable = reach.walkable().expect("walkable bits");
+        assert_eq!(got_walkable.iter().collect::<Vec<_>>(), walkable);
+        assert_eq!(
+            reach
+                .reachable()
+                .expect("reachable bits")
+                .iter()
+                .collect::<Vec<_>>(),
+            reachable
+        );
+        assert_eq!(
+            reach
+                .reachable_adj()
+                .expect("adjacent bits")
+                .iter()
+                .collect::<Vec<_>>(),
+            adj
+        );
+        assert_eq!(
+            reach
+                .exact_rank()
+                .expect("exact ranks")
+                .iter()
+                .collect::<Vec<_>>(),
+            exact_rank
+        );
+        assert_eq!(
+            reach
+                .adjacent_rank()
+                .expect("adjacent ranks")
+                .iter()
+                .collect::<Vec<_>>(),
+            adjacent_rank
+        );
+        assert!(reach.step().expect("step vector").is_empty());
+        assert_eq!(
+            reach
+                .canlight()
+                .expect("lighting bits")
+                .iter()
+                .collect::<Vec<_>>(),
+            walkable
+        );
+        assert_eq!(got_walkable.get(0) & (1 << 31), 1 << 31, "bit 31 in word 0");
+        assert_eq!(got_walkable.get(1) & 1, 1, "bit 32 in word 1");
+        assert_eq!(got_walkable.get(1) & (1 << 21), 1 << 21, "bit 53 in word 1");
+        assert_eq!(got_walkable.get(1) & (1 << 31), 1 << 31, "bit 63 in word 1");
+        assert_eq!(got_walkable.get(2) & 1, 1, "bit 64 in word 2");
     }
 
     #[test]
@@ -8241,7 +5248,15 @@ pub(crate) mod tests {
         let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
         let kf = decode_snapshot(&keyframe).expect("keyframe");
         assert!(kf.has_reach());
-        assert_eq!(kf.reach().expect("reach").step(), step);
+        assert_eq!(
+            kf.reach()
+                .expect("reach")
+                .step()
+                .expect("step vector")
+                .iter()
+                .collect::<Vec<_>>(),
+            step
+        );
         let (delta, _) = encode_snapshot_delta(Some(&fp), &input, false);
         let view = decode_snapshot(&delta).expect("delta");
         assert!(!view.has_reach(), "unchanged reach omitted from delta");
@@ -8277,11 +5292,11 @@ pub(crate) mod tests {
         let reach = view.reach().expect("cleared view");
         assert!(!reach.available());
         assert_eq!(reach.width(), 0);
-        assert!(reach.walkable().is_empty());
-        assert!(reach.exact_rank().is_empty());
-        assert!(reach.adjacent_rank().is_empty());
-        assert!(reach.step().is_empty());
-        assert!(reach.canlight().is_empty());
+        assert!(reach.walkable().expect("walkable bits").is_empty());
+        assert!(reach.exact_rank().expect("exact ranks").is_empty());
+        assert!(reach.adjacent_rank().expect("adjacent ranks").is_empty());
+        assert!(reach.step().expect("step vector").is_empty());
+        assert!(reach.canlight().expect("lighting bits").is_empty());
     }
 
     #[test]
@@ -8309,19 +5324,40 @@ pub(crate) mod tests {
         };
         let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
         let kf = decode_snapshot(&keyframe).expect("keyframe");
-        assert_eq!(kf.reach().expect("reach").canlight(), lit);
+        assert_eq!(
+            kf.reach()
+                .expect("reach")
+                .canlight()
+                .expect("lighting bits")
+                .iter()
+                .collect::<Vec<_>>(),
+            lit
+        );
 
         input.reach.canlight = &zeros;
         let (delta, fp2) = encode_snapshot_delta(Some(&fp), &input, false);
         let view = decode_snapshot(&delta).expect("delta");
         assert!(view.has_reach(), "canlight change must post reach");
-        assert_eq!(view.reach().expect("reach").canlight(), zeros);
+        assert_eq!(
+            view.reach()
+                .expect("reach")
+                .canlight()
+                .expect("lighting bits")
+                .iter()
+                .collect::<Vec<_>>(),
+            zeros
+        );
 
         input.reach = ReachViewInput::UNAVAILABLE;
         let (cleared, _) = encode_snapshot_delta(Some(&fp2), &input, false);
         let view = decode_snapshot(&cleared).expect("cleared");
         assert!(view.has_reach());
-        assert!(view.reach().expect("cleared").canlight().is_empty());
+        assert!(view
+            .reach()
+            .expect("cleared")
+            .canlight()
+            .expect("lighting bits")
+            .is_empty());
     }
 
     #[test]
@@ -8345,7 +5381,13 @@ pub(crate) mod tests {
         assert!(kf.has_collision());
         let c = kf.collision().expect("collision");
         assert!(c.available());
-        assert_eq!(c.flags(), flags);
+        assert_eq!(
+            c.flags()
+                .expect("collision flags")
+                .iter()
+                .collect::<Vec<_>>(),
+            flags
+        );
         let (delta, fp2) = encode_snapshot_delta_with_native(Some(&fp), &input, native, false);
         let view = decode_snapshot(&delta).expect("delta");
         assert!(!view.has_collision(), "unchanged collision omitted");
@@ -8360,7 +5402,7 @@ pub(crate) mod tests {
         assert!(view.has_collision(), "available→false must post");
         let c = view.collision().expect("cleared");
         assert!(!c.available());
-        assert!(c.flags().is_empty());
+        assert!(c.flags().expect("collision flags").is_empty());
     }
 
     #[test]
@@ -8405,9 +5447,9 @@ pub(crate) mod tests {
         // A buffer written before the board slots existed (append-only
         // schema): both slots are absent and the generation reads 0.
         let mut b = flatbuffers::FlatBufferBuilder::new();
-        let tab = b.start_table();
-        b.push_slot_always(VT_SNAP_TICK, 7u64);
-        let root = b.end_table(tab);
+        let mut snapshot = SnapshotBuilder::new(&mut b);
+        snapshot.add_tick(7);
+        let root = snapshot.finish();
         b.finish(root, None);
         let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
         assert!(!view.has_puzzle_board());
@@ -8437,15 +5479,24 @@ pub(crate) mod tests {
         let board = view.puzzle_board().expect("present board");
         assert_eq!(board.component_id(), 6600);
         assert_eq!(board.size(), 25);
-        let items = board.items();
+        let items = board.items().expect("board items");
         assert_eq!(items.len(), 2, "one row per stored slot, no gap rows");
-        assert_eq!(items[0].id(), 2201);
-        assert_eq!(items[0].slot(), 3);
-        assert_eq!(items[0].component_id(), 6600);
-        assert_eq!(items[0].ops(), vec!["Take"]);
-        assert_eq!(items[1].id(), 2202);
-        assert_eq!(items[1].slot(), 4);
-        assert!(items[1].ops().is_empty());
+        let first = items.get(0);
+        assert_eq!(first.id(), 2201);
+        assert_eq!(first.slot(), 3);
+        assert_eq!(first.component_id(), 6600);
+        assert_eq!(
+            first
+                .ops()
+                .expect("item operations")
+                .iter()
+                .collect::<Vec<_>>(),
+            vec!["Take"]
+        );
+        let second = items.get(1);
+        assert_eq!(second.id(), 2202);
+        assert_eq!(second.slot(), 4);
+        assert!(second.ops().expect("item operations").is_empty());
         assert_eq!(view.puzzle_board_generation(), 4);
     }
 
@@ -8459,8 +5510,9 @@ pub(crate) mod tests {
         let view = decode_snapshot(&bytes).expect("keyframe");
         let board = view.puzzle_board().expect("present board");
         assert_eq!(board.size(), 9);
-        assert_eq!(board.items().len(), 2, "rows are the stored slots only");
-        assert_eq!(board.items()[1].slot(), 7, "the empty slot 6 is not a row");
+        let items = board.items().expect("board items");
+        assert_eq!(items.len(), 2, "rows are the stored slots only");
+        assert_eq!(items.get(1).slot(), 7, "the empty slot 6 is not a row");
     }
 
     #[test]
@@ -8479,7 +5531,7 @@ pub(crate) mod tests {
         let board = view.puzzle_board().expect("a close is a present object");
         assert_eq!(board.component_id(), -1);
         assert_eq!(board.size(), 0);
-        assert!(board.items().is_empty());
+        assert!(board.items().expect("board items").is_empty());
         assert_eq!(view.puzzle_board_generation(), 9);
     }
 
@@ -8520,7 +5572,15 @@ pub(crate) mod tests {
             "a row change co-posts the generation"
         );
         assert_eq!(view.puzzle_board_generation(), 1);
-        assert_eq!(view.puzzle_board().expect("board").items()[0].id(), 2202);
+        assert_eq!(
+            view.puzzle_board()
+                .expect("board")
+                .items()
+                .expect("board items")
+                .get(0)
+                .id(),
+            2202
+        );
 
         // A session edge: only the generation moves.
         let bumped = board_native(&moved, 25, 2);
@@ -8578,15 +5638,17 @@ pub(crate) mod tests {
         // A buffer written before slot 254 existed (append-only schema): the
         // slot is absent and the reader reports nothing rather than a clear.
         let mut b = flatbuffers::FlatBufferBuilder::new();
-        let tab = b.start_table();
-        b.push_slot_always(VT_SNAP_TICK, 7u64);
-        b.push_slot_always(VT_SNAP_WALK_OUTCOME_SEQ, 3u64);
-        let root = b.end_table(tab);
+        let root = {
+            let mut snapshot = SnapshotBuilder::new(&mut b);
+            snapshot.add_tick(7);
+            snapshot.add_walk_outcome_seq(3);
+            snapshot.finish()
+        };
         b.finish(root, None);
         let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
         assert!(view.has_walk_outcome_seq());
         assert!(!view.has_walk_missing_carry());
-        assert!(view.walk_missing_carry().is_empty());
+        assert!(view.walk_missing_carry().is_none());
     }
 
     #[test]
@@ -8609,15 +5671,16 @@ pub(crate) mod tests {
             encode_snapshot_delta_with_native(None, &empty_input(1), carry_native(&rows, 1), false);
         let view = decode_snapshot(&bytes).expect("keyframe");
         assert!(view.has_walk_missing_carry());
-        let posted = view.walk_missing_carry();
+        let posted = view.walk_missing_carry().expect("missing carry rows");
         assert_eq!(posted.len(), 2, "posted order is the host's");
-        assert_eq!(posted[0].id(), 1854);
-        assert_eq!(posted[0].count(), 1);
-        assert_eq!(posted[0].name(), Some("Shantay pass"));
-        assert_eq!(posted[1].id(), 995);
-        assert_eq!(posted[1].count(), 10);
-        assert!(!posted[1].has_name());
-        assert_eq!(posted[1].name(), None);
+        let first = posted.get(0);
+        assert_eq!(first.id(), 1854);
+        assert_eq!(first.count(), 1);
+        assert_eq!(first.name(), Some("Shantay pass"));
+        let second = posted.get(1);
+        assert_eq!(second.id(), 995);
+        assert_eq!(second.count(), 10);
+        assert_eq!(second.name(), None);
     }
 
     #[test]
@@ -8633,6 +5696,7 @@ pub(crate) mod tests {
             decode_snapshot(&keyframe)
                 .expect("keyframe")
                 .walk_missing_carry()
+                .expect("missing carry rows")
                 .len(),
             1
         );
@@ -8647,7 +5711,10 @@ pub(crate) mod tests {
         let view = decode_snapshot(&delta).expect("delta");
         assert!(view.has_walk_outcome_seq(), "the family re-posts");
         assert!(view.has_walk_missing_carry(), "the clear is never omitted");
-        assert!(view.walk_missing_carry().is_empty());
+        assert!(view
+            .walk_missing_carry()
+            .expect("cleared missing carry rows")
+            .is_empty());
     }
 
     #[test]
@@ -8719,4 +5786,6 @@ pub(crate) mod tests {
         );
         assert!(!view.walk_outcome_blocked());
     }
+
+    include!("isolate_fb_schema_roundtrip.rs");
 }

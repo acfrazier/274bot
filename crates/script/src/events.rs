@@ -141,12 +141,12 @@ impl NativeEventProducer {
         // Native Rust selects only the newest ring entry. Omitted chat_lines
         // are a delta omission, not a repeated event.
         if snap.has_chat_lines() {
-            if let Some(line) = snap.chat_lines().into_iter().next() {
+            if let Some(line) = snap.chat_lines().and_then(|lines| lines.iter().next()) {
                 self.current_chat = Some((
                     line.seq(),
                     line.type_(),
                     line.username().map(str::to_string),
-                    line.text().to_string(),
+                    line.text().unwrap_or_default().to_string(),
                 ));
             }
         }
@@ -178,7 +178,8 @@ impl NativeEventProducer {
                 self.last_inv_size
             };
             if size > 0 {
-                match expand_inv(&snap.inv(), size) {
+                let rows = snap.inv().expect("has_inv checked");
+                match expand_inv(rows.iter(), size) {
                     Ok(slots) => {
                         if self.last_inv.is_none() {
                             self.last_inv = Some(slots.clone());
@@ -266,10 +267,11 @@ impl NativeEventProducer {
 fn collect_xp(snap: &SnapshotReader<'_>) -> Vec<XpState> {
     snap.stats()
         .into_iter()
+        .flat_map(|rows| rows.iter())
         .take(MAX_STATS)
         .map(|s: StatReader<'_>| XpState {
             index: s.index(),
-            name: s.name().to_string(),
+            name: s.name().unwrap_or_default().to_string(),
             xp: s.xp(),
         })
         .collect()
@@ -302,7 +304,10 @@ fn merge_xp(last: &mut Vec<XpState>, current: &[XpState]) {
     }
 }
 
-fn expand_inv(rows: &[RowReader<'_>], size: i32) -> Result<Vec<SlotState>, String> {
+fn expand_inv<'a>(
+    rows: impl IntoIterator<Item = RowReader<'a>>,
+    size: i32,
+) -> Result<Vec<SlotState>, String> {
     if size <= 0 || size > MAX_INV_SIZE {
         return Err(format!(
             "inventory events: invalid inv_size {size}; family reset"

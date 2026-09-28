@@ -88,13 +88,27 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+      - name: Install pinned flatc
+        env:
+          FLATC_URL: https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g%2B%2B-13.zip
+          FLATC_SHA256: 9f87066dc5dfa7fe02090b55bab5f3e55df03e32c9b0cdf229004ade7d091039
+        run: |
+          curl --fail --location --retry 3 --output /tmp/flatc.zip "$FLATC_URL"
+          echo "$FLATC_SHA256  /tmp/flatc.zip" | sha256sum --check -
+          unzip -q /tmp/flatc.zip -d /tmp/flatc
+          sudo install -m 0755 /tmp/flatc/flatc /usr/local/bin/flatc
+          test "$(flatc --version)" = "flatc version 25.12.19"
       - name: Check crate architecture
         run: |
           python3 --version
           python3 tools/architecture/check.py
           python3 tools/architecture/check.py --self-test
-          python3 tools/schema/isolate_snapshot_check.py
-          python3 tools/schema/isolate_snapshot_check.py --self-test
+      - name: Check FlatBuffer bindings
+        run: |
+          generated="$(mktemp -d)"
+          trap 'rm -rf "$generated"' EXIT
+          flatc --rust -o "$generated" crates/script/schema/isolate.fbs
+          diff -ru crates/script/schema/generated "$generated"
 
   test_lanes:
     name: test (${{ matrix.lane }})

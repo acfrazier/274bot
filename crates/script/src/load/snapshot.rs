@@ -5,7 +5,10 @@
 //! small V8 property helpers and native-event batch materialization used by
 //! the tick loop. Lifecycle/teardown stays in `isolate`.
 
+use flatbuffers::{ForwardsUOffset, Vector};
 use rustyscript::Runtime;
+
+type TableVector<'a, T> = Option<Vector<'a, ForwardsUOffset<T>>>;
 
 /// Materialise the decoded FlatBuffer snapshot as the JS object the
 /// shim reads (`__rs2b0t_host.snapshot`), merging it onto the last
@@ -83,19 +86,19 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "ingame", falsy)?;
     }
     if snap.has_inv() {
-        let inv = row_array(&mut scope, &snap.inv())?;
+        let inv = row_array(&mut scope, snap.inv())?;
         set(&mut scope, obj, "inv", inv)?;
     } else if !had {
         set(&mut scope, obj, "inv", empty_rows)?;
     }
     if snap.has_stats() {
-        let stats = stat_array(&mut scope, &snap.stats())?;
+        let stats = stat_array(&mut scope, snap.stats())?;
         set(&mut scope, obj, "stats", stats)?;
     } else if !had {
         set(&mut scope, obj, "stats", empty_rows)?;
     }
     if snap.has_booths() {
-        let booths = tile_array(&mut scope, &snap.booths())?;
+        let booths = tile_array(&mut scope, snap.booths())?;
         set(&mut scope, obj, "booths", booths)?;
     } else if !had {
         set(&mut scope, obj, "booths", empty_rows)?;
@@ -107,19 +110,19 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "nearest_booth", none)?;
     }
     if snap.has_banks() {
-        let banks = bank_stand_array(&mut scope, &snap.banks())?;
+        let banks = bank_stand_array(&mut scope, snap.banks())?;
         set(&mut scope, obj, "banks", banks)?;
     } else if !had {
         set(&mut scope, obj, "banks", empty_rows)?;
     }
     if snap.has_bank() {
-        let bank = row_array(&mut scope, &snap.bank())?;
+        let bank = row_array(&mut scope, snap.bank())?;
         set(&mut scope, obj, "bank", bank)?;
     } else if !had {
         set(&mut scope, obj, "bank", empty_rows)?;
     }
     if snap.has_bank_side() {
-        let bank_side = row_array(&mut scope, &snap.bank_side())?;
+        let bank_side = row_array(&mut scope, snap.bank_side())?;
         set(&mut scope, obj, "bank_side", bank_side)?;
     } else if !had {
         set(&mut scope, obj, "bank_side", empty_rows)?;
@@ -151,7 +154,7 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "bank_snapshot_generation", generation)?;
     }
     if snap.has_bank_approaches() {
-        let approaches = bank_approach_array(&mut scope, &snap.bank_approaches())?;
+        let approaches = bank_approach_array(&mut scope, snap.bank_approaches())?;
         set(&mut scope, obj, "bank_approaches", approaches)?;
     } else if !had {
         set(&mut scope, obj, "bank_approaches", empty_rows)?;
@@ -180,7 +183,7 @@ pub(super) fn materialize_snapshot(
         )?;
         let rid = num(&mut scope, snap.walk_outcome_request_id() as f64);
         set(&mut scope, obj, "walk_outcome_request_id", rid)?;
-        let carry = carry_array(&mut scope, &snap.walk_missing_carry())?;
+        let carry = carry_array(&mut scope, snap.walk_missing_carry())?;
         set(&mut scope, obj, "walk_missing_carry", carry)?;
     } else if !had {
         let zero = num(&mut scope, 0.0);
@@ -204,13 +207,13 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "route_inspect_request_id", rid)?;
         let ok = v8::Boolean::new(&mut scope, snap.route_inspect_ok());
         set(&mut scope, obj, "route_inspect_ok", ok.into())?;
-        let reason = js_string(&mut scope, snap.route_inspect_reason())?;
+        let reason = js_string(&mut scope, snap.route_inspect_reason().unwrap_or_default())?;
         set(&mut scope, obj, "route_inspect_reason", reason)?;
         let bank = v8::Boolean::new(&mut scope, snap.route_inspect_bank_planned());
         set(&mut scope, obj, "route_inspect_bank_planned", bank.into())?;
         let ticks = num(&mut scope, snap.route_inspect_ticks());
         set(&mut scope, obj, "route_inspect_ticks", ticks)?;
-        let hops = inspect_hop_array(&mut scope, &snap.route_inspect_hops())?;
+        let hops = inspect_hop_array(&mut scope, snap.route_inspect_hops())?;
         set(&mut scope, obj, "route_inspect_hops", hops)?;
         let pseq = num(&mut scope, snap.route_inspect_prev_seq() as f64);
         set(&mut scope, obj, "route_inspect_prev_seq", pseq)?;
@@ -220,7 +223,10 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "route_inspect_prev_request_id", prid)?;
         let pok = v8::Boolean::new(&mut scope, snap.route_inspect_prev_ok());
         set(&mut scope, obj, "route_inspect_prev_ok", pok.into())?;
-        let preason = js_string(&mut scope, snap.route_inspect_prev_reason())?;
+        let preason = js_string(
+            &mut scope,
+            snap.route_inspect_prev_reason().unwrap_or_default(),
+        )?;
         set(&mut scope, obj, "route_inspect_prev_reason", preason)?;
         let pbank = v8::Boolean::new(&mut scope, snap.route_inspect_prev_bank_planned());
         set(
@@ -231,7 +237,7 @@ pub(super) fn materialize_snapshot(
         )?;
         let pticks = num(&mut scope, snap.route_inspect_prev_ticks());
         set(&mut scope, obj, "route_inspect_prev_ticks", pticks)?;
-        let phops = inspect_hop_array(&mut scope, &snap.route_inspect_prev_hops())?;
+        let phops = inspect_hop_array(&mut scope, snap.route_inspect_prev_hops())?;
         set(&mut scope, obj, "route_inspect_prev_hops", phops)?;
         let run = num(&mut scope, snap.route_inspect_running_id() as f64);
         set(&mut scope, obj, "route_inspect_running_id", run)?;
@@ -458,19 +464,19 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "trade_partner", none.into())?;
     }
     if snap.has_trade_mine() {
-        let trade_mine = row_array(&mut scope, &snap.trade_mine())?;
+        let trade_mine = row_array(&mut scope, snap.trade_mine())?;
         set(&mut scope, obj, "trade_mine", trade_mine)?;
     } else if !had {
         set(&mut scope, obj, "trade_mine", empty_rows)?;
     }
     if snap.has_trade_theirs() {
-        let trade_theirs = row_array(&mut scope, &snap.trade_theirs())?;
+        let trade_theirs = row_array(&mut scope, snap.trade_theirs())?;
         set(&mut scope, obj, "trade_theirs", trade_theirs)?;
     } else if !had {
         set(&mut scope, obj, "trade_theirs", empty_rows)?;
     }
     if snap.has_trade_side() {
-        let trade_side = row_array(&mut scope, &snap.trade_side())?;
+        let trade_side = row_array(&mut scope, snap.trade_side())?;
         set(&mut scope, obj, "trade_side", trade_side)?;
     } else if !had {
         set(&mut scope, obj, "trade_side", empty_rows)?;
@@ -496,14 +502,14 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "shop_open", falsy)?;
     }
     if snap.has_shop_stock() {
-        let shop_stock = row_array(&mut scope, &snap.shop_stock())?;
+        let shop_stock = row_array(&mut scope, snap.shop_stock())?;
         set(&mut scope, obj, "shop_stock", shop_stock)?;
     } else if !had {
         set(&mut scope, obj, "shop_stock", empty_rows)?;
     }
     if snap.has_shop_player_available() {
         let shop_player = if snap.shop_player_available() {
-            row_array(&mut scope, &snap.shop_player())?
+            row_array(&mut scope, snap.shop_player())?
         } else {
             empty_rows
         };
@@ -515,7 +521,7 @@ pub(super) fn materialize_snapshot(
         let available = v8::Boolean::new(&mut scope, snap.main_make_available());
         set(&mut scope, obj, "main_make_available", available.into())?;
         let main_make = if snap.main_make_available() {
-            row_array(&mut scope, &snap.main_make())?
+            row_array(&mut scope, snap.main_make())?
         } else {
             empty_rows
         };
@@ -556,35 +562,35 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "self_target_index", index)?;
     }
     if snap.has_widgets() {
-        let widgets = widget_text_array(&mut scope, &snap.widgets())?;
+        let widgets = widget_text_array(&mut scope, snap.widgets())?;
         set(&mut scope, obj, "widgets", widgets)?;
     } else if !had {
         set(&mut scope, obj, "widgets", empty_rows)?;
     }
     if snap.has_quest_statuses_update() {
         if snap.quest_statuses_available() {
-            let quests = quest_status_array(&mut scope, &snap.quest_statuses())?;
+            let quests = quest_status_array(&mut scope, snap.quest_statuses())?;
             set(&mut scope, obj, "quest_statuses", quests)?;
         } else {
             set(&mut scope, obj, "quest_statuses", none)?;
         }
     } else if snap.has_quest_statuses() {
         // Accept buffers from the additive vector-only draft as available.
-        let quests = quest_status_array(&mut scope, &snap.quest_statuses())?;
+        let quests = quest_status_array(&mut scope, snap.quest_statuses())?;
         set(&mut scope, obj, "quest_statuses", quests)?;
     } else if !had {
         set(&mut scope, obj, "quest_statuses", none)?;
     }
     if snap.has_npc_boxes_update() {
         if snap.npc_boxes_available() {
-            let boxes = npc_box_array(&mut scope, &snap.npc_boxes())?;
+            let boxes = npc_box_array(&mut scope, snap.npc_boxes())?;
             set(&mut scope, obj, "npc_boxes", boxes)?;
         } else {
             set(&mut scope, obj, "npc_boxes", none)?;
         }
     } else if snap.has_npc_boxes() {
         // Accept buffers from an additive vector-only draft as available.
-        let boxes = npc_box_array(&mut scope, &snap.npc_boxes())?;
+        let boxes = npc_box_array(&mut scope, snap.npc_boxes())?;
         set(&mut scope, obj, "npc_boxes", boxes)?;
     } else if !had {
         set(&mut scope, obj, "npc_boxes", none)?;
@@ -669,31 +675,31 @@ pub(super) fn materialize_snapshot(
         set_readonly(&mut scope, host, "ours", falsy)?;
     }
     if snap.has_npcs() {
-        let npcs = scene_entity_array(&mut scope, &snap.npcs(), true)?;
+        let npcs = scene_entity_array(&mut scope, snap.npcs(), true)?;
         set(&mut scope, obj, "npcs", npcs)?;
     } else if !had {
         set(&mut scope, obj, "npcs", empty_rows)?;
     }
     if snap.has_locs() {
-        let locs = scene_entity_array(&mut scope, &snap.locs(), false)?;
+        let locs = scene_entity_array(&mut scope, snap.locs(), false)?;
         set(&mut scope, obj, "locs", locs)?;
     } else if !had {
         set(&mut scope, obj, "locs", empty_rows)?;
     }
     if snap.has_players() {
-        let players = scene_entity_array(&mut scope, &snap.players(), false)?;
+        let players = scene_entity_array(&mut scope, snap.players(), false)?;
         set(&mut scope, obj, "players", players)?;
     } else if !had {
         set(&mut scope, obj, "players", empty_rows)?;
     }
     if snap.has_ground() {
-        let ground = scene_entity_array(&mut scope, &snap.ground(), false)?;
+        let ground = scene_entity_array(&mut scope, snap.ground(), false)?;
         set(&mut scope, obj, "ground", ground)?;
     } else if !had {
         set(&mut scope, obj, "ground", empty_rows)?;
     }
     if snap.has_equipment() {
-        let equipment = row_array(&mut scope, &snap.equipment())?;
+        let equipment = row_array(&mut scope, snap.equipment())?;
         set(&mut scope, obj, "equipment", equipment)?;
     } else if !had {
         set(&mut scope, obj, "equipment", empty_rows)?;
@@ -720,7 +726,7 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "chat_text", none)?;
     }
     if snap.has_chat_options() {
-        let chat_options = chat_option_array(&mut scope, &snap.chat_options())?;
+        let chat_options = chat_option_array(&mut scope, snap.chat_options())?;
         set(&mut scope, obj, "chat_options", chat_options)?;
     } else if !had {
         set(&mut scope, obj, "chat_options", empty_rows)?;
@@ -733,13 +739,13 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "side_tab", neg)?;
     }
     if snap.has_varps() {
-        let varps = varp_array(&mut scope, &snap.varps())?;
+        let varps = varp_array(&mut scope, snap.varps())?;
         set(&mut scope, obj, "varps", varps)?;
     } else if !had {
         set(&mut scope, obj, "varps", empty_rows)?;
     }
     if snap.has_combat_styles() {
-        let combat_styles = combat_style_array(&mut scope, &snap.combat_styles())?;
+        let combat_styles = combat_style_array(&mut scope, snap.combat_styles())?;
         set(&mut scope, obj, "combat_styles", combat_styles)?;
     } else if !had {
         set(&mut scope, obj, "combat_styles", empty_rows)?;
@@ -815,8 +821,11 @@ pub(super) fn materialize_snapshot(
             let root = num(&mut scope, pair.root() as f64);
             set(&mut scope, modal, "root", root)?;
             let lines = pair.texts();
-            let texts = v8::Array::new(&mut scope, lines.len() as i32);
-            for (i, line) in lines.into_iter().enumerate() {
+            let texts = v8::Array::new(
+                &mut scope,
+                lines.as_ref().map_or(0, |lines| lines.len()) as i32,
+            );
+            for (i, line) in lines.into_iter().flat_map(|lines| lines.iter()).enumerate() {
                 let line = js_string(&mut scope, line)?;
                 texts
                     .set_index(&mut scope, i as u32, line)
@@ -852,25 +861,25 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "chat_modal_id", neg)?;
     }
     if snap.has_make_products() {
-        let make_products = make_product_array(&mut scope, &snap.make_products())?;
+        let make_products = make_product_array(&mut scope, snap.make_products())?;
         set(&mut scope, obj, "make_products", make_products)?;
     } else if !had {
         set(&mut scope, obj, "make_products", empty_rows)?;
     }
     if snap.has_side_tab_ifaces() {
-        let ifaces = side_tab_iface_array(&mut scope, &snap.side_tab_ifaces())?;
+        let ifaces = side_tab_iface_array(&mut scope, snap.side_tab_ifaces())?;
         set(&mut scope, obj, "side_tab_ifaces", ifaces)?;
     } else if !had {
         set(&mut scope, obj, "side_tab_ifaces", empty_rows)?;
     }
     if snap.has_spell_buttons() {
-        let spell_buttons = combat_style_array(&mut scope, &snap.spell_buttons())?;
+        let spell_buttons = combat_style_array(&mut scope, snap.spell_buttons())?;
         set(&mut scope, obj, "spell_buttons", spell_buttons)?;
     } else if !had {
         set(&mut scope, obj, "spell_buttons", empty_rows)?;
     }
     if snap.has_chat_lines() {
-        let chat_lines = chat_line_array(&mut scope, &snap.chat_lines())?;
+        let chat_lines = chat_line_array(&mut scope, snap.chat_lines())?;
         set(&mut scope, obj, "chat_lines", chat_lines)?;
     } else if !had {
         set(&mut scope, obj, "chat_lines", empty_rows)?;
@@ -1166,8 +1175,9 @@ fn row_object<'s>(
     set(scope, o, "count", count)?;
     let id = num(scope, row.id() as f64);
     set(scope, o, "id", id)?;
-    let ops = v8::Array::new(scope, row.ops().len() as i32);
-    for (i, op) in row.ops().iter().enumerate() {
+    let row_ops = row.ops();
+    let ops = v8::Array::new(scope, row_ops.as_ref().map_or(0, |ops| ops.len()) as i32);
+    for (i, op) in row_ops.into_iter().flat_map(|ops| ops.iter()).enumerate() {
         let a = js_string(scope, op)?;
         ops.set_index(scope, i as u32, a)
             .ok_or_else(|| "v8 array set failed".to_string())?;
@@ -1188,29 +1198,29 @@ fn row_object<'s>(
     Ok(o.into())
 }
 
-fn row_array<'s>(
+fn row_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: &[crate::isolate_fb::RowReader<'_>],
+    rows: TableVector<'a, crate::isolate_fb::RowReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, rows.len() as i32);
-    for (i, row) in rows.iter().enumerate() {
-        let row = row_object(scope, row)?;
+    let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
+    for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
+        let row = row_object(scope, &row)?;
         arr.set_index(scope, i as u32, row)
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }
     Ok(arr.into())
 }
 
-fn stat_array<'s>(
+fn stat_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    stats: &[crate::isolate_fb::StatReader<'_>],
+    stats: TableVector<'a, crate::isolate_fb::StatReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, stats.len() as i32);
-    for (i, st) in stats.iter().enumerate() {
+    let arr = v8::Array::new(scope, stats.as_ref().map_or(0, |stats| stats.len()) as i32);
+    for (i, st) in stats.into_iter().flat_map(|stats| stats.iter()).enumerate() {
         let o = v8::Object::new(scope);
         let index = num(scope, st.index() as f64);
         set(scope, o, "index", index)?;
-        let name = js_string(scope, st.name())?;
+        let name = js_string(scope, st.name().unwrap_or_default())?;
         set(scope, o, "name", name)?;
         let xp = num(scope, st.xp() as f64);
         set(scope, o, "xp", xp)?;
@@ -1251,7 +1261,7 @@ fn tile_values_object<'s>(
 fn unavailable_collision<'s>(
     scope: &mut v8::HandleScope<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    collision_from_parts(scope, false, 0, 0, 0, 0, 0, &[])
+    collision_from_parts(scope, false, 0, 0, 0, 0, 0, None)
 }
 
 fn collision_object<'s>(
@@ -1261,7 +1271,6 @@ fn collision_object<'s>(
     let Some(c) = collision else {
         return unavailable_collision(scope);
     };
-    let flags = c.flags();
     collision_from_parts(
         scope,
         c.available(),
@@ -1270,12 +1279,12 @@ fn collision_object<'s>(
         c.level(),
         c.width(),
         c.height(),
-        &flags,
+        c.flags(),
     )
 }
 
 #[allow(clippy::too_many_arguments)] // mirrors collision plane fields into one V8 object
-fn collision_from_parts<'s>(
+fn collision_from_parts<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
     available: bool,
     base_x: i32,
@@ -1283,7 +1292,7 @@ fn collision_from_parts<'s>(
     level: i32,
     width: i32,
     height: i32,
-    flags: &[i32],
+    flags: Option<Vector<'a, i32>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let o = v8::Object::new(scope);
     let available_v = v8::Boolean::new(scope, available).into();
@@ -1298,7 +1307,7 @@ fn collision_from_parts<'s>(
     set(scope, o, "width", width_v)?;
     let height_v = num(scope, height as f64);
     set(scope, o, "height", height_v)?;
-    let view_flags = if available { flags } else { &[] };
+    let view_flags = if available { flags } else { None };
     let flags_v = collision_flags_view(scope, view_flags)?;
     set(scope, o, "flags", flags_v)?;
     Ok(o.into())
@@ -1306,15 +1315,18 @@ fn collision_from_parts<'s>(
 
 fn collision_flags_view<'s>(
     scope: &mut v8::HandleScope<'s>,
-    flags: &[i32],
+    flags: Option<Vector<'_, i32>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let nbytes = flags.len().saturating_mul(4);
+    let nbytes = flags
+        .as_ref()
+        .map_or(0, |flags| flags.len())
+        .saturating_mul(4);
     let ab = v8::ArrayBuffer::new(scope, nbytes);
     if nbytes > 0 {
         let backing = ab.get_backing_store();
         if let Some(ptr) = backing.data() {
             let dest = ptr.as_ptr() as *mut u8;
-            for (i, flag) in flags.iter().enumerate() {
+            for (i, flag) in flags.into_iter().flat_map(|flags| flags.iter()).enumerate() {
                 let bytes = flag.to_le_bytes();
                 unsafe {
                     std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest.add(i * 4), 4);
@@ -1389,20 +1401,20 @@ fn nearest_booth_object<'s>(
     set(scope, o, "level", level)?;
     let id = num(scope, nb.id() as f64);
     set(scope, o, "id", id)?;
-    let name = js_string(scope, nb.name())?;
+    let name = js_string(scope, nb.name().unwrap_or_default())?;
     set(scope, o, "name", name)?;
-    let op = js_string(scope, nb.op())?;
+    let op = js_string(scope, nb.op().unwrap_or_default())?;
     set(scope, o, "op", op)?;
     Ok(o.into())
 }
 
-fn tile_array<'s>(
+fn tile_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    tiles: &[crate::isolate_fb::TileReader<'_>],
+    tiles: TableVector<'a, crate::isolate_fb::BoothReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, tiles.len() as i32);
-    for (i, t) in tiles.iter().enumerate() {
-        let t = tile_object(scope, t)?;
+    let arr = v8::Array::new(scope, tiles.as_ref().map_or(0, |tiles| tiles.len()) as i32);
+    for (i, t) in tiles.into_iter().flat_map(|tiles| tiles.iter()).enumerate() {
+        let t = tile_values_object(scope, t.x(), t.z(), t.level())?;
         arr.set_index(scope, i as u32, t)
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }
@@ -1451,8 +1463,16 @@ fn scene_entity_object<'s>(
     set(scope, o, "in_combat", in_combat.into())?;
     let animating = v8::Boolean::new(scope, ent.animating());
     set(scope, o, "animating", animating.into())?;
-    let actions = v8::Array::new(scope, ent.actions().len() as i32);
-    for (i, action) in ent.actions().iter().enumerate() {
+    let entity_actions = ent.actions();
+    let actions = v8::Array::new(
+        scope,
+        entity_actions.as_ref().map_or(0, |actions| actions.len()) as i32,
+    );
+    for (i, action) in entity_actions
+        .into_iter()
+        .flat_map(|actions| actions.iter())
+        .enumerate()
+    {
         let a = js_string(scope, action)?;
         actions
             .set_index(scope, i as u32, a)
@@ -1494,28 +1514,28 @@ fn scene_entity_object<'s>(
     Ok(o.into())
 }
 
-fn scene_entity_array<'s>(
+fn scene_entity_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    ents: &[crate::isolate_fb::SceneEntityReader<'_>],
+    ents: TableVector<'a, crate::isolate_fb::SceneEntityReader<'a>>,
     npc: bool,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, ents.len() as i32);
-    for (i, ent) in ents.iter().enumerate() {
-        let ent = scene_entity_object(scope, ent, npc)?;
+    let arr = v8::Array::new(scope, ents.as_ref().map_or(0, |ents| ents.len()) as i32);
+    for (i, ent) in ents.into_iter().flat_map(|ents| ents.iter()).enumerate() {
+        let ent = scene_entity_object(scope, &ent, npc)?;
         arr.set_index(scope, i as u32, ent)
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }
     Ok(arr.into())
 }
 
-fn chat_option_array<'s>(
+fn chat_option_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    opts: &[crate::isolate_fb::ChatOptionReader<'_>],
+    opts: TableVector<'a, crate::isolate_fb::ChatOptionReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, opts.len() as i32);
-    for (i, opt) in opts.iter().enumerate() {
+    let arr = v8::Array::new(scope, opts.as_ref().map_or(0, |opts| opts.len()) as i32);
+    for (i, opt) in opts.into_iter().flat_map(|opts| opts.iter()).enumerate() {
         let o = v8::Object::new(scope);
-        let text = js_string(scope, opt.text())?;
+        let text = js_string(scope, opt.text().unwrap_or_default())?;
         set(scope, o, "text", text)?;
         let com_id = num(scope, opt.com_id() as f64);
         set(scope, o, "comId", com_id)?;
@@ -1526,19 +1546,34 @@ fn chat_option_array<'s>(
     Ok(arr.into())
 }
 
-fn make_product_array<'s>(
+fn make_product_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    products: &[crate::isolate_fb::MakeProductReader<'_>],
+    products: TableVector<'a, crate::isolate_fb::MakeProductReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, products.len() as i32);
-    for (i, product) in products.iter().enumerate() {
+    let arr = v8::Array::new(
+        scope,
+        products.as_ref().map_or(0, |products| products.len()) as i32,
+    );
+    for (i, product) in products
+        .into_iter()
+        .flat_map(|products| products.iter())
+        .enumerate()
+    {
         let o = v8::Object::new(scope);
-        let name = js_string(scope, product.name())?;
+        let name = js_string(scope, product.name().unwrap_or_default())?;
         set(scope, o, "name", name)?;
         let oid = num(scope, product.object_id() as f64);
         set(scope, o, "object_id", oid)?;
-        let buttons = v8::Array::new(scope, product.buttons().len() as i32);
-        for (j, btn) in product.buttons().iter().enumerate() {
+        let product_buttons = product.buttons();
+        let buttons = v8::Array::new(
+            scope,
+            product_buttons.as_ref().map_or(0, |buttons| buttons.len()) as i32,
+        );
+        for (j, btn) in product_buttons
+            .into_iter()
+            .flat_map(|buttons| buttons.iter())
+            .enumerate()
+        {
             let b = v8::Object::new(scope);
             let qty = num(scope, btn.qty() as f64);
             set(scope, b, "qty", qty)?;
@@ -1555,12 +1590,12 @@ fn make_product_array<'s>(
     Ok(arr.into())
 }
 
-fn varp_array<'s>(
+fn varp_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    varps: &[crate::isolate_fb::VarpReader<'_>],
+    varps: TableVector<'a, crate::isolate_fb::VarpReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, varps.len() as i32);
-    for (i, v) in varps.iter().enumerate() {
+    let arr = v8::Array::new(scope, varps.as_ref().map_or(0, |varps| varps.len()) as i32);
+    for (i, v) in varps.into_iter().flat_map(|varps| varps.iter()).enumerate() {
         let o = v8::Object::new(scope);
         let index = num(scope, v.index() as f64);
         set(scope, o, "index", index)?;
@@ -1573,16 +1608,23 @@ fn varp_array<'s>(
     Ok(arr.into())
 }
 
-fn combat_style_array<'s>(
+fn combat_style_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    styles: &[crate::isolate_fb::CombatStyleReader<'_>],
+    styles: TableVector<'a, crate::isolate_fb::CombatStyleReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, styles.len() as i32);
-    for (i, st) in styles.iter().enumerate() {
+    let arr = v8::Array::new(
+        scope,
+        styles.as_ref().map_or(0, |styles| styles.len()) as i32,
+    );
+    for (i, st) in styles
+        .into_iter()
+        .flat_map(|styles| styles.iter())
+        .enumerate()
+    {
         let o = v8::Object::new(scope);
         let mode = num(scope, st.mode() as f64);
         set(scope, o, "mode", mode)?;
-        let label = js_string(scope, st.label())?;
+        let label = js_string(scope, st.label().unwrap_or_default())?;
         set(scope, o, "label", label)?;
         let component_id = num(scope, st.component_id() as f64);
         set(scope, o, "component_id", component_id)?;
@@ -1593,12 +1635,12 @@ fn combat_style_array<'s>(
     Ok(arr.into())
 }
 
-fn side_tab_iface_array<'s>(
+fn side_tab_iface_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    tabs: &[crate::isolate_fb::SideTabIfaceReader<'_>],
+    tabs: TableVector<'a, crate::isolate_fb::SideTabIfaceReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, tabs.len() as i32);
-    for (i, t) in tabs.iter().enumerate() {
+    let arr = v8::Array::new(scope, tabs.as_ref().map_or(0, |tabs| tabs.len()) as i32);
+    for (i, t) in tabs.into_iter().flat_map(|tabs| tabs.iter()).enumerate() {
         let o = v8::Object::new(scope);
         let index = num(scope, t.index() as f64);
         set(scope, o, "index", index)?;
@@ -1610,16 +1652,16 @@ fn side_tab_iface_array<'s>(
     Ok(arr.into())
 }
 
-fn chat_line_array<'s>(
+fn chat_line_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    lines: &[crate::isolate_fb::ChatLineReader<'_>],
+    lines: TableVector<'a, crate::isolate_fb::ChatLineReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, lines.len() as i32);
-    for (i, line) in lines.iter().enumerate() {
+    let arr = v8::Array::new(scope, lines.as_ref().map_or(0, |lines| lines.len()) as i32);
+    for (i, line) in lines.into_iter().flat_map(|lines| lines.iter()).enumerate() {
         let o = v8::Object::new(scope);
         let seq = num(scope, line.seq() as f64);
         set(scope, o, "seq", seq)?;
-        let text = js_string(scope, line.text())?;
+        let text = js_string(scope, line.text().unwrap_or_default())?;
         set(scope, o, "text", text)?;
         let type_ = num(scope, line.type_() as f64);
         set(scope, o, "type", type_)?;
@@ -1642,7 +1684,7 @@ fn puzzle_board_object<'s>(
     board: Option<crate::isolate_fb::PuzzleBoardReader<'_>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     match board {
-        Some(board) => board_object(scope, board.component_id(), board.size(), &board.items()),
+        Some(board) => board_object(scope, board.component_id(), board.size(), board.items()),
         None => closed_puzzle_board(scope),
     }
 }
@@ -1652,14 +1694,14 @@ fn puzzle_board_object<'s>(
 fn closed_puzzle_board<'s>(
     scope: &mut v8::HandleScope<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    board_object(scope, -1, 0, &[])
+    board_object(scope, -1, 0, None)
 }
 
-fn board_object<'s>(
+fn board_object<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
     component_id: i32,
     size: i32,
-    rows: &[crate::isolate_fb::RowReader<'_>],
+    rows: TableVector<'a, crate::isolate_fb::RowReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let o = v8::Object::new(scope);
     let component_id = num(scope, component_id as f64);
@@ -1671,21 +1713,22 @@ fn board_object<'s>(
     Ok(o.into())
 }
 
-fn widget_text_array<'s>(
+fn widget_text_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: &[crate::isolate_fb::WidgetTextReader<'_>],
+    rows: TableVector<'a, crate::isolate_fb::WidgetTextReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, rows.len() as i32);
-    for (i, row) in rows.iter().enumerate() {
+    let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
+    for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
         let o = v8::Object::new(scope);
         let component_id = num(scope, row.component_id() as f64);
         set(scope, o, "component_id", component_id)?;
         // An inventory component (a posted item count) has no text: frozen
         // `reader.ifText` reads null for it, never ''.
-        let text = if row.item_count() >= 0 && row.text().is_empty() {
+        let row_text = row.text().unwrap_or_default();
+        let text = if row.item_count() >= 0 && row_text.is_empty() {
             v8::null(scope).into()
         } else {
-            js_string(scope, row.text())?
+            js_string(scope, row_text)?
         };
         set(scope, o, "text", text)?;
         let item_count = num(scope, row.item_count() as f64);
@@ -1696,16 +1739,16 @@ fn widget_text_array<'s>(
     Ok(arr.into())
 }
 
-fn quest_status_array<'s>(
+fn quest_status_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: &[crate::isolate_fb::QuestStatusReader<'_>],
+    rows: TableVector<'a, crate::isolate_fb::QuestStatusReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, rows.len() as i32);
-    for (i, row) in rows.iter().enumerate() {
+    let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
+    for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
         let o = v8::Object::new(scope);
-        let name = js_string(scope, row.name())?;
+        let name = js_string(scope, row.name().unwrap_or_default())?;
         set(scope, o, "name", name)?;
-        let status = js_string(scope, row.status())?;
+        let status = js_string(scope, row.status().unwrap_or_default())?;
         set(scope, o, "status", status)?;
         // Only a posted id becomes a property. An absent slot is "no click
         // target" — not `0`, and not a sentinel the page could click.
@@ -1719,26 +1762,29 @@ fn quest_status_array<'s>(
     Ok(arr.into())
 }
 
-fn npc_box_array<'s>(
+fn npc_box_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: &[crate::isolate_fb::NpcBoxReader<'_>],
+    rows: TableVector<'a, crate::isolate_fb::NpcBoxReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, rows.len() as i32);
-    for (i, row) in rows.iter().enumerate() {
+    let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
+    for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
         let o = v8::Object::new(scope);
         let index = num(scope, row.index() as f64);
         set(scope, o, "index", index)?;
         let points = row.points();
-        let point_arr = v8::Array::new(scope, points.len() as i32);
-        for (j, (x, y)) in points.into_iter().enumerate() {
-            let point = v8::Object::new(scope);
-            let x = num(scope, x as f64);
-            set(scope, point, "x", x)?;
-            let y = num(scope, y as f64);
-            set(scope, point, "y", y)?;
-            point_arr
-                .set_index(scope, j as u32, point.into())
-                .ok_or_else(|| "v8 array set failed".to_string())?;
+        let point_count = points.as_ref().map_or(0, |points| points.len() / 2);
+        let point_arr = v8::Array::new(scope, point_count as i32);
+        if let Some(points) = points {
+            for j in 0..point_count {
+                let point = v8::Object::new(scope);
+                let x = num(scope, points.get(j * 2) as f64);
+                set(scope, point, "x", x)?;
+                let y = num(scope, points.get(j * 2 + 1) as f64);
+                set(scope, point, "y", y)?;
+                point_arr
+                    .set_index(scope, j as u32, point.into())
+                    .ok_or_else(|| "v8 array set failed".to_string())?;
+            }
         }
         set(scope, o, "points", point_arr.into())?;
         arr.set_index(scope, i as u32, o.into())
@@ -1747,14 +1793,21 @@ fn npc_box_array<'s>(
     Ok(arr.into())
 }
 
-fn bank_stand_array<'s>(
+fn bank_stand_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    stands: &[crate::isolate_fb::BankStandReader<'_>],
+    stands: TableVector<'a, crate::isolate_fb::BankStandReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, stands.len() as i32);
-    for (i, s) in stands.iter().enumerate() {
+    let arr = v8::Array::new(
+        scope,
+        stands.as_ref().map_or(0, |stands| stands.len()) as i32,
+    );
+    for (i, s) in stands
+        .into_iter()
+        .flat_map(|stands| stands.iter())
+        .enumerate()
+    {
         let o = v8::Object::new(scope);
-        let name = js_string(scope, s.name())?;
+        let name = js_string(scope, s.name().unwrap_or_default())?;
         set(scope, o, "name", name)?;
         let x = num(scope, s.x() as f64);
         set(scope, o, "x", x)?;
@@ -1762,7 +1815,7 @@ fn bank_stand_array<'s>(
         set(scope, o, "z", z)?;
         let level = num(scope, s.level() as f64);
         set(scope, o, "level", level)?;
-        let kind = js_string(scope, s.kind())?;
+        let kind = js_string(scope, s.kind().unwrap_or_default())?;
         set(scope, o, "kind", kind)?;
         let op = num(scope, s.op() as f64);
         set(scope, o, "op", op)?;
@@ -1786,12 +1839,12 @@ fn bank_stand_array<'s>(
 /// The walk outcome's navigator-named gate shorts: the diagnosis' own id and
 /// count, plus the host obj table's display name when it resolved one (`null`
 /// otherwise — the join is the id, and a nameless short is still posted).
-fn carry_array<'s>(
+fn carry_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: &[crate::isolate_fb::CarryReader<'_>],
+    rows: TableVector<'a, crate::isolate_fb::CarryReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, rows.len() as i32);
-    for (i, row) in rows.iter().enumerate() {
+    let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
+    for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
         let o = v8::Object::new(scope);
         let id = num(scope, row.id() as f64);
         set(scope, o, "id", id)?;
@@ -1813,12 +1866,12 @@ fn carry_array<'s>(
     Ok(arr.into())
 }
 
-fn bank_approach_array<'s>(
+fn bank_approach_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: &[crate::isolate_fb::BankApproachReader<'_>],
+    rows: TableVector<'a, crate::isolate_fb::BankApproachReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, rows.len() as i32);
-    for (i, row) in rows.iter().enumerate() {
+    let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
+    for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
         let o = v8::Object::new(scope);
         let loc_id = num(scope, row.loc_id() as f64);
         set(scope, o, "loc_id", loc_id)?;
@@ -1844,20 +1897,20 @@ fn bank_approach_array<'s>(
     Ok(arr.into())
 }
 
-fn inspect_hop_array<'s>(
+fn inspect_hop_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: &[crate::isolate_fb::InspectHopReader<'_>],
+    rows: TableVector<'a, crate::isolate_fb::InspectHopReader<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, rows.len() as i32);
-    for (i, row) in rows.iter().enumerate() {
+    let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
+    for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
         let o = v8::Object::new(scope);
-        let kind = js_string(scope, row.kind())?;
+        let kind = js_string(scope, row.kind().unwrap_or_default())?;
         set(scope, o, "kind", kind)?;
         let loc_id = num(scope, row.loc_id() as f64);
         set(scope, o, "locId", loc_id)?;
-        let loc_name = js_string(scope, row.loc_name())?;
+        let loc_name = js_string(scope, row.loc_name().unwrap_or_default())?;
         set(scope, o, "locName", loc_name)?;
-        let action = js_string(scope, row.action())?;
+        let action = js_string(scope, row.action().unwrap_or_default())?;
         set(scope, o, "action", action)?;
         let option = num(scope, row.option() as f64);
         set(scope, o, "option", option)?;
