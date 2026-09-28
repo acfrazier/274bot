@@ -601,6 +601,8 @@ impl AppWindow {
                     .map_err(PanelError::WindowCreation)?,
             )
         };
+        #[cfg(feature = "memory-profile")]
+        host_play::memory::mark_startup(host_play::memory::StartupMark::WindowCreated);
 
         let (instance, surface, fallbacks) = first_surface(&window)?;
 
@@ -629,6 +631,23 @@ impl AppWindow {
             device,
             queue,
         } = parts;
+
+        // One-time structured identity for the memory-profile run record. It
+        // writes no log line; the debug print below stays under BOT_DEBUG.
+        #[cfg(feature = "memory-profile")]
+        {
+            let info = adapter.get_info();
+            host_play::memory::record_adapter(host_play::memory::AdapterRecord {
+                name: info.name,
+                backend: format!("{:?}", info.backend),
+                device_type: format!("{:?}", info.device_type),
+                driver: info.driver,
+                driver_info: info.driver_info,
+                vendor: info.vendor,
+                device: info.device,
+                pci_bus_id: info.device_pci_bus_id,
+            });
+        }
 
         if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
             let info = adapter.get_info();
@@ -753,6 +772,9 @@ impl AppWindow {
             renderer,
         };
 
+        #[cfg(feature = "memory-profile")]
+        host_play::memory::mark_startup(host_play::memory::StartupMark::GpuReady);
+
         Ok(Self {
             instance,
             device,
@@ -793,7 +815,7 @@ impl AppWindow {
     {
         let _profile_frame = client::profiling::UI_FRAME.start();
         #[cfg(feature = "memory-profile")]
-        let _memory_profile_frame = host_play::memory::PanelFrameTimer::start();
+        let mut memory_profile_frame = host_play::memory::PanelFrameTimer::start();
         self.imgui
             .platform
             .prepare_frame(&self.window, &mut self.imgui.context);
@@ -899,6 +921,8 @@ impl AppWindow {
         // bookkeeping stays after the present, so a slow capture map never
         // holds the drawable (the original visible-frame ordering).
         frame.present();
+        #[cfg(feature = "memory-profile")]
+        memory_profile_frame.presented();
         if let FrameSubmission::Submitted(readbacks) = submission {
             complete_readbacks(&self.device, self.surface_desc.format, readbacks, shots);
         }

@@ -1958,6 +1958,14 @@ fn named_local_forwarded_ports_qualify_and_keep_identity_closed() {
         profile.game_data().is_none(),
         "synthetic cache must still fail identity/source qualification"
     );
+    assert!(
+        matches!(
+            profile.game_data_status(),
+            host_play::GameDataStatus::CacheIdentity { .. }
+        ),
+        "a supported local world with a synthetic cache is withheld for its cache identity, got {:?}",
+        profile.game_data_status()
+    );
 
     write_world_json(&engine, 289, 45594, "true");
     let missing_web = resolve_named_local_289(&fixture, &engine, 44594, 2180, &[]).unwrap();
@@ -2047,7 +2055,15 @@ fn operator_listed_endpoint_requires_bound_content_identity_for_builtin_facts() 
     options.prod = true;
     let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
     assert!(!selected.supported_server());
-    assert!(selected.bind().unwrap().game_data().is_none());
+    let profile = selected.bind().unwrap();
+    assert!(profile.game_data().is_none());
+    match profile.game_data_status() {
+        host_play::GameDataStatus::Unsupported { reason } => assert!(
+            reason.contains("custom.example") && reason.contains("bundled rs2b2t world"),
+            "the rejection names the endpoint that is not bundled: {reason}"
+        ),
+        other => panic!("an unlisted public endpoint is unsupported, got {other:?}"),
+    }
 }
 
 #[test]
@@ -2106,7 +2122,15 @@ fn missing_world_json_with_port_overrides_does_not_qualify() {
         selected.world_members(),
         &host_play::WorldMembersFact::Unknown
     );
-    assert!(selected.bind().unwrap().game_data().is_none());
+    let profile = selected.bind().unwrap();
+    assert!(profile.game_data().is_none());
+    match profile.game_data_status() {
+        host_play::GameDataStatus::Unsupported { reason } => assert!(
+            reason.contains("world.json") && reason.contains("none usable"),
+            "the rejection names the missing guarded world.json: {reason}"
+        ),
+        other => panic!("explicit endpoints without world.json are unsupported, got {other:?}"),
+    }
 }
 
 #[test]
@@ -2125,7 +2149,15 @@ fn explicit_world_members_does_not_manufacture_override_trust() {
         }
     ));
     assert!(!selected.supported_server());
-    assert!(selected.bind().unwrap().game_data().is_none());
+    let profile = selected.bind().unwrap();
+    assert!(profile.game_data().is_none());
+    match profile.game_data_status() {
+        host_play::GameDataStatus::Unsupported { reason } => assert!(
+            reason.contains("ExplicitOverride"),
+            "the rejection names the explicit membership override: {reason}"
+        ),
+        other => panic!("an explicit membership override is unsupported, got {other:?}"),
+    }
 
     let (options, _) = parse_profile_args([
         "--profile",

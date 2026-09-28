@@ -9,5 +9,7 @@ static ALLOCATOR: host_play::memory::BenchmarkAllocator = host_play::memory::BEN
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    #[cfg(feature = "memory-profile")]
+    host_play::memory::mark_process_start();
     tui::bin::main()
 }

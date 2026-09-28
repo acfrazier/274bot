@@ -27,8 +27,8 @@ pub use nav_identity::{
     NavLoadCounters, NavOrigin,
 };
 pub use profile::{
-    parse_profile_args, parse_revision, ProfileOptions, ProfileSelection, ServerProfile,
-    WorldMembersFact, WorldMembersSource,
+    parse_profile_args, parse_revision, GameDataStatus, ProfileOptions, ProfileSelection,
+    ServerProfile, WorldMembersFact, WorldMembersSource,
 };
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -421,6 +421,12 @@ pub mod memory;
 
 #[cfg(feature = "memory-profile")]
 mod memory_diagnostics;
+
+#[cfg(feature = "memory-profile")]
+mod memory_slots;
+
+#[cfg(feature = "memory-profile")]
+mod memory_startup;
 
 #[cfg(test)]
 #[path = "lib_tests.rs"]
