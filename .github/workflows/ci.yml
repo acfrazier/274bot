@@ -75,8 +75,13 @@ jobs:
           cargo clippy --workspace --all-targets --no-deps -- -D warnings
           cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings
           cargo clippy -p host --all-targets --no-deps --features performance-profile -- -D warnings
+          cargo clippy -p host --all-targets --no-deps --features render-diagnostics -- -D warnings
           cargo clippy -p panel --all-targets --no-deps --features memory-profile -- -D warnings
+          cargo clippy -p panel --all-targets --no-deps --features render-diagnostics -- -D warnings
           cargo clippy -p host-play --all-targets --no-deps --features memory-profile -- -D warnings
+          cargo clippy -p host-play --all-targets --no-deps --features memory-profile-no-alloc -- -D warnings
+          cargo clippy -p tui --all-targets --no-deps --features memory-profile -- -D warnings
+          cargo clippy -p script --no-default-features --all-targets --no-deps -- -D warnings
 
   architecture:
     name: architecture
@@ -115,30 +120,54 @@ jobs:
             save_cache: false
             os: ubuntu-24.04
             command: "cargo test -p script --features load --tests"
+          - lane: script-no-default
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            os: ubuntu-24.04
+            command: "cargo test -p script --no-default-features"
           - lane: host-play-memory
             free_disk: false
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
-            command: "cargo test -p host-play --features memory-profile --tests"
+            command: "cargo test -p host-play --features memory-profile"
+          - lane: host-play-memory-no-alloc
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            os: ubuntu-24.04
+            command: "cargo test -p host-play --features memory-profile-no-alloc --lib"
           - lane: host-performance
             free_disk: false
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
-            command: "cargo test -p host --features performance-profile --lib performance_profile"
+            command: "cargo test -p host --features performance-profile"
           - lane: panel-memory
             free_disk: false
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
-            command: "cargo test -p panel --features memory-profile --lib focus::tests::memory_stress_policies"
+            command: "cargo test -p panel --features memory-profile"
+          - lane: panel-render-diagnostics
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            os: ubuntu-24.04
+            command: "cargo test -p panel --features render-diagnostics --lib"
+          - lane: tui-memory
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            os: ubuntu-24.04
+            command: "cargo test -p tui --features memory-profile"
           - lane: host-play-memory-26.04
             os: ubuntu-26.04
             free_disk: false
             cache_key: workspace
             save_cache: true
-            command: "cargo test -p host-play --features memory-profile --tests"
+            command: "cargo test -p host-play --features memory-profile"
     runs-on: ${{ matrix.os }}
     env:
       SKIP_GPU: "1"
