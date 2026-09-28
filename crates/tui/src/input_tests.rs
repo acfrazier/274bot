@@ -341,6 +341,23 @@ fn marked_bulk_confirms_marked_scope_without_unmarked_churn_loop() {
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::ScriptStartAll);
 }
 
+#[test]
+fn marked_start_confirm_names_the_selected_script_it_will_run() {
+    let mut app = fleet_app(&["alice", "bob"]);
+    app.table
+        .selection
+        .set(app.profile_id_for_name("alice"), true);
+    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    assert_eq!(app.run_command(Command::ScriptStartAll), AppAction::None);
+    let all = text(&draw(&mut app, 120, 40));
+    let label = app.script_sel.as_ref().unwrap().label();
+    assert!(
+        all.contains(&format!("Start {label} on 1 marked bot")),
+        "{all}"
+    );
+    assert!(!all.contains("last successful script"), "{all}");
+}
+
 /// An NPC dialogue is visible everywhere but only the Chat tab answers it.
 #[test]
 fn a_dialogue_never_takes_keys_from_other_panes() {
