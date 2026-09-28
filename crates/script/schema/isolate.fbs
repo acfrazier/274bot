@@ -3,9 +3,9 @@
 // back after the tick. FlatBuffers, not JSON: a 50+ isolate wall must not
 // pay a stringify/parse per tick.
 //
-// The Rust side is hand-written against this schema
-// (crates/script/src/isolate_fb.rs) so operators never need `flatc` at
-// `cargo test` time. Keep the two in sync.
+// Rust bindings are checked-in `flatc --rust` output
+// (`schema/generated/isolate_generated.rs`), so operators never need
+// `flatc` at `cargo test` time. CI regenerates them with flatc 25.12.19.
 namespace rs2b0t.isolate;
 
 // A game tile {x, z, level}.
@@ -24,8 +24,8 @@ table Row {
   id: int;
   ops: [string];
   noted: bool;
-  cert: int;
-  component_id: int;
+  cert: int = -1;
+  component_id: int = -1;
   slot: int = -1;
 }
 
@@ -48,8 +48,8 @@ table SceneEntity {
   z: int;
   level: int;
   distance: int;
-  health: int;
-  max_health: int;
+  health: int = -1;
+  max_health: int = -1;
   in_combat: bool;
   animating: bool;
   actions: [string];
@@ -57,7 +57,7 @@ table SceneEntity {
   reachable_adj: bool;
   combat_level: int;
   target_kind: int;   // 0 none, 1 npc, 2 player
-  target_index: int; // -1 when none
+  target_index: int = -1; // -1 when none
   // NPC-only packed observation. Omitted on loc/player/ground (reader 0).
   // size < 1 means observation absent; 0,0 with size >= 1 is a valid world tile.
   size: int;
@@ -101,7 +101,7 @@ table NearestBooth {
   level: int;
   name: string;
   op: string;
-  id: int;
+  id: int = -1;
 }
 
 // Compact native bank-booth dest + readiness for one loc identity.
@@ -132,19 +132,19 @@ table BankStand {
 // One make/smelt button of a make product (`quantity` -1 = "Make X").
 table MakeButton {
   qty: int;
-  com_id: int;
+  com_id: int = -1;
 }
 
 // One make-X product row from the chat make menu.
 table MakeProduct {
-  object_id: int;
+  object_id: int = -1;
   name: string;
   buttons: [MakeButton];
 }
 
 table SideTabIface {
   index: int;
-  id: int;
+  id: int = -1;
 }
 
 table ChatLine {
@@ -191,7 +191,7 @@ table WidgetText {
 table QuestStatus {
   name: string;
   status: string;
-  component_id: int;
+  component_id: int = null;
 }
 
 // The main modal's paired text walk (Snapshot slot 248). ONE table so a
@@ -203,7 +203,7 @@ table QuestStatus {
 // OMITTED Snapshot slot is not that object (the isolate keeps its last
 // pair). See the Snapshot comment for the delta rules.
 table MainModalTexts {
-  root: int;
+  root: int = -1;
   texts: [string];
 }
 
@@ -224,7 +224,7 @@ table Carry {
 // `size: 0` and no rows is the observed closed board. All three fields are
 // written whenever the table is present.
 table PuzzleBoard {
-  component_id: int;
+  component_id: int = -1;
   size: int;
   items: [Row];
 }
@@ -232,7 +232,7 @@ table PuzzleBoard {
 // One live NPC's projected overlay-canvas box. `points` is sixteen ints
 // (x0,y0, ... x7,y7): ground ring first, then the top ring, same winding.
 table NpcBox {
-  index: int;
+  index: int = -1;
   points: [int];
 }
 
@@ -277,7 +277,7 @@ table Snapshot {
   chat_continue: bool;
   chat_text: string;
   chat_options: [ChatOption];
-  side_tab: int;
+  side_tab: int = -1;
   varps: [Varp];
   combat_styles: [CombatStyle];
   run_energy: int;
@@ -286,15 +286,15 @@ table Snapshot {
   my_name: string;
   in_combat: bool;
   animating: bool;
-  main_modal_id: int;
-  chat_modal_id: int;
+  main_modal_id: int = -1;
+  chat_modal_id: int = -1;
   make_products: [MakeProduct];
   side_tab_ifaces: [SideTabIface];
   spell_buttons: [CombatStyle];
   chat_lines: [ChatLine];
   nearest_booth: NearestBooth;
-  bank_note_on: int;
-  bank_note_off: int;
+  bank_note_on: int = -1;
+  bank_note_off: int = -1;
   scene_state: int;
   weight: int;
   camera_yaw: int;
@@ -307,8 +307,8 @@ table Snapshot {
   trade_mine: [Row];
   trade_theirs: [Row];
   trade_side: [Row];
-  trade_accept_id: int;
-  trade_decline_id: int;
+  trade_accept_id: int = -1;
+  trade_decline_id: int = -1;
   shop_open: bool;
   shop_stock: [Row];
   // Open/close session identity used to reject stale bank actions.
@@ -511,21 +511,21 @@ table Interact {
   level: int;
   kind: string;
   name: string;
-  stand_op: int;
+  stand_op: int = null;
   choose: string;
   action: string;
-  index: int; // NPC index, or the radius for walk-near.
-  component_id: int;
-  bank_generation: ulong;
-  bank_item_id: int;
-  lands_as_id: int;
-  source_item_id: int;
-  source_item_slot: int;
-  target_item_id: int;
-  target_item_slot: int;
+  index: int = null; // NPC index, or the radius for walk-near.
+  component_id: int = null;
+  bank_generation: ulong = null;
+  bank_item_id: int = null;
+  lands_as_id: int = null;
+  source_item_id: int = null;
+  source_item_slot: int = null;
+  target_item_id: int = null;
+  target_item_slot: int = null;
   request_id: ulong = 0;
-  xf: double;
-  yf: double;
+  xf: double = null;
+  yf: double = null;
   input_identity: ulong = 0;
   // Packed-nav FindOptions bits. Absent old buffers stay false.
   allow_wilderness: bool = false;

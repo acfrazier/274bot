@@ -611,34 +611,38 @@ fn published_seq_for(snap: &SnapshotReader<'_>, request_id: u64) -> u64 {
     0
 }
 
-fn published_terminal(
+fn published_terminal<'a>(
     seq: u64,
     request_id: u64,
     ok: bool,
-    reason: &str,
+    reason: Option<&str>,
     bank_planned: bool,
     ticks: f64,
-    hops: Vec<InspectHopReader<'_>>,
+    hops: Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<InspectHopReader<'a>>>>,
 ) -> Option<Terminal> {
     if seq == 0 || request_id == 0 {
         return None;
     }
     Some(Terminal {
         ok,
-        reason: reason.to_string(),
+        reason: reason.unwrap_or_default().to_string(),
         bank_planned,
         ticks,
-        hops: hops.iter().map(hop_from_reader).collect(),
+        hops: hops
+            .into_iter()
+            .flat_map(|hops| hops.iter())
+            .map(|hop| hop_from_reader(&hop))
+            .collect(),
         request_id,
     })
 }
 
 fn hop_from_reader(h: &InspectHopReader<'_>) -> InspectHop {
     InspectHop {
-        kind: h.kind().to_string(),
+        kind: h.kind().unwrap_or_default().to_string(),
         loc_id: h.loc_id(),
-        loc_name: h.loc_name().to_string(),
-        action: h.action().to_string(),
+        loc_name: h.loc_name().unwrap_or_default().to_string(),
+        action: h.action().unwrap_or_default().to_string(),
         option: h.option(),
         from_x: h.from_x(),
         from_z: h.from_z(),

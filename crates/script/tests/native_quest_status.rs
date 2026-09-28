@@ -332,7 +332,12 @@ fn main_modal_texts_lifecycle_posts_a_text_change_a_closed_pair_and_the_table_ro
     let wire = script::isolate_fb::decode_snapshot(&delta).unwrap();
     assert!(wire.has_main_modal_texts(), "the changed pair must post");
     assert_eq!(
-        wire.main_modal_texts().expect("pair").texts(),
+        wire.main_modal_texts()
+            .expect("pair")
+            .texts()
+            .expect("texts")
+            .iter()
+            .collect::<Vec<_>>(),
         vec!["@red@line a", "line b"]
     );
     assert!(wire.has_main_modal_id(), "the pair bit co-posts slot 68");
@@ -480,7 +485,10 @@ fn a_rebuilt_row_with_a_new_id_re_posts_the_quest_tab() {
         "a moved component id must re-post the rows"
     );
     assert_eq!(
-        wire.quest_statuses()[0].component_id(),
+        wire.quest_statuses()
+            .expect("quest rows")
+            .get(0)
+            .component_id(),
         Some(84),
         "the row carries the new click target"
     );

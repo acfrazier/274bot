@@ -146,13 +146,25 @@ fn view_from_reader(r: ReachReader<'_>) -> ReachQueryView {
         level: r.level(),
         width: r.width(),
         height: r.height(),
-        walkable: r.walkable(),
-        reachable: r.reachable(),
-        reachable_adj: r.reachable_adj(),
-        exact_rank: r.exact_rank(),
-        adjacent_rank: r.adjacent_rank(),
-        step: r.step(),
-        canlight: r.canlight(),
+        walkable: r.walkable().map(|v| v.iter().collect()).unwrap_or_default(),
+        reachable: r
+            .reachable()
+            .map(|v| v.iter().collect())
+            .unwrap_or_default(),
+        reachable_adj: r
+            .reachable_adj()
+            .map(|v| v.iter().collect())
+            .unwrap_or_default(),
+        exact_rank: r
+            .exact_rank()
+            .map(|v| v.iter().collect())
+            .unwrap_or_default(),
+        adjacent_rank: r
+            .adjacent_rank()
+            .map(|v| v.iter().collect())
+            .unwrap_or_default(),
+        step: r.step().map(|v| v.iter().collect()).unwrap_or_default(),
+        canlight: r.canlight().map(|v| v.iter().collect()).unwrap_or_default(),
     }
 }
 

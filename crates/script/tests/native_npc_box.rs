@@ -175,15 +175,10 @@ fn unavailable_update_clears_a_previously_posted_box() {
 }
 
 #[test]
-fn old_buffer_without_npc_box_fields_initializes_null() {
-    let mut builder = flatbuffers::FlatBufferBuilder::new();
-    let table = builder.start_table();
-    builder.push_slot_always(4, 1_u64);
-    let root = builder.end_table(table);
-    builder.finish(root, None);
-
+fn snapshot_without_npc_box_fields_initializes_null() {
+    let bytes = script::isolate_fb::encode_snapshot(&base_snapshot());
     let iso = spawn("globalThis.__probe = reader.npcBox(7);");
-    assert!(tick(&iso, builder.finished_data().to_vec(), 1).is_null());
+    assert!(tick(&iso, bytes, 1).is_null());
     iso.join();
 }
 
@@ -246,7 +241,7 @@ fn unchanged_delta_retains_and_despawn_delta_removes_the_box() {
     let update = decode_snapshot(&despawned).unwrap();
     assert!(update.has_npc_boxes_update());
     assert!(update.npc_boxes_available());
-    assert!(update.npc_boxes().is_empty());
+    assert!(update.npc_boxes().expect("npc box rows").is_empty());
     assert!(tick(&iso, despawned, 3).is_null());
     iso.join();
 }
