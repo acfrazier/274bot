@@ -164,7 +164,17 @@ milestone separately from `qualification_complete_s`. Qualification additionally
 requires seed/proof completion and running scripts for active workloads.
 Multi-slot `moss_giant_bank_start` replaces only its contended post-return
 fresh-XP checkpoint with fail-closed local-player named-NPC engagement; the
-scenario's final Strength-XP-since-Start proof remains mandatory.
+scenario's final Strength-XP-since-Start proof remains mandatory. The field
+holds four Moss giants and each catalog card skips a giant another slot targets,
+so one giant serves one slot at a time and the rest queue: ten slots qualified
+there at kickoff, but fifty qualified only 25 to 30 in thirty minutes. The
+content has 42 Moss giants in the whole world (never more than five within the
+MossGiant card's ten-tile field radius), so no split of a large fleet across spots
+gives every slot a giant. A fleet above ten slots therefore stocks its own: after
+a slot returns to the safespot it sends `::npcadd mossgiant` twice (an admin
+command, like the fixture's `::give` and `::setstat`; each giant despawns after
+500 ticks and does not respawn), before the engagement watch. N=1 and N=10 are
+unchanged.
 
 Seed/proof or script failures fail the run and return a nonzero exit, and so does
 a fleet that has not qualified after 30 minutes (`blocked: ready=… seeded=…
@@ -225,7 +235,10 @@ not apply (a headless `tui-play` has no adapter or panel frames):
   can begin. A large gap shows the UI thread was elsewhere; it does not by itself
   prove the OS marked the window unresponsive.
 - `ready_ever`: how many slots have ever been `ingame && scene_state == 2`,
-  against `ready`, how many are now.
+  against `ready`, how many are now. Active workloads also carry `seeded`
+  (scenario runners that passed, or sit at the Start step waiting for the script
+  to load) and `proved` (runners that passed their final proof), so a fleet that
+  stalls shows when `proved` stopped rising; both are `null` for idle workloads.
 
 `samples.qualification.jsonl` contains observation start/end progress and, for a
 failed fleet, the per-slot failure record above. With optional diagnostics,
