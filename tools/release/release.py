@@ -748,7 +748,7 @@ def clear_platform_stage(args, platform, commit_root):
     remote = windows_root(args, args.commit)
     script = (
         "$root = Join-Path $HOME {}; "
-        "if (Test-Path $root) { Remove-Item -Recurse -Force -ErrorAction Stop $root }"
+        "if (Test-Path $root) {{ Remove-Item -Recurse -Force -ErrorAction Stop $root }}"
     ).format(powershell_quote(remote.replace("/", "\\")))
     windows_transport(args, "run", script)
 
