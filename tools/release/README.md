@@ -110,7 +110,10 @@ python3 tools/release/release.py verify \
 Finalization first refuses a tag that is neither the Cargo version nor a
 numeric patch tag beginning with that version (for example, version `0.1.8`
 may finalize as `0.1.8.1`). It also requires the staged manifest's version and
-public release name to match the pinned source. It then copies the release
+public release name to match the pinned source. The final package and archive
+are named from the tag (`274bot-0.1.8.1-linux-x64.tar.gz`), so a patch release
+never reuses the base release's archive names; the build stages under the Cargo
+version and finalize renames the staged directory. It then copies the release
 notes, records platform runtime requirements, rehashes every package file,
 creates the native archive, downloads remote archives, and regenerates
 `SHA256SUMS` from only the candidate's expected archive names.
