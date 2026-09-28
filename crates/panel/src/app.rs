@@ -1761,13 +1761,20 @@ fn paint_inverse_combo_arrow(ui: &Ui) {
     .build();
 }
 
-fn logout_enabled(vault_open: bool, focused: bool, connected: bool, queued: bool) -> bool {
-    vault_open && focused && (connected || queued)
+fn logout_enabled(
+    vault_open: bool,
+    focused: bool,
+    connected: bool,
+    queued: bool,
+    guard_parked: bool,
+) -> bool {
+    vault_open && focused && (connected || queued || guard_parked)
 }
 
 /// Log in / Logout above WalkTo. Always drawn; disabled while the vault
-/// is locked or no profile is focused. Logout needs a connected or genuinely
-/// queued focused slot, so an unloaded profile cannot be latched accidentally.
+/// is locked or no profile is focused. Logout needs a connected, genuinely
+/// queued or repeat-guard-parked focused slot, so an unloaded profile cannot
+/// be latched accidentally.
 fn login_logout_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
     let cells = button_cells(avail, 2);
@@ -1778,11 +1785,13 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
         .as_deref()
         .and_then(|name| session.queue_for(name))
         .is_some();
+    let guard_parked = session.focused_guard_parked();
     let can_logout = logout_enabled(
         vault_open,
         focused.is_some(),
         session.focused_connected(),
         focused_queued,
+        guard_parked,
     );
     {
         let _off = (!can_login).then(|| ui.begin_disabled());
@@ -1815,6 +1824,8 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
             "pick a profile"
         } else if focused_queued {
             "cancel the focused slot's queued login"
+        } else if guard_parked {
+            "end the parked session — its held script work is discarded"
         } else {
             "log out the focused slot — it stays in the picker"
         });
