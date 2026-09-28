@@ -66,9 +66,18 @@ pub(crate) struct SeedView<'a> {
     /// The catalog script was started for this slot.
     pub started: bool,
     pub step_names: &'a [&'static str],
+    /// The step the runner was last seen executing. A failed runner reports
+    /// only its message, so this is what says where it stopped.
+    pub last_step: Option<usize>,
 }
 
 impl SeedView<'_> {
+    /// The runner proves the scenario's final predicate once every step has
+    /// passed; that stage has no step name.
+    fn step_name(&self, step: usize) -> &'static str {
+        self.step_names.get(step).copied().unwrap_or("final proof")
+    }
+
     fn to_json(&self) -> Value {
         match &self.status {
             RunnerStatus::Seeding => json!({"status": "seeding", "script_started": self.started}),
@@ -76,15 +85,15 @@ impl SeedView<'_> {
                 "status": "running",
                 "step": step,
                 "total": total,
-                // The runner proves the scenario's final predicate once every
-                // step has passed; there is no step name for that stage.
-                "step_name": self.step_names.get(*step).copied().unwrap_or("final proof"),
+                "step_name": self.step_name(*step),
                 "script_started": self.started,
             }),
             RunnerStatus::Passed => json!({"status": "passed", "script_started": self.started}),
             RunnerStatus::Failed(message) => json!({
                 "status": "failed",
                 "message": message,
+                "last_step": self.last_step,
+                "last_step_name": self.last_step.map(|step| self.step_name(step)),
                 "script_started": self.started,
             }),
         }
@@ -254,6 +263,7 @@ mod tests {
                 status: RunnerStatus::Running { step: 2, total: 3 },
                 started: true,
                 step_names: &names,
+                last_step: Some(2),
             }),
             script("Running", Some("food option blank")),
         );
@@ -270,25 +280,36 @@ mod tests {
     }
 
     /// After the last step the runner proves the scenario's final predicate;
-    /// that stage has no step name and must not index past the list.
+    /// that stage has no step name and must not index past the list. A runner
+    /// that failed reports only its message, so the record keeps the step it
+    /// was last seen on: a slot that timed out mid-scenario names it, and one
+    /// that never left the seed does not invent one.
     #[test]
-    fn the_final_proof_stage_has_no_step_name_and_a_failure_keeps_its_message() {
+    fn the_final_proof_stage_has_no_step_name_and_a_failure_names_its_last_step() {
         let names = ["only step"];
         let proving = SeedView {
             status: RunnerStatus::Running { step: 1, total: 1 },
             started: true,
             step_names: &names,
+            last_step: Some(1),
         }
         .to_json();
         assert_eq!(proving["step_name"], "final proof");
 
-        let failed = SeedView {
+        let failed_view = |last_step| SeedView {
             status: RunnerStatus::Failed("deadline".into()),
-            started: false,
+            started: true,
             step_names: &names,
-        }
-        .to_json();
-        assert_eq!(failed["status"], "failed");
-        assert_eq!(failed["message"], "deadline");
+            last_step,
+        };
+        let mid_scenario = failed_view(Some(0)).to_json();
+        assert_eq!(mid_scenario["status"], "failed");
+        assert_eq!(mid_scenario["message"], "deadline");
+        assert_eq!(mid_scenario["last_step_name"], "only step");
+        let in_proof = failed_view(Some(1)).to_json();
+        assert_eq!(in_proof["last_step_name"], "final proof");
+        let never_ran = failed_view(None).to_json();
+        assert!(never_ran["last_step"].is_null());
+        assert!(never_ran["last_step_name"].is_null());
     }
 }

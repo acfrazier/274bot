@@ -378,6 +378,9 @@ struct Seed {
     /// Scenario step names in order, so a stuck slot's record names the step
     /// it never left (the runner reports only an index).
     step_names: Vec<&'static str>,
+    /// The step the runner was last polled executing: a runner that fails
+    /// reports only its message, so this keeps where it stopped.
+    last_step: Option<usize>,
 }
 
 /// Per-slot benchmark seed runners installed by [`Run::prepare`] for
@@ -446,10 +449,25 @@ fn widen_fleet_post_start_waits(scenario: &mut scenario::Scenario, n: usize) {
         step.wait.budget_ticks = step.wait.budget_ticks.max(minimum);
     }
 }
+
+/// The largest fleet the natural Ardougne field is known to serve. The
+/// kickoff N=10 cell qualified there; N=50 qualified 25 to 30 slots in the
+/// 30-minute bound on both platforms, because the field holds four Moss giants
+/// and every catalog combat card skips a giant another player targets, so each
+/// giant serves one slot at a time and the rest queue behind a lottery.
+const MOSS_NATURAL_FIELD_FLEET_LIMIT: usize = 10;
+
+/// Giants stocked beside each returned slot of a larger fleet: two, so a slot
+/// whose first is taken or that dies still has a free one.
+const MOSS_PRIVATE_GIANTS_PER_SLOT: usize = 2;
+
+const MOSS_RETURN_WATCH: &str = "watch return to the moss-giant safespot after startup banking";
+
 /// Shared single-combat actors cannot award XP to every fleet member: the
 /// frozen card counts another player's target disappearing as a kill. Keep the
 /// ordinary N=1 XP proof, but require a fail-closed local engagement for W2
 /// fleets so denied contenders do not block an otherwise representative load.
+/// Fleets beyond [`MOSS_NATURAL_FIELD_FLEET_LIMIT`] also get private giants.
 fn qualify_contentious_moss_fleet(
     scenario: &mut scenario::Scenario,
     n: usize,
@@ -471,6 +489,45 @@ fn qualify_contentious_moss_fleet(
         .ok_or("moss fleet qualification is missing its post-return Strength XP watch")?;
     step.name = "watch the local player target a Moss giant after the startup bank return";
     step.wait.arm = scenario::Proof::LocalTargetingNpcName { name: "Moss giant" };
+    if n > MOSS_NATURAL_FIELD_FLEET_LIMIT {
+        stock_private_moss_giants(scenario, start)?;
+    }
+    Ok(())
+}
+
+/// A fleet larger than the field can serve stocks its own targets. Real
+/// spawns cannot: the content places 42 Moss giants in the whole world and
+/// four in this field, so no split of a 50-slot fleet across spots gives every
+/// slot a giant. After a slot returns to the safespot it spawns giants with the
+/// engine's `::npcadd` (an admin command like the `::give` and `::setstat` the
+/// fixture already sends), before the engagement watch and the final
+/// Strength-XP proof, both of which stay mandatory.
+fn stock_private_moss_giants(
+    scenario: &mut scenario::Scenario,
+    start: usize,
+) -> Result<(), String> {
+    let returned = scenario.steps[start + 1..]
+        .iter()
+        .position(|step| step.name == MOSS_RETURN_WATCH)
+        .map(|offset| start + 1 + offset)
+        .ok_or("moss fleet qualification is missing its safespot-return watch")?;
+    let arm = scenario.steps[returned].wait.arm;
+    scenario.steps.insert(
+        returned + 1,
+        scenario::Step {
+            name: "stock private Moss giants beside the slot that returned to the safespot",
+            kind: scenario::StepKind::Perform {
+                send: Box::new(|client, _| {
+                    (0..MOSS_PRIVATE_GIANTS_PER_SLOT)
+                        .all(|_| api::interact::cheat(client, "npcadd mossgiant"))
+                }),
+            },
+            wait: scenario::Wait {
+                arm,
+                budget_ticks: 300,
+            },
+        },
+    );
     Ok(())
 }
 
@@ -487,6 +544,7 @@ fn seed_runner(
         runner,
         started: false,
         step_names,
+        last_step: None,
     }
 }
 
@@ -610,6 +668,9 @@ impl Run {
     /// Frontends start `Play` next, then [`bind_seed_nav`] with
     /// [`SeedNav::FromPlay`](`play.world()`) before spawning slots.
     pub fn prepare_unseeded(config: Config, frontend: &'static str) -> Result<Self, String> {
+        // A frontend `main` marks the epoch first; this only guarantees the
+        // epoch predates this run's own timer for any other caller.
+        mark_process_start();
         // Fail closed on panel-only / conflicting flags before minting vaults.
         let render_policy = parse_render_policy(frontend)?;
         let single_renderer = std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
@@ -910,12 +971,12 @@ impl Run {
                     .ok_or_else(|| format!("missing seed for {name}"))?
                     .clone();
                 let (status, on_start, already_started) = {
-                    let seed = seed_arc.lock().unwrap();
-                    (
-                        seed.runner.status(),
-                        seed.runner.on_start_script(),
-                        seed.started,
-                    )
+                    let mut seed = seed_arc.lock().unwrap();
+                    let status = seed.runner.status();
+                    if let scenario::RunnerStatus::Running { step, .. } = &status {
+                        seed.last_step = Some(*step);
+                    }
+                    (status, seed.runner.on_start_script(), seed.started)
                 };
                 match status {
                     scenario::RunnerStatus::Failed(msg) => {
@@ -1164,6 +1225,9 @@ impl Run {
             value["ui_frame_max_scope"] = "sample-interval".into();
             crate::memory_startup::add_sample_fields(&mut value, self.started);
             value["ready_ever"] = self.ready_latch.ever().into();
+            let seed_counts = (self.config.workload != Workload::Idle).then_some((seeded, proved));
+            value["seeded"] = seed_counts.map(|(seeded, _)| seeded).into();
+            value["proved"] = seed_counts.map(|(_, proved)| proved).into();
             value["game_data"] = self.game_data_json(play);
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
             if self.diagnostics {
@@ -1214,6 +1278,7 @@ impl Run {
                         status: seed.runner.status(),
                         started: seed.started,
                         step_names: &seed.step_names,
+                        last_step: seed.last_step,
                     }),
                     ScriptView {
                         state: format!("{:?}", play.script_state(name)),
@@ -1939,6 +2004,70 @@ mod tests {
             scenario::Proof::StatXpGain { id: 2, min: 1 },
             "fleet qualification must retain the final post-Start Strength XP proof"
         );
+    }
+
+    fn step_names_of(scenario: &scenario::Scenario) -> Vec<&'static str> {
+        scenario.steps.iter().map(|step| step.name).collect()
+    }
+
+    /// A fleet the natural field can serve keeps the kickoff cell exactly; a
+    /// larger one stocks giants for each slot after it returns to the safespot
+    /// and before it must engage one, and still owes the final XP proof.
+    #[test]
+    fn moss_fleets_beyond_the_natural_field_stock_private_giants_after_the_return() {
+        const STOCK: &str =
+            "stock private Moss giants beside the slot that returned to the safespot";
+        let baseline = scenario::get("moss_giant_bank_start").expect("moss scenario");
+        let baseline_steps = step_names_of(&baseline);
+
+        for n in [1, 10] {
+            let mut natural = scenario::get("moss_giant_bank_start").expect("moss scenario");
+            qualify_contentious_moss_fleet(&mut natural, n).expect("natural qualifier");
+            assert!(
+                !step_names_of(&natural).contains(&STOCK),
+                "N={n} is the kickoff cell and must not stock giants"
+            );
+            assert_eq!(natural.steps.len(), baseline_steps.len());
+        }
+
+        for n in [16, 50] {
+            let mut fleet = scenario::get("moss_giant_bank_start").expect("moss scenario");
+            qualify_contentious_moss_fleet(&mut fleet, n).expect("fleet qualifier");
+            let names = step_names_of(&fleet);
+            assert_eq!(
+                names.len(),
+                baseline_steps.len() + 1,
+                "N={n}: one added step"
+            );
+            let stock = names
+                .iter()
+                .position(|name| *name == STOCK)
+                .expect("stock step");
+            assert_eq!(
+                names[stock - 1],
+                MOSS_RETURN_WATCH,
+                "N={n}: giants are stocked only after the slot is back at the safespot"
+            );
+            assert_eq!(
+                names[stock + 1],
+                "watch the local player target a Moss giant after the startup bank return",
+                "N={n}: giants exist before the slot must engage one"
+            );
+            assert_eq!(
+                fleet.steps[stock].wait.arm,
+                fleet.steps[stock - 1].wait.arm,
+                "N={n}: the stock step waits on the safespot arrival it follows"
+            );
+            assert!(matches!(
+                fleet.steps[stock].kind,
+                scenario::StepKind::Perform { .. }
+            ));
+            assert_eq!(
+                fleet.proof,
+                scenario::Proof::StatXpGain { id: 2, min: 1 },
+                "N={n}: stocking targets must not weaken the final Strength XP proof"
+            );
+        }
     }
 
     #[test]
