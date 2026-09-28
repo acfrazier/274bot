@@ -291,14 +291,18 @@ impl TuiApp {
             return AppAction::None;
         }
         if command.is_bulk() {
-            let members = if matches!(command, Command::ScriptStartAll | Command::ScriptStopAll)
-                && !self.table.selection.is_empty()
-            {
+            let marked = matches!(command, Command::ScriptStartAll | Command::ScriptStopAll)
+                && !self.table.selection.is_empty();
+            let members = if marked {
                 self.marked_names()
             } else {
                 self.names.clone()
             };
-            self.confirm(ConfirmKind::Bulk { command, members });
+            self.confirm(ConfirmKind::Bulk {
+                command,
+                members,
+                marked,
+            });
             return AppAction::None;
         }
         match command {
@@ -457,12 +461,14 @@ impl TuiApp {
             }
             _ => return None,
         }
-        self.table.sync(&self.names, &self.fleet);
+        self.table
+            .sync_with_ids(&self.names, &self.profile_ids, &self.fleet);
         Some(AppAction::None)
     }
 
     fn fleet_key(&mut self, key: KeyEvent) -> AppAction {
-        self.table.sync(&self.names, &self.fleet);
+        self.table
+            .sync_with_ids(&self.names, &self.profile_ids, &self.fleet);
         let page = self.regions.fleet_rows.height.max(1) as isize;
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.table.move_cursor(-1, &self.names),
@@ -493,7 +499,8 @@ impl TuiApp {
             KeyCode::Esc => {
                 if !self.table.filter.is_empty() {
                     self.table.filter.clear();
-                    self.table.sync(&self.names, &self.fleet);
+                    self.table
+                        .sync_with_ids(&self.names, &self.profile_ids, &self.fleet);
                 } else if self.regions.class == SizeClass::Compact {
                     self.key_focus = Pane::Detail;
                 }
@@ -643,7 +650,8 @@ impl TuiApp {
     fn fleet_row_at(&mut self, row: u16) -> Option<(usize, usize)> {
         let rows = self.regions.fleet_rows;
         let position = self.regions.fleet_first + usize::from(row.checked_sub(rows.y)?);
-        self.table.sync(&self.names, &self.fleet);
+        self.table
+            .sync_with_ids(&self.names, &self.profile_ids, &self.fleet);
         let member = *self.table.shown().get(position)?;
         Some((position, member))
     }
@@ -754,7 +762,8 @@ impl TuiApp {
             return AppAction::None;
         }
         if contains(self.regions.fleet_rows, col, row) {
-            self.table.sync(&self.names, &self.fleet);
+            self.table
+                .sync_with_ids(&self.names, &self.profile_ids, &self.fleet);
             self.table.move_cursor(delta * 3, &self.names);
         } else if contains(self.regions.log_rows, col, row) {
             self.log.scroll_by(delta * 3);

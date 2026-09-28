@@ -99,11 +99,6 @@ pub struct FleetState {
 }
 
 impl FleetState {
-    /// Legacy/test convenience when no vault identities are available.
-    pub fn sync(&mut self, names: &[String], rows: &[FleetRow]) {
-        self.sync_with_ids(names, &[], rows);
-    }
-
     /// Recompute the shown rows for `names` (their projected `rows`), keep
     /// the cursor on the same member when possible and drop marks of
     /// departed identities. `ids` parallels `names`; missing ids use a
@@ -186,10 +181,6 @@ impl FleetState {
         let identity =
             profile_id(ids, names, index).unwrap_or_else(|| ProfileIdentity::synthetic(name));
         self.selection.toggle(identity);
-    }
-
-    pub fn is_marked(&self, name: &str) -> bool {
-        self.selection.contains(ProfileIdentity::synthetic(name))
     }
 
     pub fn is_marked_id(&self, identity: ProfileIdentity) -> bool {

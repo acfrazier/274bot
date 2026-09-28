@@ -1680,7 +1680,7 @@ impl TuiSession {
                 &app.table.selection,
                 &mut self.core,
                 &mut self.scripts,
-                None,
+                app.script_sel.as_ref(),
                 root.as_deref(),
             );
             self.scripts.show_load_failures();

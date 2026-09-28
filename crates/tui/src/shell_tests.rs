@@ -152,7 +152,8 @@ fn a_resize_recomputes_every_click_target() {
     let names: Vec<String> = (0..50).map(|i| format!("bot{i:02}")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut app = fleet_app(&refs);
-    app.table.sync(&app.names, &app.fleet);
+    app.table
+        .sync_with_ids(&app.names, &app.profile_ids, &app.fleet);
     app.table.cursor_to(40, &app.names);
     let wide = draw(&mut app, 120, 40);
     let (_, wide_y) = find(&wide, "> bot40").expect("cursor row at 120x40");

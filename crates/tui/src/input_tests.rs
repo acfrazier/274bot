@@ -59,6 +59,41 @@ fn space_selects_rows_without_selecting_the_bot() {
     assert!(text(&draw(&mut app, 120, 40)).contains("selected 1 of 3"));
 }
 
+#[test]
+fn uid_marks_survive_cursor_moves_and_filter_keys() {
+    let mut app = fleet_app(&["alice", "bob", "carol"]);
+    app.profile_ids = [
+        frontend_core::ProfileIdentity::uid(41),
+        frontend_core::ProfileIdentity::uid(42),
+        frontend_core::ProfileIdentity::uid(43),
+    ]
+    .into();
+    draw(&mut app, 120, 40);
+
+    // Space follows the production fleet_key path, including its identity
+    // projection before each key.
+    app.on_key(ch(' '));
+    app.on_key(key(KeyCode::Down));
+    app.on_key(ch(' '));
+    let alice = frontend_core::ProfileIdentity::uid(41);
+    let bob = frontend_core::ProfileIdentity::uid(42);
+    assert!(app.table.selection.contains(alice));
+    assert!(app.table.selection.contains(bob));
+
+    // A cursor move and a filter character both re-project the table.
+    app.on_key(key(KeyCode::Down));
+    app.on_key(ch('/'));
+    app.on_key(ch('b'));
+    assert!(app.table.selection.contains(alice));
+    assert!(app.table.selection.contains(bob));
+
+    // The filtered, marked row still toggles off through fleet_key.
+    app.on_key(key(KeyCode::Enter));
+    app.on_key(ch(' '));
+    assert!(app.table.selection.contains(alice));
+    assert!(!app.table.selection.contains(bob));
+}
+
 /// Tab only moves keyboard focus; it never selects another bot.
 #[test]
 fn tab_moves_keyboard_focus_between_panes_only() {
@@ -287,6 +322,25 @@ fn bulk_commands_confirm_a_frozen_scope() {
     assert_eq!(app.on_key(ch('y')), AppAction::LogoutAll);
 }
 
+#[test]
+fn marked_bulk_confirms_marked_scope_without_unmarked_churn_loop() {
+    let mut app = fleet_app(&["alice", "bob"]);
+    app.table
+        .selection
+        .set(app.profile_id_for_name("alice"), true);
+    assert_eq!(app.run_command(Command::ScriptStartAll), AppAction::None);
+    let all = text(&draw(&mut app, 120, 40));
+    assert!(
+        all.contains("Start 1 marked bot on their last successful script"),
+        "{all}"
+    );
+    assert!(!all.contains("Start all 1 member"), "{all}");
+
+    // An unmarked member arriving does not change the frozen marked scope.
+    app.names.push("carol".into());
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::ScriptStartAll);
+}
+
 /// An NPC dialogue is visible everywhere but only the Chat tab answers it.
 #[test]
 fn a_dialogue_never_takes_keys_from_other_panes() {
@@ -330,7 +384,10 @@ fn clicks_select_rows_and_right_click_opens_a_menu() {
         AppAction::None,
         "the checkbox column"
     );
-    assert!(app.table.is_marked("carol"));
+    assert!(app
+        .table
+        .selection
+        .contains(app.profile_id_for_name("carol")));
     assert_eq!(app.focused_name().as_deref(), Some("bob"));
 
     let rows = draw(&mut app, 120, 40);
