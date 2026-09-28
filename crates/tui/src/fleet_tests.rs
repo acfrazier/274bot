@@ -78,7 +78,7 @@ fn a_departed_member_loses_its_row_selection() {
     state.sync(&members, &[]);
     state.toggle_mark(&members, 0);
     state.toggle_mark(&members, 1);
-    assert_eq!(state.marks.len(), 2);
+    assert_eq!(state.selection.len(), 2);
     members.retain(|n| n != "bob");
     state.sync(&members, &[]);
     assert!(state.is_marked("alice"));
@@ -109,6 +109,7 @@ fn rows_show_selection_cursor_and_selected_bot_as_plain_text() {
     let (rows, hits) = render(
         FleetTable {
             names: &members,
+            ids: &[],
             rows: &rows,
             state: &mut state,
             selected: Some(0),
@@ -145,6 +146,7 @@ fn a_long_fleet_scrolls_to_keep_the_cursor_visible() {
     let (rows, hits) = render(
         FleetTable {
             names: &members,
+            ids: &[],
             rows: &[],
             state: &mut state,
             selected: None,

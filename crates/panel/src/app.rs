@@ -1832,13 +1832,22 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// WalkTo: main-chrome button that opens the native map tile picker.
+/// WalkTo and Fleet share the action row. Fleet opens independently of the
+/// Game/Grid wall, so the wall's rendering controls remain unchanged.
 fn walkto_button(ui: &Ui, session: &mut Session) {
-    let w = ui.content_region_avail()[0];
-    if ui.button_with_size("WalkTo", [w, 0.0]) {
+    let avail = ui.content_region_avail()[0];
+    let cells = button_cells(avail, 2);
+    if ui.button_with_size("WalkTo", [cells[0].0, 0.0]) {
         session.walkto_open = !session.walkto_open;
     }
     ui.set_item_tooltip("open the tile picker — close with the window ✕");
+    if cells[1].1 {
+        gap_line(ui);
+    }
+    if ui.button_with_size("Fleet", [cells[1].0, 0.0]) {
+        session.fleet_open = true;
+    }
+    ui.set_item_tooltip("open the marked-bot Fleet window");
 }
 
 fn debug_caption(id: &str) -> &str {
@@ -4938,6 +4947,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     let panel_class = panel_window_class();
     ui.set_next_window_class(&panel_class);
     panel_window(ui, &mut state.session, progress);
+    crate::fleet::window(ui, &mut state.session);
     ui.set_next_window_class(&game_class);
     // Frame owner: identity replacement and close-release happen outside
     // the Game window build closure so a rebind cannot keep stale buffers.

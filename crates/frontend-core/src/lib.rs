@@ -25,6 +25,7 @@ pub mod profile_form;
 mod profiles;
 pub mod resources;
 pub mod scripts;
+pub mod selection;
 pub mod session;
 pub mod surface;
 pub mod views;
@@ -38,6 +39,9 @@ pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Ou
 pub use profile_form::{FormNotice, ProfileFormSave, SavedProfile, NOTHING_SAVED};
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
+pub use selection::{
+    start_marked, stop_marked, BulkAction, BulkReport, BulkSkip, MarkedSelection, ProfileIdentity,
+};
 pub use session::{
     ArmMirror, OperatorSession, Removal, ScriptStart, Selection, SlotTransition, StartSettled,
     Transition, SLOT_REMOVE_TIMEOUT,

@@ -291,10 +291,14 @@ impl TuiApp {
             return AppAction::None;
         }
         if command.is_bulk() {
-            self.confirm(ConfirmKind::Bulk {
-                command,
-                members: self.names.clone(),
-            });
+            let members = if matches!(command, Command::ScriptStartAll | Command::ScriptStopAll)
+                && !self.table.selection.is_empty()
+            {
+                self.marked_names()
+            } else {
+                self.names.clone()
+            };
+            self.confirm(ConfirmKind::Bulk { command, members });
             return AppAction::None;
         }
         match command {
@@ -321,10 +325,12 @@ impl TuiApp {
                 self.table.editing = true;
             }
             Command::MarkAllShown => {
-                self.table.sync(&self.names, &self.fleet);
-                self.table.mark_all_shown(&self.names);
+                self.table
+                    .sync_with_ids(&self.names, &self.profile_ids, &self.fleet);
+                self.table
+                    .mark_all_shown_with_ids(&self.names, &self.profile_ids);
             }
-            Command::ClearMarks => self.table.marks.clear(),
+            Command::ClearMarks => self.table.selection.clear(),
             Command::Login => return AppAction::Login,
             Command::Logout => return AppAction::Logout,
             Command::Remove => {
@@ -479,7 +485,8 @@ impl TuiApp {
             }
             KeyCode::Char(' ') => {
                 if let Some(member) = self.table.cursor_member() {
-                    self.table.toggle_mark(&self.names, member);
+                    self.table
+                        .toggle_mark_with_ids(&self.names, &self.profile_ids, member);
                 }
             }
             KeyCode::Char('/') => self.table.editing = true,
@@ -647,7 +654,8 @@ impl TuiApp {
         };
         self.table.cursor_to(position, &self.names);
         if col < self.regions.fleet_rows.x + MARK_COLUMNS {
-            self.table.toggle_mark(&self.names, member);
+            self.table
+                .toggle_mark_with_ids(&self.names, &self.profile_ids, member);
             return AppAction::None;
         }
         let name = self.names[member].clone();

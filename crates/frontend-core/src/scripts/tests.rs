@@ -5,15 +5,15 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use host_play::{InstancePermit, Play, PlayOptions};
-use serde_json::{json, Map, Value};
-use vault::{Profile, ProfileSettings, Vault};
-
 use super::{Notice, Scripts};
 use crate::operations::Outcome;
+use crate::selection::{start_marked, stop_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
+use host_play::{InstancePermit, Play, PlayOptions};
+use serde_json::{json, Map, Value};
 
+use vault::{Profile, ProfileSettings, Vault};
 const LOOPING: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 
 struct Fixture {
@@ -814,4 +814,58 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
         lines("opid-bob")
     );
     f.core.play().unwrap().script_stop("opid-alice");
+}
+
+#[test]
+fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
+    let mut f = fixture("bulk-selection", &["alice", "bob", "carol"]);
+    let card = f.card("bulk.ts", LOOPING);
+    f.assign("alice", &card);
+    f.start_running("alice");
+
+    let mut selected = MarkedSelection::default();
+    selected.mark_all([
+        ProfileIdentity::uid(1),
+        ProfileIdentity::uid(2),
+        ProfileIdentity::uid(3),
+    ]);
+    let card_sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+    let first = start_marked(
+        &selected,
+        &mut f.core,
+        &mut f.scripts,
+        Some(&card_sel),
+        None,
+    );
+    assert_eq!(first.affected, 2);
+    assert_eq!(first.skipped.len(), 1);
+    assert_eq!(first.skipped[0].profile, "alice");
+    assert!(first.skipped[0].reason.contains("active"));
+
+    f.settle();
+    f.wait_state("bob", script::RunState::Running);
+    f.wait_state("carol", script::RunState::Running);
+
+    let duplicate = start_marked(
+        &selected,
+        &mut f.core,
+        &mut f.scripts,
+        Some(&card_sel),
+        None,
+    );
+    assert_eq!(duplicate.affected, 0);
+    assert_eq!(duplicate.skipped.len(), 3);
+    assert!(duplicate
+        .skipped
+        .iter()
+        .all(|skip| skip.reason.contains("active")));
+
+    let stop = stop_marked(&selected, &mut f.core);
+    assert_eq!(stop.affected, 3);
+    let duplicate_stop = stop_marked(&selected, &mut f.core);
+    assert_eq!(duplicate_stop.affected, 0);
+    assert!(duplicate_stop
+        .skipped
+        .iter()
+        .any(|skip| skip.reason.contains("stopping")));
 }

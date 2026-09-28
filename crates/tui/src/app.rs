@@ -328,6 +328,9 @@ pub struct TuiApp {
     /// Fleet members (load order) and the selected bot's index: the core
     /// `select`, not where the keyboard points (that is `key_focus`).
     pub names: Vec<String>,
+    /// Stable vault identities parallel to `names`; fixture-only rows fall
+    /// back to a deterministic synthetic identity in the fleet table.
+    pub profile_ids: Vec<frontend_core::ProfileIdentity>,
     pub focused: Option<usize>,
     /// The fleet rows (one per member) and their totals from the shared
     /// `frontend-core` projection; the binary copies them when the core's
@@ -466,6 +469,7 @@ impl TuiApp {
         Self {
             title: title.into(),
             names: Vec::new(),
+            profile_ids: Vec::new(),
             focused: None,
             fleet: Vec::new(),
             counts: FleetCounts::default(),
@@ -554,6 +558,33 @@ impl TuiApp {
     /// The focused slot's username.
     pub fn focused_name(&self) -> Option<String> {
         self.focused.and_then(|i| self.names.get(i)).cloned()
+    }
+    pub(crate) fn profile_id_for_name(&self, name: &str) -> frontend_core::ProfileIdentity {
+        self.names
+            .iter()
+            .position(|candidate| candidate == name)
+            .and_then(|index| self.profile_ids.get(index).copied())
+            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name))
+    }
+    pub(crate) fn is_marked_name(&self, name: &str) -> bool {
+        self.table
+            .selection
+            .contains(self.profile_id_for_name(name))
+    }
+    pub(crate) fn marked_names(&self) -> Vec<String> {
+        self.names
+            .iter()
+            .enumerate()
+            .filter(|(index, name)| {
+                self.table.selection.contains(
+                    self.profile_ids
+                        .get(*index)
+                        .copied()
+                        .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name)),
+                )
+            })
+            .map(|(_, name)| name.clone())
+            .collect()
     }
 
     /// Re-sync the view from the fresh projection: the selected slot's
@@ -856,7 +887,11 @@ impl TuiApp {
         let mut rows = Vec::with_capacity(names.len());
         for name in names {
             let status = eligibility(&name);
-            let checked = status.is_eligible() && self.table.is_marked(&name);
+            let checked = status.is_eligible()
+                && self
+                    .table
+                    .selection
+                    .contains(self.profile_id_for_name(&name));
             rows.push(WalkSendRow {
                 name,
                 status,
@@ -875,12 +910,19 @@ impl TuiApp {
             WalkSendMode::Group => WalkSendMode::Focused,
         };
         if self.walk_send.mode == WalkSendMode::Group && self.walk_send.checked_count() == 0 {
+            let eligible_ids = self
+                .walk_send
+                .rows
+                .iter()
+                .filter(|row| row.status.is_eligible())
+                .map(|row| self.profile_id_for_name(&row.name))
+                .collect::<Vec<_>>();
             for row in &mut self.walk_send.rows {
                 if row.status.is_eligible() {
                     row.checked = true;
-                    self.table.marks.insert(row.name.clone());
                 }
             }
+            self.table.selection.mark_all(eligible_ids);
         }
         self.walk_send.sync_walk_label();
     }
@@ -890,6 +932,7 @@ impl TuiApp {
         let Some(focused) = self.focused_name() else {
             return;
         };
+        let identity = self.profile_id_for_name(&focused);
         if let Some(row) = self
             .walk_send
             .rows
@@ -898,11 +941,7 @@ impl TuiApp {
         {
             if row.status.is_eligible() {
                 row.checked = !row.checked;
-                if row.checked {
-                    self.table.marks.insert(focused);
-                } else {
-                    self.table.marks.remove(&focused);
-                }
+                self.table.selection.set(identity, row.checked);
             }
         }
         self.walk_send.sync_walk_label();

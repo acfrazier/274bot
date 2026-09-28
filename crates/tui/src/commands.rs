@@ -360,6 +360,13 @@ impl Command {
             Some(name) => format!("BOT {name}"),
             None => "no bot selected".to_string(),
         };
+        let selected_scope = || {
+            if app.table.selection.is_empty() {
+                format!("all {}", members_text(app.names.len()))
+            } else {
+                format!("{} marked bots", app.table.selection.len())
+            }
+        };
         match self.group() {
             Group::App => "app".into(),
             Group::Logs => "log".into(),
@@ -369,7 +376,7 @@ impl Command {
                 _ => "fleet table".into(),
             },
             Group::Script if matches!(self, Command::ScriptStartAll | Command::ScriptStopAll) => {
-                format!("all {}", members_text(app.names.len()))
+                selected_scope()
             }
             Group::Script if matches!(self, Command::ScriptBrowse | Command::ScriptLoad) => {
                 "script library".into()
@@ -406,9 +413,8 @@ impl Command {
         };
         match self {
             Command::ShowMessage => app.error.as_ref().map(|_| ()).ok_or("no message"),
-            Command::SelectNextBot | Command::SelectPrevBot | Command::LogoutAll => members(),
             Command::MarkAllShown => members(),
-            Command::ClearMarks => (!app.table.marks.is_empty())
+            Command::ClearMarks => (!app.table.selection.is_empty())
                 .then_some(())
                 .ok_or("no rows selected"),
             Command::Login | Command::Logout | Command::Remove => bot(),

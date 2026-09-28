@@ -316,6 +316,7 @@ impl TuiApp {
             .min(inner.height);
         let hits = FleetTable {
             names: &self.names,
+            ids: &self.profile_ids,
             rows: &self.fleet,
             state: &mut self.table,
             selected: self.focused,
