@@ -1,4 +1,6 @@
 use super::*;
+use api::host_log;
+use api::hostlog::{Category, Level};
 const JAGS: [&str; 8] = CacheManifest::ARCHIVES;
 struct LoadedNav {
     availability: NavAvailability,
@@ -13,42 +15,72 @@ struct LoadedNav {
 fn verify_game_data_source(
     path: &Path,
     expected: &api::game_data::SourceInput,
-) -> Result<(), String> {
+) -> Result<(), GameDataSourceFault> {
     let actual_len = std::fs::metadata(path)
-        .map_err(|error| format!("game data source {}: {error}", path.display()))?
+        .map_err(|error| GameDataSourceFault::Unreadable {
+            error: error.to_string(),
+        })?
         .len();
     if actual_len != expected.bytes {
-        return Err(format!(
-            "game data source {} length mismatch: expected {} bytes, found {actual_len}",
-            path.display(),
-            expected.bytes
-        ));
+        return Err(GameDataSourceFault::Length {
+            expected: expected.bytes,
+            actual: actual_len,
+        });
     }
     let actual = nav::manifest::hash_file(path)
-        .map_err(|error| format!("game data source {}: {error}", path.display()))?;
+        .map_err(|error| GameDataSourceFault::Unreadable { error })?;
     if actual != expected.sha256 {
-        return Err(format!(
-            "game data source {} content mismatch: expected sha256 {}, found {actual}",
-            path.display(),
-            expected.sha256
-        ));
+        return Err(GameDataSourceFault::Content {
+            expected: expected.sha256.clone(),
+            actual,
+        });
     }
     Ok(())
 }
 
 /// Every pinned generator source must verify: engine and decoder inputs
 /// under the engine dir, content inputs under the content dir. Any mismatch
-/// (missing file, length, or bytes) keeps generated facts closed.
+/// (missing file, length, or bytes) keeps generated facts closed. The whole
+/// list is always checked so a rejection reports how many inputs failed (a
+/// wrong source root fails all of them; one edited file fails one). Returns
+/// the number of verified inputs.
 fn verify_game_data_sources(
     data: &api::game_data::SelectedGameData,
     engine_dir: &Path,
     content_dir: &Path,
-) -> Result<(), String> {
-    for (is_content, input) in data.source_inputs() {
-        let base = if is_content { content_dir } else { engine_dir };
-        verify_game_data_source(&base.join(&input.path), input)?;
+) -> Result<usize, GameDataSourceRejection> {
+    verify_source_inputs(data.source_inputs(), engine_dir, content_dir)
+}
+
+fn verify_source_inputs<'a>(
+    inputs: impl Iterator<Item = (bool, &'a api::game_data::SourceInput)>,
+    engine_dir: &Path,
+    content_dir: &Path,
+) -> Result<usize, GameDataSourceRejection> {
+    let mut total = 0;
+    let mut failures = Vec::new();
+    for (is_content, input) in inputs {
+        total += 1;
+        let (root, base) = if is_content {
+            (GameDataSourceRoot::Content, content_dir)
+        } else {
+            (GameDataSourceRoot::Engine, engine_dir)
+        };
+        let path = base.join(&input.path);
+        if let Err(fault) = verify_game_data_source(&path, input) {
+            failures.push(GameDataSourceFailure {
+                root,
+                input: input.path.clone(),
+                path,
+                fault,
+            });
+        }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(total)
+    } else {
+        Err(GameDataSourceRejection { total, failures })
+    }
 }
 
 impl ProfileSelection {
@@ -462,14 +494,17 @@ impl ProfileSelection {
             file_store_dir: runtime_cache.as_ref().and_then(|p| p.store_dir.clone()),
             ondemand_persist_dir: runtime_cache.as_ref().map(|p| p.persist_dir.clone()),
         })?);
-        let game_data = if self.supported_server || (runtime && self.target() == BotTarget::Prod) {
-            api::game_data::for_optional_profile(self.revision(), &cache_id)?.filter(|data| {
-                self.target() == BotTarget::Prod
-                    || verify_game_data_sources(data, &self.engine_dir, &self.content_dir).is_ok()
-            })
-        } else {
-            None
-        };
+        let (game_data, game_data_status) = self.attach_game_data(runtime, &cache_id)?;
+        if runtime && !game_data_status.is_attached() {
+            host_log!(
+                stderr;
+                Category::Lifecycle,
+                Level::Warn,
+                "generated game data withheld ({}): {}",
+                game_data_status.reason(),
+                game_data_status.detail()
+            );
+        }
         Ok(Arc::new(ServerProfile {
             selection: self.selection,
             client: binding,
@@ -477,6 +512,7 @@ impl ProfileSelection {
             cache_manifest: actual,
             runtime_cache,
             game_data,
+            game_data_status,
             nav_pack,
             nav_flags,
             nav_origin: origin,
@@ -493,6 +529,88 @@ impl ProfileSelection {
             world_members: self.world_members.clone(),
             public_worlds: self.public_worlds.clone(),
         }))
+    }
+
+    /// The fact-trust decision, with its cause. Facts attach only for a
+    /// supported server whose cache the generated asset describes and, for a
+    /// local world, whose pinned generator sources all verify. Recording the
+    /// cause never widens what attaches.
+    fn attach_game_data(
+        &self,
+        runtime: bool,
+        cache_id: &str,
+    ) -> Result<
+        (
+            Option<Arc<api::game_data::SelectedGameData>>,
+            GameDataStatus,
+        ),
+        String,
+    > {
+        let public = self.target() == BotTarget::Prod;
+        if !(self.supported_server || (runtime && public)) {
+            return Ok((
+                None,
+                GameDataStatus::Unsupported {
+                    reason: self.unsupported_reason(),
+                },
+            ));
+        }
+        let Some(data) = api::game_data::for_optional_profile(self.revision(), cache_id)? else {
+            let generated = api::game_data::for_revision(self.revision())?;
+            return Ok((
+                None,
+                GameDataStatus::CacheIdentity {
+                    profile_cache_id: cache_id.to_owned(),
+                    generated_cache_id: generated.cache_id().to_owned(),
+                    generated_content_id: generated.content_id().map(str::to_owned),
+                },
+            ));
+        };
+        if public {
+            return Ok((
+                Some(data),
+                GameDataStatus::Attached(GameDataAttestation::PublicBuild),
+            ));
+        }
+        match verify_game_data_sources(&data, &self.engine_dir, &self.content_dir) {
+            Ok(inputs) => Ok((
+                Some(data),
+                GameDataStatus::Attached(GameDataAttestation::SourcesVerified { inputs }),
+            )),
+            Err(rejection) => Ok((None, GameDataStatus::SourceRejected(rejection))),
+        }
+    }
+
+    /// Which supported-server condition this selection failed. Only called
+    /// when `supported_server` is false.
+    fn unsupported_reason(&self) -> String {
+        let endpoints = format!(
+            "{}:{} / {}:{}",
+            self.game_host, self.game_port, self.asset_host, self.asset_port
+        );
+        if self.selection.target() == BotTarget::Prod {
+            return format!("public endpoint {endpoints} is not a bundled rs2b2t world");
+        }
+        if !(crate::is_loopback_host(&self.game_host) && crate::is_loopback_host(&self.asset_host))
+        {
+            return format!("endpoint {endpoints} is not loopback");
+        }
+        let world_json = self.engine_dir.join("data/config/world.json");
+        match &self.world_members {
+            WorldMembersFact::Known {
+                source: WorldMembersSource::LocalWorldJson { .. },
+                ..
+            } => format!("local endpoint {endpoints} did not qualify"),
+            WorldMembersFact::Known { source, .. } => format!(
+                "explicit endpoint flags need the guarded local world.json ({}), but world membership came from {source:?}",
+                world_json.display()
+            ),
+            WorldMembersFact::Unknown => format!(
+                "explicit endpoint flags need a guarded local world.json (revision {}, boolean node.members) at {}; none usable",
+                self.revision().as_i32(),
+                world_json.display()
+            ),
+        }
     }
 
     /// Bind the immutable profile, check the captured cache identity once, and
@@ -783,10 +901,35 @@ fn decode_nav_world(
 
 #[cfg(test)]
 mod tests {
-    use super::verify_game_data_source;
+    use super::{
+        verify_game_data_source, verify_source_inputs, GameDataSourceFault, GameDataSourceRoot,
+        GameDataStatus,
+    };
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    fn scratch_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Pin `path` by its own current length and SHA-256, the same
+    /// `nav::manifest::hash_file` the binding uses (the real pinned digests
+    /// have no synthetic preimage).
+    fn pin(path: &Path, relative: &str) -> api::game_data::SourceInput {
+        api::game_data::SourceInput {
+            path: relative.to_string(),
+            bytes: std::fs::metadata(path).unwrap().len(),
+            sha256: nav::manifest::hash_file(path).unwrap(),
+        }
+    }
 
     /// Length-plus-SHA-256 source binding, with no real engine or content.
     ///
@@ -797,22 +940,13 @@ mod tests {
     /// binding uses; one flipped byte at the same length must be refused.
     #[test]
     fn equal_size_different_bytes_sources_do_not_attach_game_data() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-verify-sources-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch_dir("verify-sources");
 
         // Exact bytes verify through the predicate `bind` uses.
         let probe = dir.join("probe.bin");
         let bytes: Vec<u8> = (0..512).map(|i| (i % 251) as u8).collect();
         std::fs::write(&probe, &bytes).unwrap();
-        let expected = api::game_data::SourceInput {
-            path: "probe.bin".to_string(),
-            bytes: bytes.len() as u64,
-            sha256: nav::manifest::hash_file(&probe).unwrap(),
-        };
+        let expected = pin(&probe, "probe.bin");
         verify_game_data_source(&probe, &expected).expect("exact source bytes must verify");
 
         // One flipped byte keeps the length: the size-only shortcut this guards
@@ -825,12 +959,110 @@ mod tests {
             expected.bytes,
             "the mutation must keep the length so only bytes differ"
         );
-        let reason = verify_game_data_source(&probe, &expected)
+        let fault = verify_game_data_source(&probe, &expected)
             .expect_err("equal-size different-bytes sources must keep facts closed");
         assert!(
-            reason.contains("content mismatch") && reason.contains("probe.bin"),
-            "refusal must name a content mismatch, got: {reason}"
+            matches!(fault, GameDataSourceFault::Content { .. }),
+            "refusal must be a content mismatch, got {fault:?}"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A rejection keeps facts closed but names every failed input, its root
+    /// and how it failed, so a wrong source root, a missing generated file and
+    /// an edited file are told apart without a debugger.
+    #[test]
+    fn rejection_tells_missing_truncated_and_edited_inputs_apart() {
+        let dir = scratch_dir("reject-sources");
+        let engine = dir.join("engine");
+        let content = dir.join("content");
+        std::fs::create_dir_all(&engine).unwrap();
+        std::fs::create_dir_all(&content).unwrap();
+        for (root, name, bytes) in [
+            (&engine, "ok.bin", vec![1_u8; 64]),
+            (&engine, "short.bin", vec![2_u8; 64]),
+            (&content, "edited.bin", vec![3_u8; 64]),
+            (&content, "gone.bin", vec![4_u8; 64]),
+        ] {
+            std::fs::write(root.join(name), bytes).unwrap();
+        }
+        let inputs = [
+            (false, pin(&engine.join("ok.bin"), "ok.bin")),
+            (false, pin(&engine.join("short.bin"), "short.bin")),
+            (true, pin(&content.join("edited.bin"), "edited.bin")),
+            (true, pin(&content.join("gone.bin"), "gone.bin")),
+        ];
+        let refs = || inputs.iter().map(|(content, input)| (*content, input));
+        assert_eq!(
+            verify_source_inputs(refs(), &engine, &content),
+            Ok(4),
+            "pristine inputs verify and report how many"
+        );
+
+        std::fs::write(engine.join("short.bin"), vec![2_u8; 10]).unwrap();
+        let mut edited = vec![3_u8; 64];
+        edited[63] ^= 0xff;
+        std::fs::write(content.join("edited.bin"), edited).unwrap();
+        std::fs::remove_file(content.join("gone.bin")).unwrap();
+
+        let rejection = verify_source_inputs(refs(), &engine, &content)
+            .expect_err("three broken inputs must reject the whole set");
+        assert_eq!((rejection.total, rejection.verified()), (4, 1));
+        let failures = rejection
+            .failures
+            .iter()
+            .map(|failure| (failure.root, failure.input.as_str(), failure.fault.kind()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            failures,
+            [
+                (GameDataSourceRoot::Engine, "short.bin", "length-mismatch"),
+                (
+                    GameDataSourceRoot::Content,
+                    "edited.bin",
+                    "content-mismatch"
+                ),
+                (GameDataSourceRoot::Content, "gone.bin", "unreadable"),
+            ],
+            "failures keep the generator's order and name their root"
+        );
+        assert_eq!(
+            rejection.failures[2].path,
+            content.join("gone.bin"),
+            "the failure names the resolved path that was read"
+        );
+
+        let json = GameDataStatus::SourceRejected(rejection).to_json();
+        assert_eq!(json["attached"], false);
+        assert_eq!(json["reason"], "source-rejected");
+        assert_eq!(json["sources"]["total"], 4);
+        assert_eq!(json["sources"]["verified"], 1);
+        assert_eq!(json["sources"]["failed"], 3);
+        assert_eq!(json["sources"]["failures"][2]["root"], "content");
+        assert_eq!(json["sources"]["failures"][2]["kind"], "unreadable");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A wrong source root fails every pinned input; the record still counts
+    /// them all but stays small.
+    #[test]
+    fn wrong_source_root_record_counts_every_input_but_lists_a_bounded_few() {
+        let dir = scratch_dir("wrong-root");
+        let pinned = (0..12)
+            .map(|i| api::game_data::SourceInput {
+                path: format!("data/pack/input-{i}.bin"),
+                bytes: 8,
+                sha256: "00".repeat(32),
+            })
+            .collect::<Vec<_>>();
+        let rejection = verify_source_inputs(pinned.iter().map(|input| (true, input)), &dir, &dir)
+            .expect_err("nothing exists under the wrong root");
+        assert_eq!((rejection.total, rejection.verified()), (12, 0));
+        let json = GameDataStatus::SourceRejected(rejection).to_json();
+        assert_eq!(json["sources"]["failed"], 12);
+        assert_eq!(json["sources"]["failures"].as_array().unwrap().len(), 8);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

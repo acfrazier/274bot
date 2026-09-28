@@ -15,6 +15,8 @@ fn parse_args() -> panel::PanelArgs {
 }
 
 fn main() {
+    #[cfg(feature = "memory-profile")]
+    host_play::memory::mark_process_start();
     let args = parse_args();
     host_play::passphrase::warn_legacy_env("panel-play");
     if let Err(e) = panel::run_panel(args) {

@@ -166,11 +166,17 @@ Multi-slot `moss_giant_bank_start` replaces only its contended post-return
 fresh-XP checkpoint with fail-closed local-player named-NPC engagement; the
 scenario's final Strength-XP-since-Start proof remains mandatory.
 
-Seed/proof or script failures fail the run and return a nonzero exit. The
-observation-boundary qualification file records each slot's state, error and
-script progress. Inspect those records before treating a run as a benchmark: a
-process that exits normally is not by itself evidence that every bot did useful
-work for the whole interval.
+Seed/proof or script failures fail the run and return a nonzero exit, and so does
+a fleet that has not qualified after 30 minutes (`blocked: ready=… seeded=…
+proved=… wanted=… ever_ready=…`). Every such failure first appends one
+`"phase":"failed"` record to `samples.qualification.jsonl` with the error and,
+for every slot, whether it ever reached `ingame && scene_state == 2` (and when),
+its last observed session state (startup phase and how long it has been in it,
+login-queue place, error, worker terminal, latch, welcome hold), its scenario
+step by name, and its script state and error. The observation-boundary records
+carry the same per-slot fields. Inspect them before treating a run as a
+benchmark: a process that exits normally is not by itself evidence that every
+bot did useful work for the whole interval.
 
 ## Reading results
 
@@ -190,8 +196,40 @@ overflow count, observation-window mean and the maximum of the interval maxima
 rather than presenting 250 ms as an exact slow-frame duration. Requested
 rendering metadata does not prove the observed backend or cadence.
 
-`samples.qualification.jsonl` contains observation start/end progress. With
-optional diagnostics, `samples.diagnostics.jsonl` adds bounded per-slot evidence.
+Every sample row also carries run metadata, each field a JSON `null` when it does
+not apply (a headless `tui-play` has no adapter or panel frames):
+
+- `adapter`: the wgpu adapter the panel selected (`name`, `backend`,
+  `device_type`, `driver`, `driver_info`, `vendor`, `device`, `pci_bus_id`), with
+  `adapter_selections` counting how many times the panel selected one (more than
+  one means the GPU stack was rebuilt). It is recorded once, in the run metadata,
+  without `BOT_DEBUG` and without a log line.
+- `game_data`: the profile's generated-facts trust decision with its reason:
+  `attached`, or withheld because the selection is `unsupported-server`, the
+  cache does not match the generated asset (`cache-identity`), or a pinned
+  generator source failed verification (`source-rejected`, with how many of the
+  inputs failed and the first failures by root, pinned path and kind). Facts are
+  withheld exactly as before; only the cause is recorded, and the same cause is
+  logged once at warn level when a profile is bound for play.
+- Startup timeline, in seconds from the process entry the frontend `main`
+  recorded: `startup_window_created_s`, `startup_gpu_ready_s`,
+  `startup_first_render_s`, `startup_first_frame_presented_s` (the first
+  presented panel frame), `startup_first_client_frame_s`, and
+  `run_started_process_s` (when this harness's own timer began), all placed
+  against launch by `process_epoch_unix_ms`. `render_gap_*` times the space
+  between panel render callbacks, which the frame histogram does not: the longest
+  gap since the process began (`render_gap_max_ns`, ended at
+  `render_gap_max_at_s`), the longest in this sample interval
+  (`render_gap_interval_max_ns`, swap-reset), and how many gaps reached five
+  seconds (`render_gaps_ge_5s`), the point at which an OS “Not Responding” state
+  can begin. A large gap shows the UI thread was elsewhere; it does not by itself
+  prove the OS marked the window unresponsive.
+- `ready_ever`: how many slots have ever been `ingame && scene_state == 2`,
+  against `ready`, how many are now.
+
+`samples.qualification.jsonl` contains observation start/end progress and, for a
+failed fleet, the per-slot failure record above. With optional diagnostics,
+`samples.diagnostics.jsonl` adds bounded per-slot evidence.
 Detailed navigation history is null because the campaign capture system is not
 part of this harness. Direct-owner census, scheduling/latency journals, managed
 process controllers and campaign replay/provisioning tools are not dependencies.

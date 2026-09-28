@@ -14,6 +14,10 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+pub use crate::memory_startup::{
+    mark_process_start, mark_startup, record_adapter, AdapterRecord, StartupMark,
+};
+
 static ALLOCS: AtomicU64 = AtomicU64::new(0);
 static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
 static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
@@ -29,23 +33,41 @@ const READY_SETTLE: Duration = Duration::from_secs(2);
 ///
 /// Buckets are millisecond ceilings from 0 through 249; bucket 250 includes
 /// every slower frame. The cumulative histogram lets the receipt runner
-/// difference exactly the observation window it selected.
-pub struct PanelFrameTimer(Instant);
+/// difference exactly the observation window it selected. The timer also
+/// feeds the startup timeline: the space *between* render callbacks (where an
+/// OS unresponsive interval lives) and the first presented frame.
+pub struct PanelFrameTimer {
+    start: Instant,
+    presented: bool,
+}
 
 impl PanelFrameTimer {
     pub fn start() -> Self {
-        Self(Instant::now())
+        let start = Instant::now();
+        crate::memory_startup::render_started(start);
+        Self {
+            start,
+            presented: false,
+        }
+    }
+
+    /// The frame's swapchain image was presented. Frames that return early on
+    /// a lost, outdated, timed-out or occluded surface never call this.
+    pub fn presented(&mut self) {
+        self.presented = true;
     }
 }
 
 impl Drop for PanelFrameTimer {
     fn drop(&mut self) {
-        let elapsed = self.0.elapsed();
+        let end = Instant::now();
+        let elapsed = end.saturating_duration_since(self.start);
         let elapsed_us = elapsed.as_micros() as usize;
         let elapsed_ms = elapsed_us.div_ceil(1000).min(PANEL_FRAME_BUCKETS - 1);
         PANEL_FRAME_MS[elapsed_ms].fetch_add(1, Relaxed);
         let elapsed_ns = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
         PANEL_FRAME_INTERVAL_MAX_NS.fetch_max(elapsed_ns, Relaxed);
+        crate::memory_startup::render_ended(end, self.presented);
     }
 }
 
@@ -353,6 +375,9 @@ pub fn require_live_benchmark() -> Result<(), String> {
 struct Seed {
     runner: scenario::ScenarioRunner,
     started: bool,
+    /// Scenario step names in order, so a stuck slot's record names the step
+    /// it never left (the runner reports only an index).
+    step_names: Vec<&'static str>,
 }
 
 /// Per-slot benchmark seed runners installed by [`Run::prepare`] for
@@ -362,6 +387,7 @@ static SEEDS: Mutex<Option<HashMap<String, Arc<Mutex<Seed>>>>> = Mutex::new(None
 /// Called from the existing frontend slot observe hook. Drives the selected
 /// benchmark's seed/proof; unseeded idle installs no seeds.
 pub(crate) fn client_frame(c: &mut client::client::Client, name: &str, hold: bool) {
+    mark_startup(StartupMark::FirstClientFrame);
     crate::memory_diagnostics::frame(c, name, hold);
     let seed = {
         let seeds = SEEDS.lock().unwrap();
@@ -453,12 +479,14 @@ fn seed_runner(
     name: &str,
     world: Option<Arc<nav::world::NavWorld>>,
 ) -> Seed {
+    let step_names = scenario.steps.iter().map(|step| step.name).collect();
     let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
     runner.set_live_names(&[name.to_owned()]);
     runner.set_deadline(Duration::from_secs(1800));
     Seed {
         runner,
         started: false,
+        step_names,
     }
 }
 
@@ -510,6 +538,10 @@ pub struct Run {
     pub render_policy: RenderPolicy,
     diagnostic_output: Option<std::fs::File>,
     qualification_output: std::fs::File,
+    /// Which slots have ever been ready; a fleet failure names the rest.
+    ready_latch: crate::memory_slots::ReadyLatch,
+    /// The profile's game-data trust decision, serialized once on first poll.
+    game_data: Option<serde_json::Value>,
 }
 
 /// Where non-idle seed runners get their [`nav::world::NavWorld`].
@@ -714,6 +746,7 @@ impl Run {
             config.workload.as_str(),
             output_path.display()
         );
+        let ready_latch = crate::memory_slots::ReadyLatch::new(&names);
         Ok(Self {
             config,
             names,
@@ -737,6 +770,8 @@ impl Run {
             qualification_output,
             single_renderer,
             render_policy,
+            ready_latch,
+            game_data: None,
         })
     }
 
@@ -831,10 +866,21 @@ impl Run {
         Ok(())
     }
 
-    /// Drive warmup/observe/lifecycle. `Ok(true)` when teardown finished.
+    /// Drive warmup/observe/lifecycle. `Ok(true)` when teardown finished. A
+    /// failure is recorded per slot before it is returned, because both
+    /// frontends exit on it.
     pub fn poll(&mut self, play: &Play) -> Result<bool, String> {
+        let result = self.poll_inner(play);
+        if let Err(error) = &result {
+            self.record_failure(play, error);
+        }
+        result
+    }
+
+    fn poll_inner(&mut self, play: &Play) -> Result<bool, String> {
         let now = Instant::now();
         let statuses = play.statuses();
+        self.ready_latch.observe(&statuses, now);
         let ready = statuses
             .iter()
             .filter(|s| s.ingame && s.scene_state == 2)
@@ -935,8 +981,9 @@ impl Run {
             && self.started.elapsed() > Duration::from_secs(1800)
         {
             return Err(format!(
-                "blocked: ready={ready} seeded={seeded} proved={proved} wanted={}",
-                self.config.n
+                "blocked: ready={ready} seeded={seeded} proved={proved} wanted={} ever_ready={}",
+                self.config.n,
+                self.ready_latch.ever()
             ));
         }
         if self.observing.is_none()
@@ -1115,6 +1162,9 @@ impl Run {
             value["ui_frame_total_ns"] = ui_frame_total_ns.into();
             value["ui_frame_max_ns"] = take_panel_frame_interval_max_ns().into();
             value["ui_frame_max_scope"] = "sample-interval".into();
+            crate::memory_startup::add_sample_fields(&mut value, self.started);
+            value["ready_ever"] = self.ready_latch.ever().into();
+            value["game_data"] = self.game_data_json(play);
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
             if self.diagnostics {
                 self.write_diagnostics(play, None)?;
@@ -1127,19 +1177,88 @@ impl Run {
             .is_some_and(|t| t.elapsed() >= self.config.teardown))
     }
 
+    /// The profile's game-data trust decision, serialized once.
+    fn game_data_json(&mut self, play: &Play) -> serde_json::Value {
+        self.game_data
+            .get_or_insert_with(|| {
+                play.server_profile()
+                    .map_or(serde_json::Value::Null, |profile| {
+                        profile.game_data_status().to_json()
+                    })
+            })
+            .clone()
+    }
+
+    /// One outcome per slot: whether it ever reached `ingame && scene_state
+    /// == 2` and its last observed session, scenario and script state.
+    fn slot_outcomes(&self, play: &Play) -> Vec<serde_json::Value> {
+        use crate::memory_slots::{slot_outcome, ScriptView, SeedView};
+        let now = Instant::now();
+        let statuses = play.statuses();
+        let seeds = SEEDS.lock().unwrap();
+        self.names
+            .iter()
+            .map(|name| {
+                let seed = seeds
+                    .as_ref()
+                    .and_then(|map| map.get(name))
+                    .map(|seed| seed.lock().unwrap());
+                slot_outcome(
+                    name,
+                    self.ready_latch
+                        .first_ready(name)
+                        .map(|at| at.saturating_duration_since(self.started).as_secs_f64()),
+                    statuses.iter().find(|s| &s.username == name),
+                    now,
+                    seed.as_ref().map(|seed| SeedView {
+                        status: seed.runner.status(),
+                        started: seed.started,
+                        step_names: &seed.step_names,
+                    }),
+                    ScriptView {
+                        state: format!("{:?}", play.script_state(name)),
+                        error: play.script_last_error(name),
+                        runtime: play.memory_script_progress(name),
+                    },
+                )
+            })
+            .collect()
+    }
+
     // Two boundary reads preserve script progress evidence when verbose
     // diagnostic collection is disabled. Never drains logs or sends actions.
     fn write_qualification(&mut self, play: &Play, phase: &str) -> Result<(), String> {
-        let statuses = play.statuses();
-        let slots: Vec<_> = self.names.iter().map(|name| serde_json::json!({
-            "name": name,
-            "state": format!("{:?}", play.script_state(name)),
-            "error": play.script_last_error(name),
-            "runtime": play.memory_script_progress(name),
-            "client": statuses.iter().find(|s| &s.username == name).map(|s| serde_json::json!({"ingame":s.ingame,"scene_state":s.scene_state,"x":s.tile_x,"z":s.tile_z,"level":s.tile_level})),
-        })).collect();
-        let value = serde_json::json!({"phase":phase,"elapsed_s":self.started.elapsed().as_secs_f64(),"slots":slots});
+        let slots = self.slot_outcomes(play);
+        let value = serde_json::json!({
+            "phase": phase,
+            "elapsed_s": self.started.elapsed().as_secs_f64(),
+            "ready_ever": self.ready_latch.ever(),
+            "slots": slots,
+        });
         writeln!(self.qualification_output, "{value}").map_err(|e| e.to_string())
+    }
+
+    /// The fail-closed record: which slots ever qualified and where each of
+    /// the others stopped. Best effort, and never replaces the failure it
+    /// documents.
+    fn record_failure(&mut self, play: &Play, error: &str) {
+        let slots = self.slot_outcomes(play);
+        let ready_now = slots
+            .iter()
+            .filter(|slot| slot["ingame_scene2_now"] == true)
+            .count();
+        let value = serde_json::json!({
+            "phase": "failed",
+            "error": error,
+            "elapsed_s": self.started.elapsed().as_secs_f64(),
+            "wanted": self.config.n,
+            "ready_now": ready_now,
+            "ready_ever": self.ready_latch.ever(),
+            "slots": slots,
+        });
+        if let Err(write_error) = writeln!(self.qualification_output, "{value}") {
+            eprintln!("memory benchmark: could not record slot outcomes: {write_error}");
+        }
     }
 
     fn write_diagnostics(&mut self, play: &Play, failure: Option<&str>) -> Result<(), String> {

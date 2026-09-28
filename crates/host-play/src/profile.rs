@@ -71,6 +71,213 @@ pub enum NavAvailability {
     Bound,
 }
 
+/// Which tree a pinned generator input is read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameDataSourceRoot {
+    Engine,
+    Content,
+}
+
+impl GameDataSourceRoot {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Engine => "engine",
+            Self::Content => "content",
+        }
+    }
+}
+
+/// Why one pinned generator input did not verify.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GameDataSourceFault {
+    /// Missing, unreadable or otherwise not hashable at the resolved path.
+    Unreadable { error: String },
+    /// The length differs from the pinned bytes.
+    Length { expected: u64, actual: u64 },
+    /// The length matches but the SHA-256 differs.
+    Content { expected: String, actual: String },
+}
+
+impl GameDataSourceFault {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Unreadable { .. } => "unreadable",
+            Self::Length { .. } => "length-mismatch",
+            Self::Content { .. } => "content-mismatch",
+        }
+    }
+}
+
+/// One pinned generator input that failed, with the path actually read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameDataSourceFailure {
+    pub root: GameDataSourceRoot,
+    /// The pinned path, relative to the root.
+    pub input: String,
+    /// The resolved path that was read (root joined with `input`).
+    pub path: PathBuf,
+    pub fault: GameDataSourceFault,
+}
+
+impl GameDataSourceFailure {
+    pub fn detail(&self) -> String {
+        let path = self.path.display();
+        match &self.fault {
+            GameDataSourceFault::Unreadable { error } => {
+                format!("game data source {path}: {error}")
+            }
+            GameDataSourceFault::Length { expected, actual } => format!(
+                "game data source {path} length mismatch: expected {expected} bytes, found {actual}"
+            ),
+            GameDataSourceFault::Content { expected, actual } => format!(
+                "game data source {path} content mismatch: expected sha256 {expected}, found {actual}"
+            ),
+        }
+    }
+}
+
+/// Every pinned input was checked; at least one failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameDataSourceRejection {
+    /// Pinned inputs checked, in the generator's order.
+    pub total: usize,
+    pub failures: Vec<GameDataSourceFailure>,
+}
+
+impl GameDataSourceRejection {
+    pub fn verified(&self) -> usize {
+        self.total - self.failures.len()
+    }
+}
+
+/// What vouches for attached facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameDataAttestation {
+    /// Every pinned generator input matched by length and SHA-256.
+    SourcesVerified { inputs: usize },
+    /// The public target trusts its compiled resources, not a source tree.
+    PublicBuild,
+}
+
+/// The recorded outcome of the fact-trust decision at bind. Recording it
+/// never changes it: only [`GameDataStatus::Attached`] carries facts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GameDataStatus {
+    Attached(GameDataAttestation),
+    /// The selection is not a supported server, so no facts were requested
+    /// and no source was read.
+    Unsupported {
+        reason: String,
+    },
+    /// The generated asset does not describe this profile's cache.
+    CacheIdentity {
+        profile_cache_id: String,
+        generated_cache_id: String,
+        generated_content_id: Option<String>,
+    },
+    /// A pinned generator input failed verification.
+    SourceRejected(GameDataSourceRejection),
+}
+
+impl GameDataStatus {
+    pub fn is_attached(&self) -> bool {
+        matches!(self, Self::Attached(_))
+    }
+
+    /// Stable machine label.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::Attached(_) => "attached",
+            Self::Unsupported { .. } => "unsupported-server",
+            Self::CacheIdentity { .. } => "cache-identity",
+            Self::SourceRejected(_) => "source-rejected",
+        }
+    }
+
+    /// One human sentence naming the cause.
+    pub fn detail(&self) -> String {
+        match self {
+            Self::Attached(GameDataAttestation::SourcesVerified { inputs }) => {
+                format!("{inputs} pinned generator inputs verified")
+            }
+            Self::Attached(GameDataAttestation::PublicBuild) => {
+                "attested by the public build".into()
+            }
+            Self::Unsupported { reason } => reason.clone(),
+            Self::CacheIdentity {
+                profile_cache_id,
+                generated_cache_id,
+                generated_content_id,
+            } => format!(
+                "profile cache {profile_cache_id} is neither the generated asset's cache id {generated_cache_id}{}",
+                generated_content_id
+                    .as_ref()
+                    .map_or(String::new(), |id| format!(" nor its content id {id}"))
+            ),
+            Self::SourceRejected(rejection) => format!(
+                "{} of {} pinned generator inputs failed verification; first: {}",
+                rejection.failures.len(),
+                rejection.total,
+                rejection
+                    .failures
+                    .first()
+                    .map_or_else(String::new, GameDataSourceFailure::detail)
+            ),
+        }
+    }
+
+    /// Structured form for profile and perf metadata. Failures are capped so
+    /// a wrong source root (every input failing) stays a small record.
+    pub fn to_json(&self) -> serde_json::Value {
+        const LISTED_FAILURES: usize = 8;
+        let mut value = serde_json::json!({
+            "attached": self.is_attached(),
+            "reason": self.reason(),
+            "detail": self.detail(),
+        });
+        match self {
+            Self::Attached(GameDataAttestation::SourcesVerified { inputs }) => {
+                value["attestation"] = "sources-verified".into();
+                value["sources"] = serde_json::json!({
+                    "total": inputs, "verified": inputs, "failed": 0,
+                });
+            }
+            Self::Attached(GameDataAttestation::PublicBuild) => {
+                value["attestation"] = "public-build".into();
+            }
+            Self::Unsupported { .. } => {}
+            Self::CacheIdentity {
+                profile_cache_id,
+                generated_cache_id,
+                generated_content_id,
+            } => {
+                value["profile_cache_id"] = profile_cache_id.clone().into();
+                value["generated_cache_id"] = generated_cache_id.clone().into();
+                value["generated_content_id"] = generated_content_id.clone().into();
+            }
+            Self::SourceRejected(rejection) => {
+                value["sources"] = serde_json::json!({
+                    "total": rejection.total,
+                    "verified": rejection.verified(),
+                    "failed": rejection.failures.len(),
+                    "failures": rejection
+                        .failures
+                        .iter()
+                        .take(LISTED_FAILURES)
+                        .map(|failure| serde_json::json!({
+                            "root": failure.root.label(),
+                            "input": failure.input,
+                            "kind": failure.fault.kind(),
+                            "detail": failure.detail(),
+                        }))
+                        .collect::<Vec<_>>(),
+                });
+            }
+        }
+        value
+    }
+}
+
 /// Frozen session inputs. Getters expose no mutable connection/resource fields.
 #[derive(Debug)]
 pub struct ServerProfile {
@@ -81,6 +288,7 @@ pub struct ServerProfile {
     // Keeps owned packs/snapshot alive across every clone and bot.
     runtime_cache: Option<Arc<client::unpack::PreparedRuntimeCache>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    game_data_status: GameDataStatus,
     nav_pack: PathBuf,
     nav_flags: PathBuf,
     nav_origin: NavOrigin,
@@ -131,6 +339,11 @@ impl ServerProfile {
     /// Facts additionally qualified by the supported server/source boundary.
     pub fn game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
         self.game_data.clone()
+    }
+    /// Why [`Self::game_data`] is present or absent. Facts are attached only
+    /// when this is [`GameDataStatus::Attached`].
+    pub fn game_data_status(&self) -> &GameDataStatus {
+        &self.game_data_status
     }
     pub fn prepared_cache(&self) -> Option<&Arc<client::unpack::PreparedRuntimeCache>> {
         self.runtime_cache.as_ref()
