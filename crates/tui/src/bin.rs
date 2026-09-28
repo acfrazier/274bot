@@ -99,17 +99,18 @@ pub struct Args {
     pub map_bundle: Option<PathBuf>,
 }
 
-fn usage() -> ! {
-    eprintln!(
-        "usage: tui-play [--profile local-274|local-289|public-289] [--revision 274|289] \
+const USAGE: &str = "usage: tui-play [--profile local-274|local-289|public-289] [--revision 274|289] \
          [--prod] [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] \
          [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass PASS] \
          [--world N] [--live script_<name> [--catalog-core | --pair-core]] [--user USER]... \
          (default user: first vault profile)\n\
          release packaging: tui-play --map-bundle OUT --revision 274|289 --cache JAG_DIR \
-         --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map terrain into OUT/map/<revision>)"
-    );
+         --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map terrain into OUT/map/<revision>)";
+
+/// Usage on stderr for a bad invocation (exit 2, the CLI family's convention).
+fn usage() -> ! {
+    eprintln!("{USAGE}");
     std::process::exit(2);
 }
 
@@ -136,16 +137,18 @@ fn live_core_from_env(value: Option<&str>) -> Result<(bool, bool), String> {
 }
 
 /// `--live NAME` wins over `BOT_LIVE`, and a core flag over `BOT_LIVE_CORE`;
-/// empty env is ignored. `--help`/`-h` print the usage line (exit 2, the CLI
-/// family's convention). Shared server/profile flags are consumed first by
-/// host-play.
+/// empty env is ignored. `--help`/`-h` print the usage on stdout and exit 0;
+/// a bad invocation prints it on stderr and exits 2. Shared server/profile
+/// flags are consumed first by host-play.
 pub fn parse_args() -> Args {
     match parse_args_from(env::args().skip(1)) {
         Ok(args) => args,
+        Err(msg) if msg == "usage" => {
+            println!("{USAGE}");
+            std::process::exit(0);
+        }
         Err(msg) => {
-            if msg != "usage" {
-                eprintln!("{msg}");
-            }
+            eprintln!("{msg}");
             usage();
         }
     }
