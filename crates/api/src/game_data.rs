@@ -5,15 +5,19 @@ use std::sync::{Arc, OnceLock};
 
 use client::io::ClientRevision;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
+
+use crate::selected::{FactError, SelectedPin};
 
 const SCHEMA_VERSION: u16 = 4;
 const REVISION_274: &[u8] = include_bytes!("../data/game-data/274.json");
 const REVISION_289: &[u8] = include_bytes!("../data/game-data/289.json");
+const MANIFEST: &[u8] = include_bytes!("../data/game-data/manifest.json");
 
 static DATA_274: OnceLock<Result<Arc<SelectedGameData>, String>> = OnceLock::new();
 static DATA_289: OnceLock<Result<Arc<SelectedGameData>, String>> = OnceLock::new();
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 struct CacheIdentity {
     cache_id: String,
     /// Decoded (`274DCI01`) identity of the same pinned cache. Absent in
@@ -21,10 +25,18 @@ struct CacheIdentity {
     /// profiles assert it instead of a packed equivalence list.
     #[serde(default)]
     content_id: Option<String>,
+    #[serde(default)]
+    nav_sha256: Option<String>,
+    #[serde(default)]
+    flags_sha256: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Provenance {
+    #[serde(default)]
+    engine_commit: Option<String>,
+    #[serde(default)]
+    content_commit: Option<String>,
     cache_identity: CacheIdentity,
     inputs: Vec<SourceInput>,
     content_inputs: Vec<SourceInput>,
@@ -37,6 +49,34 @@ pub struct SourceInput {
     pub path: String,
     pub sha256: String,
     pub bytes: u64,
+}
+
+#[derive(Deserialize)]
+struct PinManifest {
+    schema_version: u16,
+    revisions: Vec<PinManifestRow>,
+}
+
+#[derive(Deserialize)]
+struct PinManifestRow {
+    revision: i32,
+    bytes: u64,
+    sha256: String,
+    engine_commit: String,
+    content_commit: String,
+    cache_identity: CacheIdentity,
+}
+
+fn digest_hex(text: &str) -> Result<[u8; 32], FactError> {
+    if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(FactError::PinMismatch);
+    }
+    let mut digest = [0; 32];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16)
+            .map_err(|_| FactError::PinMismatch)?;
+    }
+    Ok(digest)
 }
 
 /// One selected-cache object row. Aliases come from generated server data;
@@ -982,9 +1022,88 @@ pub struct SelectedGameData {
     fixed_food_heals_index: Vec<(String, i32)>,
     #[serde(skip)]
     fixed_food_heal_index: HashMap<u64, Vec<usize>>,
+    #[serde(skip)]
+    selected_pin: Option<Result<Arc<SelectedPin>, FactError>>,
 }
 
 impl SelectedGameData {
+    /// Cached selected identity. No decoding, hashing or allocation occurs on
+    /// access. Unbound/legacy facts are unavailable, never a fabricated pin.
+    pub fn selected_pin(&self) -> Result<Arc<SelectedPin>, FactError> {
+        self.selected_pin.as_ref().cloned().unwrap_or_else(|| {
+            Err(FactError::FamilyUnavailable(
+                crate::selected::PIN_FAMILY.clone(),
+            ))
+        })
+    }
+
+    fn bind_pin(
+        &self,
+        bytes: &[u8],
+        manifest_bytes: &[u8],
+        revision: ClientRevision,
+    ) -> Result<Arc<SelectedPin>, FactError> {
+        let unavailable = || FactError::FamilyUnavailable(crate::selected::PIN_FAMILY.clone());
+        let engine = self
+            .provenance
+            .engine_commit
+            .as_deref()
+            .ok_or_else(unavailable)?;
+        let content = self
+            .provenance
+            .content_commit
+            .as_deref()
+            .ok_or_else(unavailable)?;
+        let cache = &self.provenance.cache_identity;
+        let content_id = cache.content_id.as_deref().ok_or_else(unavailable)?;
+        let nav = cache.nav_sha256.as_deref().ok_or_else(unavailable)?;
+        let flags = cache.flags_sha256.as_deref().ok_or_else(unavailable)?;
+        let manifest: PinManifest =
+            serde_json::from_slice(manifest_bytes).map_err(|_| FactError::PinMismatch)?;
+        if manifest.schema_version != self.schema_version {
+            return Err(FactError::Schema {
+                expected: self.schema_version,
+                actual: manifest.schema_version,
+            });
+        }
+        let mut rows = manifest
+            .revisions
+            .iter()
+            .filter(|row| row.revision == self.revision);
+        let row = rows.next().ok_or(FactError::PinMismatch)?;
+        if rows.next().is_some()
+            || self.revision != revision.as_i32()
+            || row.bytes != bytes.len() as u64
+            || digest_hex(&row.sha256)? != <[u8; 32]>::from(Sha256::digest(bytes))
+            || row.engine_commit != engine
+            || row.content_commit != content
+            || row.cache_identity != *cache
+            || engine.len() != 40
+            || content.len() != 40
+            || !engine
+                .bytes()
+                .chain(content.bytes())
+                .all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(FactError::PinMismatch);
+        }
+        // The cache and decoded-content ids in this manifest are SHA-256
+        // identities too. Validate them without retaining duplicate bytes.
+        digest_hex(&cache.cache_id)?;
+        digest_hex(content_id)?;
+        Ok(Arc::new(SelectedPin {
+            revision,
+            engine_commit: Arc::from(engine),
+            content_commit: Arc::from(content),
+            cache_id: Arc::from(cache.cache_id.as_str()),
+            content_id: Arc::from(content_id),
+            nav_sha256: digest_hex(nav)?,
+            flags_sha256: digest_hex(flags)?,
+            schema: self.schema_version,
+            manifest_sha256: Sha256::digest(manifest_bytes).into(),
+        }))
+    }
+
     /// Body owned by M-296: no typed quest family is installed before its asset cutover.
     pub fn prepare_quests(
         &self,
@@ -1196,6 +1315,7 @@ impl SelectedGameData {
             ));
         }
         data.build_indexes();
+        data.selected_pin = Some(data.bind_pin(bytes, MANIFEST, expected_revision));
         Ok(Arc::new(data))
     }
 
