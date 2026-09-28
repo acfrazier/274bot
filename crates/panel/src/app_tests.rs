@@ -3281,6 +3281,27 @@ fn pin_profiles_geometry() {
     }
 }
 
+/// The Discard / Keep editing prompt's laid-out width. Call with the
+/// frame's context bound, after the Profiles window drew.
+fn switch_prompt_width() -> f32 {
+    use dear_imgui_rs::sys;
+    use std::ffi::CString;
+
+    // SAFETY: the caller binds the frame's context; every name is a
+    // NUL-terminated copy that outlives its call, and a window is read only
+    // after the lookup found it.
+    unsafe {
+        let profiles = sys::igFindWindowByName(c"Profiles".as_ptr());
+        assert!(!profiles.is_null(), "Profiles was drawn");
+        let label = CString::new(super::PROFILE_EDIT_SWITCH_POPUP).unwrap();
+        let id = sys::igGetIDWithSeed_Str(label.as_ptr(), std::ptr::null(), (*profiles).ID);
+        let name = CString::new(format!("##Popup_{id:08x}")).unwrap();
+        let popup = sys::igFindWindowByName(name.as_ptr());
+        assert!(!popup.is_null(), "the prompt was drawn");
+        (*popup).Size.x
+    }
+}
+
 /// The Profiles window over a real vault, driven through real ImGui frames
 /// the way the app runs them (the session pump, then the window) at the
 /// default docked tab geometry: what it showed is read back from ImGui's
@@ -3363,6 +3384,29 @@ impl ProfilesUi {
             text: self.drawn.0.take(),
             colours,
         }
+    }
+
+    /// One frame; returns the unsaved-edits prompt's laid-out width and
+    /// the width its message needs on one line.
+    fn switch_prompt_width(&mut self) -> (f32, f32) {
+        self.session.pump_status();
+        self.ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let width = {
+            let ui = self.ctx.frame();
+            ui.with_bound_context(pin_profiles_geometry);
+            super::chooser_window(ui, &mut self.session, None);
+            let prompt = &self.session.pending_edit_switch.as_ref().unwrap().prompt;
+            (
+                ui.with_bound_context(switch_prompt_width),
+                ui.current_font()
+                    .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, prompt)[0],
+            )
+        };
+        self.ctx.render();
+        width
     }
 
     /// Type `c` into the edit form, as the keyboard would: Tab to one of
@@ -3735,6 +3779,10 @@ fn opening_another_profile_over_unsaved_edits_asks_first() {
         "{}",
         asked.text
     );
+    // Readable, not a one-character sliver: a short message fits on one
+    // line (the 0.1.9.1 RC drew the prompt about 20 px wide).
+    let (width, message) = ui.switch_prompt_width();
+    assert!(width >= message, "prompt width {width} < message {message}");
     let kept = ui.click(At::SwitchPrompt, "Keep editing");
     assert!(kept.has("Editing alice"), "{}", kept.text);
     assert!(!kept.has("[ Discard ]"), "{}", kept.text);

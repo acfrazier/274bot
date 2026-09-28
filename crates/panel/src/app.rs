@@ -3654,6 +3654,18 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
 
 /// Fitted dialog width: wrap + auto-resize so first open is not a sliver.
 const DIALOG_W: f32 = 400.0;
+
+/// Popup body text wrapped at the fitted dialog width's content edge.
+/// `Ui::text_wrapped` always wraps at the window edge; in an auto-sizing
+/// popup that edge is the popup's own content width, so the popup
+/// collapses to a sliver. Fixed-width `DIALOG_W` windows keep
+/// `text_wrapped`: their edge is fixed and accounts for a scrollbar.
+fn popup_text(ui: &Ui, text: &str) {
+    let edge = DIALOG_W - ui.clone_style().window_padding()[0];
+    let _wrap = ui.push_text_wrap_pos(edge);
+    ui.text(text);
+}
+
 const VAULT_RESET_POPUP: &str = "Reset vault?";
 const PROFILE_DELETE_POPUP: &str = "Delete profile?";
 /// Unsaved-changes prompt when an explicit edit-target switch lands on a
@@ -3686,8 +3698,7 @@ fn scary_confirm_popup(
             ui.close_current_popup();
             return;
         }
-        let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
-        ui.text_wrapped(body);
+        popup_text(ui, body);
         ui.spacing();
         ui.checkbox("I understand", understood);
         ui.spacing();
@@ -4043,9 +4054,8 @@ fn edit_switch_popup(ui: &Ui, session: &mut Session) {
             ui.close_current_popup();
             return;
         }
-        let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
         if let Some(switch) = session.pending_edit_switch.as_ref() {
-            ui.text_wrapped(&switch.prompt);
+            popup_text(ui, &switch.prompt);
         }
         ui.spacing();
         let avail = ui.content_region_avail()[0];
