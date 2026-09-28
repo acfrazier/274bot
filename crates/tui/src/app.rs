@@ -20,7 +20,9 @@ use ratatui::Frame;
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
 use frontend_core::MapBakeChoice;
 use frontend_core::{FleetCounts, FleetRow, ResourceView, SlotDetail};
-use host_play::walk_map::{Catalogue, MapModel, ObservedService, Search, WalkSlotStatus};
+use host_play::walk_map::{
+    Catalogue, DisplayName, MapModel, ObservedService, Search, WalkSlotStatus,
+};
 use nav::map::poi::{PoiKind, PoiRecord};
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
@@ -36,7 +38,8 @@ use crate::map::{Map, MapAction, MapView, ObservedMark, ZOOMS};
 use crate::overlay::Modal;
 use crate::script_params::{ParamsCommit, ParamsKey, ParamsPane, ParamsState};
 use crate::script_shape::{
-    browse_lines, rs2b0t_root_has_index, BrowseCard, BrowseLine, ScriptClick, ScriptPane,
+    browse_lines, card_selection, rs2b0t_root_has_index, BrowseCard, BrowseLine, ScriptClick,
+    ScriptPane,
 };
 use crate::settings::SettingsState;
 use crate::status::StatusPane;
@@ -375,14 +378,25 @@ pub struct TuiApp {
     pub walk_dest: Option<Tile>,
     /// Chat pane state (focused option row).
     pub chat: ChatState,
-    /// Settings popup over the focused profile's settings; the binary
-    /// persists [`TuiApp::settings`] back to the vault when
+    /// Settings popup over the settings of the profile it is bound to
+    /// ([`TuiApp::settings_profile`]); the binary persists
+    /// [`TuiApp::settings`] back to the vault when
     /// [`TuiApp::settings_dirty`] flips.
     pub settings: vault::ProfileSettings,
     /// Walk-confirm find opt-ins (teleports / wilderness / BankBudget).
     pub nav: NavFindSettings,
     pub settings_state: SettingsState,
     pub settings_dirty: bool,
+    /// Profile the settings popup was opened for and stays bound to: focus
+    /// changes never rebind it or rewrite its buffers. `None` while closed
+    /// (or before the first pump binds it).
+    pub settings_profile: Option<String>,
+    /// The popup's title, naming its bound profile: built when it binds, so
+    /// drawing only borrows it.
+    pub settings_title: String,
+    /// The popup's save feedback: an inline refusal, or `Saved <name>.`
+    /// once its last persist is durable.
+    pub settings_save: frontend_core::ProfileFormSave,
     /// Remembered WalkTo terrain-bake choice (shared `panel-ui.json` key).
     pub map_bake: MapBakeChoice,
     /// The settings popup changed [`Self::map_bake`]; the binary persists it.
@@ -484,6 +498,9 @@ impl TuiApp {
             nav: NavFindSettings::default(),
             settings_state: SettingsState::default(),
             settings_dirty: false,
+            settings_profile: None,
+            settings_title: crate::settings::TITLE.to_string(),
+            settings_save: frontend_core::ProfileFormSave::default(),
             map_bake: MapBakeChoice::Ask,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
@@ -636,7 +653,7 @@ impl TuiApp {
             .min(self.map_search_results.len().saturating_sub(1));
     }
 
-    fn search_hit_label(&self, index: usize) -> Option<String> {
+    pub(crate) fn search_hit_label(&self, index: usize) -> Option<String> {
         fn kind_glyph(kind: PoiKind) -> &'static str {
             match kind {
                 PoiKind::Bank => "B",
@@ -651,7 +668,7 @@ impl TuiApp {
             return Some(format!(
                 "{} {} ({},{},{})",
                 kind_glyph(entry.kind()),
-                entry.name(),
+                entry.display_name(),
                 anchor.x,
                 anchor.z,
                 anchor.level
@@ -661,7 +678,7 @@ impl TuiApp {
         Some(format!(
             "{} {} ({},{},{})",
             kind_glyph(poi.kind),
-            poi.name.as_str(),
+            DisplayName::new(poi.name.as_str()),
             poi.display.x as i32,
             poi.display.z as i32,
             poi.effective_plane
@@ -762,6 +779,10 @@ impl TuiApp {
     pub(crate) fn map_enter(&mut self) -> AppAction {
         if let Some(pending) = self.map_model.pending() {
             if self.walk_send.mode == WalkSendMode::Group {
+                if self.walk_send.checked_count() == 0 {
+                    self.error = Some("no bots selected".into());
+                    return AppAction::None;
+                }
                 return AppAction::MapWalkGroup;
             }
             return AppAction::ArmWalk(pending.requested);
@@ -1260,17 +1281,20 @@ impl TuiApp {
             .script_sel
             .as_ref()
             .and_then(|sel| match sel {
+                ScriptSel::Compiled(id) => self
+                    .script_cards
+                    .iter()
+                    .position(|c| card_selection(c) == Some(ScriptSel::Compiled(*id))),
                 ScriptSel::Loaded(source, name) => self
                     .script_cards
                     .iter()
                     .position(|c| c.source == *source && c.name == *name),
-                _ => None,
             })
             .and_then(|card_idx| card_indices.iter().position(|&i| i == card_idx))
             .unwrap_or(0);
         let next = (pos as i32 + step).rem_euclid(card_indices.len() as i32) as usize;
         let card = &self.script_cards[card_indices[next]];
-        self.script_sel = Some(ScriptSel::Loaded(card.source, card.name.clone()));
+        self.script_sel = card_selection(card);
         self.browse_changed = true;
     }
 
@@ -1370,7 +1394,7 @@ impl TuiApp {
             ScriptClick::ImportCatalog => self.run_command(Command::ImportCatalog),
             ScriptClick::Pick(idx) => {
                 if let Some(card) = self.script_cards.get(idx) {
-                    self.script_sel = Some(ScriptSel::Loaded(card.source, card.name.clone()));
+                    self.script_sel = card_selection(card);
                     self.browse_changed = true;
                 }
                 AppAction::None

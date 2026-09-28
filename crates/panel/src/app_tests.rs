@@ -28,6 +28,38 @@ use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
 
 #[test]
+fn catalog_assignment_without_catalog_has_a_distinct_prefs_hint() {
+    let mut session = crate::session::Session::new();
+    session.script_sel = Some(script::ScriptSel::Loaded(
+        script::ScriptSource::Catalog,
+        "Sherlock".into(),
+    ));
+    assert_eq!(
+        super::script_prefs_disabled_hint(&session),
+        Some("script catalog unavailable")
+    );
+}
+
+#[test]
+fn parameters_rail_does_not_call_an_unloaded_catalog_card_parameterless() {
+    let mut session = crate::session::Session::new();
+    session.script_sel = Some(script::ScriptSel::Loaded(
+        script::ScriptSource::Catalog,
+        "Sherlock".into(),
+    ));
+    assert_eq!(
+        super::parameters_rail_placeholder(&session),
+        Some("(script catalog unavailable)"),
+        "0.1.9 printed '(no parameters)' for a card whose catalog was never read"
+    );
+    session.script_sel = None;
+    assert_eq!(
+        super::parameters_rail_placeholder(&session),
+        Some("(no script selected)")
+    );
+}
+
+#[test]
 fn logout_is_enabled_only_for_a_loaded_ingame_or_queued_focus() {
     assert!(!logout_enabled(false, true, true, false));
     assert!(!logout_enabled(true, false, true, false));
@@ -3045,4 +3077,671 @@ fn browse_file_card_without_desc_does_not_assert_on_endchild() {
         }
         ctx.render();
     }
+}
+
+fn chooser_frame(ctx: &mut dear_imgui_rs::Context, session: &mut crate::session::Session) {
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        super::chooser_window(ui, session, None);
+    }
+    ctx.render();
+}
+
+/// A profile editor text field is focused and being typed in when the
+/// operator opens another profile: the switch waits for the Discard / Keep
+/// prompt, and after discarding the next keystroke must not write the
+/// previous profile's text into the new one's field.
+#[test]
+fn switching_the_edit_target_resets_a_focused_text_field() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let dir = TestDir::new("chooser-switch-focused");
+    let mut session = crate::session::Session::new();
+    let mut vault = vault::Vault::create(&dir.join("vault"), "bot").unwrap();
+    for (name, pass, uid) in [("Hans", "hpass", 43), ("aindniK", "kpass", 42)] {
+        vault
+            .upsert(vault::Profile {
+                username: name.into(),
+                password: pass.into(),
+                uid,
+                settings: vault::ProfileSettings::default(),
+            })
+            .unwrap();
+    }
+    session.core.set_vault(Some(vault));
+    session.begin_edit_profile(Some("Hans"));
+    let mut ctx = dear_imgui_rs::Context::create();
+    chooser_frame(&mut ctx, &mut session);
+    chooser_frame(&mut ctx, &mut session);
+    // Tab into the form until one of its text fields is being edited.
+    for _ in 0..40 {
+        if ctx.io().want_text_input() {
+            break;
+        }
+        ctx.io_mut().add_key_event(dear_imgui_rs::Key::Tab, true);
+        chooser_frame(&mut ctx, &mut session);
+        ctx.io_mut().add_key_event(dear_imgui_rs::Key::Tab, false);
+        chooser_frame(&mut ctx, &mut session);
+    }
+    ctx.io_mut().add_input_character('X');
+    chooser_frame(&mut ctx, &mut session);
+    assert!(
+        session.cred_user.contains('X') || session.cred_pass.contains('X'),
+        "typing reaches a credentials field"
+    );
+
+    // The dirty draft holds the switch for the prompt.
+    session.begin_edit_profile(Some("aindniK"));
+    assert_eq!(
+        session
+            .pending_edit_switch
+            .as_ref()
+            .map(|switch| switch.target.as_str()),
+        Some("aindniK")
+    );
+    assert!(
+        session.cred_user.contains('X') || session.cred_pass.contains('X'),
+        "the unconfirmed switch rewrites nothing"
+    );
+    chooser_frame(&mut ctx, &mut session);
+    session.confirm_pending_edit_switch();
+    chooser_frame(&mut ctx, &mut session);
+    ctx.io_mut().add_input_character('Y');
+    chooser_frame(&mut ctx, &mut session);
+    chooser_frame(&mut ctx, &mut session);
+    assert_eq!(
+        (session.cred_user.as_str(), session.cred_pass.as_str()),
+        ("aindniK", "kpass")
+    );
+}
+
+/// Every text item one ImGui frame drew, read back from ImGui's own text
+/// log (`LogToClipboard` finishes into this clipboard backend): one line
+/// per row, same-row items joined by a space, buttons as `[ label ]`.
+#[derive(Clone, Default)]
+struct DrawnText(std::rc::Rc<std::cell::RefCell<String>>);
+
+impl dear_imgui_rs::ClipboardBackend for DrawnText {
+    fn get(&mut self) -> Option<String> {
+        None
+    }
+
+    fn set(&mut self, value: &str) {
+        value.clone_into(&mut self.0.borrow_mut());
+    }
+}
+
+/// What one frame of the Profiles window showed.
+struct Shown {
+    text: String,
+    colours: Vec<u32>,
+}
+
+impl Shown {
+    fn has(&self, needle: &str) -> bool {
+        self.text.contains(needle)
+    }
+
+    /// The `n` lines drawn right above the Save button.
+    fn above_save(&self, n: usize) -> Vec<&str> {
+        let lines: Vec<&str> = self.text.lines().collect();
+        let save = lines
+            .iter()
+            .position(|line| line.contains("[ Save ]"))
+            .unwrap_or_else(|| panic!("Save is drawn: {}", self.text));
+        lines[save.saturating_sub(n)..save].to_vec()
+    }
+
+    /// How many vertices drew in `colour` (ImGui packs RGBA little-endian).
+    /// Text outside the window's visible area draws none.
+    fn in_colour(&self, colour: [f32; 4]) -> usize {
+        let packed = u32::from_le_bytes(colour.map(|c| (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8));
+        self.colours.iter().filter(|&&c| c == packed).count()
+    }
+}
+
+/// Where a Profiles item's id lives.
+#[derive(Clone, Copy)]
+enum At {
+    /// The window's own scope (Close).
+    Window,
+    /// The edit form's per-target scope (Save, Cancel).
+    Form,
+    /// The profile list (a row's name, its Edit).
+    List,
+    /// The Discard / Keep editing prompt.
+    SwitchPrompt,
+}
+
+/// Queue ImGui's own activation of the Profiles item `label`, whose id lives
+/// `at` (`form` is the edit form's id scope): it is pressed on the next
+/// frame exactly as a click presses it, and never while it is disabled.
+/// Call with the frame's context bound.
+fn activate_profiles_item(at: At, form: usize, label: &str) {
+    use dear_imgui_rs::sys;
+    use std::ffi::CString;
+
+    // SAFETY: the caller binds the frame's context; every name is a
+    // NUL-terminated copy that outlives its call, and a window is read only
+    // after the lookup found it.
+    unsafe {
+        let window_id = |name: &str| {
+            let name = CString::new(name).unwrap();
+            let window = sys::igFindWindowByName(name.as_ptr());
+            assert!(!window.is_null(), "{name:?} was drawn");
+            (*window).ID
+        };
+        let id = |label: &str, seed: sys::ImGuiID| {
+            let label = CString::new(label).unwrap();
+            sys::igGetIDWithSeed_Str(label.as_ptr(), std::ptr::null(), seed)
+        };
+        let profiles = window_id("Profiles");
+        let seed = match at {
+            At::Window => profiles,
+            At::Form => sys::igGetIDWithSeed_Int(form as i32, profiles),
+            At::List => window_id(&format!(
+                "Profiles/##profiles-list_{:08X}",
+                id("##profiles-list", profiles)
+            )),
+            At::SwitchPrompt => window_id(&format!(
+                "##Popup_{:08x}",
+                id(super::PROFILE_EDIT_SWITCH_POPUP, profiles)
+            )),
+        };
+        sys::igActivateItemByID(id(label, seed));
+    }
+}
+
+/// Pin the Profiles window to the default layout's docked tab geometry (the
+/// 330 px panel, as tall as the default window) at the origin, so what
+/// draws is what the operator sees there without scrolling. Call with the
+/// frame's context bound.
+fn pin_profiles_geometry() {
+    use dear_imgui_rs::sys;
+
+    let always = sys::ImGuiCond_Always;
+    // SAFETY: the caller binds the frame's context; the name is a static
+    // NUL-terminated string, and ImGui ignores a window it has not created.
+    unsafe {
+        sys::igSetWindowPos_Str(
+            c"Profiles".as_ptr(),
+            sys::ImVec2_c { x: 0.0, y: 0.0 },
+            always,
+        );
+        sys::igSetWindowSize_Str(
+            c"Profiles".as_ptr(),
+            sys::ImVec2_c {
+                x: PANEL_WIDTH,
+                y: BASE_WINDOW_H,
+            },
+            always,
+        );
+    }
+}
+
+/// The Profiles window over a real vault, driven through real ImGui frames
+/// the way the app runs them (the session pump, then the window) at the
+/// default docked tab geometry: what it showed is read back from ImGui's
+/// text log and vertex colours, and clicks go through ImGui's own item
+/// activation.
+struct ProfilesUi {
+    ctx: dear_imgui_rs::Context,
+    drawn: DrawnText,
+    session: crate::session::Session,
+    dir: TestDir,
+}
+
+impl ProfilesUi {
+    /// Profiles open over a fresh vault of `(username, password, uid)`.
+    fn new(label: &str, profiles: &[(&str, &str, i32)]) -> Self {
+        let dir = TestDir::new(label);
+        let mut vault = vault::Vault::create(&dir.join("vault"), "bot").unwrap();
+        for &(username, password, uid) in profiles {
+            vault
+                .upsert(vault::Profile {
+                    username: username.into(),
+                    password: password.into(),
+                    uid,
+                    settings: vault::ProfileSettings::default(),
+                })
+                .unwrap();
+        }
+        let mut session = crate::session::Session::new();
+        session.core.set_vault(Some(vault));
+        session.wall.chooser_open = true;
+        let mut ctx = dear_imgui_rs::Context::create();
+        let drawn = DrawnText::default();
+        ctx.set_clipboard_backend(drawn.clone());
+        let mut ui = Self {
+            ctx,
+            drawn,
+            session,
+            dir,
+        };
+        ui.frame();
+        ui
+    }
+
+    fn frame(&mut self) -> Shown {
+        self.draw(None)
+    }
+
+    /// Click `label` (its id lives `at`): ImGui presses it on the next
+    /// frame; the frame after that shows the result.
+    fn click(&mut self, at: At, label: &str) -> Shown {
+        self.draw(Some((at, label)));
+        self.frame();
+        self.frame()
+    }
+
+    fn draw(&mut self, click: Option<(At, &str)>) -> Shown {
+        self.session.pump_status();
+        self.ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let form = self.session.chooser_form;
+        {
+            let ui = self.ctx.frame();
+            ui.with_bound_context(pin_profiles_geometry);
+            if let Some((at, label)) = click {
+                ui.with_bound_context(|| activate_profiles_item(at, form, label));
+            }
+            ui.log_to_clipboard(0u32);
+            super::chooser_window(ui, &mut self.session, None);
+            ui.log_finish();
+        }
+        let colours = self
+            .ctx
+            .render()
+            .draw_lists()
+            .flat_map(|list| list.vtx_buffer().iter().map(|vertex| vertex.col))
+            .collect();
+        Shown {
+            text: self.drawn.0.take(),
+            colours,
+        }
+    }
+
+    /// Type `c` into the edit form, as the keyboard would: Tab to one of
+    /// its text fields, then the character.
+    fn type_char(&mut self, c: char) -> Shown {
+        for _ in 0..40 {
+            if self.ctx.io().want_text_input() {
+                break;
+            }
+            self.ctx
+                .io_mut()
+                .add_key_event(dear_imgui_rs::Key::Tab, true);
+            self.frame();
+            self.ctx
+                .io_mut()
+                .add_key_event(dear_imgui_rs::Key::Tab, false);
+            self.frame();
+        }
+        assert!(
+            self.ctx.io().want_text_input(),
+            "a form text field has the keyboard"
+        );
+        self.ctx.io_mut().add_input_character(c);
+        self.frame();
+        self.frame()
+    }
+
+    /// The main panel's banner line (hidden behind Profiles in the default
+    /// layout) as it draws now.
+    fn banner(&mut self) -> String {
+        self.ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = self.ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("banner")
+                .build(|| super::banner(ui, &self.session, None));
+            ui.log_finish();
+        }
+        self.ctx.render();
+        self.drawn.0.take()
+    }
+
+    /// Let every queued profile write finish; the next frame's pump settles
+    /// it.
+    fn finish_writes(&mut self) {
+        self.session.core.flush_writes();
+    }
+
+    /// The vault on disk as `(username, uid, password)`, by username.
+    fn disk(&self) -> Vec<(String, i32, String)> {
+        let vault = vault::Vault::unlock(&self.dir.join("vault"), "bot").unwrap();
+        let mut rows: Vec<_> = vault
+            .profiles()
+            .map(|p| (p.username.clone(), p.uid, p.password.clone()))
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    #[cfg(unix)]
+    fn writable(&self, writable: bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = if writable { 0o700 } else { 0o500 };
+        std::fs::set_permissions(&*self.dir, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+}
+
+fn row(username: &str, uid: i32, password: &str) -> (String, i32, String) {
+    (username.into(), uid, password.into())
+}
+
+/// A refused Save (renaming onto another profile's username) shows its
+/// reason and "nothing was saved." right above Save, the reason in the error
+/// colour, with Profiles still open on the form. Nothing is written, and
+/// typing in the form clears it.
+#[test]
+fn a_refused_save_shows_above_save_until_the_form_is_edited() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-refused",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_user = "bob".into();
+    let unsaved = ui.frame();
+
+    let refused = ui.click(At::Form, "Save");
+    assert!(refused.has("Editing alice"), "{}", refused.text);
+    assert_eq!(
+        refused.above_save(2),
+        [
+            "credentials: a profile named bob already exists",
+            frontend_core::NOTHING_SAVED,
+        ],
+        "{}",
+        refused.text
+    );
+    assert!(
+        refused.in_colour(super::ERROR) > unsaved.in_colour(super::ERROR),
+        "the reason draws in the error colour"
+    );
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")],
+        "nothing was written"
+    );
+
+    let typed = ui.type_char('x');
+    assert!(typed.has("Editing alice"), "{}", typed.text);
+    assert!(
+        !typed.has("already exists") && !typed.has(frontend_core::NOTHING_SAVED),
+        "typing clears the refusal: {}",
+        typed.text
+    );
+}
+
+/// `Saved <name>.` shows right above Save, in green, only once the write is
+/// durable, and on the form the Save came from; Profiles stays open.
+#[test]
+fn saved_shows_only_once_the_write_is_durable() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-saved", &[("alice", "apass", 42)]);
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+
+    let queued = ui.click(At::Form, "Save");
+    assert!(queued.has("Editing alice"), "{}", queued.text);
+    assert!(
+        !queued.has("Saved"),
+        "no Saved while the write is queued: {}",
+        queued.text
+    );
+    assert_eq!(queued.in_colour(super::GREEN), 0);
+
+    drop(held);
+    ui.finish_writes();
+    let saved = ui.frame();
+    assert!(saved.has("Editing alice"), "{}", saved.text);
+    assert_eq!(saved.above_save(1), ["Saved alice."], "{}", saved.text);
+    assert!(saved.in_colour(super::GREEN) > 0, "Saved draws in green");
+    assert_eq!(ui.disk(), [row("alice", 42, "newpass")]);
+}
+
+/// Opening another profile's form before a save completes: the save still
+/// lands, but its `Saved` never shows on the other profile's form.
+#[test]
+fn a_save_completing_after_a_switch_shows_nothing_on_the_new_form() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-switch-pending",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    let switched = ui.click(At::List, "Edit##edit-bob");
+    assert!(switched.has("Editing bob"), "{}", switched.text);
+
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    assert!(shown.has("Editing bob"), "{}", shown.text);
+    assert!(
+        !shown.has("Saved"),
+        "alice's save never shows on bob's form: {}",
+        shown.text
+    );
+    assert_eq!(shown.in_colour(super::GREEN), 0);
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "newpass"), row("bob", 43, "bpass")],
+        "the save itself landed"
+    );
+}
+
+/// Closing Profiles before a save completes and opening the same profile
+/// again: the new form never shows the earlier save's `Saved`.
+#[test]
+fn a_save_completing_after_close_shows_nothing_on_a_reopened_form() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-close-pending", &[("alice", "apass", 42)]);
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    let closed = ui.click(At::Window, "Close");
+    assert!(closed.text.trim().is_empty(), "Close shut Profiles");
+
+    // The panel's Profiles button, then Edit on the same profile.
+    ui.session.wall.chooser_open = true;
+    ui.frame();
+    let reopened = ui.click(At::List, "Edit##edit-alice");
+    assert!(reopened.has("Editing alice"), "{}", reopened.text);
+
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    assert!(shown.has("Editing alice"), "{}", shown.text);
+    assert!(
+        !shown.has("Saved"),
+        "the closed form's save never shows on the reopened one: {}",
+        shown.text
+    );
+    assert_eq!(ui.disk(), [row("alice", 42, "newpass")]);
+}
+
+/// A save whose write fails after it was accepted reports on the main
+/// panel's banner, as in 0.1.9, and never in a form: here the form of the
+/// profile opened meanwhile.
+#[test]
+#[cfg(unix)]
+fn a_late_write_failure_reports_on_the_banner_not_in_a_form() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-late-failure",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    ui.click(At::List, "Edit##edit-bob");
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(shown.has("Editing bob"), "{}", shown.text);
+    assert!(
+        !shown.has("credentials:") && !shown.has(frontend_core::NOTHING_SAVED),
+        "the failure never shows in bob's form: {}",
+        shown.text
+    );
+    let banner = ui.banner();
+    assert!(
+        banner.contains("credentials:"),
+        "the banner reports it: {banner:?}"
+    );
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")],
+        "nothing was saved"
+    );
+}
+
+/// A rename whose write fails leaves the form on the old profile, so Save
+/// retries the same rename: the profile keeps its uid under the new name
+/// and no second profile appears.
+#[test]
+#[cfg(unix)]
+fn a_failed_rename_retries_as_the_same_rename() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-rename-retry",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_user = "carol".into();
+
+    ui.writable(false);
+    ui.click(At::Form, "Save");
+    ui.finish_writes();
+    let failed = ui.frame();
+    ui.writable(true);
+    assert!(
+        failed.has("Editing alice"),
+        "the failed rename leaves the form on alice: {}",
+        failed.text
+    );
+    assert!(!failed.has("Saved"), "{}", failed.text);
+    assert!(ui.banner().contains("credentials:"));
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")]
+    );
+
+    ui.click(At::Form, "Save");
+    ui.finish_writes();
+    let saved = ui.frame();
+    assert!(saved.has("Editing carol"), "{}", saved.text);
+    assert_eq!(saved.above_save(1), ["Saved carol."], "{}", saved.text);
+    assert_eq!(
+        ui.disk(),
+        [row("bob", 43, "bpass"), row("carol", 42, "apass")],
+        "alice renamed in place, no second profile"
+    );
+}
+
+/// While a rename is being written the form keeps its old target, so Save
+/// is disabled until it settles: a second Save (after typing yet another
+/// name) is not taken, and no second profile appears.
+#[test]
+fn save_waits_for_the_forms_save_in_flight() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-save-once", &[("alice", "apass", 42)]);
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_user = "carol".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    let queued = ui.click(At::Form, "Save");
+    assert!(
+        queued.has("Editing alice"),
+        "the form follows the rename only once it is durable: {}",
+        queued.text
+    );
+    ui.session.cred_user = "dave".into();
+    ui.click(At::Form, "Save");
+
+    drop(held);
+    ui.finish_writes();
+    let saved = ui.frame();
+    assert!(saved.has("Editing carol"), "{}", saved.text);
+    assert_eq!(saved.above_save(1), ["Saved carol."], "{}", saved.text);
+    assert_eq!(
+        ui.disk(),
+        [row("carol", 42, "apass")],
+        "one rename, no second profile"
+    );
+}
+
+/// Picking a profile row only moves focus: Profiles stays open with the
+/// edit form on its profile and its unsaved draft.
+#[test]
+fn picking_a_row_keeps_profiles_open_on_the_form() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-pick",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "typed".into();
+
+    let picked = ui.click(At::List, "bob");
+    assert_eq!(ui.session.focused_name().as_deref(), Some("bob"));
+    assert!(
+        picked.has("Editing alice"),
+        "Profiles stays open on the form: {}",
+        picked.text
+    );
+    assert_eq!(ui.session.cred_pass, "typed", "the draft is kept");
+}
+
+/// Opening another profile over unsaved edits asks first: Keep editing
+/// leaves the form and its draft alone, Discard opens the other profile.
+#[test]
+fn opening_another_profile_over_unsaved_edits_asks_first() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-switch-prompt",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "typed".into();
+
+    let asked = ui.click(At::List, "Edit##edit-bob");
+    assert!(asked.has("Editing alice"), "{}", asked.text);
+    assert!(
+        asked.has("[ Discard ]") && asked.has("[ Keep editing ]"),
+        "{}",
+        asked.text
+    );
+    let kept = ui.click(At::SwitchPrompt, "Keep editing");
+    assert!(kept.has("Editing alice"), "{}", kept.text);
+    assert!(!kept.has("[ Discard ]"), "{}", kept.text);
+    assert_eq!(ui.session.cred_pass, "typed", "keeping drops nothing");
+
+    ui.click(At::List, "Edit##edit-bob");
+    let discarded = ui.click(At::SwitchPrompt, "Discard");
+    assert!(discarded.has("Editing bob"), "{}", discarded.text);
+    assert_eq!(ui.session.cred_pass, "bpass", "bob's own row loads");
 }

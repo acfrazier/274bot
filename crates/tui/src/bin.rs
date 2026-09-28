@@ -48,13 +48,11 @@ use host_play::{
     live_vault_passphrase_for, load_navpois, map_ready_catalogue, mint_live_entries_for_target,
     mint_live_names, open_vault, parse_profile_args, peek_map_catalogue,
     persist_background_bots_ack, player_here_tile, profile_password_for, run_with_io,
-    run_with_template, step_walk_arm_bank_fetch, walk_arm_bank_fetch_freezes_follow,
-    MapDemandHandle, MapJobStatus, MapStage, PlayOptions, ProfileOptions, ReadyCatalogue,
-    ServerProfile, SharedClientTemplate, WalkArm, WireCmd,
+    run_with_template, MapDemandHandle, MapJobStatus, MapStage, PlayOptions, ProfileOptions,
+    ReadyCatalogue, ServerProfile, SharedClientTemplate, WalkArm, WireCmd,
 };
 use nav::map::identity::Digest;
 use nav::tile::Tile;
-use nav::traveller::{TravelOptions, TravelOutcome};
 use nav::WorldState;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -268,7 +266,12 @@ fn reset_frontend_slot_session(
     tick_latch: &Arc<Mutex<NavStepLatch>>,
 ) -> bool {
     tick_latch.lock().unwrap().remove(name);
-    travellers.lock().unwrap().remove(name).is_some()
+    let removed = travellers.lock().unwrap().remove(name);
+    let Some(arm) = removed else {
+        return false;
+    };
+    host_play::cancel_walk_arm(Some(name), &mut arm.lock().unwrap(), None, "SessionEnded");
+    true
 }
 
 fn reset_frontend_slot_lifetime(
@@ -331,58 +334,6 @@ fn seed_mainland_on_ready<D: api::interact::Driver>(
 ) -> bool {
     if ready && take_mainland_seed(sent, name, enabled, last_login_reconnect) {
         api::interact::mainland_hop(driver);
-        true
-    } else {
-        false
-    }
-}
-
-/// Panel-parity walk-arm tick: BankBudget session first, then route follow.
-fn step_walk_arm_follow<D: api::interact::Driver>(
-    driver: &mut D,
-    snapshot: &api::snapshot::GameSnapshot,
-    arm: &mut WalkArm,
-    world: Option<&nav::world::NavWorld>,
-    here: (i32, i32, i32),
-    map_members: bool,
-) -> bool {
-    if arm.bank_fetch.is_some() {
-        step_walk_arm_bank_fetch(driver, snapshot, arm, world, Some(here), map_members);
-        if walk_arm_bank_fetch_freezes_follow(arm) {
-            return false;
-        }
-    }
-    let Some(route) = arm.route.clone() else {
-        return false;
-    };
-    let walking_stand = arm.bank_fetch.as_ref().is_some_and(|p| {
-        matches!(
-            p.steps.front(),
-            Some(nav::bank_fetch::BankStep::Walk { x, z, level })
-                if route.dest.x == *x
-                    && route.dest.z == *z
-                    && route.dest.level == *level
-        )
-    });
-    let mut options = TravelOptions {
-        close_enough: 0,
-        teleports: world.map(|w| w.graph.teleports.as_slice()),
-        edges: world.map(|w| w.graph.edges.as_slice()),
-        ..TravelOptions::default()
-    };
-    let outcome = arm.traveller.follow(driver, snapshot, route, &mut options);
-    if walking_stand
-        && matches!(
-            &outcome,
-            Some(o) if !matches!(o, TravelOutcome::Arrived { .. })
-        )
-    {
-        arm.bank_fetch = None;
-        arm.route = None;
-        return false;
-    }
-    if outcome.is_some() {
-        arm.route = None;
         true
     } else {
         false
@@ -802,7 +753,15 @@ impl TuiSession {
                 };
                 let mut arm = arm.lock().unwrap();
                 let world = nav_world.lock().unwrap().clone();
-                step_walk_arm_follow(c, snap, &mut arm, world.as_deref(), here, map_members)
+                host_play::step_walk_arm_follow(
+                    c,
+                    snap,
+                    &mut arm,
+                    world.as_deref(),
+                    here,
+                    map_members,
+                    Some(name),
+                )
             };
             if finished {
                 walk_clear.store(true, Ordering::Relaxed);
@@ -1318,59 +1277,56 @@ impl TuiSession {
             self.arm_walk_without_host(app, dest);
             return;
         }
-        let _ = dest;
-        let context = match self.map_context(app) {
-            Ok(context) => context,
-            Err(error) => {
-                app.error = Some(format!("map: {error}"));
-                return;
-            }
-        };
-        let Some(from) = app.here.map(|h| Tile {
+        let name = app.focused_name();
+        let origin = app.here.map(|h| Tile {
             x: h.x,
             z: h.z,
             level: h.level,
-        }) else {
-            app.error = Some(ActionError::NoOrigin.to_string());
-            return;
-        };
-        let command = match app.map_model.confirm(
-            ActionKind::Walk,
-            &context,
-            Some(from),
-            app.nav.find_options(),
-        ) {
-            Ok(command) => command,
-            Err(error) => {
-                app.clear_consumed_map_selection();
-                app.error = Some(format!("map: {error}"));
-                return;
-            }
-        };
-        app.clear_consumed_map_selection();
-        let Some(play) = self.core.play() else {
-            app.error = Some(ActionError::NoFocus.to_string());
-            return;
-        };
-        let name = app.focused_name();
+        });
+        let options = app.nav.find_options();
+        let profile = self.server_profile.clone();
         let state = self.focused_walk_state(&name);
-        let bank = name
-            .as_deref()
-            .and_then(|n| {
-                self.snapshots.lock().unwrap().get(n).map(|snap| {
-                    snap.bank()
-                        .iter()
-                        .map(|it| (it.def.id, it.count))
-                        .collect::<Vec<_>>()
+        let request = host_play::walk_map::WalkRequest {
+            slot: name.as_deref(),
+            origin,
+            destination: app
+                .map_model
+                .pending()
+                .map(|s| s.target.unwrap_or(s.requested))
+                .or(Some(dest)),
+            options,
+            map_members: state.map_members,
+            members: profile
+                .as_ref()
+                .map_or(&host_play::WorldMembersFact::Unknown, |p| p.world_members()),
+        };
+        let result = request.run(|| {
+            let context = self.map_context(app)?;
+            let from = origin.ok_or(ActionError::NoOrigin)?;
+            let command = app
+                .map_model
+                .confirm(ActionKind::Walk, &context, Some(from), options);
+            app.clear_consumed_map_selection();
+            let command = command?;
+            let play = self.core.play().ok_or(ActionError::NoFocus)?;
+            let bank = name
+                .as_deref()
+                .and_then(|n| {
+                    self.snapshots.lock().unwrap().get(n).map(|snap| {
+                        snap.bank()
+                            .iter()
+                            .map(|it| (it.def.id, it.count))
+                            .collect::<Vec<_>>()
+                    })
                 })
-            })
-            .unwrap_or_default();
-        let destination = command.destination();
-        match play.map_walk(command, &context, &state, &bank, &self.travellers) {
-            Ok(_) => {
-                app.walk_dest = Some(destination);
-                app.error = None;
-            }
+                .unwrap_or_default();
+            let destination = command.destination();
+            let route = play.map_walk(command, &context, &state, &bank, &self.travellers)?;
+            app.walk_dest = Some(destination);
+            Ok(route)
+        });
+        match result {
+            Ok(_) => app.error = None,
             Err(error) => app.error = Some(format!("map: {error}")),
         }
     }
@@ -1464,28 +1420,39 @@ impl TuiSession {
             .filter(|row| row.checked)
             .map(|row| row.name.clone())
             .collect();
-        let context = match self.map_context(app) {
-            Ok(context) => context,
-            Err(error) => {
-                app.error = Some(format!("map: {error}"));
-                return;
-            }
-        };
-        let plan = match app
-            .map_model
-            .confirm_walk_plan(&context, app.nav.find_options())
-        {
-            Ok(plan) => plan,
-            Err(error) => {
-                app.clear_consumed_map_selection();
-                app.error = Some(format!("map: {error}"));
-                return;
-            }
-        };
-        app.clear_consumed_map_selection();
-        let Some(play) = self.core.play() else {
-            app.error = Some(ActionError::NoFocus.to_string());
+        if names.is_empty() {
+            app.error = Some("no bots selected".into());
             return;
+        }
+        let options = app.nav.find_options();
+        let destination = app
+            .map_model
+            .pending()
+            .map(|s| s.target.unwrap_or(s.requested));
+        let prepared = (|| {
+            let context = self.map_context(app)?;
+            let plan = app.map_model.confirm_walk_plan(&context, options);
+            app.clear_consumed_map_selection();
+            let plan = plan?;
+            let play = self.core.play().ok_or(ActionError::NoFocus)?;
+            Ok((context, plan, play))
+        })();
+        let (context, plan, play) = match prepared {
+            Ok(pair) => pair,
+            Err(error) => {
+                host_play::walk_map::WalkRequest::refuse_group(
+                    self.core.play(),
+                    &names,
+                    destination,
+                    options,
+                    self.server_profile
+                        .as_ref()
+                        .map_or(&host_play::WorldMembersFact::Unknown, |p| p.world_members()),
+                    error,
+                );
+                app.error = Some(format!("map: {error}"));
+                return;
+            }
         };
         let states: Vec<_> = names
             .iter()
@@ -1872,24 +1839,32 @@ impl TuiSession {
         }
     }
 
-    /// Persist the settings popup's changes onto the focused vault
-    /// profile (the operator vault; `--live`'s temp vault is ephemeral)
-    /// and mirror guardian settings onto a running slot's arm.
+    /// Persist the settings popup's changes onto the profile it was opened
+    /// for (the operator vault; `--live`'s temp vault is ephemeral) and
+    /// mirror guardian settings onto a running slot's arm. A refusal shows
+    /// on the message line and in the popup; `Saved <name>.` shows in the
+    /// same popup once the write is durable. A write that fails later is
+    /// reported on the message line only.
     fn persist_settings(&mut self, app: &mut TuiApp) {
-        let Some(name) = app.focused_name() else {
+        let Some(name) = app.settings_profile.clone() else {
             return;
         };
         // Field edit, not a whole-settings replacement: the popup owns only
         // the guardian fields, and the arm changes only after the vault
         // write succeeded.
         let settings = &app.settings;
-        if let Err(e) = self.core.set_random_settings(
+        match self.core.set_random_settings(
             &name,
             settings.random_events,
             &settings.lamp_skill,
             settings.lamp_auto,
         ) {
-            app.error = Some(format!("settings: {e}"));
+            Ok(op) => app.settings_save.submitted(op, name),
+            Err(e) => {
+                let reason = format!("settings: {e}");
+                app.settings_save.refused(reason.clone());
+                app.error = Some(reason);
+            }
         }
     }
 
@@ -1958,22 +1933,47 @@ impl TuiSession {
                 self.scripts.set_pending_browse(name, sel.clone());
             }
         }
-        // The settings popup and the script heading follow the focused
-        // profile: reload when the focus changes (a fresh focus must not
-        // show the old slot's random toggle or carry its script draft).
+        // The script heading follows the focused profile: reload when the
+        // focus changes (a fresh focus must not carry its script draft).
+        // The settings popup stays bound to the profile it was opened for:
+        // a focus change never closes it or rewrites its buffers.
         let focused = app.focused_name();
         if self.last_focused.as_deref() != focused.as_deref() {
             self.last_focused = focused.clone();
-            app.script_sel = focused
+            let heading = focused
                 .as_deref()
                 .and_then(|n| self.scripts.heading(&self.core, n));
-            app.params_state.open = false;
-            app.settings = focused
-                .as_deref()
-                .and_then(|n| self.core.vault().and_then(|v| v.get(n)))
-                .map(|p| p.settings.clone())
-                .unwrap_or_default();
-            app.settings_state.open = false;
+            if heading.as_ref().is_some_and(|sel| {
+                matches!(
+                    sel,
+                    script::ScriptSel::Loaded(script::ScriptSource::Catalog, _)
+                )
+            }) {
+                self.fill_rs2b0t_cards_once();
+            }
+            app.script_sel = heading;
+            if !app.settings_state.open {
+                app.settings = focused
+                    .as_deref()
+                    .and_then(|n| self.core.vault().and_then(|v| v.get(n)))
+                    .map(|p| p.settings.clone())
+                    .unwrap_or_default();
+            }
+        }
+        if app.settings_state.open {
+            if let (None, Some(name)) = (app.settings_profile.as_ref(), focused.as_deref()) {
+                // Freshly opened: bind the focused profile and load its row;
+                // later focus changes keep this binding and its buffers.
+                app.settings = self
+                    .core
+                    .vault()
+                    .and_then(|v| v.get(name))
+                    .map(|p| p.settings.clone())
+                    .unwrap_or_default();
+                app.settings_title = format!("{} — {name}", crate::settings::TITLE);
+                app.settings_profile = Some(name.to_string());
+                app.settings_dirty = false;
+            }
         }
 
         let mut write_failed = false;
@@ -1987,13 +1987,7 @@ impl TuiSession {
         }
         self.refresh_background_notice(app, Instant::now());
         // The script pane's Browse picker lists library cards with registry fields.
-        app.script_cards = self
-            .scripts
-            .js
-            .cards()
-            .iter()
-            .map(BrowseCard::from)
-            .collect();
+        app.script_cards = self.scripts.browse_cards().map(BrowseCard::from).collect();
         let present = categories_present(&app.script_cards);
         let order = resolve_category_order(&self.script_category_order, &present);
         if order != self.script_category_order {
@@ -2127,6 +2121,14 @@ impl TuiSession {
             self.persist_settings(app);
             app.settings_dirty = false;
         }
+        // A closed popup lets go of its profile only once its last edit
+        // persisted there; a persist still in flight then never shows in a
+        // later popup.
+        if !app.settings_state.open && app.settings_profile.take().is_some() {
+            app.settings_save.form_changed();
+        }
+        // `Saved <name>.` shows only on the popup the persist came from.
+        app.settings_save.settle(&self.core);
         if app.map_bake_dirty {
             self.persist_map_bake(app);
             app.map_bake_dirty = false;
@@ -2595,7 +2597,7 @@ impl TuiSession {
         // here keeps a failed first-run profile a startup error.
         let op = self
             .core
-            .save_profile(profile, frontend_core::ArmMirror::None, "profile")?;
+            .create_profile(profile, frontend_core::ArmMirror::None, "profile")?;
         self.core.flush_writes();
         match self.core.failure(op) {
             Some(error) => Err(format!("profile: {error}")),

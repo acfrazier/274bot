@@ -81,9 +81,25 @@ impl Play {
     /// status/script lock is held here.
     pub(super) fn signal_slot_stop(&self, name: &str) {
         if let Some(arm) = self.arms.get(name) {
+            let connected = self.slot_connected(name);
             arm.stop.store(true, Ordering::Relaxed);
             arm.notify_retry_wait();
             self.queue.lock().leave_owner(arm.queue_owner);
+            if connected {
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Info,
+                    slot = name,
+                    "session exit reason=removal"
+                );
+            } else {
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Info,
+                    slot = name,
+                    "slot stop reason=removal"
+                );
+            }
         }
     }
 
@@ -249,6 +265,27 @@ impl Play {
         }
     }
 
+    /// Arm plus a worker that runs until the returned sender is used or
+    /// dropped, so a Stop leaves it [`Play::slot_stopping`] for as long as
+    /// the caller holds it (a slow worker exit, deterministically).
+    #[cfg(feature = "test-support")]
+    pub fn attach_blocked_worker_for_test(
+        &mut self,
+        name: &str,
+        arm: Arc<SlotArm>,
+    ) -> std::sync::mpsc::Sender<()> {
+        self.attach_arm(name, arm);
+        self.spawned.insert(name.to_string());
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        self.handles.insert(
+            name.to_string(),
+            thread::spawn(move || {
+                let _ = released.recv();
+            }),
+        );
+        release
+    }
+
     /// Spawn one more slot on this play's FIFO. No-op if `username` is
     /// already in the status list (already running). `None` arm behaves as
     /// [`SlotArm::new(profile.uid, true)`] — the slot logs in immediately
@@ -381,19 +418,19 @@ impl Play {
 /// script); packets, isolate interactions, route follows and scene caches
 /// belong to the disconnected session and are discarded.
 ///
-/// `reconnect`: the slot relogs through this boundary by itself (see
-/// [`end_slot_session`]). A Load script's own work is then held whole for
-/// the relogged session, and the script walk it had armed is re-armed there:
-/// frozen AutoRelogin pauses the script on the disconnect and resumes it on
-/// the new session's scene 2 (`AutoRelogin.ts:180-190`, `159-163`). An
-/// operator or idle logout, or a slot Stop, ends that work instead.
+/// `keep_work`: the boundary came from an unexpected exit of a running or
+/// paused script (see [`end_slot_session`]). A Load script's own work is then
+/// held whole for either an automatic relog or a repeat-guard park, and its
+/// armed walk resumes after the next login. Frozen AutoRelogin pauses the
+/// script on disconnect and resumes it on the new session's scene 2
+/// (`AutoRelogin.ts:180-190`, `159-163`). Deliberate logout or Stop ends it.
 pub(super) fn reset_slot_session_work(
     name: &str,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
-    reconnect: bool,
+    keep_work: bool,
 ) {
     // `Some(carry)`: the script held its work; `carry` names the run whose
     // armed walk the relogged session re-arms.
@@ -401,7 +438,7 @@ pub(super) fn reset_slot_session_work(
         let Ok(mut slot) = slot.lock() else {
             return None;
         };
-        if reconnect && slot.load_active() {
+        if keep_work && slot.load_active() {
             let carry = slot.reconnect_session_work();
             Some(carry.then(|| slot.runtime_generation()))
         } else {
@@ -421,17 +458,68 @@ pub(super) fn reset_slot_session_work(
     }
 }
 
-/// One session boundary of the slot thread: classify it and reset. A drop
-/// relogs when a login is wanted or a script is running or paused (frozen
-/// `wantLogin = credentials && (autoLogin || scriptActive())`,
-/// `AutoRelogin.ts:175-190`), unless the slot is stopping or the operator
-/// latched it logged out (Logout, an idle logout) or asked for a logout.
+/// Reset one session boundary of the slot thread. A drop relogs when a login
+/// is wanted or a script is running or paused (frozen `wantLogin =
+/// credentials && (autoLogin || scriptActive())`,
+/// `AutoRelogin.ts:175-190`), unless the slot is stopping or a deliberate
+/// operator/persisted logout or the repeat guard latched it off. The repeat
+/// guard parks login without discarding a script's work, so explicit Log in
+/// can resume it.
 ///
 /// A BroadcastChannel membership belongs to the script run, not to the
-/// connection: an isolate this boundary keeps (paused for the relog or the
-/// next Log in) holds its membership suspended, and the next session
-/// re-admits it only under the same run generation and world. A stopping
-/// slot thread observes no later session, so its member leaves now.
+/// connection: an isolate this boundary keeps holds its membership suspended,
+/// and the next session re-admits it only under the same run generation and
+/// world. A stopping slot thread observes no later session, so its member
+/// leaves now.
+fn reset_slot_session_boundary(
+    name: &str,
+    arm: &SlotArm,
+    scripts: &ScriptWall,
+    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    channels: &super::script_channels::SlotChannels,
+) -> bool {
+    arm.set_script_active(script_active(scripts, name));
+    let deliberate_logout = arm.take_logout_work_reset();
+    let stopping = arm.stop.load(Ordering::Relaxed);
+    let keep_work = !deliberate_logout && !stopping && arm.keeps_script_work_after_exit();
+    reset_slot_session_work(name, scripts, cheats, wires, navs, keep_work);
+    if channels.tracks() {
+        let (generation, kept) = script_slot(scripts, name)
+            .and_then(|slot| {
+                slot.lock()
+                    .ok()
+                    .map(|slot| (slot.runtime_generation(), slot.load_active()))
+            })
+            .unwrap_or((0, false));
+        let deliveries = if kept && !stopping {
+            channels.suspend(generation)
+        } else {
+            channels.leave()
+        };
+        deliver_channel_events(scripts, deliveries);
+    }
+    keep_work
+}
+
+fn log_session_boundary(name: &str, arm: &SlotArm, keep_work: bool, kind: &str) {
+    let stopping = arm.stop.load(Ordering::Relaxed);
+    let relog = !stopping && arm.relogs_after_drop();
+    let (script_active, error_hold, auto_intent) = arm.relog_decision_context();
+    host_log!(
+        Category::Lifecycle,
+        Level::Info,
+        slot = name,
+        "session boundary kind={kind} keep_work={keep_work} relog={relog} stopping={stopping} script_active={script_active} error_hold={error_hold} auto_intent={auto_intent} auto_login={} want_login={} want_logout={} latch={:?}",
+        arm.auto_login.load(Ordering::Relaxed),
+        arm.wants_login(),
+        arm.wants_logout(),
+        arm.login_latch_reason()
+    );
+}
+
+/// End a connected session and record its one boundary decision.
 pub(super) fn end_slot_session(
     name: &str,
     arm: &SlotArm,
@@ -441,26 +529,37 @@ pub(super) fn end_slot_session(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     channels: &super::script_channels::SlotChannels,
 ) {
-    arm.set_script_active(script_active(scripts, name));
-    let stopping = arm.stop.load(Ordering::Relaxed);
-    let reconnect = !stopping && arm.relogs_after_drop();
-    reset_slot_session_work(name, scripts, cheats, wires, navs, reconnect);
-    if !channels.tracks() {
+    // Publish offline before resetting so a concurrent Logout becomes an
+    // offline reset instead of falling through the just-ended session.
+    arm.mark_session_offline();
+    let keep_work = reset_slot_session_boundary(name, arm, scripts, cheats, wires, navs, channels);
+    log_session_boundary(name, arm, keep_work, "exit");
+}
+
+/// Apply an operator Logout that arrived after the connected-session boundary.
+/// A guard-parked or queued script still owns held work, so the title loop
+/// ends that work exactly once before it can honor a later explicit Log in.
+pub(super) fn apply_offline_logout_reset(
+    name: &str,
+    arm: &SlotArm,
+    scripts: &ScriptWall,
+    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    channels: &super::script_channels::SlotChannels,
+) {
+    if !arm.logout_work_reset_pending() {
         return;
     }
-    let (generation, kept) = script_slot(scripts, name)
-        .and_then(|slot| {
-            slot.lock()
-                .ok()
-                .map(|slot| (slot.runtime_generation(), slot.load_active()))
-        })
-        .unwrap_or((0, false));
-    let deliveries = if kept && !stopping {
-        channels.suspend(generation)
+    arm.set_script_active(script_active(scripts, name));
+    let (script_active, _, _) = arm.relog_decision_context();
+    if script_active {
+        let keep_work =
+            reset_slot_session_boundary(name, arm, scripts, cheats, wires, navs, channels);
+        log_session_boundary(name, arm, keep_work, "offline_logout");
     } else {
-        channels.leave()
-    };
-    deliver_channel_events(scripts, deliveries);
+        let _ = arm.take_logout_work_reset();
+    }
 }
 
 /// Publish the slot's script activity to its login want, as frozen
@@ -670,13 +769,32 @@ fn spawn_slot_thread(
             let mut key_refreshed = false;
             let mut script_tick: u64 = 0;
             let mut run_policy = ScriptRunPolicy::default();
+            let mut last_relog_park = None;
             loop {
                 if arm.stop.load(Ordering::Relaxed) {
                     return;
                 }
                 if !client.ingame {
                     sync_script_login(&arm, &slot_scripts, &username);
+                    apply_offline_logout_reset(
+                        &username,
+                        &arm,
+                        &slot_scripts,
+                        &slot_cheats,
+                        &slot_wires,
+                        &slot_navs,
+                        &slot_channels,
+                    );
                     if !should_handshake(&arm, client.ingame) {
+                        let reason = arm.relog_park_reason();
+                        if last_relog_park != Some(reason) {
+                            host_log!(
+                                Category::Login,
+                                Level::Info,
+                                "relog decision park reason={reason}"
+                            );
+                            last_relog_park = Some(reason);
+                        }
                         // No pending intent (title hold, latched logout, or a
                         // withdrawn wait): a parked slot holds no FIFO place
                         // and publishes no `k of n`.
@@ -690,6 +808,7 @@ fn spawn_slot_thread(
                         thread::sleep(Duration::from_millis(20));
                         continue;
                     }
+                    last_relog_park = None;
                     // Leaving title park for handshake: refresh latch from the
                     // arm so an explicit Log in cannot keep a stale TRUE from
                     // the last park publish through queue/connect.
@@ -757,6 +876,7 @@ fn spawn_slot_thread(
                         world_dirty = false;
                         refresh_key = false;
                     }
+                    host_log!(Category::Login, Level::Info, "relog decision wait queue");
                     let wait = wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm);
                     if wait == PermitWait::Cancelled {
                         if arm.stop.load(Ordering::Relaxed) {
@@ -791,7 +911,11 @@ fn spawn_slot_thread(
                     let mut permit = GrantedReservation::new(&slot_queue, uid);
                     mark_login_started(&slot_statuses, &username);
                     let reconnect = arm.reconnect.load(Ordering::Relaxed);
-                    host_log!(Category::Login, Level::Info, "handshake begin reconnect={reconnect}");
+                    host_log!(
+                        Category::Login,
+                        Level::Info,
+                        "relog decision attempt reconnect={reconnect}"
+                    );
                     // Read at each handshake, not captured at spawn: a
                     // password saved since then applies to this login.
                     let password = arm.login_password();
@@ -843,6 +967,13 @@ fn spawn_slot_thread(
                                 world_dirty = true;
                             }
                             let retry = login_retry_wait(&mut backoff, e.code);
+                            host_log!(
+                                Category::Login,
+                                Level::Info,
+                                "relog decision wait backoff_ms={} code={}",
+                                retry.as_millis(),
+                                e.code
+                            );
                             if e.code == 16 {
                                 slot_queue.lock().hold_for(Instant::now(), retry);
                             }
@@ -924,15 +1055,27 @@ fn spawn_slot_thread(
                             );
                             if session_boundary {
                                 session_epoch = session_epoch.wrapping_add(1);
-                                end_slot_session(
-                                    name,
-                                    &arm_latch_obs,
-                                    &slot_scripts,
-                                    &slot_cheats,
-                                    &slot_wires,
-                                    &slot_navs,
-                                    &observe_channels,
-                                );
+                                if c.ingame {
+                                    reset_slot_session_boundary(
+                                        name,
+                                        &arm_latch_obs,
+                                        &slot_scripts,
+                                        &slot_cheats,
+                                        &slot_wires,
+                                        &slot_navs,
+                                        &observe_channels,
+                                    );
+                                } else {
+                                    end_slot_session(
+                                        name,
+                                        &arm_latch_obs,
+                                        &slot_scripts,
+                                        &slot_cheats,
+                                        &slot_wires,
+                                        &slot_navs,
+                                        &observe_channels,
+                                    );
+                                }
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
@@ -1025,7 +1168,7 @@ fn spawn_slot_thread(
                             // status lock (scripts -> statuses is the only
                             // order the two mutexes may nest).
                             let paint = script_paint_of(&slot_scripts, name);
-                            let login_latched = arm_latch_obs.login_latched();
+                            let login_latch_reason = arm_latch_obs.login_latch_reason();
                             let (up, here, active_world) = {
                                 let mut all = lock_statuses(&slot_statuses);
                                 let mut up = false;
@@ -1037,7 +1180,8 @@ fn spawn_slot_thread(
                                         // player observation can authorize game actions.
                                         s.ingame = ready;
                                         s.scene_state = nav_snapshot.scene_state();
-                                        s.login_latched = login_latched;
+                                        s.login_latched = login_latch_reason.is_some();
+                                        s.login_latch_reason = login_latch_reason;
                                         apply_startup_phase(s, name, ready, c.ingame);
                                         s.runenergy = if ready { c.runenergy } else { 0 };
                                         s.run_sends = run_sends;

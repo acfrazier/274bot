@@ -171,7 +171,7 @@ fn map_poi_catalogue() -> (std::sync::Arc<Catalogue>, Tile, Tile) {
         10,
         SourceSpace::ServerGame { plane: 0 },
         PoiKind::Label { priority: 1 },
-        "Lumbridge",
+        "Lumbridge/Swamp",
     )];
     labels.sort_by_key(|r| r.key);
     let doc = ServicePois {
@@ -196,7 +196,7 @@ fn map_poi_catalogue() -> (std::sync::Arc<Catalogue>, Tile, Tile) {
         .expect("booth");
     let label = catalogue
         .entries()
-        .find(|e| e.name() == "Lumbridge")
+        .find(|e| e.name() == "Lumbridge/Swamp")
         .expect("label");
     let stand = booth.walk_target().expect("physical stand");
     let label_anchor = label.anchor();
@@ -880,6 +880,8 @@ fn map_poi_confirm_keeps_catalogue_stand_and_blocks_view_only_labels() {
     app.map_model.clear_selection();
     app.map.selection = None;
     search_and_jump(&mut app, "booth");
+    app.names = vec!["poi-walker".into()];
+    app.refresh_walk_send(|_| WalkSlotStatus::Eligible(WalkSlotReady { origin: tile(0, 0) }));
     assert_eq!(app.on_key(ch('g')), AppAction::None);
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::MapWalkGroup);
     assert_eq!(
@@ -1420,4 +1422,40 @@ fn script_commands_are_reachable_at_80x24() {
     assert!(!app.script_browse_open);
     assert_eq!(app.on_key(ch('f')), AppAction::None);
     assert!(app.script_load_open);
+}
+
+#[test]
+fn map_search_list_uses_display_name_not_slash_breaks() {
+    let (catalogue, _, label_anchor) = map_poi_catalogue();
+    let mut app = TuiApp::new("274bot headless");
+    bind_catalogue_map(&mut app, std::sync::Arc::clone(&catalogue));
+    let index = catalogue
+        .entries()
+        .find(|e| e.name() == "Lumbridge/Swamp")
+        .unwrap()
+        .index();
+    let row = app.search_hit_label(index).expect("label row");
+    assert!(
+        row.contains("Lumbridge Swamp"),
+        "list must show a space, not the stored line-break: {row}"
+    );
+    assert!(
+        !row.contains("Lumbridge/Swamp"),
+        "slash line-break must not leak into the list: {row}"
+    );
+    assert!(row.contains(&format!(
+        "({},{},{})",
+        label_anchor.x, label_anchor.z, label_anchor.level
+    )));
+
+    search_and_jump(&mut app, "lumbridge");
+    let drawn = text(&draw(&mut app, 120, 40));
+    assert!(
+        drawn.contains("Lumbridge Swamp"),
+        "drawn search rows must use the display name: {drawn}"
+    );
+    assert!(
+        !drawn.contains("Lumbridge/Swamp"),
+        "drawn search rows must not leak the slash: {drawn}"
+    );
 }

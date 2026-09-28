@@ -858,7 +858,18 @@ fn write_state(out: &mut String, row: &FleetRow, status: Option<&SlotStatus>) {
         (Phase::Ready, Some(s)) => {
             let _ = write!(out, "ingame scene {}", s.scene_state);
         }
-        (Phase::LoggedOut, _) => out.push_str("logged out (Log in to connect)"),
+        (Phase::LoggedOut, Some(s)) => match s.login_latch_reason {
+            Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts {
+                count,
+                window_seconds,
+            }) => {
+                let _ = write!(
+                    out,
+                    "logged out (repeat guard: {count} unexpected logouts in {window_seconds}s; Log in to retry)"
+                );
+            }
+            _ => out.push_str("logged out (Log in to connect)"),
+        },
         (Phase::LoginError, _) => match error {
             Some(error) => {
                 let _ = write!(out, "login {error}");

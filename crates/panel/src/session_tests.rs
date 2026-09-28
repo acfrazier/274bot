@@ -2080,6 +2080,50 @@ fn confirm_map_walk(s: &mut Session, world: &NavWorld, origin: Tile, dest: Tile)
 }
 
 #[test]
+fn picker_walk_receipts_reach_process_and_slot_logs_once() {
+    use frontend_core::log::{global, LogScope, LogView};
+    let log = global();
+    let mut s = Session::new();
+    let world = open_world(20, 20);
+    let origin = Tile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    let destination = Tile {
+        x: 17,
+        z: 18,
+        level: 0,
+    };
+    s.select_picker_tile(&world, destination);
+    assert!(!s.confirm_picker_walk(&world));
+    let mut process = LogView::new(LogScope::Process);
+    process
+        .edit_filter(|filter| filter.text = "WalkTo origin=unknown destination=(17,18,0)".into());
+    log.refresh(&mut process);
+    assert_eq!(process.len(), 1, "{}", process.to_text());
+    assert!(process.rows()[0].message.contains("refused=NoOrigin"));
+    assert_eq!(process.rows()[0].slot, None);
+
+    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let name = "panel-walk-receipt";
+    push_session_slot(&mut s, name, origin, None, true, true);
+    s.statuses = s.core.play().unwrap().statuses();
+    s.core.play_mut().unwrap().focus(name);
+    s.set_focus_for_test(name);
+    s.select_picker_tile(&world, destination);
+    assert!(s.confirm_picker_walk(&world), "{:?}", s.error);
+    let mut slot = LogView::new(LogScope::Slot(name.into()));
+    slot.edit_filter(|filter| filter.text = "WalkTo ".into());
+    log.refresh(&mut slot);
+    assert_eq!(slot.len(), 1, "{}", slot.to_text());
+    let message = &slot.rows()[0].message;
+    assert!(message.contains("destination=(17,18,0)"), "{message}");
+    assert!(message.contains("success legs="), "{message}");
+    assert!(message.contains("members_source=unknown "), "{message}");
+}
+
+#[test]
 fn picker_without_observed_origin_refuses_and_consumes_selection() {
     let mut s = Session::new();
     let world = open_world(3, 3);
@@ -3111,7 +3155,6 @@ fn focus_first_profile_selects_first_vault_name() {
         .unwrap();
     s.focus_first_profile();
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
-    assert_eq!(s.cred_user, "alice");
     assert!(s.core.slots().contains_key("alice"));
     assert!(
         !s.core.slots().contains_key("bob"),
@@ -4306,8 +4349,8 @@ fn load_refresh_keeps_an_explicit_non_auto_login() {
 }
 
 #[test]
-fn load_keeps_an_idle_timeout_latched_auto_member_logged_out() {
-    let path = tmp_vault("load-idle-latched-auto.vault");
+fn load_keeps_a_persisted_auto_login_member_logged_out() {
+    let path = tmp_vault("load-persisted-logout-auto.vault");
     let mut session = Session::new();
     let mut vault = Vault::create(&path, "bot").unwrap();
     let mut alice = profile("alice", "pw", 42);
@@ -4325,7 +4368,7 @@ fn load_keeps_an_idle_timeout_latched_auto_member_logged_out() {
     assert!(arm.login_latched());
     assert!(
         !arm.wants_login(),
-        "Load must not undo a client idle-timeout latch"
+        "Load must not undo a persisted operator logout"
     );
 }
 
@@ -4516,20 +4559,203 @@ fn arm_login_all_cancels_pending_logout() {
     assert!(!arm.login_latched());
 }
 
+/// Operator report: the editor showed "edit aindniK" with Hans's user and
+/// password after Hans was loaded onto the wall, and Save renamed aindniK
+/// onto Hans (overwriting Hans, deleting aindniK). Loading or focusing
+/// another profile leaves the editor's fields on the edited profile.
 #[test]
-fn select_syncs_credentials_fields_from_focused_profile() {
-    let path = tmp_vault("select-sync.vault");
+fn loading_another_profile_while_editing_keeps_the_editor_on_its_profile() {
+    let path = tmp_vault("edit-focus-desync.vault");
+    let mut s = Session::new();
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    for p in [
+        profile("aindniK", "kpass", 42),
+        profile("Hans", "hpass", 43),
+    ] {
+        s.core.vault_mut().unwrap().upsert(p).unwrap();
+    }
+
+    s.begin_edit_profile(Some("aindniK"));
+    s.load("Hans");
+    s.cred_settings.world = Some(2);
+    let saved = s.save_credentials();
+    s.core.flush_writes();
+    s.pump_status();
+
+    let disk = Vault::unlock(&path, "bot").unwrap();
+    let row = |name: &str| disk.get(name).map(|p| (p.uid, p.password.clone()));
+    assert_eq!(row("Hans"), Some((43, "hpass".into())), "Hans untouched");
+    assert_eq!(row("aindniK"), Some((42, "kpass".into())), "aindniK kept");
+    assert_eq!(disk.get("aindniK").unwrap().settings.world, Some(2));
+    assert!(saved, "{:?}", s.error);
+}
+
+#[test]
+fn renaming_onto_an_existing_username_is_refused_and_writes_nothing() {
+    let path = tmp_vault("rename-onto-existing.vault");
+    let mut s = Session::new();
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    for p in [
+        profile("aindniK", "kpass", 42),
+        profile("Hans", "hpass", 43),
+    ] {
+        s.core.vault_mut().unwrap().upsert(p).unwrap();
+    }
+
+    s.begin_edit_profile(Some("aindniK"));
+    s.cred_user = "Hans".into();
+    s.cred_pass = "typed".into();
+    let saved = s.save_credentials();
+    s.core.flush_writes();
+    s.pump_status();
+
+    let disk = Vault::unlock(&path, "bot").unwrap();
+    let row = |name: &str| disk.get(name).map(|p| (p.uid, p.password.clone()));
+    assert_eq!(row("Hans"), Some((43, "hpass".into())), "Hans untouched");
+    assert_eq!(row("aindniK"), Some((42, "kpass".into())), "aindniK kept");
+    assert!(!saved);
+    assert_eq!(
+        s.error.as_deref(),
+        Some("credentials: a profile named Hans already exists")
+    );
+    assert_eq!(
+        s.chooser_edit.as_deref(),
+        Some("aindniK"),
+        "the form stays open"
+    );
+}
+
+#[test]
+fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
+    let path = tmp_vault("new-onto-existing.vault");
     let mut s = Session::new();
     s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
     s.core
         .vault_mut()
         .unwrap()
-        .upsert(profile("alice", "pw", 42))
+        .upsert(profile("Hans", "hpass", 43))
         .unwrap();
 
-    s.select("alice");
-    assert_eq!(s.cred_user, "alice");
-    assert_eq!(s.cred_pass, "pw");
+    s.begin_edit_profile(None);
+    s.cred_user = "Hans".into();
+    s.cred_pass = "typed".into();
+    let saved = s.save_credentials();
+    s.core.flush_writes();
+    s.pump_status();
+
+    let disk = Vault::unlock(&path, "bot").unwrap();
+    let hans = disk.get("Hans").unwrap();
+    assert_eq!((hans.uid, hans.password.as_str()), (43, "hpass"));
+    assert!(!saved);
+    assert_eq!(
+        s.error.as_deref(),
+        Some("credentials: a profile named Hans already exists")
+    );
+    assert_eq!(s.chooser_edit.as_deref(), Some(""), "the form stays open");
+}
+
+/// Live finding: switching focus (the main-panel profile selector, the
+/// rail, a wall load) while an edit form is open must never retarget the
+/// form or rewrite its buffers — Save stays bound to the profile the form
+/// was opened for.
+#[test]
+fn focus_changes_keep_the_edit_form_on_its_target() {
+    let path = tmp_vault("edit-focus-keeps-target.vault");
+    let mut s = Session::new();
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    for p in [
+        profile("aindniK", "kpass", 42),
+        profile("Hans", "hpass", 43),
+    ] {
+        s.core.vault_mut().unwrap().upsert(p).unwrap();
+    }
+
+    s.begin_edit_profile(Some("aindniK"));
+    s.cred_pass = "typed-but-unsaved".into();
+
+    s.select("Hans");
+    assert_eq!(
+        s.chooser_edit.as_deref(),
+        Some("aindniK"),
+        "a focus change never retargets the form"
+    );
+    assert_eq!(
+        (s.cred_user.as_str(), s.cred_pass.as_str()),
+        ("aindniK", "typed-but-unsaved"),
+        "a focus change never rewrites the buffers"
+    );
+
+    s.load("Hans");
+    assert_eq!(
+        s.chooser_edit.as_deref(),
+        Some("aindniK"),
+        "a wall load never retargets the form"
+    );
+    assert_eq!(
+        (s.cred_user.as_str(), s.cred_pass.as_str()),
+        ("aindniK", "typed-but-unsaved")
+    );
+}
+
+/// Live finding: explicitly opening a different profile for editing while
+/// the form holds unsaved changes silently discarded the draft. The form
+/// must stay on its target until the operator confirms the switch.
+#[test]
+fn opening_another_profile_with_unsaved_changes_keeps_the_form_until_confirmed() {
+    let path = tmp_vault("edit-switch-confirm.vault");
+    let mut s = Session::new();
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    for p in [
+        profile("aindniK", "kpass", 42),
+        profile("Hans", "hpass", 43),
+    ] {
+        s.core.vault_mut().unwrap().upsert(p).unwrap();
+    }
+
+    s.begin_edit_profile(Some("aindniK"));
+    s.cred_pass = "typed-but-unsaved".into();
+
+    // Explicitly opening Hans must not discard the dirty aindniK draft.
+    s.begin_edit_profile(Some("Hans"));
+    assert_eq!(
+        s.chooser_edit.as_deref(),
+        Some("aindniK"),
+        "the form stays on its target until the switch is confirmed"
+    );
+    assert_eq!(
+        (s.cred_user.as_str(), s.cred_pass.as_str()),
+        ("aindniK", "typed-but-unsaved"),
+        "the unconfirmed switch rewrites nothing"
+    );
+}
+
+/// A clean form switches target at once, with no prompt staged.
+#[test]
+fn opening_another_profile_without_unsaved_changes_switches_at_once() {
+    let path = tmp_vault("edit-switch-clean.vault");
+    let mut s = Session::new();
+    s.core.set_vault(Some(Vault::create(&path, "bot").unwrap()));
+    for p in [
+        profile("aindniK", "kpass", 42),
+        profile("Hans", "hpass", 43),
+    ] {
+        s.core.vault_mut().unwrap().upsert(p).unwrap();
+    }
+
+    s.begin_edit_profile(Some("aindniK"));
+    assert!(!s.edit_dirty(), "an untouched form is clean");
+    s.begin_edit_profile(Some("Hans"));
+    assert_eq!(s.pending_edit_switch, None, "no prompt for a clean form");
+    assert_eq!(s.chooser_edit.as_deref(), Some("Hans"));
+    assert_eq!(
+        (s.cred_user.as_str(), s.cred_pass.as_str()),
+        ("Hans", "hpass")
+    );
+
+    // A blank new-profile form is clean too.
+    s.begin_edit_profile(None);
+    assert_eq!(s.chooser_edit.as_deref(), Some(""));
+    assert!(!s.edit_dirty());
 }
 
 #[test]
@@ -4636,8 +4862,13 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
     );
     session.cred_settings.world = None;
     session.cred_pass = "updated".into();
+    // Leave the editor first: the next save is programmatic (no bound form),
+    // so it must preserve the world pin rather than project the blank draft.
+    session.pump_status();
+    session.cancel_edit_profile();
     assert!(session.save_credentials());
     session.core.flush_writes();
+    session.pump_status();
     assert_eq!(
         Vault::unlock(&path, "bot")
             .unwrap()

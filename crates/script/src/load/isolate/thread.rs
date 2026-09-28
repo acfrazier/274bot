@@ -1,6 +1,29 @@
 use super::teardown::*;
 use super::*;
 
+// Turn browser timer operations into catchable JS errors. Isolates run on
+// plain threads, so deno's timer ops cannot safely enter a Tokio reactor.
+#[rustyscript::deno_core::op2(nofast)]
+fn reject_isolate_timer() -> Result<(), rustyscript::Error> {
+    Err(rustyscript::Error::Runtime(
+        "Timer APIs are unavailable in 274bot isolates; use Execution.delayTicks".to_string(),
+    ))
+}
+
+fn reject_isolate_timer_op(op: rustyscript::deno_core::OpDecl) -> rustyscript::deno_core::OpDecl {
+    match op.name {
+        "op_timer_cancel"
+        | "op_timer_queue"
+        | "op_timer_queue_immediate"
+        | "op_timer_queue_system"
+        | "op_timer_ref"
+        | "op_timer_unref" => op.with_implementation_from(&reject_isolate_timer()),
+        _ => op,
+    }
+}
+
+rustyscript::deno_core::extension!(isolate_timer_guards, middleware = reject_isolate_timer_op,);
+
 #[derive(Default)]
 pub(super) struct MouseGestureIdentities {
     pub(super) pairs: VecDeque<u64>,
@@ -139,6 +162,7 @@ pub(super) fn isolate_main(
     // Runtime destructor has completed.
     let _runtime_lifetime: RuntimeLifetime;
     let mut runtime = match Runtime::new(RuntimeOptions {
+        extensions: vec![isolate_timer_guards::init()],
         timeout: RUNTIME_TIMEOUT,
         max_heap_size: Some(MAX_HEAP),
         ..Default::default()

@@ -14,12 +14,14 @@ use nav::world::NavWorld;
 
 use super::overlay::{self, OverlayColors, OverlayFit, OverlayLayers, OverlayPaint};
 use super::{
-    decode_tile, encode_tile, overlay_fit, parse_coord, phys_footprint_bytes, rasterize_overlay,
-    view_from_canvas, FixtureStore, MapPhase, WalkMapRenderer, CACHE_UNBOUND, MAX_IDX_DEFAULT,
-    MAX_IDX_LAYERS, MAX_VTX_DEFAULT, MAX_VTX_LAYERS, MIN_CELL_PPT, OVERLAY_BYTE_CAP, OVERLAY_MAX_H,
-    OVERLAY_MAX_W,
+    content_priority, decode_tile, dist2_to_centre, encode_tile, kind_rank, overlay_fit,
+    parse_coord, phys_footprint_bytes, place_map_labels, rasterize_overlay, view_from_canvas,
+    FixtureStore, LabelRect, MapLabelCandidate, MapPhase, WalkMapRenderer, CACHE_UNBOUND,
+    MAX_IDX_DEFAULT, MAX_IDX_LAYERS, MAX_LABELS, MAX_VTX_DEFAULT, MAX_VTX_LAYERS, MIN_CELL_PPT,
+    OVERLAY_BYTE_CAP, OVERLAY_MAX_H, OVERLAY_MAX_W,
 };
 use crate::game_view::FrameGpu;
+use nav::map::poi::PoiKind;
 
 fn open_world(w: usize, h: usize) -> NavWorld {
     NavWorld::from_parts(
@@ -985,5 +987,273 @@ fn terrain_lod_stops_at_the_bound_bake_max_lod() {
     assert!(
         slots.iter().all(|key| key.lod == 0),
         "terrain asked for a LOD the bake does not have: {slots:?}"
+    );
+}
+
+fn label_candidate(
+    id: usize,
+    content_priority: u8,
+    kind_rank: u8,
+    dist2: u32,
+    rect: LabelRect,
+) -> MapLabelCandidate {
+    MapLabelCandidate {
+        id,
+        name_off: 0,
+        name_len: 0,
+        px: rect.x,
+        py: rect.y,
+        content_priority,
+        kind_rank,
+        dist2,
+        rect,
+    }
+}
+
+fn placed_ids(candidates: &mut [MapLabelCandidate], cap: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    place_map_labels(candidates, cap, &mut out);
+    out.iter().map(|&i| candidates[i].id).collect()
+}
+
+fn any_overlap(candidates: &[MapLabelCandidate], ids: &[usize]) -> bool {
+    ids.iter().enumerate().any(|(i, &a)| {
+        ids[i + 1..].iter().any(|&b| {
+            let left = candidates.iter().find(|c| c.id == a).unwrap();
+            let right = candidates.iter().find(|c| c.id == b).unwrap();
+            left.rect.overlaps(right.rect)
+        })
+    })
+}
+
+/// Catalogue-order placement as 0.1.9 `draw_pois` did: first `cap` names, no
+/// collision test.
+fn place_in_visit_order(candidates: &[MapLabelCandidate], cap: usize) -> Vec<usize> {
+    candidates.iter().take(cap).map(|c| c.id).collect()
+}
+
+fn varrock_west_bank_row() -> Vec<MapLabelCandidate> {
+    // 16 px/tile, "Bank"/"Banker" ~40x13 at the shared (5,-6) offset.
+    // Six booths on z=0 and six bankers one tile north; neighbouring labels
+    // overlap because the text is wider than a tile.
+    let ppt = 16.0;
+    let w = 40.0;
+    let h = 13.0;
+    let mut out = Vec::new();
+    for i in 0..6 {
+        let x = i as f32 * ppt + 5.0;
+        out.push(label_candidate(
+            i,
+            255,
+            kind_rank(PoiKind::Bank),
+            dist2_to_centre(i as f64 + 0.5 - 2.5, 0.0),
+            LabelRect { x, y: -6.0, w, h },
+        ));
+    }
+    for i in 0..6 {
+        let x = i as f32 * ppt + 5.0;
+        out.push(label_candidate(
+            6 + i,
+            255,
+            kind_rank(PoiKind::Bank),
+            dist2_to_centre(i as f64 + 0.5 - 2.5, 1.5 - 0.5),
+            LabelRect {
+                x,
+                y: ppt - 6.0,
+                w,
+                h,
+            },
+        ));
+    }
+    out
+}
+
+#[test]
+fn bank_row_labels_skip_overlaps_the_old_visit_order_stacked() {
+    let row = varrock_west_bank_row();
+    let old = place_in_visit_order(&row, MAX_LABELS);
+    assert_eq!(old.len(), 12, "0.1.9 drew every Bank and Banker in the row");
+    assert!(
+        any_overlap(&row, &old),
+        "catalogue-order placement stacks the bank-row labels"
+    );
+
+    let mut ranked = row.clone();
+    let placed = placed_ids(&mut ranked, MAX_LABELS);
+    assert!(
+        !any_overlap(&ranked, &placed),
+        "placed labels must not overlap: {placed:?}"
+    );
+    assert!(
+        placed.len() < old.len(),
+        "overlap filter must drop stacked bank-row labels: {placed:?}"
+    );
+    assert!(
+        placed.contains(&2),
+        "the booth nearest the view centre must keep its label: {placed:?}"
+    );
+}
+
+#[test]
+fn content_label_priority_beats_an_overlapping_bank() {
+    let bank = label_candidate(
+        0,
+        content_priority(PoiKind::Bank),
+        kind_rank(PoiKind::Bank),
+        0,
+        LabelRect {
+            x: 0.0,
+            y: 0.0,
+            w: 40.0,
+            h: 12.0,
+        },
+    );
+    let place = label_candidate(
+        1,
+        content_priority(PoiKind::Label { priority: 1 }),
+        kind_rank(PoiKind::Label { priority: 1 }),
+        80,
+        LabelRect {
+            x: 8.0,
+            y: 0.0,
+            w: 80.0,
+            h: 12.0,
+        },
+    );
+    let mut candidates = [bank, place];
+    let placed = placed_ids(&mut candidates, MAX_LABELS);
+    assert_eq!(
+        placed,
+        vec![1],
+        "the content label must win the overlapping bank"
+    );
+}
+
+#[test]
+fn map_label_cap_still_applies_after_overlap_filter() {
+    let mut candidates: Vec<_> = (0..40)
+        .map(|i| {
+            label_candidate(
+                i,
+                255,
+                0,
+                i as u32,
+                LabelRect {
+                    x: i as f32 * 80.0,
+                    y: 0.0,
+                    w: 40.0,
+                    h: 12.0,
+                },
+            )
+        })
+        .collect();
+    let placed = placed_ids(&mut candidates, MAX_LABELS);
+    assert_eq!(placed.len(), MAX_LABELS);
+    assert!(
+        !any_overlap(&candidates, &placed),
+        "non-overlapping labels still respect MAX_LABELS"
+    );
+}
+
+fn label_collect_view() -> View {
+    View {
+        west: 0.0,
+        south: 0.0,
+        east: 100.0,
+        north: 100.0,
+        pixels_per_tile: 16.0,
+        plane: 0,
+        max_lod: 0,
+    }
+}
+
+fn stored_label_text(names: &str, candidate: MapLabelCandidate) -> &str {
+    let start = candidate.name_off as usize;
+    &names[start..start + candidate.name_len as usize]
+}
+
+fn collect_named_poi(names: &mut String, candidates: &mut Vec<MapLabelCandidate>, name: &str) {
+    super::push_map_label(
+        names,
+        candidates,
+        label_collect_view(),
+        [0.0, 0.0],
+        [1600.0, 1600.0],
+        50.5,
+        50.5,
+        PoiKind::Label { priority: 1 },
+        name,
+    );
+}
+
+#[test]
+fn map_marker_text_uses_display_name() {
+    let mut names = String::new();
+    let mut candidates = Vec::new();
+    collect_named_poi(&mut names, &mut candidates, "Port/Sarim");
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(stored_label_text(&names, candidates[0]), "Port Sarim");
+    candidates[0].rect = LabelRect {
+        x: 0.0,
+        y: 0.0,
+        w: 40.0,
+        h: 12.0,
+    };
+    let mut placed = Vec::new();
+    place_map_labels(&mut candidates, MAX_LABELS, &mut placed);
+    assert_eq!(placed.len(), 1);
+    assert_eq!(
+        stored_label_text(&names, candidates[placed[0]]),
+        "Port Sarim",
+        "layout must keep the collected display name, not Port/Sarim"
+    );
+}
+
+#[test]
+fn slash_label_collect_reuses_name_buffer_after_warmup() {
+    let view = label_collect_view();
+    let mut names = String::new();
+    let mut candidates = Vec::new();
+    let collect = |names: &mut String, candidates: &mut Vec<MapLabelCandidate>| {
+        names.clear();
+        candidates.clear();
+        for i in 0..12 {
+            super::push_map_label(
+                names,
+                candidates,
+                view,
+                [0.0, 0.0],
+                [1600.0, 1600.0],
+                10.0 + f64::from(i),
+                10.0,
+                PoiKind::Label { priority: 1 },
+                "Port/Sarim",
+            );
+        }
+    };
+    collect(&mut names, &mut candidates);
+    assert_eq!(candidates.len(), 12);
+    assert_eq!(stored_label_text(&names, candidates[0]), "Port Sarim");
+    let name_cap = names.capacity();
+    let cand_cap = candidates.capacity();
+    collect(&mut names, &mut candidates);
+    assert_eq!(
+        names.capacity(),
+        name_cap,
+        "warm name buffer must not grow on the next collect"
+    );
+    assert_eq!(
+        candidates.capacity(),
+        cand_cap,
+        "warm candidate vec must not grow on the next collect"
+    );
+    let mut placed = Vec::new();
+    place_map_labels(&mut candidates, MAX_LABELS, &mut placed);
+    let placed_cap = placed.capacity();
+    place_map_labels(&mut candidates, MAX_LABELS, &mut placed);
+    assert_eq!(
+        placed.capacity(),
+        placed_cap,
+        "warm placed-id vec must not grow on the next rank"
     );
 }

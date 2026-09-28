@@ -298,6 +298,8 @@ fn merged_bridge_access_annotation_and_label_remain_distinct() {
     search.update(&catalogue, "CANIFIS bank").unwrap();
     let result = catalogue.entry(search.results()[0]).unwrap();
     assert_eq!(result.meaning(), Meaning::PlaceLabel);
+    assert_eq!(result.name(), "Canifis/Bank");
+    assert_eq!(result.display_name().to_string(), "Canifis Bank");
     let mut model = MapModel::default();
     let mut ctx = context();
     ctx.overlay = Some(catalogue.key());
@@ -307,6 +309,57 @@ fn merged_bridge_access_annotation_and_label_remain_distinct() {
         model.pending().unwrap().target,
         None,
         "blocked label cannot snap to a nearby stand"
+    );
+}
+
+#[test]
+fn slash_place_labels_display_as_spaces_and_remain_searchable() {
+    let world = Arc::new(world(t(0, 0, 0), 8, &[]));
+    let label = record(
+        EntityKind::Label,
+        4,
+        4,
+        SourceSpace::ServerGame { plane: 0 },
+        PoiKind::Label { priority: 2 },
+        "Port/Sarim",
+    );
+    let catalogue = Catalogue::new(
+        world,
+        identity(),
+        digest(8),
+        None,
+        Some(services(vec![label], digest(8))),
+    )
+    .unwrap();
+    let entry = catalogue
+        .entries()
+        .find(|e| e.name() == "Port/Sarim")
+        .unwrap();
+    assert_eq!(DisplayName::new("Port/Sarim").to_string(), "Port Sarim");
+    assert_eq!(DisplayName::new("Lumbridge").to_string(), "Lumbridge");
+    assert_eq!(entry.display_name().to_string(), "Port Sarim");
+    let mut buf = String::with_capacity(32);
+    let cap = buf.capacity();
+    display_name_into("Port/Sarim", &mut buf);
+    assert_eq!(buf, "Port Sarim");
+    assert_eq!(
+        buf.capacity(),
+        cap,
+        "display_name_into must write into a reserved buffer without growing it"
+    );
+    buf.clear();
+    display_name_into("Port/Sarim", &mut buf);
+    assert_eq!(buf.capacity(), cap);
+    let mut search = Search::default();
+    search.update(&catalogue, "port sarim").unwrap();
+    assert_eq!(
+        catalogue.entry(search.results()[0]).unwrap().name(),
+        "Port/Sarim"
+    );
+    search.update(&catalogue, "Port/Sarim").unwrap();
+    assert_eq!(
+        catalogue.entry(search.results()[0]).unwrap().name(),
+        "Port/Sarim"
     );
 }
 
@@ -1191,6 +1244,7 @@ fn single_bot_walk_and_teleport_follow_a_focus_switch() {
 
 #[test]
 fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
+    let log_mark = crate::walk_map::test_log::mark();
     let nav = world(t(3200, 3200, 0), 8, &[]);
     let fixture = MapFixture::new(&nav, "local-289");
     let mut play = fixture.play(t(3201, 3201, 0));
@@ -1303,6 +1357,42 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
         report.summary(),
         "2 walking, 1 not logged in: logged-out, 1 no position yet: nopos, 1 running a script: scripter, 1 no path: bot3"
     );
+    let records = crate::walk_map::test_log::records_since(log_mark);
+    assert_eq!(records.len(), names.len() + 4, "{records:?}");
+    for (name, request_outcome, terminal_reason) in [
+        ("alice", "success ", None),
+        ("bob", "success ", None),
+        ("logged-out", "refused=NoFocus", Some("reason=NoFocus")),
+        ("nopos", "refused=NoOrigin", Some("reason=NoOrigin")),
+        (
+            "scripter",
+            "refused=RunningScript",
+            Some("reason=RunningScript"),
+        ),
+        ("bot3", "refused=NoPath", Some("reason=NoPath")),
+    ] {
+        let lines: Vec<_> = records.iter().filter(|(slot, _)| slot == name).collect();
+        let request_lines: Vec<_> = lines
+            .iter()
+            .filter(|(_, message)| !message.starts_with("WalkTo outcome="))
+            .collect();
+        assert_eq!(request_lines.len(), 1, "{name}: {lines:?}");
+        let message = &request_lines[0].1;
+        assert!(message.contains(request_outcome), "{message}");
+        assert!(message.contains("members_source=unknown "), "{message}");
+        let terminal_lines: Vec<_> = lines
+            .iter()
+            .filter(|(_, message)| message.starts_with("WalkTo outcome="))
+            .collect();
+        assert_eq!(
+            terminal_lines.len(),
+            usize::from(terminal_reason.is_some()),
+            "{name}: {lines:?}"
+        );
+        if let Some(reason) = terminal_reason {
+            assert!(terminal_lines[0].1.contains(reason), "{terminal_lines:?}");
+        }
+    }
     let arms = arms.lock().unwrap();
     assert_eq!(arms["alice"].lock().unwrap().queued_tile(), Some(dest));
     assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));

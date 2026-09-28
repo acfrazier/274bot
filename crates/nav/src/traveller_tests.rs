@@ -2630,6 +2630,343 @@ fn follow_npc_edge_approaches_the_live_tile_when_the_driver_wandered() {
 }
 
 #[test]
+fn follow_reapproaches_when_the_tracked_npc_network_tile_moves_after_approach() {
+    let mut c = scene_client();
+    plant_driver_npc(&mut c, 7, 2, 1);
+    let mut snap = snap_at(&mut c, 0, 1);
+    let mut t = Traveller::new();
+    let route = Route {
+        legs: vec![Leg::Transport { edge: cart_edge() }],
+        dest: WorldTile {
+            x: 3300,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    };
+    let walks = std::cell::RefCell::new(Vec::new());
+    let transports = std::cell::Cell::new(0);
+    let mut options = TravelOptions {
+        on_event: Some(Box::new(|event| match event {
+            TravelEvent::WalkAttempt { aim, .. } => walks.borrow_mut().push(aim),
+            TravelEvent::TransportAttempt { .. } => transports.set(transports.get() + 1),
+            _ => {}
+        })),
+        ..TravelOptions::default()
+    };
+
+    assert!(t
+        .follow(&mut c, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        walks.borrow().as_slice(),
+        &[WorldTile {
+            x: 3201,
+            z: 3201,
+            level: 0
+        }]
+    );
+    assert_eq!(transports.get(), 0);
+
+    // The player reaches the old approach stand while the same NPC slot's
+    // route head moves three tiles away. Keep the rendered tile stale to
+    // exercise the packet target (`NpcView.network`), not interpolation.
+    plant_player(&mut c, 1, 1);
+    let npc = c.npc[0].as_mut().unwrap();
+    npc.entity.route_x[0] = 4;
+    npc.entity.route_z[0] = 1;
+    bump_rebuild(&mut c, &mut snap);
+    assert_eq!(snap.npcs()[0].index, 0);
+    assert_eq!(
+        snap.npcs()[0].tile,
+        WorldTile {
+            x: 3202,
+            z: 3201,
+            level: 0
+        }
+    );
+    assert_eq!(
+        snap.npcs()[0].network,
+        WorldTile {
+            x: 3204,
+            z: 3201,
+            level: 0
+        }
+    );
+
+    assert!(t
+        .follow(&mut c, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        transports.get(),
+        0,
+        "do not send OP_NPC from the stale stand"
+    );
+    assert_eq!(
+        walks.borrow().as_slice(),
+        &[
+            WorldTile {
+                x: 3201,
+                z: 3201,
+                level: 0
+            },
+            WorldTile {
+                x: 3203,
+                z: 3201,
+                level: 0
+            },
+        ],
+        "re-approach the tracked NPC's current network tile"
+    );
+}
+
+#[test]
+fn follow_moving_tracked_npc_stalls_within_one_approach_budget() {
+    let mut c = scene_client();
+    plant_driver_npc(&mut c, 7, 2, 1);
+    let mut snap = snap_at(&mut c, 0, 1);
+    let mut t = Traveller::new();
+    let route = Route {
+        legs: vec![Leg::Transport { edge: cart_edge() }],
+        dest: WorldTile {
+            x: 3300,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    };
+    let walks = std::cell::RefCell::new(Vec::new());
+    let transports = std::cell::Cell::new(0);
+    let budget = 6;
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: budget,
+        on_event: Some(Box::new(|event| match event {
+            TravelEvent::WalkAttempt { aim, .. } => walks.borrow_mut().push(aim),
+            TravelEvent::TransportAttempt { .. } => transports.set(transports.get() + 1),
+            _ => {}
+        })),
+        ..TravelOptions::default()
+    };
+
+    let mut outcome = None;
+    let mut polls = 0;
+    for poll in 1..=budget + 3 {
+        polls = poll;
+        outcome = t.follow(&mut c, &snap, route.clone(), &mut options);
+        if outcome.is_some() {
+            break;
+        }
+
+        // Settle every accepted approach, then move the same NPC slot two
+        // tiles farther away before the next poll. A per-re-arm clock would
+        // chase forever; the hop-wide clock must still expire.
+        let aim = walks
+            .borrow()
+            .last()
+            .copied()
+            .expect("each chase poll arms an approach");
+        plant_player(&mut c, aim.x - 3200, aim.z - 3200);
+        c.npc[0].as_mut().unwrap().entity.route_x[0] += 2;
+        bump_rebuild(&mut c, &mut snap);
+    }
+
+    assert!(
+        matches!(outcome, Some(TravelOutcome::Stalled { .. })),
+        "the moving target must stall, got {outcome:?}"
+    );
+    assert!(
+        polls <= budget + 2,
+        "the cumulative approach clock ended on poll {polls}, budget {budget}"
+    );
+    assert_eq!(
+        transports.get(),
+        0,
+        "never interact while the tracked NPC keeps moving"
+    );
+}
+
+#[test]
+fn follow_reapproaches_tracked_npc_beyond_the_initial_search_radius() {
+    let mut c = scene_client();
+    // The selected slot begins seven tiles from edge.at, inside the initial
+    // eight-tile candidate radius.
+    plant_driver_npc(&mut c, 7, 8, 1);
+    let mut snap = snap_at(&mut c, 0, 1);
+    let mut t = Traveller::new();
+    let route = Route {
+        legs: vec![Leg::Transport { edge: cart_edge() }],
+        dest: WorldTile {
+            x: 3300,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    };
+    let walks = std::cell::RefCell::new(Vec::new());
+    let transports = std::cell::Cell::new(0);
+    let mut options = TravelOptions {
+        on_event: Some(Box::new(|event| match event {
+            TravelEvent::WalkAttempt { aim, .. } => walks.borrow_mut().push(aim),
+            TravelEvent::TransportAttempt { .. } => transports.set(transports.get() + 1),
+            _ => {}
+        })),
+        ..TravelOptions::default()
+    };
+
+    assert!(t
+        .follow(&mut c, &snap, route.clone(), &mut options)
+        .is_none());
+    plant_player(&mut c, 7, 1);
+    // The same index and type wanders eleven tiles from edge.at. It remains
+    // the tracked instance even though a fresh candidate search would omit it.
+    c.npc[0].as_mut().unwrap().entity.route_x[0] = 12;
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut c, &snap, route.clone(), &mut options)
+        .is_none());
+
+    assert_eq!(
+        walks.borrow().as_slice(),
+        &[
+            WorldTile {
+                x: 3207,
+                z: 3201,
+                level: 0,
+            },
+            WorldTile {
+                x: 3211,
+                z: 3201,
+                level: 0,
+            },
+        ],
+        "re-approach the selected slot outside the initial search radius"
+    );
+    assert_eq!(transports.get(), 0);
+}
+
+#[test]
+fn follow_revalidates_after_a_wanderer_temporarily_has_no_standable_ring() {
+    let mut c = scene_client();
+    plant_driver_npc(&mut c, 7, 2, 1);
+    let mut snap = snap_at(&mut c, 0, 1);
+    let mut t = Traveller::new();
+    let route = Route {
+        legs: vec![Leg::Transport { edge: cart_edge() }],
+        dest: WorldTile {
+            x: 3300,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    };
+    let walks = std::cell::RefCell::new(Vec::new());
+    let transports = std::cell::Cell::new(0);
+    let mut options = TravelOptions {
+        on_event: Some(Box::new(|event| match event {
+            TravelEvent::WalkAttempt { aim, .. } => walks.borrow_mut().push(aim),
+            TravelEvent::TransportAttempt { .. } => transports.set(transports.get() + 1),
+            _ => {}
+        })),
+        ..TravelOptions::default()
+    };
+
+    assert!(t
+        .follow(&mut c, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(walks.borrow().len(), 1);
+
+    // The player settles the first approach while the NPC moves into a
+    // completely blocked ring. No replacement walk can be sent this poll.
+    plant_player(&mut c, 1, 1);
+    {
+        let npc = c.npc[0].as_mut().unwrap();
+        npc.entity.route_x[0] = 5;
+        npc.entity.route_z[0] = 5;
+    }
+    for x in 4..=6 {
+        for z in 4..=6 {
+            c.collision[0].flags[x][z] |= client::dash3d::CollisionFlag::SQ_BLOCKED;
+        }
+    }
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut c, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(walks.borrow().len(), 1);
+
+    // Once the tracked slot returns to an approachable tile, the next poll
+    // must revalidate immediately rather than waiting beside a walk never sent.
+    {
+        let npc = c.npc[0].as_mut().unwrap();
+        npc.entity.route_x[0] = 4;
+        npc.entity.route_z[0] = 1;
+    }
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut c, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        walks.borrow().last(),
+        Some(&WorldTile {
+            x: 3203,
+            z: 3201,
+            level: 0,
+        })
+    );
+    assert_eq!(transports.get(), 0);
+}
+
+#[test]
+fn follow_npc_interaction_refreshes_the_reach_chat_watermark_when_sent() {
+    let mut c = scene_client();
+    plant_driver_npc(&mut c, 7, 2, 1);
+    let mut snap = snap_at(&mut c, 0, 1);
+    let mut rec = FollowRec {
+        route: Some((0, 1)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let route = Route {
+        legs: vec![Leg::Transport { edge: cart_edge() }],
+        dest: WorldTile {
+            x: 3300,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    };
+    let mut options = TravelOptions::default();
+
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.npc_ops, 0);
+
+    // This line predates the OP_NPC send. It must be behind the watermark
+    // captured when the player reaches the approach stand and Talk-to goes out.
+    c.add_chat(0, "I can't reach that!", "");
+    plant_player(&mut c, 1, 1);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.npc_ops, 1);
+
+    bump_rebuild(&mut c, &mut snap);
+    assert!(
+        t.follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none(),
+        "a reach line from before the interaction must not abort the hop"
+    );
+    plant_player(&mut c, 100, 0);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(matches!(
+        t.follow(&mut rec, &snap, route, &mut options),
+        Some(TravelOutcome::Arrived { .. })
+    ));
+}
+
+#[test]
 fn follow_npc_edge_blocks_when_the_driver_is_out_of_scene() {
     // No NPC of the edge's type within search radius of `at`: the hop waits out
     // its loc budget and reports `Blocked`, never a loc-shaped lookup
@@ -4629,6 +4966,8 @@ fn troll_open_door_progress_does_not_reverse_to_approach() {
             sent_tile: None,
             tries: 0,
             troll: true,
+            npc_index: None,
+            approach_ticks_waited: 0,
             open_sent_tick: None,
             chat_seq: 0,
             dialog_page: None,
@@ -4688,6 +5027,8 @@ fn troll_probes_crossing_after_open_before_snapshot_catches_up() {
         sent_tile: None,
         tries: 0,
         troll: true,
+        npc_index: None,
+        approach_ticks_waited: 0,
         open_sent_tick: None,
         chat_seq: 0,
         dialog_page: None,
@@ -4876,6 +5217,8 @@ fn troll_does_not_reopen_a_door_behind_the_walker() {
             sent_tile: None,
             tries: 0,
             troll: true,
+            npc_index: None,
+            approach_ticks_waited: 0,
             open_sent_tick: None,
             chat_seq: 0,
             dialog_page: None,
@@ -6392,6 +6735,8 @@ fn level_change_transport_requires_proximity_to_to() {
         }),
         tries: 0,
         troll: false,
+        npc_index: None,
+        approach_ticks_waited: 0,
         open_sent_tick: None,
         chat_seq: 0,
         dialog_page: None,

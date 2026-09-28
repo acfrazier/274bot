@@ -135,6 +135,28 @@ impl From<&JsCard> for BrowseCard {
         }
     }
 }
+/// The selection represented by a Browse card.
+pub fn card_selection(card: &BrowseCard) -> Option<ScriptSel> {
+    if card.kind == ScriptKind::Compiled {
+        script::compiled_id(&card.name).map(ScriptSel::Compiled)
+    } else {
+        Some(ScriptSel::Loaded(card.source, card.name.clone()))
+    }
+}
+
+impl<'a> From<frontend_core::scripts::BrowseCard<'a>> for BrowseCard {
+    fn from(card: frontend_core::scripts::BrowseCard<'a>) -> Self {
+        Self {
+            name: card.name().to_owned(),
+            description: card.description().to_owned(),
+            category: card.category().to_owned(),
+            tags: card.tags().map_or_else(Vec::new, ToOwned::to_owned),
+            kind: card.kind(),
+            source: card.source(),
+            unloadable: card.unloadable().map(str::to_owned),
+        }
+    }
+}
 
 /// Categories present on `cards`, first-seen order.
 pub fn categories_present(cards: &[BrowseCard]) -> Vec<String> {
@@ -530,8 +552,8 @@ mod tests {
     use script::{RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
 
     use super::{
-        browse_lines, card_category, card_detail_lines, categories_present, resolve_category_order,
-        BrowseCard, BrowseLine, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
+        browse_lines, card_category, card_detail_lines, card_selection, categories_present,
+        resolve_category_order, BrowseCard, BrowseLine, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
     };
 
     fn sample_file_card() -> BrowseCard {
@@ -716,6 +738,44 @@ mod tests {
         assert!(text.contains("[File]"), "source badge: {text:?}");
         assert!(text.contains("category: Skilling"), "category: {text:?}");
         assert!(text.contains("tags: mining"), "tags: {text:?}");
+    }
+
+    #[test]
+    fn compiled_core_card_converts_into_a_selectable_tui_card() {
+        let core =
+            frontend_core::scripts::BrowseCard::Compiled(frontend_core::scripts::CompiledCard {
+                id: script::CompiledId("Sherlock"),
+                name: "Sherlock",
+                description: "Rust-native clue trail solver",
+                category: "Treasure Trails",
+            });
+        let card = BrowseCard::from(core);
+        assert_eq!(
+            card_selection(&card),
+            Some(ScriptSel::Compiled(script::CompiledId("Sherlock")))
+        );
+        let text = render(
+            ScriptPane::new(
+                RunState::Idle,
+                None,
+                &[card],
+                &[],
+                false,
+                true,
+                false,
+                "",
+                false,
+                None,
+            ),
+            80,
+            12,
+        );
+        assert!(text.contains("Sherlock"), "name: {text:?}");
+        assert!(text.contains("[Compiled]"), "kind badge: {text:?}");
+        assert!(
+            text.contains("category: Treasure Trails"),
+            "category: {text:?}"
+        );
     }
 
     #[test]

@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level};
-use client::client::client::SessionExitObservation;
 use client::client::{Client, LoginError};
 use client::config::IfType;
 use client::BotTarget;
@@ -19,6 +18,62 @@ pub(super) type SharedLoginQueue = Arc<QueueMutex<LoginQueue>>;
 
 static NEXT_QUEUE_OWNER: AtomicU64 = AtomicU64::new(1);
 
+/// Three independent unexpected exits inside ten minutes are unlikely to be
+/// a transient network blip, but still bound an accidental reconnect storm.
+/// The operator can always clear the guard with an explicit Log in.
+pub const UNEXPECTED_LOGOUT_THRESHOLD: usize = 3;
+pub const UNEXPECTED_LOGOUT_WINDOW: Duration = Duration::from_secs(10 * 60);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginLatchReason {
+    OperatorLogout,
+    PersistedLogout,
+    RepeatedUnexpectedLogouts { count: u8, window_seconds: u64 },
+}
+
+impl std::fmt::Display for LoginLatchReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OperatorLogout => f.write_str("operator logout"),
+            Self::PersistedLogout => f.write_str("saved logged-out state"),
+            Self::RepeatedUnexpectedLogouts {
+                count,
+                window_seconds,
+            } => write!(
+                f,
+                "repeat guard: {count} unexpected logouts in {window_seconds}s"
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct UnexpectedLogoutRecord {
+    pub(super) count: usize,
+    pub(super) latched: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RelogParkReason {
+    NoIntent,
+    OperatorLogout,
+    PersistedLogout,
+    RepeatGuard,
+    WorldError,
+}
+
+impl std::fmt::Display for RelogParkReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NoIntent => "no_intent",
+            Self::OperatorLogout => "operator_logout",
+            Self::PersistedLogout => "persisted_logout",
+            Self::RepeatGuard => "repeat_guard",
+            Self::WorldError => "world_error",
+        })
+    }
+}
+
 /// Login/logout controller state. Every operator command advances one
 /// generation under this lock. A worker acknowledgement from an older
 /// generation applies only when the current intent still requests the same
@@ -28,12 +83,13 @@ struct SlotIntent {
     generation: u64,
     want_login: bool,
     want_logout: bool,
-    login_latched: bool,
+    login_latch: Option<LoginLatchReason>,
     auto_intent: bool,
     /// A world-preference error withdrew the login: the slot's active
     /// script does not log it back in until the operator arms a login,
     /// changes auto-login or the world ([`SlotArm::hold_login_on_error`]).
     error_hold: bool,
+    unexpected_logout_times: [Option<Instant>; UNEXPECTED_LOGOUT_THRESHOLD],
 }
 
 #[derive(Clone, Copy)]
@@ -88,6 +144,13 @@ pub struct SlotArm {
     /// A script is running or paused on the slot, as the slot thread last
     /// published it ([`SlotArm::set_script_active`]).
     script_active: AtomicBool,
+    /// Whether a successful handshake currently owns a live session. Logout
+    /// uses this to distinguish connected intent (the exit latch is enough)
+    /// from an offline command that must reset already-held script work.
+    session_online: AtomicBool,
+    /// An operator Logout issued while offline still ends held script work.
+    /// The slot thread consumes this once at the next session/title boundary.
+    logout_work_reset_pending: AtomicBool,
     /// The password the next handshake sends. Set from the profile at spawn
     /// and by [`crate::Play::remember_profile`], so a saved password change
     /// reaches a running worker's next login without a respawn. Private: it
@@ -123,9 +186,10 @@ impl SlotArm {
                 generation: 0,
                 want_login,
                 want_logout: false,
-                login_latched: false,
+                login_latch: None,
                 auto_intent: want_login,
                 error_hold: false,
+                unexpected_logout_times: [None; UNEXPECTED_LOGOUT_THRESHOLD],
             }),
             stop: Arc::new(AtomicBool::new(false)),
             auto_login: Arc::new(AtomicBool::new(want_login)),
@@ -136,6 +200,8 @@ impl SlotArm {
             world_generation: AtomicU64::new(0),
             reconnect: Arc::new(AtomicBool::new(false)),
             script_active: AtomicBool::new(false),
+            session_online: AtomicBool::new(false),
+            logout_work_reset_pending: AtomicBool::new(false),
             password: parking_lot::Mutex::new(Arc::from("")),
             retry_wake: parking_lot::Condvar::new(),
             #[cfg(any(test, feature = "test-support"))]
@@ -250,10 +316,11 @@ impl SlotArm {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
         intent.error_hold = false;
-        intent.login_latched = false;
+        intent.login_latch = None;
         intent.want_login = true;
         intent.auto_intent = false;
         intent.want_logout = false;
+        intent.unexpected_logout_times = [None; UNEXPECTED_LOGOUT_THRESHOLD];
         drop(intent);
         self.retry_wake.notify_all();
     }
@@ -262,10 +329,18 @@ impl SlotArm {
     pub fn request_logout(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
-        intent.login_latched = true;
+        intent.login_latch = Some(LoginLatchReason::OperatorLogout);
         intent.want_logout = true;
         intent.want_login = false;
         intent.auto_intent = false;
+        // A connected exit reads OperatorLogout from the latch. Only an
+        // already-offline command adds a deferred reset; otherwise a later
+        // Log in that cancels an ineffective logout must preserve work. Do
+        // not clear an older offline reset that no boundary has consumed.
+        if !self.session_online.load(Ordering::Acquire) {
+            self.logout_work_reset_pending
+                .store(true, Ordering::Release);
+        }
         drop(intent);
         self.retry_wake.notify_all();
     }
@@ -275,7 +350,7 @@ impl SlotArm {
     pub fn hold_logged_out(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
-        intent.login_latched = true;
+        intent.login_latch = Some(LoginLatchReason::PersistedLogout);
         intent.want_login = false;
         intent.want_logout = false;
         intent.auto_intent = false;
@@ -292,7 +367,40 @@ impl SlotArm {
     }
 
     pub fn login_latched(&self) -> bool {
-        self.intent.lock().login_latched
+        self.intent.lock().login_latch.is_some()
+    }
+
+    pub fn login_latch_reason(&self) -> Option<LoginLatchReason> {
+        self.intent.lock().login_latch
+    }
+
+    pub(super) fn logout_work_reset_pending(&self) -> bool {
+        self.logout_work_reset_pending.load(Ordering::Acquire)
+    }
+
+    pub(super) fn take_logout_work_reset(&self) -> bool {
+        self.logout_work_reset_pending.swap(false, Ordering::AcqRel)
+    }
+
+    fn mark_session_online(&self) {
+        self.session_online.store(true, Ordering::Release);
+    }
+
+    pub(super) fn mark_session_offline(&self) {
+        self.session_online.store(false, Ordering::Release);
+    }
+
+    pub(super) fn relog_park_reason(&self) -> RelogParkReason {
+        let intent = self.intent.lock();
+        match intent.login_latch {
+            Some(LoginLatchReason::OperatorLogout) => RelogParkReason::OperatorLogout,
+            Some(LoginLatchReason::PersistedLogout) => RelogParkReason::PersistedLogout,
+            Some(LoginLatchReason::RepeatedUnexpectedLogouts { .. }) => {
+                RelogParkReason::RepeatGuard
+            }
+            None if intent.error_hold => RelogParkReason::WorldError,
+            None => RelogParkReason::NoIntent,
+        }
     }
 
     /// Process-unique identity of the worker lifetime this arm controls:
@@ -324,7 +432,7 @@ impl SlotArm {
         intent.generation = intent.generation.wrapping_add(1);
         intent.error_hold = false;
         if enabled {
-            if !intent.login_latched && !intent.want_login {
+            if intent.login_latch.is_none() && !intent.want_login {
                 intent.want_login = true;
                 intent.auto_intent = true;
             }
@@ -376,7 +484,10 @@ impl SlotArm {
         }
         intent.generation = intent.generation.wrapping_add(1);
         intent.error_hold = false;
-        if self.auto_login.load(Ordering::Relaxed) && !intent.login_latched && !intent.want_login {
+        if self.auto_login.load(Ordering::Relaxed)
+            && intent.login_latch.is_none()
+            && !intent.want_login
+        {
             intent.want_login = true;
             intent.auto_intent = true;
         }
@@ -395,17 +506,39 @@ impl SlotArm {
     }
 
     /// Whether a dropped connection is relogged: a login is wanted, or a
-    /// script is active (frozen `scriptActive()`), and the operator has not
-    /// latched the slot logged out or asked for a logout.
+    /// script is active (frozen `scriptActive()`), and neither deliberate
+    /// logout nor the repeat guard has parked the slot.
     pub(super) fn relogs_after_drop(&self) -> bool {
         let intent = self.intent.lock();
         !intent.want_logout && self.wanted(&intent)
     }
 
+    /// Unexpected exits preserve a running or paused script's session work
+    /// even when the repeat guard parks automatic login. A later explicit
+    /// Log in resumes that same work; deliberate logout does not.
+    pub(super) fn keeps_script_work_after_exit(&self) -> bool {
+        let intent = self.intent.lock();
+        self.script_active.load(Ordering::Acquire)
+            && !intent.want_logout
+            && !matches!(
+                intent.login_latch,
+                Some(LoginLatchReason::OperatorLogout | LoginLatchReason::PersistedLogout)
+            )
+    }
+
+    pub(super) fn relog_decision_context(&self) -> (bool, bool, bool) {
+        let intent = self.intent.lock();
+        (
+            self.script_active.load(Ordering::Acquire),
+            intent.error_hold,
+            intent.auto_intent,
+        )
+    }
+
     /// The level-triggered login want: not latched off by the operator, and
     /// a login intent or an active script.
     fn wanted(&self, intent: &SlotIntent) -> bool {
-        !intent.login_latched
+        intent.login_latch.is_none()
             && (intent.want_login
                 || (!intent.error_hold && self.script_active.load(Ordering::Acquire)))
     }
@@ -476,31 +609,66 @@ impl SlotArm {
             return;
         }
         intent.want_logout = false;
-        intent.login_latched = true;
+        intent.login_latch = Some(LoginLatchReason::OperatorLogout);
         intent.want_login = false;
         intent.auto_intent = false;
     }
 
-    fn acknowledge_observed_idle_logout(&self) {
+    pub(super) fn record_unexpected_logout_at(
+        &self,
+        now: Instant,
+    ) -> Option<UnexpectedLogoutRecord> {
         let mut intent = self.intent.lock();
-        // An explicit Login issued after the idle request is the newest
-        // command and must survive the delayed server acknowledgement.
-        if intent.want_login && !intent.auto_intent && !intent.want_logout {
-            return;
+        if intent.login_latch.is_some() || intent.want_logout {
+            return None;
         }
-        intent.login_latched = true;
-        intent.want_login = false;
-        intent.auto_intent = false;
+        let mut retained = [None; UNEXPECTED_LOGOUT_THRESHOLD];
+        let mut count = 0;
+        for timestamp in intent.unexpected_logout_times.iter().flatten().copied() {
+            if now.saturating_duration_since(timestamp) <= UNEXPECTED_LOGOUT_WINDOW {
+                retained[count] = Some(timestamp);
+                count += 1;
+            }
+        }
+        if count < UNEXPECTED_LOGOUT_THRESHOLD {
+            retained[count] = Some(now);
+            count += 1;
+        }
+        intent.unexpected_logout_times = retained;
+        let latched = count >= UNEXPECTED_LOGOUT_THRESHOLD;
+        if latched {
+            intent.generation = intent.generation.wrapping_add(1);
+            intent.login_latch = Some(LoginLatchReason::RepeatedUnexpectedLogouts {
+                count: count as u8,
+                window_seconds: UNEXPECTED_LOGOUT_WINDOW.as_secs(),
+            });
+            intent.want_login = false;
+            intent.auto_intent = false;
+        }
+        Some(UnexpectedLogoutRecord { count, latched })
+    }
+
+    #[cfg(test)]
+    pub(super) fn unexpected_logout_count_at(&self, now: Instant) -> usize {
+        self.intent
+            .lock()
+            .unexpected_logout_times
+            .iter()
+            .flatten()
+            .filter(|timestamp| {
+                now.saturating_duration_since(**timestamp) <= UNEXPECTED_LOGOUT_WINDOW
+            })
+            .count()
     }
 
     fn acknowledge_login(&self, command: IntentCommand) {
         let mut intent = self.intent.lock();
         if intent.generation != command.generation
-            && (!intent.want_login || intent.login_latched || intent.want_logout)
+            && (!intent.want_login || intent.login_latch.is_some() || intent.want_logout)
         {
             return;
         }
-        let keep = self.auto_login.load(Ordering::Relaxed) && !intent.login_latched;
+        let keep = self.auto_login.load(Ordering::Relaxed) && intent.login_latch.is_none();
         intent.want_login = keep;
         intent.auto_intent = keep;
     }
@@ -653,6 +821,9 @@ pub(super) fn login_and_acknowledge_permit<T, E>(
 /// After a successful handshake, keep an unlatched slot armed exactly when
 /// its saved auto-login policy is enabled. A newer command generation wins.
 pub(super) fn on_login_success(arm: &SlotArm, command: IntentCommand) {
+    // Publish the successful connection before acknowledging its command so
+    // a concurrent Logout linearizes as connected and needs no deferred reset.
+    arm.mark_session_online();
     arm.acknowledge_login(command);
     // A later DC / tune / park is opcode 18, not a cold 16.
     arm.reconnect.store(true, Ordering::Relaxed);
@@ -669,10 +840,45 @@ pub(super) fn tick_flags(
     ifaces: &[Option<Box<IfType>>],
     arm: &SlotArm,
 ) -> bool {
-    if let Some(SessionExitObservation::ServerLogoutAfterLocalIdleRequest) =
-        client.take_session_exit_observation()
-    {
-        arm.acknowledge_observed_idle_logout();
+    if let Some(reason) = client.take_session_exit_reason() {
+        match (arm.stop.load(Ordering::Relaxed), arm.login_latch_reason()) {
+            // `signal_slot_stop` logged the removal transition when it armed
+            // Stop. A coincident transport observation is not a second exit.
+            (true, _) => {}
+            (false, Some(LoginLatchReason::OperatorLogout)) => {
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Info,
+                    "session exit reason=operator_logout transport={reason}"
+                );
+            }
+            (false, _) => {
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Warn,
+                    "session exit reason={reason}"
+                );
+                if let Some(record) = arm.record_unexpected_logout_at(Instant::now()) {
+                    if record.latched {
+                        host_log!(
+                            Category::Login,
+                            Level::Warn,
+                            "relog decision repeat_guard count={} window_s={}",
+                            record.count,
+                            UNEXPECTED_LOGOUT_WINDOW.as_secs()
+                        );
+                    } else {
+                        host_log!(
+                            Category::Login,
+                            Level::Info,
+                            "unexpected logout count={} window_s={}",
+                            record.count,
+                            UNEXPECTED_LOGOUT_WINDOW.as_secs()
+                        );
+                    }
+                }
+            }
+        }
     }
     if let Some(command) = arm.logout_command(client.ingame) {
         if !api::interact::logout(client, ifaces) {
@@ -781,19 +987,20 @@ pub(super) fn login_retry_wait(backoff: &mut LoginBackoff, code: i32) -> Duratio
     }
 }
 
-/// Copy a login-queue snapshot onto every `SlotStatus` row named `name`;
-/// `None` (granted or not queued) clears both fields back to -1.
+/// Publish the current login latch and its reason onto the slot's status row.
+/// A latch supersedes queue and retry activity until explicit Log in.
 pub(super) fn publish_login_latched(
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     name: &str,
-    latched: bool,
+    reason: Option<LoginLatchReason>,
 ) {
     if let Some(s) = lock_statuses(statuses)
         .iter_mut()
         .find(|s| s.username == name)
     {
-        s.login_latched = latched;
-        if latched {
+        s.login_latched = reason.is_some();
+        s.login_latch_reason = reason;
+        if reason.is_some() {
             s.error = None;
             s.login_started = None;
             s.queue_position = -1;
@@ -809,7 +1016,7 @@ pub(super) fn publish_login_latched_from_arm(
     name: &str,
     arm: &SlotArm,
 ) {
-    publish_login_latched(statuses, name, arm.login_latched());
+    publish_login_latched(statuses, name, arm.login_latch_reason());
 }
 
 pub(super) fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) {
@@ -906,7 +1113,7 @@ pub(super) fn permit_wait_cancelled(arm: &SlotArm) -> bool {
     let stale_auto = intent.auto_intent && !arm.auto_login.load(Ordering::Relaxed);
     let script = !intent.error_hold && arm.script_active.load(Ordering::Acquire);
     arm.stop.load(Ordering::Relaxed)
-        || intent.login_latched
+        || intent.login_latch.is_some()
         || !((intent.want_login && !stale_auto) || script)
 }
 

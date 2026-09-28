@@ -50,7 +50,8 @@ pub fn parse_revision(value: &str) -> Result<ClientRevision, String> {
     }
 }
 
-/// WORLD membership bound to a selected endpoint. Unknown routes as false.
+/// WORLD membership for the selected local world or complete public roster.
+/// Unknown routes as false.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorldMembersFact {
     Unknown,
@@ -72,6 +73,9 @@ pub enum WorldMembersSource {
     },
     /// `--world-members true|false` on this profile.
     ExplicitOverride,
+    /// Every configured endpoint is an rs2b2t members world, including fallback.
+    /// Authority: https://rs2b2t.com/play ("Members features included").
+    Rs2b2tWorlds,
 }
 
 impl WorldMembersFact {
@@ -100,8 +104,9 @@ pub struct ProfileOptions {
     pub vault_path: Option<PathBuf>,
     pub catalog_root: Option<PathBuf>,
     pub cache_manifest: Option<PathBuf>,
-    /// Operator-declared WORLD membership for this endpoint (`true`/`false`).
-    /// Omission preserves the guarded local world.json bind / unknown public.
+    /// Operator-declared WORLD membership for the profile (`true`/`false`).
+    /// Omission uses guarded local world.json or the rs2b2t public roster;
+    /// other public rosters remain unknown.
     pub world_members: Option<bool>,
 }
 

@@ -180,6 +180,22 @@ fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
 }
 
 #[test]
+fn browse_card_list_includes_compiled_cards() {
+    let f = fixture("compiled-card-list", &["alice"]);
+    let cards: Vec<_> = f.scripts.browse_cards().collect();
+    let sherlock = cards
+        .iter()
+        .find(|card| card.name() == "Sherlock")
+        .expect("load builds expose Sherlock to Browse");
+    assert_eq!(sherlock.kind(), script::ScriptKind::Compiled);
+    assert_eq!(sherlock.category(), "Treasure Trails");
+    assert_eq!(
+        sherlock.selection(),
+        script::ScriptSel::Compiled(script::CompiledId("Sherlock"))
+    );
+}
+
+#[test]
 fn merged_profile_bag_carries_profile_global_clue_partner() {
     let mut f = fixture("clue-global", &["alice"]);
     let mut profile = f.core.vault().unwrap().get("alice").unwrap().clone();

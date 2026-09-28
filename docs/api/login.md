@@ -107,10 +107,8 @@ layout), or from `LOGIN_RSAN` / `LOGIN_RSAE`.
 ## Public worlds (`public-289`)
 
 `BOT_TARGET=prod` (alias `live`), `host-play --prod`, or
-`--profile public-289` uses the ordered endpoints in `~/.274bot/worlds.json`
-(created with w1 and w2 on port 443 when absent). An invalid file or a
-public endpoint outside that list fails closed. The shared cache is fetched
-from the first reachable configured asset world. Each vault account stores
+`--profile public-289` uses the rs2b2t worlds (w1 and w2 on port 443 by default).
+The shared cache is fetched from the first reachable asset world. Each vault account stores
 an optional world number: auto rotates on response 7, waits after all
 worlds report full, and pinned accounts stay on their chosen world.
 The client uses the selected world's node id and fetches its login RSA
@@ -119,6 +117,11 @@ on response 6); a failed fetch uses the baked public modulus without caching
 the fallback. The local engine key path above is unchanged. Login and
 cache transport remain WSS/HTTPS for public worlds; Cargo `TARGET` remains the
 rustc triple.
+
+A peer WSS Close, TLS failure, or WebSocket protocol error is treated as an
+immediate transport loss rather than waiting for the dead-server deadline.
+Standalone clients enter the Java-style `lostCon` reconnect path; the same
+failure during login reports the ordinary connection error.
 
 `$ENGINE_DIR` defaults depend on revision (274:
 `$HOME/experiments/Server/engine`; 289:
@@ -144,13 +147,36 @@ The panel arms logins through `SlotArm` flags (host-play), not
 `api::interact::login` directly. Two intents differ:
 
 - **Login all / Log in** is a **one-shot**: it clears the member's logout
-  latch, cancels any pending logout, and arms the handshake. Once the grant
-  lands the arm disarms, so an unexpected DC leaves the slot on the title
-  until the next explicit arm.
+  latch and repeat-logout history, cancels any pending logout, and arms the
+  handshake. Once the grant lands the one-shot disarms. A running or paused
+  script still relogs after an unexpected disconnect; a slot without a script
+  then follows its saved auto-login setting.
 - **Auto-login** (General config → **slot**, **auto-login on title**, backed
   by `ProfileSettings.auto_login`, default **off**) records the intent's
   provenance. Turning it on arms an unlatched parked slot only when no
   explicit intent is already active; turning it off withdraws only
   auto-derived intent, including during preparation/backoff. An explicit
   **Log in** survives an auto on→off toggle. An explicit **Logout / Logout
-  all** latches the member until the next **Login all** clears it.
+  all** latches the member until the next explicit login clears it.
+
+## Host-owned session liveness
+
+The host owns inactivity policy for every connected slot. The embedded client
+does not send its automatic `IDLE_TIMER` request while externally owned; this
+does not synthesize mouse or keyboard input and does not add an anti-idle game
+packet. `NO_TIMEOUT` is appended after about one wall-clock second without a
+successful outbound flush, even when another packet is already queued or an
+idle slot is pumped slowly. The successful combined flush starts the next
+interval, so fast pumping cannot flood keepalives.
+
+An unexpected server logout, EOF, or transport failure relogs with the normal
+queue and backoff while a script is running or paused, independently of the
+saved auto-login setting, and preserves that script's in-flight work.
+A slot without an active script keeps the saved auto-login behavior. Three
+unexpected session exits inside ten minutes trip a repeat guard to avoid a
+reconnect storm; the slot status names the guard and the session log records
+its count and window. The window uses Rust's monotonic `Instant`; on macOS it
+counts awake time, so system sleep does not advance the ten minutes. The
+script's work remains held, and **Log in** clears the guard and resumes it.
+Operator **Logout**, Stop, and removal remain terminal and are never
+automatically resurrected.

@@ -300,10 +300,7 @@ fn public_world_file_selects_endpoint_and_rejects_unlisted_host() {
         ("w2.rs2b2t.com", 443)
     );
     options.host = Some("attacker.example".into());
-    assert!(options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap_err()
-        .contains("worlds.json"));
+    assert!(options.resolve_with_env(None, &fixture.env()).is_err());
     options.host = Some("w1.rs2b2t.com".into());
     assert_eq!(
         options
@@ -1564,7 +1561,7 @@ fn local_world_json_binds_only_when_revision_and_bool_match() {
 fn public_profile_never_inherits_local_world_json() {
     let fixture = Fixture::new();
     let engine = fixture.0.join("engine");
-    write_world_json(&engine, 289, 443, "true");
+    write_world_json(&engine, 289, 443, "false");
     let env = fixture.env();
     let (options, _) = parse_profile_args([
         "--profile",
@@ -1574,11 +1571,178 @@ fn public_profile_never_inherits_local_world_json() {
     ])
     .unwrap();
     let selected = options.resolve_with_env(None, &env).unwrap();
-    assert!(!selected.map_members());
-    assert_eq!(
+    assert!(selected.map_members());
+    assert!(!matches!(
         selected.world_members(),
-        &host_play::WorldMembersFact::Unknown
-    );
+        host_play::WorldMembersFact::Known {
+            source: host_play::WorldMembersSource::LocalWorldJson { .. },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
+    use host_play::public_worlds::PublicWorlds;
+    let fixture = Fixture::new();
+    let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
+    let path = fixture.0.join(".274bot/worlds.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let bundled = PublicWorlds::default();
+    for world in &bundled.worlds {
+        let mut roster = bundled.clone();
+        roster.worlds = vec![world.clone()];
+        std::fs::write(&path, serde_json::to_vec(&roster).unwrap()).unwrap();
+        assert!(options
+            .resolve_with_env(None, &fixture.env())
+            .unwrap()
+            .map_members());
+    }
+    for host in ["w3.rs2b2t.com", "W42.RS2B2T.COM", "w001.rs2b2t.com"] {
+        let mut roster = bundled.clone();
+        roster.worlds.truncate(1);
+        roster.worlds[0].host = host.into();
+        roster.worlds[0].number = 17;
+        roster.worlds[0].node_id = 52;
+        std::fs::write(&path, serde_json::to_vec(&roster).unwrap()).unwrap();
+        let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+        assert!(
+            selected.map_members(),
+            "{host}: {:?}",
+            selected.world_members()
+        );
+    }
+    for (host, port) in [
+        ("w1.rs2b2t.com", 444),
+        ("rs2b2t.com.evil.net", 443),
+        ("w1.rs2b2t.com.x", 443),
+        ("w.rs2b2t.com", 443),
+        ("w1a.rs2b2t.com", 443),
+        ("w1.2.rs2b2t.com", 443),
+        ("x1.rs2b2t.com", 443),
+        ("w1.evilrs2b2t.com", 443),
+    ] {
+        let mut roster = bundled.clone();
+        roster.worlds[0].host = host.into();
+        roster.worlds[0].port = port;
+        std::fs::write(&path, serde_json::to_vec(&roster).unwrap()).unwrap();
+        let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+        assert_eq!(
+            selected.world_members(),
+            &host_play::WorldMembersFact::Unknown,
+            "{host}:{port}"
+        );
+    }
+    for mixed in [false, true] {
+        let mut roster = bundled.clone();
+        let custom = roster.worlds.last_mut().unwrap();
+        custom.host = "custom.example".into();
+        if !mixed {
+            roster.worlds.remove(0);
+        }
+        std::fs::write(&path, serde_json::to_vec(&roster).unwrap()).unwrap();
+        let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+        assert_eq!(
+            selected.world_members(),
+            &host_play::WorldMembersFact::Unknown
+        );
+        assert!(!selected.map_members());
+    }
+    std::fs::write(&path, serde_json::to_vec(&bundled).unwrap()).unwrap();
+    options.world_members = Some(false);
+    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert!(!selected.map_members());
+    assert!(matches!(
+        selected.world_members(),
+        host_play::WorldMembersFact::Known {
+            members: false,
+            source: host_play::WorldMembersSource::ExplicitOverride
+        }
+    ));
+}
+
+#[test]
+#[ignore = "requires NAV_TEST_PACK pointing to the shipped revision-289 nav pack"]
+fn public_profile_routes_lumbridge_to_ardougne() {
+    use api::snapshot::WorldTile;
+    use host_play::walk_map::{ActionError, WalkRequest};
+    use nav::{
+        router::{find_with, FindOptions},
+        world::NavWorld,
+        world_state::WorldState,
+    };
+    struct Log(parking_lot::Mutex<Vec<String>>);
+    impl api::hostlog::Sink for Log {
+        fn record(&self, record: &api::hostlog::Record<'_>) {
+            if record.slot == Some("members-route-regression") {
+                assert_eq!(record.level, api::hostlog::Level::Info);
+                self.0.lock().push(record.message.to_owned());
+            }
+        }
+    }
+    static LOG: Log = Log(parking_lot::Mutex::new(Vec::new()));
+    assert!(api::hostlog::install_sink(&LOG));
+    let fixture = Fixture::new();
+    let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
+    let world = NavWorld::load_pack(Path::new(&std::env::var("NAV_TEST_PACK").unwrap())).unwrap();
+    let from = WorldTile {
+        x: 3220,
+        z: 3211,
+        level: 0,
+    };
+    let to = WorldTile {
+        x: 2661,
+        z: 3301,
+        level: 0,
+    };
+    for (override_members, reachable) in [(None, true), (Some(false), false)] {
+        options.world_members = override_members;
+        let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+        let result = WalkRequest {
+            slot: Some("members-route-regression"),
+            origin: Some(nav::tile::Tile {
+                x: from.x,
+                z: from.z,
+                level: from.level,
+            }),
+            destination: Some(nav::tile::Tile {
+                x: to.x,
+                z: to.z,
+                level: to.level,
+            }),
+            options: FindOptions::default(),
+            map_members: selected.map_members(),
+            members: selected.world_members(),
+        }
+        .run(|| {
+            find_with(
+                &world.collision,
+                &world.graph,
+                from,
+                to,
+                FindOptions::default(),
+                &WorldState::empty().with_map_members(selected.map_members()),
+            )
+            .map_err(|_| ActionError::NoPath)
+        });
+        assert_eq!(
+            result.is_ok(),
+            reachable,
+            "{override_members:?}: {result:?}"
+        );
+    }
+    let logs = LOG.0.lock();
+    assert_eq!(logs.len(), 3, "one request line plus one failed terminal");
+    assert!(logs[0].contains("map_members=true"));
+    assert!(logs[0].contains("members_source=rs2b2t "));
+    assert!(logs[1].contains("map_members=false"));
+    assert!(logs[1].contains("members_source=explicit "));
+    assert!(logs[1].contains("refused=NoPath"));
+    assert!(logs[2].contains("WalkTo outcome=aborted"));
+    assert!(logs[2].contains("reason=NoPath"));
+    for line in logs.iter() {
+        println!("{line}");
+    }
 }
 
 #[test]
@@ -1610,6 +1774,13 @@ fn explicit_world_members_beats_local_file_and_declares_public() {
         parse_profile_args(["--profile", "public-289", "--world-members", "true"]).unwrap();
     let selected = options.resolve_with_env(None, &env).unwrap();
     assert!(selected.map_members());
+    assert!(matches!(
+        selected.world_members(),
+        host_play::WorldMembersFact::Known {
+            members: true,
+            source: host_play::WorldMembersSource::ExplicitOverride
+        }
+    ));
 }
 
 #[test]
@@ -1769,7 +1940,7 @@ fn named_local_nonlocal_host_stays_fail_closed() {
 fn public_endpoint_overrides_do_not_inherit_local_world_facts() {
     let fixture = Fixture::new();
     let engine = fixture.0.join("engine");
-    write_world_json_with_web(&engine, 289, 443, Some(443), "true");
+    write_world_json_with_web(&engine, 289, 443, Some(443), "false");
     let (options, _) = parse_profile_args([
         "--profile",
         "public-289",
@@ -1795,7 +1966,10 @@ fn public_endpoint_overrides_do_not_inherit_local_world_facts() {
     assert!(selected.supported_server());
     assert_eq!(
         selected.world_members(),
-        &host_play::WorldMembersFact::Unknown
+        &host_play::WorldMembersFact::Known {
+            members: true,
+            source: host_play::WorldMembersSource::Rs2b2tWorlds,
+        }
     );
 }
 

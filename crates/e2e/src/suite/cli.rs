@@ -360,8 +360,15 @@ fn settings_env_keys(config: &NativeConfig) -> Vec<String> {
 /// The profile inputs the *child* itself resolves, from the effective argv, cwd and env.
 fn bind_profile(config: &NativeConfig, cwd: &Path) -> SuiteResult<ProfileIdentity> {
     let env = launch_profile_env(cwd)?;
+    bind_profile_with_env(config, &env)
+}
+
+fn bind_profile_with_env(
+    config: &NativeConfig,
+    env: &host_play::profile::ProfileEnvironment,
+) -> SuiteResult<ProfileIdentity> {
     let (options, _rest) = effective_profile_options(config)?;
-    let selection = options.resolve_with_env(None, &env).map_err(|error| {
+    let selection = options.resolve_with_env(None, env).map_err(|error| {
         format!(
             "the native profile resolver rejects this configuration ({error}); the suite binds the inputs \
              the child resolves, so it cannot substitute a different selection"
@@ -391,6 +398,14 @@ fn bind_profile(config: &NativeConfig, cwd: &Path) -> SuiteResult<ProfileIdentit
         } => identity::EffectiveWorldMembersIdentity {
             value: Some(*members),
             source: identity::WorldMembersIdentitySource::ExplicitOverride,
+            declaration: None,
+        },
+        host_play::WorldMembersFact::Known {
+            members,
+            source: host_play::WorldMembersSource::Rs2b2tWorlds,
+        } => identity::EffectiveWorldMembersIdentity {
+            value: Some(*members),
+            source: identity::WorldMembersIdentitySource::Rs2b2tWorlds,
             declaration: None,
         },
         host_play::WorldMembersFact::Known {

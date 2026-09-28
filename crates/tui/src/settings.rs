@@ -10,13 +10,17 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
-use frontend_core::MapBakeChoice;
+use frontend_core::{FormNotice, MapBakeChoice, NOTHING_SAVED};
 use vault::ProfileSettings;
 
 use crate::app::NavFindSettings;
+
+/// The popup's title while no profile is bound to it.
+pub const TITLE: &str = "settings";
 
 /// Lamp skills the popup cycles, in display order.
 pub const LAMP_SKILLS: [&str; 7] = [
@@ -53,12 +57,17 @@ pub enum SettingsKey {
     Ignored,
 }
 
-/// The settings popup widget over a `ProfileSettings`.
+/// The settings popup widget over a `ProfileSettings`. `title` names the
+/// bound profile (for example `settings — alice`). `notice` is the bound
+/// profile's save feedback, drawn under the rows: a refusal in red with
+/// [`NOTHING_SAVED`], or `Saved <name>.` in green once the write is durable.
 pub struct SettingsPane<'a> {
     pub settings: &'a mut ProfileSettings,
     pub nav: &'a mut NavFindSettings,
     pub map_bake: &'a mut MapBakeChoice,
     pub state: &'a mut SettingsState,
+    pub title: &'a str,
+    pub notice: Option<&'a FormNotice>,
 }
 
 impl<'a> SettingsPane<'a> {
@@ -73,6 +82,8 @@ impl<'a> SettingsPane<'a> {
             nav,
             map_bake,
             state,
+            title: TITLE,
+            notice: None,
         }
     }
 
@@ -138,6 +149,30 @@ impl<'a> SettingsPane<'a> {
             height: h,
         }
     }
+
+    /// The drawn popup: [`Self::popup_rect`] grown down (and widened when
+    /// its text needs it) for the notice under the rows. The rows keep
+    /// their place, so a click still lands on the row it points at.
+    fn drawn_rect(area: Rect, notice: Option<&FormNotice>) -> Rect {
+        let rows = Self::popup_rect(area);
+        let (lines, text) = match notice {
+            None => return rows,
+            Some(FormNotice::Refused(reason)) => (
+                2,
+                Span::raw(reason.as_str()).width().max(NOTHING_SAVED.len()),
+            ),
+            Some(FormNotice::Saved(saved)) => (1, Span::raw(saved.as_str()).width()),
+        };
+        let width = u16::try_from(text + 2)
+            .unwrap_or(u16::MAX)
+            .clamp(rows.width, area.width);
+        Rect {
+            x: area.x + (area.width - width) / 2,
+            y: rows.y,
+            width,
+            height: (rows.height + lines).min(area.y + area.height - rows.y),
+        }
+    }
 }
 
 impl Widget for SettingsPane<'_> {
@@ -145,9 +180,9 @@ impl Widget for SettingsPane<'_> {
         if !self.state.open {
             return;
         }
-        let popup = Self::popup_rect(area);
+        let popup = Self::drawn_rect(area, self.notice);
         Clear.render(popup, buf);
-        let block = Block::default().borders(Borders::ALL).title("settings");
+        let block = Block::default().borders(Borders::ALL).title(self.title);
         let inner = block.inner(popup);
         block.render(popup, buf);
         let rows = [
@@ -159,7 +194,7 @@ impl Widget for SettingsPane<'_> {
             ("bank fetch", format!("{}", self.nav.allow_bank_fetch)),
             ("map bake", self.map_bake.as_str().to_string()),
         ];
-        let lines: Vec<Line> = rows
+        let mut lines: Vec<Line> = rows
             .iter()
             .enumerate()
             .map(|(i, (name, value))| {
@@ -167,6 +202,20 @@ impl Widget for SettingsPane<'_> {
                 Line::from(format!("{marker}{name}: {value}"))
             })
             .collect();
+        match self.notice {
+            Some(FormNotice::Refused(reason)) => {
+                let red = Style::default().fg(Color::Red);
+                lines.push(Line::styled(reason.as_str(), red));
+                lines.push(Line::styled(NOTHING_SAVED, red));
+            }
+            Some(FormNotice::Saved(saved)) => {
+                lines.push(Line::styled(
+                    saved.as_str(),
+                    Style::default().fg(Color::Green),
+                ));
+            }
+            None => {}
+        }
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .render(inner, buf);

@@ -36,23 +36,29 @@ re-evaluated on every title-loop pass), unless the operator logged the slot
 out. A dropped connection relogged that way pauses a Load script whole: every
 await, step machine and task runtime stays, their clocks and the `Execution`
 wait clock stop, and the script resumes on the relogged session's first
-tick. The slot then re-sends the script walk it was following, and the last
-eight walk, walk-near and abort-walk requests the script queued that never
-reached the dropped connection. Other unsent requests are dropped; their
-owners retry on their own timeouts. An operator or idle logout, Stop or slot
-removal ends the session instead: the in-flight machine rows and task
-runtimes end (`aborted`, `reset`). Compiled scripts end their live step at
-either boundary.
+tick. A repeated-exit guard parks automatic login but holds the work the same
+way; an explicit **Log in** clears the guard and resumes it. The slot then
+re-sends the script walk it was following, and the last eight walk, walk-near
+and abort-walk requests the script queued that never reached the dropped
+connection. Other unsent requests are dropped; their owners retry on their own
+timeouts. An operator logout, Stop, or slot removal ends the session instead:
+the in-flight machine rows and task runtimes end (`aborted`, `reset`). Compiled
+scripts end their live step at either boundary.
 
 ### File Load and catalog cards
 
 - **Load** registers a picker card tagged **File** from an absolute/relative
   path (`~/.274bot/js-scripts.json` remembers `{name, path}`). Same path
   overwrites; different paths stay distinct even when stems match.
-  Compiled names are **reserved**.
+- Compiled registry cards (currently Sherlock in `load` builds) are also in
+  Browse, grouped under **Treasure Trails** and tagged **Compiled**. They use
+  no parameter schema. Compiled names remain reserved.
 - Catalog cards are **Catalog** source: static parse of
   `src/bot/scripts/index.ts` (no V8 at registration). Browse fills both
   panel and TUI pickers.
+- Isolate scripts cannot use browser timer APIs (`setTimeout`, `setInterval`,
+  `clearTimeout`, or `clearInterval`); calls throw a catchable error. Use
+  `Execution.delayTicks` for game-time waits.
 - Isolate is its own OS thread; a non-yielding execution has a **600 ms
   runaway horizon** measured from that execution's own start; **64 MB V8 heap
   cap** (`heap_limits(0, 64 MiB)`). A confirmed watchdog, Pause-deadline, or

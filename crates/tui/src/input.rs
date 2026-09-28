@@ -336,7 +336,16 @@ impl TuiApp {
                 self.modal = None;
                 self.loadouts_state.open = false;
                 self.params_state.open = false;
-                self.settings_state.open = true;
+                if !self.settings_state.open {
+                    // A fresh open: the next pump binds the focused profile
+                    // and loads its row. Opening again while bound keeps the
+                    // draft (the heading names its profile).
+                    self.settings_state.open = true;
+                    self.settings_profile = None;
+                    self.settings_title.clear();
+                    self.settings_title.push_str(crate::settings::TITLE);
+                    self.settings_save.form_changed();
+                }
             }
             Command::Loadouts => {
                 self.modal = None;
@@ -549,7 +558,12 @@ impl TuiApp {
             &mut self.settings_state,
         );
         match pane.on_key(key) {
-            SettingsKey::Changed => self.settings_dirty = true,
+            SettingsKey::Changed => {
+                self.settings_dirty = true;
+                // The draft moved on: a notice about its last save no
+                // longer describes it.
+                self.settings_save.edited();
+            }
             SettingsKey::MapBake => self.map_bake_dirty = true,
             SettingsKey::Consumed | SettingsKey::Ignored => {}
         }

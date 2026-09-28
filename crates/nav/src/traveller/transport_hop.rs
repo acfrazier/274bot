@@ -1,20 +1,17 @@
 use super::*;
 
-/// The live target of a transport hop: the edge's loc view (doors,
-/// ladders, stairs, boats, agility, gliders, spirit trees) or — for an
-/// NPC-triggered hop (`TransportKind::Npc`: cart, essence-mine wizard,
-/// Elkoy) — the edge's NPC view.
+/// The live target of a transport hop: the edge's loc view (doors, ladders,
+/// stairs, agility shortcuts, spirit trees) or, for the shared NPC-backed
+/// Boat/Npc/Glider path, the edge's NPC view.
 pub(super) enum TransportTarget<'s> {
     Loc(&'s LocView),
     Npc(&'s NpcView),
 }
 
-/// The snapshot target for a transport edge: the edge's `loc_id` within
-/// 3 tiles of `edge.at` for loc edges ([`find_transport_loc`]), or the
-/// edge's npc type id within [`NPC_SEARCH_RADIUS`] of `edge.at` for
-/// [`TransportKind::Npc`] edges ([`NPC_SEARCH_RADIUS`], nearest first).
-/// An Npc edge's `loc_id` is the npc.pack type id, matched against the
-/// live NPC's `r#type`.
+/// The snapshot target for a transport edge: the edge's loc view, or the
+/// nearest matching NPC's current network tile. NPC selection and later
+/// adjacency checks use the path head the client sends OP_NPC toward, never
+/// the rendered/interpolated tile.
 pub(super) fn find_transport_target<'s>(
     snapshot: &'s GameSnapshot,
     edge: &TransportEdge,
@@ -24,9 +21,9 @@ pub(super) fn find_transport_target<'s>(
             .npcs()
             .iter()
             .filter(|npc| {
-                npc.r#type == Some(edge.loc_id as usize) && npc.tile.level == edge.at.level
+                npc.r#type == Some(edge.loc_id as usize) && npc.network.level == edge.at.level
             })
-            .map(|npc| (npc, cheb(npc.tile, edge.at)))
+            .map(|npc| (npc, cheb(npc.network, edge.at)))
             .filter(|(_, gap)| *gap <= NPC_SEARCH_RADIUS)
             .min_by_key(|(_, gap)| *gap)
             .map(|(npc, _)| TransportTarget::Npc(npc))
@@ -35,10 +32,45 @@ pub(super) fn find_transport_target<'s>(
     }
 }
 
+/// Re-find the NPC instance selected when this hop was armed. A different
+/// same-type NPC is not interchangeable: the tracked index remains valid by
+/// type and level even when the NPC wanders beyond the initial search radius.
+pub(super) fn find_transport_target_instance<'s>(
+    snapshot: &'s GameSnapshot,
+    edge: &TransportEdge,
+    npc_index: Option<usize>,
+) -> Option<TransportTarget<'s>> {
+    if !npc_backed(edge) {
+        return find_transport_target(snapshot, edge);
+    }
+    let index = npc_index?;
+    snapshot
+        .npcs()
+        .iter()
+        .find(|npc| {
+            npc.index == index
+                && npc.r#type == Some(edge.loc_id as usize)
+                && npc.network.level == edge.at.level
+        })
+        .map(TransportTarget::Npc)
+}
+
+/// Whether OP_NPC may be sent from the player's current stand. The network
+/// tile is the client's packet/path target; the rendered tile may lag it.
+pub(super) fn npc_interaction_ready(
+    snapshot: &GameSnapshot,
+    here: WorldTile,
+    npc: &NpcView,
+) -> bool {
+    here.level == npc.network.level
+        && cheb(here, npc.network) <= 1
+        && scene_standable(snapshot, here)
+}
+
 /// Send the transport hop's interact for the edge's target kind: an
-/// `op_loc` for loc edges, an `op_npc` for `TransportKind::Npc` edges,
-/// both with the edge's `option`. `option` 0 on a loc hop uses the first
-/// `item_req` obj on the loc (`oplocu` — unequippable knife on a web).
+/// `op_loc` for loc edges or an `op_npc` for NPC-backed edges, both with the
+/// edge's `option`. `option` 0 on a loc hop uses the first `item_req` obj on
+/// the loc (`oplocu` — unequippable knife on a web).
 pub(super) fn interact_transport<'t>(
     snapshot: &'t GameSnapshot,
     ix: &mut Interactions<'t>,
@@ -48,7 +80,7 @@ pub(super) fn interact_transport<'t>(
 ) -> SendResult<'t> {
     let (actual_id, tile) = match &target {
         TransportTarget::Loc(l) => (l.id, l.tile),
-        TransportTarget::Npc(n) => (n.r#type.map(|id| id as i32).unwrap_or(-1), n.tile),
+        TransportTarget::Npc(n) => (n.r#type.map(|id| id as i32).unwrap_or(-1), n.network),
     };
     let result = match target {
         TransportTarget::Loc(loc) if uses_held_on_loc(edge) => {
@@ -91,8 +123,8 @@ pub(super) fn uses_held_on_loc(edge: &TransportEdge) -> bool {
     edge.option == 0 && !edge.item_req.is_empty()
 }
 
-/// The block message's target word for an edge: "npc" for
-/// [`TransportKind::Npc`] edges, "loc" for every loc-targeted kind.
+/// The block message's target word: "npc" for NPC-backed edges, "loc" for
+/// every loc-targeted kind.
 pub(super) fn target_word(edge: &TransportEdge) -> &'static str {
     if npc_backed(edge) {
         "npc"
@@ -158,9 +190,9 @@ pub(super) fn edge_loc_open(snapshot: &GameSnapshot, edge: &TransportEdge) -> bo
     })
 }
 
-/// The chat ring's latest sequence — the hop-start watermark for the
-/// "I can't reach that!" watch (the `settle::said` sequence delta; never
-/// a stale-head check on the single most recent line).
+/// The chat ring's latest sequence. NPC-backed hops refresh this watermark
+/// when the interaction is actually sent, so the reachability watch cannot
+/// attribute an older line to a delayed or re-armed interaction.
 pub(super) fn chat_seq(snapshot: &GameSnapshot) -> i32 {
     Query::new(snapshot.chat_lines()).latest_sequence()
 }
@@ -336,10 +368,11 @@ impl FollowRun {
                     return Poll::Watching;
                 } else if edge.open_loc_id.is_some()
                     && edge.kind != TransportKind::Door
+                    && !npc_backed(edge)
                     && edge_loc_open(snapshot, edge)
                     && hop.tries == 0
                 {
-                    return match find_transport_target(snapshot, edge) {
+                    return match find_transport_target_instance(snapshot, edge, hop.npc_index) {
                         Some(target) => {
                             let mut ix = Interactions::new(snapshot, d);
                             match interact_transport(snapshot, &mut ix, target, edge, options) {
@@ -365,11 +398,13 @@ impl FollowRun {
                 }
             }
         }
-        // The pre-interact approach: the player must stand within chebyshev
-        // 1 of the loc (or the driver NPC) before the game accepts an
-        // interact. While the approach is armed, watch it instead of the
-        // arrive arm; only once adjacent does the hop find the target,
-        // interact, and settle `arrived(to)`.
+        // The pre-interact approach: once the stored stand settles, re-find
+        // the selected NPC instance and validate the player's current stand
+        // against that instance's current network tile. A wanderer may have
+        // moved while the player approached; never send OP_NPC from the stale
+        // stand. For NPC-backed hops the approach remains armed until an
+        // interaction is sent, so a missing instance and every re-arm stay
+        // budgeted by one cumulative clock.
         if hop.approach.is_some() {
             match self.poll_approach(d, snapshot, &mut hop, options) {
                 Poll::Watching => {
@@ -377,22 +412,73 @@ impl FollowRun {
                     return Poll::Watching;
                 }
                 Poll::Terminal(outcome) => return Poll::Terminal(outcome),
-                // The player is adjacent now: fall through, send the loc
-                // interact, then watch `arrived(to)`.
                 Poll::LegDone => {}
             }
             let edge = match &hop.leg {
                 Leg::Transport { edge } => edge.clone(),
                 Leg::Walk { .. } => unreachable!("transport hop holds a transport leg"),
             };
-            return match find_transport_target(snapshot, &edge) {
+            let target = find_transport_target_instance(snapshot, &edge, hop.npc_index);
+            if let Some(TransportTarget::Npc(npc)) = target.as_ref() {
+                if !npc_interaction_ready(snapshot, here, npc) {
+                    let current = npc.network;
+                    let Some(tile) = approach_tile(snapshot, current, here) else {
+                        // Keep the settled approach unchanged. The next poll
+                        // can immediately revalidate the tracked NPC if it
+                        // wanders back to a position with a standable ring.
+                        // The cumulative approach clock still bounds the wait.
+                        self.transport = Some(hop);
+                        return Poll::Watching;
+                    };
+                    let mut ix = Interactions::new(snapshot, d);
+                    let result = ix.walk(tile);
+                    report_walk(options, snapshot, here, tile, &result);
+                    match result {
+                        SendResult::Sent { .. } => {
+                            let approach = hop.approach.as_mut().expect("approach remains armed");
+                            approach.tile = tile;
+                            approach.at = current;
+                            approach.sent_tick = snapshot.tick();
+                            approach.retry_pending = false;
+                            hop.sent_tile = Some(here);
+                            self.loc_wait = 0;
+                            self.transport = Some(hop);
+                            return Poll::Watching;
+                        }
+                        SendResult::Refused {
+                            reason:
+                                SendReason::OffScene
+                                | SendReason::Unreachable
+                                | SendReason::SceneUnavailable,
+                            ..
+                        } => {
+                            let approach = hop.approach.as_mut().expect("approach remains armed");
+                            approach.tile = tile;
+                            approach.at = current;
+                            approach.retry_pending = true;
+                            self.transport = Some(hop);
+                            return Poll::Watching;
+                        }
+                        SendResult::Refused { reason, .. } => {
+                            fire_leg(options, &hop.leg, LegPhase::Failed);
+                            return Poll::Terminal(TravelOutcome::Refused { at: here, reason });
+                        }
+                    }
+                }
+            }
+            return match target {
                 Some(target) => {
+                    let chat_seq_at_send = npc_backed(&edge).then(|| chat_seq(snapshot));
                     let mut ix = Interactions::new(snapshot, d);
                     match interact_transport(snapshot, &mut ix, target, &edge, options) {
                         SendResult::Sent { .. } => {
                             self.loc_wait = 0;
                             hop.ticks_waited = 0;
                             hop.sent_tile = Some(here);
+                            if let Some(seq) = chat_seq_at_send {
+                                hop.chat_seq = seq;
+                            }
+                            hop.approach = None;
                             if edge.kind == TransportKind::Door {
                                 hop.open_sent_tick = Some(snapshot.tick());
                             }
@@ -411,9 +497,14 @@ impl FollowRun {
                         }
                     }
                 }
+                None if npc_backed(&edge) => {
+                    // Keep the armed approach so the cumulative NPC clock
+                    // reports the terminal stall. A despawned tracked slot is
+                    // never silently replaced by another same-type NPC.
+                    self.transport = Some(hop);
+                    Poll::Watching
+                }
                 None => {
-                    // The target has not appeared in the loaded scene yet:
-                    // keep waiting, bounded by the hop budget.
                     self.loc_wait += 1;
                     if self.loc_wait > self.budget {
                         fire_leg(options, &hop.leg, LegPhase::Failed);
@@ -438,8 +529,8 @@ impl FollowRun {
         }
         // The "I can't reach that!" watch: the client pathfind failed
         // right after the send, so the hop is refused immediately instead
-        // of sitting out the settle budget. `chat_seq` is the hop-start
-        // watermark, so only genuinely new lines count.
+        // of sitting out the settle budget. NPC-backed hops refresh
+        // `chat_seq` at interaction send, so only genuinely new lines count.
         let hop_seq = hop.chat_seq;
         let edge = match &hop.leg {
             Leg::Transport { edge } => edge.clone(),
@@ -749,13 +840,12 @@ impl FollowRun {
     }
 
     /// One approach-hop settle step: match the adjacency arm
-    /// (`arrived(at, 1)` — only once the player stands within chebyshev 1
-    /// of the loc may the hop send the interact), or lapse the budget. A
-    /// door hop whose approach lapses escalates to the automatic troll
-    /// (the cheap hop lapsed before its first interact — the troll walks
-    /// the player to the door too); only a non-door transport lapses to
-    /// the real `Stalled`. The approach walk itself was sent when the hop
-    /// was armed; a known stun may rearm that walk once before settling.
+    /// (`arrived(at, 1)`), or lapse the budget. NPC-backed approaches share
+    /// one cumulative clock across moving-target re-arms. Existing loc/door
+    /// approaches retain their per-arm clock; a door lapse escalates to the
+    /// automatic troll and only a non-door lapse returns the real `Stalled`.
+    /// The approach walk itself was sent when the hop was armed; a known stun
+    /// may rearm that walk once before settling.
     pub(super) fn poll_approach<D: Driver>(
         &mut self,
         d: &mut D,
@@ -765,6 +855,26 @@ impl FollowRun {
     ) -> Poll {
         let mut approach = hop.approach.take().expect("approach hop present");
         let here = here(snapshot);
+        let npc_approach = hop.npc_index.is_some();
+        if npc_approach {
+            hop.approach_ticks_waited += 1;
+            if hop.approach_ticks_waited > self.budget {
+                // One clock spans every moving-target re-arm. A wandering NPC
+                // therefore cannot reset the approach budget indefinitely.
+                let why = if hop.sent_tile == Some(here) {
+                    HopFailure::Dropped
+                } else {
+                    HopFailure::Expired
+                };
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                return Poll::Terminal(TravelOutcome::Stalled {
+                    at: here,
+                    aiming: approach.tile,
+                    why,
+                    tries: hop.tries.max(1),
+                });
+            }
+        }
         if approach.retry_pending
             && (here.level != approach.at.level || cheb(here, approach.at) > 1)
         {
@@ -804,7 +914,11 @@ impl FollowRun {
         );
         match settle.poll(ReadContext::new(snapshot)) {
             Some(Outcome::Matched { .. }) => {
-                // The player is adjacent: the caller sends the loc interact.
+                if npc_approach {
+                    // Keep the approach until the caller has revalidated the
+                    // tracked target and actually sent the interaction.
+                    hop.approach = Some(approach);
+                }
                 Poll::LegDone
             }
             Some(Outcome::Expired { .. }) => {
@@ -822,13 +936,15 @@ impl FollowRun {
                 hop.approach = Some(approach);
                 Poll::Watching
             }
+            None if npc_approach => {
+                hop.approach = Some(approach);
+                Poll::Watching
+            }
             None => {
                 approach.ticks_waited += 1;
                 if approach.ticks_waited > self.budget {
-                    // The approach walk never landed: for a door, escalate
-                    // this same leg to the automatic troll instead of
-                    // stalling; only a troll hop that lapses again — or a
-                    // non-door transport — returns the real `Stalled`.
+                    // Preserve the existing loc/door approach behavior:
+                    // only NPC re-arms share the cumulative clock above.
                     let door_leg = matches!(
                         &hop.leg,
                         Leg::Transport { edge } if edge.kind == TransportKind::Door

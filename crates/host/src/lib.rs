@@ -433,6 +433,7 @@ impl Host {
         run_sends: &mut u32,
         knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
     ) -> RandomStatus {
+        client.set_external_reconnect_owner(true);
         if let Some(inp) = input {
             inp.consume_native_frame(&mut client.shell);
         } else {
@@ -440,19 +441,6 @@ impl Host {
         }
         let random_events = slot.random_events.load(Ordering::Relaxed);
         slot.settings.random_events = random_events;
-        // The 289 timer increments inside `mainloop`, so interrupt it at
-        // the host boundary without manufacturing input or a packet. Only
-        // trust the previous guardian publication while no newer client
-        // generation is waiting for the post-loop drain.
-        if client.revision().is_289()
-            && client.ingame
-            && random_events
-            && slot.guardian_status.hold
-            && slot.guardian_status.claim == RandomClaim::Host
-            && slot.guardian_status_is_current(client)
-        {
-            client.shell.idle_cycles = 0;
-        }
         let t_loop = std::time::Instant::now();
         client.mainloop();
         slot.loop_ns = slot
@@ -1031,14 +1019,6 @@ impl SlotLoop {
             self.run_sends += 1;
         }
         result
-    }
-
-    fn guardian_status_is_current(&self, client: &Client) -> bool {
-        let last = self.pump.last();
-        !self.pump.dirty(client.gens).any()
-            && last.player_info == client.gens.player_info
-            && last.session == client.gens.session
-            && last.invalidations == client.gens.invalidations
     }
 }
 

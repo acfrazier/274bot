@@ -5,7 +5,7 @@ use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
-use nav::traveller::Traveller;
+use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 use nav::WorldState;
 
@@ -117,12 +117,24 @@ pub fn arm_walk_on(
                     .entry(name.to_string())
                     .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
                     .clone();
-                let mut arm = arm.lock().unwrap();
-                // A fresh arm replaces any in-flight follow run.
-                arm.traveller.clear();
-                arm.bank_fetch = None;
-                arm.route = Some(route.clone());
-                arm.route_generation = crate::walk_map::next_map_route_generation();
+                let replaced = {
+                    let mut arm = arm.lock().unwrap();
+                    let replaced = walk_destination(&arm);
+                    // A fresh arm replaces any in-flight follow run.
+                    arm.traveller.clear();
+                    arm.bank_fetch = None;
+                    arm.route = Some(route.clone());
+                    arm.route_generation = crate::walk_map::next_map_route_generation();
+                    replaced
+                };
+                if let Some(destination) = replaced {
+                    crate::walk_map::emit_walk_cancelled(
+                        Some(name),
+                        destination,
+                        Some(from_w),
+                        "Replaced",
+                    );
+                }
             }
             Ok(route)
         }
@@ -134,11 +146,23 @@ pub fn arm_walk_on(
                     .entry(name.to_string())
                     .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
                     .clone();
-                let mut arm = arm.lock().unwrap();
-                arm.traveller.clear();
-                arm.bank_fetch = Some(pending);
-                arm.route = Some(route.clone());
-                arm.route_generation = crate::walk_map::next_map_route_generation();
+                let replaced = {
+                    let mut arm = arm.lock().unwrap();
+                    let replaced = walk_destination(&arm);
+                    arm.traveller.clear();
+                    arm.bank_fetch = Some(pending);
+                    arm.route = Some(route.clone());
+                    arm.route_generation = crate::walk_map::next_map_route_generation();
+                    replaced
+                };
+                if let Some(destination) = replaced {
+                    crate::walk_map::emit_walk_cancelled(
+                        Some(name),
+                        destination,
+                        Some(from_w),
+                        "Replaced",
+                    );
+                }
             }
             Ok(route)
         }
@@ -189,4 +213,119 @@ pub fn walk_arm_bank_fetch_freezes_follow(arm: &WalkArm) -> bool {
         allow_teleports: false,
         ..Default::default()
     })
+}
+
+fn walk_destination(arm: &WalkArm) -> Option<WorldTile> {
+    arm.bank_fetch
+        .as_ref()
+        .map(|pending| pending.dest)
+        .or_else(|| arm.route.as_ref().map(|route| route.dest))
+}
+
+fn bank_stand_route_active(arm: &WalkArm) -> bool {
+    let Some(route) = arm.route.as_ref() else {
+        return false;
+    };
+    arm.bank_fetch.as_ref().is_some_and(|pending| {
+        matches!(
+            pending.steps.front(),
+            Some(nav::bank_fetch::BankStep::Walk { x, z, level })
+                if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
+        )
+    })
+}
+
+/// Panel/TUI WalkTo pump: advance BankBudget work first, then the manual
+/// route. The exact traveller outcome is logged before the route is cleared.
+/// A successful bank-stand sub-route is internal and therefore never emits a
+/// terminal WalkTo receipt; its final route remains the operator's request.
+pub fn step_walk_arm_follow<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    arm: &mut WalkArm,
+    world: Option<&NavWorld>,
+    here: (i32, i32, i32),
+    map_members: bool,
+    slot: Option<&str>,
+) -> bool {
+    if arm.bank_fetch.is_some() {
+        let walking_stand_before = bank_stand_route_active(arm);
+        let bank_destination = walk_destination(arm);
+        step_walk_arm_bank_fetch(driver, snapshot, arm, world, Some(here), map_members);
+        if walking_stand_before && !bank_stand_route_active(arm) {
+            // BankBudget completed its private stand route before the
+            // traveller polled that arrival. Discard that private follow
+            // state before the operator's final route is resumed.
+            arm.traveller.clear();
+        }
+        if arm.bank_fetch.is_none() && arm.route.is_none() {
+            arm.traveller.clear();
+            if let Some(destination) = bank_destination {
+                crate::walk_map::emit_walk_aborted(
+                    slot,
+                    destination,
+                    Some(WorldTile {
+                        x: here.0,
+                        z: here.1,
+                        level: here.2,
+                    }),
+                    "BankFetch",
+                );
+            }
+            return true;
+        }
+        if walk_arm_bank_fetch_freezes_follow(arm) {
+            return false;
+        }
+    }
+    let Some(route) = arm.route.as_ref() else {
+        return false;
+    };
+    let destination = walk_destination(arm).unwrap_or(route.dest);
+    let walking_stand = bank_stand_route_active(arm);
+    let mut options = TravelOptions {
+        close_enough: 0,
+        teleports: world.map(|world| world.graph.teleports.as_slice()),
+        edges: world.map(|world| world.graph.edges.as_slice()),
+        ..TravelOptions::default()
+    };
+    let outcome = arm
+        .traveller
+        .follow(driver, snapshot, route.clone(), &mut options);
+    if walking_stand && matches!(&outcome, Some(TravelOutcome::Arrived { .. })) {
+        arm.route = None;
+        return false;
+    }
+    let Some(outcome) = outcome else {
+        return false;
+    };
+    let leg = if walking_stand || matches!(&outcome, TravelOutcome::Arrived { .. }) {
+        None
+    } else {
+        arm.traveller.terminal_leg_index()
+    };
+    crate::walk_map::emit_walk_terminal(slot, destination, &outcome, leg, route);
+    if walking_stand {
+        arm.bank_fetch = None;
+    }
+    arm.route = None;
+    true
+}
+
+/// Cancel one active manual WalkTo at a frontend/session ownership boundary.
+/// Returns whether an active request was closed.
+pub fn cancel_walk_arm(
+    slot: Option<&str>,
+    arm: &mut WalkArm,
+    at: Option<WorldTile>,
+    reason: &'static str,
+) -> bool {
+    let Some(destination) = walk_destination(arm) else {
+        return false;
+    };
+    crate::walk_map::emit_walk_cancelled(slot, destination, at, reason);
+    arm.traveller.clear();
+    arm.route = None;
+    arm.bank_fetch = None;
+    true
 }

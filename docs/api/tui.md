@@ -60,7 +60,7 @@ label in its border. Everything is plain text as well as colour.
 | --- | --- |
 | Fleet | loaded members: `[x]` row selection, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · selected K of M`; Load+login all / Logout all buttons |
 | Overview | the selected bot's buttons (Log in, Log out, Remove, Settings, Loadouts, Manual walk), status rows (same `SlotStatus` + `RandomStatus` as the panel, including active world) and inventory / stats / nearest locs |
-| Map | packed collision dots, POIs, `@` here, remaining-walk `*`; Walk-confirm is `host_play::arm_walk_on`; Walk / Teleport / Group / Search buttons. The catalogue is requested only while this tab is open. |
+| Map | packed collision dots, POIs, `@` here, remaining-walk `*`; Walk-confirm is `host_play::arm_walk_on`; Walk / Teleport / Group / Search buttons. Search hit rows use display names (`/` line-breaks become spaces). The map draws one-cell glyphs, not overlapping text labels. The catalogue is requested only while this tab is open. |
 | Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start all / Stop all over the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
 | Chat | game chat ring and NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back). An open dialogue marks the tab `Chat!` and the BOT line `DIALOGUE`. |
 | Logs | the shared structured log (same filters, search, follow, Save and session file as the panel) |

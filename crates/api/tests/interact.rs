@@ -4035,7 +4035,7 @@ fn idle_client(revision: ClientRevision) -> Client {
     c.local_player = Some(ClientPlayer::at(5, 5));
     c.npc[7] = Some(Box::new(ClientNpc::at(5, 5)));
     c.shell.idle_cycles = 4500;
-    c.no_timeout_timer = 0;
+    c.last_outbound = std::time::Instant::now();
     c
 }
 
@@ -4105,7 +4105,7 @@ fn rejected_noop_and_background_paths_do_not_reset_idle() {
 
     let mut keepalive = idle_client(ClientRevision::R289);
     keepalive.shell.idle_cycles = 100;
-    keepalive.no_timeout_timer = 50;
+    keepalive.last_outbound = std::time::Instant::now() - std::time::Duration::from_secs(1);
     keepalive.out.pos = 0;
     keepalive.game_loop();
     assert_eq!(keepalive.shell.idle_cycles, 101);
@@ -4140,7 +4140,7 @@ fn active_opnpc_avoids_idle_timer_inactive_client_still_emits() {
     ));
     assert_eq!(active.shell.idle_cycles, 0);
     active.out.pos = 0;
-    active.no_timeout_timer = 0;
+    active.last_outbound = std::time::Instant::now();
     active.game_loop();
     assert_eq!(active.shell.idle_cycles, 1);
     assert!(
@@ -4150,7 +4150,7 @@ fn active_opnpc_avoids_idle_timer_inactive_client_still_emits() {
 
     let mut idle = idle_client(ClientRevision::R289);
     idle.out.pos = 0;
-    idle.no_timeout_timer = 0;
+    idle.last_outbound = std::time::Instant::now();
     idle.game_loop();
     assert_eq!(idle.shell.idle_cycles, 4001);
     assert!(
@@ -4160,7 +4160,7 @@ fn active_opnpc_avoids_idle_timer_inactive_client_still_emits() {
 
     let mut legacy = idle_client(ClientRevision::R274);
     legacy.out.pos = 0;
-    legacy.no_timeout_timer = 0;
+    legacy.last_outbound = std::time::Instant::now();
     legacy.game_loop();
     assert_eq!(legacy.shell.idle_cycles, 4500);
     assert!(

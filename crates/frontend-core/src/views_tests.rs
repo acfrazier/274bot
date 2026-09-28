@@ -246,6 +246,28 @@ fn a_parked_member_without_login_intent_is_logged_out_until_log_in() {
     assert_eq!(row(&s, "vp-carol").phase, Phase::Waiting);
 }
 
+#[test]
+fn repeat_logout_guard_reason_is_visible_in_slot_status() {
+    let row = FleetRow::fixture("alice", Phase::LoggedOut, None, None);
+    let status = SlotStatus {
+        username: "alice".into(),
+        login_latched: true,
+        login_latch_reason: Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts {
+            count: 3,
+            window_seconds: 600,
+        }),
+        ..SlotStatus::default()
+    };
+    let mut text = String::new();
+
+    write_state(&mut text, &row, Some(&status));
+
+    assert_eq!(
+        text,
+        "logged out (repeat guard: 3 unexpected logouts in 600s; Log in to retry)"
+    );
+}
+
 /// Turning Auto login off while a failed login waits for its retry parks
 /// the slot (the host stops retrying): logged out, with the error kept as
 /// history. An error that itself withdrew the login stays a failure.

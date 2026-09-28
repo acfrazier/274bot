@@ -1160,3 +1160,15 @@ fn pending_selection_draws_no_dest_marker_until_a_walk_is_armed() {
         "the armed walk destination draws its marker"
     );
 }
+
+#[test]
+fn search_hit_caption_uses_display_name() {
+    let mut caption = String::new();
+    super::search_hit_caption_into(&mut caption, "Port/Sarim", 3023, 3217, 0);
+    assert_eq!(caption, "Port Sarim  3023 3217 0");
+    super::search_hit_caption_into(&mut caption, "Lumbridge", 3220, 3220, 0);
+    assert_eq!(
+        caption, "Lumbridge  3220 3220 0",
+        "the reused buffer is cleared per row"
+    );
+}

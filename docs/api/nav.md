@@ -303,7 +303,9 @@ refuses instead of storing a later login dest. Local engines also get
 **Teleport** (`Play::map_teleport`, loopback-guarded, focused-only). Close/hide
 unregisters textures and drops CPU pixels. `BOT_CPU=1` still uses this
 map path (panel UI GPU). `walk_status_text` mirrors the armed dest and
-clears on any terminal outcome.
+clears on any terminal outcome. Place names keep `/` as a stored world-map
+line break; lists and canvas labels show a space. Canvas labels skip
+overlapping text (markers still draw; at most 32 labels).
 
 ## Live tests
 

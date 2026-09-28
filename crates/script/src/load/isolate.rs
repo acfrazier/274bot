@@ -108,8 +108,8 @@ enum IsolateCmd {
         generation: u64,
         input_identity: u64,
     },
-    /// A session boundary. `keep_work`: the host relogs through it, so the
-    /// script's work is held for the next session instead of ended.
+    /// A session boundary. `keep_work`: hold the script's work for the next
+    /// logged-in session instead of ending it.
     ResetSession {
         keep_work: bool,
         /// The work generation this reset opened: only the reset of the
@@ -1039,7 +1039,7 @@ impl LoadIsolate {
         std::mem::take(&mut *self.lifecycle.lock().unwrap())
     }
 
-    /// The session ended (operator logout, idle logout, no relog coming):
+    /// The session ended deliberately (operator logout, Stop, or removal):
     /// discard work from the previous connection, including batches that an
     /// already running tick has not forwarded yet, and end the script's
     /// in-flight machine rows and task runtimes (their awaits settle
@@ -1051,10 +1051,10 @@ impl LoadIsolate {
         self.reset_session(false)
     }
 
-    /// The connection dropped and the host relogs: discard the connection's
-    /// work like [`LoadIsolate::reset_session_work`], but hold the script's
-    /// own — every parked await, machine row and task runtime, their clocks
-    /// and the Execution wait clock stopped — until the relogged session's
+    /// The connection dropped unexpectedly: discard the connection's work
+    /// like [`LoadIsolate::reset_session_work`], but hold the script's own —
+    /// every parked await, machine row and task runtime, their clocks and the
+    /// Execution wait clock stopped — until the next logged-in session's
     /// first tick. Frozen AutoRelogin pauses the whole script across a
     /// disconnect and resumes it on the new session's scene 2
     /// (`AutoRelogin.ts:180-190`, `159-163`; `ScriptContext.ts:92-117`).

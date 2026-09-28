@@ -8,6 +8,10 @@ use script::IsolatedEnv;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use host_play as map_host;
+#[path = "../../host-play/tests/support/map_fixture.rs"]
+mod map_fixture;
+
 fn wait_script_state(play: &host_play::Play, name: &str, want: script::RunState) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while play.script_state(name) != want && Instant::now() < deadline {
@@ -24,6 +28,36 @@ fn dummy_options() -> PlayOptions {
         cache_dir: "/tmp".into(),
         lowmem: true,
         mainland: false,
+    }
+}
+
+fn walk_receipt_field<'a>(message: &'a str, name: &str) -> Option<&'a str> {
+    message.split_ascii_whitespace().find_map(|field| {
+        let (key, value) = field.split_once('=')?;
+        (key == name).then_some(value)
+    })
+}
+
+fn assert_walk_receipt_fields(
+    message: &str,
+    outcome: &str,
+    destination: &str,
+    at: &str,
+    reason: &str,
+    transport: &str,
+) {
+    for (name, expected) in [
+        ("outcome", outcome),
+        ("destination", destination),
+        ("at", at),
+        ("reason", reason),
+        ("transport", transport),
+    ] {
+        assert_eq!(
+            walk_receipt_field(message, name),
+            Some(expected),
+            "{name} in {message:?}"
+        );
     }
 }
 
@@ -1703,6 +1737,138 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
 }
 
 #[test]
+fn resetting_the_same_walk_slot_session_twice_logs_one_cancellation() {
+    use api::snapshot::WorldTile;
+    use frontend_core::log::{global, LogScope, LogView};
+    use nav::router::Route;
+
+    let log = global();
+    let slot = "walk-receipt-session-ended";
+    let destination = WorldTile {
+        x: 8,
+        z: 9,
+        level: 0,
+    };
+    let arm = Arc::new(Mutex::new(WalkArm {
+        route: Some(Route {
+            dest: destination,
+            legs: vec![],
+            ticks: 0.0,
+        }),
+        ..Default::default()
+    }));
+    let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::from([(slot.to_owned(), arm)])));
+    let tick_latch = Arc::new(Mutex::new(HashMap::from([(
+        slot.to_owned(),
+        (1, (8, 9, 0)),
+    )])));
+
+    assert!(reset_frontend_slot_session(slot, &travellers, &tick_latch));
+    assert!(!reset_frontend_slot_session(slot, &travellers, &tick_latch));
+
+    let mut receipts = LogView::new(LogScope::Slot(slot.into()));
+    receipts.edit_filter(|filter| filter.text = "WalkTo outcome=".into());
+    log.refresh(&mut receipts);
+    assert_eq!(receipts.len(), 1, "{}", receipts.to_text());
+    assert_walk_receipt_fields(
+        receipts.rows()[0].message.as_ref(),
+        "cancelled",
+        "(8,9,0)",
+        "unknown",
+        "SessionEnded",
+        "-",
+    );
+}
+
+#[test]
+fn production_walk_receipt_uses_snapped_destination() {
+    use frontend_core::log::{global, LogScope, LogView};
+    let log = global();
+    let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
+    let fixture = map_fixture::MapFixture::new(&world, "local-289");
+    let mut session = TuiSession::new(dummy_options());
+    session.server_profile = Some(Arc::clone(fixture.template.profile()));
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    session.core.set_play(Some(fixture.play(origin)));
+    let mut app = TuiApp::new("274bot headless");
+    let name = "tui-walk-receipt";
+    app.names = vec![name.into()];
+    app.focused = Some(0);
+    app.map_active = true;
+    app.world = Some(Arc::clone(&world));
+    session.bind_map_context(&mut app);
+    let requested = Tile {
+        x: 5,
+        z: 2,
+        level: 0,
+    };
+    app.select_requested(requested);
+    let target = app.map_model.pending().unwrap().target.unwrap();
+    assert_ne!(target, requested);
+    app.here = None;
+    session.arm_walk_on(&mut app, requested);
+    assert!(app.walk_dest.is_none());
+    let mut view = LogView::new(LogScope::Slot(name.into()));
+    view.edit_filter(|filter| filter.text = "WalkTo ".into());
+    log.refresh(&mut view);
+    assert_eq!(view.len(), 2, "{}", view.to_text());
+    let request = view
+        .rows()
+        .iter()
+        .find(|row| row.message.starts_with("WalkTo origin="))
+        .expect("request receipt");
+    assert!(request.message.contains("refused=NoOrigin"), "{request:?}");
+    assert!(
+        request.message.contains(&format!(
+            "destination=({},{},{})",
+            target.x, target.z, target.level
+        )),
+        "{request:?}"
+    );
+    assert!(
+        request.message.contains("members_source=unknown "),
+        "{request:?}"
+    );
+    let terminal = view
+        .rows()
+        .iter()
+        .find(|row| row.message.starts_with("WalkTo outcome="))
+        .expect("terminal receipt");
+    assert_walk_receipt_fields(
+        terminal.message.as_ref(),
+        "aborted",
+        &format!("({},{},{})", target.x, target.z, target.level),
+        "unknown",
+        "NoOrigin",
+        "-",
+    );
+}
+
+#[test]
+fn empty_group_walk_preserves_selection_and_reports_refusal() {
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("274bot headless");
+    app.world = Some(Arc::new(bank_fetch_fixtures::knife_nav_world(2)));
+    app.select_requested(Tile {
+        x: 1,
+        z: 1,
+        level: 0,
+    });
+    app.walk_send.mode = crate::app::WalkSendMode::Group;
+    assert_eq!(app.map_enter(), AppAction::None);
+    assert_eq!(app.error.as_deref(), Some("no bots selected"));
+    assert!(app.map_model.pending().is_some());
+    app.error = None;
+    session.map_walk_group(&mut app);
+    assert_eq!(app.error.as_deref(), Some("no bots selected"));
+    assert!(app.map_model.pending().is_some());
+}
+
+#[test]
 fn refused_no_origin_walk_does_not_arm_destination() {
     // Production `Play::map_walk` NoOrigin needs a bound ServerProfile nav
     // identity before `map_context` succeeds. TUI tests do not construct that
@@ -1879,18 +2045,252 @@ fn follow_tick_pumps_bank_budget_step() {
         ..Default::default()
     };
     let before = c.out.pos;
-    step_walk_arm_follow(
+    host_play::step_walk_arm_follow(
         &mut c,
         &snap,
         &mut arm,
         Some(world.as_ref()),
         (0, 4, 0),
         false,
+        None,
     );
     assert!(
         c.out.pos > before,
         "BankBudget pump must drive deposit on the Driver (pos {before} → {})",
         c.out.pos
+    );
+}
+
+#[test]
+fn bank_stand_subroute_does_not_emit_operator_terminal_receipt() {
+    use api::snapshot::WorldTile;
+    use bank_fetch_fixtures::bank_client;
+    use frontend_core::log::{global, LogScope, LogView};
+    use host_play::PendingBankFetch;
+    use nav::bank_fetch::BankStep;
+    use nav::router::{Leg, Route};
+    use std::collections::VecDeque;
+
+    let log = global();
+    let mut c = bank_client();
+    let here = host_play::player_here_tile(&c).expect("fixture player");
+    let at = WorldTile {
+        x: here.0,
+        z: here.1,
+        level: here.2,
+    };
+    let stand = WorldTile { x: at.x + 1, ..at };
+    let destination = WorldTile { x: at.x + 2, ..at };
+    let final_route = Route {
+        dest: destination,
+        legs: vec![Leg::Walk {
+            tiles: vec![stand, destination],
+        }],
+        ticks: 1.0,
+    };
+    let mut arm = WalkArm {
+        bank_fetch: Some(PendingBankFetch {
+            steps: VecDeque::from([BankStep::Walk {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+            }]),
+            dest: destination,
+            opts: FindOptions::default(),
+            final_route: final_route.clone(),
+            avoid: Vec::new(),
+        }),
+        route: Some(Route {
+            dest: stand,
+            legs: vec![Leg::Walk {
+                tiles: vec![at, stand],
+            }],
+            ticks: 1.0,
+        }),
+        route_generation: 103,
+        ..Default::default()
+    };
+    let mut snap = api::snapshot::GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(!host_play::step_walk_arm_follow(
+        &mut c,
+        &snap,
+        &mut arm,
+        None,
+        here,
+        false,
+        Some("receipt-bank-root"),
+    ));
+
+    c.local_player = Some(client::client::ClientPlayer::at(6, 5));
+    c.bump_gens(client::io::ServerProt::PLAYER_INFO);
+    snap.rebuild(&c);
+    assert!(
+        !host_play::step_walk_arm_follow(
+            &mut c,
+            &snap,
+            &mut arm,
+            None,
+            (stand.x, stand.z, stand.level),
+            false,
+            Some("receipt-bank-root"),
+        ),
+        "completing the internal stand route must not finish the operator route"
+    );
+    assert_eq!(
+        arm.route.as_ref().map(|route| route.dest),
+        Some(destination)
+    );
+    let mut receipts = LogView::new(LogScope::Slot("receipt-bank-root".into()));
+    receipts.edit_filter(|filter| filter.text = "WalkTo outcome=".into());
+    log.refresh(&mut receipts);
+    assert_eq!(receipts.len(), 0, "{}", receipts.to_text());
+
+    c.local_player = Some(client::client::ClientPlayer::at(7, 5));
+    c.bump_gens(client::io::ServerProt::PLAYER_INFO);
+    snap.rebuild(&c);
+    assert!(host_play::step_walk_arm_follow(
+        &mut c,
+        &snap,
+        &mut arm,
+        None,
+        (destination.x, destination.z, destination.level),
+        false,
+        Some("receipt-bank-root"),
+    ));
+    log.refresh(&mut receipts);
+    assert_eq!(receipts.len(), 1, "{}", receipts.to_text());
+    let message = receipts.rows()[0].message.as_ref();
+    let tile = format!(
+        "({},{},{})",
+        destination.x, destination.z, destination.level
+    );
+    assert_walk_receipt_fields(message, "arrived", &tile, &tile, "-", "-");
+    assert_eq!(walk_receipt_field(message, "leg"), Some("-"), "{message:?}");
+}
+
+#[test]
+fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
+    use api::snapshot::WorldTile;
+    use bank_fetch_fixtures::bank_client;
+    use frontend_core::log::{global, LogScope, LogView};
+    use nav::router::{Leg, Route};
+    use nav::transport::{TransportEdge, TransportKind};
+
+    let log = global();
+
+    let mut c = bank_client();
+    let here = host_play::player_here_tile(&c).expect("fixture player");
+    let at = WorldTile {
+        x: here.0,
+        z: here.1,
+        level: here.2,
+    };
+    let mut snap = api::snapshot::GameSnapshot::new();
+    snap.rebuild(&c);
+
+    let arrived_route = Route {
+        dest: at,
+        legs: vec![],
+        ticks: 0.0,
+    };
+    let mut arrived = WalkArm {
+        route: Some(arrived_route),
+        route_generation: 101,
+        ..Default::default()
+    };
+    assert!(host_play::step_walk_arm_follow(
+        &mut c,
+        &snap,
+        &mut arrived,
+        None,
+        here,
+        false,
+        Some("receipt-arrived"),
+    ));
+    assert!(!host_play::step_walk_arm_follow(
+        &mut c,
+        &snap,
+        &mut arrived,
+        None,
+        here,
+        false,
+        Some("receipt-arrived"),
+    ));
+
+    let destination = WorldTile {
+        x: at.x + 10,
+        z: at.z,
+        level: at.level,
+    };
+    let edge = TransportEdge {
+        kind: TransportKind::Boat,
+        at,
+        to: destination,
+        loc_id: 378,
+        option: 1,
+        ticks: 7,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+    };
+    let aborted_route = Route {
+        dest: destination,
+        legs: vec![Leg::Transport { edge }],
+        ticks: 7.0,
+    };
+    let mut aborted = WalkArm {
+        route: Some(aborted_route),
+        route_generation: 102,
+        ..Default::default()
+    };
+    let mut finished = 0;
+    for _ in 0..70 {
+        finished += usize::from(host_play::step_walk_arm_follow(
+            &mut c,
+            &snap,
+            &mut aborted,
+            None,
+            here,
+            false,
+            Some("receipt-aborted"),
+        ));
+    }
+    assert_eq!(finished, 1, "the route has one terminal transition");
+
+    let mut arrived = LogView::new(LogScope::Slot("receipt-arrived".into()));
+    arrived.edit_filter(|filter| filter.text = "WalkTo outcome=".into());
+    log.refresh(&mut arrived);
+    let mut aborted = LogView::new(LogScope::Slot("receipt-aborted".into()));
+    aborted.edit_filter(|filter| filter.text = "WalkTo outcome=".into());
+    log.refresh(&mut aborted);
+    assert_eq!(arrived.len(), 1, "{}", arrived.to_text());
+    assert_eq!(aborted.len(), 1, "{}", aborted.to_text());
+    let arrived_message = arrived.rows()[0].message.as_ref();
+    let at = format!("({},{},{})", at.x, at.z, at.level);
+    assert_walk_receipt_fields(arrived_message, "arrived", &at, &at, "-", "-");
+    assert_eq!(
+        walk_receipt_field(arrived_message, "leg"),
+        Some("-"),
+        "{arrived_message:?}"
+    );
+    let aborted_message = aborted.rows()[0].message.as_ref();
+    assert_walk_receipt_fields(
+        aborted_message,
+        "aborted",
+        &format!(
+            "({},{},{})",
+            destination.x, destination.z, destination.level
+        ),
+        &at,
+        "Blocked",
+        "Boat:378",
     );
 }
 
@@ -2127,6 +2527,12 @@ fn settings_popup_writes_only_guardian_fields() {
     session.core.fleet_mut().add("alice");
     session.core.select("alice");
     let mut app = TuiApp::new("tui");
+    session.names = vec!["alice".into()];
+    session.last_focused = Some("alice".into());
+    // The popup binds the focused profile when it opens.
+    let open = app.run_command(crate::commands::Command::Settings);
+    dispatch(&mut session, &mut app, open);
+    session.pump(&mut app);
     // A stale popup draft: every non-guardian field at its default.
     app.settings = vault::ProfileSettings {
         random_events: false,
@@ -2134,8 +2540,6 @@ fn settings_popup_writes_only_guardian_fields() {
         lamp_auto: true,
         ..vault::ProfileSettings::default()
     };
-    session.names = vec!["alice".into()];
-    session.last_focused = Some("alice".into());
     app.settings_dirty = true;
 
     session.pump(&mut app);
@@ -2248,6 +2652,268 @@ fn assign(session: &mut TuiSession, name: &str, card: &script::JsCard) {
 fn focus_member(session: &mut TuiSession, app: &mut TuiApp, name: &str) {
     session.focus(name);
     session.pump(app);
+}
+
+/// Live finding (TUI parity): the settings popup closed without explanation
+/// when focus moved, dropping the draft. It must stay open and bound to the
+/// profile it was opened for, and persist there — never to the newly
+/// focused profile.
+#[test]
+fn settings_popup_stays_bound_to_its_profile_across_focus_change() {
+    let iso = IsolatedEnv::enter("tui-settings-bind");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    focus_member(&mut session, &mut app, "alice");
+    let open = app.run_command(crate::commands::Command::Settings);
+    dispatch(&mut session, &mut app, open);
+    session.pump(&mut app);
+    assert!(app.settings_state.open, "settings opens");
+    // Toggle random events off: the draft belongs to alice.
+    app.on_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Enter,
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    assert!(!app.settings.random_events, "the toggle edits the draft");
+    // Switch focus to bob: the popup stays open on alice's draft, titled
+    // with the profile it is bound to.
+    focus_member(&mut session, &mut app, "bob");
+    assert!(
+        app.settings_state.open,
+        "a focus change never closes the form"
+    );
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(
+            cell_of(&screen, "settings — alice").is_some(),
+            "{w}x{h}: the title names the bound profile"
+        );
+    }
+    assert!(
+        !app.settings.random_events,
+        "a focus change never rewrites the buffers"
+    );
+    // Persisting writes alice's row, never bob's.
+    session.pump(&mut app);
+    session.core.flush_writes();
+    let vault = session.core.vault().unwrap();
+    assert!(
+        !vault.get("alice").unwrap().settings.random_events,
+        "the edit lands on the bound profile"
+    );
+    assert!(
+        vault.get("bob").unwrap().settings.random_events,
+        "bob untouched"
+    );
+}
+
+fn settings_key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
+}
+
+/// The terminal sizes the TUI is checked at.
+const SIZES: [(u16, u16); 2] = [(80, 24), (120, 40)];
+
+/// The whole TUI drawn at `w`×`h`.
+fn screen(app: &mut TuiApp, w: u16, h: u16) -> ratatui::buffer::Buffer {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    terminal.backend().buffer().clone()
+}
+
+/// The cell where `needle` starts on screen, matched one cell per char.
+fn cell_of(screen: &ratatui::buffer::Buffer, needle: &str) -> Option<(u16, u16)> {
+    let area = screen.area;
+    let chars: Vec<char> = needle.chars().collect();
+    (area.top()..area.bottom()).find_map(|y| {
+        (area.left()..area.right())
+            .find(|&x| {
+                chars.iter().enumerate().all(|(i, &c)| {
+                    let cx = usize::from(x) + i;
+                    cx < usize::from(area.right())
+                        && screen[(cx as u16, y)]
+                            .symbol()
+                            .chars()
+                            .eq(std::iter::once(c))
+                })
+            })
+            .map(|x| (x, y))
+    })
+}
+
+/// Open the settings popup on the focused profile, as `o` does.
+fn open_settings(session: &mut TuiSession, app: &mut TuiApp) {
+    let open = app.run_command(crate::commands::Command::Settings);
+    dispatch(session, app, open);
+    session.pump(app);
+    assert!(app.settings_state.open, "settings opens");
+}
+
+/// `Saved <name>.` shows in the settings popup, in green under its rows,
+/// only once the persist is durable.
+#[test]
+fn settings_popup_shows_saved_once_the_write_is_durable() {
+    let iso = IsolatedEnv::enter("tui-settings-saved");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    focus_member(&mut session, &mut app, "alice");
+    open_settings(&mut session, &mut app);
+    let gate = session.core.write_gate();
+    let held = gate.lock().unwrap();
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    session.pump(&mut app);
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(cell_of(&screen, "settings — alice").is_some(), "{w}x{h}");
+        assert!(
+            cell_of(&screen, "Saved alice.").is_none(),
+            "{w}x{h}: no Saved while the write is queued"
+        );
+    }
+
+    drop(held);
+    session.core.flush_writes();
+    session.pump(&mut app);
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        let (left, top) = cell_of(&screen, "settings — alice").expect("the popup is drawn");
+        let (x, y) = cell_of(&screen, "Saved alice.")
+            .unwrap_or_else(|| panic!("{w}x{h}: Saved shows once the write is durable"));
+        assert!(
+            x == left && y > top,
+            "{w}x{h}: inside the popup, under its rows"
+        );
+        assert_eq!(screen[(x, y)].fg, ratatui::style::Color::Green, "{w}x{h}");
+    }
+    let vault = session.core.vault().unwrap();
+    assert!(!vault.get("alice").unwrap().settings.random_events);
+    assert!(vault.get("bob").unwrap().settings.random_events);
+}
+
+/// Closing the settings popup before a persist completes: the popup opened
+/// next, here on another profile, never shows that persist's `Saved`.
+#[test]
+fn a_persist_completing_after_close_shows_nothing_in_the_next_popup() {
+    let iso = IsolatedEnv::enter("tui-settings-close-pending");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    focus_member(&mut session, &mut app, "alice");
+    open_settings(&mut session, &mut app);
+    let gate = session.core.write_gate();
+    let held = gate.lock().unwrap();
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    session.pump(&mut app);
+    app.on_key(settings_key(crossterm::event::KeyCode::Esc));
+    session.pump(&mut app);
+    assert!(!app.settings_state.open, "Esc closes the popup");
+    focus_member(&mut session, &mut app, "bob");
+    open_settings(&mut session, &mut app);
+
+    drop(held);
+    session.core.flush_writes();
+    session.pump(&mut app);
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(cell_of(&screen, "settings — bob").is_some(), "{w}x{h}");
+        assert!(
+            cell_of(&screen, "Saved alice.").is_none(),
+            "{w}x{h}: alice's persist never shows in bob's popup"
+        );
+    }
+    let vault = session.core.vault().unwrap();
+    assert!(
+        !vault.get("alice").unwrap().settings.random_events,
+        "the persist itself landed"
+    );
+}
+
+/// A persist that fails after it was accepted reports on the message line,
+/// as in 0.1.9, and never inside the settings popup.
+#[test]
+#[cfg(unix)]
+fn a_late_persist_failure_reports_on_the_message_line_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let iso = IsolatedEnv::enter("tui-settings-late-failure");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    focus_member(&mut session, &mut app, "alice");
+    open_settings(&mut session, &mut app);
+    let gate = session.core.write_gate();
+    let held = gate.lock().unwrap();
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    session.pump(&mut app);
+
+    std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    drop(held);
+    session.core.flush_writes();
+    session.pump(&mut app);
+    std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(cell_of(&screen, "settings — alice").is_some(), "{w}x{h}");
+        assert!(
+            cell_of(&screen, "msg: random:").is_some(),
+            "{w}x{h}: the message line reports the failure"
+        );
+        assert!(
+            cell_of(&screen, "settings: random:").is_none()
+                && cell_of(&screen, frontend_core::NOTHING_SAVED).is_none(),
+            "{w}x{h}: the popup never shows it"
+        );
+    }
+    assert!(
+        session
+            .core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .random_events,
+        "nothing was saved"
+    );
+}
+
+/// A refused persist (the bound profile is gone) shows in the popup, in red
+/// under its rows with "nothing was saved." under it, and on the message
+/// line; editing the popup again clears it.
+#[test]
+fn a_refused_persist_shows_in_the_popup_until_the_next_edit() {
+    let iso = IsolatedEnv::enter("tui-settings-refused");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    focus_member(&mut session, &mut app, "alice");
+    open_settings(&mut session, &mut app);
+    session.core.vault_mut().unwrap().remove("alice").unwrap();
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    session.pump(&mut app);
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        let (left, top) = cell_of(&screen, "settings — alice").expect("the popup is drawn");
+        let (x, y) = cell_of(&screen, "settings: random: no profile alice")
+            .unwrap_or_else(|| panic!("{w}x{h}: the refusal shows"));
+        assert!(x == left && y > top, "{w}x{h}: inside the popup");
+        assert_eq!(screen[(x, y)].fg, ratatui::style::Color::Red, "{w}x{h}");
+        assert_eq!(
+            cell_of(&screen, frontend_core::NOTHING_SAVED),
+            Some((left, y + 1)),
+            "{w}x{h}: nothing-was-saved right under the reason"
+        );
+        assert!(
+            cell_of(&screen, "msg: settings: random: no profile alice").is_some(),
+            "{w}x{h}: and on the message line"
+        );
+    }
+
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(
+            cell_of(&screen, frontend_core::NOTHING_SAVED).is_none(),
+            "{w}x{h}: editing the popup clears the refusal"
+        );
+    }
+    let vault = session.core.vault().unwrap();
+    assert!(vault.get("alice").is_none(), "nothing recreated");
+    assert!(
+        vault.get("bob").unwrap().settings.random_events,
+        "bob untouched"
+    );
 }
 
 fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::KeyCode) {

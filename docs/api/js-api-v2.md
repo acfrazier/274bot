@@ -617,15 +617,16 @@ seat: the v1 `SolveClue.ownsEquipment()` reads the same rust list and is true
 while it is non-empty — do-not-grind-equip — with no `api.snapshot.equipment`
 and no `SNAPSHOT_KEYS` growth.
 
-Two different resets exist and neither is `retry()`. A **session end** — an
-operator or idle logout, `reset_session_work` — aborts the live step and its
-token and keeps the rest of the session: the strip list still answers
-`ownsEquipment()` and still owes its reclaim, and the leave-in-pack latch still
-refuses its row. A dropped connection the slot relogs through by itself is not
-a session end: the whole script is paused and resumed after the relog, and the
-live step carries on with it. Operator **Stop** is a fresh task instance: the
-step, the strip list and the latch all start over, so a later Start begins
-clean.
+Two different resets exist and neither is `retry()`. A deliberate **session
+end** — operator logout, Stop, or removal — uses `reset_session_work`: it
+aborts the live step and its token and keeps the rest of the session. The
+strip list still answers `ownsEquipment()` and still owes its reclaim, and the
+leave-in-pack latch still refuses its row. A dropped connection is not a
+session end: the whole script is paused and resumed after the relog, and the
+live step carries on with it. A tripped repeat guard holds that same work
+while automatic login is parked; explicit **Log in** clears the guard and
+resumes it. Operator **Stop** is a fresh task instance: the step, the strip
+list and the latch all start over, so a later Start begins clean.
 
 `clue.begin(input?)` takes the optional input and ignores every key: nothing
 but the token and the wrapper's generation is captured, so `enabled`, the pack
