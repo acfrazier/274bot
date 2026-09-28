@@ -4,24 +4,29 @@
 //! used for `measureText` and `fillText` raster. JS only forwards
 //! getters/setters/methods.
 
+#[cfg(feature = "load")]
 mod compose;
 mod geom;
+#[cfg(feature = "load")]
 mod raster;
 mod style;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "load"))]
 #[path = "canvas_tests.rs"]
 mod tests;
 
 use std::cell::RefCell;
 
+#[cfg(feature = "load")]
 pub use compose::compose_paint;
 pub use geom::{
     ClipPath, ClipSet, DrawExtras, FillPaint, GradStop, LineJoinKind, PathSeg, Shadow, TextAlign,
     TextBaseline, MAX_CLIP_PATHS, MAX_GRADIENTS, MAX_GRADIENT_STOPS, MAX_LINE_WIDTH,
     MAX_PATH_SEGS_PER_FRAME, MAX_PATH_SEGS_PER_OP, MAX_SAVE_DEPTH, MAX_SHADOW_BLUR,
 };
+#[cfg(feature = "load")]
 pub use raster::{dirty_bounds, rasterize};
+#[cfg(feature = "load")]
 pub(crate) use style::font_for;
 pub use style::{font_px_allowed, measure_with, pack_rgba, parse_color, parse_font, unpack_rgba};
 
@@ -917,6 +922,7 @@ pub struct Take {
     pub fail: Option<&'static str>,
 }
 
+#[cfg(feature = "load")]
 impl Take {
     pub(super) fn fail_message(&self) -> Option<&'static str> {
         self.fail
@@ -948,6 +954,7 @@ pub fn take() -> Take {
     })
 }
 
+#[cfg(feature = "load")]
 pub(super) fn take_outcome() -> OnPaintOutcome {
     OUTCOME.with(|o| o.borrow_mut().take().unwrap_or(OnPaintOutcome::Success))
 }
@@ -974,6 +981,7 @@ pub struct DirtyRect {
     pub h: i32,
 }
 
+#[cfg(feature = "load")]
 pub(crate) fn clip_to_applet(x: i64, y: i64, w: i64, h: i64) -> Option<DirtyRect> {
     let x1 = x.max(0);
     let y1 = y.max(0);
@@ -991,6 +999,7 @@ pub(crate) fn clip_to_applet(x: i64, y: i64, w: i64, h: i64) -> Option<DirtyRect
     }
 }
 
+#[cfg(feature = "load")]
 pub(crate) fn normalize_rect(x: i32, y: i32, w: i32, h: i32) -> Option<(i64, i64, i64, i64)> {
     let mut x = i64::from(x);
     let mut y = i64::from(y);

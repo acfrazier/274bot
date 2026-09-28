@@ -18,6 +18,18 @@
 //! the acquisition window. There is no Stop arm and nothing is enqueued from
 //! `onStop`.
 
+/// Prepared native read arguments; no tick-time family decode.
+pub struct JournalRequest {
+    pub quest: api::selected::FactKey,
+    pub facts: std::sync::Arc<api::quest_facts::QuestCatalog>,
+}
+
+/// Host journal owner. M-297 installs its NativeMachine implementation together
+/// with the Load wire cutover, so there cannot be two live journal owners.
+pub struct JournalMachine {
+    _private: (),
+}
+
 use crate::machine::{AbortReason, Begin, Cx, Family, Step};
 use crate::observed::{self, QuestTab};
 use crate::scene_query;

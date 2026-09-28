@@ -218,6 +218,7 @@ pub fn finite_f32(v: f64) -> Option<f32> {
     }
 }
 
+#[cfg(any(feature = "load", test))]
 /// Conservative axis-aligned bounds of path points and control points.
 pub fn path_bounds(segs: &[PathSeg]) -> Option<(f32, f32, f32, f32)> {
     let mut minx = f32::MAX;
@@ -393,6 +394,7 @@ fn append_arc_cubic(
     true
 }
 
+#[cfg(any(feature = "load", test))]
 /// Two-circle conical parameter `t` for point `(px,py)`.
 ///
 /// Circle(t) has centre `C0 + t (C1-C0)` and radius `r0 + t (r1-r0)`.
@@ -450,6 +452,7 @@ pub fn conical_t(px: f32, py: f32, x0: f32, y0: f32, r0: f32, x1: f32, y1: f32, 
     pick(t0, t1)
 }
 
+#[cfg(any(feature = "load", test))]
 pub fn sample_stops(stops: &[GradStop], t: f32) -> u32 {
     if stops.is_empty() {
         return 0;
@@ -486,6 +489,7 @@ pub fn sample_stops(stops: &[GradStop], t: f32) -> u32 {
     last.color
 }
 
+#[cfg(any(feature = "load", test))]
 fn lerp_color(a: u32, b: u32, u: f32) -> u32 {
     let ua = u.clamp(0.0, 1.0);
     let ch = |shift: u32| -> u8 {
@@ -499,6 +503,7 @@ fn lerp_color(a: u32, b: u32, u: f32) -> u32 {
         | u32::from(ch(0))
 }
 
+#[cfg(feature = "load")]
 pub fn segs_to_skia(segs: &[PathSeg]) -> Option<tiny_skia::Path> {
     let mut b = tiny_skia::PathBuilder::new();
     let mut started = false;

@@ -437,6 +437,7 @@ impl<'de> serde::Deserialize<'de> for InspectAvoidWire {
     }
 }
 
+#[cfg(feature = "load")]
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
 pub(crate) enum MaybeInteractReq {
@@ -447,9 +448,11 @@ pub(crate) enum MaybeInteractReq {
 /// A queued interact row no [`InteractReq`] variant accepts, named by its
 /// `op` so the tick loop can log what it refused instead of dropping it
 /// silently. Accepts every value kind, as the `IgnoredAny` it replaced did.
+#[cfg(feature = "load")]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct RejectedRow(pub(crate) String);
 
+#[cfg(feature = "load")]
 impl<'de> serde::Deserialize<'de> for RejectedRow {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         Ok(RejectedRow(match Shape::deserialize(d)? {
@@ -464,8 +467,10 @@ impl<'de> serde::Deserialize<'de> for RejectedRow {
 /// One queued row, read on its own: a row serde cannot read at all (a
 /// BigInt, say) is refused like any other malformed row instead of failing
 /// every row beside it.
+#[cfg(feature = "load")]
 pub(crate) struct QueuedRow(pub(crate) MaybeInteractReq);
 
+#[cfg(feature = "load")]
 impl<'de> serde::Deserialize<'de> for QueuedRow {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         Ok(QueuedRow(MaybeInteractReq::deserialize(d).unwrap_or_else(
@@ -476,12 +481,14 @@ impl<'de> serde::Deserialize<'de> for QueuedRow {
 
 /// Any value, as much of it as a log line names: a string's text, an
 /// object's string `op`, or the kind of anything else.
+#[cfg(feature = "load")]
 enum Shape {
     Str(String),
     Object(Option<String>),
     Other(&'static str),
 }
 
+#[cfg(feature = "load")]
 impl<'de> serde::Deserialize<'de> for Shape {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         struct V;

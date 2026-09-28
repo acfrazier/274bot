@@ -985,6 +985,36 @@ pub struct SelectedGameData {
 }
 
 impl SelectedGameData {
+    /// Body owned by M-296: no typed quest family is installed before its asset cutover.
+    pub fn prepare_quests(
+        &self,
+        _worker: &mut crate::selected::FamilyPreparation,
+    ) -> Result<Arc<crate::quest_facts::QuestCatalog>, crate::selected::FactError> {
+        Err(crate::selected::FactError::FamilyUnavailable(
+            crate::selected::FactKey::new("quests"),
+        ))
+    }
+
+    /// Body owned by M-306: no typed gathering family is installed before its asset cutover.
+    pub fn prepare_gathering(
+        &self,
+        _worker: &mut crate::selected::FamilyPreparation,
+    ) -> Result<Arc<crate::gather_methods::GatherCatalog>, crate::selected::FactError> {
+        Err(crate::selected::FactError::FamilyUnavailable(
+            crate::selected::FactKey::new("gathering"),
+        ))
+    }
+
+    /// Cache-only; M-296 installs the weak cache with the typed family.
+    pub fn try_quests(&self) -> Option<Arc<crate::quest_facts::QuestCatalog>> {
+        None
+    }
+
+    /// Cache-only; M-306 installs the weak cache with the typed family.
+    pub fn try_gathering(&self) -> Option<Arc<crate::gather_methods::GatherCatalog>> {
+        None
+    }
+
     fn decode(bytes: &[u8], expected_revision: ClientRevision) -> Result<Arc<Self>, String> {
         let mut data: Self = serde_json::from_slice(bytes)
             .map_err(|error| format!("generated game data decode: {error}"))?;

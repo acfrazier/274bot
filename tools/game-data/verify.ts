@@ -3,7 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { verifyCacheIdentity } from './cache-identity.ts';
-import { extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, gatherContentFiles, questIdentityContentFiles, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parsePack } from './generate.ts';
+import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, engineDirt } from './generate.ts';
+import { parsePack } from './extractors/common.ts';
+import { extractGatherMethodsFacts, extractGatherPlacementsFacts, gatherContentFiles } from './extractors/gathering.ts';
+import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { assertRs2b0tPinned, bankCatalogRust, contentDirt, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces } from './generate.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected: Record<number, { engine: string; content: string; engineRoot: string; contentRoot: string; cache: { cache_id: string; content_id: string; nav_sha256: string; flags_sha256: string } }> = {
@@ -66,7 +69,7 @@ for (const revision of [274, 289]) {
     const file = path.join(root, `crates/api/data/game-data/${revision}.json`); const payload = JSON.parse(fs.readFileSync(file, 'utf8')) as any; const pin = expected[revision]; const manifestRow = manifest.revisions.find((entry) => entry.revision === revision); if (!manifestRow) throw new Error(`${revision}: missing manifest row`);
     assertEqual(payload.schema_version, 4, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`); assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`); assertEqual(commit(pin.engineRoot), pin.engine, `${revision} live engine commit`); assertEqual(commit(pin.contentRoot), pin.content, `${revision} live content commit`);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
-    const sourcePaths = [...decoderSources, 'data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config']; const dirtyEngine = execFileSync('git', ['-C', pin.engineRoot, 'status', '--porcelain', '--untracked-files=all', '--', ...sourcePaths], { encoding: 'utf8' }).trim(); if (dirtyEngine) throw new Error(`${revision}: relevant engine inputs are dirty: ${dirtyEngine}`); const dirtyContent = contentDirt(pin.contentRoot); if (dirtyContent) throw new Error(`${revision}: relevant content inputs are dirty: ${dirtyContent}`);
+    const dirtyEngine = engineDirt(pin.engineRoot); if (dirtyEngine) throw new Error(`${revision}: relevant engine inputs are dirty: ${dirtyEngine}`); const dirtyContent = contentDirt(pin.contentRoot); if (dirtyContent) throw new Error(`${revision}: relevant content inputs are dirty: ${dirtyContent}`);
     assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: any) => input.path)), JSON.stringify(contentFiles), `${revision} complete content provenance`);
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
     const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
