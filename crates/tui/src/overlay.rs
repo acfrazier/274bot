@@ -185,11 +185,18 @@ impl Confirm {
                         format!("Log out all {n}: {names}"),
                         "They stay loaded, parked until Log in.".into(),
                     ],
-                    Command::ScriptStartAll => vec![
-                        format!("Start {scope} on their last successful script:"),
-                        names,
-                        "Members with no saved assignment are skipped.".into(),
-                    ],
+                    Command::ScriptStartAll => match app.script_sel.as_ref().filter(|_| *marked) {
+                        Some(sel) => vec![
+                            format!("Start {} on {scope}:", sel.label()),
+                            names,
+                            "Members that cannot start it are skipped with a reason.".into(),
+                        ],
+                        None => vec![
+                            format!("Start {scope} on their last successful script:"),
+                            names,
+                            "Members with no saved assignment are skipped.".into(),
+                        ],
+                    },
                     Command::ScriptStopAll => vec![
                         format!("Stop the scripts of {scope}:"),
                         names,
