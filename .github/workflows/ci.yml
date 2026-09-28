@@ -137,7 +137,7 @@ jobs:
             os: ubuntu-26.04
             free_disk: false
             cache_key: workspace
-            save_cache: false
+            save_cache: true
             command: "cargo test -p host-play --features memory-profile --tests"
     runs-on: ${{ matrix.os }}
     env:
