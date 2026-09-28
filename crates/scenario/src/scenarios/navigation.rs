@@ -1051,15 +1051,16 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
     }
 }
 
-/// South of brass-key hut door loc 1804 (Varrock / bank side). Packed
-/// crossing `(3115,3449,0) → (3115,3450,0)` dir N, item-req brass key 983.
-const BRASS_HUT_OUTSIDE: WorldTile = WorldTile {
+/// One tile south of packed 1804 `at` (3115,3449). A headed follow that
+/// teled onto the `at` refused `StaleTarget` with hops=0 while a continue
+/// dialog was still up.
+const BRASS_HUT_APPROACH: WorldTile = WorldTile {
     x: 3115,
-    z: 3449,
+    z: 3448,
     level: 0,
 };
 /// Inside the hut, ladder 1755's surface landing. North of 1804, so a
-/// follow from `BRASS_HUT_OUTSIDE` has to take the keyed door (not the
+/// follow from `BRASS_HUT_APPROACH` has to take the keyed door (not the
 /// cellar ladder).
 const BRASS_HUT_INSIDE: WorldTile = WorldTile {
     x: 3116,
@@ -1073,71 +1074,103 @@ const VARROCK_WEST_BANK: WorldTile = WorldTile {
     level: 0,
 };
 
+fn drain_brass_hut_continues(name: &'static str) -> Step {
+    Step {
+        name,
+        kind: StepKind::DrainDialogs { choice: 1 },
+        wait: Wait {
+            arm: Proof::NoActiveContinue,
+            budget_ticks: 60,
+        },
+    }
+}
+
 /// Native Traveller follow through brass-hut door loc 1804 in both
 /// directions: outside → hut interior (1804 N, into the dungeon hut),
 /// then hut → Varrock West bank (1804 S, back out). Does not Start a
 /// catalog card; hill_giant_bank's Strength-XP watch never reached this
 /// door on headed 289 because the isolate did not run Eat/SetAttackStyle.
 pub(crate) fn nav_brass_hut_scenario() -> Scenario {
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "clear the backpack and give the Brass key",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "give edgevilledungeonkey 1");
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ItemId {
+                id: BRASS_KEY_ID,
+                count: 1,
+            },
+            budget_ticks: 80,
+        },
+    });
+    steps.push(drain_brass_hut_continues(
+        "drain Inventory-wiped continue before the hut tele",
+    ));
+    steps.push(tele_step(
+        "tele one tile south of the brass-key hut door",
+        BRASS_HUT_APPROACH,
+    ));
+    steps.push(drain_brass_hut_continues(
+        "drain speed/tele continues before the inbound follow",
+    ));
+    steps.push(Step {
+        name: "follow north through loc 1804 into the hut",
+        kind: StepKind::Follow {
+            dest: BRASS_HUT_INSIDE,
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: BRASS_HUT_INSIDE.x,
+                z: BRASS_HUT_INSIDE.z,
+                level: BRASS_HUT_INSIDE.level,
+                radius: 2,
+            },
+            budget_ticks: 600,
+        },
+    });
+    steps.push(Step {
+        name: "shot inside the hut after the 1804 north hop",
+        kind: StepKind::Shot {
+            label: "nav_brass_hut_in",
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: BRASS_HUT_INSIDE.x,
+                z: BRASS_HUT_INSIDE.z,
+                level: BRASS_HUT_INSIDE.level,
+                radius: 2,
+            },
+            budget_ticks: 30,
+        },
+    });
+    steps.push(Step {
+        name: "follow south through loc 1804 out to Varrock West",
+        kind: StepKind::Follow {
+            dest: VARROCK_WEST_BANK,
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: VARROCK_WEST_BANK.x,
+                z: VARROCK_WEST_BANK.z,
+                level: VARROCK_WEST_BANK.level,
+                radius: 4,
+            },
+            budget_ticks: 600,
+        },
+    });
     Scenario {
         name: "nav_brass_hut",
         seed: Seed {
             profiles: vec![("test", "test")],
             mainland: true,
         },
-        steps: vec![
-            Step {
-                name: "clear the backpack and give the Brass key",
-                kind: StepKind::Perform {
-                    send: Box::new(|c, _| {
-                        cheat(c, "~clearinv");
-                        cheat(c, "give edgevilledungeonkey 1");
-                        true
-                    }),
-                },
-                wait: Wait {
-                    arm: Proof::ItemId {
-                        id: BRASS_KEY_ID,
-                        count: 1,
-                    },
-                    budget_ticks: 80,
-                },
-            },
-            tele_step(
-                "tele to the south side of the brass-key hut door",
-                BRASS_HUT_OUTSIDE,
-            ),
-            Step {
-                name: "follow north through loc 1804 into the hut",
-                kind: StepKind::Follow {
-                    dest: BRASS_HUT_INSIDE,
-                },
-                wait: Wait {
-                    arm: Proof::ArrivedNear {
-                        x: BRASS_HUT_INSIDE.x,
-                        z: BRASS_HUT_INSIDE.z,
-                        level: BRASS_HUT_INSIDE.level,
-                        radius: 2,
-                    },
-                    budget_ticks: 600,
-                },
-            },
-            Step {
-                name: "follow south through loc 1804 out to Varrock West",
-                kind: StepKind::Follow {
-                    dest: VARROCK_WEST_BANK,
-                },
-                wait: Wait {
-                    arm: Proof::ArrivedNear {
-                        x: VARROCK_WEST_BANK.x,
-                        z: VARROCK_WEST_BANK.z,
-                        level: VARROCK_WEST_BANK.level,
-                        radius: 4,
-                    },
-                    budget_ticks: 600,
-                },
-            },
-        ],
+        steps,
         proof: Proof::ArrivedNear {
             x: VARROCK_WEST_BANK.x,
             z: VARROCK_WEST_BANK.z,
