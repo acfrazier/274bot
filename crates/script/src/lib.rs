@@ -37,6 +37,7 @@ pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
 mod module_imports;
+/// Typed compiled-card contract; the existing slot's legacy trait is `ctx::Script`.
 pub mod native;
 pub mod params;
 pub mod quester;
@@ -50,7 +51,7 @@ pub mod slot;
 #[cfg(feature = "load")]
 pub mod watchdog;
 
-pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
+pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, ScriptCtx};
 #[cfg(feature = "load")]
 pub use duel::{duel_name, duel_partner_name};
 pub use identity::{
@@ -125,7 +126,6 @@ mod banking_open;
 #[cfg(feature = "load")]
 mod boat_fare;
 pub mod cake_stall;
-#[cfg(feature = "load")]
 pub mod clue;
 #[cfg(feature = "load")]
 mod cook_locations;
@@ -181,7 +181,6 @@ mod periodic_bank;
 mod prayer;
 #[cfg(feature = "load")]
 mod production;
-#[cfg(feature = "load")]
 pub mod quest_journal;
 #[cfg(feature = "load")]
 mod reach;

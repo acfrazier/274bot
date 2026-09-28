@@ -17,7 +17,9 @@ pub struct QuestCatalog {
 impl QuestCatalog {
     /// Body owned by M-296; typed family assets are not installed yet.
     pub fn quest(&self, _id: &str) -> Result<&QuestFacts, FactError> {
-        Err(FactError::FamilyUnavailable(FactKey::new("quests")))
+        Err(FactError::FamilyUnavailable(
+            crate::selected::QUESTS_FAMILY.clone(),
+        ))
     }
 
     /// Body owned by M-296; no transmission is inferred from an absent program.
@@ -71,6 +73,7 @@ pub struct StartLocation {
 #[serde(deny_unknown_fields)]
 pub struct StageFacts {
     pub id: FactKey,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     pub role: Option<FactKey>,
     pub terminal: bool,
     pub signals: Arc<[SignalRange]>,

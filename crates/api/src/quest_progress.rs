@@ -15,8 +15,7 @@ impl EvidenceStamp {
     /// observations; ordinary later ticks do not invalidate an older proof.
     pub fn meets(self, required_after: Self) -> bool {
         self.run == required_after.run
-            && self.tick >= required_after.tick
-            && self.sequence >= required_after.sequence
+            && (self.tick, self.sequence) >= (required_after.tick, required_after.sequence)
     }
 }
 
@@ -65,7 +64,11 @@ mod tests {
 
     #[test]
     fn reconnect_and_causal_changes_invalidate_but_idle_ticks_do_not() {
-        let run = RunKey::allocate().unwrap();
+        let run = RunKey {
+            slot: 7,
+            run: 1,
+            session: 1,
+        };
         let proof = EvidenceStamp {
             run,
             tick: 10,
@@ -77,6 +80,28 @@ mod tests {
             sequence: 1,
             ..proof
         }));
+        assert!(EvidenceStamp {
+            tick: 11,
+            sequence: 1,
+            ..proof
+        }
+        .meets(proof));
+        assert!(!EvidenceStamp {
+            sequence: 19,
+            ..proof
+        }
+        .meets(proof));
+        assert!(!EvidenceStamp {
+            tick: 9,
+            sequence: 99,
+            ..proof
+        }
+        .meets(proof));
+        assert!(!EvidenceStamp {
+            run: RunKey { slot: 8, ..run },
+            ..proof
+        }
+        .meets(proof));
         assert!(!proof.meets(EvidenceStamp {
             sequence: 21,
             ..proof

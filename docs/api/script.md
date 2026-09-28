@@ -8,7 +8,7 @@ JS ↔ Rust isolate wire is **FlatBuffers** — there is no extra JSON host wire
 and no foreign JS policy runtime in-tree.
 
 WalkTo is **host nav** (panel picker / TUI map), not a script card.
-`Script::on_random` is a rising-edge knock (`RandomClaim::Host` default).
+`ctx::Script::on_random` is a rising-edge knock (`RandomClaim::Host` default).
 Catalog cards come from an external `$RS2B0T` / `--catalog` checkout
 (upstream `rs2b2t/rs2b0t` layout: `src/bot/scripts`), not a copy in this
 tree. `$RS2B0T` wins over the persisted root (`~/.274bot/rs2b0t-path`,
@@ -18,6 +18,28 @@ world the bound **server profile** logged into (see [README.md](../../README.md)
 Compatibility is **partial**. Unsupported helpers and options fail
 explicitly. Do not treat runner PASS, a single live gold, or a historical
 inventory count as “all catalog scripts / all options qualified.”
+
+## Native contract boundary
+
+New compiled-card consumers use `script::native::Script`. The currently
+installed registry and slot use `script::ctx::Script` until their lifecycle
+cutover; there is no ambiguous crate-root `Script` re-export.
+
+`native::ActionContext` exposes borrowed frame/evidence/pin/recovery views,
+and `quest_journal::{JournalRequest, JournalMachine}` and `clue::ClueRecovery`
+are available without `load`. These declarations do not install a native
+action facility: begins/polls refuse with `ActionError::Unavailable`, and no
+public constructor can mint a frame, handle or quiet lease. Isolate lifecycle
+hooks remain crate-private and behind `load`.
+
+Selected fact strings can be shared with a decode-local `api::selected::FactStrings`;
+drop the interner after preparation and let the family-held Arcs own their
+lifetimes. `FactKey::new` has no global intern pool. `RunKey.slot` comes from
+Play's worker lifetime owner, not a second allocator. Evidence freshness
+compares `(tick, sequence)` lexicographically within that exact run/session.
+Authorize quest gates through `QuestCatalog::test_gate`, not raw numeric
+signal ranges. Fact-record optional fields require explicit `null` when no
+value applies; omission is not proof of no requirement.
 
 ## Two runners
 

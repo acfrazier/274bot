@@ -186,7 +186,7 @@ impl Play {
     #[cfg(test)]
     pub(crate) fn mark_script_running_for_walk(&self, name: &str) {
         struct Dummy;
-        impl script::Script for Dummy {
+        impl script::ctx::Script for Dummy {
             fn name(&self) -> &str {
                 "walk-exclude"
             }

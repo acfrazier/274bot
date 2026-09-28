@@ -17,7 +17,9 @@ pub struct GatherCatalog {
 impl GatherCatalog {
     /// Body owned by M-306; typed family assets are not installed yet.
     pub fn method(&self, _id: &str) -> Result<&GatherMethod, FactError> {
-        Err(FactError::FamilyUnavailable(FactKey::new("gathering")))
+        Err(FactError::FamilyUnavailable(
+            crate::selected::GATHERING_FAMILY.clone(),
+        ))
     }
 
     /// Body owned by M-306; unavailable coverage is not an empty iterator.
@@ -26,9 +28,9 @@ impl GatherCatalog {
         _method: &GatherMethod,
         _region: &SceneRegionInput,
     ) -> Result<impl Iterator<Item = &'a GatherSpot>, FactError> {
-        Err::<std::iter::Empty<&'a GatherSpot>, _>(FactError::FamilyUnavailable(FactKey::new(
-            "gathering",
-        )))
+        Err::<std::iter::Empty<&'a GatherSpot>, _>(FactError::FamilyUnavailable(
+            crate::selected::GATHERING_FAMILY.clone(),
+        ))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,7 +59,9 @@ pub struct GatherTarget {
 #[serde(deny_unknown_fields)]
 pub struct ToolUse {
     pub item: i32,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     pub use_gate: Option<SkillMinimum>,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     pub wield_gate: Option<SkillMinimum>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -295,7 +295,7 @@ const PIECE_INDEX_FIVE: i32 = 2751;
 const PIECE_NO_OPS: i32 = 2752;
 struct QueueMove;
 
-impl script::Script for QueueMove {
+impl script::ctx::Script for QueueMove {
     fn name(&self) -> &str {
         "queue-move"
     }

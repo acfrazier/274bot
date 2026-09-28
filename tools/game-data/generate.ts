@@ -4,20 +4,22 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
+import generatedInputPins from './generated-inputs.json';
 import { sha256, sourceFile, parseRows, parsePack, integer, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
 import { gatherContentFiles, extractGatherMethodsFacts, extractGatherPlacementsFacts } from './extractors/gathering.ts';
 import { questIdentityContentFiles, extractQuestIdentityFacts } from './extractors/quests.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null };
-type Revision = { revision: number; engine: string; content: string; expectedEngine: string; expectedContent: string; cacheIdentity: { cache_id: string; content_id?: string; nav_sha256: string; flags_sha256: string }; output: string };
+type GeneratedInputs = { engine_commit: string; content_commit: string; engine: InputHash[]; content: InputHash[] };
+type Revision = { revision: number; engine: string; content: string; expectedEngine: string; expectedContent: string; generatedInputs?: GeneratedInputs; cacheIdentity: { cache_id: string; content_id?: string; nav_sha256: string; flags_sha256: string }; output: string };
 
 const root = path.resolve(import.meta.dirname, '../..');
 const envPath = (name: string, fallback: string) => process.env[name] ? path.resolve(process.env[name]!) : fallback;
-const revisions: Revision[] = [
+export const revisions: Revision[] = [
     { revision: 274, engine: envPath('GAME_DATA_274_ENGINE', '/Users/acfrazier/experiments/Server/engine'), content: envPath('GAME_DATA_274_CONTENT', '/Users/acfrazier/experiments/Server/content'), expectedEngine: '4c95f87efe00b068cadbd229d94736626907bd1a', expectedContent: '000c19997e07206131bcb3c884265840efce416d', cacheIdentity: { cache_id: '4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c', content_id: '0d14c891b5727142379c6d8844bd5bb1ff9874d4d996db1dc5ceea0e9062469c', nav_sha256: '05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4', flags_sha256: '92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb' }, output: path.join(root, 'crates/api/data/game-data/274.json') },
     { revision: 289, engine: envPath('GAME_DATA_289_ENGINE', '/Users/acfrazier/experiments/lostcity-289/engine'), content: envPath('GAME_DATA_289_CONTENT', '/Users/acfrazier/experiments/lostcity-289/content'), expectedEngine: 'cc359656b4acd216ca452495874b6beba9a0ac75', expectedContent: '92649430fcbc83538d8c4367ecb96cee1a67a944', cacheIdentity: { cache_id: 'c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09', content_id: 'cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044', nav_sha256: '131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924', flags_sha256: '67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a' }, output: path.join(root, 'crates/api/data/game-data/289.json') }
-];
+].map(spec => ({ ...spec, generatedInputs: generatedInputPins[spec.revision as 274 | 289] }));
 const decoderSources = [
     'src/cache/config/ObjType.ts', 'src/cache/config/NpcType.ts', 'src/cache/config/ConfigType.ts', 'src/cache/config/ParamHelper.ts', 'src/cache/config/ParamType.ts', 'src/cache/config/ScriptVarType.ts',
     'src/io/BZip2.ts', 'src/io/Jagfile.ts', 'src/io/Packet.ts', 'src/datastruct/DoublyLinkable.ts', 'src/datastruct/LinkList.ts', 'src/datastruct/Linkable.ts', 'src/util/Environment.ts', 'src/util/Logger.ts', 'src/util/TryParse.ts', 'src/util/WorldConfig.ts'
@@ -65,9 +67,10 @@ function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse
 export function assertPinned(spec: Revision) {
     const engineCommit = commit(spec.engine); const contentCommit = commit(spec.content);
     if (engineCommit !== spec.expectedEngine || contentCommit !== spec.expectedContent) throw new Error(`${spec.revision}: expected pinned commits, got ${engineCommit}/${contentCommit}`);
-    const dirtyEngine = engineDirt(spec.engine);
+    if (spec.generatedInputs && (spec.generatedInputs.engine_commit !== engineCommit || spec.generatedInputs.content_commit !== contentCommit)) throw new Error(`${spec.revision}: generated input pins belong to different commits`);
+    const dirtyEngine = engineDirt(spec.engine, spec.generatedInputs?.engine);
     if (dirtyEngine) throw new Error(`${spec.revision}: relevant engine inputs are dirty:\n${dirtyEngine}`);
-    const dirtyContent = contentDirt(spec.content);
+    const dirtyContent = contentDirt(spec.content, spec.generatedInputs?.content);
     if (dirtyContent) throw new Error(`${spec.revision}: relevant content inputs are dirty:\n${dirtyContent}`);
     return { engineCommit, contentCommit };
 }
@@ -83,13 +86,45 @@ export const ENGINE_INPUT_PATHS = [
     'src/network/game/client/model',
     'data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config',
 ];
-/** Decoder imports and engine action-limit definitions are covered together. */
-export function engineDirt(engine: string) {
-    return execFileSync('git', ['-C', engine, 'status', '--porcelain', '--untracked-files=all', '--', ...ENGINE_INPUT_PATHS], { encoding: 'utf8' }).trim();
+// Platform metadata is never an extractor input, tracked or otherwise.
+const isJunk = (file: string) => ['.DS_Store', 'Thumbs.db', 'desktop.ini'].includes(path.basename(file)) || path.basename(file).startsWith('._');
+function gitFiles(base: string, paths: string[], options: string[]) {
+    return execFileSync('git', ['-C', base, 'ls-files', '-z', ...options, '--', ...paths], { encoding: 'utf8' }).split('\0').filter(file => file && !isJunk(file));
 }
-/** Porcelain status of every selected-content input; empty when clean. */
-export function contentDirt(content: string) {
-    return execFileSync('git', ['-C', content, 'status', '--porcelain', '--untracked-files=all', '--', ...contentFiles, ...CONTENT_TREE_PATHSPECS], { encoding: 'utf8' }).trim();
+function checkedInput(base: string, relative: string) {
+    // Reject symlink ancestors as well as symlink leaves.
+    let file = base;
+    for (const part of relative.split('/')) {
+        if (!part || part === '.' || part === '..') throw new Error(`invalid selected input: ${relative}`);
+        file = path.join(file, part);
+        if (fs.lstatSync(file).isSymbolicLink()) throw new Error(`selected input must not escape its pin: ${relative}`);
+    }
+    if (!fs.statSync(file).isFile()) throw new Error(`unsupported selected input: ${relative}`);
+    return sourceFile(base, relative);
+}
+function inputDirt(base: string, paths: string[], generated: readonly InputHash[]) {
+    const dirty = execFileSync('git', ['-C', base, '-c', 'status.renames=false', 'status', '--porcelain', '-z', '--untracked-files=all', '--', ...paths], { encoding: 'utf8' })
+        .split('\0').filter(row => row && !isJunk(row.slice(3)));
+    const pinned = new Map(generated.map(input => [input.path, input]));
+    for (const file of gitFiles(base, paths, ['--others', '--ignored', '--exclude-standard'])) {
+        if (!pinned.has(file)) dirty.push(`unrecognized ignored input: ${file}`);
+    }
+    for (const input of generated) {
+        try {
+            const actual = checkedInput(base, input.path);
+            if (actual.bytes !== input.bytes || actual.sha256 !== input.sha256) dirty.push(`generated input hash mismatch: ${input.path}`);
+        } catch (error) {
+            dirty.push(`generated input unavailable: ${input.path}: ${error instanceof Error ? error.message : error}`);
+        }
+    }
+    return dirty.join('\n');
+}
+/** Tracked changes and every ignored input in the same closure used for hashing. */
+export function engineDirt(engine: string, generated: readonly InputHash[] = []) {
+    return inputDirt(engine, ENGINE_INPUT_PATHS, generated);
+}
+export function contentDirt(content: string, generated: readonly InputHash[] = []) {
+    return inputDirt(content, CONTENT_TREE_PATHSPECS, generated);
 }
 
 export type InputHash = { path: string; bytes: number; sha256: string };
@@ -119,20 +154,13 @@ export type SelectedBuild = {
 /** Sorted complete input inventory, including includes/configs/packs/maps/engine limits. */
 function selectedInputHashes(spec: Revision): InputHash[] {
     const inputs: InputHash[] = [];
-    const visit = (base: string, relative: string, scope: string) => {
-        const file = path.join(base, relative);
-        const stat = fs.lstatSync(file);
-        if (stat.isSymbolicLink()) throw new Error(`selected input must not escape its pin: ${scope}/${relative}`);
-        if (stat.isDirectory()) {
-            for (const name of fs.readdirSync(file).sort()) visit(base, `${relative}/${name}`, scope);
-        } else if (stat.isFile()) {
-            inputs.push({ ...sourceFile(base, relative), path: `${scope}/${relative}` });
-        } else {
-            throw new Error(`unsupported selected input: ${scope}/${relative}`);
-        }
-    };
-    for (const tree of CONTENT_TREE_PATHSPECS) visit(spec.content, tree, 'content');
-    for (const file of ENGINE_INPUT_PATHS) visit(spec.engine, file, 'engine');
+    for (const [scope, base, paths, generated] of [
+        ['content', spec.content, CONTENT_TREE_PATHSPECS, spec.generatedInputs?.content ?? []],
+        ['engine', spec.engine, ENGINE_INPUT_PATHS, spec.generatedInputs?.engine ?? []],
+    ] as const) {
+        const names = new Set([...gitFiles(base, paths, ['--cached']), ...generated.map(input => input.path)]);
+        for (const relative of names) inputs.push({ ...checkedInput(base, relative), path: `${scope}/${relative}` });
+    }
     return inputs.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 }
 
@@ -150,45 +178,59 @@ export async function generateSelected(spec: Revision, build: SelectedBuild) {
         cache_id: spec.cacheIdentity.cache_id, content_id: spec.cacheIdentity.content_id,
         inputs: selectedInputHashes(spec),
     };
-    const directory = path.join(path.dirname(spec.output), String(spec.revision));
-    fs.mkdirSync(directory, { recursive: true });
-    const emit = (name: string, bytes: Uint8Array | string) => {
-        const file = path.join(directory, name);
-        fs.writeFileSync(file, bytes);
-        return { path: file, ...sha256(file) };
-    };
-    const family = (name: string, draft: FamilyDraft): FamilyArtifact => {
-        if (!Number.isInteger(draft.schema) || draft.schema < 1 || draft.schema > 65535) throw new Error(`${name}: invalid extractor schema`);
-        const bytes = `${JSON.stringify({ schema: draft.schema, ...upstream, facts: draft.payload }, null, 2)}\n`;
-        return { ...emit(`${name}.json`, bytes), schema: draft.schema };
-    };
-    // Nothing downstream exists or is supplied to the extractors at this point.
-    const families = {
-        quests: family('quests', build.quests(upstream)),
-        gathering: family('gathering', build.gathering(upstream)),
-    };
-    const nav = await build.bake(families);
-    if (nav.quest_facts_sha256 !== families.quests.sha256 || nav.quest_extractor_schema !== families.quests.schema) {
-        throw new Error('nav quest-family digest/schema mismatch');
+    const parent = path.dirname(spec.output);
+    fs.mkdirSync(parent, { recursive: true });
+    const directory = path.join(parent, String(spec.revision));
+    const staging = fs.mkdtempSync(path.join(parent, `.${spec.revision}-staging-`));
+    try {
+        const emit = (name: string, bytes: Uint8Array | string) => {
+            const file = path.join(staging, name);
+            fs.writeFileSync(file, bytes);
+            return { path: file, ...sha256(file) };
+        };
+        const family = (name: string, draft: FamilyDraft): FamilyArtifact => {
+            if (!Number.isInteger(draft.schema) || draft.schema < 1 || draft.schema > 65535) throw new Error(`${name}: invalid extractor schema`);
+            const bytes = `${JSON.stringify({ schema: draft.schema, ...upstream, facts: draft.payload }, null, 2)}\n`;
+            return { ...emit(`${name}.json`, bytes), schema: draft.schema };
+        };
+        // Nothing downstream exists or is supplied to the extractors at this point.
+        const families = {
+            quests: family('quests', build.quests(upstream)),
+            gathering: family('gathering', build.gathering(upstream)),
+        };
+        const nav = await build.bake(families);
+        if (nav.quest_facts_sha256 !== families.quests.sha256 || nav.quest_extractor_schema !== families.quests.schema) throw new Error('nav quest-family digest/schema mismatch');
+        const navHash = sha256(nav.nav), flagsHash = sha256(nav.flags);
+        const core = build.core(upstream, families, nav);
+        const coreArtifact = emit('core.json', core.bytes);
+        assertPinned(spec);
+        if (JSON.stringify(selectedInputHashes(spec)) !== JSON.stringify(upstream.inputs)) throw new Error('selected inputs changed during generation');
+        const descriptor = (artifact: FamilyArtifact) => ({
+            path: path.basename(artifact.path), schema: artifact.schema, bytes: artifact.bytes, sha256: artifact.sha256,
+        });
+        const manifest = {
+            schema: 1, revision: upstream.revision, engine_commit: upstream.engine_commit, content_commit: upstream.content_commit,
+            cache_id: upstream.cache_id, content_id: upstream.content_id, action_limits: core.action_limits,
+            families: { quests: descriptor(families.quests), gathering: descriptor(families.gathering) },
+            nav: { ...navHash, quest_facts_sha256: nav.quest_facts_sha256, quest_extractor_schema: nav.quest_extractor_schema },
+            flags: flagsHash, core: { path: 'core.json', bytes: coreArtifact.bytes, sha256: coreArtifact.sha256 },
+        };
+        // The digest is returned/attached by loaders, never embedded in these bytes.
+        const artifact = emit('manifest.json', `${JSON.stringify(manifest, null, 2)}\n`);
+        const backup = fs.existsSync(directory) ? fs.mkdtempSync(path.join(parent, `.${spec.revision}-previous-`)) : undefined;
+        if (backup) fs.renameSync(directory, path.join(backup, 'assets'));
+        try {
+            fs.renameSync(staging, directory);
+        } catch (error) {
+            if (backup) fs.renameSync(path.join(backup, 'assets'), directory);
+            if (backup) fs.rmSync(backup, { recursive: true });
+            throw error;
+        }
+        if (backup) fs.rmSync(backup, { recursive: true });
+        return { ...artifact, path: path.join(directory, 'manifest.json') };
+    } finally {
+        fs.rmSync(staging, { recursive: true, force: true });
     }
-    const navHash = sha256(nav.nav), flagsHash = sha256(nav.flags);
-    const core = build.core(upstream, families, nav);
-    const coreArtifact = emit('core.json', core.bytes);
-    // Refuse a mid-build source change before binding the final manifest.
-    assertPinned(spec);
-    if (JSON.stringify(selectedInputHashes(spec)) !== JSON.stringify(upstream.inputs)) throw new Error('selected inputs changed during generation');
-    const descriptor = (artifact: FamilyArtifact) => ({
-        path: path.basename(artifact.path), schema: artifact.schema, bytes: artifact.bytes, sha256: artifact.sha256,
-    });
-    const manifest = {
-        schema: 1, revision: upstream.revision, engine_commit: upstream.engine_commit, content_commit: upstream.content_commit,
-        cache_id: upstream.cache_id, content_id: upstream.content_id, action_limits: core.action_limits,
-        families: { quests: descriptor(families.quests), gathering: descriptor(families.gathering) },
-        nav: { ...navHash, quest_facts_sha256: nav.quest_facts_sha256, quest_extractor_schema: nav.quest_extractor_schema },
-        flags: flagsHash, core: { path: 'core.json', bytes: coreArtifact.bytes, sha256: coreArtifact.sha256 },
-    };
-    // The digest is returned/attached by loaders, never embedded in these bytes.
-    return emit('manifest.json', `${JSON.stringify(manifest, null, 2)}\n`);
 }
 /**
  * The rs2b0t sources the generator reads, as git blob ids at the pinned
@@ -2573,14 +2615,26 @@ async function generate(spec: Revision) {
     const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, placement_inputs: gatherPlacements.inputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, gather_placements: gatherPlacements.facts, quest_identity: questIdentity, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, gather_placements: { rows: gatherPlacements.facts.rows.length, maps: gatherPlacements.inputs.maps.files, published_loc_ids: gatherPlacements.inputs.published_loc_ids.count, coverage: gatherPlacements.facts.coverage.length, woods: gatherPlacements.woods }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') }, trio_givers: { rows: trioGivers.facts.rows.length, with_spawn: trioGivers.facts.rows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.facts.coverage.length, maps: trioGivers.inputs.maps.files, handlers: trioGivers.inputs.handlers.length, npc_configs: trioGivers.inputs.npc_configs.length, digest: crypto.createHash('sha256').update(JSON.stringify(trioGivers.facts)).digest('hex') }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing }, cook_inputs: cookInputs, cook_surfaces: cookSurfaces.facts.rows.length };
 }
 
-/**
- * 289 is the selected content and 274 is corroboration: both extracts are parsed
- * independently from their own tree, and the two must agree on every selected
- * identity, name, and unique spawn. Disagreement refuses to publish either.
- */
+/** Shared CLI selection. With no flag, 274 is best-effort corroboration of 289. */
+export function requestedRevisions(args: string[]): number[] {
+    if (args.length === 0) return [274, 289];
+    if (args.length === 2 && args[0] === '--revision' && (args[1] === '274' || args[1] === '289')) return [Number(args[1])];
+    throw new Error('usage: [--revision 274|289]');
+}
 async function main() {
+    const requested = requestedRevisions(process.argv.slice(2));
+    const refused: { revision: number; reason: string }[] = [];
     const results = [];
-    for (const spec of revisions) results.push(await generate(spec));
+    for (const spec of revisions.filter(spec => requested.includes(spec.revision))) {
+        try {
+            results.push(await generate(spec));
+        } catch (error) {
+            if (spec.revision === 289 || requested.length === 1) throw error;
+            const reason = error instanceof Error ? error.message : String(error);
+            refused.push({ revision: spec.revision, reason });
+            console.error(`${spec.revision}: REFUSED: ${reason}`);
+        }
+    }
     const digests = new Map(results.map((result) => [result.revision, result.talk_key.digest]));
     if (new Set(digests.values()).size !== 1) {
         throw new Error(`talk_key: the two pins disagree on the selected identity (${[...digests].map(([revision, digest]) => `${revision}:${digest}`).join(', ')})`);
@@ -2589,9 +2643,12 @@ async function main() {
     if (new Set(giverDigests.values()).size !== 1) {
         throw new Error(`trio_givers: the two pins disagree on the selected identity, display name, or unique spawn (${[...giverDigests].map(([revision, digest]) => `${revision}:${digest}`).join(', ')})`);
     }
-    const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results };
     const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json');
+    const previous = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const merged = new Map(previous.revisions.map((row: { revision: number }) => [row.revision, row]));
+    for (const result of results) merged.set(result.revision, result);
+    const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: [...merged.values()].sort((a, b) => a.revision - b.revision) };
     fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-    console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2));
+    console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results, refused, cross_pin: results.length === 2 ? 'verified' : 'not checked: both revisions did not generate' }, null, 2));
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });

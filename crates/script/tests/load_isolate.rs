@@ -2182,7 +2182,7 @@ fn slot_start_load_refuses_while_active() {
 #[test]
 fn slot_load_and_compiled_are_xor() {
     struct Noop;
-    impl script::Script for Noop {
+    impl script::ctx::Script for Noop {
         fn name(&self) -> &str {
             "noop"
         }

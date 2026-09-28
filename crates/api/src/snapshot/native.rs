@@ -15,6 +15,7 @@ pub struct JournalModalView<'a> {
 }
 
 /// A host-created frame borrow; no public constructor can invent readiness.
+#[derive(Clone, Copy)]
 pub struct SnapshotView<'a> {
     _snapshot: &'a GameSnapshot,
 }

@@ -11379,7 +11379,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
 #[derive(Default)]
 struct TickCounter(Arc<Mutex<u32>>);
 
-impl script::Script for TickCounter {
+impl script::ctx::Script for TickCounter {
     fn name(&self) -> &str {
         "TickCounter"
     }
@@ -12218,7 +12218,7 @@ fn script_observe_drains_queued_cheat_onto_driver() {
 #[derive(Default)]
 struct InvProbe(Arc<Mutex<Option<(bool, bool, bool)>>>);
 
-impl script::Script for InvProbe {
+impl script::ctx::Script for InvProbe {
     fn name(&self) -> &str {
         "InvProbe"
     }
@@ -12293,7 +12293,7 @@ type SnapProbeSeen = Option<(bool, Option<i32>)>;
 #[derive(Default)]
 struct SnapProbe(Arc<Mutex<SnapProbeSeen>>);
 
-impl script::Script for SnapProbe {
+impl script::ctx::Script for SnapProbe {
     fn name(&self) -> &str {
         "SnapProbe"
     }
@@ -17073,7 +17073,7 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
 /// itself (the Task 5 `Handle` override).
 struct ClaimHandle(Arc<Mutex<u32>>);
 
-impl script::Script for ClaimHandle {
+impl script::ctx::Script for ClaimHandle {
     fn name(&self) -> &str {
         "ClaimHandle"
     }
@@ -17138,7 +17138,7 @@ fn knock_reaches_peer_slot_while_other_slot_lock_held() {
     use api::random::{DetectedRandom, RandomKind};
 
     struct ClaimHandle;
-    impl script::Script for ClaimHandle {
+    impl script::ctx::Script for ClaimHandle {
         fn name(&self) -> &str {
             "claim-handle"
         }
@@ -17335,7 +17335,7 @@ fn after_genie_gone_lamp_auto_off_in_inv_detects_without_hold() {
 /// records what `ctx.walk` returned.
 struct WalkProbe(Arc<Mutex<Option<bool>>>, Arc<Mutex<(i32, i32, i32)>>);
 
-impl script::Script for WalkProbe {
+impl script::ctx::Script for WalkProbe {
     fn name(&self) -> &str {
         "WalkProbe"
     }

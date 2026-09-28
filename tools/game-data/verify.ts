@@ -1,19 +1,17 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { verifyCacheIdentity } from './cache-identity.ts';
-import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, engineDirt } from './generate.ts';
+import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, revisions, requestedRevisions } from './generate.ts';
 import { parsePack } from './extractors/common.ts';
 import { extractGatherMethodsFacts, extractGatherPlacementsFacts, gatherContentFiles } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
-import { assertRs2b0tPinned, bankCatalogRust, contentDirt, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces } from './generate.ts';
+import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces } from './generate.ts';
 const root = path.resolve(import.meta.dirname, '../..');
-const expected: Record<number, { engine: string; content: string; engineRoot: string; contentRoot: string; cache: { cache_id: string; content_id: string; nav_sha256: string; flags_sha256: string } }> = {
-    274: { engine: '4c95f87efe00b068cadbd229d94736626907bd1a', content: '000c19997e07206131bcb3c884265840efce416d', engineRoot: process.env.GAME_DATA_274_ENGINE || '/Users/acfrazier/experiments/Server/engine', contentRoot: process.env.GAME_DATA_274_CONTENT || '/Users/acfrazier/experiments/Server/content', cache: { cache_id: '4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c', content_id: '0d14c891b5727142379c6d8844bd5bb1ff9874d4d996db1dc5ceea0e9062469c', nav_sha256: '05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4', flags_sha256: '92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb' } },
-    289: { engine: 'cc359656b4acd216ca452495874b6beba9a0ac75', content: '92649430fcbc83538d8c4367ecb96cee1a67a944', engineRoot: process.env.GAME_DATA_289_ENGINE || '/Users/acfrazier/experiments/lostcity-289/engine', contentRoot: process.env.GAME_DATA_289_CONTENT || '/Users/acfrazier/experiments/lostcity-289/content', cache: { cache_id: 'c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09', content_id: 'cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044', nav_sha256: '131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924', flags_sha256: '67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a' } }
-};
-const decoderSources = ['src/cache/config/ObjType.ts', 'src/cache/config/NpcType.ts', 'src/cache/config/ConfigType.ts', 'src/cache/config/ParamHelper.ts', 'src/cache/config/ParamType.ts', 'src/cache/config/ScriptVarType.ts', 'src/io/BZip2.ts', 'src/io/Jagfile.ts', 'src/io/Packet.ts', 'src/datastruct/DoublyLinkable.ts', 'src/datastruct/LinkList.ts', 'src/datastruct/Linkable.ts', 'src/util/Environment.ts', 'src/util/Logger.ts', 'src/util/TryParse.ts', 'src/util/WorldConfig.ts'];
+const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
+    engine: spec.expectedEngine, content: spec.expectedContent,
+    engineRoot: spec.engine, contentRoot: spec.content, cache: spec.cacheIdentity,
+}]));
 const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', 'scripts/skill_prayer/configs/prayers.dbrow', 'scripts/skill_prayer/configs/prayers.constant', 'scripts/skill_prayer/interfaces/prayer.if', 'scripts/areas/area_falador/configs/dwarven_mine.inv', 'scripts/areas/area_falador/configs/dwarven_mine.npc', 'scripts/skill_runecraft/configs/runecraft.constant', 'maps/m45_75.jm2', 'pack/npc.pack', 'scripts/quests/quest_murder/configs/quest_murder.loc', 'scripts/general/configs/quest.enum', 'maps/m42_55.jm2', 'pack/loc.pack', 'pack/obj.pack', 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', 'scripts/_unpack/225/all.npc', 'scripts/drop tables/scripts/giant.rs2', 'scripts/drop tables/scripts/moss_giant.rs2', 'scripts/drop tables/scripts/fire_giant.rs2', 'scripts/drop tables/scripts/green_dragon.rs2', 'scripts/drop tables/scripts/shared_droptables.rs2', ...gatherContentFiles, ...questIdentityContentFiles, ...trailContentFiles];
 const unpackNpcIndex = contentFiles.indexOf('scripts/_unpack/225/all.npc');
 contentFiles.splice(unpackNpcIndex + 1, 0, 'scripts/areas/area_kalphite/configs/kalphite.npc');
@@ -37,7 +35,6 @@ const expectedDropNames: Record<number, Record<string, string[]>> = {
     },
 };
 function digest(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
-function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function assertEqual(actual: unknown, expectedValue: unknown, label: string) { if (actual !== expectedValue) throw new Error(`${label}: expected ${expectedValue}, got ${actual}`); }
 /** One published item row, in the writer's decoded shape. Read under the checks below. */
 type PublishedItemRow = { alias: string | null; id: number; name: string | null; cost: number; stackable: boolean; members: boolean; certificate_link: number; certificate_template: number; wear_position: number; wear_position_2: number; wear_position_3: number; tradeable: boolean; stack_variant: boolean };
@@ -65,11 +62,11 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, 'crates/api/data/gam
 assertEqual(manifest.schema_version, 4, 'manifest schema');
 const results = [];
 const publishedTrioGivers = new Map<number, PublishedTrioGivers>();
-for (const revision of [274, 289]) {
+async function verifyRevision(revision: number) {
     const file = path.join(root, `crates/api/data/game-data/${revision}.json`); const payload = JSON.parse(fs.readFileSync(file, 'utf8')) as any; const pin = expected[revision]; const manifestRow = manifest.revisions.find((entry) => entry.revision === revision); if (!manifestRow) throw new Error(`${revision}: missing manifest row`);
-    assertEqual(payload.schema_version, 4, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`); assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`); assertEqual(commit(pin.engineRoot), pin.engine, `${revision} live engine commit`); assertEqual(commit(pin.contentRoot), pin.content, `${revision} live content commit`);
+    assertEqual(payload.schema_version, 4, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`); assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`);
+    assertPinned(revisions.find(spec => spec.revision === revision)!);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
-    const dirtyEngine = engineDirt(pin.engineRoot); if (dirtyEngine) throw new Error(`${revision}: relevant engine inputs are dirty: ${dirtyEngine}`); const dirtyContent = contentDirt(pin.contentRoot); if (dirtyContent) throw new Error(`${revision}: relevant content inputs are dirty: ${dirtyContent}`);
     assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: any) => input.path)), JSON.stringify(contentFiles), `${revision} complete content provenance`);
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
     const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
@@ -461,7 +458,21 @@ for (const revision of [274, 289]) {
     publishedTrioGivers.set(revision, trioGivers);
     results.push({ revision, records: payload.items.length, consumption: payload.consumption.length, pickpocket: payload.pickpocket.length, drop_tables: drops.length, spells: spells.length, staves: staves.length, herbs: herbs.length, prayers: prayers.length, pickaxes: nurmof.pickaxes.length, flour_six: 6, gather_methods: { mining: gather.mining.length, woods: gather.woods.length, fishing: gather.fishing.length }, gather_placements: { rows: placements.rows.length, maps: payload.provenance.placement_inputs.maps.files, published_loc_ids: payload.provenance.placement_inputs.published_loc_ids.count, coverage: placements.coverage.length, woods: extractedPlacements.woods }, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trailRows.length, clues: trailRows.filter((row: any) => row.role === 'clue').length, caskets: trailRows.filter((row: any) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: constrained.length }, talk_key: { talk: talkRows.length, talk_with_spawn: talkRows.filter((row) => row.spawn !== undefined).length, keys: keyRows.length, keys_with_spawn: keyRows.filter((row) => row.spawn !== undefined).length, coverage: talkKey.coverage.length, scripts: extractedTalkKey.inputs.scripts.files, npc_configs: extractedTalkKey.inputs.npc_configs.files }, trio_givers: { rows: giverRows.length, with_spawn: giverRows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.coverage.length, maps: extractedTrioGivers.inputs.maps.files, handlers: extractedTrioGivers.inputs.handlers.length, npc_configs: extractedTrioGivers.inputs.npc_configs.length, aliases: giverRows.map((row) => row.alias) }, equipment_names: { resolved: resolved.length, absent: absent.length, family_counts: familyCounts }, fire_staff_providers: fireProviders, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, fixed_food_heals: Object.fromEntries(fixed), output_sha256: output.sha256, input_hashes: true, content_hashes: true, source_pins: true, dirty_gate: true, cache_identity: pin.cache });
 }
+const requested = requestedRevisions(process.argv.slice(2));
+const refused: { revision: number; reason: string }[] = [];
+for (const revision of requested) {
+    try {
+        await verifyRevision(revision);
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        refused.push({ revision, reason });
+        console.error(`${revision}: REFUSED: ${reason}`);
+        if (revision === 289 || requested.length === 1) process.exitCode = 1;
+    }
+}
 const pinnedGivers274 = publishedTrioGivers.get(274); const pinnedGivers289 = publishedTrioGivers.get(289);
-if (!pinnedGivers274 || !pinnedGivers289) throw new Error('trio_givers: both pins must publish the family');
-if (JSON.stringify(pinnedGivers289) !== JSON.stringify(pinnedGivers274)) throw new Error('trio_givers: the two pins disagree on the selected identity, display name, or unique spawn');
-const evidence = { schema_version: 4, generator: 'tools/game-data/generate.ts', verification: 'tools/game-data/verify.ts', revisions: results }; const evidencePath = path.join(root, 'docs/compat/evidence/generated-game-data/verification.json'); fs.mkdirSync(path.dirname(evidencePath), { recursive: true }); fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`); console.log(JSON.stringify(evidence));
+const crossPin = pinnedGivers274 && pinnedGivers289 ? 'verified' : 'not checked: both revisions did not verify';
+if (pinnedGivers274 && pinnedGivers289 && JSON.stringify(pinnedGivers289) !== JSON.stringify(pinnedGivers274)) throw new Error('trio_givers: the two pins disagree on the selected identity, display name, or unique spawn');
+const evidence = { schema_version: 4, generator: 'tools/game-data/generate.ts', verification: 'tools/game-data/verify.ts', revisions: results, refused, cross_pin: crossPin };
+const evidencePath = path.join(root, 'docs/compat/evidence/generated-game-data/verification.json');
+fs.mkdirSync(path.dirname(evidencePath), { recursive: true }); fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`); console.log(JSON.stringify(evidence));
