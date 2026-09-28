@@ -60,12 +60,13 @@ fn parameters_rail_does_not_call_an_unloaded_catalog_card_parameterless() {
 }
 
 #[test]
-fn logout_is_enabled_only_for_a_loaded_ingame_or_queued_focus() {
-    assert!(!logout_enabled(false, true, true, false));
-    assert!(!logout_enabled(true, false, true, false));
-    assert!(!logout_enabled(true, true, false, false));
-    assert!(logout_enabled(true, true, true, false));
-    assert!(logout_enabled(true, true, false, true));
+fn logout_is_enabled_only_for_a_connected_queued_or_guard_parked_focus() {
+    assert!(!logout_enabled(false, true, true, false, false));
+    assert!(!logout_enabled(true, false, true, false, false));
+    assert!(!logout_enabled(true, true, false, false, false));
+    assert!(logout_enabled(true, true, true, false, false));
+    assert!(logout_enabled(true, true, false, true, false));
+    assert!(logout_enabled(true, true, false, false, true));
 }
 
 fn checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {

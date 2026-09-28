@@ -5687,6 +5687,32 @@ fn focused_connection_is_distinct_from_game_readiness() {
     assert!(!s.focused_ingame());
 }
 
+/// Only the repeat guard's park (offline, unqueued, possibly holding script
+/// work) enables Logout for an offline slot; an operator logout's latch
+/// does not, so an already logged-out profile is not latched again.
+#[test]
+fn focused_guard_park_is_only_the_repeat_guard_latch() {
+    let mut s = Session::new();
+    s.set_focus_for_test("alice");
+    s.statuses.push(SlotStatus {
+        username: "alice".into(),
+        login_latch_reason: Some(host_play::LoginLatchReason::OperatorLogout),
+        ..SlotStatus::default()
+    });
+    assert!(!s.focused_guard_parked());
+    s.statuses[0].login_latch_reason =
+        Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts {
+            count: 3,
+            window_seconds: 600,
+        });
+    assert!(s.focused_guard_parked());
+    s.set_focus_for_test("bob");
+    assert!(
+        !s.focused_guard_parked(),
+        "another slot's park is not bob's"
+    );
+}
+
 /// The queue card reads each bot's own place from the shared fleet rows,
 /// whichever bot is focused.
 #[test]

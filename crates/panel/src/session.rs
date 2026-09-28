@@ -4337,6 +4337,22 @@ impl Session {
             .any(|s| s.username == name && s.connected)
     }
 
+    /// Whether the repeat guard parked the focused slot after repeated
+    /// unexpected exits. It is offline and unqueued but may still hold a
+    /// script's work, which a Logout ends.
+    pub fn focused_guard_parked(&self) -> bool {
+        let Some(name) = self.focused_name() else {
+            return false;
+        };
+        self.statuses().iter().any(|s| {
+            s.username == name
+                && matches!(
+                    s.login_latch_reason,
+                    Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts { .. })
+                )
+        })
+    }
+
     /// Whether the focused slot has a scene/player observation safe for game
     /// actions.
     pub fn focused_ingame(&self) -> bool {
