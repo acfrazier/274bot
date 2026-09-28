@@ -19,21 +19,23 @@ env:
 
 # GitHub is a subset of local CI (see CONTRIBUTING.md): no LIVE=1, no GPU
 # adapter (SKIP_GPU=1). The cargo graph is the same as local — host workspace
-# plus vendor/fr-client-rust — once ALSA/X11 headers are present. ubuntu-latest
+# plus vendor/fr-client-rust — once ALSA/X11 headers are present. ubuntu-24.04
 # does not ship libasound; panel enables client `audio` (cpal → alsa-sys).
 
 jobs:
   fmt:
     name: fmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fmt-ubuntu-24.04
       - name: Check formatting
         run: |
           cargo fmt --all -- --check
@@ -41,9 +43,9 @@ jobs:
 
   clippy:
     name: clippy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -63,6 +65,7 @@ jobs:
             libxrandr-dev
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: clippy-ubuntu-24.04
           cache-on-failure: true
           workspaces: |
             . -> target
@@ -77,9 +80,9 @@ jobs:
 
   architecture:
     name: architecture
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Check crate architecture
         run: |
           python3 --version
@@ -98,33 +101,45 @@ jobs:
             free_disk: true
             cache_key: workspace
             save_cache: true
+            os: ubuntu-24.04
             command: "cargo test --workspace"
           - lane: vendor
             free_disk: false
             cache_key: vendor
             save_cache: true
+            os: ubuntu-24.04
             command: "cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace"
           - lane: script-load
             free_disk: false
             cache_key: workspace
             save_cache: false
+            os: ubuntu-24.04
             command: "cargo test -p script --features load --tests"
           - lane: host-play-memory
             free_disk: false
             cache_key: workspace
             save_cache: false
+            os: ubuntu-24.04
             command: "cargo test -p host-play --features memory-profile --tests"
           - lane: host-performance
             free_disk: false
             cache_key: workspace
             save_cache: false
+            os: ubuntu-24.04
             command: "cargo test -p host --features performance-profile --lib performance_profile"
           - lane: panel-memory
             free_disk: false
             cache_key: workspace
             save_cache: false
+            os: ubuntu-24.04
             command: "cargo test -p panel --features memory-profile --lib focus::tests::memory_stress_policies"
-    runs-on: ubuntu-latest
+          - lane: host-play-memory-26.04
+            os: ubuntu-26.04
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            command: "cargo test -p host-play --features memory-profile --tests"
+    runs-on: ${{ matrix.os }}
     env:
       SKIP_GPU: "1"
     steps:
@@ -133,7 +148,7 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -151,7 +166,7 @@ jobs:
             libxrandr-dev
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: test-${{ matrix.cache_key }}
+          shared-key: test-${{ matrix.os }}-${{ matrix.cache_key }}
           cache-on-failure: true
           save-if: ${{ matrix.save_cache }}
           workspaces: |
@@ -165,7 +180,7 @@ jobs:
     name: test
     if: ${{ always() }}
     needs: test_lanes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require every test lane
         env:
