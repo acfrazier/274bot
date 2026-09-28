@@ -21,6 +21,9 @@ use serde_json::{Map, Value};
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
+mod compiled_settings;
+pub use compiled_settings::CompiledSettingsRecord;
+
 const MAGIC: &[u8; 8] = b"274VAULT";
 const FORMAT_VERSION: u8 = 1;
 const SALT_LEN: usize = 16;

@@ -280,6 +280,12 @@
 //! fills its pages from the latest posted isolate scene, including the player
 //! tile, slot count and `hold || ours` interrupt.
 
+/// Slot-retained clue debt. M-297 installs stripped gear and the abandon latch
+/// during the atomic host/Load clue cutover; this has no action tokens.
+pub struct ClueRecovery {
+    _private: (),
+}
+
 mod acquire;
 mod combat;
 mod entrana;

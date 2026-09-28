@@ -3,7 +3,10 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertPinned, assertRs2b0tPinned, contentDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
+import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows } from './extractors/common.ts';
+import { extractGatherMethodsFacts, extractGatherPlacementsFacts } from './extractors/gathering.ts';
+import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
@@ -1041,6 +1044,19 @@ for (const dir of [gateEngine, gateContent]) execFileSync('git', ['-c', 'user.em
 const gateHead = (dir: string) => execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const gateSpec = { revision: 274, engine: gateEngine, content: gateContent, expectedEngine: gateHead(gateEngine), expectedContent: gateHead(gateContent) } as Parameters<typeof assertPinned>[0];
 assert.equal(assertPinned(gateSpec).contentCommit, gateSpec.expectedContent, 'a clean pinned tree passes the write gate');
+for (const relative of ['scripts/quests/example/journal.rs2', 'scripts/shared/include.constant', 'pack/obj.pack']) {
+    const file = path.join(gateContent, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'untracked selected input\n');
+    assert.throws(() => assertPinned(gateSpec), /relevant content inputs are dirty/, relative);
+    fs.rmSync(file);
+}
+const engineLimit = path.join(gateEngine, 'src/network/game/client/ClientGameProtCategory.ts');
+fs.mkdirSync(path.dirname(engineLimit), { recursive: true });
+fs.writeFileSync(engineLimit, 'export const USER_EVENT_LIMIT = 5;\n');
+assert.match(engineDirt(gateEngine), /ClientGameProtCategory\.ts/);
+assert.throws(() => assertPinned(gateSpec), /relevant engine inputs are dirty/);
+fs.rmSync(engineLimit);
 fs.appendFileSync(path.join(gateContent, 'maps/m43_55.jm2'), '0 2 2: 1306\n');
 assert.throws(() => assertPinned(gateSpec), /relevant content inputs are dirty/, 'a modified map outside content_files fails the write gate');
 execFileSync('git', ['-C', gateContent, 'checkout', '--', 'maps/m43_55.jm2']);

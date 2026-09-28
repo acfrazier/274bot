@@ -8,6 +8,12 @@ use crate::game_data::{
 };
 use serde_json::{json, Map, Value};
 
+mod catalog;
+pub use catalog::{
+    GatherCatalog, GatherMethod, GatherSkill, GatherSpot, GatherTarget, GatherYield, RespawnFact,
+    RespawnScale, SpotId, TargetClass, ToolUse,
+};
+
 pub const FAMILY_UNAVAILABLE: &str = "family-unavailable:gather_methods";
 pub const FAMILY_UNAVAILABLE_PLACEMENTS: &str = "family-unavailable:gather_placements";
 pub const UNKNOWN_SKILL: &str = "unknown-skill";
@@ -101,7 +107,8 @@ pub fn gather_resource(
 /// One level's box, the rust mirror of the v2 `SceneRegionInput` fields.
 /// `level` is compared against the stored row's `plane`; there is no `plane`
 /// key and no radius form.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SceneRegionInput {
     pub min_x: i32,
     pub min_z: i32,

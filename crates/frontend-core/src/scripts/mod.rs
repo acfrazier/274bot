@@ -11,6 +11,9 @@
 //! Operator-facing text is published as one [`Notice`] the front end shows
 //! on its message line, in call order (the last one wins).
 
+mod native;
+pub use native::{NativeCommand, NativeDetail, NativeTarget, SchemaView};
+
 mod reload;
 mod sync;
 

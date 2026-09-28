@@ -7,6 +7,9 @@ use crate::game_data::{
 };
 use serde_json::{json, Value};
 
+mod catalog;
+pub use catalog::{QuestCatalog, QuestFacts, QuestKind, StageFacts, StartLocation, Transmission};
+
 pub const IDENTITY_UNAVAILABLE: &str = "family-unavailable:quest_identity";
 pub const PREREQS_UNAVAILABLE: &str = "family-unavailable:quest_prereqs";
 pub const UNKNOWN_QUEST: &str = "unknown-quest";

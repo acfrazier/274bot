@@ -10,6 +10,8 @@ use client::dash3d::client_entity::ClientEntity;
 use serde::Serialize;
 mod views;
 pub use views::*;
+mod native;
+pub use native::{JournalModalView, Observed, SnapshotView};
 mod decode;
 pub use decode::{attacked_by_player, cache_held_ops, tab_inv_component, PLAYER_FACE_BASE};
 use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIfaceGate};

@@ -121,20 +121,20 @@ One authored quest document for the Quester (`id` is the engine stem; `display_n
 _Avoid_: QuestRoot, friendly name as a code key, `cooks_assistant` as the id
 
 **Sequence**:
-A linear bucket of Steps keyed by a named quest varp's value. There is no FFXIV journal Sequence byte.
-_Avoid_: DAG, step graph, FFXIV Sequence
+A linear bucket of Steps keyed by a journal-resolved stage, optionally qualified by a quest role. Scalar source-stage windows are separate access gates.
+_Avoid_: DAG, step graph, FFXIV Sequence, numeric ordering of stage names
 
 **Step**:
 One tagged action on a Path, mapped onto a host verb (or composed from owned ops).
 _Avoid_: ITask, QuestEngine step, named mill/cow/egg verbs
 
 **Skip-if**:
-A snapshot predicate that treats a Step as already done (inventory, tile, chat, varp). How a later Start resumes.
+A three-valued predicate that treats a Step as already done only when proven true. Unknown evidence never authorizes a skip.
 _Avoid_: SkipConditions as their type, varp-only progress
 
 **Progress**:
-The live cursor: current Path, varp bucket, local step index.
-_Avoid_: QuestWork, their Sequence byte
+Observed quest state resolved from journal evidence, including stage, completion and possible source-signal ranges. A local step cursor is diagnostic, not server truth.
+_Avoid_: QuestWork, their Sequence byte, varp-only progress
 
 **RequiredStats**:
 Skill minima that must hold before Start (Path) or before a Sequence. A gate. The Quester does not train.

@@ -5,7 +5,6 @@
 
 /// Native boost-potion descriptors, planning and sip selection.
 pub mod boost_potions;
-#[cfg(feature = "load")]
 pub mod canvas;
 #[cfg(feature = "load")]
 pub mod channel;
@@ -38,13 +37,14 @@ pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
 mod module_imports;
+pub mod native;
 pub mod params;
+pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
 pub mod ranged;
 pub mod registry;
 pub mod rs2b0t_registry;
 pub mod settings_store;
-#[cfg(feature = "load")]
 pub mod shim;
 pub mod slot;
 #[cfg(feature = "load")]
@@ -126,7 +126,7 @@ mod banking_open;
 mod boat_fare;
 pub mod cake_stall;
 #[cfg(feature = "load")]
-mod clue;
+pub mod clue;
 #[cfg(feature = "load")]
 mod cook_locations;
 #[cfg(feature = "load")]
@@ -182,7 +182,7 @@ mod prayer;
 #[cfg(feature = "load")]
 mod production;
 #[cfg(feature = "load")]
-mod quest_journal;
+pub mod quest_journal;
 #[cfg(feature = "load")]
 mod reach;
 #[cfg(feature = "load")]
