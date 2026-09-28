@@ -1145,8 +1145,8 @@ fn start_after_launch_runs_saved_catalog_assignment_before_any_browse() {
         s.scripts
             .js
             .get(script::ScriptSource::Catalog, "RunBot")
-            .is_none(),
-        "fresh launch: catalog not filled yet"
+            .is_some(),
+        "restoring a saved catalog assignment fills the catalog once"
     );
     s.script_start_selected();
     settle(&mut s);

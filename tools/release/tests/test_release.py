@@ -454,16 +454,15 @@ class ManifestTests(unittest.TestCase):
     def test_checksums_reject_stale_archives_and_tampering(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            expect = {"version": "0.1.9"}
             name = "274bot-0.1.9-linux-x64.tar.gz"
             candidate = root / name
             candidate.write_bytes(b"candidate")
             stale = root / "274bot-0.1.7-linux-arm64.tar.gz"
             stale.write_bytes(b"stale")
             with self.assertRaisesRegex(release.ReleaseError, "unexpected"):
-                release.update_sha256s(root, expect)
+                release.update_sha256s(root, "0.1.9")
             stale.unlink()
-            release.update_sha256s(root, expect)
+            release.update_sha256s(root, "0.1.9")
             release.verify_sha256s(root, {"linux": candidate})
             candidate.write_bytes(b"tampered")
             with self.assertRaisesRegex(release.ReleaseError, "mismatch"):
@@ -501,7 +500,7 @@ class ManifestTests(unittest.TestCase):
                 ["274bot-0.1.9-linux-x64", "linux-build-receipt.json"],
             )
 
-    def test_macos_finalize_reuses_accepted_notarization_on_retry(self):
+    def test_macos_patch_finalize_renames_package_and_reuses_notarization_on_retry(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             commit = "a" * 40
@@ -519,7 +518,7 @@ class ManifestTests(unittest.TestCase):
             notes.write_text("notes")
             args = argparse.Namespace(
                 worker_root=root, commit=commit, platform="macos",
-                release_notes=notes, tag="0.1.9", notarization_id=None,
+                release_notes=notes, tag="0.1.9.1", notarization_id=None,
                 notary_profile="274bot",
             )
             commands = []
@@ -537,8 +536,17 @@ class ManifestTests(unittest.TestCase):
             with mock.patch.object(release, "run", side_effect=fake_run), \
                     mock.patch.object(release, "create_archive", side_effect=fake_archive), \
                     contextlib.redirect_stdout(io.StringIO()):
-                release.finalize_worker(args)
-                release.finalize_worker(args)
+                first = release.finalize_worker(args)
+                second = release.finalize_worker(args)
+            self.assertEqual(first.name, "274bot-0.1.9.1-macos-arm64.zip")
+            self.assertEqual(second, first)
+            self.assertFalse(package.exists())
+            self.assertTrue((root / "274bot-0.1.9.1-macos-arm64" / "274bot.app").is_dir())
+            release.write_json(root / "macos-finalize-result.json", {"archive": first.name})
+            self.assertIn(
+                "274bot-0.1.9.1-macos-arm64",
+                release.retain_release_outputs(root, commit, "macos"),
+            )
             submissions = [row for row in commands if "notarytool" in row]
             self.assertEqual(len(submissions), 1)
             self.assertEqual(
@@ -615,7 +623,7 @@ class ControllerTests(unittest.TestCase):
             artifacts.mkdir()
             for platform in release.PLATFORMS:
                 make_package_archive(artifacts, platform)
-            release.update_sha256s(artifacts, {"version": "0.1.9"})
+            release.update_sha256s(artifacts, "0.1.9")
             args = self.transport_args(root)
             args.artifact_dir = artifacts
             seen = []

@@ -1,9 +1,10 @@
 use std::fmt;
 use std::sync::atomic::Ordering;
 
+use api::snapshot::WorldTile;
 use nav::map::identity::Digest;
 use nav::map::spatial::{snap_walkable, GameTile};
-use nav::router::{FindOptions, Route};
+use nav::router::{FindOptions, Leg, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
 use nav::WorldState;
@@ -84,6 +85,334 @@ impl fmt::Display for ActionError {
     }
 }
 impl std::error::Error for ActionError {}
+
+/// One operator WalkTo request, including refusals before a command can be
+/// built. Frontends and group dispatch use this boundary once per requested
+/// slot, never from availability checks or the traveller's frame pump.
+pub struct WalkRequest<'a> {
+    pub slot: Option<&'a str>,
+    pub origin: Option<Tile>,
+    pub destination: Option<Tile>,
+    pub options: FindOptions,
+    pub map_members: bool,
+    pub members: &'a crate::WorldMembersFact,
+}
+
+impl WalkRequest<'_> {
+    pub fn run(
+        self,
+        action: impl FnOnce() -> Result<Route, ActionError>,
+    ) -> Result<Route, ActionError> {
+        let outcome = action();
+        if api::hostlog::enabled(api::hostlog::Category::NavEvent) {
+            api::hostlog::emit(
+                api::hostlog::Emit {
+                    category: api::hostlog::Category::NavEvent,
+                    level: api::hostlog::Level::Info,
+                    slot: self.slot,
+                    always_stderr: false,
+                },
+                format_args!(
+                    "WalkTo origin={} destination={} teleports={} wilderness={} bank_fetch={} map_members={} members_source={} {}",
+                    WalkTile(self.origin),
+                    WalkTile(self.destination),
+                    self.options.allow_teleports,
+                    self.options.allow_wilderness,
+                    self.options.allow_bank_fetch,
+                    self.map_members,
+                    MembersSource(self.members),
+                    WalkOutcome(&outcome),
+                ),
+            );
+        }
+        if let Err(reason) = outcome.as_ref() {
+            emit_walk_rejected(self.slot, self.destination, self.origin, *reason);
+        }
+        outcome
+    }
+
+    /// A group confirmation refused before dispatch still gets one receipt per
+    /// selected slot. Both frontends use the host's current observed origins.
+    pub fn refuse_group(
+        play: Option<&crate::Play>,
+        names: &[String],
+        destination: Option<Tile>,
+        options: FindOptions,
+        members: &crate::WorldMembersFact,
+        error: ActionError,
+    ) {
+        let origins: Vec<_> = {
+            let statuses = play.map(|p| crate::play_status::lock_statuses(&p.statuses));
+            names
+                .iter()
+                .map(|name| {
+                    statuses.as_ref().and_then(|rows| {
+                        rows.iter()
+                            .find(|s| s.username == *name)
+                            .and_then(|s| s.ready_tile())
+                            .map(|(x, z, level)| Tile { x, z, level })
+                    })
+                })
+                .collect()
+        };
+        // A sink may read slot status itself; never invoke it under that lock.
+        for (name, origin) in names.iter().zip(origins) {
+            let _ = WalkRequest {
+                slot: Some(name),
+                origin,
+                destination,
+                options,
+                map_members: members.map_members(),
+                members,
+            }
+            .run(|| Err(error));
+        }
+    }
+}
+
+struct MembersSource<'a>(&'a crate::WorldMembersFact);
+impl fmt::Display for MembersSource<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::{WorldMembersFact, WorldMembersSource};
+        f.write_str(match self.0 {
+            WorldMembersFact::Unknown => "unknown",
+            WorldMembersFact::Known { source, .. } => match source {
+                WorldMembersSource::ExplicitOverride => "explicit",
+                WorldMembersSource::Rs2b2tWorlds => "rs2b2t",
+                WorldMembersSource::LocalWorldJson { .. } => "local-world-json",
+            },
+        })
+    }
+}
+
+struct WalkTile(Option<Tile>);
+impl fmt::Display for WalkTile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(tile) => write!(f, "({},{},{})", tile.x, tile.z, tile.level),
+            None => f.write_str("unknown"),
+        }
+    }
+}
+
+struct WalkOutcome<'a>(&'a Result<Route, ActionError>);
+impl fmt::Display for WalkOutcome<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let route = match self.0 {
+            Ok(route) => route,
+            Err(reason) => return write!(f, "refused={reason:?}"),
+        };
+        let steps: usize = route
+            .legs
+            .iter()
+            .map(|leg| match leg {
+                nav::router::Leg::Walk { tiles } => tiles.len().saturating_sub(1),
+                nav::router::Leg::Transport { .. } => 0,
+            })
+            .sum();
+        write!(
+            f,
+            "success legs={} walk_steps={steps} transports=[",
+            route.legs.len()
+        )?;
+        let mut separator = "";
+        for leg in &route.legs {
+            if let nav::router::Leg::Transport { edge } = leg {
+                write!(
+                    f,
+                    "{separator}{:?}:{}@({},{},{})",
+                    edge.kind, edge.loc_id, edge.at.x, edge.at.z, edge.at.level
+                )?;
+                separator = ",";
+            }
+        }
+        f.write_str("]")
+    }
+}
+
+/// Emit the one terminal receipt for an armed operator WalkTo. The caller
+/// supplies the exact [`nav::traveller::TravelOutcome`] before clearing the
+/// route; the original route supplies the failing leg's transport identity.
+pub(crate) fn emit_walk_terminal(
+    slot: Option<&str>,
+    destination: WorldTile,
+    outcome: &nav::traveller::TravelOutcome,
+    leg: Option<usize>,
+    route: &Route,
+) {
+    if !api::hostlog::enabled(api::hostlog::Category::NavEvent) {
+        return;
+    }
+    api::hostlog::emit(
+        api::hostlog::Emit {
+            category: api::hostlog::Category::NavEvent,
+            level: api::hostlog::Level::Info,
+            slot,
+            always_stderr: false,
+        },
+        format_args!(
+            "WalkTo outcome={} destination={} at={} reason={} leg={} transport={}",
+            TerminalStatus(outcome),
+            WorldWalkTile(Some(destination)),
+            WorldWalkTile(Some(terminal_at(outcome))),
+            TerminalReason(outcome),
+            LegNumber(leg),
+            TerminalTransport { route, leg },
+        ),
+    );
+}
+
+/// Close an armed operator WalkTo that was replaced or lost with its session.
+pub(crate) fn emit_walk_cancelled(
+    slot: Option<&str>,
+    destination: WorldTile,
+    at: Option<WorldTile>,
+    reason: &'static str,
+) {
+    if !api::hostlog::enabled(api::hostlog::Category::NavEvent) {
+        return;
+    }
+    api::hostlog::emit(
+        api::hostlog::Emit {
+            category: api::hostlog::Category::NavEvent,
+            level: api::hostlog::Level::Info,
+            slot,
+            always_stderr: false,
+        },
+        format_args!(
+            "WalkTo outcome=cancelled destination={} at={} reason={} leg=- transport=-",
+            WorldWalkTile(Some(destination)),
+            WorldWalkTile(at),
+            reason,
+        ),
+    );
+}
+
+/// Close an operator WalkTo whose host-side prerequisite phase failed before
+/// the traveller could produce a [`nav::traveller::TravelOutcome`].
+pub(crate) fn emit_walk_aborted(
+    slot: Option<&str>,
+    destination: WorldTile,
+    at: Option<WorldTile>,
+    reason: &'static str,
+) {
+    if !api::hostlog::enabled(api::hostlog::Category::NavEvent) {
+        return;
+    }
+    api::hostlog::emit(
+        api::hostlog::Emit {
+            category: api::hostlog::Category::NavEvent,
+            level: api::hostlog::Level::Info,
+            slot,
+            always_stderr: false,
+        },
+        format_args!(
+            "WalkTo outcome=aborted destination={} at={} reason={} leg=- transport=-",
+            WorldWalkTile(Some(destination)),
+            WorldWalkTile(at),
+            reason,
+        ),
+    );
+}
+
+fn emit_walk_rejected(
+    slot: Option<&str>,
+    destination: Option<Tile>,
+    at: Option<Tile>,
+    reason: ActionError,
+) {
+    if !api::hostlog::enabled(api::hostlog::Category::NavEvent) {
+        return;
+    }
+    api::hostlog::emit(
+        api::hostlog::Emit {
+            category: api::hostlog::Category::NavEvent,
+            level: api::hostlog::Level::Info,
+            slot,
+            always_stderr: false,
+        },
+        format_args!(
+            "WalkTo outcome=aborted destination={} at={} reason={reason:?} leg=- transport=-",
+            WalkTile(destination),
+            WalkTile(at),
+        ),
+    );
+}
+
+fn terminal_at(outcome: &nav::traveller::TravelOutcome) -> WorldTile {
+    use nav::traveller::TravelOutcome;
+    match outcome {
+        TravelOutcome::Arrived { at }
+        | TravelOutcome::Stalled { at, .. }
+        | TravelOutcome::Refused { at, .. }
+        | TravelOutcome::Blocked { at, .. }
+        | TravelOutcome::GaveUp { at, .. } => *at,
+    }
+}
+
+struct WorldWalkTile(Option<WorldTile>);
+impl fmt::Display for WorldWalkTile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(tile) => write!(f, "({},{},{})", tile.x, tile.z, tile.level),
+            None => f.write_str("unknown"),
+        }
+    }
+}
+
+struct TerminalStatus<'a>(&'a nav::traveller::TravelOutcome);
+impl fmt::Display for TerminalStatus<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if matches!(self.0, nav::traveller::TravelOutcome::Arrived { .. }) {
+            f.write_str("arrived")
+        } else {
+            f.write_str("aborted")
+        }
+    }
+}
+
+struct TerminalReason<'a>(&'a nav::traveller::TravelOutcome);
+impl fmt::Display for TerminalReason<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use nav::traveller::TravelOutcome;
+        match self.0 {
+            TravelOutcome::Arrived { .. } => f.write_str("-"),
+            TravelOutcome::Stalled { why, .. } => write!(f, "Stalled({why:?})"),
+            TravelOutcome::Refused { reason, .. } => write!(f, "{reason:?}"),
+            TravelOutcome::Blocked { .. } => f.write_str("Blocked"),
+            TravelOutcome::GaveUp { .. } => f.write_str("GaveUp"),
+        }
+    }
+}
+
+struct LegNumber(Option<usize>);
+impl fmt::Display for LegNumber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(index) => write!(f, "{}", index + 1),
+            None => f.write_str("-"),
+        }
+    }
+}
+
+struct TerminalTransport<'a> {
+    route: &'a Route,
+    leg: Option<usize>,
+}
+impl fmt::Display for TerminalTransport<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self
+            .leg
+            .and_then(|index| self.route.legs.get(index))
+            .and_then(|leg| match leg {
+                Leg::Transport { edge } => Some(edge),
+                Leg::Walk { .. } => None,
+            }) {
+            Some(edge) => write!(f, "{:?}:{}", edge.kind, edge.loc_id),
+            None => f.write_str("-"),
+        }
+    }
+}
 
 /// Why a slot cannot take a group Walk. The panel only renders these codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -657,23 +986,48 @@ impl Play {
         arms: &WalkArms,
     ) -> GroupWalkReport {
         let mut outcomes = Vec::with_capacity(slots.len());
+        let profile = self.server_profile();
         for req in slots {
             let status = self.walk_eligibility(req.name);
-            let kind = match status {
-                WalkSlotStatus::Excluded(reason) => WalkSlotOutcomeKind::Excluded(reason),
-                WalkSlotStatus::Eligible(ready) => {
-                    let command = plan.command(req.name, ready.origin);
-                    let current = MapContext {
-                        focus: self.map_focus(req.name),
-                        nav: dest.nav,
-                        overlay: dest.overlay,
-                        generation: dest.generation,
-                    };
-                    match self.map_walk(command, &current, req.state, req.bank, arms) {
-                        Ok(_) => WalkSlotOutcomeKind::Walking,
-                        Err(error) => WalkSlotOutcomeKind::Failed(error),
+            let origin = crate::play_status::lock_statuses(&self.statuses)
+                .iter()
+                .find(|s| s.username == req.name)
+                .and_then(|s| s.ready_tile())
+                .map(|(x, z, level)| Tile { x, z, level });
+            let result = WalkRequest {
+                slot: Some(req.name),
+                origin,
+                destination: Some(plan.destination),
+                options: plan.options,
+                map_members: req.state.map_members,
+                members: profile
+                    .as_ref()
+                    .map_or(&crate::WorldMembersFact::Unknown, |p| p.world_members()),
+            }
+            .run(|| {
+                let ready = match status {
+                    WalkSlotStatus::Eligible(ready) => ready,
+                    WalkSlotStatus::Excluded(reason) => {
+                        return Err(match reason {
+                            WalkExclude::NotLoggedIn => ActionError::NoFocus,
+                            WalkExclude::NoPosition => ActionError::NoOrigin,
+                            WalkExclude::RunningScript => ActionError::RunningScript,
+                        })
                     }
-                }
+                };
+                let command = plan.command(req.name, ready.origin);
+                let current = MapContext {
+                    focus: self.map_focus(req.name),
+                    nav: dest.nav,
+                    overlay: dest.overlay,
+                    generation: dest.generation,
+                };
+                self.map_walk(command, &current, req.state, req.bank, arms)
+            });
+            let kind = match (status, result) {
+                (WalkSlotStatus::Excluded(reason), _) => WalkSlotOutcomeKind::Excluded(reason),
+                (_, Ok(_)) => WalkSlotOutcomeKind::Walking,
+                (_, Err(error)) => WalkSlotOutcomeKind::Failed(error),
             };
             outcomes.push(WalkSlotOutcome {
                 name: req.name.to_string(),

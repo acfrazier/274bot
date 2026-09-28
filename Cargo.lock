@@ -4597,6 +4597,7 @@ dependencies = [
  "api",
  "client",
  "deno_ast",
+ "deno_core",
  "flatbuffers",
  "nav",
  "rustyscript",

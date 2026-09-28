@@ -44,7 +44,7 @@ profile is known skipped; unknown profiles `getvar tutorial` first),
 **Lumbridge** (`~home`), **maxme** (19× `setstat`
 99), **Teles** popup, and a disabled **DebugPanel** stub (v2 later).
 Public world hosts hide that heading. The Profiles editor offers `auto` or
-each configured world from `~/.274bot/worlds.json`; the selected world is
+each listed rs2b2t world; the selected world is
 used on the next slot start. Live slot rows display the current world.
 
 Last focused profile is restored from `~/.274bot/panel-ui.json`
@@ -167,12 +167,18 @@ and rail **+ add bot**), not a blocking modal. Clicking a row focuses it
 (and loads it onto the wall while MultiBox is on; stays open for more).
 Single-bot pick closes the picker. **Load all** is MultiBox-only.
 **Close**/Esc closes without loading. **Edit** (next to **✕**) shows
-username/password; **New profile** is a blank edit. **Save** upserts and
-selects. The row **✕** deletes the **vault profile only** — a live wall
-member keeps running and stays on the rail (Save re-creates the row).
+username/password; **New profile** is a blank edit. The editor stays on
+the profile it opened on while other rows are loaded or focused. **Save**
+upserts and selects; changing the username renames the profile. A new
+profile or a rename onto a username another profile already has is
+refused with an error and nothing is written. The row **✕** deletes the
+**vault profile only** — a live wall member keeps running and stays on
+the rail (Save re-creates the row).
 The rail tile **✕** is the opposite: it removes the member from the wall,
 arms a clean IF logout when ingame, stops the slot, and never touches
-the vault.
+the vault. A member removed and loaded again while its old worker is
+still stopping starts once that worker has exited, with any Log in or
+Log out issued meanwhile.
 
 ### Resource honesty
 
@@ -346,6 +352,11 @@ opens without asking.
 shared `map_bake` key of `panel-ui.json` (`ask` when absent). POIs come from `Catalogue::from_ready` (client
 records, authenticated `navpois`, game-data names) plus live
 `observed_services` for the focused bot. Search uses that catalogue.
+Place names keep `/` as a stored world-map line break (`Port/Sarim`); lists
+and canvas labels show a space (`Port Sarim`). Canvas labels are ranked by
+content `priority`, then kind, then distance to the view centre, and a label
+is omitted when its text rectangle would overlap an already placed one
+(markers still draw; at most 32 labels). Search still splits on `/`.
 Optional map-owned overlay toggles (not per-tile quads), vector route
 and destination (pending selection vs armed dest are distinct), wheel-zoom toward
 the cursor, click-to-pick uses the canvas rect (`is_mouse_hovering_rect`),

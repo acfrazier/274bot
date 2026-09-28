@@ -21,6 +21,7 @@ pub mod log;
 pub mod log_file;
 pub mod map_bake;
 pub mod operations;
+pub mod profile_form;
 mod profiles;
 pub mod resources;
 pub mod scripts;
@@ -34,6 +35,7 @@ pub use map_bake::{
     MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
+pub use profile_form::{FormNotice, ProfileFormSave, SavedProfile, NOTHING_SAVED};
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use session::{

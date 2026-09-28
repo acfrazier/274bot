@@ -16,8 +16,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use api::hostlog::{Level, Source};
+use host::{FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
-use vault::{Profile, Vault, VaultChange};
+use vault::{Profile, ProfileSettings, Vault, VaultChange};
 
 use crate::fleet::Fleet;
 use crate::operations::{
@@ -43,6 +44,17 @@ struct PendingRemoval<Io> {
     arm: Arc<SlotArm>,
     io: Option<Io>,
     op: OperationId,
+}
+
+/// A spawn waiting for the previous worker of the same name to exit (a
+/// removed member loaded again while its stopped worker is still ending).
+/// The surface IO stays in `slots`; a Log in issued meanwhile replaces the
+/// arm, so the new worker starts with the latest login intent.
+struct DeferredSpawn {
+    profile: Profile,
+    input: Option<Arc<SlotInput>>,
+    mailbox: Option<Arc<FrameBuf>>,
+    arm: Option<Arc<SlotArm>>,
 }
 
 /// One observed status change since the previous poll.
@@ -160,6 +172,8 @@ pub struct OperatorSession<Io> {
     selected: Option<String>,
     slots: HashMap<String, Io>,
     removals: HashMap<String, PendingRemoval<Io>>,
+    /// Spawns queued behind a still-stopping worker, by slot.
+    deferred: HashMap<String, DeferredSpawn>,
     statuses: Vec<SlotStatus>,
     /// The next poll's rows; swapped with `statuses` so both keep their
     /// buffers and a steady-state poll allocates nothing.
@@ -214,6 +228,7 @@ impl<Io> OperatorSession<Io> {
             selected: None,
             slots: HashMap::new(),
             removals: HashMap::new(),
+            deferred: HashMap::new(),
             statuses: Vec::new(),
             polled: Vec::new(),
             transitions: Vec::new(),
@@ -267,6 +282,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Drop the play (joins its workers). Final teardown only.
     pub fn close_play(&mut self) {
+        self.deferred.clear();
         self.play = None;
     }
 
@@ -432,6 +448,8 @@ impl<Io> OperatorSession<Io> {
     /// login intent. Existing IO with no arm is a preserved terminal
     /// lifetime and restarts only when `restart_terminal` is set (explicit
     /// Log in). Without a play (pre-unlock) only the IO is registered.
+    /// While the name's previous worker is still stopping, the spawn is
+    /// queued and [`Self::poll`] starts it once that worker has exited.
     pub fn ensure_slot<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
@@ -455,10 +473,12 @@ impl<Io> OperatorSession<Io> {
         let Some(mut profile) = self.durable_profile(name).cloned() else {
             return Ok(());
         };
+        self.deferred.remove(name);
         surface.lifetime_reset(name);
         let retained = self.slots.remove(name);
         let attach = surface.attach(name, &mut profile, retained);
         if !self.spawn_workers {
+            self.old_lifetime_retired(name);
             if let (Some(play), Some(arm)) = (self.play.as_mut(), arm.as_ref()) {
                 play.attach_arm(name, Arc::clone(arm));
             }
@@ -469,6 +489,26 @@ impl<Io> OperatorSession<Io> {
         if let (true, Some(arm)) = (self.bypass_asset_startup, arm.as_ref()) {
             arm.bypass_asset_startup_for_test();
         }
+        if self
+            .play
+            .as_ref()
+            .is_some_and(|play| play.slot_stopping(name))
+        {
+            self.deferred.insert(
+                name.to_string(),
+                DeferredSpawn {
+                    profile,
+                    input: attach.input,
+                    mailbox: attach.mailbox,
+                    arm,
+                },
+            );
+            self.slots.insert(name.to_string(), attach.io);
+            return Ok(());
+        }
+        if self.play.is_some() {
+            self.old_lifetime_retired(name);
+        }
         if let Some(play) = self.play.as_mut() {
             if let Err(error) = play.try_spawn_slot(profile, attach.input, attach.mailbox, arm) {
                 self.slots.insert(name.to_string(), attach.io);
@@ -477,6 +517,14 @@ impl<Io> OperatorSession<Io> {
         }
         self.slots.insert(name.to_string(), attach.io);
         Ok(())
+    }
+
+    /// A new lifetime of `name` is about to start, so its previous one has
+    /// exited: a Remove still waiting on that worker is complete (poll can
+    /// no longer tell once the replacement arm exists).
+    fn old_lifetime_retired(&mut self, name: &str) {
+        self.operations
+            .resolve_pending(ActionKind::Remove, name, Outcome::Completed);
     }
 
     /// Cancel a pending removal in response to an operator action. The
@@ -562,7 +610,7 @@ impl<Io> OperatorSession<Io> {
         let result = match running {
             // Already running (re-load): refresh the saved auto intent. Only
             // a cancelled removal may reverse the clean logout it requested;
-            // client idle-timeout and operator latches remain parked.
+            // persisted/operator and repeat-guard latches remain parked.
             Some(arm) => {
                 arm.set_auto_login(auto_login);
                 if cancelled_removal && want_login && arm.login_latched() {
@@ -647,7 +695,10 @@ impl<Io> OperatorSession<Io> {
         let outcome = match result {
             Err(error) => Outcome::Failed(error),
             Ok(()) if self.play.is_none() => Outcome::Failed("vault locked".into()),
-            Ok(()) if self.play.as_ref().and_then(|p| p.arm(name)).is_none() => {
+            Ok(())
+                if self.play.as_ref().and_then(|p| p.arm(name)).is_none()
+                    && !self.deferred.contains_key(name) =>
+            {
                 Outcome::Failed(format!("no profile {name}"))
             }
             Ok(()) => Outcome::Pending,
@@ -693,6 +744,9 @@ impl<Io> OperatorSession<Io> {
         self.operations.cancel_pending(ActionKind::Logout, name);
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
             arm.request_logout();
+        } else if let Some(arm) = self.deferred.get(name).and_then(|d| d.arm.as_ref()) {
+            // Not spawned yet: it starts on the title, held logged out.
+            arm.hold_logged_out();
         }
         self.operations.set(op, name, Outcome::Pending);
     }
@@ -737,6 +791,7 @@ impl<Io> OperatorSession<Io> {
         self.fleet.remove(name);
         self.fleet.clear_latch(name);
         self.operations.cancel_pending(ActionKind::Login, name);
+        self.deferred.remove(name);
         let connected = self
             .play
             .as_ref()
@@ -928,13 +983,14 @@ impl<Io> OperatorSession<Io> {
         &self.script_lines
     }
 
-    /// First half of [`Self::poll`]: reap finished workers and advance
-    /// pending removals (stop on disconnect or timeout). Never joins a live
-    /// worker.
+    /// First half of [`Self::poll`]: reap finished workers, start the
+    /// spawns that waited for them and advance pending removals (stop on
+    /// disconnect or timeout). Never joins a live worker.
     pub fn advance_removals(&mut self, now: Instant) {
         if let Some(play) = self.play.as_mut() {
             play.pump_worker_reaps();
         }
+        self.spawn_deferred();
         if self.removals.is_empty() {
             return;
         }
@@ -983,6 +1039,46 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
+    /// Start every queued spawn whose previous worker has exited. It spawns
+    /// from the durable row as it is now (a save made while it waited
+    /// applies), keeping the surface's per-spawn render choices.
+    fn spawn_deferred(&mut self) {
+        if self.deferred.is_empty() {
+            return;
+        }
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        let ready: Vec<String> = self
+            .deferred
+            .keys()
+            .filter(|name| !play.slot_stopping(name))
+            .cloned()
+            .collect();
+        for name in ready {
+            let Some(spawn) = self.deferred.remove(&name) else {
+                continue;
+            };
+            self.old_lifetime_retired(&name);
+            // Deleted while it waited: nothing to spawn.
+            let Some(mut profile) = self.durable_profile(&name).cloned() else {
+                continue;
+            };
+            profile.settings.raster = spawn.profile.settings.raster;
+            profile.settings.lowmem = spawn.profile.settings.lowmem;
+            if let Some(arm) = spawn.arm.as_ref() {
+                arm.set_auto_login(profile.settings.auto_login);
+            }
+            let Some(play) = self.play.as_mut() else {
+                return;
+            };
+            if let Err(error) = play.try_spawn_slot(profile, spawn.input, spawn.mailbox, spawn.arm)
+            {
+                crate::log::global().slot_line(&name, Source::Host, Level::Error, &error);
+            }
+        }
+    }
+
     fn poll_starts(&mut self) {
         let Some(play) = self.play.as_ref() else {
             return;
@@ -1017,6 +1113,7 @@ impl<Io> OperatorSession<Io> {
         let play = self.play.as_ref();
         let statuses = &self.statuses;
         let removals = &self.removals;
+        let deferred = &self.deferred;
         self.operations.settle(|action, slot| {
             let row = statuses.iter().find(|s| s.username == slot);
             let arm = play.and_then(|p| p.arm(slot));
@@ -1024,7 +1121,9 @@ impl<Io> OperatorSession<Io> {
                 ActionKind::Login => {
                     let row = match row {
                         Some(row) => row,
-                        None if arm.is_none() => return Some(Outcome::Cancelled),
+                        None if arm.is_none() && !deferred.contains_key(slot) => {
+                            return Some(Outcome::Cancelled)
+                        }
                         None => return None,
                     };
                     if row.ingame {
@@ -1223,9 +1322,23 @@ impl<Io> OperatorSession<Io> {
         ))
     }
 
+    /// Stage a new profile like [`Self::save_profile`], refused when a
+    /// profile of that username already exists: a new row never overwrites
+    /// another profile.
+    pub fn create_profile(
+        &mut self,
+        profile: Profile,
+        mirror: ArmMirror,
+        label: &'static str,
+    ) -> Result<OperationId, String> {
+        self.refuse_existing(&profile.username, label)?;
+        self.save_profile(profile, mirror, label)
+    }
+
     /// Rename `old` to `profile.username` as one transaction: the new row
     /// and the removal of the old one are written in a single commit, and a
-    /// failure puts both back.
+    /// failure puts both back. Refused when another profile already has the
+    /// new username: a rename never overwrites it.
     pub fn rename_profile(
         &mut self,
         old: &str,
@@ -1233,6 +1346,9 @@ impl<Io> OperatorSession<Io> {
         mirror: ArmMirror,
         label: &'static str,
     ) -> Result<OperationId, String> {
+        if old != profile.username {
+            self.refuse_existing(&profile.username, label)?;
+        }
         self.ensure_writer();
         self.hold_durable(&profile.username)
             .ok_or_else(|| format!("{label}: vault locked"))?;
@@ -1251,6 +1367,60 @@ impl<Io> OperatorSession<Io> {
             mirror,
             label,
         ))
+    }
+
+    fn refuse_existing(&self, username: &str, label: &str) -> Result<(), String> {
+        if self
+            .vault
+            .as_ref()
+            .is_some_and(|v| v.get(username).is_some())
+        {
+            return Err(format!(
+                "{label}: a profile named {username} already exists"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether a profile editor holding (`username`, `password`, `settings`)
+    /// for `target` has unsaved changes: anything its Save path would write
+    /// differs from the vault row. For an existing target Save writes the
+    /// canonicalized username (trimmed), the password as typed, and only
+    /// the settings fields the credentials form owns: `world` and the
+    /// trimmed `clue_duel_partner`. Every other setting (auto-login,
+    /// random/lamp, raster, tutorial, script assignment/parameters, …) is
+    /// either persisted immediately by its own control or preserved from the
+    /// current vault row, so a concurrent change there never counts as
+    /// dirty. `None` (or `""`) is the new-profile form: a typed name or
+    /// password, or any non-default setting, counts. A missing row for an
+    /// existing target counts as dirty, so leaving the form always asks
+    /// instead of silently dropping the draft. The panel's Profiles form
+    /// gates its explicit edit-target switch on this; the TUI settings popup
+    /// persists each edit as it is made, so it never holds a draft.
+    pub fn profile_form_dirty(
+        &self,
+        target: Option<&str>,
+        username: &str,
+        password: &str,
+        settings: &ProfileSettings,
+    ) -> bool {
+        match target.filter(|t| !t.is_empty()) {
+            Some(name) => match self.vault.as_ref().and_then(|v| v.get(name)) {
+                Some(row) => {
+                    row.username != username.trim()
+                        || row.password != password
+                        || row.settings.world != settings.world
+                        || row.settings.clue_duel_partner.trim()
+                            != settings.clue_duel_partner.trim()
+                }
+                None => true,
+            },
+            None => {
+                !username.trim().is_empty()
+                    || !password.is_empty()
+                    || *settings != ProfileSettings::default()
+            }
+        }
     }
 
     /// Delete a vault profile only; a live member is not logged out or

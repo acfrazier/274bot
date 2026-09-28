@@ -249,6 +249,10 @@ pub struct Traveller {
     leg: usize,
     /// The active high-level follow run (Task 14); `None` when idle.
     follow: Option<FollowRun>,
+    /// Original-route leg for the most recent terminal follow outcome. Kept
+    /// after the run is cleared so the host can log that exact outcome before
+    /// clearing its route; reset when another follow starts.
+    follow_terminal_leg: Option<usize>,
     /// The per-slot Rune Essence mine latch: set when an essence entry
     /// hop completes, the mine exit loc may only return to the entry
     /// wizard. Survives across routes (the game's `%exit_essence_mine_coord`
@@ -270,6 +274,7 @@ impl Traveller {
             last_op_ok: None,
             leg: 0,
             follow: None,
+            follow_terminal_leg: None,
             essence: None,
         }
     }
@@ -284,6 +289,7 @@ impl Traveller {
         self.last_op_ok = None;
         self.leg = 0;
         self.follow = None;
+        self.follow_terminal_leg = None;
     }
 
     /// The latched Rune Essence mine session: the wizard the player last
@@ -323,6 +329,13 @@ impl Traveller {
             .or(Some(transport.to))
     }
 
+    /// Original-route leg associated with the most recent terminal
+    /// [`TravelOutcome`]. `None` for an empty route arrival or before a run
+    /// terminates.
+    pub fn terminal_leg_index(&self) -> Option<usize> {
+        self.follow_terminal_leg
+    }
+
     /// Advance the high-level route follower one step: pollable, never
     /// blocking. `None` means the route is still being followed — call
     /// again next tick with the same `route` (a clone) and `options`.
@@ -343,6 +356,7 @@ impl Traveller {
         options: &mut TravelOptions<'_>,
     ) -> Option<TravelOutcome> {
         if self.follow.is_none() {
+            self.follow_terminal_leg = None;
             self.follow = Some(FollowRun::start(route, options));
         }
         let outcome = self
@@ -364,6 +378,13 @@ impl Traveller {
             );
         }
         if outcome.is_some() {
+            self.follow_terminal_leg = self.follow.as_ref().and_then(|run| {
+                if matches!(&outcome, Some(TravelOutcome::Arrived { .. })) {
+                    run.leg_index.checked_sub(1)
+                } else {
+                    Some(run.leg_index)
+                }
+            });
             self.follow = None;
         }
         outcome
@@ -578,6 +599,8 @@ impl FollowRun {
                                     sent_tile: Some(here),
                                     tries: 0,
                                     troll: false,
+                                    npc_index: None,
+                                    approach_ticks_waited: 0,
                                     open_sent_tick: None,
                                     chat_seq: chat_seq(snapshot),
                                     dialog_page: None,
@@ -635,6 +658,8 @@ impl FollowRun {
                                     sent_tile: Some(here),
                                     tries: 0,
                                     troll: false,
+                                    npc_index: None,
+                                    approach_ticks_waited: 0,
                                     open_sent_tick: None,
                                     chat_seq: chat_seq(snapshot),
                                     dialog_page: None,
@@ -648,15 +673,18 @@ impl FollowRun {
                             }
                         }
                     }
-                    // The game only accepts an `op_loc`/`op_npc` from
-                    // adjacent. Packed `at` is the spawn, not a leash:
-                    // sailors/officers/pilots wander, so NPC hops approach
-                    // the live tile (Musa customs Talk-to from the packed
-                    // pier while the officer is four tiles away is
-                    // Unreachable). Loc hops still use packed `at`.
+                    // The game only accepts an `op_loc`/`op_npc` from an
+                    // operable adjacent stand. Packed `at` is the spawn, not
+                    // a leash: sailors/officers/pilots wander, and OP_NPC
+                    // paths to the live network route head rather than the
+                    // rendered/interpolated tile.
+                    let mut selected_npc_index = None;
                     let approach_at = if npc_backed(edge) {
                         match find_transport_target(snapshot, edge) {
-                            Some(TransportTarget::Npc(npc)) => npc.tile,
+                            Some(TransportTarget::Npc(npc)) => {
+                                selected_npc_index = Some(npc.index);
+                                npc.network
+                            }
                             Some(TransportTarget::Loc(loc)) => loc.tile,
                             None => {
                                 self.loc_wait += 1;
@@ -683,7 +711,18 @@ impl FollowRun {
                     } else {
                         edge.at
                     };
-                    if cheb(here, approach_at) > 1 {
+                    let needs_approach = if selected_npc_index.is_some() {
+                        !find_transport_target_instance(snapshot, edge, selected_npc_index)
+                            .is_some_and(|target| match target {
+                                TransportTarget::Npc(npc) => {
+                                    npc_interaction_ready(snapshot, here, npc)
+                                }
+                                TransportTarget::Loc(_) => false,
+                            })
+                    } else {
+                        cheb(here, approach_at) > 1
+                    };
+                    if needs_approach {
                         if self
                             .settle_until
                             .is_some_and(|until| snapshot.tick() < until)
@@ -732,12 +771,14 @@ impl FollowRun {
                                     troll: false,
                                     open_sent_tick: None,
                                     chat_seq: chat_seq(snapshot),
+                                    npc_index: selected_npc_index,
+                                    approach_ticks_waited: 0,
                                     dialog_page: None,
                                     approach: Some(ApproachHop {
                                         tile: approach,
                                         at: approach_at,
-                                        ticks_waited: 0,
                                         sent_tick: snapshot.tick(),
+                                        ticks_waited: 0,
                                         retry_pending: false,
                                     }),
                                 });
@@ -768,9 +809,10 @@ impl FollowRun {
                             }
                         }
                     }
-                    match find_transport_target(snapshot, edge) {
+                    match find_transport_target_instance(snapshot, edge, selected_npc_index) {
                         Some(target) => {
                             let to = edge.to;
+                            let chat_seq_at_send = chat_seq(snapshot);
                             let mut ix = Interactions::new(snapshot, d);
                             match interact_transport(snapshot, &mut ix, target, edge, options) {
                                 SendResult::Sent { .. } => {
@@ -799,8 +841,10 @@ impl FollowRun {
                                         sent_tile: Some(here),
                                         tries,
                                         troll: false,
+                                        npc_index: selected_npc_index,
+                                        approach_ticks_waited: 0,
                                         open_sent_tick,
-                                        chat_seq: chat_seq(snapshot),
+                                        chat_seq: chat_seq_at_send,
                                         dialog_page: None,
                                         approach: None,
                                     });
@@ -913,9 +957,9 @@ impl WalkHop {
 /// door-troll fallback: the hop re-reads the door's state and re-sends
 /// while closed, probes after Open, and walks when open after
 /// the cheap one-interact hop lapsed its budget. `chat_seq` is the chat
-/// ring's latest sequence when the hop started: the watermark for the
-/// "I can't reach that!" fast-fail watch (`settle::said`'s sequence
-/// delta, never a stale-head check).
+/// watermark for the "I can't reach that!" fast-fail watch
+/// (`settle::said`'s sequence delta, never a stale-head check); NPC-backed
+/// hops refresh it when their interaction is actually sent.
 struct TransportHop {
     leg: Leg,
     to: WorldTile,
@@ -923,6 +967,14 @@ struct TransportHop {
     sent_tile: Option<WorldTile>,
     tries: u32,
     troll: bool,
+    /// The NPC slot selected when an NPC-backed edge was armed. Later
+    /// interaction checks re-find this exact instance instead of silently
+    /// switching to another same-type NPC.
+    npc_index: Option<usize>,
+    /// Total polls spent approaching before the first transport interaction.
+    /// This survives moving-target re-arms, so the existing hop budget bounds
+    /// a wanderer that never lets the player become adjacent.
+    approach_ticks_waited: u32,
     /// The tick a door Open was sent: one crossing probe
     /// ([`door_step_pending`]) on a later delivered tick. The troll spends
     /// it on the next tick; the cheap hop keeps it until the player stands
@@ -933,22 +985,23 @@ struct TransportHop {
     /// page (spirit-tree dest list after "Where can I go?") is answered;
     /// the same page is never re-pressed.
     dialog_page: Option<String>,
-    /// The pre-interact approach walk: the standable take-off tile within
-    /// chebyshev 1 of the edge's `at` the player must reach before the loc
-    /// interact can be sent. `None` once the player stands adjacent (or on
-    /// a hop with no interact, like the open-leaf walk-through).
+    /// The pre-interact approach walk: a standable tile adjacent to the live
+    /// interaction target. NPC-backed hops re-arm this against the tracked
+    /// instance's current network tile before sending; loc-backed hops use
+    /// the edge's `at`. `None` after the interaction is sent (or on a hop
+    /// with no interact, like the open-leaf walk-through).
     approach: Option<ApproachHop>,
 }
 
-/// The transport approach: the standable take-off tile within chebyshev 1
-/// of the edge's `at` (the walk target), the `at` the adjacency settle is
-/// measured against, and the stall clock.
+/// The transport approach: a standable take-off tile within Chebyshev 1 of
+/// the target position, the position the adjacency settle is measured
+/// against, its per-arm loc/door budget, and the send state.
 struct ApproachHop {
     sent_tick: u32,
+    ticks_waited: u32,
     retry_pending: bool,
     tile: WorldTile,
     at: WorldTile,
-    ticks_waited: u32,
 }
 
 /// Fire the `on_leg` callback for a phase transition, using the `options`

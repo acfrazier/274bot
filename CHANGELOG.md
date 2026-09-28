@@ -3,6 +3,100 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.1.9` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [0.1.9.1] — 2026-09-28 — Alpha 4 patch
+
+### Sessions
+
+- Hosted sessions no longer trigger the embedded client's inactivity logout.
+  The client sends a Java-style keepalive after about a second without an
+  outbound packet, without flooding fast-pumped slots.
+- A running or paused script keeps its in-flight work across unexpected
+  disconnects (server logout, EOF, WebSocket/TLS/protocol errors, dead server)
+  and relogs through the normal login queue. Three unexpected exits within ten
+  awake minutes park relogging until an explicit Log in.
+- A deliberate Logout, Stop or Remove stays final, including a Logout while
+  already parked. Cancelling a Logout that never took effect in game no longer
+  discards the work at the next unexpected drop.
+- Exit, relog, queue, backoff and session-boundary decisions are logged with
+  typed reasons.
+
+### Navigation
+
+- WalkTo and script walks now use the members gates on rs2b2t's public worlds.
+  With the default public profile, long routes such as Lumbridge to Ardougne
+  were refused with "No path to the selected destination" because membership
+  resolved as unknown. An explicit `--world-members` setting still wins, and
+  local profiles keep both members and free-to-play operation.
+- Every panel and TUI map walk request logs one line with its origin,
+  destination, routing options, world membership and the outcome (route
+  summary or refusal reason).
+- Boats, cart drivers and other NPC transports: the bot walks up to the NPC
+  where it actually is before talking to it. A wandering sailor or customs
+  officer no longer causes "I can't reach that!" and an aborted walk from
+  a stale position.
+- Every panel and TUI map walk also logs how it ended: arrived, aborted
+  (with the reason and the transport it stopped at) or cancelled.
+- A map walk that fetches items from the bank now continues to its
+  destination after banking, instead of stopping at the bank.
+
+### Profiles and fleet
+
+- The Profiles editor can no longer overwrite another profile. An open edit
+  form stays on the profile it was opened for, shows which one ("Editing
+  …"), and asks before discarding unsaved changes when you open another
+  profile. Renaming onto an existing username, or creating a profile with
+  one, is refused inside the Profiles window with "nothing was saved", and a
+  successful save shows "Saved …" there. The TUI settings popup behaves
+  the same way.
+- In single-bot mode, picking a profile in the Profiles window keeps the
+  window open (close it with the tab's ×), as MultiBox already did.
+- Login all right after Load all reaches a member whose previous worker was
+  still stopping, instead of leaving it parked logged out.
+- A Remove followed quickly by a re-add now settles, instead of leaving a
+  pending operation that never completes.
+
+### Scripts
+
+- Browse lists the compiled Sherlock script again, and selecting it starts it.
+- A restored script assignment opens Script prefs with its parameters, not
+  "(no parameters)" when the catalog was not yet read. A card whose catalog
+  is unavailable is reported as such.
+- Browser timer APIs (`setTimeout` and similar) now fail with a catchable
+  error in isolate scripts instead of crashing the isolate. Use
+  `Execution.delayTicks` for game-time waits.
+
+### WalkTo map
+
+- Place names stored with `/` as a line break (for example `Port/Sarim`)
+  display with a space in the picker, canvas labels and TUI search. Search
+  still treats `/` as a word break.
+- Canvas labels are ranked by importance, then kind, then distance from the
+  view centre. Labels whose text would overlap an already placed label are
+  omitted (markers still draw).
+
+### Audio and title (client)
+
+- Switching from lowmem to highmem in game resumes the current zone song,
+  only when music is on and no jingle is playing, instead of always starting
+  the title music. Switching to lowmem stops music and sound effects cleanly.
+- Sound effects follow the 289 client: a new effect replaces the current one
+  only if it would end later; otherwise it is dropped. They no longer queue
+  behind each other, so a hit sound no longer waits for a stun sound to
+  finish.
+- The sound-effect volume setting is now applied (0, −4, −8, −12 dB).
+- Title-screen flames animate at the 289 client's steady-state cadence
+  (about 37 ms per frame).
+
+### Known issues
+
+- After an in-game logout, the title screen in the panel stays frozen and
+  ignores input. Log in from the panel as usual. A live title with a
+  single "Log In" button is planned for 0.2.0.
+- A map walk started from a few spots in Ardougne market can fail with
+  "No path to the selected destination", because a door there that starts
+  open isn't known to navigation yet. Step a tile or two away and try
+  again.
+
 ## [0.1.9] — 2026-09-27 — Alpha 4
 
 ### Release engineering

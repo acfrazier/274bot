@@ -68,6 +68,9 @@ pub struct SlotStatus {
     /// Intentional logout latch ([`SlotArm::login_latched`]): the slot is
     /// parked on the title until the operator explicitly arms login again.
     pub login_latched: bool,
+    /// Why automatic login is latched. A repeated-unexpected-logout guard is
+    /// operator-visible; explicit Log in clears it.
+    pub login_latch_reason: Option<super::LoginLatchReason>,
     /// Payload bytes from the current `Client.stream`; reset to zero whenever
     /// the connected session ends.
     pub bytes_in: u64,
@@ -121,6 +124,7 @@ impl Clone for SlotStatus {
             queue_position: self.queue_position,
             queue_total: self.queue_total,
             login_latched: self.login_latched,
+            login_latch_reason: self.login_latch_reason,
             bytes_in: self.bytes_in,
             bytes_out: self.bytes_out,
             stream_epoch: self.stream_epoch,
@@ -162,6 +166,8 @@ impl Clone for SlotStatus {
         self.queue_position.clone_from(&source.queue_position);
         self.queue_total.clone_from(&source.queue_total);
         self.login_latched.clone_from(&source.login_latched);
+        self.login_latch_reason
+            .clone_from(&source.login_latch_reason);
         self.bytes_in.clone_from(&source.bytes_in);
         self.bytes_out.clone_from(&source.bytes_out);
         self.stream_epoch = source.stream_epoch;
@@ -319,6 +325,7 @@ impl Default for SlotStatus {
             queue_position: -1,
             queue_total: -1,
             login_latched: false,
+            login_latch_reason: None,
             bytes_in: 0,
             bytes_out: 0,
             stream_epoch: 0,

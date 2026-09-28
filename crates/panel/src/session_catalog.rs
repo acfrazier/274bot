@@ -119,16 +119,21 @@ impl Session {
             .map(|(source, name)| (*source, name.as_str()))
     }
 
-    /// Select a Browse card. Transpile is deferred: cache hits fill `js`
-    /// immediately (disk read); misses enqueue **this card only**.
-    pub fn select_script_card(&mut self, source: script::ScriptSource, name: impl Into<String>) {
-        let name = name.into();
-        let sel = script::ScriptSel::Loaded(source, name.clone());
+    /// Select a shared Browse card. Compiled cards only update the pending
+    /// selection; loaded cards also queue their source for transpile.
+    pub fn select_script_selection(&mut self, sel: script::ScriptSel) {
         self.script_sel = Some(sel.clone());
         if let Some(profile) = self.focused_name() {
-            self.set_pending_browse(&profile, sel);
+            self.set_pending_browse(&profile, sel.clone());
         }
-        self.enqueue_transpile(source, name, true);
+        if let script::ScriptSel::Loaded(source, lookup) = sel {
+            self.enqueue_transpile(source, lookup, true);
+        }
+    }
+
+    /// Select a loaded card by its library lookup identity.
+    pub fn select_script_card(&mut self, source: script::ScriptSource, name: impl Into<String>) {
+        self.select_script_selection(script::ScriptSel::Loaded(source, name.into()));
     }
 
     /// Operator opted into warming every unwarmed card. Still one

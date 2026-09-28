@@ -38,7 +38,17 @@ impl Session {
     }
 
     pub fn restore_script_heading(&mut self, profile: &str) {
-        self.script_sel = self.scripts.heading(&self.core, profile);
+        let heading = self.scripts.heading(&self.core, profile);
+        let needs_catalog = heading.as_ref().is_some_and(|sel| {
+            matches!(
+                sel,
+                script::ScriptSel::Loaded(script::ScriptSource::Catalog, _)
+            )
+        });
+        self.script_sel = heading;
+        if needs_catalog {
+            self.fill_rs2b0t_cards_once();
+        }
     }
 
     pub fn profile_assignment(&self, profile: &str) -> Option<ScriptAssignment> {

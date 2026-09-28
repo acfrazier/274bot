@@ -43,8 +43,14 @@ fn profile_identity_records_effective_world_membership_and_provenance() {
     std::fs::create_dir_all(&root).unwrap();
     let engine = root.join("engine");
     let declaration = write_world_members(&engine, 274, 43594, true);
+    let env = host_play::profile::ProfileEnvironment {
+        home: Some(root.clone()),
+        working_dir: Some(root.clone()),
+        ..Default::default()
+    };
+    let bind = |config: &NativeConfig| bind_profile_with_env(config, &env);
 
-    let inherited = bind_profile(&profile_identity_config("local-274", &engine), &root).unwrap();
+    let inherited = bind(&profile_identity_config("local-274", &engine)).unwrap();
     let inherited_json = serde_json::to_value(&inherited).unwrap();
     assert_eq!(
         inherited.world_members, None,
@@ -66,7 +72,7 @@ fn profile_identity_records_effective_world_membership_and_provenance() {
     );
 
     write_world_members(&engine, 274, 43594, false);
-    let known_free = bind_profile(&profile_identity_config("local-274", &engine), &root).unwrap();
+    let known_free = bind(&profile_identity_config("local-274", &engine)).unwrap();
     let known_free_json = serde_json::to_value(&known_free).unwrap();
     assert_eq!(known_free_json["effective_world_members"]["value"], false);
     assert_eq!(
@@ -74,16 +80,19 @@ fn profile_identity_records_effective_world_membership_and_provenance() {
         "local_world_json"
     );
 
-    let public = bind_profile(&profile_identity_config("public-289", &engine), &root).unwrap();
+    let public = bind(&profile_identity_config("public-289", &engine)).unwrap();
     let public_json = serde_json::to_value(&public).unwrap();
-    assert!(public_json["effective_world_members"]["value"].is_null());
-    assert_eq!(public_json["effective_world_members"]["source"], "unknown");
+    assert_eq!(public_json["effective_world_members"]["value"], true);
+    assert_eq!(
+        public_json["effective_world_members"]["source"],
+        "rs2b2t_worlds"
+    );
     assert!(public_json["effective_world_members"]["declaration"].is_null());
 
     let mut overridden = profile_identity_config("local-274", &engine);
     overridden.world_members = Some(true);
     overridden.extra_args = vec!["--world-members".into(), "false".into()];
-    let overridden = bind_profile(&overridden, &root).unwrap();
+    let overridden = bind(&overridden).unwrap();
     let overridden_json = serde_json::to_value(&overridden).unwrap();
     assert_eq!(overridden.world_members, Some(false));
     assert_eq!(overridden_json["effective_world_members"]["value"], false);

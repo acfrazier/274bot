@@ -371,6 +371,12 @@ def package_base(expect, platform):
     return f"274bot-{expect['version']}-{ARCH_NAME[platform]}"
 
 
+def release_base(tag, platform):
+    """Final package name. A patch tag (0.1.9.1 on crate version 0.1.9) names
+    the package so it cannot collide with the base release's archives."""
+    return f"274bot-{tag}-{ARCH_NAME[platform]}"
+
+
 def selected_platforms(value):
     return PLATFORMS if value == "all" else (value,)
 
@@ -881,9 +887,15 @@ def create_archive(base, platform, destination):
 def finalize_worker(args):
     root = Path(args.worker_root).resolve()
     expect = worker_expect(root, args.commit, args.platform)
-    base = root / package_base(expect, args.platform)
+    validate_tag(args.tag, expect["version"])
+    staged = root / package_base(expect, args.platform)
+    base = root / release_base(args.tag, args.platform)
+    if staged != base and staged.is_dir():
+        if base.exists():
+            raise ReleaseError(f"both {staged.name} and {base.name} are staged")
+        staged.rename(base)
     if not base.is_dir():
-        raise ReleaseError(f"staged package is missing: {base}")
+        raise ReleaseError(f"staged package is missing: {staged}")
     notes = Path(args.release_notes).resolve()
     if not notes.is_file():
         raise ReleaseError(f"release notes are missing: {notes}")
@@ -956,16 +968,16 @@ def render_finalize_plan(args):
     }
 
 
-def expected_archive_names(expect):
+def expected_archive_names(tag):
     return {
-        package_base(expect, platform) + ARCHIVE_SUFFIX[platform]
+        release_base(tag, platform) + ARCHIVE_SUFFIX[platform]
         for platform in PLATFORMS
     }
 
 
-def update_sha256s(artifact_dir, expect):
+def update_sha256s(artifact_dir, tag):
     artifact_dir = Path(artifact_dir)
-    expected = expected_archive_names(expect)
+    expected = expected_archive_names(tag)
     actual = {
         path.name for path in artifact_dir.glob("274bot-*")
         if path.is_file() and (
@@ -1006,7 +1018,7 @@ def finalize_controller(args):
     artifact_dir = Path(args.artifact_dir).resolve() if args.artifact_dir else commit_root / "artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     for platform in selected_platforms(args.platform):
-        name = package_base(expect, platform) + ARCHIVE_SUFFIX[platform]
+        name = release_base(args.tag, platform) + ARCHIVE_SUFFIX[platform]
         destination = artifact_dir / name
         if destination.exists():
             raise ReleaseError(f"refusing to overwrite release archive: {destination}")
@@ -1036,7 +1048,7 @@ def finalize_controller(args):
             )
             windows_transport(args, "run", script)
             windows_transport(args, "get", f"{root}/{name}", destination)
-        update_sha256s(artifact_dir, expect)
+        update_sha256s(artifact_dir, args.tag)
     print(artifact_dir / "SHA256SUMS")
 
 
@@ -1299,6 +1311,10 @@ def retain_release_outputs(root, commit, platform):
         f"{platform}-finalize-result.json",
         "notarization-id.txt",
     }
+    finalized = root / f"{platform}-finalize-result.json"
+    if finalized.is_file():
+        archive = json.loads(finalized.read_text())["archive"]
+        keep |= {archive, archive[: -len(ARCHIVE_SUFFIX[platform])]}
     for path in root.iterdir():
         if path.name in keep:
             continue

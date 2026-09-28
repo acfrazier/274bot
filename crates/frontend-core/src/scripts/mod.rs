@@ -125,6 +125,109 @@ struct BulkStart {
     skipped: usize,
     failures: Vec<String>,
 }
+/// Metadata for one compiled picker card. The compiled registry owns the
+/// executable identity; this shared projection owns only operator-facing
+/// Browse text so both front ends render the same card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompiledCard {
+    pub id: script::CompiledId,
+    pub name: &'static str,
+    pub description: &'static str,
+    pub category: &'static str,
+}
+
+impl CompiledCard {
+    fn from_id(id: script::CompiledId) -> Self {
+        match id.0 {
+            "Sherlock" => Self {
+                id,
+                name: "Sherlock",
+                description: "Rust-native clue trail solver — waits for a clue and solves it.",
+                category: "Treasure Trails",
+            },
+            _ => Self {
+                id,
+                name: id.0,
+                description: "",
+                category: "Uncategorized",
+            },
+        }
+    }
+}
+
+/// One shared Browse card: a compiled registry card or a loaded JS card.
+/// Loaded cards remain borrowed from the library, so a Browse render does not
+/// clone source bytes or the whole card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowseCard<'a> {
+    Compiled(CompiledCard),
+    Loaded(&'a script::JsCard),
+}
+
+impl<'a> BrowseCard<'a> {
+    pub fn name(self) -> &'a str {
+        match self {
+            Self::Compiled(card) => card.name,
+            Self::Loaded(card) => card.name.as_str(),
+        }
+    }
+
+    pub fn description(self) -> &'a str {
+        match self {
+            Self::Compiled(card) => card.description,
+            Self::Loaded(card) => card.description.as_str(),
+        }
+    }
+
+    pub fn category(self) -> &'a str {
+        match self {
+            Self::Compiled(card) => card.category,
+            Self::Loaded(card) => card.category.as_str(),
+        }
+    }
+
+    pub fn tags(self) -> Option<&'a [String]> {
+        match self {
+            Self::Compiled(_) => None,
+            Self::Loaded(card) => Some(&card.tags),
+        }
+    }
+
+    pub fn kind(self) -> script::ScriptKind {
+        match self {
+            Self::Compiled(_) => script::ScriptKind::Compiled,
+            Self::Loaded(card) => card.kind,
+        }
+    }
+
+    pub fn source(self) -> script::ScriptSource {
+        match self {
+            Self::Compiled(_) => script::ScriptSource::Builtin,
+            Self::Loaded(card) => card.source,
+        }
+    }
+
+    pub fn unloadable(self) -> Option<&'a str> {
+        match self {
+            Self::Compiled(_) => None,
+            Self::Loaded(card) => card.unloadable.as_deref(),
+        }
+    }
+
+    pub fn loaded(self) -> Option<&'a script::JsCard> {
+        match self {
+            Self::Compiled(_) => None,
+            Self::Loaded(card) => Some(card),
+        }
+    }
+
+    pub fn selection(self) -> script::ScriptSel {
+        match self {
+            Self::Compiled(card) => script::ScriptSel::Compiled(card.id),
+            Self::Loaded(card) => script::ScriptSel::Loaded(card.source, card.identity_id()),
+        }
+    }
+}
 
 pub struct Scripts {
     /// The card library: catalog, loaded files, transpile cache.
@@ -237,6 +340,17 @@ impl Scripts {
                 eprintln!("[scripts] $RS2B0T registry: {error}");
             }
         }
+    }
+
+    /// The shared Browse card sequence: compiled registry cards first, then
+    /// loaded JS/catalog cards in library order.
+    pub fn browse_cards(&self) -> impl Iterator<Item = BrowseCard<'_>> {
+        script::compiled_ids()
+            .iter()
+            .copied()
+            .map(CompiledCard::from_id)
+            .map(BrowseCard::Compiled)
+            .chain(self.js.cards().iter().map(BrowseCard::Loaded))
     }
 
     // ---- assignment and Browse selection -------------------------------

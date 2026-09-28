@@ -942,20 +942,21 @@ impl SlotScript {
     }
 
     /// Re-gate a started script and invalidate deferred actions and snapshot
-    /// deltas at a connection boundary that ends the session (operator or
-    /// idle logout, or no relog coming): a Load script's in-flight machine
-    /// rows and task runtimes end. Operator run intent is retained.
+    /// deltas at a deliberate connection boundary (operator logout, Stop, or
+    /// removal): a Load script's in-flight machine rows and task runtimes end.
+    /// Operator run intent is retained.
     pub fn reset_session_work(&mut self) {
         self.session_boundary(false);
     }
 
-    /// The connection dropped and the host relogs: as
+    /// The connection dropped unexpectedly: as
     /// [`SlotScript::reset_session_work`], except that a Load script's work
-    /// is held whole for the relogged session
+    /// is held whole for the next session, whether automatic relog proceeds
+    /// or a repeat guard waits for explicit Log in
     /// ([`LoadIsolate::reconnect_session_work`]); a compiled script's live
     /// step still ends. Returns whether the host should re-arm, on the new
-    /// session, the script walk it was following: the script's work was
-    /// held and the walk is not the watchdog's own recovery walk, which the
+    /// session, the script walk it was following: the script's work was held
+    /// and the walk is not the watchdog's own recovery walk, which the
     /// boundary ends.
     pub fn reconnect_session_work(&mut self) -> bool {
         self.session_boundary(true)

@@ -81,8 +81,8 @@ pub use map_cache::{
 };
 pub use map_producer::{map_artifact_policies, NativeMapProducer};
 pub use walk_arm::{
-    arm_walk_on, step_walk_arm_bank_fetch, walk_arm_bank_fetch_freezes_follow, NoPath, WalkArm,
-    WalkArms,
+    arm_walk_on, cancel_walk_arm, step_walk_arm_bank_fetch, step_walk_arm_follow,
+    walk_arm_bank_fetch_freezes_follow, NoPath, WalkArm, WalkArms,
 };
 mod play_scripts;
 pub use play_scripts::{ScriptNavPaint, ScriptStartHandle};
@@ -118,16 +118,17 @@ pub use play_bootstrap::{
     world_host_for_bot_target, PlayOptions, ProfilePlayOptions, SharedClientTemplate,
     ValidatedTemplate,
 };
-pub use play_login::SlotArm;
 use play_login::{apply_queue_wait, sync_profile_arm, SharedLoginQueue};
 #[cfg(test)]
 use play_login::{
     configure_slot_world, drop_queue_place, enqueue_queue_place, granted_permit_may_start_login,
     granted_permit_world_is_current, login_and_acknowledge_permit, login_retry_wait,
-    on_login_success, permit_wait_cancelled, publish_login_latched, publish_login_latched_from_arm,
+    on_login_success, permit_wait_cancelled, publish_login_latched_from_arm,
     refresh_slot_world_preference, should_handshake, tick_flags, wait_for_permit,
-    wait_for_transfer_response, GrantedReservation, PermitWait,
+    wait_for_transfer_response, GrantedReservation, PermitWait, UNEXPECTED_LOGOUT_THRESHOLD,
+    UNEXPECTED_LOGOUT_WINDOW,
 };
+pub use play_login::{LoginLatchReason, SlotArm};
 use play_slots::SlotFrame;
 #[cfg(test)]
 use play_slots::{

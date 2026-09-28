@@ -251,6 +251,147 @@ fn login_recreates_a_terminal_worker_with_its_retained_io_but_select_does_not() 
     );
 }
 
+/// Member `b`, just dropped from the wall, whose worker has not exited
+/// yet: it keeps running until the returned sender is dropped. The play
+/// really spawns workers, at a port nothing listens on, so a login fails
+/// and retries without contacting a server. Also returns the drop's Remove.
+fn member_still_stopping(
+    test: &str,
+) -> (
+    OperatorSession<u32>,
+    Recorder,
+    std::sync::mpsc::Sender<()>,
+    OperationId,
+) {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let play = host_play::run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let mut s = OperatorSession::new(InstancePermit::SkipLock);
+    s.set_bypass_asset_startup(true);
+    s.start(vault_with(test, &[("b", 2, false)]), play);
+    let mut surface = Recorder::default();
+    s.fleet_mut().add("b");
+    let release = s
+        .play_mut()
+        .unwrap()
+        .attach_blocked_worker_for_test("b", SlotArm::new(2, false));
+    let remove = s.remove("b", Instant::now(), &mut surface).op;
+    assert!(s.play().unwrap().slot_stopping("b"));
+    (s, surface, release, remove)
+}
+
+/// Let `b`'s old worker exit, then poll once.
+fn finish_stopping(s: &mut OperatorSession<u32>, release: std::sync::mpsc::Sender<()>) {
+    drop(release);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while s.play().unwrap().slot_stopping("b") && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    s.poll();
+}
+
+/// Operator report (Windows, 0.1.9): drop a wall member, then Load all and
+/// Login all at once. The dropped member's worker had not exited yet, so
+/// both spawns were refused and nothing brought it back: it came up later
+/// parked "logged out". Its spawn now waits for the old worker, and the
+/// Login all issued meanwhile reaches the new one.
+#[test]
+fn login_all_right_after_load_all_reaches_a_member_whose_old_worker_is_still_stopping() {
+    let (mut s, mut surface, release, remove) = member_still_stopping("load-login-stopping");
+
+    let (load, _) = s.load_all(&mut surface);
+    let login = s.login_all(&mut surface);
+    assert_eq!(s.members(), ["b".to_string()]);
+    assert_eq!(
+        s.operation(load).unwrap().outcome("b"),
+        Some(&Outcome::Completed)
+    );
+    assert_eq!(
+        s.operation(login).unwrap().outcome("b"),
+        Some(&Outcome::Pending),
+        "the Login waits for the new worker, it does not fail"
+    );
+    assert_eq!(
+        s.operation(remove).unwrap().outcome("b"),
+        Some(&Outcome::Pending),
+        "the old worker has not exited yet"
+    );
+
+    finish_stopping(&mut s, release);
+    let b = s
+        .play()
+        .unwrap()
+        .arm("b")
+        .expect("b's worker spawns once its predecessor exited");
+    assert!(b.wants_login(), "the Login all reached the new worker");
+    assert!(!b.login_latched());
+    assert_eq!(
+        s.operation(remove).unwrap().outcome("b"),
+        Some(&Outcome::Completed),
+        "the removal is complete once its worker exited"
+    );
+    s.play_mut().unwrap().stop_slot("b");
+}
+
+#[test]
+fn a_logout_issued_while_the_spawn_waits_holds_the_new_worker_logged_out() {
+    let (mut s, mut surface, release, _) = member_still_stopping("load-logout-stopping");
+    s.load_all(&mut surface);
+    s.login_all(&mut surface);
+    s.logout("b");
+
+    finish_stopping(&mut s, release);
+    let b = s.play().unwrap().arm("b").expect("b's worker spawns");
+    assert!(b.login_latched(), "the later Logout wins");
+    assert!(!b.wants_login());
+    s.play_mut().unwrap().stop_slot("b");
+}
+
+/// A member removed and loaded again before a poll saw its removal settle
+/// (its worker already gone): the Remove completes when the new lifetime
+/// starts. Pending reports are never evicted, so a Remove left pending by
+/// each cycle would grow the operation history without bound.
+#[test]
+fn repeated_remove_and_reload_keeps_the_operation_history_bounded() {
+    let mut s = session("remove-reload-cycle", &[("a", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("a", &mut surface);
+    let mut removes = Vec::new();
+    for _ in 0..80 {
+        removes.push(s.remove("a", Instant::now(), &mut surface).op);
+        s.load("a", &mut surface);
+        s.poll();
+    }
+    assert!(
+        s.operation(removes[0]).is_none(),
+        "settled history is evicted"
+    );
+    let kept = removes
+        .iter()
+        .filter(|op| s.operation(**op).is_some())
+        .count();
+    assert!(kept < 64, "{kept} Remove reports retained");
+    let last = *removes.last().unwrap();
+    assert_eq!(
+        s.operation(last).unwrap().outcome("a"),
+        Some(&Outcome::Completed)
+    );
+}
+
 #[test]
 fn removing_the_selected_member_selects_its_neighbour_and_settles_after_disconnect() {
     let mut s = session(
@@ -924,6 +1065,210 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
     assert!(disk.get("alice").is_none() && disk.get("alicia").is_some());
 }
 
+/// Operator report: an edit form whose username field held another
+/// profile's name saved as a rename onto it, overwriting that profile and
+/// deleting the edited one.
+#[test]
+fn a_rename_onto_an_existing_username_is_refused_and_writes_nothing() {
+    let mut s = session(
+        "rename-collide",
+        &[("aindniK", 1, true), ("Hans", 2, false)],
+    );
+    let mut onto = s.vault().unwrap().get("aindniK").unwrap().clone();
+    onto.username = "Hans".into();
+    onto.password = "typed".into();
+
+    let error = s
+        .rename_profile("aindniK", onto, ArmMirror::None, "credentials")
+        .unwrap_err();
+    assert_eq!(error, "credentials: a profile named Hans already exists");
+    s.flush_writes();
+
+    let disk = Vault::unlock(&vault_path("rename-collide"), "bot").unwrap();
+    for vault in [s.vault().unwrap(), &disk] {
+        let hans = vault.get("Hans").unwrap();
+        assert_eq!(
+            (hans.uid, hans.password.as_str()),
+            (2, "pw"),
+            "Hans untouched"
+        );
+        let kept = vault
+            .get("aindniK")
+            .expect("the edited profile is not deleted");
+        assert_eq!((kept.uid, kept.password.as_str()), (1, "pw"));
+    }
+}
+
+#[test]
+fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
+    let mut s = session("create-collide", &[("Hans", 2, false)]);
+    let fresh = Profile {
+        username: "Hans".into(),
+        password: "typed".into(),
+        uid: 9,
+        settings: ProfileSettings::default(),
+    };
+
+    let error = s
+        .create_profile(fresh.clone(), ArmMirror::None, "credentials")
+        .unwrap_err();
+    assert_eq!(error, "credentials: a profile named Hans already exists");
+    s.flush_writes();
+    let disk = Vault::unlock(&vault_path("create-collide"), "bot").unwrap();
+    for vault in [s.vault().unwrap(), &disk] {
+        let hans = vault.get("Hans").unwrap();
+        assert_eq!((hans.uid, hans.password.as_str()), (2, "pw"));
+    }
+
+    // A new username is created.
+    let bob = Profile {
+        username: "bob".into(),
+        ..fresh
+    };
+    s.create_profile(bob, ArmMirror::None, "credentials")
+        .unwrap();
+    s.flush_writes();
+    let disk = Vault::unlock(&vault_path("create-collide"), "bot").unwrap();
+    assert_eq!(disk.get("bob").unwrap().password, "typed");
+}
+
+/// The shared unsaved-changes predicate behind both profile editors: an
+/// untouched form is clean, any field its Save would write makes it dirty,
+/// and a target whose row is gone counts as dirty (leaving must ask, never
+/// silently drop the draft).
+#[test]
+fn profile_form_dirty_tracks_edits_against_the_vault_row() {
+    let s = session("form-dirty", &[("alice", 1, false)]);
+    let row = s.vault().unwrap().get("alice").unwrap();
+    let (user, pass, settings) = (
+        row.username.clone(),
+        row.password.clone(),
+        row.settings.clone(),
+    );
+
+    assert!(
+        !s.profile_form_dirty(Some("alice"), &user, &pass, &settings),
+        "an editor opened on the row is clean"
+    );
+    assert!(
+        s.profile_form_dirty(Some("alice"), &user, "typed-but-unsaved", &settings),
+        "an edited password is unsaved"
+    );
+    assert!(
+        s.profile_form_dirty(Some("alice"), "bob", &pass, &settings),
+        "a renamed username is unsaved"
+    );
+    let mut tweaked = settings.clone();
+    tweaked.world = Some(2);
+    assert!(
+        s.profile_form_dirty(Some("alice"), &user, &pass, &tweaked),
+        "an edited setting is unsaved"
+    );
+    assert!(
+        s.profile_form_dirty(Some("ghost"), &user, &pass, &settings),
+        "a target with no row must ask before it is left"
+    );
+}
+
+#[test]
+fn profile_form_dirty_treats_a_blank_new_profile_as_clean() {
+    let s = session("form-dirty-new", &[("alice", 1, false)]);
+    let clean = ProfileSettings::default();
+
+    assert!(
+        !s.profile_form_dirty(None, "", "", &clean),
+        "a blank new-profile form is clean"
+    );
+    assert!(
+        !s.profile_form_dirty(Some(""), "  ", "", &clean),
+        "whitespace alone is not a name"
+    );
+    assert!(
+        s.profile_form_dirty(None, "bob", "", &clean),
+        "a typed name is unsaved"
+    );
+    assert!(
+        s.profile_form_dirty(None, "", "pw", &clean),
+        "a typed password is unsaved"
+    );
+    let mut tweaked = clean.clone();
+    tweaked.lamp_auto = !clean.lamp_auto;
+    assert!(
+        s.profile_form_dirty(None, "", "", &tweaked),
+        "a non-default setting is unsaved"
+    );
+}
+
+/// The Save projection for an existing target: only the trimmed username,
+/// the password as typed, `world` and the trimmed `clue_duel_partner` count.
+/// Whitespace-equivalent drafts are clean, and a concurrent change to a
+/// field Save preserves (script assignment, raster, tutorial, …) never
+/// makes an untouched editor look dirty.
+#[test]
+fn profile_form_dirty_projects_only_what_save_writes() {
+    let mut s = session("form-dirty-projection", &[("alice", 1, false)]);
+    let row = s.vault().unwrap().get("alice").unwrap().clone();
+
+    // Whitespace around the username and the clue partner canonicalizes to
+    // the stored row: Save would write the same values.
+    assert!(
+        !s.profile_form_dirty(
+            Some("alice"),
+            "  alice  ",
+            &row.password,
+            &ProfileSettings {
+                clue_duel_partner: format!("  {}  ", row.settings.clue_duel_partner),
+                ..row.settings.clone()
+            },
+        ),
+        "whitespace-equivalent input is not dirty"
+    );
+
+    // A concurrent change to fields Save preserves leaves the open draft
+    // clean: the editor still matches what its Save would write.
+    let mut concurrent = row.settings.clone();
+    concurrent.script_assignment = Some(vault::ScriptAssignment {
+        source_kind: "catalog".into(),
+        identity: "other".into(),
+        display_name: String::new(),
+        unavailable: None,
+    });
+    concurrent.raster = match row.settings.raster {
+        vault::RasterMode::Gpu => vault::RasterMode::Cpu,
+        _ => vault::RasterMode::Gpu,
+    };
+    concurrent.tutorial_skipped = Some(!row.settings.tutorial_skipped.unwrap_or(false));
+    concurrent.lowmem = !row.settings.lowmem;
+    concurrent.auto_login = !row.settings.auto_login;
+    concurrent.random_events = !row.settings.random_events;
+    {
+        let mut updated = row.clone();
+        updated.settings = concurrent;
+        s.vault_mut().unwrap().upsert(updated).unwrap();
+    }
+    assert!(
+        !s.profile_form_dirty(Some("alice"), &row.username, &row.password, &row.settings),
+        "a concurrent change to a non-owned setting is not dirty"
+    );
+
+    // Real edits still count.
+    assert!(
+        s.profile_form_dirty(Some("alice"), &row.username, "changed", &row.settings),
+        "a real password edit is dirty"
+    );
+    let mut world = row.settings.clone();
+    world.world = Some(row.settings.world.unwrap_or(1).wrapping_add(1));
+    assert!(
+        s.profile_form_dirty(Some("alice"), &row.username, &row.password, &world),
+        "a real world edit is dirty"
+    );
+    let mut clue = row.settings.clone();
+    clue.clue_duel_partner = format!("{}!", row.settings.clue_duel_partner);
+    assert!(
+        s.profile_form_dirty(Some("alice"), &row.username, &row.password, &clue),
+        "a real clue-partner edit is dirty"
+    );
+}
 #[test]
 fn on_a_failed_commit_a_superseded_write_is_cancelled_and_only_the_final_one_fails() {
     let mut s = session("write-coalesce-fail", &[("alice", 1, false)]);

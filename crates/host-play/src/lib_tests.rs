@@ -1666,23 +1666,6 @@ fn apply_queue_wait_writes_k_of_n_and_grant_clears() {
 }
 
 #[test]
-fn publish_login_latched_projects_arm_latch_onto_slot_row() {
-    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
-        username: "alice".into(),
-        startup_phase: StartupPhase::Queueing,
-        ..Default::default()
-    }]));
-    publish_login_latched(&statuses, "alice", true);
-    {
-        let rows = statuses.lock().unwrap();
-        assert!(rows[0].login_latched);
-        assert_eq!(rows[0].startup_phase, StartupPhase::Queueing);
-    }
-    publish_login_latched(&statuses, "alice", false);
-    assert!(!statuses.lock().unwrap()[0].login_latched);
-}
-
-#[test]
 fn explicit_login_rearm_clears_latch_and_allows_handshake() {
     let arm = SlotArm::new(0, true);
     arm.request_logout();
@@ -1854,25 +1837,7 @@ fn client_after_observed_idle_logout() -> Client {
     client
 }
 
-#[test]
-fn tick_flags_latches_an_observed_idle_logout_without_changing_saved_intent() {
-    let mut client = client_after_observed_idle_logout();
-    let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
-    arm.request_logout();
-
-    assert!(!tick_flags(&mut client, &[], &arm));
-    assert!(arm.login_latched());
-    assert!(!arm.wants_login());
-    assert!(arm.auto_login.load(Ordering::Relaxed));
-    assert!(arm.reconnect.load(Ordering::Relaxed));
-    assert!(arm.wants_logout());
-    assert!(!should_handshake(&arm, false));
-    assert_eq!(client.take_session_exit_observation(), None);
-}
-
-#[test]
-fn unclassified_server_logout_leaves_auto_login_armed() {
+fn client_after_server_logout() -> Client {
     let cfg = ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -1885,13 +1850,147 @@ fn unclassified_server_logout_leaves_auto_login_armed() {
     let mut packet = client::io::Packet::new(vec![]);
     client.psize = 0;
     client.handle_packet(client::io::ServerProt289::LOGOUT, &mut packet);
+    client
+}
+
+#[test]
+fn operator_logout_wins_over_a_correlated_client_idle_logout() {
+    let mut client = client_after_observed_idle_logout();
     let arm = SlotArm::new(7, true);
+    arm.reconnect.store(true, Ordering::Relaxed);
+    arm.request_logout();
+
+    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(arm.login_latched());
+    assert!(!arm.wants_login());
+    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.reconnect.load(Ordering::Relaxed));
+    assert!(arm.wants_logout());
+    assert!(!should_handshake(&arm, false));
+    assert_eq!(client.take_session_exit_reason(), None);
+}
+
+#[test]
+fn idle_correlated_server_logout_relogs_an_active_script_without_auto_login() {
+    let mut client = client_after_observed_idle_logout();
+    let arm = SlotArm::new(7, false);
+    arm.set_script_active(true);
+
+    assert!(!tick_flags(&mut client, &[], &arm));
+    assert_eq!(arm.login_latch_reason(), None);
+    assert!(
+        should_handshake(&arm, false),
+        "the incident's idle-correlated server logout is unexpected, not a permanent latch"
+    );
+}
+
+#[test]
+fn unexpected_server_logout_relogs_an_active_script_with_auto_login_off() {
+    let mut client = client_after_server_logout();
+    let arm = SlotArm::new(7, false);
+    arm.set_script_active(true);
 
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(!arm.login_latched());
-    assert!(arm.wants_login());
-    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.wants_login());
+    assert!(!arm.auto_login.load(Ordering::Relaxed));
     assert!(should_handshake(&arm, false));
+    assert_eq!(arm.login_latch_reason(), None);
+}
+
+#[test]
+fn tick_flags_drives_repeat_guard_and_ignores_operator_logout_and_stop() {
+    let arm = SlotArm::new(7, false);
+    arm.set_script_active(true);
+    for expected in 1..=UNEXPECTED_LOGOUT_THRESHOLD {
+        let mut client = client_after_server_logout();
+        assert!(!tick_flags(&mut client, &[], &arm));
+        assert_eq!(arm.unexpected_logout_count_at(Instant::now()), expected);
+    }
+    assert_eq!(
+        arm.login_latch_reason(),
+        Some(LoginLatchReason::RepeatedUnexpectedLogouts {
+            count: UNEXPECTED_LOGOUT_THRESHOLD as u8,
+            window_seconds: UNEXPECTED_LOGOUT_WINDOW.as_secs(),
+        })
+    );
+
+    let operator = SlotArm::new(8, true);
+    operator.request_logout();
+    let mut client = client_after_server_logout();
+    assert!(!tick_flags(&mut client, &[], &operator));
+    assert_eq!(operator.unexpected_logout_count_at(Instant::now()), 0);
+
+    let stopped = SlotArm::new(9, true);
+    stopped.stop.store(true, Ordering::Relaxed);
+    let mut client = client_after_server_logout();
+    assert!(tick_flags(&mut client, &[], &stopped));
+    assert_eq!(stopped.unexpected_logout_count_at(Instant::now()), 0);
+}
+
+#[test]
+fn repeat_guard_window_includes_600_seconds_and_excludes_601() {
+    let base = Instant::now();
+    let inclusive = SlotArm::new(7, false);
+    inclusive.record_unexpected_logout_at(base).unwrap();
+    inclusive
+        .record_unexpected_logout_at(base + Duration::from_secs(1))
+        .unwrap();
+    let record = inclusive
+        .record_unexpected_logout_at(base + UNEXPECTED_LOGOUT_WINDOW)
+        .unwrap();
+    assert_eq!(record.count, UNEXPECTED_LOGOUT_THRESHOLD);
+    assert!(record.latched, "an exit exactly 600 seconds old counts");
+
+    let expired = SlotArm::new(8, false);
+    expired.record_unexpected_logout_at(base).unwrap();
+    expired
+        .record_unexpected_logout_at(base + Duration::from_secs(1))
+        .unwrap();
+    let record = expired
+        .record_unexpected_logout_at(base + UNEXPECTED_LOGOUT_WINDOW + Duration::from_secs(1))
+        .unwrap();
+    assert_eq!(record.count, 2);
+    assert!(!record.latched, "an exit 601 seconds old expires");
+}
+
+#[test]
+fn repeat_guard_latches_after_three_unexpected_logouts_and_login_clears_it() {
+    let arm = SlotArm::new(7, false);
+    arm.set_script_active(true);
+    let now = Instant::now();
+
+    for offset in 0..UNEXPECTED_LOGOUT_THRESHOLD - 1 {
+        let record = arm
+            .record_unexpected_logout_at(now + Duration::from_secs(offset as u64))
+            .unwrap();
+        assert_eq!(record.count, offset + 1);
+        assert!(!record.latched);
+        assert!(should_handshake(&arm, false));
+    }
+
+    let record = arm
+        .record_unexpected_logout_at(now + Duration::from_secs(2))
+        .unwrap();
+    assert_eq!(record.count, UNEXPECTED_LOGOUT_THRESHOLD);
+    assert!(record.latched);
+    assert_eq!(
+        arm.login_latch_reason(),
+        Some(LoginLatchReason::RepeatedUnexpectedLogouts {
+            count: UNEXPECTED_LOGOUT_THRESHOLD as u8,
+            window_seconds: UNEXPECTED_LOGOUT_WINDOW.as_secs(),
+        })
+    );
+    assert!(!should_handshake(&arm, false));
+
+    arm.arm_explicit_login();
+    assert_eq!(arm.login_latch_reason(), None);
+    assert!(should_handshake(&arm, false));
+    let record = arm
+        .record_unexpected_logout_at(now + Duration::from_secs(3))
+        .unwrap();
+    assert_eq!(record.count, 1, "explicit Log in clears guard history");
+    assert!(!record.latched);
 }
 
 #[test]
@@ -4803,6 +4902,258 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
 fn walk_arm_may_follow_freezes_under_hold() {
     assert!(WalkArm::may_follow(false), "unheld follow may poll");
     assert!(!WalkArm::may_follow(true), "hold freezes WalkArm follow");
+}
+
+fn walk_receipts(mark: usize, slot: &str) -> Vec<String> {
+    crate::walk_map::test_log::records_since(mark)
+        .into_iter()
+        .filter(|(record_slot, message)| {
+            record_slot == slot && message.starts_with("WalkTo outcome=")
+        })
+        .map(|(_, message)| message)
+        .collect()
+}
+
+fn walk_receipt_field<'a>(message: &'a str, name: &str) -> Option<&'a str> {
+    message.split_ascii_whitespace().find_map(|field| {
+        let (key, value) = field.split_once('=')?;
+        (key == name).then_some(value)
+    })
+}
+
+fn assert_walk_receipt_fields(
+    message: &str,
+    outcome: &str,
+    destination: &str,
+    at: &str,
+    reason: &str,
+    transport: &str,
+) {
+    for (name, expected) in [
+        ("outcome", outcome),
+        ("destination", destination),
+        ("at", at),
+        ("reason", reason),
+        ("transport", transport),
+    ] {
+        assert_eq!(
+            walk_receipt_field(message, name),
+            Some(expected),
+            "{name} in {message:?}"
+        );
+    }
+}
+
+#[test]
+fn arming_the_same_walk_slot_twice_cancels_the_first_request_once() {
+    let log_mark = crate::walk_map::test_log::mark();
+    let world = open_world(3, 3);
+    let travellers: WalkArms = Arc::new(Mutex::new(HashMap::new()));
+    let from = Tile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let first = Tile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    let second = Tile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let slot = "walk-receipt-replaced";
+
+    for destination in [first, second] {
+        arm_walk_on(
+            &world,
+            from,
+            destination,
+            FindOptions::default(),
+            &WorldState::empty(),
+            &[],
+            &travellers,
+            Some(slot),
+        )
+        .expect("the open world routes both requests");
+    }
+
+    let receipts = walk_receipts(log_mark, slot);
+    assert_eq!(receipts.len(), 1, "{receipts:?}");
+    assert_walk_receipt_fields(
+        &receipts[0],
+        "cancelled",
+        "(1,1,0)",
+        "(0,0,0)",
+        "Replaced",
+        "-",
+    );
+}
+
+#[test]
+fn unroutable_bank_stand_aborts_the_walk_request_exactly_once() {
+    let log_mark = crate::walk_map::test_log::mark();
+    let slot = "walk-receipt-bank-fetch";
+    let mut client = bank_client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let here = player_here_tile(&client).expect("fixture player");
+    let destination = WorldTile {
+        x: here.0 + 2,
+        z: here.1,
+        level: here.2,
+    };
+    let stand = WorldTile {
+        x: here.0 + 1,
+        z: here.1,
+        level: here.2,
+    };
+    let final_route = Route {
+        dest: destination,
+        legs: vec![],
+        ticks: 0.0,
+    };
+    let mut arm = WalkArm {
+        route: Some(final_route.clone()),
+        bank_fetch: Some(PendingBankFetch {
+            steps: VecDeque::from([BankStep::Walk {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+            }]),
+            dest: destination,
+            opts: FindOptions::default(),
+            final_route,
+            avoid: Vec::new(),
+        }),
+        ..Default::default()
+    };
+
+    assert!(step_walk_arm_follow(
+        &mut client,
+        &snapshot,
+        &mut arm,
+        None,
+        here,
+        false,
+        Some(slot),
+    ));
+    assert!(!step_walk_arm_follow(
+        &mut client,
+        &snapshot,
+        &mut arm,
+        None,
+        here,
+        false,
+        Some(slot),
+    ));
+
+    let receipts = walk_receipts(log_mark, slot);
+    assert_eq!(receipts.len(), 1, "{receipts:?}");
+    assert_walk_receipt_fields(
+        &receipts[0],
+        "aborted",
+        &format!(
+            "({},{},{})",
+            destination.x, destination.z, destination.level
+        ),
+        &format!("({},{},{})", here.0, here.1, here.2),
+        "BankFetch",
+        "-",
+    );
+}
+
+#[test]
+fn failed_bank_stand_subroute_omits_private_leg_metadata() {
+    let log_mark = crate::walk_map::test_log::mark();
+    let slot = "walk-receipt-bank-stand-failure";
+    let mut client = bank_client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let here = player_here_tile(&client).expect("fixture player");
+    let at = WorldTile {
+        x: here.0,
+        z: here.1,
+        level: here.2,
+    };
+    let stand = WorldTile { x: at.x + 1, ..at };
+    let destination = WorldTile { x: at.x + 2, ..at };
+    let final_route = Route {
+        dest: destination,
+        legs: vec![],
+        ticks: 0.0,
+    };
+    let edge = TransportEdge {
+        kind: TransportKind::Boat,
+        at,
+        to: stand,
+        loc_id: 378,
+        option: 1,
+        ticks: 7,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+    };
+    let mut arm = WalkArm {
+        route: Some(Route {
+            dest: stand,
+            legs: vec![Leg::Transport { edge }],
+            ticks: 7.0,
+        }),
+        bank_fetch: Some(PendingBankFetch {
+            steps: VecDeque::from([BankStep::Walk {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+            }]),
+            dest: destination,
+            opts: FindOptions::default(),
+            final_route,
+            avoid: Vec::new(),
+        }),
+        ..Default::default()
+    };
+
+    let mut finished = 0;
+    for _ in 0..70 {
+        finished += usize::from(step_walk_arm_follow(
+            &mut client,
+            &snapshot,
+            &mut arm,
+            None,
+            here,
+            false,
+            Some(slot),
+        ));
+    }
+    assert_eq!(finished, 1, "the private route has one terminal transition");
+
+    let receipts = walk_receipts(log_mark, slot);
+    assert_eq!(receipts.len(), 1, "{receipts:?}");
+    assert_walk_receipt_fields(
+        &receipts[0],
+        "aborted",
+        &format!(
+            "({},{},{})",
+            destination.x, destination.z, destination.level
+        ),
+        &format!("({},{},{})", here.0, here.1, here.2),
+        "Blocked",
+        "-",
+    );
+    assert_eq!(
+        walk_receipt_field(&receipts[0], "leg"),
+        Some("-"),
+        "{receipts:?}"
+    );
 }
 
 /// The shared walk arm (panel `Session::arm_walk_on` is a thin
@@ -15919,6 +16270,103 @@ fn an_active_script_relogs_a_dropped_connection_with_auto_login_off() {
     rig.end_session(&arm);
     rig.frames(2);
     assert_eq!(rig.armed(), armed, "and its walk carries on");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// The repeat guard stops reconnect attempts, not the active script. An
+/// explicit Log in clears the guard and resumes the work held at the exit.
+#[test]
+fn repeat_guard_parks_without_discarding_active_script_work() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.frames(1);
+    let armed = rig.armed();
+    let now = Instant::now();
+    for offset in 0..UNEXPECTED_LOGOUT_THRESHOLD {
+        arm.record_unexpected_logout_at(now + Duration::from_secs(offset as u64));
+    }
+    assert!(arm.login_latched());
+
+    rig.end_session(&arm);
+    assert!(
+        !should_handshake(&arm, false),
+        "the guard parks automatic relog"
+    );
+
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.end_session(&arm);
+    rig.frames(2);
+    assert_eq!(rig.armed(), armed, "the held walk resumes after Log in");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// A Logout issued after a repeat-guard park is still a deliberate session
+/// end: explicit Log in starts without the held walk from the old session.
+#[test]
+fn operator_logout_while_guard_parked_discards_held_script_work() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.frames(1);
+    let before = rig.walks().len();
+    let now = Instant::now();
+    for offset in 0..UNEXPECTED_LOGOUT_THRESHOLD {
+        arm.record_unexpected_logout_at(now + Duration::from_secs(offset as u64));
+    }
+    rig.end_session(&arm);
+    assert!(arm.login_latched());
+
+    arm.request_logout();
+    play_slots::apply_offline_logout_reset(
+        "alice",
+        &arm,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+        &rig.channels,
+    );
+    assert_eq!(
+        rig.armed(),
+        (0, None),
+        "the offline Logout ends held work before any Log in"
+    );
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.end_session(&arm);
+    rig.frames(2);
+    assert_eq!(rig.armed(), (0, None), "old held walk must be gone");
+    assert_eq!(rig.walks().len(), before, "nothing old is re-dispatched");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Cancelling a connected Logout before it takes effect must not poison the
+/// next unrelated drop: the active run still owns and resumes its held walk.
+#[test]
+fn cancelled_ingame_logout_preserves_work_on_later_unexpected_drop() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.frames(1);
+    let armed = rig.armed();
+
+    arm.request_logout();
+    arm.arm_explicit_login();
+    rig.end_session(&arm);
+    assert!(
+        should_handshake(&arm, false),
+        "the cancelled Logout must not park the later reconnect"
+    );
+
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.end_session(&arm);
+    rig.frames(2);
+    assert_eq!(rig.armed(), armed, "the held walk must resume");
     rig.slot().lock().unwrap().stop();
 }
 

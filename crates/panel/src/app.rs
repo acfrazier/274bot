@@ -52,12 +52,13 @@ use crate::session::{
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
-    integer_ui_scale, native_applet, panel_split_ratio, ACCENT, ACCENT_HOVER, BG, ERROR,
+    integer_ui_scale, native_applet, panel_split_ratio, ACCENT, ACCENT_HOVER, BG, ERROR, GREEN,
     PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM,
 };
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
+use frontend_core::scripts::BrowseCard;
 use frontend_core::views::run_state_label;
-use frontend_core::{FleetRow, Phase, ResourceView};
+use frontend_core::{FleetRow, FormNotice, Phase, ResourceView};
 
 #[path = "live_harness.rs"]
 mod live_harness;
@@ -2082,10 +2083,10 @@ fn category_from_key(a: [u8; 32]) -> Option<String> {
     std::str::from_utf8(&a[..n]).ok().map(str::to_string)
 }
 
-fn card_categories(cards: &[script::JsCard]) -> Vec<String> {
+fn card_categories(cards: &[BrowseCard<'_>]) -> Vec<String> {
     let mut out = Vec::new();
     for card in cards {
-        let cat = display_category(&card.category).to_string();
+        let cat = display_category((*card).category()).to_string();
         if !out.iter().any(|c| c == &cat) {
             out.push(cat);
         }
@@ -2155,7 +2156,8 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
         {
             if p.delivery {
                 if let Some(from) = category_from_key(p.data) {
-                    let present = card_categories(session.scripts.js.cards());
+                    let cards: Vec<_> = session.scripts.browse_cards().collect();
+                    let present = card_categories(&cards);
                     let mut order =
                         resolve_category_order(&session.ui.script_category_order, &present);
                     move_category(&mut order, &from, cat);
@@ -2167,10 +2169,18 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
     }
 }
 
-fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: f32) {
-    let selected =
-        session.script_sel == Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
-    let id = format!("##scard-{}", card.identity_key());
+fn browse_script_card(
+    ui: &Ui,
+    session: &Session,
+    card: BrowseCard<'_>,
+    w: f32,
+) -> Option<script::ScriptSel> {
+    let selection = card.selection();
+    let selected = session.script_sel.as_ref() == Some(&selection);
+    let id = match card {
+        BrowseCard::Compiled(card) => format!("##scard-compiled-{}", card.id.0),
+        BrowseCard::Loaded(card) => format!("##scard-{}", card.identity_key()),
+    };
     let _border = selected.then(|| ui.push_style_color(StyleColor::Border, ACCENT));
     ui.child_window(&id)
         .size([w, 0.0])
@@ -2181,7 +2191,7 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
             let inner = ui.content_region_avail()[0].max(1.0);
             let row_h = ui.text_line_height_with_spacing();
             let origin = ui.cursor_screen_pos();
-            let badge = card_kind_source(card.kind, card.source);
+            let badge = card_kind_source(card.kind(), card.source());
             let font_sz = ui.current_font_size();
             let badge_w = ui
                 .current_font()
@@ -2189,7 +2199,7 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
             let gap = ui.clone_style().item_spacing()[0];
             let title_w = title_clip_width(inner, badge_w, gap);
             let badges_below = title_w < 32.0;
-            let title_color = if card.unloadable.is_some() {
+            let title_color = if card.unloadable().is_some() {
                 TEXT_DIM
             } else {
                 ACCENT
@@ -2198,7 +2208,7 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
                 {
                     let _clip =
                         ui.push_clip_rect(origin, [origin[0] + inner, origin[1] + row_h], true);
-                    ui.text_colored(title_color, &card.name);
+                    ui.text_colored(title_color, card.name());
                 }
                 let badge_origin = [origin[0], origin[1] + row_h];
                 ui.set_cursor_screen_pos(badge_origin);
@@ -2210,14 +2220,11 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
                     );
                     ui.text_disabled(&badge);
                 }
-                // Badge ItemSize advances the cursor. A trailing
-                // SetCursorScreenPos to the next line with no following item
-                // aborts File cards (empty desc/tags) — imgui issue 5548.
             } else {
                 {
                     let _clip =
                         ui.push_clip_rect(origin, [origin[0] + title_w, origin[1] + row_h], true);
-                    ui.text_colored(title_color, &card.name);
+                    ui.text_colored(title_color, card.name());
                 }
                 let badge_origin = [origin[0] + title_w + gap, origin[1]];
                 ui.set_cursor_screen_pos(badge_origin);
@@ -2230,70 +2237,77 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
                     ui.text_disabled(&badge);
                 }
             }
-            if let Some(line) = card_transpile_label(
-                session.transpile_front(),
-                card.source,
-                &card.name,
-                session.transpile_done,
-                session.transpile_total,
-            ) {
-                let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
-                ui.text_disabled(line);
-            }
-            if let Some(failure) = session.scripts.js.load_failure(&card.identity_key()) {
-                ui.text_colored(ERROR, format!("failed {}", failure.stage.as_str()));
-                if selected {
-                    ui.text_wrapped(failure.named_line());
+            if let Some(loaded) = card.loaded() {
+                if let Some(line) = card_transpile_label(
+                    session.transpile_front(),
+                    loaded.source,
+                    &loaded.name,
+                    session.transpile_done,
+                    session.transpile_total,
+                ) {
+                    let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+                    ui.text_disabled(line);
+                }
+                if let Some(failure) = session.scripts.js.load_failure(&loaded.identity_key()) {
+                    ui.text_colored(ERROR, format!("failed {}", failure.stage.as_str()));
+                    if selected {
+                        ui.text_wrapped(failure.named_line());
+                    }
                 }
             }
-            if !card.description.is_empty() {
+            if !card.description().is_empty() {
                 let _wrap = ui.push_text_wrap_pos(0.0);
                 let line_h = ui.text_line_height();
                 let full = ui.current_font().calc_text_size(
                     ui.current_font_size(),
                     f32::MAX,
                     inner,
-                    &card.description,
+                    card.description(),
                 )[1];
                 let h = card_desc_height(line_h, selected, full).max(1.0);
                 if selected || h + 0.5 >= full {
-                    ui.text_wrapped(&card.description);
+                    ui.text_wrapped(card.description());
                 } else {
                     ui.child_window("##desc")
                         .size([inner, h])
                         .flags(WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE)
                         .build(ui, || {
-                            ui.text_wrapped(&card.description);
+                            ui.text_wrapped(card.description());
                         });
                 }
             }
-            if !card.tags.is_empty() {
+            if let Some(tags) = card.tags().filter(|tags| !tags.is_empty()) {
                 let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                 let _wrap = ui.push_text_wrap_pos(0.0);
-                ui.text_wrapped(card.tags.join(", "));
+                ui.text_wrapped(tags.join(", "));
             }
         });
     let min = ui.item_rect_min();
     let max = ui.item_rect_max();
-    if card_rect_activated(
+    card_rect_activated(
         ui.is_mouse_hovering_rect(min, max),
         ui.is_mouse_released(MouseButton::Left),
         ui.is_mouse_dragging_with_threshold(MouseButton::Left, 5.0),
-    ) {
-        session.select_script_card(card.source, card.identity_id());
-    }
+    )
+    .then_some(selection)
 }
 
-fn browse_card_grid(ui: &Ui, session: &mut Session, cards: &[&script::JsCard]) {
+fn browse_card_grid(
+    ui: &Ui,
+    session: &Session,
+    cards: &[&BrowseCard<'_>],
+) -> Option<script::ScriptSel> {
     let avail = ui.content_region_avail()[0];
     let cols = card_columns(avail, CARD_MIN_W, CARD_GAP);
     let w = card_width(avail, cols, CARD_GAP);
+    let mut selected = None;
     for (i, card) in cards.iter().enumerate() {
         if i > 0 && i % cols != 0 {
             ui.same_line_with_spacing(0.0, CARD_GAP);
         }
-        browse_script_card(ui, session, card, w);
+        selected = browse_script_card(ui, session, **card, w).or(selected);
     }
+    selected
 }
 
 fn browse_window_body(ui: &Ui, session: &mut Session) {
@@ -2329,8 +2343,13 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         }
         ui.spacing();
     }
-    let cards: Vec<script::JsCard> = session.scripts.js.cards().to_vec();
-    let present = card_categories(&cards);
+    let mut present = Vec::new();
+    for card in session.scripts.browse_cards() {
+        let cat = display_category(card.category()).to_string();
+        if !present.iter().any(|known| known == &cat) {
+            present.push(cat);
+        }
+    }
     let order = resolve_category_order(&session.ui.script_category_order, &present);
     if order != session.ui.script_category_order {
         session.ui.script_category_order = order.clone();
@@ -2387,6 +2406,8 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         }
         ui.spacing();
     }
+    let cards: Vec<BrowseCard<'_>> = session.scripts.browse_cards().collect();
+    let mut picked = None;
     ui.child_window("##script-list")
         .size([0.0, ui.content_region_avail()[1].max(80.0)])
         .build(ui, || {
@@ -2396,9 +2417,9 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
                 if filter.as_deref().is_some_and(|f| f != cat.as_str()) {
                     continue;
                 }
-                let group: Vec<&script::JsCard> = cards
+                let group: Vec<&BrowseCard<'_>> = cards
                     .iter()
-                    .filter(|c| display_category(&c.category) == cat.as_str())
+                    .filter(|c| display_category((*c).category()) == cat.as_str())
                     .collect();
                 if group.is_empty() {
                     continue;
@@ -2407,12 +2428,15 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
                 if filter.is_none() {
                     ui.text_disabled(cat);
                 }
-                browse_card_grid(ui, session, &group);
+                picked = browse_card_grid(ui, session, &group).or(picked.take());
             }
             if !any {
                 ui.text_disabled("no scripts — Browse is empty");
             }
         });
+    if let Some(selection) = picked {
+        session.select_script_selection(selection);
+    }
 }
 
 fn overlay_right_strip(session: &Session) -> f32 {
@@ -2806,32 +2830,25 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "parameters") {
         return;
     }
+    if let Some(placeholder) = parameters_rail_placeholder(session) {
+        ui.text_disabled(placeholder);
+        return;
+    }
     match &session.script_sel {
         Some(script::ScriptSel::Loaded(source, name)) => {
             if let Some(card) = session.scripts.js.get(*source, name) {
-                if card.settings_schema.is_empty() {
-                    ui.text_disabled("(no parameters)");
-                } else {
-                    let bag = session.merged_settings_bag(*source, name, &card.settings_schema);
-                    for (label, value) in script::parameter_rows(&card.settings_schema, &bag) {
-                        kv_row(ui, &label, &value);
-                    }
+                let bag = session.merged_settings_bag(*source, name, &card.settings_schema);
+                for (label, value) in script::parameter_rows(&card.settings_schema, &bag) {
+                    kv_row(ui, &label, &value);
                 }
-            } else {
-                ui.text_disabled("(no parameters)");
             }
         }
         Some(script::ScriptSel::Compiled(id)) => {
-            let pairs = script::defaults(*id);
-            if pairs.is_empty() {
-                ui.text_disabled("(no parameters)");
-            } else {
-                for (k, v) in pairs {
-                    kv_row(ui, &k, &v);
-                }
+            for (k, v) in script::defaults(*id) {
+                kv_row(ui, &k, &v);
             }
         }
-        None => ui.text_disabled("(no script selected)"),
+        None => {}
     }
 }
 
@@ -3086,18 +3103,68 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     session.script_prefs_open = open;
 }
 
-/// Tooltip when Script prefs is disabled (empty schema or no selection).
+/// Why a selected Loaded card is not in the library: its catalog has not been
+/// read yet (or could not be), versus a card that is simply missing. Shared by
+/// the Script prefs hint and the parameters rail so neither calls a card that
+/// was never loaded "no parameters".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MissingCard {
+    CatalogUnavailable,
+    CardUnavailable,
+}
+
+impl MissingCard {
+    fn of(session: &Session, source: script::ScriptSource) -> Self {
+        if source == script::ScriptSource::Catalog && !session.scripts.catalog_filled() {
+            Self::CatalogUnavailable
+        } else {
+            Self::CardUnavailable
+        }
+    }
+
+    fn prefs_hint(self) -> &'static str {
+        match self {
+            Self::CatalogUnavailable => "script catalog unavailable",
+            Self::CardUnavailable => "selected script parameters unavailable",
+        }
+    }
+
+    fn rail_text(self) -> &'static str {
+        match self {
+            Self::CatalogUnavailable => "(script catalog unavailable)",
+            Self::CardUnavailable => "(parameters unavailable)",
+        }
+    }
+}
+
+/// The parameters rail's placeholder when there are no rows to list, else
+/// `None` (the rail then lists the merged settings or compiled defaults).
+fn parameters_rail_placeholder(session: &Session) -> Option<&'static str> {
+    match &session.script_sel {
+        None => Some("(no script selected)"),
+        Some(script::ScriptSel::Loaded(source, name)) => {
+            match session.scripts.js.get(*source, name) {
+                None => Some(MissingCard::of(session, *source).rail_text()),
+                Some(card) if card.settings_schema.is_empty() => Some("(no parameters)"),
+                Some(_) => None,
+            }
+        }
+        Some(script::ScriptSel::Compiled(id)) => script::defaults(*id)
+            .is_empty()
+            .then_some("(no parameters)"),
+    }
+}
+
+/// Tooltip when Script prefs is disabled (empty schema, unavailable card, or no selection).
 fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
     match &session.script_sel {
         None => Some("select a script first"),
         Some(script::ScriptSel::Compiled(_)) => Some("compiled scripts have no parameter schema"),
         Some(script::ScriptSel::Loaded(source, name)) => {
-            let empty = session
-                .scripts
-                .js
-                .get(*source, name)
-                .is_none_or(|card| card.settings_schema.is_empty());
-            if empty {
+            let Some(card) = session.scripts.js.get(*source, name) else {
+                return Some(MissingCard::of(session, *source).prefs_hint());
+            };
+            if card.settings_schema.is_empty() {
                 Some("selected script has no parameters")
             } else {
                 None
@@ -3464,7 +3531,9 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
             let name = name.to_string();
             session.set_auto_login(&name, auto_cur);
         }
+        session.note_chooser_edited();
     }
+    let mut world_changed = false;
     if let Some(worlds) = session
         .server_profile
         .as_ref()
@@ -3483,6 +3552,7 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
                 .build()
             {
                 session.cred_settings.world = None;
+                world_changed = true;
             }
             for world in &worlds.worlds {
                 let label = format!("w{}", world.number);
@@ -3492,9 +3562,13 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
                     .build()
                 {
                     session.cred_settings.world = Some(world.number);
+                    world_changed = true;
                 }
             }
         }
+    }
+    if world_changed {
+        session.note_chooser_edited();
     }
     ui.text_wrapped("this profile; handshake on spawn unless latched out");
 }
@@ -3582,6 +3656,9 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
 const DIALOG_W: f32 = 400.0;
 const VAULT_RESET_POPUP: &str = "Reset vault?";
 const PROFILE_DELETE_POPUP: &str = "Delete profile?";
+/// Unsaved-changes prompt when an explicit edit-target switch lands on a
+/// dirty form: Discard drops the draft, Keep editing stays on the target.
+const PROFILE_EDIT_SWITCH_POPUP: &str = "Unsaved profile edits?";
 
 /// Teles-style confirm: click-out / Escape / any of these keys / Cancel
 /// dismisses. Only I understand then the confirm button commits.
@@ -3949,6 +4026,44 @@ fn chooser_dock_id(panel: Option<Id>) -> Option<Id> {
     panel
 }
 
+/// Unsaved-changes prompt for a staged edit-target switch: Discard drops
+/// the draft and opens the pending target, Keep editing (or Escape) stays
+/// on the current form. Rendered from the Profiles window while
+/// `pending_edit_switch` is set.
+fn edit_switch_popup(ui: &Ui, session: &mut Session) {
+    if session.pending_edit_switch.is_none() {
+        return;
+    }
+    if !ui.is_popup_open(PROFILE_EDIT_SWITCH_POPUP) {
+        ui.open_popup(PROFILE_EDIT_SWITCH_POPUP);
+    }
+    ui.popup(PROFILE_EDIT_SWITCH_POPUP, || {
+        if ui.is_key_pressed(Key::Escape) {
+            session.cancel_pending_edit_switch();
+            ui.close_current_popup();
+            return;
+        }
+        let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+        if let Some(switch) = session.pending_edit_switch.as_ref() {
+            ui.text_wrapped(&switch.prompt);
+        }
+        ui.spacing();
+        let avail = ui.content_region_avail()[0];
+        let (w, stack) = button_row_layout(avail, 2);
+        if ui.button_with_size("Discard", [w, 0.0]) {
+            session.confirm_pending_edit_switch();
+            ui.close_current_popup();
+        }
+        if !stack {
+            ui.same_line();
+        }
+        if ui.button_with_size("Keep editing", [w, 0.0]) {
+            session.cancel_pending_edit_switch();
+            ui.close_current_popup();
+        }
+    });
+}
+
 /// Profile picker (single-bot and MultiBox). Click a row to focus it
 /// (and load onto the wall while MultiBox is on); Edit opens user/pass;
 /// ✕ deletes the vault row only. Load all is MultiBox-only.
@@ -4031,39 +4146,67 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 session.pending_profile_delete = Some(name);
                 ui.open_popup(PROFILE_DELETE_POPUP);
             } else if let Some(name) = picked {
-                if session.multibox {
-                    session.load(&name);
-                } else {
-                    session.select(&name);
-                    session.wall.chooser_open = false;
-                    session.cancel_edit_profile();
-                }
+                // Row pick is pure focus (a wall load in MultiBox): the
+                // picker and any open edit form stay exactly as they are.
+                session.pick_profile(&name);
             }
-            if let Some(edit_name) = session.chooser_edit.clone() {
+            if session.chooser_edit.is_some() {
                 ui.spacing();
                 ui.separator();
-                if edit_name.is_empty() {
-                    ui.text_colored(ACCENT, "new profile");
-                } else {
-                    ui.text_colored(ACCENT, format!("edit {edit_name}"));
+                {
+                    let edit = session.chooser_edit.as_deref().unwrap_or("");
+                    if edit.is_empty() {
+                        ui.text_colored(ACCENT, "New profile");
+                    } else {
+                        ui.text_colored(ACCENT, "Editing");
+                        ui.same_line();
+                        ui.text_colored(ACCENT, edit);
+                    }
                 }
+                // One id scope per opened target: a text field still active
+                // from the previous target cannot write its edit buffer into
+                // this one's fields.
+                let _form = ui.push_id(session.chooser_form);
                 ui.text_disabled("user");
-                ui.input_text("##cred-user", &mut session.cred_user)
+                if ui
+                    .input_text("##cred-user", &mut session.cred_user)
                     .hint("username")
-                    .build();
+                    .build()
+                {
+                    session.note_chooser_edited();
+                }
                 ui.text_disabled("pass");
-                ui.input_text("##cred-pass", &mut session.cred_pass)
+                if ui
+                    .input_text("##cred-pass", &mut session.cred_pass)
                     .password(true)
                     .hint("password")
-                    .build();
+                    .build()
+                {
+                    session.note_chooser_edited();
+                }
                 slot_capture_section(ui, session);
                 slot_random_section(ui, session);
                 slot_clue_section(ui, session);
+                // Save's outcome, next to Save: a refusal (nothing was
+                // written; the banner is hidden while Profiles is open) or,
+                // once the write is durable, `Saved <name>.`.
+                match session.chooser_save.notice() {
+                    Some(FormNotice::Refused(reason)) => {
+                        ui.text_colored(ERROR, reason);
+                        ui.text_disabled(frontend_core::NOTHING_SAVED);
+                    }
+                    Some(FormNotice::Saved(saved)) => ui.text_colored(GREEN, saved),
+                    None => {}
+                }
                 let avail = ui.content_region_avail()[0];
                 let (bw, stack) = button_row_layout(avail, 2);
-                if ui.button_with_size("Save", [bw, 0.0]) && session.save_credentials() {
-                    session.cancel_edit_profile();
+                // One Save at a time: the form follows a rename or a new
+                // profile only once its write is durable.
+                let saving = session.chooser_save.saving().then(|| ui.begin_disabled());
+                if ui.button_with_size("Save", [bw, 0.0]) {
+                    session.save_credentials();
                 }
+                drop(saving);
                 if !stack {
                     ui.same_line();
                 }
@@ -4071,10 +4214,15 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     session.cancel_edit_profile();
                 }
             }
+            edit_switch_popup(ui, session);
             }
             ui.spacing();
-            if let Some((_, name)) = &session.saving_profile {
-                ui.text_disabled(format!("saving {name}…"));
+            if let Some(name) = session.chooser_save.in_flight() {
+                ui.text_disabled("saving ");
+                ui.same_line_with_spacing(0.0, 0.0);
+                ui.text_disabled(name);
+                ui.same_line_with_spacing(0.0, 0.0);
+                ui.text_disabled("…");
             }
             let w = ui.content_region_avail()[0];
             if ui.button_with_size("Close", [w, 0.0]) {
@@ -4143,12 +4291,16 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 fn slot_clue_section(ui: &Ui, session: &mut Session) {
     ui.text_disabled("clue duel partner");
     ui.set_next_item_width(-1.0);
-    ui.input_text(
-        "##clue-duel-partner",
-        &mut session.cred_settings.clue_duel_partner,
-    )
-    .hint("other account name")
-    .build();
+    if ui
+        .input_text(
+            "##clue-duel-partner",
+            &mut session.cred_settings.clue_duel_partner,
+        )
+        .hint("other account name")
+        .build()
+    {
+        session.note_chooser_edited();
+    }
     ui.text_wrapped(
         "run this account in Duel Arena Clue helper mode when clue 3554 needs the crossing",
     );
@@ -4171,6 +4323,7 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
                 session.cred_settings.lamp_auto,
             );
         }
+        session.note_chooser_edited();
     }
     ui.text_wrapped("talk random events through on this profile. Off: never talk, never hold — still detects and shows the status row.");
     let mut auto = session.cred_settings.lamp_auto;
@@ -4185,6 +4338,7 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
                 auto,
             );
         }
+        session.note_chooser_edited();
     }
     ui.text_wrapped(
         "this profile; claim a lamp reward without a confirmation click (guardian rubs when lamp auto is on).",
@@ -4201,6 +4355,7 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
                 session.cred_settings.lamp_auto,
             );
         }
+        session.note_chooser_edited();
     }
 }
 

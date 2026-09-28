@@ -49,7 +49,6 @@ use nav::paint::{
 };
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
-use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
 use vault::{Profile, ProfileSettings, Vault};
@@ -898,9 +897,18 @@ pub struct Session {
     /// Profile picker edit: `None` not editing, `Some("")` new profile,
     /// `Some(name)` editing that vault row.
     pub chooser_edit: Option<String>,
-    /// A credentials Save whose write has not settled; its profile is
-    /// selected (and spawned) only after the write succeeds.
-    pub saving_profile: Option<(frontend_core::OperationId, String)>,
+    /// Bumped each time the editor opens on a target: the form's widget ids
+    /// include it, so no text field keeps an edit buffer from the previous
+    /// target.
+    pub chooser_form: usize,
+    /// Explicit retarget of an unsaved edit form, awaiting the Discard /
+    /// Keep editing prompt. `None` means no switch is waiting.
+    pub pending_edit_switch: Option<EditSwitch>,
+    /// The edit form's save feedback (its inline refusal, or `Saved <name>.`
+    /// once the write is durable) and the credentials Save still being
+    /// written: its profile is selected (and spawned) only after the write
+    /// succeeds.
+    pub chooser_save: frontend_core::ProfileFormSave,
     /// Per-username walk arms; the focused slot's arm carries the armed
     /// whole-world route (polled from `start_play` `per_frame` via
     /// [`nav::traveller::Traveller::follow`]).
@@ -1186,7 +1194,12 @@ fn reset_frontend_slot_session(
     tick_latch: &Arc<Mutex<HashMap<String, (u64, Tile)>>>,
 ) -> bool {
     tick_latch.lock().unwrap().remove(name);
-    travellers.lock().unwrap().remove(name).is_some()
+    let removed = travellers.lock().unwrap().remove(name);
+    let Some(arm) = removed else {
+        return false;
+    };
+    host_play::cancel_walk_arm(Some(name), &mut arm.lock().unwrap(), None, "SessionEnded");
+    true
 }
 
 /// A slot spawn/removal is the ownership boundary for username reuse. Client
@@ -1277,7 +1290,9 @@ impl Session {
             cred_pass: String::new(),
             cred_settings: ProfileSettings::default(),
             chooser_edit: None,
-            saving_profile: None,
+            chooser_form: 0,
+            pending_edit_switch: None,
+            chooser_save: frontend_core::ProfileFormSave::default(),
             travellers,
             script_nav_paint: Arc::new(Mutex::new(None)),
             nav_states: Arc::new(Mutex::new(HashMap::new())),
@@ -2814,66 +2829,15 @@ impl Session {
                 };
                 let mut arm = arm.lock().unwrap();
                 let world = crate::picker::pack();
-                // BankBudget session first. Walk follows the stand
-                // sub-route; Open / Deposit / Withdraw / Wear / Close
-                // freeze follow (never mid-session final_route).
-                if arm.bank_fetch.is_some() {
-                    host_play::step_walk_arm_bank_fetch(
-                        c,
-                        snapshot,
-                        &mut arm,
-                        world.as_deref(),
-                        Some((here.x, here.z, here.level)),
-                        map_members,
-                    );
-                    if host_play::walk_arm_bank_fetch_freezes_follow(&arm) {
-                        return;
-                    }
-                }
-                let Some(route) = arm.route.clone() else {
-                    return;
-                };
-                let walking_stand = arm.bank_fetch.as_ref().is_some_and(|p| {
-                    matches!(
-                        p.steps.front(),
-                        Some(nav::bank_fetch::BankStep::Walk { x, z, level })
-                            if route.dest.x == *x
-                                && route.dest.z == *z
-                                && route.dest.level == *level
-                    )
-                });
-                // The follow surface reads the canonical base + route-head
-                // tile from a snapshot rebuilt off the same client; the
-                // run is polled one step per player-info tick. The packed
-                // teleport list rides along so a jewellery rub hop can
-                // answer the destination dialog's choice for its landing.
-                let mut options = TravelOptions {
-                    // Exact arrival: the armed dest must be stood on
-                    // before the route clears (the v1 traveller arrived
-                    // the same way).
-                    close_enough: 0,
-                    teleports: world.as_ref().map(|w| w.graph.teleports.as_slice()),
-                    edges: world.as_ref().map(|w| w.graph.edges.as_slice()),
-                    ..TravelOptions::default()
-                };
-                let outcome = arm.traveller.follow(c, snapshot, route, &mut options);
-                if walking_stand
-                    && matches!(
-                        &outcome,
-                        Some(o) if !matches!(o, nav::traveller::TravelOutcome::Arrived { .. })
-                    )
-                {
-                    // Stand Walk stalled / refused → NoPath.
-                    arm.bank_fetch = None;
-                    arm.route = None;
-                    return;
-                }
-                if outcome.is_some() {
-                    arm.route = None;
-                    true
-                } else {
-                    false
-                }
+                host_play::step_walk_arm_follow(
+                    c,
+                    snapshot,
+                    &mut arm,
+                    world.as_deref(),
+                    (here.x, here.z, here.level),
+                    map_members,
+                    Some(name),
+                )
             };
             if finished {
                 walk_clear.store(true, Ordering::Relaxed);
@@ -3156,7 +3120,8 @@ impl Session {
     /// Switch the focused profile. A parked vault name is spawned on first
     /// select (login FIFO); already-running slots stay up so the picker can
     /// change focus. Capture follows the new focus when the single capture
-    /// toggle is on (never two keyboards). The picker edit fields follow.
+    /// toggle is on (never two keyboards). The profile editor's fields do
+    /// not follow: they stay on the profile being edited.
     /// New slots inherit the vault profile's auto-login (and logout latch).
     ///
     /// Flat model: clicking a member is pure focus — the Game pane samples
@@ -3247,16 +3212,13 @@ impl Session {
         } else {
             self.capture_tx = None;
         }
-        // Credentials fields follow the newly focused profile; the General
-        // config mirrors the profile's raster/mem so the pane shows what the
-        // slot actually runs (display only — no write-back, no re-role).
-        if let Some(vault) = self.core.vault() {
-            if let Some(p) = vault.get(name) {
-                self.cred_user = p.username.clone();
-                self.cred_pass = p.password.clone();
-                self.ui.raster = p.settings.raster;
-                self.ui.lowmem = p.settings.lowmem;
-            }
+        // The General config mirrors the profile's raster/mem so the pane
+        // shows what the slot actually runs (display only — no write-back,
+        // no re-role). The profile editor's fields stay on the profile
+        // being edited: a focus change never rewrites them.
+        if let Some(p) = self.core.vault().and_then(|vault| vault.get(name)) {
+            self.ui.raster = p.settings.raster;
+            self.ui.lowmem = p.settings.lowmem;
         }
     }
 
@@ -4108,23 +4070,36 @@ impl Session {
     /// Consume a pending selection once. Missing player/focus is an explicit
     /// refusal, never an arm stored for a future login.
     pub fn confirm_picker_walk(&mut self, world: &NavWorld) -> bool {
-        use host_play::walk_map::{ActionError, ActionKind};
+        use host_play::walk_map::{ActionError, ActionKind, WalkRequest};
         let context = self.picker_context(world);
         let origin = self
             .focused_tile()
             .map(|(x, z, level)| Tile { x, z, level });
-        let command = self.map_model.confirm(
-            ActionKind::Walk,
-            &context,
+        let options = FindOptions {
+            allow_teleports: self.ui.nav.allow_teleports,
+            allow_wilderness: self.ui.nav.allow_wilderness,
+            allow_bank_fetch: self.ui.nav.allow_bank_fetch,
+            ..Default::default()
+        };
+        let name = self.focused_name();
+        let profile = self.server_profile.clone();
+        let request = WalkRequest {
+            slot: name.as_deref(),
             origin,
-            FindOptions {
-                allow_teleports: self.ui.nav.allow_teleports,
-                allow_wilderness: self.ui.nav.allow_wilderness,
-                allow_bank_fetch: self.ui.nav.allow_bank_fetch,
-                ..Default::default()
-            },
-        );
-        let result = command.and_then(|command| {
+            destination: self
+                .map_model
+                .pending()
+                .map(|s| s.target.unwrap_or(s.requested)),
+            options,
+            map_members: self.map_members(),
+            members: profile
+                .as_ref()
+                .map_or(&host_play::WorldMembersFact::Unknown, |p| p.world_members()),
+        };
+        let result = request.run(|| {
+            let command = self
+                .map_model
+                .confirm(ActionKind::Walk, &context, origin, options)?;
             let play = self.core.play().ok_or(ActionError::NoFocus)?;
             self.walk_dest = Some(command.destination());
             let state = self.focused_walk_state();
@@ -4229,26 +4204,41 @@ impl Session {
             .map(|row| row.name.clone())
             .collect();
         let context = self.picker_context(world);
-        let plan = match self.map_model.confirm_walk_plan(
-            &context,
-            FindOptions {
-                allow_teleports: self.ui.nav.allow_teleports,
-                allow_wilderness: self.ui.nav.allow_wilderness,
-                allow_bank_fetch: self.ui.nav.allow_bank_fetch,
-                ..Default::default()
-            },
-        ) {
+        let options = FindOptions {
+            allow_teleports: self.ui.nav.allow_teleports,
+            allow_wilderness: self.ui.nav.allow_wilderness,
+            allow_bank_fetch: self.ui.nav.allow_bank_fetch,
+            ..Default::default()
+        };
+        let destination = self
+            .map_model
+            .pending()
+            .map(|s| s.target.unwrap_or(s.requested));
+        let plan = self
+            .map_model
+            .confirm_walk_plan(&context, options)
+            .and_then(|plan| {
+                self.core.play().ok_or(ActionError::NoFocus)?;
+                Ok(plan)
+            });
+        let plan = match plan {
             Ok(plan) => plan,
             Err(error) => {
+                host_play::walk_map::WalkRequest::refuse_group(
+                    self.core.play(),
+                    &names,
+                    destination,
+                    options,
+                    self.server_profile
+                        .as_ref()
+                        .map_or(&host_play::WorldMembersFact::Unknown, |p| p.world_members()),
+                    error,
+                );
                 self.error = Some(error.to_string());
                 return false;
             }
         };
         self.walk_dest = Some(plan.destination());
-        if self.core.play().is_none() {
-            self.error = Some(ActionError::NoFocus.to_string());
-            return false;
-        }
         let states: Vec<WorldState> = names
             .iter()
             .map(|name| self.walk_state(Some(name)))
@@ -4622,6 +4612,7 @@ impl Drop for Session {
 }
 
 mod chooser;
+pub use chooser::EditSwitch;
 
 #[cfg(test)]
 #[path = "session_tests.rs"]

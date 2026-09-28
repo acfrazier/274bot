@@ -217,18 +217,23 @@ impl OperationBook {
     /// Cancel pending members of `action` for `slot` (a newer command
     /// superseded them).
     pub(crate) fn cancel_pending(&mut self, action: ActionKind, slot: &str) {
+        self.resolve_pending(action, slot, Outcome::Cancelled);
+    }
+
+    /// Settle every pending member of `action` for `slot` with `outcome`.
+    pub(crate) fn resolve_pending(&mut self, action: ActionKind, slot: &str, outcome: Outcome) {
         let Self {
             reports, changes, ..
         } = self;
         for report in reports.iter_mut().filter(|r| r.action == action) {
             for member in report.members.iter_mut() {
                 if member.slot == slot && member.outcome.is_pending() {
-                    member.outcome = Outcome::Cancelled;
+                    member.outcome = outcome.clone();
                     changes.push(OpChange {
                         id: report.id,
                         action,
                         slot: member.slot.clone(),
-                        outcome: Outcome::Cancelled,
+                        outcome: outcome.clone(),
                     });
                 }
             }

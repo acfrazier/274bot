@@ -933,6 +933,7 @@ pub enum WorldMembersIdentitySource {
     Unknown,
     LocalWorldJson,
     ExplicitOverride,
+    Rs2b2tWorlds,
 }
 
 /// Suite settings that shape what a run does.

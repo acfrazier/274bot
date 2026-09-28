@@ -8,6 +8,7 @@
 //! results cannot resurrect a closed generation.
 
 mod fixtures;
+mod labels;
 mod overlay;
 
 use std::collections::HashSet;
@@ -28,7 +29,7 @@ use nav::tile::Tile;
 use nav::world::NavWorld;
 
 use host_play::map_cache::ReadyImages;
-use host_play::walk_map::{Catalogue, ObservedService, Search};
+use host_play::walk_map::{display_name_into, Catalogue, ObservedService, Search};
 
 use crate::game_view::FrameGpu;
 use crate::nav_settings::{parse_html_color, NavSettings};
@@ -37,6 +38,10 @@ use crate::theme::{ACCENT, TEXT, TEXT_DIM};
 #[cfg(test)]
 pub use fixtures::encode_tile;
 pub use fixtures::{decode_tile, Store as FixtureStore};
+pub(crate) use labels::{
+    content_priority, dist2_to_centre, kind_rank, place_map_labels, LabelRect, MapLabelCandidate,
+    LABEL_OFFSET,
+};
 pub use overlay::{
     overlay_fit, rasterize as rasterize_overlay, OverlayColors, OverlayFit, OverlayLayers,
     OverlayPaint, MIN_CELL_PPT, NSEW_PPT, OVERLAY_BYTE_CAP, OVERLAY_MAX_H, OVERLAY_MAX_W,
@@ -156,6 +161,12 @@ pub struct WalkMapRenderer {
     phase: MapPhase,
     last_vtx: i32,
     last_idx: i32,
+    label_names: String,
+    /// Reused search-row caption buffer (picker list), so rows do not
+    /// allocate per frame.
+    pub(crate) search_caption: String,
+    label_candidates: Vec<MapLabelCandidate>,
+    placed_label_ids: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -226,6 +237,10 @@ impl WalkMapRenderer {
             phase: MapPhase::Pending,
             last_vtx: 0,
             last_idx: 0,
+            label_names: String::new(),
+            search_caption: String::new(),
+            label_candidates: Vec::new(),
+            placed_label_ids: Vec::new(),
         }
     }
 
@@ -341,6 +356,14 @@ impl WalkMapRenderer {
         self.overlay_size = (0, 0);
         self.overlay_key = None;
         self.last_vis = None;
+        self.label_names.clear();
+        self.label_names.shrink_to_fit();
+        self.search_caption.clear();
+        self.search_caption.shrink_to_fit();
+        self.label_candidates.clear();
+        self.label_candidates.shrink_to_fit();
+        self.placed_label_ids.clear();
+        self.placed_label_ids.shrink_to_fit();
     }
 
     fn stop_worker(&mut self) {
@@ -466,6 +489,7 @@ impl WalkMapRenderer {
             reach,
             overlay_zoom_in,
         );
+        self.layout_poi_labels(ui, origin, size, view);
         let draw = ui.get_window_draw_list();
         draw.add_rect(
             origin,
@@ -588,6 +612,77 @@ impl WalkMapRenderer {
         }
     }
 
+    fn layout_poi_labels(&mut self, ui: &Ui, origin: [f32; 2], size: [f32; 2], view: View) {
+        self.label_names.clear();
+        self.label_candidates.clear();
+        self.placed_label_ids.clear();
+        let logical_ppt = if view.east > view.west {
+            f64::from(size[0]) / (view.east - view.west)
+        } else {
+            0.0
+        };
+        if logical_ppt < 4.0 {
+            return;
+        }
+        if let Some(catalogue) = self.catalogue.as_ref() {
+            for entry in catalogue.entries() {
+                let tile = entry.anchor();
+                if tile.level != i32::from(view.plane) {
+                    continue;
+                }
+                push_map_label(
+                    &mut self.label_names,
+                    &mut self.label_candidates,
+                    view,
+                    origin,
+                    size,
+                    f64::from(tile.x) + 0.5,
+                    f64::from(tile.z) + 0.5,
+                    entry.kind(),
+                    entry.name(),
+                );
+            }
+        }
+        for poi in &self.fixtures.pois {
+            if poi.effective_plane != view.plane {
+                continue;
+            }
+            push_map_label(
+                &mut self.label_names,
+                &mut self.label_candidates,
+                view,
+                origin,
+                size,
+                poi.display.x,
+                poi.display.z,
+                poi.kind,
+                poi.name.as_str(),
+            );
+        }
+        if self.label_candidates.is_empty() {
+            return;
+        }
+        let font = ui.current_font();
+        let font_sz = ui.current_font_size().max(1.0);
+        for candidate in &mut self.label_candidates {
+            let start = candidate.name_off as usize;
+            let end = start + candidate.name_len as usize;
+            let name = &self.label_names[start..end];
+            let sz = font.calc_text_size(font_sz, f32::MAX, 0.0, name);
+            candidate.rect = LabelRect {
+                x: candidate.px + LABEL_OFFSET[0],
+                y: candidate.py + LABEL_OFFSET[1],
+                w: sz[0],
+                h: sz[1].max(font_sz),
+            };
+        }
+        place_map_labels(
+            &mut self.label_candidates,
+            MAX_LABELS,
+            &mut self.placed_label_ids,
+        );
+    }
+
     fn draw_pois(
         &self,
         draw: &dear_imgui_rs::DrawListMut<'_>,
@@ -597,14 +692,8 @@ impl WalkMapRenderer {
         sel: Option<Tile>,
         here: Option<Tile>,
     ) {
-        let logical_ppt = if view.east > view.west {
-            f64::from(size[0]) / (view.east - view.west)
-        } else {
-            0.0
-        };
-        let mut labels = 0usize;
         let mut symbols = 0usize;
-        let mut mark = |x: f64, z: f64, kind: PoiKind, name: &str| -> bool {
+        let mut mark = |x: f64, z: f64, kind: PoiKind| -> bool {
             if x < view.west || x > view.east || z < view.south || z > view.north {
                 return true;
             }
@@ -620,10 +709,6 @@ impl WalkMapRenderer {
             draw.add_rect([p[0] - 3.0, p[1] - 3.0], [p[0] + 3.0, p[1] + 3.0], color)
                 .filled(true)
                 .build();
-            if labels < MAX_LABELS && logical_ppt >= 4.0 && !name.is_empty() {
-                draw.add_text([p[0] + 5.0, p[1] - 6.0], TEXT, name);
-                labels += 1;
-            }
             true
         };
         if let Some(catalogue) = &self.catalogue {
@@ -636,7 +721,6 @@ impl WalkMapRenderer {
                     f64::from(tile.x) + 0.5,
                     f64::from(tile.z) + 0.5,
                     entry.kind(),
-                    entry.name(),
                 ) {
                     break;
                 }
@@ -650,7 +734,6 @@ impl WalkMapRenderer {
                 f64::from(service.tile.x) + 0.5,
                 f64::from(service.tile.z) + 0.5,
                 service.kind,
-                "",
             ) {
                 break;
             }
@@ -659,9 +742,22 @@ impl WalkMapRenderer {
             if poi.effective_plane != view.plane {
                 continue;
             }
-            if !mark(poi.display.x, poi.display.z, poi.kind, poi.name.as_str()) {
+            if !mark(poi.display.x, poi.display.z, poi.kind) {
                 break;
             }
+        }
+        for &i in &self.placed_label_ids {
+            let candidate = self.label_candidates[i];
+            let start = candidate.name_off as usize;
+            let end = start + candidate.name_len as usize;
+            draw.add_text(
+                [
+                    candidate.px + LABEL_OFFSET[0],
+                    candidate.py + LABEL_OFFSET[1],
+                ],
+                TEXT,
+                &self.label_names[start..end],
+            );
         }
         if let Some(here) = here {
             if here.level == i32::from(view.plane) {
@@ -1352,6 +1448,49 @@ fn draw_dest_marker(
     draw.add_line([p[0], p[1] - 6.0], [p[0], p[1] + 6.0], c)
         .thickness(2.0)
         .build();
+}
+
+#[allow(clippy::too_many_arguments)] // world point, kind, and name share one collect
+fn push_map_label(
+    names: &mut String,
+    candidates: &mut Vec<MapLabelCandidate>,
+    view: View,
+    origin: [f32; 2],
+    size: [f32; 2],
+    x: f64,
+    z: f64,
+    kind: PoiKind,
+    name: &str,
+) {
+    if x < view.west || x > view.east || z < view.south || z > view.north {
+        return;
+    }
+    let off = names.len();
+    display_name_into(name, names);
+    let len = names.len() - off;
+    if len == 0 {
+        return;
+    }
+    let p = canvas_point(view, origin, size, x, z);
+    candidates.push(MapLabelCandidate {
+        id: candidates.len(),
+        name_off: off as u32,
+        name_len: len as u32,
+        px: p[0],
+        py: p[1],
+        content_priority: content_priority(kind),
+        kind_rank: kind_rank(kind),
+        dist2: dist2_to_centre(
+            x - (view.west + view.east) * 0.5,
+            z - (view.south + view.north) * 0.5,
+        ),
+        rect: LabelRect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        },
+    });
 }
 
 /// Map a world point onto the canvas using the view's world span, not physical

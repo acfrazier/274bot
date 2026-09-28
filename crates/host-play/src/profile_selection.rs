@@ -146,9 +146,7 @@ impl ProfileOptions {
             worlds.by_endpoint(&game_host, game_port).is_none()
                 || worlds.by_endpoint(&asset_host, asset_port).is_none()
         }) {
-            return Err(
-                "public-289 game/asset endpoints must appear in the configured worlds.json".into(),
-            );
+            return Err("public-289 connects only to the listed rs2b2t worlds".into());
         }
         if game_port == 0 || asset_port == 0 {
             return Err("profile ports must be nonzero".into());
@@ -199,7 +197,11 @@ impl ProfileOptions {
         };
         let engine_dir = absolute(engine_dir);
         let guarded = parse_guarded_local_world(selection, &engine_dir);
-        let world_members = world_members_from_guarded(self.world_members, guarded.as_ref());
+        let world_members = resolve_world_members(
+            self.world_members,
+            guarded.as_ref(),
+            public_worlds.as_deref(),
+        );
         // Only the bundled public endpoints imply bundled content facts at
         // selection time. A custom listed endpoint must prove its content
         // identity when bound before receiving those facts.
@@ -291,12 +293,13 @@ fn parse_guarded_local_world(
     })
 }
 
-/// Guarded local world.json bind. NODE_MEMBERS is not applied. Public
-/// profiles never inherit. Explicit `--world-members` wins and does not
-/// become a fact-trust signal.
-fn world_members_from_guarded(
+/// Explicit overrides win. Local profiles use guarded world.json; public
+/// profiles use only the complete known-members roster, never local files.
+/// Declaring membership does not become a fact-trust signal.
+fn resolve_world_members(
     explicit: Option<bool>,
     guarded: Option<&GuardedLocalWorld>,
+    public_worlds: Option<&PublicWorlds>,
 ) -> WorldMembersFact {
     if let Some(members) = explicit {
         return WorldMembersFact::Known {
@@ -305,7 +308,14 @@ fn world_members_from_guarded(
         };
     }
     let Some(world) = guarded else {
-        return WorldMembersFact::Unknown;
+        return if public_worlds.is_some_and(PublicWorlds::is_rs2b2t_members_roster) {
+            WorldMembersFact::Known {
+                members: true,
+                source: WorldMembersSource::Rs2b2tWorlds,
+            }
+        } else {
+            WorldMembersFact::Unknown
+        };
     };
     WorldMembersFact::Known {
         members: world.members,

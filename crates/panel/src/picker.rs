@@ -1706,6 +1706,15 @@ fn draw_walk_send_popup(ui: &Ui, session: &mut Session) {
     });
 }
 
+/// Write a search-row caption (display name, then tile) into `out`, which the
+/// caller reuses across frames, so a row costs no allocation after warm-up.
+pub(crate) fn search_hit_caption_into(out: &mut String, name: &str, x: i32, z: i32, level: i32) {
+    use std::fmt::Write as _;
+    out.clear();
+    host_play::walk_map::display_name_into(name, out);
+    let _ = write!(out, "  {x} {z} {level}");
+}
+
 fn draw_search_hits(ui: &Ui, session: &mut Session, map: &mut WalkMapRenderer, world: &NavWorld) {
     if let Some(catalogue) = session.map_catalogue.clone() {
         let query = map.search.clone();
@@ -1713,39 +1722,37 @@ fn draw_search_hits(ui: &Ui, session: &mut Session, map: &mut WalkMapRenderer, w
             session.error = Some(error.to_string());
             return;
         }
+        let mut caption = std::mem::take(&mut map.search_caption);
         for &index in map.catalogue_search.results().iter().take(MAX_LABELS) {
             let Some(entry) = catalogue.entry(index) else {
                 continue;
             };
             let anchor = entry.anchor();
-            let label = format!(
-                "{}  {} {} {}",
-                entry.name(),
-                anchor.x,
-                anchor.z,
-                anchor.level
-            );
-            if ui.selectable(&label) && session.select_picker_poi(index) {
+            search_hit_caption_into(&mut caption, entry.name(), anchor.x, anchor.z, anchor.level);
+            if ui.selectable(&caption) && session.select_picker_poi(index) {
                 sync_view_from_model(&session.map_model);
             }
         }
+        map.search_caption = caption;
         return;
     }
+    let mut caption = std::mem::take(&mut map.search_caption);
     for poi in map.search_hits() {
         let requested = poi_anchor(poi);
-        let label = format!(
-            "{}  {} {} {}",
+        search_hit_caption_into(
+            &mut caption,
             poi.name.as_str(),
             requested.x,
             requested.z,
-            requested.level
+            requested.level,
         );
-        if ui.selectable(&label) {
+        if ui.selectable(&caption) {
             recenter_on(requested.x, requested.z);
             LEVEL.store(requested.level, Ordering::Relaxed);
             session.select_picker_tile(world, requested);
         }
     }
+    map.search_caption = caption;
 }
 
 fn apply_search_jump(session: &mut Session, map: &mut WalkMapRenderer, world: &NavWorld) {

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::mem::size_of;
 use std::sync::Arc;
 
@@ -490,6 +491,11 @@ impl<'a> Entry<'a> {
             .map(|r| r.name.as_str())
             .unwrap_or_else(|| transport_name(self.transports().next().unwrap().kind))
     }
+    /// Stored names keep `/` as a world-map line break. Lists and canvas
+    /// labels show a space instead; search still splits on `/`.
+    pub fn display_name(self) -> DisplayName<'a> {
+        DisplayName::new(self.name())
+    }
     pub fn kind(self) -> PoiKind {
         self.records().last().map(|r| r.kind).unwrap_or_else(|| {
             if self.meaning() == Meaning::TeleportLanding {
@@ -639,6 +645,47 @@ impl Search {
         *self = Self::default();
     }
 }
+
+/// World-map `/` is a line break in `maps/labels.txt`. Display sites show a
+/// space; the stored name and search index stay unchanged. Formatting writes
+/// the mapped slices directly, so list captions do not allocate a temporary
+/// name `String` before `format!`.
+#[derive(Clone, Copy, Debug)]
+pub struct DisplayName<'a>(&'a str);
+
+impl<'a> DisplayName<'a> {
+    #[inline]
+    pub const fn new(raw: &'a str) -> Self {
+        Self(raw)
+    }
+}
+
+impl fmt::Display for DisplayName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut rest = self.0;
+        while let Some(i) = rest.find('/') {
+            f.write_str(&rest[..i])?;
+            f.write_str(" ")?;
+            rest = &rest[i + 1..];
+        }
+        f.write_str(rest)
+    }
+}
+
+/// Append the display form of `raw` onto `out` (`/` → space). The canvas
+/// path writes into a reused buffer so slash names do not allocate a
+/// temporary `String` per visible POI.
+pub fn display_name_into(raw: &str, out: &mut String) {
+    out.reserve(raw.len());
+    let mut rest = raw;
+    while let Some(i) = rest.find('/') {
+        out.push_str(&rest[..i]);
+        out.push(' ');
+        rest = &rest[i + 1..];
+    }
+    out.push_str(rest);
+}
+
 fn normalize(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     normalize_into(&mut result, s);

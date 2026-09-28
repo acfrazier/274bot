@@ -467,6 +467,49 @@ fn isolate_spawn_ticks_probe_and_joins() {
     assert_eq!(n, 3, "three ticks reached the JS tick function");
     iso.join();
 }
+#[test]
+fn isolate_timer_api_fails_as_a_script_error_and_survives() {
+    let iso = spawn_ready(
+        r#"
+export function tick() {
+    globalThis.__before_timer = (globalThis.__before_timer || 0) + 1;
+    try { globalThis.setTimeout(() => {}, 0); } catch (e) { (globalThis.__timer_errors ||= []).push(String(e)); }
+    try { setInterval(() => {}, 0); } catch (e) { globalThis.__timer_errors.push(String(e)); }
+    try { clearTimeout(0); } catch (e) { globalThis.__timer_errors.push(String(e)); }
+    try { clearInterval(0); } catch (e) { globalThis.__timer_errors.push(String(e)); }
+    try { new Function("setTimeout(() => {}, 0)")(); } catch (e) { globalThis.__timer_errors.push(String(e)); }
+}
+"#
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("globalThis.__before_timer").unwrap(),
+        serde_json::json!(1)
+    );
+    let timer_errors = iso
+        .probe("globalThis.__timer_errors")
+        .expect("timer errors should be collected");
+    let timer_errors = timer_errors.as_array().expect("timer errors array");
+    assert_eq!(timer_errors.len(), 5, "each timer API should throw once");
+    assert!(
+        timer_errors.iter().all(|error| {
+            error.as_str().is_some_and(|error| {
+                error.contains("unavailable in 274bot isolates; use Execution.delayTicks")
+            })
+        }),
+        "timer rejection should be observable: {timer_errors:?}"
+    );
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("globalThis.__before_timer").unwrap(),
+        serde_json::json!(2),
+        "a timer call must not kill the isolate thread"
+    );
+    iso.join();
+}
 
 // (5b) Compat defineBot fixture: the injected shim lets the module load,
 // and ticks run `create()`'s `loop()` without throwing.

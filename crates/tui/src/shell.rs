@@ -107,12 +107,14 @@ impl TuiApp {
         self.draw_drawer(frame.buffer_mut(), rects.drawer, class);
         self.draw_footer(frame.buffer_mut(), rects.footer);
         if self.settings_state.open {
-            let pane = SettingsPane::new(
+            let mut pane = SettingsPane::new(
                 &mut self.settings,
                 &mut self.nav,
                 &mut self.map_bake,
                 &mut self.settings_state,
             );
+            pane.title = &self.settings_title;
+            pane.notice = self.settings_save.notice();
             frame.render_widget(pane, area);
         }
         self.draw_modal(frame);
