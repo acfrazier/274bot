@@ -757,7 +757,10 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
     assert_eq!(app.walk_send.mode, WalkSendMode::Group);
     assert_eq!(app.walk_send.walk_label(), "Walk 1 bots");
     assert!(
-        app.table.is_marked("alice") && !app.table.is_marked("bob"),
+        app.table
+            .selection
+            .contains(app.profile_id_for_name("alice"))
+            && !app.table.selection.contains(app.profile_id_for_name("bob")),
         "the group is the fleet's row selection: only eligible alice"
     );
     assert_eq!(

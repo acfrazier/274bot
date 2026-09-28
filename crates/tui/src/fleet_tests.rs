@@ -1,4 +1,4 @@
-use frontend_core::{FleetRow, Phase, QueuePlace};
+use frontend_core::{FleetRow, Phase, ProfileIdentity, QueuePlace};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
@@ -28,7 +28,7 @@ fn filter_terms_match_name_world_and_state() {
     let mut state = FleetState::default();
     let shown = |state: &mut FleetState, filter: &str| {
         state.filter = filter.into();
-        state.sync(&members, &rows);
+        state.sync_with_ids(&members, &[], &rows);
         state
             .shown()
             .iter()
@@ -53,18 +53,18 @@ fn the_cursor_stays_on_its_member_when_the_filter_or_fleet_changes() {
     let mut members = names(&["alice", "bob", "carol"]);
     let rows = Vec::new();
     let mut state = FleetState::default();
-    state.sync(&members, &rows);
+    state.sync_with_ids(&members, &[], &rows);
     state.move_cursor(2, &members);
     assert_eq!(state.cursor_member(), Some(2), "cursor on carol");
     state.filter = "o".into(); // bob, carol
-    state.sync(&members, &rows);
+    state.sync_with_ids(&members, &[], &rows);
     assert_eq!(
         state.cursor_member().map(|i| members[i].as_str()),
         Some("carol")
     );
     state.filter.clear();
     members.remove(0); // alice leaves: carol moves up one row
-    state.sync(&members, &rows);
+    state.sync_with_ids(&members, &[], &rows);
     assert_eq!(
         state.cursor_member().map(|i| members[i].as_str()),
         Some("carol")
@@ -75,15 +75,17 @@ fn the_cursor_stays_on_its_member_when_the_filter_or_fleet_changes() {
 fn a_departed_member_loses_its_row_selection() {
     let mut members = names(&["alice", "bob"]);
     let mut state = FleetState::default();
-    state.sync(&members, &[]);
+    state.sync_with_ids(&members, &[], &[]);
     state.toggle_mark(&members, 0);
     state.toggle_mark(&members, 1);
     assert_eq!(state.selection.len(), 2);
     members.retain(|n| n != "bob");
-    state.sync(&members, &[]);
-    assert!(state.is_marked("alice"));
+    state.sync_with_ids(&members, &[], &[]);
+    assert!(state
+        .selection
+        .contains(ProfileIdentity::synthetic("alice")));
     assert!(
-        !state.is_marked("bob"),
+        !state.selection.contains(ProfileIdentity::synthetic("bob")),
         "a removed member is not a hidden group target"
     );
 }
@@ -103,7 +105,7 @@ fn rows_show_selection_cursor_and_selected_bot_as_plain_text() {
     let members = names(&["alice", "bob", "carol"]);
     let rows = vec![ready("alice", 2), queued("bob", 2, 5)];
     let mut state = FleetState::default();
-    state.sync(&members, &rows);
+    state.sync_with_ids(&members, &[], &rows);
     state.toggle_mark(&members, 2);
     state.move_cursor(1, &members);
     let (rows, hits) = render(
@@ -141,7 +143,7 @@ fn rows_show_selection_cursor_and_selected_bot_as_plain_text() {
 fn a_long_fleet_scrolls_to_keep_the_cursor_visible() {
     let members: Vec<String> = (0..100).map(|i| format!("bot{i:03}")).collect();
     let mut state = FleetState::default();
-    state.sync(&members, &[]);
+    state.sync_with_ids(&members, &[], &[]);
     state.cursor_to(60, &members);
     let (rows, hits) = render(
         FleetTable {

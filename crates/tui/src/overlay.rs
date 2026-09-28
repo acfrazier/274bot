@@ -74,6 +74,8 @@ pub enum ConfirmKind {
     Bulk {
         command: Command,
         members: Vec<String>,
+        /// Whether the frozen scope came from marked rows rather than the whole fleet.
+        marked: bool,
     },
 }
 
@@ -160,10 +162,19 @@ impl Confirm {
                     ),
                 ]
             }
-            ConfirmKind::Bulk { command, members } => {
+            ConfirmKind::Bulk {
+                command,
+                members,
+                marked,
+            } => {
                 let count = members.len();
                 let n = members_text(count);
                 let names = scope_names(members);
+                let scope = if *marked {
+                    format!("{count} marked {}", if count == 1 { "bot" } else { "bots" })
+                } else {
+                    format!("all {n}")
+                };
                 match command {
                     Command::LoadLoginAll => vec![
                         "Load every vault profile that is not in the fleet,".into(),
@@ -175,16 +186,16 @@ impl Confirm {
                         "They stay loaded, parked until Log in.".into(),
                     ],
                     Command::ScriptStartAll => vec![
-                        format!("Start all {n} on their last successful script:"),
+                        format!("Start {scope} on their last successful script:"),
                         names,
                         "Members with no saved assignment are skipped.".into(),
                     ],
                     Command::ScriptStopAll => vec![
-                        format!("Stop the scripts of all {n}:"),
+                        format!("Stop the scripts of {scope}:"),
                         names,
                         "Queued replacement Starts are cancelled too.".into(),
                     ],
-                    _ => vec![format!("{} over {n}: {names}", command.label(app))],
+                    _ => vec![format!("{} over {scope}: {names}", command.label(app))],
                 }
             }
         };
@@ -336,15 +347,29 @@ impl TuiApp {
                 self.quit = true;
                 (None, AppAction::Quit)
             }
-            ConfirmKind::Bulk { command, members } => {
-                if members != self.names {
+            ConfirmKind::Bulk {
+                command,
+                members,
+                marked,
+            } => {
+                let current_members = if marked {
+                    self.marked_names()
+                } else {
+                    self.names.clone()
+                };
+                if members != current_members {
                     // Never retarget silently: show the new scope instead.
                     let refreshed = Confirm {
                         kind: ConfirmKind::Bulk {
                             command,
-                            members: self.names.clone(),
+                            members: current_members,
+                            marked,
                         },
-                        note: Some("The fleet changed: check the new scope and confirm again."),
+                        note: Some(if marked {
+                            "The marked selection changed: check the new scope and confirm again."
+                        } else {
+                            "The fleet changed: check the new scope and confirm again."
+                        }),
                     };
                     return (Some(Modal::Confirm(refreshed)), AppAction::None);
                 }
