@@ -1,5 +1,5 @@
 //! `tui-play`: the headless operator panel binary. Same flag spirit as
-//! `host-play` / `panel-play` (`--vault`, `--vault-pass` / `BOT_VAULT_PASS`,
+//! `host-play` / `panel-play` (`--vault`, `--vault-pass-stdin`,
 //! `--host`, `--port`, `--cache`, `--user`, `--live script_<name>`).
 //!
 //! The operator lifecycle (vault, `host_play::Play`, fleet membership,
@@ -82,7 +82,10 @@ pub enum RunMode {
 /// Parsed `tui-play` flags.
 #[derive(Debug, Clone)]
 pub struct Args {
-    pub pass: Option<String>,
+    /// `--vault-pass-stdin`: read the vault passphrase from a piped stdin. It
+    /// is never an argument or an environment variable; on a terminal it is
+    /// asked for at a hidden prompt.
+    pub pass_stdin: bool,
     pub users: Vec<String>,
     pub live: Option<String>,
     pub world: Option<u16>,
@@ -102,7 +105,7 @@ pub struct Args {
 const USAGE: &str = "usage: tui-play [--profile local-274|local-289|public-289] [--revision 274|289] \
          [--prod] [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] \
          [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
-         [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass PASS] \
+         [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass-stdin] \
          [--world N] [--live script_<name> [--catalog-core | --pair-core]] [--user USER]... \
          (default user: first vault profile)\n\
          release packaging: tui-play --map-bundle OUT --revision 274|289 --cache JAG_DIR \
@@ -159,7 +162,7 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
     let (profile, rest) = parse_profile_args(args).map_err(|e| format!("tui-play: {e}"))?;
     let (catalog_core, pair_core) = live_core_from_env(env::var("BOT_LIVE_CORE").ok().as_deref())?;
     let mut parsed = Args {
-        pass: env::var("BOT_VAULT_PASS").ok(),
+        pass_stdin: false,
         world: None,
         users: Vec::new(),
         live: env::var("BOT_LIVE").ok().filter(|s| !s.is_empty()),
@@ -171,8 +174,11 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
     let mut core_flags: Option<(bool, bool)> = None;
     let mut it = rest.into_iter();
     while let Some(arg) = it.next() {
+        if host_play::passphrase::is_removed_flag(arg.as_ref()) {
+            return Err(host_play::passphrase::removed_flag_error("tui-play"));
+        }
         match arg.as_ref() {
-            "--vault-pass" => parsed.pass = Some(need_value(&mut it, "--vault-pass")?),
+            "--vault-pass-stdin" => parsed.pass_stdin = true,
             "--user" => parsed.users.push(need_value(&mut it, "--user")?),
             "--world" => {
                 let value = need_value(&mut it, "--world")?;
@@ -245,7 +251,7 @@ fn temp_live_vault(entries: &[(String, String)], vault_pass: &str) -> PathBuf {
         vault
             .upsert(Profile {
                 username: user.clone(),
-                password: pass.clone(),
+                password: pass.clone().into(),
                 uid: 274_000_001 + i as i32,
                 settings: vault::ProfileSettings {
                     auto_login: true,
@@ -516,7 +522,11 @@ impl TuiSession {
         #[cfg(test)]
         script::IsolatedEnv::ensure_thread();
         let mut js = script::JsLibrary::new(script::default_js_store());
-        let _ = js.restore(); // missing/broken store is not fatal here
+        // A missing store is a first run; a refused or corrupt one is said out
+        // loud (and nothing is saved over a refused one).
+        if let Err(error) = js.restore() {
+            eprintln!("tui-play: {error}");
+        }
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         let mut core = OperatorSession::new(_instance);
         // The fleet rows show the map walks this TUI arms.
@@ -2566,9 +2576,6 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             run_loop(session, app)
         }
         RunMode::Interactive => {
-            let Some(pass) = args.pass.clone() else {
-                return Err("no vault passphrase (set BOT_VAULT_PASS or --vault-pass)".into());
-            };
             let vault_path = session
                 .server_profile
                 .as_ref()
@@ -2576,6 +2583,11 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
                 .vault_path()
                 .to_path_buf();
             let vault_exists = vault_path.is_file();
+            let pass = host_play::passphrase::obtain(
+                "tui-play",
+                args.pass_stdin,
+                host_play::passphrase::Purpose::for_vault(vault_exists),
+            )?;
             if let Err(e) = session.unlock_at(&vault_path, &pass) {
                 return Err(format!("vault {}: {e}", vault_path.display()));
             }
@@ -2629,7 +2641,7 @@ impl TuiSession {
             .unwrap_or(274_000_001);
         let profile = Profile {
             username: username.into(),
-            password: profile_password_for(username, self.target()),
+            password: profile_password_for(username, self.target()).into(),
             uid,
             settings: vault::ProfileSettings::default(),
         };
@@ -2877,6 +2889,7 @@ fn set_mouse_capture(on: bool) {
 
 pub fn main() -> ExitCode {
     let args = parse_args();
+    host_play::passphrase::warn_legacy_env("tui-play");
     if let Some(out) = &args.map_bundle {
         return map_bundle(&args.profile, out);
     }

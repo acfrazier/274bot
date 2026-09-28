@@ -19,7 +19,7 @@ impl Session {
             None if self.profile_options.is_some() => self
                 .resolve_profile()
                 .map(|selection| selection.catalog_root().map(Path::to_path_buf)),
-            None => Ok(script::rs2b0t_root()),
+            None => script::rs2b0t_root_checked(),
         }
     }
 

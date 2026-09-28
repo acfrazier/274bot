@@ -39,7 +39,7 @@ fn fleet(test: &str, members: &[&str], auto_login: bool) -> OperatorSession<()> 
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("vault");
     let _ = std::fs::remove_file(&path);
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     for (i, name) in members.iter().enumerate() {
         vault
             .upsert(Profile {

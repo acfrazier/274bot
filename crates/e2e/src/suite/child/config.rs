@@ -15,6 +15,12 @@ pub const MAINLAND_ENV: &str = "BOT_MAINLAND";
 /// `ENGINE_DIR`, …) is bound through the identity instead.
 pub const DEADLINE_ENV: &[&str] = &["BUDGET_S"];
 
+/// Environment variables that must never reach a launched child: the retired
+/// vault-passphrase variable. Nothing reads it any more, but an operator shell
+/// that still exports it would otherwise hand the passphrase to every child (and
+/// its descendants) in the environment, where other local users can read it.
+pub const SECRET_ENV: &[&str] = &[host_play::passphrase::LEGACY_ENV];
+
 /// The inherited native deadline controls that are actually set, in a stable order.
 pub fn inherited_deadline_env() -> Vec<String> {
     DEADLINE_ENV
@@ -117,6 +123,15 @@ impl NativeConfig {
 
     /// Validate the configuration before any launch. Explicit paths must exist.
     pub fn validate(&self) -> SuiteResult<()> {
+        // The passphrase is never a child argument: it would sit in the process list
+        // and in the run ledger, which records each child's argv verbatim.
+        if self
+            .extra_args
+            .iter()
+            .any(|arg| host_play::passphrase::is_removed_flag(arg))
+        {
+            return Err(host_play::passphrase::removed_flag_error("--child-arg"));
+        }
         if self.extra_args.iter().any(|arg| arg == "--nav-paints") {
             return Err(
                 "use the suite --nav-paints option instead of --child-arg --nav-paints".into(),

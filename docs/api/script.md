@@ -92,6 +92,31 @@ scripts end their live step at either boundary.
   space) sits on top of JS heap and is **unmeasured** at the 50-slot wall —
   `rss_ladder` is Null/draw-off clients, not Started JS.
 
+### Persistence
+
+`~/.274bot/js-scripts.json` (the Load list) and `~/.274bot/rs2b0t-path` (the
+catalog root) decide which files the host later reads and runs, so restore
+treats them as untrusted input:
+
+- Both are written atomically with mode `0o600` and read with
+  `vault::read_private_file`: a file that is not a regular file, is over its
+  bound, belongs to another user (root is accepted) or is writable by its group
+  or by others is **refused**; a file others can only read (written before the
+  `0o600` writer) is tightened to `0o600` and read
+  ([vault.md](vault.md#state-files-beside-the-vault)). Windows and filesystems
+  that report every file `0o777` have no such mode to check.
+- A refused `js-scripts.json` restores nothing, is reported on stderr (and in
+  the panel log), and nothing is saved over it until the operator fixes or
+  removes it: **Load** then reports that it could not save instead of replacing
+  the file. A refused `rs2b0t-path` counts as no catalog root and is reported
+  once; choosing the catalog again writes a fresh file.
+- Paths are stored absolute and `..`-free (a relative Load path is resolved
+  against the working directory when it is loaded). Restore skips, and lists as
+  a load failure (“not restored: …”), an entry whose path is relative, has
+  `..`, or names something that is not a regular file or is over 8 MiB; a
+  missing file is dropped quietly as before. Script sources themselves are not
+  permission-checked: they live wherever the operator keeps them.
+
 ### Content-addressed transpile cache
 
 Origin bytes (TS or JS) are hashed with **SHA-256**. Hits under

@@ -93,7 +93,7 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("vault");
     let _ = std::fs::remove_file(&path);
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     vault
         .upsert(Profile {
             username: "alice".into(),

@@ -15,6 +15,10 @@ serde_json = "=1.0.140"
 serde = { version = "=1.0.219", features = ["derive"] }
 sha2 = "=0.10.9"
 libc = "0.2"
+# The hidden passphrase prompt (`passphrase::read_hidden`) reads keys in raw
+# mode, so nothing typed is echoed; same version the tui already builds.
+crossterm = "0.29"
+zeroize = "=1.9.0"
 vault = { path = "../vault" }
 rand_core = { version = "=0.6.4", features = ["getrandom"] }
 parking_lot = "0.12"

@@ -47,6 +47,7 @@ use super::SuiteResult;
 mod config;
 pub use config::{
     inherited_deadline_env, validate_deadline_env, NativeConfig, DEADLINE_ENV, MAINLAND_ENV,
+    SECRET_ENV,
 };
 #[cfg(test)]
 use config::{supported_arg, typed_env_key};
@@ -192,6 +193,11 @@ pub fn run(
     // recorded profile flag. Removal happens after the copy so it actually takes effect.
     if !spec.env.contains_key(MAINLAND_ENV) {
         command.env_remove(MAINLAND_ENV);
+    }
+    // The launch path never carries a passphrase in the environment, whether the
+    // operator's shell exported one or a spec asked for one.
+    for name in SECRET_ENV {
+        command.env_remove(name);
     }
     if let Some(cwd) = &spec.cwd {
         command.current_dir(cwd);

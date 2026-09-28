@@ -79,7 +79,7 @@ fn vault_with(test: &str, profiles: &[(&str, i32, bool)]) -> Vault {
     let path = vault_path(test);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let _ = std::fs::remove_file(&path);
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     for (name, uid, auto_login) in profiles {
         vault
             .upsert(Profile {
@@ -843,7 +843,7 @@ fn a_profile_write_is_queued_and_the_arm_follows_only_once_it_is_durable() {
         Some(&Outcome::Completed)
     );
     assert!(alice.auto_login.load(Ordering::Relaxed));
-    let disk = Vault::unlock(&vault_path("write-queued"), "bot").unwrap();
+    let disk = Vault::unlock(&vault_path("write-queued"), "test-passphrase-01").unwrap();
     assert!(disk.get("alice").unwrap().settings.auto_login);
 }
 
@@ -856,7 +856,7 @@ fn consecutive_writes_land_in_order_with_the_last_one_on_disk() {
     s.set_random_settings("alice", true, "Prayer", true)
         .unwrap();
     s.flush_writes();
-    let disk = Vault::unlock(&vault_path("write-order"), "bot").unwrap();
+    let disk = Vault::unlock(&vault_path("write-order"), "test-passphrase-01").unwrap();
     let saved = &disk.get("alice").unwrap().settings;
     assert!(saved.auto_login, "the earlier field edit is not lost");
     assert!(saved.random_events);
@@ -977,7 +977,7 @@ fn a_write_replaced_in_the_same_commit_is_cancelled_and_its_mirror_never_runs() 
         !alice.auto_login.load(Ordering::Relaxed),
         "the slot never observes the superseded value"
     );
-    let disk = Vault::unlock(&vault_path("write-coalesce"), "bot").unwrap();
+    let disk = Vault::unlock(&vault_path("write-coalesce"), "test-passphrase-01").unwrap();
     assert!(!disk.get("alice").unwrap().settings.auto_login);
 }
 
@@ -1001,7 +1001,7 @@ fn coalesced_edits_of_different_settings_all_reach_the_running_slot() {
     drop(held);
     s.flush_writes();
 
-    let disk = Vault::unlock(&vault_path("write-coalesce-fields"), "bot").unwrap();
+    let disk = Vault::unlock(&vault_path("write-coalesce-fields"), "test-passphrase-01").unwrap();
     let saved = &disk.get("alice").unwrap().settings;
     assert!(!saved.auto_login);
     assert!(!saved.random_events && !saved.lamp_auto);
@@ -1050,7 +1050,7 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
         s.vault().unwrap().get("alicia").is_none(),
         "new name rolled back"
     );
-    let disk = Vault::unlock(&vault_path("rename-fail"), "bot").unwrap();
+    let disk = Vault::unlock(&vault_path("rename-fail"), "test-passphrase-01").unwrap();
     assert!(disk.get("alice").is_some() && disk.get("alicia").is_none());
 
     let op = s
@@ -1061,7 +1061,7 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
         s.operation(op).unwrap().outcome("alicia"),
         Some(&Outcome::Completed)
     );
-    let disk = Vault::unlock(&vault_path("rename-fail"), "bot").unwrap();
+    let disk = Vault::unlock(&vault_path("rename-fail"), "test-passphrase-01").unwrap();
     assert!(disk.get("alice").is_none() && disk.get("alicia").is_some());
 }
 
@@ -1084,7 +1084,7 @@ fn a_rename_onto_an_existing_username_is_refused_and_writes_nothing() {
     assert_eq!(error, "credentials: a profile named Hans already exists");
     s.flush_writes();
 
-    let disk = Vault::unlock(&vault_path("rename-collide"), "bot").unwrap();
+    let disk = Vault::unlock(&vault_path("rename-collide"), "test-passphrase-01").unwrap();
     for vault in [s.vault().unwrap(), &disk] {
         let hans = vault.get("Hans").unwrap();
         assert_eq!(
@@ -1114,7 +1114,7 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
         .unwrap_err();
     assert_eq!(error, "credentials: a profile named Hans already exists");
     s.flush_writes();
-    let disk = Vault::unlock(&vault_path("create-collide"), "bot").unwrap();
+    let disk = Vault::unlock(&vault_path("create-collide"), "test-passphrase-01").unwrap();
     for vault in [s.vault().unwrap(), &disk] {
         let hans = vault.get("Hans").unwrap();
         assert_eq!((hans.uid, hans.password.as_str()), (2, "pw"));
@@ -1128,7 +1128,7 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
     s.create_profile(bob, ArmMirror::None, "credentials")
         .unwrap();
     s.flush_writes();
-    let disk = Vault::unlock(&vault_path("create-collide"), "bot").unwrap();
+    let disk = Vault::unlock(&vault_path("create-collide"), "test-passphrase-01").unwrap();
     assert_eq!(disk.get("bob").unwrap().password, "typed");
 }
 

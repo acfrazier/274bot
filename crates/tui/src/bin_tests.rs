@@ -573,6 +573,24 @@ fn world_flag_selects_auto_default_and_rejects_invalid_number() {
 }
 
 #[test]
+fn the_passphrase_is_only_ever_read_from_stdin_never_an_argument() {
+    assert!(!parse_args_from(["--user", "alice"]).unwrap().pass_stdin);
+    assert!(parse_args_from(["--vault-pass-stdin"]).unwrap().pass_stdin);
+    for spelling in [
+        &["--vault-pass", "hunter2-hunter2"][..],
+        &["--vault-pass=hunter2-hunter2"][..],
+        &["--user", "alice", "--vault-pass", "hunter2-hunter2"][..],
+    ] {
+        let error = parse_args_from(spelling.iter().copied()).unwrap_err();
+        assert!(error.contains("--vault-pass-stdin"), "{error}");
+        assert!(
+            !error.contains("hunter2"),
+            "the value must not be echoed: {error}"
+        );
+    }
+}
+
+#[test]
 fn parse_args_from_accepts_revision_profile_and_ordered_overrides() {
     let args = parse_args_from([
         "--live",
@@ -855,7 +873,7 @@ fn create_profile_upsert_error_returns_err() {
     let path = dir.join("vault.vault");
     let mut session = TuiSession::new(dummy_options());
     session
-        .start_play(Vault::create(&path, "bot").unwrap())
+        .start_play(Vault::create(&path, "test-passphrase-01").unwrap())
         .unwrap();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
     let err = session.create_profile("alice").unwrap_err();
@@ -1252,7 +1270,7 @@ fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
 fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     let iso = IsolatedEnv::enter("tui-initial-load");
     let mut session = TuiSession::new(dummy_options());
-    let mut vault = Vault::create(&iso.dir.join("vault"), "bot").unwrap();
+    let mut vault = Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap();
     for (uid, name) in [(7, "alice"), (8, "bob")] {
         vault
             .upsert(vault::Profile {
@@ -2518,7 +2536,7 @@ fn lifecycle_vault(test: &str) -> Vault {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("vault");
     let _ = std::fs::remove_file(&path);
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
     vault
         .upsert(Profile {
             username: "alice".into(),
@@ -2659,7 +2677,7 @@ const THIEVER_TS: &str = "export const SETTINGS = { target: { type: 'string', de
 fn tui_with_profiles(iso: &IsolatedEnv, names: &[&str]) -> (TuiSession, TuiApp) {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
-    let mut vault = Vault::create(&iso.dir.join("vault"), "bot").unwrap();
+    let mut vault = Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap();
     for (i, name) in names.iter().enumerate() {
         vault
             .upsert(vault::Profile {

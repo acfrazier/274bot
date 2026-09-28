@@ -4,6 +4,7 @@
 use std::env;
 use std::process::ExitCode;
 
+use host_play::passphrase::{self, Purpose};
 use host_play::{
     open_vault, parse_profile_args, profile_password_for, run_with_template, set_debug,
     ProfileOptions,
@@ -13,7 +14,9 @@ use vault::{Profile, ProfileSettings, VaultError};
 #[derive(Debug)]
 struct Args {
     profile: ProfileOptions,
-    pass: Option<String>,
+    /// `--vault-pass-stdin`: read the passphrase from a piped stdin. The
+    /// passphrase itself is never an argument or an environment variable.
+    pass_stdin: bool,
     users: Vec<String>,
     lowmem: bool,
     mainland: bool,
@@ -27,7 +30,7 @@ fn usage() -> ! {
          [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] \
          [--world-members true|false] \
-         [--vault-pass PASS] [--lowmem|--highmem] [--mainland] [--debug] \
+         [--vault-pass-stdin] [--lowmem|--highmem] [--mainland] [--debug] \
          [--user USER]... (default user: test)"
     );
     std::process::exit(2);
@@ -40,19 +43,22 @@ where
     let (profile, remaining) = parse_profile_args(args)?;
     let mut parsed = Args {
         profile,
-        pass: env::var("BOT_VAULT_PASS").ok(),
+        pass_stdin: false,
         users: Vec::new(),
         lowmem: true,
         mainland: env::var("BOT_MAINLAND").as_deref() == Ok("1"),
     };
     let mut it = remaining.into_iter();
     while let Some(arg) = it.next() {
+        if passphrase::is_removed_flag(&arg) {
+            return Err(passphrase::removed_flag_error("host-play"));
+        }
         let mut value = || {
             it.next()
                 .ok_or_else(|| format!("host-play: missing value for {arg}"))
         };
         match arg.as_str() {
-            "--vault-pass" => parsed.pass = Some(value()?),
+            "--vault-pass-stdin" => parsed.pass_stdin = true,
             "--lowmem" => parsed.lowmem = true,
             "--highmem" => parsed.lowmem = false,
             "--user" => parsed.users.push(value()?),
@@ -76,6 +82,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    passphrase::warn_legacy_env("host-play");
 
     // Resolve, prepare and decode before opening or creating a vault. A 289
     // profile remains constructible, but the host boundary refuses gameplay
@@ -100,11 +107,18 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let Some(pass) = args.pass else {
-        eprintln!("host-play: no vault passphrase (set BOT_VAULT_PASS or --vault-pass)");
-        return ExitCode::FAILURE;
-    };
     let vault_path = profile.vault_path().to_path_buf();
+    let pass = match passphrase::obtain(
+        "host-play",
+        args.pass_stdin,
+        Purpose::for_vault(vault_path.is_file()),
+    ) {
+        Ok(pass) => pass,
+        Err(msg) => {
+            eprintln!("host-play: {msg}");
+            return ExitCode::FAILURE;
+        }
+    };
     let mut vault = match open_vault(&vault_path, &pass) {
         Ok(vault) => vault,
         Err(e) => {
@@ -125,7 +139,7 @@ fn main() -> ExitCode {
             None => {
                 let account = Profile {
                     username: username.clone(),
-                    password: profile_password_for(username, profile.target()),
+                    password: profile_password_for(username, profile.target()).into(),
                     uid: 274_000_000 + i as i32 + 1,
                     settings: ProfileSettings::default(),
                 };
@@ -207,5 +221,27 @@ mod tests {
     fn shared_profile_parser_rejects_invalid_revision_and_port() {
         assert!(args(&["--revision", "275"]).is_err());
         assert!(args(&["--port", "nope"]).is_err());
+    }
+
+    #[test]
+    fn the_passphrase_is_never_an_argument_and_is_never_echoed_back() {
+        for spelling in [
+            &["--vault-pass", "hunter2-hunter2"][..],
+            &["--vault-pass=hunter2-hunter2"][..],
+            &["--user", "alice", "--vault-pass", "hunter2-hunter2"][..],
+        ] {
+            let error = args(spelling).unwrap_err();
+            assert!(error.contains("--vault-pass-stdin"), "{error}");
+            assert!(
+                !error.contains("hunter2"),
+                "the value must not be echoed: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_stdin_flag_selects_the_pipe_channel() {
+        assert!(!args(&["--user", "alice"]).unwrap().pass_stdin);
+        assert!(args(&["--vault-pass-stdin"]).unwrap().pass_stdin);
     }
 }

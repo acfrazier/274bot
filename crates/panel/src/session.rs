@@ -51,7 +51,7 @@ use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
 use nav::WorldState;
-use vault::{Profile, ProfileSettings, Vault};
+use vault::{Profile, ProfileSettings, Secret, Vault};
 
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
@@ -883,14 +883,16 @@ pub struct Session {
     /// The log section's filtered view and controls over the shared
     /// `frontend_core::log` store.
     pub log_pane: crate::log_pane::LogPane,
-    /// Vault passphrase scratch buffer for the in-panel unlock prompt.
-    pub pass_scratch: String,
+    /// Vault passphrase scratch buffer for the in-panel unlock prompt
+    /// (zeroed when cleared or dropped).
+    pub pass_scratch: Secret,
     /// Display copy of the core's last status poll, with queued walk
     /// destinations applied.
     pub statuses: Vec<SlotStatus>,
-    /// Picker edit scratch (username/password). Empty on the strip.
+    /// Picker edit scratch (username/password). Empty on the strip. The
+    /// password is zeroed when cleared or dropped.
     pub cred_user: String,
-    pub cred_pass: String,
+    pub cred_pass: Secret,
     /// Draft auto-login / random / lamp for a new vault row. An existing
     /// edit writes those through the vault immediately.
     pub cred_settings: ProfileSettings,
@@ -1005,7 +1007,7 @@ pub struct Session {
     /// Plain UI status only; preparation remains owned by the app worker.
     profile_preparing: bool,
     /// Interactive Unlock clicked before preparation/final validation finished.
-    requested_unlock: Option<String>,
+    requested_unlock: Option<Secret>,
     /// One-use final resource validation proof consumed by `start_play`.
     validated_template: Option<ValidatedTemplate>,
     /// Multibox wall membership (chooser / latch / bulk ops). The UI reads
@@ -1288,10 +1290,10 @@ impl Session {
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
             )),
             log_pane: crate::log_pane::LogPane::default(),
-            pass_scratch: String::new(),
+            pass_scratch: Secret::with_capacity(256),
             statuses: Vec::new(),
             cred_user: String::new(),
-            cred_pass: String::new(),
+            cred_pass: Secret::with_capacity(256),
             cred_settings: ProfileSettings::default(),
             chooser_edit: None,
             chooser_form: 0,
@@ -1340,7 +1342,12 @@ impl Session {
             scripts: frontend_core::Scripts::new(
                 {
                     let mut js = script::JsLibrary::new(script::default_js_store());
-                    let _ = js.restore(); // missing/broken store is not fatal here
+                    // A missing store is a first run; a refused or corrupt one is
+                    // said out loud (and nothing is saved over a refused one).
+                    if let Err(error) = js.restore() {
+                        eprintln!("panel: {error}");
+                        process_log(Level::Error, &error);
+                    }
                     js
                 },
                 script::ScriptSettingsStore::with_default_path(),
@@ -1892,11 +1899,11 @@ impl Session {
         self.profile_preparing
     }
 
-    pub(crate) fn request_unlock(&mut self, pass: String) {
+    pub(crate) fn request_unlock(&mut self, pass: Secret) {
         self.requested_unlock = Some(pass);
     }
 
-    pub(crate) fn take_requested_unlock(&mut self) -> Option<String> {
+    pub(crate) fn take_requested_unlock(&mut self) -> Option<Secret> {
         self.requested_unlock.take()
     }
 

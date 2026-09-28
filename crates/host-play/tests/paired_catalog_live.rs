@@ -903,7 +903,7 @@ fn selected_profile(
 fn mint_profile(account: &str, password: &str, offset: u32) -> Result<Profile, String> {
     Ok(Profile {
         username: account.to_string(),
-        password: password.to_string(),
+        password: password.into(),
         uid: (SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("clock: {error}"))?

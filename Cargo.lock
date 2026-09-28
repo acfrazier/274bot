@@ -53,6 +53,7 @@ dependencies = [
  "cfg-if",
  "cipher",
  "cpufeatures",
+ "zeroize",
 ]
 
 [[package]]
@@ -2374,6 +2375,7 @@ dependencies = [
  "api",
  "bzip2",
  "client",
+ "crossterm",
  "host",
  "libc",
  "nav",
@@ -2386,6 +2388,7 @@ dependencies = [
  "sha2",
  "vault",
  "windows-sys 0.59.0",
+ "zeroize",
 ]
 
 [[package]]
@@ -6184,7 +6187,9 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 name = "vault"
 version = "0.1.9"
 dependencies = [
+ "aes",
  "aes-gcm",
+ "libc",
  "pbkdf2",
  "rand_core",
  "serde",

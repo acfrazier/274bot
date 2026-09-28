@@ -327,7 +327,7 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
         boot_for(&RunMode::Live("stress50_full".into()), None),
         Some(Boot::Live(LiveBoot::Stress50Full))
     ));
-    match boot_for(&RunMode::Live("script_walk".into()), Some("pass")) {
+    match boot_for(&RunMode::Live("script_walk".into()), Some("pass".into())) {
         Some(Boot::Live(LiveBoot::Script { name })) => assert_eq!(name, "script_walk"),
         other => panic!("script_<name> must map to a deferred Script boot, got {other:?}"),
     }
@@ -335,9 +335,9 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
         Some(Boot::Live(LiveBoot::Script { name })) => assert_eq!(name, "nav_full"),
         other => panic!("nav_full must map to a deferred Script boot, got {other:?}"),
     }
-    match boot_for(&RunMode::Interactive, Some("hunter2")) {
+    match boot_for(&RunMode::Interactive, Some("hunter2".into())) {
         Some(Boot::Unlock { pass }) => assert_eq!(pass, "hunter2"),
-        other => panic!("BOT_VAULT_PASS must map to a deferred Unlock boot, got {other:?}"),
+        other => panic!("a piped passphrase must map to a deferred Unlock boot, got {other:?}"),
     }
     assert!(matches!(
         boot_for(&RunMode::Smoke, None),
@@ -351,6 +351,29 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
         pass: "secret".into()
     }));
     assert!(boot_failure_is_fatal(&Boot::Live(LiveBoot::Smoke)));
+}
+
+#[test]
+fn the_passphrase_is_only_ever_read_from_stdin_never_an_argument() {
+    assert!(!parse_args(["--smoke"], None).unwrap().vault_pass_stdin);
+    assert!(
+        parse_args(["--vault-pass-stdin"], None)
+            .unwrap()
+            .vault_pass_stdin
+    );
+    for spelling in [
+        &["--vault-pass", "hunter2-hunter2"][..],
+        &["--vault-pass=hunter2-hunter2"][..],
+        &["--smoke", "--vault-pass", "hunter2-hunter2"][..],
+    ] {
+        let (code, message) = parse_args(spelling.iter().copied(), None).unwrap_err();
+        assert_eq!(code, 2);
+        assert!(message.contains("--vault-pass-stdin"), "{message}");
+        assert!(
+            !message.contains("hunter2"),
+            "the value is never echoed: {message}"
+        );
+    }
 }
 
 fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
@@ -3100,7 +3123,7 @@ fn switching_the_edit_target_resets_a_focused_text_field() {
     let _guard = crate::test_support::imgui_context_guard();
     let dir = TestDir::new("chooser-switch-focused");
     let mut session = crate::session::Session::new();
-    let mut vault = vault::Vault::create(&dir.join("vault"), "bot").unwrap();
+    let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
     for (name, pass, uid) in [("Hans", "hpass", 43), ("aindniK", "kpass", 42)] {
         vault
             .upsert(vault::Profile {
@@ -3319,7 +3342,7 @@ impl ProfilesUi {
     /// Profiles open over a fresh vault of `(username, password, uid)`.
     fn new(label: &str, profiles: &[(&str, &str, i32)]) -> Self {
         let dir = TestDir::new(label);
-        let mut vault = vault::Vault::create(&dir.join("vault"), "bot").unwrap();
+        let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
         for &(username, password, uid) in profiles {
             vault
                 .upsert(vault::Profile {
@@ -3461,10 +3484,10 @@ impl ProfilesUi {
 
     /// The vault on disk as `(username, uid, password)`, by username.
     fn disk(&self) -> Vec<(String, i32, String)> {
-        let vault = vault::Vault::unlock(&self.dir.join("vault"), "bot").unwrap();
+        let vault = vault::Vault::unlock(&self.dir.join("vault"), "test-passphrase-01").unwrap();
         let mut rows: Vec<_> = vault
             .profiles()
-            .map(|p| (p.username.clone(), p.uid, p.password.clone()))
+            .map(|p| (p.username.clone(), p.uid, p.password.to_string()))
             .collect();
         rows.sort();
         rows

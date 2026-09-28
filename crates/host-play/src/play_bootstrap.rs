@@ -101,10 +101,17 @@ pub fn profile_password(username: &str) -> String {
     profile_password_for(username, client::bot_target())
 }
 
-/// Ephemeral live-vault passphrase. Local `--live` keeps the `"bot"` shim.
+/// Passphrase of a throwaway local-engine live vault. Public on purpose: that
+/// vault lives in a temp directory and holds only `username == password`
+/// accounts for a local engine, so it protects nothing. It still has to meet
+/// the vault's passphrase floor like any other new vault.
+const LOCAL_LIVE_VAULT_PASSPHRASE: &str = "local-live-vault";
+
+/// Ephemeral live-vault passphrase: the fixed throwaway one for a local
+/// engine, a fresh high-entropy secret for the public world.
 pub fn live_vault_passphrase_for(target: BotTarget) -> String {
     match target {
-        BotTarget::Local => "bot".into(),
+        BotTarget::Local => LOCAL_LIVE_VAULT_PASSPHRASE.into(),
         BotTarget::Prod => mint_high_entropy_secret(),
     }
 }
@@ -539,11 +546,14 @@ pub(super) fn bot_client_config(options: &PlayOptions, profile: &Profile) -> Cli
 /// Unlock `path`, or create it (and parent dirs) when missing. Any other
 /// unlock error (`WrongPassphrase`, `Corrupt`, `EmptyPassphrase`) is
 /// returned as-is so the CLI can print it instead of falling through to
-/// `AlreadyExists`.
+/// `AlreadyExists`. A passphrase that does not meet the floor for a *new*
+/// vault is refused before any directory is created; an existing vault is
+/// never held to the floor.
 pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
     match Vault::unlock(path, passphrase) {
         Ok(v) => Ok(v),
         Err(VaultError::NotFound(_)) => {
+            vault::check_new_passphrase(passphrase)?;
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
                     std::fs::create_dir_all(parent)?;
