@@ -5,15 +5,13 @@
 //! filter scans member metadata without allocating, so a 1,000-member fleet
 //! costs O(members) per frame and nothing at all while headless.
 
-use std::collections::BTreeSet;
-use std::fmt::Write as _;
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
+use std::fmt::Write as _;
 
 use frontend_core::views::run_state_label;
-use frontend_core::{FleetRow, Phase};
+use frontend_core::{FleetRow, MarkedSelection, Phase, ProfileIdentity};
 use script::RunState;
 
 use crate::layout::SizeClass;
@@ -79,7 +77,7 @@ pub fn row_matches(name: &str, row: Option<&FleetRow>, filter: &str) -> bool {
         .all(|term| term_matches(name, row, term))
 }
 
-/// Renderer-local fleet state. Marks are the explicit row selection
+/// Renderer-local fleet state. Marks are the shared identity-based selection
 /// ("selected N of M"); they never change the selected bot and are dropped
 /// when their member leaves the fleet.
 #[derive(Debug, Default)]
@@ -88,7 +86,8 @@ pub struct FleetState {
     pub cursor: usize,
     /// First shown row of the drawn window.
     pub scroll: usize,
-    pub marks: BTreeSet<String>,
+    /// Shared checkbox state; identities are stable across renames.
+    pub selection: MarkedSelection,
     pub filter: String,
     /// The filter line is being edited.
     pub editing: bool,
@@ -100,10 +99,16 @@ pub struct FleetState {
 }
 
 impl FleetState {
+    /// Legacy/test convenience when no vault identities are available.
+    pub fn sync(&mut self, names: &[String], rows: &[FleetRow]) {
+        self.sync_with_ids(names, &[], rows);
+    }
+
     /// Recompute the shown rows for `names` (their projected `rows`), keep
     /// the cursor on the same member when possible and drop marks of
-    /// departed members. Reuses its buffers: no allocation in steady state.
-    pub fn sync(&mut self, names: &[String], rows: &[FleetRow]) {
+    /// departed identities. `ids` parallels `names`; missing ids use a
+    /// deterministic fixture identity.
+    pub fn sync_with_ids(&mut self, names: &[String], ids: &[ProfileIdentity], rows: &[FleetRow]) {
         self.shown.clear();
         for (index, name) in names.iter().enumerate() {
             if self.filter.is_empty()
@@ -123,15 +128,10 @@ impl FleetState {
         }
         self.cursor = self.cursor.min(self.shown.len().saturating_sub(1));
         self.remember_cursor(names);
-        if !self.marks.is_empty()
-            && names
-                .iter()
-                .filter(|name| self.marks.contains(*name))
-                .count()
-                != self.marks.len()
-        {
-            self.marks.retain(|mark| names.contains(mark));
-        }
+        let identities = names.iter().enumerate().map(|(index, name)| {
+            profile_id(ids, names, index).unwrap_or_else(|| ProfileIdentity::synthetic(name))
+        });
+        self.selection.retain(identities);
     }
 
     fn remember_cursor(&mut self, names: &[String]) {
@@ -168,26 +168,45 @@ impl FleetState {
         self.remember_cursor(names);
     }
 
-    /// Toggle the row selection of member `index`.
+    /// Toggle the row selection of member `index`, using the stable id when
+    /// the caller has a vault projection and a fixture id otherwise.
     pub fn toggle_mark(&mut self, names: &[String], index: usize) {
+        self.toggle_mark_with_ids(names, &[], index);
+    }
+
+    pub fn toggle_mark_with_ids(
+        &mut self,
+        names: &[String],
+        ids: &[ProfileIdentity],
+        index: usize,
+    ) {
         let Some(name) = names.get(index) else {
             return;
         };
-        if !self.marks.remove(name) {
-            self.marks.insert(name.clone());
-        }
+        let identity =
+            profile_id(ids, names, index).unwrap_or_else(|| ProfileIdentity::synthetic(name));
+        self.selection.toggle(identity);
     }
 
     pub fn is_marked(&self, name: &str) -> bool {
-        self.marks.contains(name)
+        self.selection.contains(ProfileIdentity::synthetic(name))
+    }
+
+    pub fn is_marked_id(&self, identity: ProfileIdentity) -> bool {
+        self.selection.contains(identity)
     }
 
     pub fn mark_all_shown(&mut self, names: &[String]) {
-        for &index in &self.shown {
-            if let Some(name) = names.get(index) {
-                self.marks.insert(name.clone());
-            }
-        }
+        self.mark_all_shown_with_ids(names, &[]);
+    }
+
+    pub fn mark_all_shown_with_ids(&mut self, names: &[String], ids: &[ProfileIdentity]) {
+        let identities = self
+            .shown
+            .iter()
+            .filter_map(|&index| profile_id(ids, names, index))
+            .collect::<Vec<_>>();
+        self.selection.mark_all(identities);
     }
 
     /// Keep the cursor inside a window of `rows` lines.
@@ -204,12 +223,22 @@ impl FleetState {
     }
 }
 
+fn profile_id(ids: &[ProfileIdentity], names: &[String], index: usize) -> Option<ProfileIdentity> {
+    ids.get(index).copied().or_else(|| {
+        names
+            .get(index)
+            .map(|name| ProfileIdentity::synthetic(name))
+    })
+}
+
 /// The table widget over the fleet `names` and the core's projected `rows`.
+/// `ids` parallels `names` and keeps row marks stable through sorting/filter.
 /// `selected` is the selected bot's member index; `keys` is whether the
 /// fleet pane has keyboard focus (the cursor row is drawn reversed only
 /// then, so the operator sees where keys go).
 pub struct FleetTable<'a> {
     pub names: &'a [String],
+    pub ids: &'a [ProfileIdentity],
     pub rows: &'a [FleetRow],
     pub state: &'a mut FleetState,
     pub selected: Option<usize>,
@@ -262,13 +291,14 @@ impl FleetTable<'_> {
     pub fn render(self, area: Rect, buf: &mut Buffer, reserve: u16) -> FleetHits {
         let Self {
             names,
+            ids,
             rows: fleet,
             state,
             selected,
             keys,
             class,
         } = self;
-        state.sync(names, fleet);
+        state.sync_with_ids(names, ids, fleet);
         if area.height == 0 || area.width < 12 {
             return FleetHits::default();
         }
@@ -358,7 +388,13 @@ impl FleetTable<'_> {
                 style = style.add_modifier(Modifier::REVERSED);
             }
             cell.clear();
-            cell.push_str(if state.is_marked(name) { "[x]" } else { "[ ]" });
+            cell.push_str(
+                if state.is_marked_id(profile_id(ids, names, member).expect("fleet row identity")) {
+                    "[x]"
+                } else {
+                    "[ ]"
+                },
+            );
             cell.push_str(if is_cursor { " >" } else { "  " });
             cell.push(if is_selected { '*' } else { ' ' });
             push_fitted(&mut cell, name, name_w);
@@ -408,7 +444,7 @@ impl FleetTable<'_> {
                 "{}/{} shown · selected {} of {}",
                 state.shown().len(),
                 names.len(),
-                state.marks.len(),
+                state.selection.len(),
                 names.len()
             );
             // The selected bot also heads the detail pane; name it here only

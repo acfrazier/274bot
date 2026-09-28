@@ -2,6 +2,7 @@ pub mod app;
 pub mod build_info;
 pub mod chrome;
 pub mod clipboard;
+pub mod fleet;
 pub mod focus;
 pub mod game_view;
 pub mod grid;

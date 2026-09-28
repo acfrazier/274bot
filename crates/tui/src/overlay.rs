@@ -99,7 +99,7 @@ impl ContextItem {
     fn label(&self, app: &TuiApp) -> String {
         match self {
             ContextItem::Select(name) => format!("Select {name}"),
-            ContextItem::Mark(name) if app.table.is_marked(name) => {
+            ContextItem::Mark(name) if app.is_marked_name(name) => {
                 format!("Unselect row {name}")
             }
             ContextItem::Mark(name) => format!("Select row {name} (group)"),
@@ -383,7 +383,8 @@ impl TuiApp {
             ContextItem::Select(name) => self.select_bot(&name),
             ContextItem::Mark(name) => {
                 if let Some(index) = self.names.iter().position(|n| *n == name) {
-                    self.table.toggle_mark(&self.names, index);
+                    self.table
+                        .toggle_mark_with_ids(&self.names, &self.profile_ids, index);
                 }
                 AppAction::None
             }

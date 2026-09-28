@@ -1675,14 +1675,34 @@ impl TuiSession {
 
     fn script_start_all(&mut self, app: &mut TuiApp) {
         let root = self.start_catalog_root();
-        self.scripts.start_all(&mut self.core, root.as_deref());
-        self.apply_script_notice(app);
+        if !app.table.selection.is_empty() {
+            let report = frontend_core::start_marked(
+                &app.table.selection,
+                &mut self.core,
+                &mut self.scripts,
+                None,
+                root.as_deref(),
+            );
+            self.scripts.show_load_failures();
+            self.apply_script_notice(app);
+            app.error = Some(report.summary());
+        } else {
+            self.scripts.start_all(&mut self.core, root.as_deref());
+            self.apply_script_notice(app);
+        }
     }
 
     fn script_stop_all(&mut self, app: &mut TuiApp) {
-        self.scripts.stop_all(&mut self.core);
-        app.reload_confirm = self.scripts.reload_awaiting_confirm();
-        self.apply_script_notice(app);
+        if !app.table.selection.is_empty() {
+            let report = frontend_core::stop_marked(&app.table.selection, &mut self.core);
+            app.reload_confirm = self.scripts.reload_awaiting_confirm();
+            self.apply_script_notice(app);
+            app.error = Some(report.summary());
+        } else {
+            self.scripts.stop_all(&mut self.core);
+            app.reload_confirm = self.scripts.reload_awaiting_confirm();
+            self.apply_script_notice(app);
+        }
     }
 
     /// Reload the focused heading's card, or confirm a shown warning.
@@ -1922,6 +1942,23 @@ impl TuiSession {
             let kept = app.names.len();
             app.names.clone_from_slice(&members[..kept]);
             app.names.extend_from_slice(&members[kept..]);
+        }
+        let ids_changed = app.profile_ids.len() != members.len()
+            || members.iter().enumerate().any(|(index, name)| {
+                let identity = self
+                    .core
+                    .profile_identity(name)
+                    .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name));
+                app.profile_ids.get(index).copied() != Some(identity)
+            });
+        if ids_changed {
+            app.profile_ids.clear();
+            app.profile_ids.extend(members.iter().map(|name| {
+                self.core
+                    .profile_identity(name)
+                    .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name))
+            }));
+            app.table.selection.retain(app.profile_ids.iter().copied());
         }
         app.focused = self
             .core

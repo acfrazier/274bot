@@ -149,6 +149,28 @@ impl Session {
         self.scripts.stop_all(&mut self.core);
         self.apply_script_notice();
     }
+    /// Start the selected card across the marked fleet rows and retain one
+    /// operator-facing report rather than replacing it with per-row banners.
+    pub fn fleet_start_selected(&mut self) {
+        let root = self.start_catalog_root();
+        let report = frontend_core::start_marked(
+            &self.fleet_selection,
+            &mut self.core,
+            &mut self.scripts,
+            self.script_sel.as_ref(),
+            root.as_deref(),
+        );
+        self.apply_script_notice();
+        self.fleet_report = Some(report.summary());
+    }
+
+    /// Stop marked rows through the shared core stop path. The core skips
+    /// idle/already-stopping rows and records those reasons in the report.
+    pub fn fleet_stop_selected(&mut self) {
+        let report = frontend_core::stop_marked(&self.fleet_selection, &mut self.core);
+        self.apply_script_notice();
+        self.fleet_report = Some(report.summary());
+    }
 
     /// Fold settled script work (reload validation, Start setup, parameter
     /// writes) once per UI frame, after the core poll.

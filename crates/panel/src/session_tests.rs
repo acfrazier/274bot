@@ -6148,7 +6148,13 @@ fn chooser_vault_remove_keeps_wall_member_and_slot() {
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     s.load("alice");
+    let identity = s.core.profile_identity("alice").unwrap();
+    s.fleet_selection.set(identity, true);
     assert!(s.vault_remove("alice"), "chooser ✕ deletes the vault row");
+    assert!(
+        !s.fleet_selection.contains(identity),
+        "deleting a profile removes its shared mark"
+    );
     assert!(
         s.core.vault().unwrap().get("alice").is_none(),
         "profile row gone from the vault"

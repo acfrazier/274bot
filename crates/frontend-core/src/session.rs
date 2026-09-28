@@ -387,6 +387,15 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Vault usernames plus any running slot outside the vault.
+    /// The stable selection identity for a vault profile. Front ends use this
+    /// instead of display names when they mirror marked rows.
+    pub fn profile_identity(&self, name: &str) -> Option<crate::selection::ProfileIdentity> {
+        self.vault
+            .as_ref()
+            .and_then(|vault| vault.get(name))
+            .map(|profile| crate::selection::ProfileIdentity::uid(profile.uid))
+    }
+
     pub fn profile_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self
             .vault

@@ -933,11 +933,15 @@ pub struct Session {
     /// Slot threads set this when a traveller returns Arrived/Budget so
     /// [`Session::pump_status`] can clear [`Session::walk_dest`].
     walk_clear: Arc<AtomicBool>,
-    /// Last `(gens.player, here)` ticked per username; skip until either
-    /// changes so we do not re-send walk every 20 ms frame.
     tick_latch: Arc<Mutex<HashMap<String, (u64, Tile)>>>,
     /// WalkTo picker open flag; the picker window lands in Task 10.
     pub walkto_open: bool,
+    /// Separate Fleet window and the shared identity-keyed marked rows.
+    pub fleet_open: bool,
+    pub fleet_selection: frontend_core::MarkedSelection,
+    pub fleet_filter: String,
+    pub fleet_sort: crate::fleet::FleetSort,
+    pub fleet_report: Option<String>,
     /// One application-owned map view/catalogue, never a copy on each bot.
     pub map_model: host_play::walk_map::MapModel,
     pub map_catalogue: Option<Arc<host_play::walk_map::Catalogue>>,
@@ -1300,6 +1304,11 @@ impl Session {
             walk_dest: None,
             walk_clear: Arc::new(AtomicBool::new(false)),
             tick_latch: Arc::new(Mutex::new(HashMap::new())),
+            fleet_open: false,
+            fleet_selection: frontend_core::MarkedSelection::default(),
+            fleet_filter: String::new(),
+            fleet_sort: crate::fleet::FleetSort::Name,
+            fleet_report: None,
             walkto_open: false,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
@@ -3629,9 +3638,13 @@ impl Session {
     /// chooser (credentials Save re-creates it). Returns whether a row was
     /// removed; failures set [`Session::error`].
     pub fn vault_remove(&mut self, name: &str) -> bool {
+        let identity = self.core.profile_identity(name);
         match self.core.vault_remove(name) {
             Ok(removed) => {
                 if removed.is_some() {
+                    if let Some(identity) = identity {
+                        self.fleet_selection.remove(identity);
+                    }
                     self.error = None;
                 }
                 removed.is_some()
@@ -4133,15 +4146,15 @@ impl Session {
         self.statuses.iter().map(|s| s.username.clone()).collect()
     }
 
+    fn fleet_identity(&self, name: &str) -> frontend_core::ProfileIdentity {
+        self.core
+            .profile_identity(name)
+            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name))
+    }
+
     pub fn refresh_walk_send(&mut self) {
         use host_play::walk_map::{WalkExclude, WalkSlotStatus};
         let names = self.walk_send_names();
-        let prev: HashMap<String, bool> = self
-            .walk_send
-            .rows
-            .iter()
-            .map(|row| (row.name.clone(), row.checked))
-            .collect();
         let play = self.core.play();
         let mut rows = Vec::with_capacity(names.len());
         for name in names {
@@ -4150,7 +4163,7 @@ impl Session {
                 None => WalkSlotStatus::Excluded(WalkExclude::NotLoggedIn),
             };
             let checked =
-                status.is_eligible() && prev.get(&name).copied().unwrap_or(status.is_eligible());
+                status.is_eligible() && self.fleet_selection.contains(self.fleet_identity(&name));
             rows.push(WalkSendRow {
                 name,
                 status,
@@ -4164,14 +4177,32 @@ impl Session {
     pub fn set_walk_send_mode(&mut self, mode: WalkSendMode) {
         self.walk_send.mode = mode;
         if mode == WalkSendMode::Group && self.walk_send.checked_count() == 0 {
+            let identities = self
+                .walk_send
+                .rows
+                .iter()
+                .filter(|row| row.status.is_eligible())
+                .map(|row| self.fleet_identity(&row.name))
+                .collect::<Vec<_>>();
+            self.fleet_selection.mark_all(identities);
             for row in &mut self.walk_send.rows {
-                row.checked = row.status.is_eligible();
+                if row.status.is_eligible() {
+                    row.checked = true;
+                }
             }
         }
         self.walk_send.sync_walk_label();
     }
 
     pub fn walk_send_all_eligible(&mut self) {
+        let identities = self
+            .walk_send
+            .rows
+            .iter()
+            .filter(|row| row.status.is_eligible())
+            .map(|row| self.fleet_identity(&row.name))
+            .collect::<Vec<_>>();
+        self.fleet_selection.mark_all(identities);
         for row in &mut self.walk_send.rows {
             row.checked = row.status.is_eligible();
         }
@@ -4179,6 +4210,7 @@ impl Session {
     }
 
     pub fn walk_send_none(&mut self) {
+        self.fleet_selection.clear();
         for row in &mut self.walk_send.rows {
             row.checked = false;
         }
@@ -4186,9 +4218,17 @@ impl Session {
     }
 
     pub fn set_walk_send_checked(&mut self, index: usize, checked: bool) {
+        let identity = self
+            .walk_send
+            .rows
+            .get(index)
+            .map(|row| self.fleet_identity(&row.name));
         if let Some(row) = self.walk_send.rows.get_mut(index) {
             if row.status.is_eligible() {
                 row.checked = checked;
+                if let Some(identity) = identity {
+                    self.fleet_selection.set(identity, checked);
+                }
             }
         }
         self.walk_send.sync_walk_label();
