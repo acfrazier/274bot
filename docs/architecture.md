@@ -356,7 +356,7 @@ tiles already verified).
 | --- | --- | --- |
 | `lib.rs` | `Play` state and session lifecycle | unlock, spawn, login FIFO, tick pump |
 | `main.rs` | `host-play` CLI | profile bind, vault unlock, run |
-| `profile.rs` | launch-input resolution | world, vault, and script paths |
+| `profile.rs` | launch-input resolution | world, vault, and script paths; the generated-facts trust decision with its recorded reason |
 | `cache.rs` | runtime cache preparation order | progress stages, client owns mechanics |
 | `catalog_core.rs` | shared full-core proof witness | headed and headless proof paths |
 | `catalog_core_hunt.rs` | hunt proof witness | hold, retreat, spot, enter, leave, key, cell, bank |
@@ -375,6 +375,8 @@ tiles already verified).
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
 | `memory.rs` | opt-in memory harness | `BOT_MEMORY_N` only |
 | `memory_diagnostics.rs` | memory-run diagnostics | bounded, never drains logs |
+| `memory_startup.rs` | memory-run startup timeline | process-relative milestones, render-callback gaps and one adapter record, atomics only |
+| `memory_slots.rs` | memory-run per-slot outcomes | ready latch and the failure/boundary record |
 | `audio.rs` | focused-slot speaker gate | at most one speaker |
 | `rss.rs` | process RSS and CPU sample | harness and the core's resource meter |
 | `resource_view.rs` | live-slot facts and panel-ui prefs | live worker count/traffic the core meter samples, background count, `panel-ui.json` |
