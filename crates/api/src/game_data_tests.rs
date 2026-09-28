@@ -1,5 +1,83 @@
 use super::*;
 
+#[test]
+fn selected_pin_is_shared_and_unbound_facts_fail_closed() {
+    let data = for_revision(ClientRevision::R289).unwrap();
+    let first = data.selected_pin().unwrap();
+    let second = data.selected_pin().unwrap();
+    assert!(Arc::ptr_eq(&first, &second));
+    let legacy =
+        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
+    assert!(matches!(
+        legacy.selected_pin(),
+        Err(FactError::FamilyUnavailable(_))
+    ));
+    let unbound: SelectedGameData = serde_json::from_slice(REVISION_289).unwrap();
+    assert!(matches!(
+        unbound.selected_pin(),
+        Err(FactError::FamilyUnavailable(_))
+    ));
+}
+
+#[test]
+fn selected_pin_refuses_changed_assets_and_mismatched_manifest_identity() {
+    let data = for_revision(ClientRevision::R289).unwrap();
+    let mut changed = REVISION_289.to_vec();
+    changed.push(b' ');
+    assert_eq!(
+        data.bind_pin(&changed, MANIFEST, ClientRevision::R289),
+        Err(FactError::PinMismatch)
+    );
+    // Same length but changed bytes must fail too.
+    changed = REVISION_289.to_vec();
+    changed[0] = b' ';
+    assert_eq!(
+        data.bind_pin(&changed, MANIFEST, ClientRevision::R289),
+        Err(FactError::PinMismatch)
+    );
+    for field in ["nav_sha256", "flags_sha256", "content_id", "cache_id"] {
+        let mut manifest: serde_json::Value = serde_json::from_slice(MANIFEST).unwrap();
+        manifest["revisions"][1]["cache_identity"][field] = "00".repeat(32).into();
+        assert_eq!(
+            data.bind_pin(
+                REVISION_289,
+                &serde_json::to_vec(&manifest).unwrap(),
+                ClientRevision::R289,
+            ),
+            Err(FactError::PinMismatch),
+            "{field}"
+        );
+    }
+    assert_eq!(
+        data.bind_pin(REVISION_289, MANIFEST, ClientRevision::R274),
+        Err(FactError::PinMismatch)
+    );
+}
+
+#[test]
+fn family_preparation_runs_off_the_callers_thread() {
+    let caller = std::thread::current().id();
+    let prepared = crate::selected::FamilyPreparation::run(|worker| {
+        let data = for_revision(ClientRevision::R289).unwrap();
+        assert!(matches!(
+            data.prepare_quests(worker),
+            Err(FactError::FamilyUnavailable(_))
+        ));
+        (std::thread::current().id(), data.selected_pin().unwrap())
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    assert_ne!(prepared.0, caller);
+    assert!(Arc::ptr_eq(
+        &prepared.1,
+        &for_revision(ClientRevision::R289)
+            .unwrap()
+            .selected_pin()
+            .unwrap()
+    ));
+}
+
 fn minimal_json(tail: &str) -> String {
     format!(
         r#"{{

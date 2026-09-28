@@ -47,6 +47,7 @@ impl FactStrings {
 // Refusal paths clone a fixed key, without allocating or taking an intern lock.
 pub(crate) static QUESTS_FAMILY: LazyLock<FactKey> = LazyLock::new(|| FactKey::new("quests"));
 pub(crate) static GATHERING_FAMILY: LazyLock<FactKey> = LazyLock::new(|| FactKey::new("gathering"));
+pub(crate) static PIN_FAMILY: LazyLock<FactKey> = LazyLock::new(|| FactKey::new("selected-pin"));
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -293,10 +294,27 @@ pub struct Requirement {
     pub source: SourceSpan,
 }
 
-/// Preparation-worker capability; no public construction or tick access.
-/// Its worker constructor and family-cache mechanism belong to the family owners.
+/// Preparation-worker capability. Only [`Self::run`] constructs one, on its
+/// worker thread; pump/tick callers never receive it. It cannot leave that
+/// thread or be retained by a prepared card.
 pub struct FamilyPreparation {
-    _private: (),
+    _thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+impl FamilyPreparation {
+    /// Run preparation off-pump. The caller owns joining/settling the worker
+    /// and must fence its result against Stop, replacement and profile removal.
+    pub fn run<R: Send + 'static>(
+        work: impl FnOnce(&mut Self) -> R + Send + 'static,
+    ) -> std::io::Result<std::thread::JoinHandle<R>> {
+        std::thread::Builder::new()
+            .name("card-prepare".into())
+            .spawn(move || {
+                work(&mut Self {
+                    _thread_bound: std::marker::PhantomData,
+                })
+            })
+    }
 }
 
 #[cfg(test)]
