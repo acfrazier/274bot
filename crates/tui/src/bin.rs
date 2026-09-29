@@ -2588,9 +2588,10 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         let run = host_play::memory::Run::prepare_unseeded(config, "tui")?;
         session.options.mainland = true;
         session.unlock_at(&run.vault, &run.pass)?;
-        run.bind_seed_nav(host_play::memory::SeedNav::FromPlay(
-            session.core.play().and_then(|p| p.world()),
-        ))?;
+        run.bind_seed_nav(host_play::memory::SeedNav::FromPlay {
+            world: session.core.play().and_then(|p| p.world()),
+            obj_names: session.core.play().map(|p| p.obj_names()),
+        })?;
         session.names = run.names.clone();
         session.load_and_login_all();
         session.focus(&run.names[0]);
