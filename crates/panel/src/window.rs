@@ -474,21 +474,85 @@ struct GpuParts {
     queue: wgpu::Queue,
 }
 
-/// Adapter and device for `surface`, off the UI thread. Low power by
-/// default: on a hybrid laptop that is the integrated GPU driving the
-/// display, which skips the discrete GPU's cold start; single-GPU machines
-/// get their only adapter either way. `WGPU_POWER_PREF=high` overrides.
+/// Backends to try, in order. `WGPU_BACKEND` pins one set. On Windows,
+/// Vulkan first: enumerating D3D12 adapters loads every GPU's D3D12 driver,
+/// and on a hybrid laptop a cold NVIDIA D3D12 driver held that for ~140 s
+/// even when the Intel GPU was then chosen, while Vulkan answered in 0.3 s.
+/// D3D12 stays the fallback for GPUs without a Vulkan driver.
+fn backend_attempts() -> Vec<wgpu::Backends> {
+    if let Some(backends) = wgpu::Backends::from_env() {
+        return vec![backends];
+    }
+    if cfg!(windows) {
+        vec![wgpu::Backends::VULKAN, wgpu::Backends::DX12]
+    } else {
+        vec![wgpu::Backends::PRIMARY]
+    }
+}
+
+/// One instance per attempt; the wgpu debug flags follow the environment.
+fn instance_for(backends: wgpu::Backends) -> wgpu::Instance {
+    wgpu::Instance::new(
+        wgpu::InstanceDescriptor {
+            backends,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        }
+        .with_env(),
+    )
+}
+
+/// The first attempt that can create a surface for `window`, plus the
+/// attempts after it. Runs on the UI thread (macOS requires it there).
+fn first_surface(
+    window: &Arc<Window>,
+) -> Result<(wgpu::Instance, wgpu::Surface<'static>, Vec<wgpu::Backends>), PanelError> {
+    let mut attempts = backend_attempts();
+    loop {
+        let instance = instance_for(attempts.remove(0));
+        match instance.create_surface(window.clone()) {
+            Ok(surface) => return Ok((instance, surface, attempts)),
+            Err(error) if attempts.is_empty() => return Err(PanelError::SurfaceCreation(error)),
+            Err(_) => {}
+        }
+    }
+}
+
+/// Adapter and device for `surface`, off the UI thread. When the current
+/// backend has no adapter, the next attempt gets a fresh instance and
+/// surface here (only Windows has a next attempt, and a Win32 window
+/// accepts a surface from any thread). Low power by default: on a hybrid
+/// laptop that is the integrated GPU driving the display, which skips the
+/// discrete GPU's cold start; single-GPU machines get their only adapter
+/// either way. `WGPU_POWER_PREF=high` overrides.
 fn request_gpu(
-    instance: wgpu::Instance,
-    surface: wgpu::Surface<'static>,
+    mut instance: wgpu::Instance,
+    mut surface: wgpu::Surface<'static>,
+    window: Arc<Window>,
+    fallbacks: Vec<wgpu::Backends>,
 ) -> Result<GpuParts, PanelError> {
-    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference:
-            wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower),
-        compatible_surface: Some(&surface),
-        force_fallback_adapter: false,
-    }))
-    .map_err(PanelError::AdapterUnavailable)?;
+    let power_preference =
+        wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower);
+    let mut fallbacks = fallbacks.into_iter();
+    let adapter = loop {
+        let error = match block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        })) {
+            Ok(adapter) => break adapter,
+            Err(error) => error,
+        };
+        let next = fallbacks.by_ref().find_map(|backends| {
+            let candidate = instance_for(backends);
+            let candidate_surface = candidate.create_surface(window.clone()).ok()?;
+            Some((candidate, candidate_surface))
+        });
+        let Some((next_instance, next_surface)) = next else {
+            return Err(PanelError::AdapterUnavailable(error));
+        };
+        surface = next_surface;
+        instance = next_instance;
+    };
 
     let device_desc = wgpu::DeviceDescriptor {
         label: None,
@@ -513,15 +577,6 @@ impl AppWindow {
     /// to a worker. [`AppWindow::finish`] completes the stack on the UI
     /// thread once the worker answers.
     fn start(event_loop: &ActiveEventLoop, cfg: &PanelConfig) -> Result<PendingGpu, PanelError> {
-        // `WGPU_BACKEND` and the wgpu debug flags override the defaults.
-        let instance = wgpu::Instance::new(
-            wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::PRIMARY,
-                ..wgpu::InstanceDescriptor::new_without_display_handle()
-            }
-            .with_env(),
-        );
-
         let window = {
             let size = LogicalSize::new(cfg.window_size.0, cfg.window_size.1);
             Arc::new(
@@ -535,16 +590,15 @@ impl AppWindow {
             )
         };
 
-        let surface = instance
-            .create_surface(window.clone())
-            .map_err(PanelError::SurfaceCreation)?;
+        let (instance, surface, fallbacks) = first_surface(&window)?;
 
         let (tx, ready) = mpsc::sync_channel(1);
+        let worker_window = window.clone();
         std::thread::Builder::new()
             .name("panel-gpu-init".into())
             .spawn(move || {
                 // The receiver is gone only when the loop already exited.
-                let _ = tx.send(request_gpu(instance, surface));
+                let _ = tx.send(request_gpu(instance, surface, worker_window, fallbacks));
             })
             .map_err(PanelError::GpuThread)?;
         Ok(PendingGpu { window, ready })
