@@ -7,7 +7,6 @@ use api::host_log;
 use api::hostlog::{Category, Level};
 use client::client::{Client, LoginError};
 use client::config::IfType;
-use client::BotTarget;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use parking_lot::Mutex as QueueMutex;
 use vault::Profile;
@@ -902,7 +901,7 @@ impl Play {
             .connection
             .profile()
             .and_then(|p| p.public_worlds())
-            .ok_or("--world requires public-289")?;
+            .ok_or("--world requires the rs2b2t profile")?;
         if worlds.by_number(number).is_none() {
             return Err(format!(
                 "world {number} is not in the configured public worlds"
@@ -970,7 +969,7 @@ pub(super) fn configure_slot_world(
     stop: &AtomicBool,
 ) -> Result<(), String> {
     let modulus = public_worlds::modulus_for(world, refresh, |host, port| {
-        Client::fetch_login_modulus_for(BotTarget::Prod, host, port)
+        Client::fetch_login_modulus_for(client::Transport::Wss, host, port)
     });
     if stop.load(Ordering::Relaxed) {
         return Ok(());

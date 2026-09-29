@@ -9,10 +9,10 @@ queued. Login all, Log in, and auto-login changes only arm intent and wake
 workers. They create no membership, record no order hints, and no absent owner
 can gate the head.
 
-A process binds one **server profile** (`local-274`, `local-289`,
-`public-289`) before sockets open. Profile defaults (ports, vault path,
-engine root) are documented in [README.md](../../README.md). This page is
-the FIFO and handshake policy shared by every profile.
+A process binds one entry from `~/.274bot/servers.json` before sockets open.
+The built-ins are `local-274`, `local-289`, and `rs2b2t`; `public-289` is an
+alias. Profile defaults are documented in [README.md](../../README.md). This
+page is the FIFO and handshake policy shared by every profile.
 
 ## Where the server stores this
 
@@ -104,10 +104,11 @@ If you rotated the engine key, login reads the public half from
 `$ENGINE_DIR/data/config/private.pem` (rs2b0t `deploy-local-key.sh`
 layout), or from `LOGIN_RSAN` / `LOGIN_RSAE`.
 
-## Public worlds (`public-289`)
+## Public worlds (`rs2b2t`)
 
-`BOT_TARGET=prod` (alias `live`), `host-play --prod`, or
-`--profile public-289` uses the rs2b2t worlds (w1 and w2 on port 443 by default).
+`--rs2b2t`, `--profile rs2b2t`, or `BOT_SERVER_PROFILE=rs2b2t` selects the
+rs2b2t roster (w1 and w2 on port 443 by default). `public-289` is a profile
+name alias; `--prod` and `BOT_TARGET` were removed.
 The shared cache is fetched from the first reachable asset world. Each vault account stores
 an optional world number: auto rotates on response 7, waits after all
 worlds report full, and pinned accounts stay on their chosen world.

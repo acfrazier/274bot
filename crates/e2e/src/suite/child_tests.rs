@@ -40,8 +40,8 @@ fn case(id: &str) -> CaseEntry {
 
 /// The flags must be exactly the ones the native executables accept: the panel family
 /// parses them with `host_play::parse_profile_args` and hands the remainder to its live
-/// parser, which rejects anything but `--live`/`--smoke`/`--prod`. Consuming every flag
-/// here proves the child sees exactly `--live <name>`.
+/// parser, which accepts only live/scenario flags. Consuming every profile flag here proves
+/// the child sees exactly `--live <name>`.
 #[test]
 fn profile_args_are_exactly_what_the_native_executables_accept() {
     let args = config().profile_args();

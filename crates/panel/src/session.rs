@@ -200,13 +200,6 @@ fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
     last_login_reconnect != Some(true)
 }
 
-/// Loopback hosts get the debug heading. WalkTo Teleport also needs a Local
-/// target; see [`host_play::walk_map::debug_teleport_authorized`]. Public
-/// `w1.rs2b2t.com` and LAN IPs do not.
-pub fn is_local_engine(host: &str) -> bool {
-    host_play::is_loopback_host(host)
-}
-
 /// One Teles-popup dest: button label, `CLIENT_CHEAT` body, hover text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DebugDest {
@@ -224,14 +217,12 @@ pub fn parse_getvar_line(text: &str) -> Option<(&str, i32)> {
 
 /// Debug heading buttons. TutSkip is omitted once the profile is known
 /// skipped or still unknown (a `getvar` is in flight).
-pub fn debug_main_buttons(show_tutskip: bool) -> Vec<&'static str> {
-    debug_main_buttons_for(client::bot_target(), show_tutskip)
-}
-
-/// [`debug_main_buttons`] for an explicit target so Prod tests do not
-/// flip the process-wide `OnceLock`.
-pub fn debug_main_buttons_for(target: client::BotTarget, show_tutskip: bool) -> Vec<&'static str> {
-    if target != client::BotTarget::Local {
+/// Debug controls use the same resolved class displayed in the panel heading.
+pub fn debug_main_buttons_for(
+    class: host_play::ProfileClass,
+    show_tutskip: bool,
+) -> Vec<&'static str> {
+    if class != host_play::ProfileClass::Local {
         return vec!["DebugPanel"];
     }
     let mut labels = vec!["DebugPanel"];
@@ -372,10 +363,9 @@ const AUDIO_OPEN_RETRY: Duration = Duration::from_secs(5);
 /// Cadence of the published-catalogue probe while a WalkTo map demand bakes.
 const MAP_CATALOGUE_PROBE: Duration = Duration::from_secs(1);
 
-/// Vault path used by panel-play (`~/.274bot/vault` local, `vault-prod` on
-/// `--prod`). The same helper host-play and tui-play use.
+/// Legacy local vault path used before a profile has been resolved.
 pub fn default_vault_path() -> PathBuf {
-    host_play::default_vault_path()
+    script::bot_file("vault")
 }
 
 fn default_cache_dir() -> String {
@@ -1393,17 +1383,15 @@ impl Session {
             background_ack_open: false,
             fixture_mode: scenario::FixtureMode::Default,
             fixture_path: None,
-            options: {
-                let (host, port) = host_play::play_endpoint_for(client::bot_target());
-                PlayOptions {
-                    host,
-                    port,
-                    cache_dir: default_cache_dir(),
-                    lowmem: true,
-                    // Panel per_frame queues hop from Session.mainland (env);
-                    // spawn-time PlayOptions.mainland stays false.
-                    mainland: false,
-                }
+            options: PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: default_cache_dir(),
+                lowmem: true,
+                // Panel per_frame queues hop from Session.mainland (env);
+                // spawn-time PlayOptions.mainland stays false.
+                mainland: false,
             },
             server_profile: None,
             template: None,
@@ -1860,6 +1848,7 @@ impl Session {
         }
         self.options = PlayOptions {
             host: profile.client().game_host().to_string(),
+            transport: profile.transport(),
             port: profile.client().game_port(),
             cache_dir: profile.client().cache_dir().display().to_string(),
             lowmem: true,
@@ -2008,10 +1997,16 @@ impl Session {
         }
     }
 
-    pub(crate) fn target(&self) -> client::BotTarget {
-        self.server_profile
-            .as_ref()
-            .map_or_else(client::bot_target, |profile| profile.target())
+    pub(crate) fn profile_class(&self) -> host_play::ProfileClass {
+        self.server_profile.as_ref().map_or_else(
+            || {
+                host_play::profile::profile_class(
+                    self.options.transport,
+                    [self.options.host.as_str()],
+                )
+            },
+            |profile| profile.profile_class(),
+        )
     }
 
     fn vault_path(&self) -> Result<PathBuf, String> {
@@ -2128,8 +2123,8 @@ impl Session {
     /// then `login_all`. Slot threads keep using real `Focus` → `set_draw`.
     pub fn live_prepare_null_raster(&mut self) -> Result<(), String> {
         self.persist_ui = false;
-        let pass = host_play::live_vault_passphrase_for(self.target());
-        let entries = null_raster_live_entries_for_target(self.target());
+        let pass = host_play::live_vault_passphrase();
+        let entries = null_raster_live_entries();
         let entry_refs: Vec<(&str, &str)> = entries
             .iter()
             .map(|(u, p)| (u.as_str(), p.as_str()))
@@ -2232,12 +2227,12 @@ impl Session {
     fn live_prepare_stress(&mut self, n: usize, full_rate: bool) -> Result<(), String> {
         self.persist_ui = false;
         let n = n.max(1);
-        let names = stress_live_entries_for_target(n, self.target());
+        let names = stress_live_entries(n);
         let entries: Vec<(&str, &str)> = names
             .iter()
             .map(|(u, p)| (u.as_str(), p.as_str()))
             .collect();
-        let pass = host_play::live_vault_passphrase_for(self.target());
+        let pass = host_play::live_vault_passphrase();
         let path = temp_live_vault_from(&entries, 274_000_100, &pass, true);
         // Empty Play first: do not spawn last_focus before s00 focuses.
         if !self.start_vault(&path, &pass) {
@@ -2328,7 +2323,6 @@ impl Session {
         let view = scenario.settings.clone();
         let scenario_name = scenario.name.to_string();
         let profile_count = scenario.seed.profiles.len();
-        let target = self.target();
         // Run-prepared reuses the exact identity receipt (no fresh random suffix).
         // Default live still mints.
         let (names, entries, pass, auto_login) = match self.fixture_mode {
@@ -2361,8 +2355,8 @@ impl Session {
             }
             scenario::FixtureMode::Default => {
                 let names = host_play::mint_live_names(profile_count);
-                let entries = host_play::mint_live_entries_for_target(&names, target);
-                let pass = host_play::live_vault_passphrase_for(target);
+                let entries = host_play::mint_live_entries(&names);
+                let pass = host_play::live_vault_passphrase();
                 (names, entries, pass, true)
             }
             scenario::FixtureMode::Prepare => unreachable!("prepare rejected above"),
@@ -3014,19 +3008,19 @@ impl Session {
         play.cheat(&name, cmd);
     }
 
-    /// True when this session's world host is a local engine.
+    /// True when the resolved launch profile is Local.
     pub fn debug_ui(&self) -> bool {
-        is_local_engine(&self.options.host)
+        self.profile_class() == host_play::ProfileClass::Local
     }
-
     /// WalkTo Teleport uses the host's Local+loopback rule on this session's
     /// play connection when present, otherwise the bound target and play host.
     pub fn map_teleport_authorized(&self) -> bool {
         match self.core.play() {
             Some(play) => play.map_teleport_authorized(),
-            None => {
-                host_play::walk_map::debug_teleport_authorized(self.target(), &self.options.host)
-            }
+            None => host_play::walk_map::debug_teleport_authorized(
+                self.profile_class(),
+                &self.options.host,
+            ),
         }
     }
 
@@ -4659,22 +4653,22 @@ impl Session {
 }
 
 /// `(username, password)` pairs for live `null_raster` (`test`/`test2`).
-fn null_raster_live_entries_for_target(target: client::BotTarget) -> Vec<(String, String)> {
+fn null_raster_live_entries() -> Vec<(String, String)> {
     ["test", "test2"]
         .iter()
         .map(|user| {
             let user = user.to_string();
-            (user.clone(), host_play::profile_password_for(&user, target))
+            (user.clone(), host_play::profile_password(&user))
         })
         .collect()
 }
 
 /// `(username, password)` pairs for live stress walls (`s00`…`s{n-1}`).
-fn stress_live_entries_for_target(n: usize, target: client::BotTarget) -> Vec<(String, String)> {
+fn stress_live_entries(n: usize) -> Vec<(String, String)> {
     (0..n.max(1))
         .map(|i| {
             let name = format!("s{i:02}");
-            (name.clone(), host_play::profile_password_for(&name, target))
+            (name.clone(), host_play::profile_password(&name))
         })
         .collect()
 }

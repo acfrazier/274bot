@@ -13,17 +13,28 @@ The host, API, navigation, guardian, panel and TUI are in-tree. Browse / Start /
 
 ## Server profiles (revision + world)
 
-A session binds **one** server profile for the whole process. Named profiles are:
+A session binds one entry from `~/.274bot/servers.json` for the whole process.
+The file is created on first use with these built-ins:
 
-| Profile | Revision | World | Default game | Default assets | Default vault |
+| Profile | Revision | Transport | Default game | Default assets | Default vault |
 | --- | --- | --- | --- | --- | --- |
-| `local-274` | 274 | local engine | `127.0.0.1:43594` | HTTP `:80` | `~/.274bot/vault` |
-| `local-289` | 289 | local engine | `127.0.0.1:44594` | HTTP `:1080` | `~/.274bot/vault-289` |
-| `public-289` | 289 | public WSS/HTTPS | first configured world (default `w1.rs2b2t.com:443`) | HTTPS `:443` | `~/.274bot/vault-prod` |
+| `local-274` | 274 | TCP | `127.0.0.1:43594` | HTTP `:80` | `~/.274bot/vault` |
+| `local-289` | 289 | TCP | `127.0.0.1:44594` | HTTP `:1080` | `~/.274bot/vault-289` |
+| `rs2b2t` | 289 | WSS | first roster world (default `w1.rs2b2t.com:443`) | HTTPS `:443` | `~/.274bot/vault-prod` |
 
-Select with `--profile local-274|local-289|public-289` on `host-play`, `panel-play`, and `tui-play` (or `BOT_SERVER_PROFILE`). Related knobs: `--revision 274|289`, `BOT_REVISION`, `--prod` / `BOT_TARGET=prod|live`, `--engine`, `--cache`, `--vault`, `--catalog`, `--world-members true|false`. Conflicting combinations fail closed (for example `--prod` with a local profile, or `public-274`).
+Select any stored name with `--profile NAME` on `host-play`, `panel-play`, and
+`tui-play`, or with `BOT_SERVER_PROFILE`. `--rs2b2t` selects the public built-in;
+`public-289` remains a name alias. `--prod` and `BOT_TARGET` were removed.
+Connection overrides apply only to the selected profile and fail closed when
+they conflict with its revision, roster, or plaintext policy.
 
-Public play uses the rs2b2t worlds, with w1 and w2 bundled by default.
+The resolved profile is `Local` only when its transport is TCP and every game
+host is loopback; only that class admits client cheat packets. Every WSS
+profile is `Remote`. A TCP profile may opt in to a non-loopback endpoint with
+`allow_plaintext_offhost: true`, but remains `Remote`; the opt-in is rejected
+on WSS profiles.
+
+Public play uses the `rs2b2t` roster, with w1 and w2 bundled by default.
 The shared cache is prepared from the first world, trying the
 next if its asset server is unreachable; `~/.274bot/unpack-289` remains shared.
 Each account can select `auto` or a listed world in the panel Profiles editor.
@@ -35,20 +46,25 @@ RSA modulus from that world's `/client/client.js`, caches successful fetches
 per host and refreshes on a wrong-key login response; a failed fetch uses
 the baked key without caching it.
 
-`--world-members true|false` is an operator-declared WORLD property, held immutable with the profile; explicit overrides always win. It is not a client/server packet observation, `NODE_MEMBERS`, or account membership. Without an override, `public-289` declares members only when **every** configured world is an rs2b2t world (`w<N>.rs2b2t.com`, an ASCII numeric world label, case-insensitive, on port 443), including possible automatic fallback worlds. This also covers future rs2b2t worlds without a rebuild, independently of their world numbers or node ids. The provenance is `Rs2b2tWorlds`: the [rs2b2t world list](https://rs2b2t.com/play) states “Members features included.” rs2b2t remains the only supported public target. Other hosts, non-443 ports and mixed rosters stay **unknown** and route as not-members; no membership is inferred from their first world.
+`--world-members true|false` is an operator-declared WORLD property, held immutable with the profile; explicit overrides always win. It is not a client/server packet observation, `NODE_MEMBERS`, or account membership. Without an override, `rs2b2t` declares members only when every configured world is an rs2b2t world (`w<N>.rs2b2t.com`, ASCII numeric label, case-insensitive, port 443). Other hosts, ports, and mixed rosters remain unknown and route as F2P.
 
-Local `local-274` / `local-289` profiles retain both members and F2P operation: a guarded `engine_dir/data/config/world.json` with the matching typed `engine.revision` and a JSON bool `node.members` supplies that bool, unless explicitly overridden. Missing, malformed or mismatched local records stay unknown. Public profiles never inherit this local file. Nav state defaults and members-gate requirements are unchanged.
+On the first launch after upgrading, a valid `~/.274bot/worlds.json` is copied
+into the `rs2b2t` roster. The original is untouched; `servers.json` is
+authoritative thereafter. Each profile stores its vault filename explicitly,
+so existing `vault`, `vault-289`, and `vault-prod` files are not renamed or
+rewritten.
 
 Each panel/TUI map Walk confirmation emits one Info-level `WalkTo` outcome per requested slot through the shared host log sink, including refusals. It records origin, the routed destination (including snapping), teleport/wilderness/bank-fetch options, effective WORLD membership and compact provenance (`unknown`, `explicit`, `rs2b2t` or `local-world-json`), then route legs/walk steps/transports or the refusal reason. Local declaration paths and digests are not included. Unfocused refusals appear in the Process log; an empty group keeps its selection and reports “no bots selected.” Availability checks and frame-by-frame following do not emit request lines.
 
-Without an explicit profile, legacy resolution still applies: plain local defaults to **274**; `--prod` / `BOT_TARGET=prod` without a revision selects **public-289**. Prefer naming the profile.
+Without an explicit profile, the saved panel revision chooses `local-274` or
+`local-289`; otherwise local 274 is the default.
 
 Default engine roots (override with `--engine` / `ENGINE_DIR`):
 
 - 274: `$HOME/experiments/Server/engine`
 - 289: `$HOME/experiments/lostcity-289/engine`
 
-Pack cache for local is `$ENGINE_DIR/data/pack/client` (`--cache` overrides). Public-289 uses `~/.274bot/unpack-289` by default. This repo ships no Jagex assets; the client can fetch `/crc` and jags from the selected engine or public asset endpoint.
+All profiles cache fetched client archives under `~/.274bot/unpack` (274) or `~/.274bot/unpack-289` (289) unless `--cache`/`--unpack` overrides them. This repo ships no Jagex assets; the client fetches `/crc` and jags from the selected profile's asset endpoint.
 
 Alpha’s **tested** path is the **local** engine for the profile you run. The public world is built in for login/asset fetch; it is **not** a hosted wall, **not** Jagex, and there is **no** public-world CI or SLA.
 
@@ -115,7 +131,7 @@ cargo test -p api --offline
 
 The panel only starts the **focused** vault profile; switching the combo starts a parked name once. Last focus persists in `~/.274bot/panel-ui.json`. Credentials are **2×2**: Save/Clear then Log in/Logout. Unlocking the vault starts the **first** profile as a live slot; MultiBox raises the running set as a sidecar rail or a grid, with bulk **Login all / Logout all** and bulk **Start all / Stop all** (script bulk is separate from login bulk). Auto-login defaults **off** per profile.
 
-**panel-play does not auto-create `test`/`test`**: an empty first-run vault stays empty until you type a username/password and Save. **host-play** upserts named users (`--user test` defaults to `test`/`test`). **The vault passphrase is never taken from the environment or the command line** (both are readable by other users on the machine, and the environment is inherited by every child process): the panel asks in its unlock window, `host-play` and `tui-play` ask on the terminal (hidden; a new vault asks twice), and all three read one line from a pipe with `--vault-pass-stdin`. A **new** vault needs a non-empty passphrase after trimming surrounding whitespace; strength is the user's choice. An **existing** vault opens with the passphrase it was created with, however short. `BOT_VAULT_PASS` and `--vault-pass` were removed (see [docs/api/vault.md](docs/api/vault.md)). `--debug` or `BOT_DEBUG=1` prints slot logs. `--mainland` / `BOT_MAINLAND=1` (host-play) after scene 2 sends the courtyard tele + `setvar tutorial 1000`. On a local engine the panel **TutSkip** button is omitted until `getvar tutorial` says the tutorial is still open; press is `setvar tutorial 1000` and caches `tutorial_skipped`.
+**panel-play does not auto-create an account**: an empty first-run vault stays empty until you type a username/password and Save. `host-play` and `tui-play` create requested missing users with fresh 20-character game passwords and fresh UIDs. **The vault passphrase is never taken from the environment or command line**: the panel asks in its unlock window, `host-play` and `tui-play` ask on the terminal (hidden; a new vault asks twice), and all three read one line from a pipe with `--vault-pass-stdin`. A **new** vault needs a non-empty passphrase after trimming surrounding whitespace; strength is the user's choice. An **existing** vault opens with the passphrase it was created with, however short. `BOT_VAULT_PASS` and `--vault-pass` were removed (see [docs/api/vault.md](docs/api/vault.md)).
 
 **Scripts:** panel **Browse / Load / Reload / Start / Pause / Stop** are live; MultiBox rail adds **Start all / Stop all**. Catalog **Refresh catalog** (with confirm when running/paused bots are affected). Successful Start persists a per-profile script assignment and settings bag in the vault. Transpile is content-addressed under `~/.274bot/js-cache` (raw-source SHA-256). WalkTo on the main chrome is host nav, not a script card. Catalog scripts come from your configured `$RS2B0T` / `--catalog` checkout; this repository does not copy their source. Details: [docs/api/script.md](docs/api/script.md).
 

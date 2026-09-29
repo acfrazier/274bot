@@ -135,7 +135,7 @@ fn flags_path_for_swaps_pack_extension() {
 
 #[test]
 fn default_paths_follow_engine_dir() {
-    let content = client::bot_target::content_dir();
+    let content = client::content_dir();
     assert_eq!(default_maps_dir(), content.join("maps"));
     assert_eq!(default_doors_dir(), content.join("scripts/doors/configs"));
     assert_eq!(

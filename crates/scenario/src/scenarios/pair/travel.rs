@@ -157,7 +157,7 @@ pub(crate) fn tele_step(note: &'static str, tile: WorldTile) -> Step {
     Step {
         name: note,
         kind: StepKind::Perform {
-            send: Box::new(move |c, _| cheat(c, &tele_args(tile.level, tile.x, tile.z))),
+            send: Box::new(move |c, _| cheat(c, &tele_args(tile.level, tile.x, tile.z)).is_sent()),
         },
         wait: Wait {
             arm: Proof::Arrived {

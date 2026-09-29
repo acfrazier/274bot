@@ -984,11 +984,10 @@ fn parse_live_args_unknown_name_is_usage_exit_2() {
 }
 
 #[test]
-fn parse_live_args_prod_is_interactive_not_unknown() {
-    assert_eq!(parse_live_args(["--prod"], None), Ok(RunMode::Interactive));
+fn parse_live_args_rejects_removed_prod_flag() {
     assert_eq!(
-        parse_live_args(["--prod", "--live", "script_bone_burier"], None),
-        Ok(RunMode::Live("script_bone_burier".into()))
+        parse_live_args(["--prod"], None),
+        Err((2, "panel-play: unknown --prod".into()))
     );
 }
 

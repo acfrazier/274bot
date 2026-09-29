@@ -49,15 +49,15 @@ use nav::bake::{
 use nav::manifest::{nav_manifest_path, CacheManifest};
 
 fn default_maps_dir() -> PathBuf {
-    content_inputs(&client::bot_target::content_dir()).maps_dir
+    content_inputs(&client::content_dir()).maps_dir
 }
 
 fn default_doors_dir() -> PathBuf {
-    content_inputs(&client::bot_target::content_dir()).doors_dir
+    content_inputs(&client::content_dir()).doors_dir
 }
 
 fn default_config_jag() -> PathBuf {
-    client::bot_target::config_jag()
+    client::config_jag()
 }
 
 fn default_out() -> PathBuf {

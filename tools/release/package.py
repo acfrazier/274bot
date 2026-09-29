@@ -118,7 +118,8 @@ def main():
     p.add_argument('--build-receipt', type=Path, required=True,
                    help='JSON with host_commit, client_commit, target, rustc, features, built_at')
     p.add_argument('--revision', choices=['274', '289'], default='289')
-    p.add_argument('--app-profile', choices=['public-289', 'local-289', 'local-274'])
+    p.add_argument('--app-profile', default='rs2b2t',
+                   help='servers.json profile name for Finder launch')
     p.add_argument('--sign-identity', help='Developer ID Application identity SHA-1')
     p.add_argument('--map-cache', type=Path,
                    help='jag directory of the client cache the nav bundle was built from '
@@ -144,8 +145,6 @@ def main():
         p.error('release packages require default features')
     if a.platform == 'macos' and not a.app_profile:
         p.error('--app-profile is required for a macOS bundle')
-    if a.app_profile and not a.app_profile.endswith(a.revision):
-        p.error('app profile must match the bundled navigation revision')
     if a.sign_identity and a.platform != 'macos':
         p.error('--sign-identity is only supported on macOS')
     if a.check and (a.output or a.sign_identity):

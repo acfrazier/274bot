@@ -1,44 +1,20 @@
 use super::*;
+
+/// Fixed launch class derived only from the effective transport and roster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ServerSelection {
-    Local274,
-    Local289,
-    Public289,
+pub enum ProfileClass {
+    Local,
+    Remote,
 }
 
-impl ServerSelection {
-    pub fn parse(name: &str) -> Result<Self, String> {
-        match name {
-            "local-274" => Ok(Self::Local274),
-            "local-289" => Ok(Self::Local289),
-            "public-289" => Ok(Self::Public289),
-            "public-274" => Err("public revision 274 is unavailable; use public-289".into()),
-            _ => Err(format!(
-                "unsupported server profile {name:?}; use local-274, local-289 or public-289"
-            )),
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Local274 => "local-274",
-            Self::Local289 => "local-289",
-            Self::Public289 => "public-289",
-        }
-    }
-
-    pub fn revision(self) -> ClientRevision {
-        match self {
-            Self::Local274 => ClientRevision::R274,
-            Self::Local289 | Self::Public289 => ClientRevision::R289,
-        }
-    }
-
-    pub fn target(self) -> BotTarget {
-        match self {
-            Self::Local274 | Self::Local289 => BotTarget::Local,
-            Self::Public289 => BotTarget::Prod,
-        }
+pub fn profile_class<'a>(
+    transport: client::Transport,
+    game_hosts: impl IntoIterator<Item = &'a str>,
+) -> ProfileClass {
+    if transport == client::Transport::Tcp && game_hosts.into_iter().all(crate::is_loopback_host) {
+        ProfileClass::Local
+    } else {
+        ProfileClass::Remote
     }
 }
 
@@ -64,8 +40,9 @@ pub enum WorldMembersFact {
 /// How a known [`WorldMembersFact`] was declared.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorldMembersSource {
-    /// Guarded local `data/config/world.json` whose revision, port, and
-    /// `node.members` bool all matched the selected loopback profile.
+    /// Guarded local `data/config/world.json` whose revision and
+    /// `node.members` bool matched a selected loopback profile. Connect ports
+    /// may be forwarded independently from the engine declaration.
     LocalWorldJson {
         path: PathBuf,
         sha256: String,
@@ -90,7 +67,7 @@ impl WorldMembersFact {
 pub struct ProfileOptions {
     pub profile: Option<String>,
     pub revision: Option<String>,
-    pub prod: bool,
+    pub rs2b2t: bool,
     pub host: Option<String>,
     pub port: Option<u16>,
     pub asset_host: Option<String>,
@@ -105,8 +82,6 @@ pub struct ProfileOptions {
     pub catalog_root: Option<PathBuf>,
     pub cache_manifest: Option<PathBuf>,
     /// Operator-declared WORLD membership for the profile (`true`/`false`).
-    /// Omission uses guarded local world.json or the rs2b2t public roster;
-    /// other public rosters remain unknown.
     pub world_members: Option<bool>,
 }
 
@@ -121,7 +96,10 @@ pub fn parse_profile_args(
     while let Some(arg) = args.next() {
         let flag = arg.as_ref();
         if flag == "--prod" {
-            options.prod = true;
+            return Err("--prod was removed; use --rs2b2t or --profile rs2b2t".into());
+        }
+        if flag == "--rs2b2t" {
+            options.rs2b2t = true;
             continue;
         }
         if !matches!(
@@ -197,7 +175,7 @@ pub struct ProfileEnvironment {
     pub working_dir: Option<PathBuf>,
     pub profile: Option<String>,
     pub revision: Option<String>,
-    pub target: Option<String>,
+    pub legacy_target: Option<String>,
     pub engine_dir: Option<PathBuf>,
     pub unpack_dir: Option<PathBuf>,
     pub nav_pack: Option<PathBuf>,
@@ -218,7 +196,7 @@ impl ProfileEnvironment {
             working_dir: std::env::current_dir().ok(),
             profile: value("BOT_SERVER_PROFILE"),
             revision: value("BOT_REVISION"),
-            target: value("BOT_TARGET"),
+            legacy_target: value("BOT_TARGET"),
             engine_dir: value("ENGINE_DIR").map(PathBuf::from),
             unpack_dir: value("CLIENT_UNPACK_DIR").map(PathBuf::from),
             nav_pack: value("NAV_PACK").map(PathBuf::from),

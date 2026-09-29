@@ -1129,7 +1129,7 @@ impl ScenarioRunner {
             }
             StepKind::ObserveMazeCompletion { trigger, .. } => {
                 if let Some(cmd) = trigger {
-                    if cheat(client, cmd) {
+                    if cheat(client, cmd).is_sent() {
                         Ok(())
                     } else {
                         Err("driver rejected the send".into())

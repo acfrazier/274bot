@@ -15,10 +15,22 @@ pub trait Driver {
     fn revision(&self) -> ClientRevision {
         ClientRevision::R274
     }
-    /// Target captured by a bound session. Legacy recorders retain the existing
-    /// process default; real bound clients never re-read it for cheat policy.
-    fn session_target(&self) -> client::BotTarget {
-        client::bot_target()
+    /// Host-owned admission. Recorders and unbound stubs deny by default.
+    fn cheat_admission(&self) -> client::CheatAdmission {
+        client::CheatAdmission::Denied
+    }
+    /// Send through the concrete driver's cheat boundary. Unbound stubs cannot
+    /// encode this packet; the real client implementation delegates to
+    /// `Client::send_cheat`, the sole native encoder.
+    fn send_cheat(&mut self, _cmd: &str) -> client::CheatSend {
+        match self.cheat_admission() {
+            client::CheatAdmission::Remote(transport) => {
+                client::CheatSend::Refused(client::CheatRefusal::RemoteProfile { transport })
+            }
+            client::CheatAdmission::Denied | client::CheatAdmission::Granted => {
+                client::CheatSend::Refused(client::CheatRefusal::Offline)
+            }
+        }
     }
     /// Write a menu option at `slot` (the `doAction` path).
     fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32);
@@ -107,8 +119,11 @@ impl Driver for Client {
         Client::revision(self)
     }
 
-    fn session_target(&self) -> client::BotTarget {
-        Client::session_target(self)
+    fn cheat_admission(&self) -> client::CheatAdmission {
+        Client::cheat_admission(self)
+    }
+    fn send_cheat(&mut self, cmd: &str) -> client::CheatSend {
+        Client::send_cheat(self, cmd)
     }
     fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32) {
         self.menu_action[slot as usize] = action;
@@ -364,21 +379,14 @@ pub const MAXME_SETSTATS: &[&str] = &[
     "setstat runecraft 99",
 ];
 
-pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> bool {
-    if !cheat_allowed(driver.session_target()) {
-        return false;
-    }
-    let revision = driver.revision();
-    let out = driver.out();
-    out.p1_enc(map_client_prot(revision, ClientProt::CLIENT_CHEAT).id);
-    out.p1((cmd.len() + 1) as i32);
-    out.pjstr(cmd);
-    true
+pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> client::CheatSend {
+    driver.send_cheat(cmd)
 }
 
-/// `CLIENT_CHEAT`, TutSkip, and mainland hop stay on the local engine.
-pub fn cheat_allowed(target: client::BotTarget) -> bool {
-    target == client::BotTarget::Local
+/// Whether this driver has profile admission. Connection state remains a
+/// separate send-time check in the real client.
+pub fn cheat_allowed(admission: client::CheatAdmission) -> bool {
+    admission == client::CheatAdmission::Granted
 }
 
 /// Tutorial-skip hop used by rs2b0t `mainlandAccount`: tele off the island
@@ -386,7 +394,7 @@ pub fn cheat_allowed(target: client::BotTarget) -> bool {
 /// Does **not** relog — side icons stay tutorial-locked until a clean
 /// IF_BUTTON logout + login (scenario `StepKind::Relog`).
 pub fn mainland_hop<D: Driver + ?Sized>(driver: &mut D) {
-    if !cheat_allowed(driver.session_target()) {
+    if !cheat_allowed(driver.cheat_admission()) {
         return;
     }
     let tele = format!("tele {OFF_ISLAND_TELE}");

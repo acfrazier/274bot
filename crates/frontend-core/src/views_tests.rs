@@ -18,6 +18,7 @@ fn empty_play() -> Play {
     host_play::run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: host_play::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,

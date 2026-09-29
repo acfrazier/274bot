@@ -4,10 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use client::{
-    io::{ClientRevision, Packet},
-    BotTarget,
-};
+use client::io::{ClientRevision, Packet};
 use host_play::nav_identity::NavFlagsOrigin;
 use host_play::profile::{CacheManifest, NavAvailability, NavManifest, ProfileEnvironment};
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
@@ -185,9 +182,7 @@ fn flags_are_order_independent_and_override_saved_or_environment_revision() {
         assert_eq!(selected.game_port(), 45123);
         assert_eq!(selected.asset_port(), 1080);
         assert!(selected.vault_path().ends_with("vault-289"));
-        assert!(selected
-            .cache_dir()
-            .ends_with("lostcity-289/engine/data/pack/client"));
+        assert!(selected.cache_dir().ends_with(".274bot/unpack-289"));
         assert!(selected.nav_pack().ends_with("289/274bot.navpack"));
     }
     let (options, _) = parse_profile_args(["--profile", "local-274"]).unwrap();
@@ -207,17 +202,17 @@ fn flags_are_order_independent_and_override_saved_or_environment_revision() {
 }
 
 #[test]
-fn public_289_defaults_and_named_profile_override_lower_priority_inputs() {
+fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
     let fixture = Fixture::new();
     let mut lower_priority = fixture.env();
     lower_priority.profile = Some("local-274".into());
     lower_priority.revision = Some("274".into());
-    lower_priority.target = Some("local".into());
 
     let (named, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
     let selected = named.resolve_with_env(Some(274), &lower_priority).unwrap();
     assert_eq!(selected.revision(), ClientRevision::R289);
-    assert_eq!(selected.target(), BotTarget::Prod);
+    assert_eq!(selected.transport(), client::Transport::Wss);
+    assert_eq!(selected.profile_class(), host_play::ProfileClass::Remote);
     assert_eq!(selected.game_host(), "w1.rs2b2t.com");
     assert_eq!(selected.game_port(), 443);
     assert_eq!(selected.asset_host(), "w1.rs2b2t.com");
@@ -233,10 +228,10 @@ fn public_289_defaults_and_named_profile_override_lower_priority_inputs() {
         .ends_with("experiments/lostcity-289/content"));
     assert!(selected.vault_path().ends_with(".274bot/vault-prod"));
 
-    let (prod, _) = parse_profile_args(["--prod"]).unwrap();
-    let selected = prod.resolve_with_env(Some(274), &fixture.env()).unwrap();
+    let (rs2b2t, _) = parse_profile_args(["--rs2b2t"]).unwrap();
+    let selected = rs2b2t.resolve_with_env(Some(274), &fixture.env()).unwrap();
     assert_eq!(selected.revision(), ClientRevision::R289);
-    assert_eq!(selected.target(), BotTarget::Prod);
+    assert_eq!(selected.profile_class(), host_play::ProfileClass::Remote);
 
     let mut named_environment = fixture.env();
     named_environment.profile = Some("public-289".into());
@@ -244,26 +239,31 @@ fn public_289_defaults_and_named_profile_override_lower_priority_inputs() {
         .resolve_with_env(Some(274), &named_environment)
         .unwrap();
     assert_eq!(selected.revision(), ClientRevision::R289);
-    assert_eq!(selected.target(), BotTarget::Prod);
+    assert_eq!(selected.profile_class(), host_play::ProfileClass::Remote);
 
-    let mut prod_environment = fixture.env();
-    prod_environment.target = Some("prod".into());
-    let selected = ProfileOptions::default()
-        .resolve_with_env(Some(274), &prod_environment)
-        .unwrap();
-    assert_eq!(selected.revision(), ClientRevision::R289);
-    assert_eq!(selected.target(), BotTarget::Prod);
+    let mut legacy_environment = fixture.env();
+    legacy_environment.legacy_target = Some("prod".into());
+    assert!(ProfileOptions::default()
+        .resolve_with_env(Some(274), &legacy_environment)
+        .unwrap_err()
+        .contains("BOT_TARGET was removed"));
 
     let local_default = ProfileOptions::default()
         .resolve_with_env(None, &fixture.env())
         .unwrap();
     assert_eq!(local_default.revision(), ClientRevision::R274);
-    assert_eq!(local_default.target(), BotTarget::Local);
+    assert_eq!(
+        local_default.profile_class(),
+        host_play::ProfileClass::Local
+    );
     let saved_local_289 = ProfileOptions::default()
         .resolve_with_env(Some(289), &fixture.env())
         .unwrap();
     assert_eq!(saved_local_289.revision(), ClientRevision::R289);
-    assert_eq!(saved_local_289.target(), BotTarget::Local);
+    assert_eq!(
+        saved_local_289.profile_class(),
+        host_play::ProfileClass::Local
+    );
 
     let explicit = ProfileOptions {
         profile: Some("public-289".into()),
@@ -289,19 +289,26 @@ fn public_289_defaults_and_named_profile_override_lower_priority_inputs() {
 }
 
 #[test]
-fn public_world_file_selects_endpoint_and_rejects_unlisted_host() {
+fn worlds_file_is_imported_once_without_later_data_loss() {
     let fixture = Fixture::new();
-    let path = fixture.0.join(".274bot").join("worlds.json");
-    let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
-    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
-    assert_eq!(selected.public_worlds().unwrap().worlds[1].node_id, 11);
-    assert!(path.exists());
+    let bot_dir = fixture.0.join(".274bot");
+    std::fs::create_dir_all(&bot_dir).unwrap();
+    let path = bot_dir.join("worlds.json");
     std::fs::write(&path, r#"{"schema_version":1,"worlds":[{"number":2,"host":"w2.rs2b2t.com","port":443,"node_id":11},{"number":1,"host":"w1.rs2b2t.com","port":443,"node_id":10}]}"#).unwrap();
+    let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
     let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
     assert_eq!(
         (selected.game_host(), selected.game_port()),
         ("w2.rs2b2t.com", 443)
     );
+    let servers_path = bot_dir.join("servers.json");
+    let imported = std::fs::read(&servers_path).unwrap();
+
+    std::fs::write(&path, "not json").unwrap();
+    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert_eq!(selected.game_host(), "w2.rs2b2t.com");
+    assert_eq!(std::fs::read(&servers_path).unwrap(), imported);
+
     options.host = Some("attacker.example".into());
     assert!(options.resolve_with_env(None, &fixture.env()).is_err());
     options.host = Some("w1.rs2b2t.com".into());
@@ -312,59 +319,92 @@ fn public_world_file_selects_endpoint_and_rejects_unlisted_host() {
             .game_host(),
         "w1.rs2b2t.com"
     );
-    std::fs::write(&path, "not json").unwrap();
-    assert!(options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap_err()
-        .contains(path.to_str().unwrap()));
 }
 
 #[test]
-fn invalid_revision_public_pairing_and_conflicts_fail_before_vault_access() {
+fn upgrade_copy_preserves_vault_profiles_and_worlds_file() {
+    let fixture = Fixture::new();
+    let source = fixture.0.join("old-home/.274bot");
+    let target = fixture.0.join(".274bot");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+    let source_vault = source.join("vault-prod");
+    let mut vault = host_play::open_vault(&source_vault, "legacy-passphrase").unwrap();
+    vault
+        .upsert(vault::Profile {
+            username: "alice".into(),
+            password: "alice-password".into(),
+            uid: 274_000_123,
+            settings: vault::ProfileSettings {
+                world: Some(2),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    drop(vault);
+    let worlds = br#"{"schema_version":1,"worlds":[{"number":2,"host":"w2.rs2b2t.com","port":443,"node_id":11},{"number":1,"host":"w1.rs2b2t.com","port":443,"node_id":10}]}"#;
+    std::fs::write(source.join("worlds.json"), worlds).unwrap();
+    std::fs::copy(&source_vault, target.join("vault-prod")).unwrap();
+    std::fs::copy(source.join("worlds.json"), target.join("worlds.json")).unwrap();
+    let vault_before = std::fs::read(target.join("vault-prod")).unwrap();
+    let worlds_before = std::fs::read(target.join("worlds.json")).unwrap();
+
+    let selected = ProfileOptions {
+        rs2b2t: true,
+        ..Default::default()
+    }
+    .resolve_with_env(None, &fixture.env())
+    .unwrap();
+    assert_eq!(selected.game_host(), "w2.rs2b2t.com");
+    assert_eq!(
+        std::fs::read(target.join("vault-prod")).unwrap(),
+        vault_before
+    );
+    assert_eq!(
+        std::fs::read(target.join("worlds.json")).unwrap(),
+        worlds_before
+    );
+    let vault = vault::Vault::unlock(&target.join("vault-prod"), "legacy-passphrase").unwrap();
+    let alice = vault.get("alice").unwrap();
+    assert_eq!(alice.password.as_str(), "alice-password");
+    assert_eq!(alice.uid, 274_000_123);
+    assert_eq!(alice.settings.world, Some(2));
+}
+
+#[test]
+fn removed_legacy_flags_and_profile_conflicts_fail_before_vault_access() {
     let fixture = Fixture::new();
     for args in [
         vec!["--revision", "377"],
         vec!["--revision"],
         vec!["--port", "0"],
         vec!["--revision", "--prod"],
+        vec!["--prod"],
     ] {
         assert!(parse_profile_args(args).is_err());
     }
     for args in [
-        vec!["--prod", "--revision", "274"],
         vec!["--profile", "local-274", "--revision", "289"],
-        vec!["--profile", "local-289", "--prod"],
+        vec!["--profile", "local-289", "--rs2b2t"],
         vec!["--profile", "public-274"],
         vec!["--profile", "public-289", "--host", "localhost"],
         vec!["--profile", "public-289", "--port", "43594"],
         vec!["--profile", "public-289", "--asset-host", "localhost"],
         vec!["--profile", "public-289", "--http-port", "80"],
+        vec!["--rs2b2t", "--revision", "274"],
     ] {
         let (options, _) = parse_profile_args(args).unwrap();
         assert!(options.resolve_with_env(None, &fixture.env()).is_err());
     }
-    let mut explicit_env_274 = fixture.env();
-    explicit_env_274.revision = Some("274".into());
-    let error = ProfileOptions {
-        prod: true,
-        ..ProfileOptions::default()
-    }
-    .resolve_with_env(None, &explicit_env_274)
-    .unwrap_err();
-    assert!(error.contains("public revision 274 is unavailable"));
-
-    let mut public_env_274 = fixture.env();
-    public_env_274.target = Some("prod".into());
-    let error = ProfileOptions {
-        revision: Some("274".into()),
-        ..ProfileOptions::default()
-    }
-    .resolve_with_env(None, &public_env_274)
-    .unwrap_err();
-    assert!(error.contains("public revision 274 is unavailable"));
+    let mut legacy = fixture.env();
+    legacy.legacy_target = Some("prod".into());
+    assert!(ProfileOptions::default()
+        .resolve_with_env(None, &legacy)
+        .unwrap_err()
+        .contains("BOT_TARGET was removed"));
     assert!(
         !fixture.0.join(".274bot/vault-prod").exists(),
-        "resolving public worlds may create worlds.json but must not open a vault"
+        "profile resolution must not open a vault"
     );
 }
 
@@ -536,7 +576,8 @@ fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
         assert!(Arc::ptr_eq(&first.cache, &second.cache));
         assert!(Arc::ptr_eq(&first.ifaces, &second.ifaces));
         assert_eq!(first.cache.objs[0].name, "Fixture obj");
-        assert_eq!(first.session_target(), BotTarget::Local);
+        assert_eq!(first.session_transport(), client::Transport::Tcp);
+        assert_eq!(first.cheat_admission(), client::CheatAdmission::Granted);
         first.config.host = "invalid.invalid".into();
         first.config.port = 1;
         first.config.cache_dir = "invalid-cache".into();
@@ -678,13 +719,14 @@ fn bound_public_client_refuses_fixture_cheats_after_mutable_config_changes() {
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
     let mut options = fixture.options(289);
-    options.prod = true;
+    options.rs2b2t = true;
     let profile = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
         .bind()
         .unwrap();
-    assert_eq!(profile.target(), BotTarget::Prod);
+    assert_eq!(profile.profile_class(), host_play::ProfileClass::Remote);
+    assert_eq!(profile.transport(), client::Transport::Wss);
     assert_eq!(profile.revision(), ClientRevision::R289);
     let template = SharedClientTemplate::load(profile).unwrap();
     assert!(
@@ -695,7 +737,12 @@ fn bound_public_client_refuses_fixture_cheats_after_mutable_config_changes() {
     client.config.host = "127.0.0.1".into();
     client.config.port = 43594;
     let position = client.out.pos;
-    assert!(!api::interact::cheat(&mut client, "ping"));
+    assert_eq!(
+        api::interact::cheat(&mut client, "ping"),
+        client::CheatSend::Refused(client::CheatRefusal::RemoteProfile {
+            transport: client::Transport::Wss,
+        })
+    );
     api::interact::mainland_hop(&mut client);
     assert_eq!(client.out.pos, position);
 }
@@ -1644,19 +1691,20 @@ fn public_profile_never_inherits_local_world_json() {
 #[test]
 fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
     use host_play::public_worlds::PublicWorlds;
-    let fixture = Fixture::new();
-    let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
-    let path = fixture.0.join(".274bot/worlds.json");
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let resolve = |roster: &PublicWorlds, explicit: Option<bool>| {
+        let fixture = Fixture::new();
+        let path = fixture.0.join(".274bot/worlds.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(roster).unwrap()).unwrap();
+        let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
+        options.world_members = explicit;
+        options.resolve_with_env(None, &fixture.env()).unwrap()
+    };
     let bundled = PublicWorlds::default();
     for world in &bundled.worlds {
         let mut roster = bundled.clone();
         roster.worlds = vec![world.clone()];
-        std::fs::write(&path, serde_json::to_vec(&roster).unwrap()).unwrap();
-        assert!(options
-            .resolve_with_env(None, &fixture.env())
-            .unwrap()
-            .map_members());
+        assert!(resolve(&roster, None).map_members());
     }
     for host in ["w3.rs2b2t.com", "W42.RS2B2T.COM", "w001.rs2b2t.com"] {
         let mut roster = bundled.clone();
@@ -1664,8 +1712,7 @@ fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
         roster.worlds[0].host = host.into();
         roster.worlds[0].number = 17;
         roster.worlds[0].node_id = 52;
-        std::fs::write(&path, serde_json::to_vec(&roster).unwrap()).unwrap();
-        let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+        let selected = resolve(&roster, None);
         assert!(
             selected.map_members(),
             "{host}: {:?}",
@@ -1685,8 +1732,7 @@ fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
         let mut roster = bundled.clone();
         roster.worlds[0].host = host.into();
         roster.worlds[0].port = port;
-        std::fs::write(&path, serde_json::to_vec(&roster).unwrap()).unwrap();
-        let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+        let selected = resolve(&roster, None);
         assert_eq!(
             selected.world_members(),
             &host_play::WorldMembersFact::Unknown,
@@ -1700,17 +1746,14 @@ fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
         if !mixed {
             roster.worlds.remove(0);
         }
-        std::fs::write(&path, serde_json::to_vec(&roster).unwrap()).unwrap();
-        let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+        let selected = resolve(&roster, None);
         assert_eq!(
             selected.world_members(),
             &host_play::WorldMembersFact::Unknown
         );
         assert!(!selected.map_members());
     }
-    std::fs::write(&path, serde_json::to_vec(&bundled).unwrap()).unwrap();
-    options.world_members = Some(false);
-    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let selected = resolve(&bundled, Some(false));
     assert!(!selected.map_members());
     assert!(matches!(
         selected.world_members(),
@@ -2052,7 +2095,7 @@ fn operator_listed_endpoint_requires_bound_content_identity_for_builtin_facts() 
     )
     .unwrap();
     let mut options = fixture.options(289);
-    options.prod = true;
+    options.rs2b2t = true;
     let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
     assert!(!selected.supported_server());
     let profile = selected.bind().unwrap();
@@ -2102,7 +2145,7 @@ fn runtime_asset_connection_falls_back_to_next_listed_world() {
         }
     });
     let mut options = fixture.options(289);
-    options.prod = true;
+    options.rs2b2t = true;
     let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
     let error = selected.bind_runtime().unwrap_err();
     assert!(

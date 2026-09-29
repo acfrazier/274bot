@@ -1,19 +1,19 @@
 # First start
 
-274bot talks to a **local Lost City engine** first. Choose an immutable
-**server profile** for the process (`local-274`, `local-289`, or
-`public-289`). Public `public-289` / `--prod` uses WSS + HTTPS on
-the rs2b2t worlds (default w1/w2 on port 443)
-and requires separate live login verification.
+274bot talks to a **local Lost City engine** first. Choose one immutable
+entry from `~/.274bot/servers.json` for the process. First use creates
+`local-274`, `local-289`, and `rs2b2t`; `public-289` remains an alias for
+`rs2b2t`. The public profile uses WSS + HTTPS on its rs2b2t roster and
+requires separate live login verification.
 This repo does not ship Jagex assets and does not promise
 automatic asset distribution beyond the client’s ordinary `/crc` + jag
 fetch into the configured cache/unpack directory.
 
 ## Downloaded packages
 
-The macOS app opens on **public-289**. Standalone binaries (macOS, Windows and
-Linux) use `./panel-play --profile public-289` or `./tui-play --profile
-public-289` (`.exe` on Windows). Keep the adjacent `nav/` and `map/`
+The macOS app opens on **rs2b2t**. Standalone binaries (macOS, Windows and
+Linux) use `./panel-play --profile rs2b2t` or `./tui-play --profile
+rs2b2t` (`.exe` on Windows). Keep the adjacent `nav/` and `map/`
 directories; the macOS app contains its own resources. Initial distributed
 navigation and WalkTo map terrain target the public 289 cache: the first
 WalkTo open installs the shipped terrain when your client cache matches it,
@@ -66,9 +66,9 @@ If the cache directory is empty, run
 local engine). That script does not download assets from the public
 internet for you.
 
-**Prod / public-289** downloads `/crc` and jags into
+**rs2b2t** downloads `/crc` and jags into
 **`~/.274bot/unpack-289`** by default. The local-274 unpack default is
-`~/.274bot/unpack`; there is no public-274 profile. Versioned model/anim
+`~/.274bot/unpack`; there is no public 274 profile. Versioned model/anim
 snapshots from `unpack-cache` live in a child folder named the first 8 hex
 bytes of SHA-256(`versionlist`) — not the `/crc` table.
 
@@ -116,7 +116,7 @@ cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_b
 Without `--profile`, plain local still resolves to **274** (legacy
 default). Prefer naming the profile.
 
-## Prod (WSS + HTTPS)
+## rs2b2t (WSS + HTTPS)
 
 After local golds work. Use a real password (not username-as-password). Do
 not expect `give` / TutSkip / `tele` to work on the public world.
@@ -126,13 +126,13 @@ not expect `give` / TutSkip / `tele` to work on the public world.
 # asks in its unlock window. A new vault needs a non-empty passphrase after
 # trimming surrounding whitespace; strength is the user's choice.
 
-cargo run --release -p host-play -- --profile public-289 --user YOUR_NAME
-cargo run --release -p panel --bin panel-play -- --profile public-289
-cargo run --release -p tui --bin tui-play -- --profile public-289
-# or: --prod / BOT_TARGET=prod (selects public-289 when revision is unset)
+cargo run --release -p host-play -- --rs2b2t --user YOUR_NAME
+cargo run --release -p panel --bin panel-play -- --rs2b2t
+cargo run --release -p tui --bin tui-play -- --rs2b2t
+# Equivalent: --profile rs2b2t (public-289 is a compatibility name alias)
 ```
 
-`public-289` fetches `/crc` and jags over **HTTPS :443** into the shared
+`rs2b2t` fetches `/crc` and jags over **HTTPS :443** into the shared
 `~/.274bot/unpack-289` directory (tries the next listed asset world when
 the first is unavailable). The game stream uses **WSS** (`binary`
 subprotocol) on the account's selected rs2b2t world (w1/w2 by default).
@@ -140,6 +140,6 @@ Panel Profiles selects each account's world (`auto` or a listed world). Auto ret
 next world promptly on \"world full\"; pinned accounts do not move.
 `tui-play --world 2` chooses w2 only for accounts stored as auto.
 Local stays TCP on the profile's game/asset ports.
-Vault defaults: `~/.274bot/vault-prod` for public-289; local-274
-`~/.274bot/vault`; local-289 `~/.274bot/vault-289`. `--vault PATH` still
+Vault defaults: `~/.274bot/vault-prod` for `rs2b2t`; local-274 uses
+`~/.274bot/vault`; local-289 uses `~/.274bot/vault-289`. `--vault PATH` still
 wins. Unit tests do not verify public login.

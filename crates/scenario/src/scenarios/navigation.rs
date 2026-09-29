@@ -149,7 +149,7 @@ pub(crate) fn nav_door_scenario() -> Scenario {
                 kind: StepKind::Perform {
                     // Return true on send: the cheat is queued through the
                     // ISAAC sink, the arm waits for the tele to land.
-                    send: Box::new(|c, _| cheat(c, WALKER_TELE)),
+                    send: Box::new(|c, _| cheat(c, WALKER_TELE).is_sent()),
                 },
                 wait: Wait {
                     arm: Proof::Arrived {
@@ -1009,7 +1009,7 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
             Step {
                 name: "tele to the Al Kharid stand",
                 kind: StepKind::Perform {
-                    send: Box::new(|c, _| cheat(c, "tele 0,51,48,40,47")),
+                    send: Box::new(|c, _| cheat(c, "tele 0,51,48,40,47").is_sent()),
                 },
                 wait: Wait {
                     arm: Proof::Arrived {

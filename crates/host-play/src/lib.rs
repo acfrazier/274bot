@@ -21,15 +21,18 @@ pub mod profile;
 pub mod progress;
 pub mod public_worlds;
 pub mod quest_pair;
+pub mod servers;
 pub mod walk_map;
+pub use client::Transport;
 pub use nav_identity::{
     bundled_nav_identities, install_resource_root, BundledNavIdentity, NavFlagsOrigin,
     NavLoadCounters, NavOrigin,
 };
 pub use profile::{
-    parse_profile_args, parse_revision, GameDataStatus, ProfileOptions, ProfileSelection,
-    ServerProfile, WorldMembersFact, WorldMembersSource,
+    parse_profile_args, parse_revision, GameDataStatus, ProfileClass, ProfileOptions,
+    ProfileSelection, ServerProfile, WorldMembersFact, WorldMembersSource,
 };
+pub use servers::{proposed_vault, LaunchProfile, LaunchTransport, LaunchWorld, LoginKey, Servers};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
@@ -112,13 +115,10 @@ use nav::WorldState;
 use play_bootstrap::bot_client_config;
 use play_bootstrap::PlayConnection;
 pub use play_bootstrap::{
-    default_pack_path, default_vault_path, default_vault_path_for, default_vault_rel,
-    default_world_host, is_loopback_host, live_vault_passphrase, live_vault_passphrase_for,
-    mint_live_entries, mint_live_entries_for_target, mint_live_names, open_vault,
-    play_endpoint_for, profile_password, profile_password_for, run, run_channels,
-    run_prepared_template, run_with_io, run_with_profile, run_with_template, validate_play_host,
-    world_host_for_bot_target, PlayOptions, ProfilePlayOptions, SharedClientTemplate,
-    ValidatedTemplate,
+    default_pack_path, is_loopback_host, live_vault_passphrase, mint_game_password,
+    mint_live_entries, mint_live_names, mint_vault_passphrase, open_vault, profile_password, run,
+    run_channels, run_prepared_template, run_with_io, run_with_profile, run_with_template,
+    validate_play_host, PlayOptions, ProfilePlayOptions, SharedClientTemplate, ValidatedTemplate,
 };
 use play_login::{apply_queue_wait, sync_profile_arm, SharedLoginQueue};
 #[cfg(test)]

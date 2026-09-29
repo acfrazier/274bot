@@ -817,6 +817,7 @@ export async function tick(api) {{
 fn bank_pick_stop_invalidates_pending_selection_and_walk_before_worker_publication() {
     let play = crate::Play::new(&crate::PlayOptions {
         host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
         port: 43594,
         cache_dir: concat!(
             env!("CARGO_MANIFEST_DIR"),

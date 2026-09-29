@@ -731,7 +731,8 @@ fn a_run_refuses_when_it_cannot_bind_its_inputs() {
     assert_eq!(out.status.code(), Some(EXIT_USAGE));
     let stderr = text(&out.stderr);
     assert!(
-        stderr.contains("unsupported server profile") && stderr.contains("local-289"),
+        stderr.contains("native profile resolver rejects")
+            && stderr.contains("unknown server profile \"offline-fixture\""),
         "{stderr}"
     );
     assert!(!run_dir.exists(), "nothing was created");

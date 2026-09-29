@@ -107,9 +107,10 @@ match exactly before any spawn:
 * the profile/input configuration as the *child* resolves it: the suite runs the same
   read-only native resolver (`host_play::ProfileOptions::resolve_with_env`) over the
   effective argv it hands the child (profile flags then `--child-arg`), with the child's
-  canonical working directory and inherited env. It records the selection
-  (`local-274`/`local-289`/`public-289`) and the resolved cache, vault, nav pack/flags,
-  content and unpack paths. Content-bound inputs:
+  canonical working directory and inherited env. It records the canonical
+  `servers.json` profile name, transport, derived class, complete game/asset
+  roster, login-key source and digest, and the resolved cache, vault, nav
+  pack/flags, content and unpack paths. Content-bound inputs:
   * catalog script tree (`<catalog>/src/bot/scripts`);
   * the vault the selection implies (a file, including a followed symlink; `NotFound` is a
     defined absence);

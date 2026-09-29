@@ -1,6 +1,6 @@
 use super::*;
 use client::config::if_type::ComponentType;
-use client::{BotTarget, ClientSessionConfig, ClientSessionProfile};
+use client::{ClientSessionConfig, ClientSessionProfile};
 use host::Guardian;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -477,14 +477,6 @@ use nav::transport::{TransportEdge, TransportGraph, TransportKind};
 use vault::ProfileSettings;
 
 #[test]
-fn world_host_live_is_rs2b2t_everything_else_is_loopback() {
-    assert_eq!(world_host_for_bot_target(Some("live")), "w1.rs2b2t.com");
-    assert_eq!(world_host_for_bot_target(Some("prod")), "w1.rs2b2t.com");
-    assert_eq!(world_host_for_bot_target(Some("local")), "127.0.0.1");
-    assert_eq!(world_host_for_bot_target(None), "127.0.0.1");
-}
-
-#[test]
 fn mint_live_names_are_unique_and_never_test() {
     let mut all = std::collections::HashSet::new();
     // Repeated fleet sizes catch truncation that drops the invocation
@@ -527,70 +519,35 @@ fn mint_live_names_zero_is_empty() {
 }
 
 #[test]
-fn profile_password_local_is_username() {
-    assert_eq!(
-        profile_password_for("alice", client::BotTarget::Local),
-        "alice"
-    );
+fn profile_password_is_a_protocol_sized_fresh_secret() {
+    let first = profile_password("alice");
+    let second = profile_password("alice");
+    assert_ne!(first, "alice");
+    assert_ne!(first, second);
+    assert_eq!(first.len(), 20);
+    assert!(first
+        .bytes()
+        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit()));
 }
 
 #[test]
-fn default_vault_path_prod_is_not_the_local_file() {
-    assert_eq!(
-        default_vault_path_for(client::BotTarget::Local),
-        script::bot_file("vault")
-    );
-    assert_eq!(
-        default_vault_path_for(client::BotTarget::Prod),
-        script::bot_file("vault-prod")
-    );
-    assert_ne!(
-        default_vault_path_for(client::BotTarget::Local),
-        default_vault_path_for(client::BotTarget::Prod),
-        "prod must not reuse the local vault blob"
-    );
-}
-
-#[test]
-fn profile_password_prod_is_not_username() {
-    let pass = profile_password_for("alice", client::BotTarget::Prod);
-    assert_ne!(pass, "alice");
-    assert!(
-        pass.len() >= 16,
-        "prod password should be high-entropy: {pass}"
-    );
-}
-
-#[test]
-fn mint_live_entries_prod_refuses_username_as_password() {
+fn minted_live_entries_never_reuse_the_username() {
     let names = mint_live_names(2);
-    let entries = mint_live_entries_for_target(&names, client::BotTarget::Prod);
-    for (u, p) in &entries {
-        assert_ne!(u, p, "prod must not use username-as-password");
-    }
-    let local = mint_live_entries_for_target(&names, client::BotTarget::Local);
-    for (u, p) in &local {
-        assert_eq!(u, p, "local keeps username-as-password");
+    let entries = mint_live_entries(&names);
+    for (username, password) in &entries {
+        assert_ne!(username, password);
+        assert_eq!(password.len(), 20);
     }
 }
 
 #[test]
-fn every_live_vault_passphrase_can_create_a_vault() {
-    // The live harness creates a throwaway vault per run, so its passphrase
-    // must be non-empty for every target.
-    for target in [client::BotTarget::Local, client::BotTarget::Prod] {
-        let pass = live_vault_passphrase_for(target);
-        vault::check_new_passphrase(&pass)
-            .unwrap_or_else(|error| panic!("{target:?} live passphrase: {error}"));
-    }
-}
-
-#[test]
-fn a_public_world_live_vault_gets_a_fresh_high_entropy_passphrase() {
-    let first = live_vault_passphrase_for(client::BotTarget::Prod);
-    let second = live_vault_passphrase_for(client::BotTarget::Prod);
-    assert_ne!(first, second, "never a shared secret across runs");
-    assert!(first.len() >= 16, "prod temp vault passphrase: {first}");
+fn live_vault_passphrase_is_fresh_and_accepted() {
+    let first = live_vault_passphrase();
+    let second = live_vault_passphrase();
+    assert_ne!(first, second);
+    assert_eq!(first.len(), 48);
+    vault::check_new_passphrase(&first).unwrap();
+    vault::check_new_passphrase(&second).unwrap();
 }
 
 #[test]
@@ -726,6 +683,7 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
     let mut play = run_with_io(
         &PlayOptions {
             host: endpoint.ip().to_string(),
+            transport: client::Transport::Tcp,
             port: endpoint.port(),
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -833,7 +791,7 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
     let session_profile = Arc::new(
         ClientSessionProfile::new(ClientSessionConfig {
             revision: client::client::ClientRevision::R289,
-            target: BotTarget::Prod,
+            transport: client::Transport::Wss,
             game_host: worlds.worlds[0].host.clone(),
             game_port: w1_port,
             asset_host: "127.0.0.1".into(),
@@ -863,6 +821,7 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -926,34 +885,76 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
 }
 
 #[test]
-fn validate_play_host_loopback_ok_with_local_rsa() {
-    assert!(validate_play_host("127.0.0.1", BotTarget::Local).is_ok());
-    assert!(validate_play_host("localhost", BotTarget::Local).is_ok());
-    assert!(validate_play_host("::1", BotTarget::Local).is_ok());
+fn validate_play_host_requires_explicit_plaintext_offhost_opt_in() {
+    for loopback in ["127.0.0.1", "localhost", "::1"] {
+        assert!(validate_play_host(loopback, false).is_ok());
+    }
+    assert!(validate_play_host("attacker.example", false).is_err());
+    assert!(validate_play_host("attacker.example", true).is_ok());
 }
 
 #[test]
-fn validate_play_host_non_loopback_err_with_local_rsa() {
-    assert!(validate_play_host("attacker.example", BotTarget::Local).is_err());
-    assert!(validate_play_host("w1.rs2b2t.com", BotTarget::Local).is_err());
-}
-
-#[test]
-fn play_endpoint_for_prod_is_wss_443() {
+fn profile_class_requires_tcp_and_an_all_loopback_roster() {
     assert_eq!(
-        play_endpoint_for(BotTarget::Prod),
-        ("w1.rs2b2t.com".into(), 443)
+        crate::profile::profile_class(client::Transport::Tcp, ["127.0.0.1", "localhost"]),
+        ProfileClass::Local
     );
     assert_eq!(
-        play_endpoint_for(BotTarget::Local),
-        ("127.0.0.1".into(), 43594)
+        crate::profile::profile_class(client::Transport::Tcp, ["127.0.0.1", "192.0.2.10"]),
+        ProfileClass::Remote
+    );
+    assert_eq!(
+        crate::profile::profile_class(client::Transport::Wss, ["127.0.0.1"]),
+        ProfileClass::Remote
     );
 }
 
 #[test]
-fn validate_play_host_non_loopback_ok_with_prod_rsa() {
-    assert!(validate_play_host("attacker.example", BotTarget::Prod).is_ok());
-    assert!(validate_play_host("w1.rs2b2t.com", BotTarget::Prod).is_ok());
+fn builtin_servers_preserve_legacy_vault_associations() {
+    let servers = Servers::builtins(std::path::Path::new("/operator"));
+    assert_eq!(servers.resolve("local-274").unwrap().vault, "vault");
+    assert_eq!(servers.resolve("local-289").unwrap().vault, "vault-289");
+    assert_eq!(servers.resolve("rs2b2t").unwrap().vault, "vault-prod");
+    assert_eq!(
+        servers.resolve("public-289").unwrap(),
+        servers.resolve("rs2b2t").unwrap()
+    );
+}
+
+#[test]
+fn proposed_vault_never_implicitly_reuses_legacy_or_existing_storage() {
+    let root = std::env::temp_dir().join(format!("274bot-vault-proposal-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let servers = Servers::builtins(&root);
+    assert_eq!(
+        proposed_vault("alice", &root, &servers).unwrap(),
+        "vault-alice"
+    );
+    assert!(proposed_vault("289", &root, &servers).is_err());
+    assert!(proposed_vault("prod", &root, &servers).is_err());
+    std::fs::write(root.join("vault-bob"), b"occupied").unwrap();
+    assert!(proposed_vault("bob", &root, &servers).is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn servers_reject_ambiguous_names_and_unsafe_vault_or_transport_settings() {
+    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    servers.servers[0].name = "PUBLIC-289".into();
+    assert!(servers.validate().is_err());
+
+    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    servers.servers[0].vault = "../vault-prod".into();
+    assert!(servers.validate().is_err());
+
+    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    servers.servers[0].allow_plaintext_offhost = true;
+    assert!(servers.validate().is_err());
+
+    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    servers.servers[1].name = "RS2B2T".into();
+    assert!(servers.validate().is_err());
 }
 
 fn tmp_vault(name: &str) -> std::path::PathBuf {
@@ -967,6 +968,7 @@ fn tmp_vault(name: &str) -> std::path::PathBuf {
 fn spawn_config_follows_profile_lowmem() {
     let opt = PlayOptions {
         host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
         port: 1,
         cache_dir: "/tmp".into(),
         lowmem: true,
@@ -1057,6 +1059,7 @@ fn run_with_io_empty_profiles_starts_no_slots() {
     let play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -1079,6 +1082,7 @@ fn obj_names_getter_shares_the_play_table() {
     let play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: dir.display().to_string(),
             lowmem: true,
@@ -1097,6 +1101,7 @@ fn run_channels_empty_profiles_starts_no_slots() {
     let play = run_channels(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -1113,6 +1118,7 @@ fn stop_slot_sets_stop_and_forgets_name() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -1178,6 +1184,7 @@ fn stop_before_worker_start_retires_entries_and_respawn_has_one_row() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -1255,6 +1262,7 @@ fn begin_stop_slot_retires_without_joining_live_worker() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -1301,6 +1309,7 @@ fn stop_slot_wakes_a_parked_thread_before_joining() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -1351,6 +1360,7 @@ fn stop_slot_interrupts_login_backoff() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -1423,6 +1433,7 @@ fn generic_wake_does_not_shorten_login_backoff() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -1453,6 +1464,7 @@ fn stop_slot_during_unresponsive_public_key_fetch_is_bounded() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -1509,6 +1521,7 @@ fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -2319,6 +2332,7 @@ fn status_readers_recover_before_terminal_publication() {
     let play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -2358,6 +2372,7 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 1,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -2440,6 +2455,7 @@ fn finished_worker_is_reaped_before_explicit_respawn() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -2662,6 +2678,7 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -2746,6 +2763,7 @@ fn focus_selects_the_sampled_slot() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -2799,6 +2817,7 @@ fn stop_slot_clears_focus_on_the_stopped_name() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5301,6 +5320,7 @@ fn two_profiles_spawn_two_client_slots() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5357,6 +5377,7 @@ fn script_stop_clears_offline_published_paint() {
     let play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5392,6 +5413,7 @@ fn fenced_script_stop_requires_same_identity_and_generation() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5433,6 +5455,7 @@ fn script_start_unknown_compiled_id_errors_without_v8() {
     let _play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5446,6 +5469,7 @@ fn script_start_unknown_compiled_id_errors_without_v8() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5471,6 +5495,7 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5522,6 +5547,7 @@ fn script_start_returns_before_setup_and_stop_before_reap() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5570,6 +5596,7 @@ fn script_poll_start_never_loses_an_outcome_to_the_slot_threads_observe() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5637,6 +5664,7 @@ fn script_start_handle_explicit_loadouts_starts() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5671,6 +5699,7 @@ fn script_paint_click_is_noop_when_idle_paused_or_unadvertised() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5700,6 +5729,7 @@ fn script_paint_select_is_noop_when_idle_paused_or_unadvertised() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5755,6 +5785,7 @@ fn script_start_unknown_slot_errors_without_phantom_entry() {
     let play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5784,6 +5815,7 @@ fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
     let play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5825,6 +5857,7 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5931,6 +5964,7 @@ fn queue_wire_lands_on_the_named_slots_queue() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5976,6 +6010,7 @@ fn disconnected_slot_rejects_new_wire_and_cheat_work() {
     let play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -12261,6 +12296,8 @@ fn script_observe_drains_queued_cheat_onto_driver() {
         Arc::new(vec![]),
         Vec::new(),
     );
+    c.set_cheat_admission(client::CheatAdmission::Granted);
+    c.ingame = true;
     cheats
         .lock()
         .unwrap()
@@ -15367,6 +15404,7 @@ fn pause_clears_live_recovery_walk() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -15462,6 +15500,7 @@ fn operator_stop_stops_the_script_walk() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -15500,6 +15539,7 @@ fn operator_pause_stops_an_ordinary_script_walk() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -16637,6 +16677,7 @@ fn offline_play(endpoint: std::net::SocketAddr) -> Play {
     run_with_io(
         &PlayOptions {
             host: endpoint.ip().to_string(),
+            transport: client::Transport::Tcp,
             port: endpoint.port(),
             cache_dir: "/tmp".into(),
             lowmem: true,

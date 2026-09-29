@@ -612,7 +612,7 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--prod] [--smoke] [--lowmem|--highmem] [--vault-pass-stdin] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends\n       --prepare-fixture   offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats\n       --vault-pass-stdin  read the vault passphrase from a piped stdin (or ask on the terminal) and unlock before the window opens; without it use the in-window prompt";
+    "usage: panel-play [--profile NAME|--rs2b2t] [--smoke] [--lowmem|--highmem] [--vault-pass-stdin] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends\n       --prepare-fixture   offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats\n       --vault-pass-stdin  read the vault passphrase from a piped stdin (or ask on the terminal) and unlock before the window opens; without it use the in-window prompt";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -933,7 +933,6 @@ pub fn parse_live_args(
                 live = Some(name.as_ref().to_string());
             }
             "--smoke" => smoke = true,
-            "--prod" => {}
             "--help" | "-h" => return Err((0, LIVE_USAGE.into())),
             other => return Err((2, format!("panel-play: unknown {other}"))),
         }
@@ -1905,7 +1904,7 @@ fn debug_section(ui: &Ui, session: &mut Session) {
         return;
     }
     let show_tutskip = session.focused_tutorial_skipped() == Some(false);
-    let main = debug_main_buttons_for(session.target(), show_tutskip);
+    let main = debug_main_buttons_for(session.profile_class(), show_tutskip);
     let avail = ui.content_region_avail()[0];
     // Packed one row even when a scrollbar trims avail below MIN_BUTTON —
     // stacking turns DebugPanel/Lumbridge/maxme/Teles into four strip-width
@@ -4578,10 +4577,9 @@ fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), S
         .parent()
         .map(|p| p.join(scenario))
         .unwrap_or_else(|| scenario::default_fixture_sav_dir(scenario));
-    let target = client::bot_target();
     let names = host_play::mint_live_names(profile_count);
-    let entries = host_play::mint_live_entries_for_target(&names, target);
-    let pass = host_play::live_vault_passphrase_for(target);
+    let entries = host_play::mint_live_entries(&names);
+    let pass = host_play::live_vault_passphrase();
     let passwords: Vec<String> = entries.iter().map(|(_, p)| p.clone()).collect();
     let identity = scenario::prepare_offline_fixture(scenario::OfflinePrepareOpts {
         scenario: scenario.to_string(),
@@ -4660,7 +4658,9 @@ fn init_panel_running(
     let boot = match host_play::memory::Config::from_env() {
         Ok(Some(config)) => {
             client::profiling::enable();
-            if let Err(error) = host_play::memory::require_live_benchmark() {
+            if let Err(error) =
+                host_play::memory::require_live_benchmark(state.session.profile_class())
+            {
                 eprintln!("FAIL: {error}");
                 std::process::exit(1);
             }

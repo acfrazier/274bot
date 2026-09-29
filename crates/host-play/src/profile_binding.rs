@@ -84,14 +84,20 @@ fn verify_source_inputs<'a>(
 }
 
 impl ProfileSelection {
-    pub fn selection(&self) -> ServerSelection {
-        self.selection
+    pub fn selection(&self) -> &LaunchProfile {
+        &self.profile
+    }
+    pub fn name(&self) -> &str {
+        &self.profile.name
     }
     pub fn revision(&self) -> ClientRevision {
-        self.selection.revision()
+        parse_revision(&self.profile.revision.to_string()).expect("validated profile revision")
     }
-    pub fn target(&self) -> BotTarget {
-        self.selection.target()
+    pub fn transport(&self) -> Transport {
+        self.profile.client_transport()
+    }
+    pub fn profile_class(&self) -> ProfileClass {
+        self.class
     }
     pub fn game_host(&self) -> &str {
         &self.game_host
@@ -147,7 +153,7 @@ impl ProfileSelection {
     pub fn label(&self) -> String {
         format!(
             "{} · {}:{} · revision {}",
-            self.selection.name(),
+            self.profile.name,
             self.game_host,
             self.game_port,
             self.revision().as_i32()
@@ -281,7 +287,7 @@ impl ProfileSelection {
             let prepared =
                 client::unpack::prepare_runtime_cache(&client::unpack::RuntimeCacheRequest {
                     revision: self.revision(),
-                    target: self.target(),
+                    transport: self.transport(),
                     jag_source: &self.cache_dir,
                     snapshot_root: &self.unpack_dir,
                     asset_host: &self.asset_host,
@@ -322,7 +328,7 @@ impl ProfileSelection {
             crate::cache::prepare(
                 cache_dir,
                 unpack_dir,
-                self.target(),
+                self.transport(),
                 &self.asset_host,
                 self.asset_port,
                 observer,
@@ -397,14 +403,9 @@ impl ProfileSelection {
         let cache_id = runtime_cache
             .as_ref()
             .map_or_else(|| actual.identity(), |p| p.identity.content_id_hex());
-        let (rsa_modulus, rsa_exponent) = if self.target() == BotTarget::Prod {
+        let (rsa_modulus, rsa_exponent) = if let Some(modulus) = &self.rsa_modulus {
             (
-                client::PROD_LOGIN_RSAN.into(),
-                client::PROD_LOGIN_RSAE.into(),
-            )
-        } else if let Some(n) = &self.rsa_modulus {
-            (
-                n.clone(),
+                modulus.clone(),
                 self.rsa_exponent
                     .clone()
                     .unwrap_or_else(|| client::JAVA_LOGIN_RSAE.into()),
@@ -412,13 +413,22 @@ impl ProfileSelection {
         } else if self.rsa_exponent.is_some() {
             return Err("LOGIN_RSAE requires LOGIN_RSAN on an explicit server profile".into());
         } else {
-            let pem = self.engine_dir.join("data/config/private.pem");
-            client::login_rsa::rsa_from_pkcs1_pem_file(&pem).map_err(|e| {
-                format!(
-                    "profile RSA {}: {e}; configure the selected local engine or LOGIN_RSAN/E",
-                    pem.display()
-                )
-            })?
+            match &self.profile.login_key {
+                LoginKey::Named(_) => (
+                    client::PROD_LOGIN_RSAN.into(),
+                    client::PROD_LOGIN_RSAE.into(),
+                ),
+                LoginKey::Inline { modulus, exponent } => (modulus.clone(), exponent.clone()),
+                LoginKey::EngineDir { .. } => {
+                    let pem = self.engine_dir.join("data/config/private.pem");
+                    client::login_rsa::rsa_from_pkcs1_pem_file(&pem).map_err(|error| {
+                        format!(
+                            "profile RSA {}: {error}; configure the selected profile or LOGIN_RSAN/E",
+                            pem.display()
+                        )
+                    })?
+                }
+            }
         };
         let origin = select_nav_origin(
             table,
@@ -465,7 +475,7 @@ impl ProfileSelection {
             if let Some(identity) = &loaded.identity {
                 // Public installations need no server source checkout: only a
                 // compiled build/packager row can attest the supported world.
-                if self.target() == BotTarget::Prod {
+                if self.transport() == Transport::Wss {
                     let trusted = table.iter().any(|row| {
                         row.revision == identity.revision
                             && row.content_id == identity.content_id
@@ -480,7 +490,7 @@ impl ProfileSelection {
         }
         let binding = Arc::new(ClientSessionProfile::new(ClientSessionConfig {
             revision: self.revision(),
-            target: self.target(),
+            transport: self.transport(),
             game_host: self.game_host.clone(),
             game_port: self.game_port,
             asset_host: self.asset_host.clone(),
@@ -506,7 +516,8 @@ impl ProfileSelection {
             );
         }
         Ok(Arc::new(ServerProfile {
-            selection: self.selection,
+            profile: self.profile.clone(),
+            class: self.class,
             client: binding,
             cache: availability,
             cache_manifest: actual,
@@ -546,7 +557,7 @@ impl ProfileSelection {
         ),
         String,
     > {
-        let public = self.target() == BotTarget::Prod;
+        let public = self.transport() == Transport::Wss;
         if !(self.supported_server || (runtime && public)) {
             return Ok((
                 None,
@@ -588,7 +599,7 @@ impl ProfileSelection {
             "{}:{} / {}:{}",
             self.game_host, self.game_port, self.asset_host, self.asset_port
         );
-        if self.selection.target() == BotTarget::Prod {
+        if self.transport() == Transport::Wss {
             return format!("public endpoint {endpoints} is not a bundled rs2b2t world");
         }
         if !(crate::is_loopback_host(&self.game_host) && crate::is_loopback_host(&self.asset_host))

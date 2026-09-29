@@ -28,6 +28,7 @@ fn cfg() -> ClientConfig {
 fn seeded_client() -> Client {
     let mut c = Client::new(cfg());
     c.ingame = true;
+    c.set_cheat_admission(client::CheatAdmission::Granted);
     c.scene_state = 2;
     c.map_build_base_x = 3200;
     c.map_build_base_z = 3200;

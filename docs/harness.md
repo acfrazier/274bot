@@ -44,7 +44,7 @@ The `nav_door` integration test uses the local-274 engine and the fixed
 `$HOME/experiments/Server/engine/data/pack/client` cache path:
 
 ```sh
-BOT_TARGET=local BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
+BOT_SERVER_PROFILE=local-274 BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
 ```
 
 Some existing integration-test helpers use the default
@@ -124,7 +124,7 @@ Unset `BOT_MEMORY_N` for normal interactive use.
 ```sh
 cargo build --locked --release -p tui -p panel --features memory-profile-no-alloc
 
-LIVE=1 BOT_TARGET=local \
+LIVE=1 BOT_SERVER_PROFILE=local-274 \
 BOT_MEMORY_N=1 BOT_MEMORY_WORKLOAD=active BOT_MEMORY_SUSTAIN=1 \
 BOT_MEMORY_WARMUP_S=30 BOT_MEMORY_OBSERVE_S=240 \
 BOT_MEMORY_OUTPUT=/absolute/new-run/samples.jsonl \

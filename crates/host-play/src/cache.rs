@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use client::unpack::{self, FetchEndpoint, SnapshotPreparation, SnapshotState};
-use client::BotTarget;
+use client::Transport;
 
 use crate::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 
@@ -58,7 +58,7 @@ impl CachePreparation {
 pub fn prepare(
     cache_dir: &Path,
     unpack_dir: &Path,
-    target: BotTarget,
+    transport: Transport,
     asset_host: &str,
     asset_port: u16,
     observer: &ProfileProgressObserver,
@@ -102,7 +102,7 @@ pub fn prepare(
         &cache,
         &unpack_root,
         Some(FetchEndpoint {
-            target,
+            transport,
             host: asset_host,
             port: asset_port,
         }),

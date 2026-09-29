@@ -26,6 +26,7 @@ fn wait_script_state(play: &host_play::Play, name: &str, want: script::RunState)
 fn dummy_options() -> PlayOptions {
     PlayOptions {
         host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
         port: 43594,
         cache_dir: "/tmp".into(),
         lowmem: true,
@@ -122,9 +123,19 @@ impl api::prot::Out for RecordingOut {
 #[derive(Default)]
 struct RecordingDriver {
     out: RecordingOut,
+    cheats: Vec<String>,
 }
 
 impl api::interact::Driver for RecordingDriver {
+    fn cheat_admission(&self) -> client::CheatAdmission {
+        client::CheatAdmission::Granted
+    }
+
+    fn send_cheat(&mut self, cmd: &str) -> client::CheatSend {
+        self.cheats.push(cmd.into());
+        client::CheatSend::Sent
+    }
+
     fn set_menu(&mut self, _slot: i32, _action: i32, _a: i32, _b: i32, _c: i32) {}
 
     fn do_action(&mut self, _slot: i32) -> bool {
@@ -171,8 +182,6 @@ impl api::interact::Driver for RecordingDriver {
 
 #[test]
 fn mainland_production_gate_queues_once_without_rearming_host_or_reconnect() {
-    use client::io::ClientProt;
-
     let mut options = dummy_options();
     options.mainland = true;
     let (enabled, host_options) = mainland_seed_options(&options);
@@ -227,16 +236,11 @@ fn mainland_production_gate_queues_once_without_rearming_host_or_reconnect() {
         Some(false),
     ));
 
-    let tele = format!("tele {}", api::interact::OFF_ISLAND_TELE);
     assert_eq!(
-        driver.out.0,
+        driver.cheats,
         vec![
-            RecordedOut::Enc(ClientProt::CLIENT_CHEAT.id),
-            RecordedOut::P1((tele.len() + 1) as i32),
-            RecordedOut::Jstr(tele),
-            RecordedOut::Enc(ClientProt::CLIENT_CHEAT.id),
-            RecordedOut::P1(("setvar tutorial 1000".len() + 1) as i32),
-            RecordedOut::Jstr("setvar tutorial 1000".into()),
+            format!("tele {}", api::interact::OFF_ISLAND_TELE),
+            "setvar tutorial 1000".into()
         ]
     );
 }
@@ -543,9 +547,9 @@ fn live_running_emits_no_proof() {
 }
 
 #[test]
-fn parse_args_from_prod_is_not_unknown() {
-    let args = parse_args_from(["--prod"]).expect("prod is a known flag");
-    assert!(args.profile.prod);
+fn parse_args_from_rs2b2t_selects_remote_profile() {
+    let args = parse_args_from(["--rs2b2t"]).unwrap();
+    assert!(args.profile.rs2b2t);
     assert!(args.live.is_none());
     let home = std::env::temp_dir().join(format!("274bot-tui-public-{}", std::process::id()));
     let selection = args
@@ -559,9 +563,10 @@ fn parse_args_from_prod_is_not_unknown() {
         )
         .unwrap();
     assert_eq!(selection.revision(), client::io::ClientRevision::R289);
-    assert_eq!(selection.target(), client::BotTarget::Prod);
+    assert_eq!(selection.profile_class(), host_play::ProfileClass::Remote);
     assert_eq!(selection.public_worlds().unwrap().worlds.len(), 2);
     std::fs::remove_dir_all(home).unwrap();
+    assert!(parse_args_from(["--prod"]).is_err());
 }
 
 #[test]
@@ -843,21 +848,10 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
 }
 
 #[test]
-fn validate_startup_host_refuses_non_loopback_with_local_rsa() {
-    assert!(
-        host_play::validate_play_host("attacker.example", client::BotTarget::Local).is_err(),
-        "non-loopback host must be refused with local RSA"
-    );
-    assert!(host_play::validate_play_host("127.0.0.1", client::BotTarget::Local).is_ok());
-    // `tui-play` startup must delegate to the shared helper (not duplicate checks).
-    assert_eq!(
-        validate_startup_host("attacker.example").is_ok(),
-        host_play::validate_play_host("attacker.example", client::bot_target()).is_ok(),
-    );
-    assert_eq!(
-        validate_startup_host("127.0.0.1").is_ok(),
-        host_play::validate_play_host("127.0.0.1", client::bot_target()).is_ok(),
-    );
+fn plaintext_offhost_requires_explicit_opt_in() {
+    assert!(host_play::validate_play_host("attacker.example", false).is_err());
+    assert!(host_play::validate_play_host("127.0.0.1", false).is_ok());
+    assert!(host_play::validate_play_host("attacker.example", true).is_ok());
 }
 
 #[test]
@@ -1231,13 +1225,10 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
 }
 
 #[test]
-fn create_profile_prod_password_is_not_username() {
-    let pass = host_play::profile_password_for("alice", client::BotTarget::Prod);
+fn create_profile_password_is_a_fresh_game_secret() {
+    let pass = host_play::profile_password("alice");
     assert_ne!(pass, "alice");
-    assert_eq!(
-        host_play::profile_password_for("alice", client::BotTarget::Local),
-        "alice"
-    );
+    assert_eq!(pass.len(), 20);
 }
 
 #[test]

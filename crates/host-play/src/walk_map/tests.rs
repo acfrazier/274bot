@@ -167,6 +167,7 @@ fn edge(kind: TransportKind, at: WorldTile, to: WorldTile) -> TransportEdge {
 fn offline_play(world: NavWorld) -> crate::Play {
     let mut play = crate::Play::new(&crate::PlayOptions {
         host: "example.invalid".into(),
+        transport: client::Transport::Tcp,
         port: 43594,
         cache_dir: concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -530,30 +531,30 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
 }
 
 #[test]
-fn debug_authority_requires_local_target_and_loopback_host() {
-    use client::BotTarget;
+fn debug_authority_requires_local_profile_and_loopback_host() {
+    use crate::ProfileClass;
     assert!(!super::debug_teleport_authorized(
-        BotTarget::Prod,
+        ProfileClass::Remote,
         "localhost"
     ));
     assert!(!super::debug_teleport_authorized(
-        BotTarget::Local,
+        ProfileClass::Local,
         "192.168.1.2"
     ));
     assert!(super::debug_teleport_authorized(
-        BotTarget::Local,
+        ProfileClass::Local,
         "127.0.0.1"
     ));
     assert_eq!(
-        super::actions::debug_authorized(BotTarget::Prod, "localhost"),
+        super::actions::debug_authorized(ProfileClass::Remote, "localhost"),
         Err(ActionError::Unauthorized)
     );
     assert_eq!(
-        super::actions::debug_authorized(BotTarget::Local, "192.168.1.2"),
+        super::actions::debug_authorized(ProfileClass::Local, "192.168.1.2"),
         Err(ActionError::Unauthorized)
     );
     assert_eq!(
-        super::actions::debug_authorized(BotTarget::Local, "127.0.0.1"),
+        super::actions::debug_authorized(ProfileClass::Local, "127.0.0.1"),
         Ok(())
     );
 }

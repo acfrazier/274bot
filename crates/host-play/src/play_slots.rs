@@ -676,7 +676,7 @@ fn spawn_slot_thread(
         .and_then(|profile| profile.public_worlds())
         .is_some();
     let mainland = match &connection {
-        PlayConnection::Legacy(options) => options.mainland,
+        PlayConnection::Direct(options) => options.mainland,
         PlayConnection::Bound { mainland, .. } => *mainland,
     };
     let slot_channels = slot_channels.slot(&username);
@@ -710,7 +710,7 @@ fn spawn_slot_thread(
             // once per ingame stretch), so wrap it once here.
             let park = park.map(Arc::new);
             let mut client = match &connection {
-                PlayConnection::Legacy(options) => prepare_client(
+                PlayConnection::Direct(options) => prepare_client(
                     bot_client_config(options, &profile), uid, Arc::clone(&slot_cache),
                     ifaces_template.clone(), ifaces_mut_template.clone(),
                 ),
@@ -727,6 +727,13 @@ fn spawn_slot_thread(
                     }
                 },
             };
+            if let PlayConnection::Direct(options) = &connection {
+                client.set_transport(options.transport);
+                client.set_cheat_admission(match connection.profile_class() {
+                    crate::ProfileClass::Local => client::CheatAdmission::Granted,
+                    crate::ProfileClass::Remote => client::CheatAdmission::Remote(options.transport),
+                });
+            }
             // The host owns every reconnect attempt so each fresh socket
             // returns through the shared FIFO and reservation accounting.
             client.set_external_reconnect_owner(true);

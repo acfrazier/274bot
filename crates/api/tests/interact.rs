@@ -359,7 +359,8 @@ struct OutSink(Vec<OutByte>);
 #[derive(Default)]
 struct Recorder {
     revision: ClientRevision,
-    session_target: Option<client::BotTarget>,
+    cheat_admission: Option<client::CheatAdmission>,
+    cheats: Vec<String>,
     menus: Vec<(i32, i32, i32, i32, i32)>,
     actions: Vec<i32>,
     moves: Vec<WalkMove>,
@@ -381,8 +382,24 @@ impl Driver for Recorder {
         self.revision
     }
 
-    fn session_target(&self) -> client::BotTarget {
-        self.session_target.unwrap_or_else(client::bot_target)
+    fn cheat_admission(&self) -> client::CheatAdmission {
+        self.cheat_admission
+            .unwrap_or(client::CheatAdmission::Granted)
+    }
+
+    fn send_cheat(&mut self, cmd: &str) -> client::CheatSend {
+        match self.cheat_admission() {
+            client::CheatAdmission::Granted => {
+                self.cheats.push(cmd.into());
+                client::CheatSend::Sent
+            }
+            client::CheatAdmission::Denied => {
+                client::CheatSend::Refused(client::CheatRefusal::Offline)
+            }
+            client::CheatAdmission::Remote(transport) => {
+                client::CheatSend::Refused(client::CheatRefusal::RemoteProfile { transport })
+            }
+        }
     }
 
     fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32) {
@@ -571,36 +588,37 @@ fn op_loc_uses_scene_typecode_as_menu_param_a() {
     );
 }
 
-/// `cheat` is CLIENT_CHEAT: enc opcode, size byte (cmd+nul), pjstr(cmd).
 #[test]
-fn cheat_writes_client_cheat_without_colon_prefix() {
+fn cheat_delegates_to_the_driver_boundary() {
     let mut r = Recorder::default();
-    assert!(cheat(&mut r, "ping"));
-    assert_eq!(
-        r.out.0,
-        vec![
-            OutByte::Enc(ClientProt::CLIENT_CHEAT.id),
-            OutByte::P1(5),
-            OutByte::Jstr("ping".into()),
-        ]
-    );
+    assert_eq!(cheat(&mut r, "ping"), client::CheatSend::Sent);
+    assert_eq!(r.cheats, vec!["ping"]);
 }
 
 #[test]
-fn cheat_allowed_only_on_local_target() {
-    assert!(cheat_allowed(client::BotTarget::Local));
-    assert!(!cheat_allowed(client::BotTarget::Prod));
+fn cheat_allowed_only_when_admission_is_granted() {
+    assert!(cheat_allowed(client::CheatAdmission::Granted));
+    assert!(!cheat_allowed(client::CheatAdmission::Denied));
+    assert!(!cheat_allowed(client::CheatAdmission::Remote(
+        client::Transport::Wss
+    )));
 }
 
 #[test]
-fn public_target_cheat_refuses_without_bytes_on_both_revisions() {
+fn public_tls_cheat_refuses_without_bytes_on_both_revisions() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let mut r = Recorder {
             revision,
-            session_target: Some(client::BotTarget::Prod),
+            cheat_admission: Some(client::CheatAdmission::Remote(client::Transport::Wss)),
             ..Recorder::default()
         };
-        assert!(!cheat(&mut r, "ping"));
+        assert_eq!(
+            cheat(&mut r, "ping"),
+            client::CheatSend::Refused(client::CheatRefusal::RemoteProfile {
+                transport: client::Transport::Wss,
+            })
+        );
+        assert!(r.cheats.is_empty());
         assert!(r.out.0.is_empty());
         assert!(r.menus.is_empty());
         assert!(r.moves.is_empty());
@@ -612,16 +630,11 @@ fn public_target_cheat_refuses_without_bytes_on_both_revisions() {
 fn mainland_hop_queues_tele_and_tutorial_setvar() {
     let mut r = Recorder::default();
     mainland_hop(&mut r);
-    let tele = format!("tele {OFF_ISLAND_TELE}");
     assert_eq!(
-        r.out.0,
+        r.cheats,
         vec![
-            OutByte::Enc(ClientProt::CLIENT_CHEAT.id),
-            OutByte::P1((tele.len() + 1) as i32),
-            OutByte::Jstr(tele),
-            OutByte::Enc(ClientProt::CLIENT_CHEAT.id),
-            OutByte::P1(("setvar tutorial 1000".len() + 1) as i32),
-            OutByte::Jstr("setvar tutorial 1000".into()),
+            format!("tele {OFF_ISLAND_TELE}"),
+            "setvar tutorial 1000".into()
         ]
     );
 }
@@ -635,17 +648,9 @@ fn tele_args_splits_world_tile_into_mapsquare() {
 fn seed_at_sends_tutorial_setvar_then_tele() {
     let mut r = Recorder::default();
     seed_at(&mut r, 0, 3220, 3218);
-    let tele = tele_args(0, 3220, 3218);
     assert_eq!(
-        r.out.0,
-        vec![
-            OutByte::Enc(ClientProt::CLIENT_CHEAT.id),
-            OutByte::P1(("setvar tutorial 1000".len() + 1) as i32),
-            OutByte::Jstr("setvar tutorial 1000".into()),
-            OutByte::Enc(ClientProt::CLIENT_CHEAT.id),
-            OutByte::P1((tele.len() + 1) as i32),
-            OutByte::Jstr(tele),
-        ]
+        r.cheats,
+        vec!["setvar tutorial 1000".to_string(), tele_args(0, 3220, 3218)]
     );
 }
 
@@ -653,7 +658,9 @@ fn seed_at_sends_tutorial_setvar_then_tele() {
 #[test]
 fn client_driver_cheat_matches_java_client_cheat() {
     let mut c = Client::new(cfg());
-    assert!(cheat(&mut c, "ping"));
+    c.ingame = true;
+    c.set_cheat_admission(client::CheatAdmission::Granted);
+    assert_eq!(cheat(&mut c, "ping"), client::CheatSend::Sent);
     assert_eq!(c.out.data()[0] as i32, ClientProt::CLIENT_CHEAT.id & 0xff);
     assert_eq!(c.out.data()[1], 5);
     assert_eq!(&c.out.data()[2..7], b"ping\n");
@@ -664,6 +671,8 @@ fn client_driver_cheat_matches_java_client_cheat() {
 #[test]
 fn revision_289_direct_host_writers_match_primary_bytes() {
     let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+    c.ingame = true;
+    c.set_cheat_admission(client::CheatAdmission::Granted);
 
     assert!(Send::if_button(0x1234).write_for_revision(c.revision(), &mut c.out));
     assert_eq!(&c.out.data()[..c.out.pos], &[86, 0x12, 0x34]);
@@ -677,7 +686,7 @@ fn revision_289_direct_host_writers_match_primary_bytes() {
     assert_eq!(&c.out.data()[..c.out.pos], &[180, 1, 2, 3, 4]);
 
     c.out.pos = 0;
-    assert!(cheat(&mut c, "ping"));
+    assert_eq!(cheat(&mut c, "ping"), client::CheatSend::Sent);
     assert_eq!(
         &c.out.data()[..c.out.pos],
         &[34, 5, b'p', b'i', b'n', b'g', 10]
@@ -4099,7 +4108,8 @@ fn rejected_noop_and_background_paths_do_not_reset_idle() {
     assert_eq!(tab.shell.idle_cycles, 4500);
 
     let mut cheater = idle_client(ClientRevision::R289);
-    assert!(cheat(&mut cheater, "ping"));
+    cheater.set_cheat_admission(client::CheatAdmission::Granted);
+    assert_eq!(cheat(&mut cheater, "ping"), client::CheatSend::Sent);
     assert!(cheater.out.pos > 0, "cheat still writes CLIENT_CHEAT");
     assert_eq!(cheater.shell.idle_cycles, 4500);
 

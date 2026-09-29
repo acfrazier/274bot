@@ -82,6 +82,18 @@ fn profile_identity_records_effective_world_membership_and_provenance() {
 
     let public = bind(&profile_identity_config("public-289", &engine)).unwrap();
     let public_json = serde_json::to_value(&public).unwrap();
+    assert_eq!(public.profile, "rs2b2t");
+    assert_eq!(public.resolved.selection, "rs2b2t");
+    assert_eq!(public.resolved.transport, "wss");
+    assert_eq!(public.resolved.profile_class, "remote");
+    assert_eq!(public.resolved.login_key_source, "served");
+    assert_eq!(public.resolved.login_key_sha256.len(), 64);
+    assert_eq!(public.resolved.worlds.len(), 2);
+    assert_eq!(public.resolved.worlds[0].asset_host, "w1.rs2b2t.com");
+    assert_eq!(
+        public.resolved.vault,
+        root.join(".274bot/vault-prod").display().to_string()
+    );
     assert_eq!(public_json["effective_world_members"]["value"], true);
     assert_eq!(
         public_json["effective_world_members"]["source"],

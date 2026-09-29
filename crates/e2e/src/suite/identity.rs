@@ -857,6 +857,16 @@ impl ExternalSource {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchWorldIdentity {
+    pub number: u16,
+    pub host: String,
+    pub port: u16,
+    pub node_id: i32,
+    pub asset_host: String,
+    pub asset_port: u16,
+}
+
 /// The paths the *native* resolver selected for a configuration, recorded as the child
 /// itself resolves them.
 ///
@@ -865,9 +875,14 @@ impl ExternalSource {
 /// part of the run identity; the content-bound inputs on [`ProfileIdentity`] say which of
 /// them were read as well.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ResolvedInputs {
-    /// The native selection (`local-274`, `local-289`, `public-289`).
     pub selection: String,
+    pub transport: String,
+    pub profile_class: String,
+    pub worlds: Vec<LaunchWorldIdentity>,
+    pub login_key_source: String,
+    pub login_key_sha256: String,
     pub cache: String,
     pub vault: String,
     pub nav_pack: String,
