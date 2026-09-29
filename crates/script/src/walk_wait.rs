@@ -24,7 +24,7 @@
 //! last posted reach view — the rule the host follow ends on too. Genuinely
 //! pending follow (`None`) keeps the caller timeout.
 
-use crate::isolate_fb::SnapshotReader;
+use crate::isolate_fb::Snapshot;
 use crate::observed::{self, Scene};
 use api::snapshot::WorldTile;
 use serde_json::{json, Value};
@@ -239,7 +239,7 @@ impl WalkSlot {
 }
 
 /// After the isolate applied `snap` to the scene.
-pub(crate) fn on_snapshot(snap: &SnapshotReader<'_>) {
+pub(crate) fn on_snapshot(snap: &Snapshot<'_>) {
     if !snap.has_walk_outcome_seq() {
         return;
     }
@@ -339,7 +339,7 @@ mod tests {
     }
 
     /// One decoded post, applied the way the isolate applies it.
-    fn post(snap: &SnapshotReader<'_>) {
+    fn post(snap: &Snapshot<'_>) {
         crate::observed::apply(snap);
         crate::load::reach_query::apply(snap);
         on_snapshot(snap);
@@ -423,7 +423,7 @@ mod tests {
 
     fn observe(input: SnapshotInput<'_>, native: NativeFactsInput<'_>) {
         let bytes = encode_snapshot_with_native(&input, native);
-        let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         post(&snap);
     }
 
@@ -697,7 +697,7 @@ mod tests {
             level: 0,
         });
         let bytes = encode_snapshot(&input);
-        let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         post(&snap);
         assert!(!settled(token));
     }

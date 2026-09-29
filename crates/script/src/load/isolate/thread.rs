@@ -1141,7 +1141,7 @@ fn tick_loop(
                 // scene the step machines read, then materialise the JS
                 // object the shim reads on the host handle. A malformed
                 // blob is logged, never fatal.
-                match crate::isolate_fb::SnapshotReader::from_bytes(&bytes.bytes) {
+                match crate::isolate_fb::Snapshot::from_bytes(&bytes.bytes) {
                     Ok(snap) => {
                         // Step machines read the scene at call time; the
                         // hooks below are the edge-triggered waits.

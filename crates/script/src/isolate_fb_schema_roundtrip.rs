@@ -48,6 +48,10 @@ fn generated_bindings_round_trip_domain_payload_and_presence() {
         z: 3_211,
         level: 0,
     }];
+    let chat_options = [ChatOptionInput {
+        text: "Continue",
+        com_id: 0,
+    }];
     let mut input = empty_input(41);
     input.here = Some(TileInput {
         x: 3_207,
@@ -59,6 +63,7 @@ fn generated_bindings_round_trip_domain_payload_and_presence() {
     input.npcs = &npcs;
     input.booths = &booths;
     input.my_name = Some("Flat C");
+    input.chat_options = &chat_options;
     input.self_target_kind = 1;
     input.self_target_index = 9;
 
@@ -135,6 +140,15 @@ fn generated_bindings_round_trip_domain_payload_and_presence() {
 
     let booth = snapshot.booths().expect("posted booth").get(0);
     assert_eq!((booth.x(), booth.z(), booth.level()), (3_209, 3_211, 0));
+    let chat_options = snapshot.chat_options().expect("posted chat options");
+    let chat_option = chat_options.get(0);
+    assert_eq!(chat_option.text(), Some("Continue"));
+    assert_eq!(chat_option.com_id(), 0);
+    assert_ne!(
+        chat_option._tab.vtable().get(ChatOption::VT_COM_ID),
+        0,
+        "default-valued ChatOption.com_id remains physically present"
+    );
 
     let quests = snapshot.quest_statuses().expect("posted quest rows");
     assert_eq!(quests.len(), 2);
@@ -154,4 +168,77 @@ fn generated_bindings_round_trip_domain_payload_and_presence() {
 
     assert!(snapshot.has_self_chat());
     assert_eq!(snapshot.self_chat(), Some(""));
+    let options_before = [ChatOptionInput {
+        text: "Continue",
+        com_id: 7,
+    }];
+    let options_after = [ChatOptionInput {
+        text: "Continue",
+        com_id: 0,
+    }];
+    let mut before = empty_input(100);
+    before.chat_options = &options_before;
+    before.run_enabled = true;
+    before.run_energy = 42;
+    before.self_target_index = 9;
+    let mut after = empty_input(101);
+    after.chat_options = &options_after;
+    let mut delta_buf = IsolateBuf::new();
+    let (_, before_fp) = delta_buf.encode_snapshot_delta(None, &before, false);
+    let (delta_bytes, _) = delta_buf.encode_snapshot_delta(Some(&before_fp), &after, false);
+    let delta = decode_snapshot(&delta_bytes).expect("default-valued delta verifies");
+    assert!(delta.has_run_enabled());
+    assert!(!delta.run_enabled());
+    assert!(delta.has_run_energy());
+    assert_eq!(delta.run_energy(), 0);
+    assert!(delta.has_self_target_index());
+    assert_eq!(delta.self_target_index(), -1);
+    assert!(!delta.has_bank_note_on());
+    assert_eq!(delta.bank_note_on(), -1);
+    let delta_option = delta
+        .chat_options()
+        .expect("changed chat options are present")
+        .get(0);
+    assert_eq!(delta_option.com_id(), 0);
+    assert_ne!(
+        delta_option._tab.vtable().get(ChatOption::VT_COM_ID),
+        0,
+        "force_defaults keeps ChatOption.com_id=0 present in a delta"
+    );
+}
+
+#[test]
+fn absent_quest_status_defaults_to_unknown() {
+    let mut b = flatbuffers::FlatBufferBuilder::new();
+    let name = b.create_string("Mystery Quest");
+    let status = {
+        let mut row = QuestStatusBuilder::new(&mut b);
+        row.add_name(name);
+        row.finish()
+    };
+    let statuses = b.create_vector(&[status]);
+    let root = {
+        let mut snapshot = SnapshotBuilder::new(&mut b);
+        snapshot.add_tick(1);
+        snapshot.add_quest_statuses(statuses);
+        snapshot.add_quest_statuses_available(true);
+        snapshot.finish()
+    };
+    b.finish(root, None);
+
+    let snapshot = decode_snapshot(b.finished_data()).expect("snapshot verifies");
+    let row = snapshot
+        .quest_statuses()
+        .expect("quest statuses")
+        .get(0);
+    assert_eq!(row.status(), None, "fixture omits the status slot");
+
+    crate::observed::on_reset();
+    crate::observed::apply(&snapshot);
+    let observed_status = crate::observed::with(|scene| match scene.latest().quest_statuses() {
+        Some(crate::observed::QuestTab::Bound(rows)) => rows[0].status.to_string(),
+        _ => panic!("quest statuses were not applied"),
+    });
+    crate::observed::on_reset();
+    assert_eq!(observed_status, "unknown");
 }

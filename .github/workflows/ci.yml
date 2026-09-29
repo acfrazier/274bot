@@ -97,7 +97,10 @@ jobs:
           echo "$FLATC_SHA256  /tmp/flatc.zip" | sha256sum --check -
           unzip -q /tmp/flatc.zip -d /tmp/flatc
           sudo install -m 0755 /tmp/flatc/flatc /usr/local/bin/flatc
-          test "$(flatc --version)" = "flatc version 25.12.19"
+          cargo_flatbuffers="$(grep -F 'flatbuffers = { version = ' crates/script/Cargo.toml | cut -d '"' -f2)"
+          cargo_flatbuffers="${cargo_flatbuffers#=}"
+          test -n "$cargo_flatbuffers"
+          test "$(flatc --version)" = "flatc version $cargo_flatbuffers"
       - name: Check crate architecture
         run: |
           python3 --version

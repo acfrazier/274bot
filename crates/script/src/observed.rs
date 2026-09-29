@@ -26,9 +26,7 @@
 //! ([`Skills`]), and the side-tab and bank-stand tables keep the one fact
 //! read from each.
 
-use crate::isolate_fb::{
-    CombatStyleReader, QuestStatusReader, RowReader, SceneEntityReader, SnapshotReader, StatReader,
-};
+use crate::isolate_fb::{CombatStyle, QuestStatus, Row, SceneEntity, Snapshot, Stat};
 use api::line_of_sight::CollisionQuery;
 use flatbuffers::{ForwardsUOffset, Vector};
 use std::cell::RefCell;
@@ -61,7 +59,7 @@ static EPOCH: AtomicU64 = AtomicU64::new(1);
 
 /// Apply one decoded post. Called once per `IsolateCmd::Snapshot`, before
 /// the module hooks.
-pub fn apply(snap: &SnapshotReader<'_>) {
+pub fn apply(snap: &Snapshot<'_>) {
     SCENE.with(|scene| scene.borrow_mut().apply(snap));
 }
 
@@ -119,7 +117,7 @@ pub struct ItemRow {
 }
 
 impl ItemRow {
-    fn read(row: &RowReader<'_>, strings: &mut Interner) -> Self {
+    fn read(row: &Row<'_>, strings: &mut Interner) -> Self {
         Self {
             id: row.id(),
             count: row.count(),
@@ -202,7 +200,7 @@ impl Default for EntityRow {
 }
 
 impl EntityRow {
-    fn read(row: &SceneEntityReader<'_>, strings: &mut Interner) -> Self {
+    fn read(row: &SceneEntity<'_>, strings: &mut Interner) -> Self {
         Self {
             index: row.index(),
             id: row.id(),
@@ -258,7 +256,7 @@ pub struct SceneRow {
 }
 
 impl SceneRow {
-    fn read(row: &SceneEntityReader<'_>, strings: &mut Interner) -> Self {
+    fn read(row: &SceneEntity<'_>, strings: &mut Interner) -> Self {
         Self {
             id: row.id(),
             name: row.name().map(|name| strings.text(name)),
@@ -297,7 +295,7 @@ pub struct ButtonRow {
 }
 
 impl ButtonRow {
-    fn read(row: &CombatStyleReader<'_>, strings: &mut Interner) -> Self {
+    fn read(row: &CombatStyle<'_>, strings: &mut Interner) -> Self {
         Self {
             mode: row.mode(),
             label: strings.text(row.label().unwrap_or_default()),
@@ -331,7 +329,7 @@ pub struct Skills {
 }
 
 impl Skills {
-    fn read<'a>(rows: TableVector<'a, StatReader<'a>>) -> Self {
+    fn read<'a>(rows: TableVector<'a, Stat<'a>>) -> Self {
         let mut skills = Self::default();
         // Bit `i`: stat slot `i` posted a base level above 0.
         let mut loaded = 0u64;
@@ -436,10 +434,10 @@ pub struct QuestStatusRow {
 }
 
 impl QuestStatusRow {
-    fn read(row: &QuestStatusReader<'_>, strings: &mut Interner) -> Self {
+    fn read(row: &QuestStatus<'_>, strings: &mut Interner) -> Self {
         Self {
             name: strings.text(row.name().unwrap_or_default()),
-            status: strings.text(row.status().unwrap_or_default()),
+            status: strings.text(row.status().unwrap_or("unknown")),
             component_id: row.component_id(),
         }
     }
@@ -707,7 +705,7 @@ impl Post<'_> {
     }
 }
 
-fn read_items<'a>(rows: TableVector<'a, RowReader<'a>>, strings: &mut Interner) -> Vec<ItemRow> {
+fn read_items<'a>(rows: TableVector<'a, Row<'a>>, strings: &mut Interner) -> Vec<ItemRow> {
     rows.into_iter()
         .flat_map(|rows| rows.iter())
         .map(|row| ItemRow::read(&row, strings))
@@ -715,7 +713,7 @@ fn read_items<'a>(rows: TableVector<'a, RowReader<'a>>, strings: &mut Interner) 
 }
 
 fn read_places<'a>(
-    rows: TableVector<'a, SceneEntityReader<'a>>,
+    rows: TableVector<'a, SceneEntity<'a>>,
     strings: &mut Interner,
 ) -> Vec<SceneRow> {
     rows.into_iter()
@@ -725,7 +723,7 @@ fn read_places<'a>(
 }
 
 fn read_buttons<'a>(
-    rows: TableVector<'a, CombatStyleReader<'a>>,
+    rows: TableVector<'a, CombatStyle<'a>>,
     strings: &mut Interner,
 ) -> Vec<ButtonRow> {
     rows.into_iter()
@@ -794,13 +792,13 @@ impl Scene {
         Post { scene: self, seq }
     }
 
-    fn apply(&mut self, snap: &SnapshotReader<'_>) {
+    fn apply(&mut self, snap: &Snapshot<'_>) {
         let mut strings = std::mem::take(&mut self.strings);
         self.apply_rows(snap, &mut strings);
         self.strings = strings;
     }
 
-    fn apply_rows(&mut self, snap: &SnapshotReader<'_>, strings: &mut Interner) {
+    fn apply_rows(&mut self, snap: &Snapshot<'_>, strings: &mut Interner) {
         let mut post = self.begin_post(snap.tick());
         let p = &mut post;
         if snap.has_ingame() {
@@ -1107,7 +1105,7 @@ impl Scene {
                     .collect(),
             );
         }
-        if snap.has_quest_statuses_update() {
+        if snap.has_quest_statuses_available() {
             if snap.quest_statuses_available() {
                 p.quest_statuses(QuestTab::Bound(
                     snap.quest_statuses()
@@ -1305,7 +1303,7 @@ mod tests {
     }
 
     fn apply_bytes(bytes: &[u8]) {
-        apply(&SnapshotReader::from_bytes(bytes).expect("snapshot"));
+        apply(&Snapshot::from_bytes(bytes).expect("snapshot"));
     }
 
     fn goblin(index: i32) -> SceneEntityInput<'static> {
@@ -1363,7 +1361,7 @@ mod tests {
         apply_bytes(&keyframe);
         snap.tick = 2;
         let (delta, _) = encode_snapshot_delta(Some(&fp), &snap, false);
-        let reader = SnapshotReader::from_bytes(&delta).unwrap();
+        let reader = Snapshot::from_bytes(&delta).unwrap();
         assert!(
             !reader.has_npcs(),
             "the delta must omit the unchanged table"
@@ -1491,7 +1489,7 @@ mod tests {
         });
         snap.npcs = &npcs;
         let (logout, fp) = encode_snapshot_delta(Some(&fp), &snap, false);
-        let reader = SnapshotReader::from_bytes(&logout).unwrap();
+        let reader = Snapshot::from_bytes(&logout).unwrap();
         assert!(reader.has_here() && reader.has_npcs() && reader.has_ingame());
         apply(&reader);
         let moved = Tile {

@@ -423,7 +423,7 @@ mod tests {
     }
 
     fn post_at(tick: u64, here: Tile, view: &api::query::ReachQueryView) {
-        use crate::isolate_fb::{encode_snapshot, ReachViewInput, SnapshotReader, TileInput};
+        use crate::isolate_fb::{encode_snapshot, ReachViewInput, Snapshot, TileInput};
         let mut input = crate::isolate_fb::tests::empty_input(tick);
         input.here = Some(TileInput {
             x: here.x,
@@ -447,7 +447,7 @@ mod tests {
             stamp: 1,
         };
         let bytes = encode_snapshot(&input);
-        let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         observed::apply(&snap);
         crate::load::reach_query::apply(&snap);
     }

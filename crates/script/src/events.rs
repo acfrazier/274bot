@@ -5,7 +5,7 @@
 //! subscriptions; `take_eligible` is the only emit, called from a
 //! generation/pause/budget-gated tick.
 
-use crate::isolate_fb::{RowReader, SnapshotReader, StatReader};
+use crate::isolate_fb::{Row, Snapshot, Stat};
 
 const MAX_INV_SIZE: i32 = 28;
 const MAX_STATS: usize = 64;
@@ -115,7 +115,7 @@ impl NativeEventProducer {
     /// Absorb posted tables into bounded current/last state. Never emits.
     /// Invalidation (offline, inv_size 0, invalid slots) resets that family
     /// immediately, including during Pause, so a later valid table seeds.
-    pub fn observe(&mut self, snap: &SnapshotReader<'_>) -> ObserveResult {
+    pub fn observe(&mut self, snap: &Snapshot<'_>) -> ObserveResult {
         if snap.has_ingame() && !snap.ingame() {
             self.offline = true;
             self.reset_baselines();
@@ -264,12 +264,12 @@ impl NativeEventProducer {
     }
 }
 
-fn collect_xp(snap: &SnapshotReader<'_>) -> Vec<XpState> {
+fn collect_xp(snap: &Snapshot<'_>) -> Vec<XpState> {
     snap.stats()
         .into_iter()
         .flat_map(|rows| rows.iter())
         .take(MAX_STATS)
-        .map(|s: StatReader<'_>| XpState {
+        .map(|s: Stat<'_>| XpState {
             index: s.index(),
             name: s.name().unwrap_or_default().to_string(),
             xp: s.xp(),
@@ -305,7 +305,7 @@ fn merge_xp(last: &mut Vec<XpState>, current: &[XpState]) {
 }
 
 fn expand_inv<'a>(
-    rows: impl IntoIterator<Item = RowReader<'a>>,
+    rows: impl IntoIterator<Item = Row<'a>>,
     size: i32,
 ) -> Result<Vec<SlotState>, String> {
     if size <= 0 || size > MAX_INV_SIZE {
@@ -465,7 +465,7 @@ mod tests {
     }
 
     fn absorb(p: &mut NativeEventProducer, bytes: &[u8]) -> ObserveResult {
-        let snap = SnapshotReader::from_bytes(bytes).expect("snapshot bytes");
+        let snap = Snapshot::from_bytes(bytes).expect("snapshot bytes");
         p.observe(&snap)
     }
 
@@ -553,7 +553,7 @@ mod tests {
         snap.tick = 2;
         snap.hold = true;
         let (delta, _) = encode_snapshot_delta(Some(&fp), &snap, false);
-        let reader = SnapshotReader::from_bytes(&delta).unwrap();
+        let reader = Snapshot::from_bytes(&delta).unwrap();
         assert!(!reader.has_inv(), "delta must omit unchanged inv");
         let out = observe(&mut p, &delta);
         assert!(
@@ -825,7 +825,7 @@ mod tests {
         snap.inv_size = 10;
         snap.tick = 2;
         let (delta, _) = encode_snapshot_delta(Some(&fp), &snap, false);
-        let reader = SnapshotReader::from_bytes(&delta).unwrap();
+        let reader = Snapshot::from_bytes(&delta).unwrap();
         assert!(reader.has_inv_size());
         // inv fingerprint includes rows; size change may still carry inv.
         // Force a size-only observation by not posting inv: use a delta where
@@ -853,7 +853,7 @@ mod tests {
         snap.tick = 2;
         snap.hold = true;
         let (delta, _) = encode_snapshot_delta(Some(&fp), &snap, false);
-        let reader = SnapshotReader::from_bytes(&delta).unwrap();
+        let reader = Snapshot::from_bytes(&delta).unwrap();
         assert!(!reader.has_stats());
         assert!(observe(&mut p, &delta).events.is_empty());
         let again = [prayer(50)];
@@ -959,7 +959,7 @@ mod tests {
         snap.stats = &stats1;
         snap.inv = &[];
         let (sparse, _) = encode_snapshot_delta(Some(&fp2), &snap, false);
-        let reader = SnapshotReader::from_bytes(&sparse).unwrap();
+        let reader = Snapshot::from_bytes(&sparse).unwrap();
         assert!(!reader.has_ingame(), "still-offline delta must omit ingame");
         assert!(reader.has_stats());
         absorb(&mut p, &sparse);

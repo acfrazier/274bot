@@ -9,7 +9,7 @@ use script::hunt_key::{
     self, key_deadline_remaining_ms, key_force_bound_reached, key_token_alive, set_observation,
     KeyGround, KeyInv, KeyNpc, KeyObservation,
 };
-use script::isolate_fb::{encode_snapshot, ItemRowInput, SnapshotInput, SnapshotReader, TileInput};
+use script::isolate_fb::{encode_snapshot, ItemRowInput, Snapshot, SnapshotInput, TileInput};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
@@ -816,7 +816,7 @@ fn snapshot_reads_inv_id_not_cert_bank_or_equipment() {
         slot: 2,
     };
     let bytes = encode_snapshot(&snap_rows(outside(), &[cert, dusty], &[jail], &[jail]));
-    let reader = SnapshotReader::from_bytes(&bytes).unwrap();
+    let reader = Snapshot::from_bytes(&bytes).unwrap();
     script::observed::apply(&reader);
     let token = begin();
     let step = call(token, site(json!({})), None);
@@ -827,7 +827,7 @@ fn snapshot_reads_inv_id_not_cert_bank_or_equipment() {
 
     reset();
     let bytes = encode_snapshot(&snap_rows(outside(), &[jail], &[], &[]));
-    let reader = SnapshotReader::from_bytes(&bytes).unwrap();
+    let reader = Snapshot::from_bytes(&bytes).unwrap();
     script::observed::apply(&reader);
     let token = begin();
     let step = call(token, site(json!({})), None);

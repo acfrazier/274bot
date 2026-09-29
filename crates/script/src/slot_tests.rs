@@ -612,7 +612,7 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
     slot.start_compiled(Box::new(Noop), None).unwrap();
     assert_eq!(slot.encode_snapshot_delta(&input, false), first);
     // The earlier owned packet remains intact after reuse and Stop.
-    assert!(crate::isolate_fb::SnapshotReader::from_bytes(&first).is_ok());
+    assert!(crate::isolate_fb::Snapshot::from_bytes(&first).is_ok());
 }
 
 /// F14 M12: a post the wedged isolate refused never reached it, so the
