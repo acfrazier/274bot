@@ -6,15 +6,13 @@
 //! then a per-frame `prepare_frame` → UI body → `prepare_render_with_ui`
 //! → render pass → present cycle driven by an `ApplicationHandler` event
 //! loop. The window/GPU stack is rebuilt on render errors. An OS-destroyed
-//! window (`WindowEvent::Destroyed`) drops the stack and exits: winit's X11
-//! backend unwraps `XGetGeometry` (`error_kind: Drawable`, X11 `BadDrawable`)
-//! if a later redraw in the same pump still holds the `Window`. When the
-//! drawable is destroyed *during* redraw (DestroyNotify not yet delivered),
-//! that unwrap is caught and treated as the same window-loss close.
+//! window (`WindowEvent::Destroyed` for the current window, or
+//! `CloseRequested`) drops the stack and exits: winit's X11 backend unwraps
+//! `XGetGeometry` (`error_kind: Drawable`, X11 `BadDrawable`) if a later
+//! redraw in the same pump still holds the `Window`. Per-frame sizing uses
+//! ImGui's cached display size instead of `Window::inner_size`.
 
-use std::any::Any;
 use std::mem;
-use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
@@ -1498,22 +1496,14 @@ where
     }
 }
 
-/// winit 0.30 X11 `inner_size_physical` unwraps this after the X window is
-/// gone: `error_kind: Drawable` is X11 `BadDrawable` (code 9).
-fn x11_drawable_loss_message(msg: &str) -> bool {
-    let lower = msg.to_ascii_lowercase();
-    lower.contains("baddrawable")
-        || (lower.contains("error_kind: drawable") && lower.contains("error_code: 9"))
-}
-
-fn x11_drawable_loss_payload(payload: &(dyn Any + Send)) -> bool {
-    if let Some(s) = payload.downcast_ref::<String>() {
-        x11_drawable_loss_message(s)
-    } else if let Some(s) = payload.downcast_ref::<&str>() {
-        x11_drawable_loss_message(s)
-    } else {
-        false
-    }
+fn current_os_window_id(
+    window: &Option<AppWindow>,
+    pending: &Option<PendingGpu>,
+) -> Option<WindowId> {
+    window
+        .as_ref()
+        .map(|w| w.window.id())
+        .or_else(|| pending.as_ref().map(|p| p.window.id()))
 }
 
 fn close_for_destroyed_window(
@@ -1548,53 +1538,48 @@ where
         // We may recreate the window/gpu stack on fatal GPU errors, so we avoid
         // holding a mutable borrow of self.window across the whole match.
         match event {
-            // Close and OS-destroy both drop the stack before `exit`. winit
-            // still delivers `RedrawRequested` later in this pump; if the
-            // `Window` is alive, imgui-winit/`inner_size` hits the X11
-            // BadDrawable unwrap (error_code 9) after DestroyNotify.
-            WindowEvent::Destroyed | WindowEvent::CloseRequested => {
+            // OS-destroy of *this* window (or a close request) drops the
+            // stack before `exit`. winit still delivers `RedrawRequested`
+            // later in this pump; dropping `AppWindow` makes that a no-op
+            // so X11 `inner_size` cannot unwrap BadDrawable after DestroyNotify.
+            // A GPU rebuild drops the old winit window, which also emits
+            // `Destroyed` — ignore ids that are not the current window.
+            WindowEvent::Destroyed => {
+                if current_os_window_id(&self.window, &self.pending) != Some(window_id) {
+                    return;
+                }
+                close_for_destroyed_window(&mut self.window, &mut self.pending, event_loop);
+            }
+            WindowEvent::CloseRequested => {
                 close_for_destroyed_window(&mut self.window, &mut self.pending, event_loop);
             }
             WindowEvent::RedrawRequested => {
                 // Render and, on fatal errors, attempt a full GPU/window rebuild.
                 let mut need_recreate = false;
-                let mut lost = false;
                 if let Some(window) = self.window.as_mut() {
                     let full_event: winit::event::Event<()> = winit::event::Event::WindowEvent {
                         window_id,
                         event: event.clone(),
                     };
-                    let docking = self.cfg.docking;
-                    let redraw = self.cfg.redraw;
-                    let result = catch_unwind(AssertUnwindSafe(|| {
-                        window.imgui.platform.handle_event(
-                            &mut window.imgui.context,
-                            &window.window,
-                            &full_event,
+                    window.imgui.platform.handle_event(
+                        &mut window.imgui.context,
+                        &window.window,
+                        &full_event,
+                    );
+
+                    if let Err(e) =
+                        window.render(&mut self.ui_frame, &self.cfg.docking, self.shots.as_ref())
+                    {
+                        eprintln!(
+                            "Render error: {e}; attempting to recover by recreating GPU state"
                         );
-                        window.render(&mut self.ui_frame, &docking, self.shots.as_ref())
-                    }));
-                    match result {
-                        Ok(Ok(())) => {
-                            if matches!(redraw, RedrawMode::Poll) {
-                                window.window.request_redraw();
-                            }
-                        }
-                        Ok(Err(e)) => {
-                            eprintln!(
-                                "Render error: {e}; attempting to recover by recreating GPU state"
-                            );
-                            need_recreate = true;
-                        }
-                        Err(payload) if x11_drawable_loss_payload(&payload) => lost = true,
-                        Err(payload) => resume_unwind(payload),
+                        need_recreate = true;
+                    } else if matches!(self.cfg.redraw, RedrawMode::Poll) {
+                        window.window.request_redraw();
                     }
                 }
 
-                if lost {
-                    eprintln!("[panel] OS window was destroyed during redraw; closing");
-                    close_for_destroyed_window(&mut self.window, &mut self.pending, event_loop);
-                } else if need_recreate && !event_loop.exiting() {
+                if need_recreate && !event_loop.exiting() {
                     // Drop the existing window and rebuild the whole stack
                     // the same way startup builds it.
                     self.window = None;
@@ -1602,61 +1587,49 @@ where
                 }
             }
             _ => {
-                let result = {
-                    let Some(window) = self.window.as_mut() else {
-                        // Close/destroy already dropped the stack. Other events
-                        // before GPU bring-up finishes are ignored.
-                        return;
-                    };
-
-                    let full_event: winit::event::Event<()> = winit::event::Event::WindowEvent {
-                        window_id,
-                        event: event.clone(),
-                    };
-                    catch_unwind(AssertUnwindSafe(|| {
-                        window.imgui.platform.handle_event(
-                            &mut window.imgui.context,
-                            &window.window,
-                            &full_event,
-                        );
-                        if let WindowEvent::KeyboardInput { event, .. } = &event {
-                            // The backend queues event.text for text widgets, but
-                            // shifted punctuation has no ImGui key identity there.
-                            // Add only the missing key lifecycle and record the
-                            // produced/named capture ch in event order: text must
-                            // not be queued a second time, and key-repeat must not
-                            // extra-deliver.
-                            if !event.repeat {
-                                crate::input_capture::add_shifted_key_event(
-                                    window.imgui.context.io_mut(),
-                                    &event.logical_key,
-                                    event.location,
-                                    event.state == winit::event::ElementState::Pressed,
-                                );
-                            }
-                        }
-
-                        match event {
-                            WindowEvent::Resized(physical_size) => {
-                                window.resize(physical_size);
-                                window.window.request_redraw();
-                            }
-                            WindowEvent::ScaleFactorChanged { .. } => {
-                                let new_size = window.window.inner_size();
-                                window.resize(new_size);
-                                window.window.request_redraw();
-                            }
-                            _ => {}
-                        }
-                    }))
+                let Some(window) = self.window.as_mut() else {
+                    // Close/destroy already dropped the stack. Other events
+                    // before GPU bring-up finishes are ignored.
+                    return;
                 };
-                match result {
-                    Ok(()) => {}
-                    Err(payload) if x11_drawable_loss_payload(&payload) => {
-                        eprintln!("[panel] OS window was destroyed; closing");
-                        close_for_destroyed_window(&mut self.window, &mut self.pending, event_loop);
+
+                let full_event: winit::event::Event<()> = winit::event::Event::WindowEvent {
+                    window_id,
+                    event: event.clone(),
+                };
+                window.imgui.platform.handle_event(
+                    &mut window.imgui.context,
+                    &window.window,
+                    &full_event,
+                );
+                if let WindowEvent::KeyboardInput { event, .. } = &event {
+                    // The backend queues event.text for text widgets, but
+                    // shifted punctuation has no ImGui key identity there.
+                    // Add only the missing key lifecycle and record the
+                    // produced/named capture ch in event order: text must
+                    // not be queued a second time, and key-repeat must not
+                    // extra-deliver.
+                    if !event.repeat {
+                        crate::input_capture::add_shifted_key_event(
+                            window.imgui.context.io_mut(),
+                            &event.logical_key,
+                            event.location,
+                            event.state == winit::event::ElementState::Pressed,
+                        );
                     }
-                    Err(payload) => resume_unwind(payload),
+                }
+
+                match event {
+                    WindowEvent::Resized(physical_size) => {
+                        window.resize(physical_size);
+                        window.window.request_redraw();
+                    }
+                    WindowEvent::ScaleFactorChanged { .. } => {
+                        let new_size = window.window.inner_size();
+                        window.resize(new_size);
+                        window.window.request_redraw();
+                    }
+                    _ => {}
                 }
             }
         }
