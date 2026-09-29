@@ -19,6 +19,15 @@ pub(super) struct PendingDelivery {
 }
 
 impl ArmMirror {
+    pub(super) fn native_identity(&self) -> Option<String> {
+        match self {
+            Self::NativeSettings { id, .. } => Some(script::compiled_identity_key(*id)),
+            Self::ScriptSettings { card, .. } => Some(card.clone()),
+            Self::Remember(Some(live)) if live.run.is_some() => Some(live.identity.clone()),
+            _ => None,
+        }
+    }
+
     pub(super) fn native_draft(&self) -> Option<(script::CompiledId, Arc<SettingsBag>)> {
         match self {
             Self::NativeSettings { id, bag, .. } => Some((*id, Arc::clone(bag))),
@@ -101,23 +110,24 @@ impl<Io> OperatorSession<Io> {
                 .join()
                 .map_err(|_| "native settings preparation worker panicked".to_string())
                 .and_then(|result| result.map_err(|error| error.to_string()));
-            let delivery = if self.profile_edits.get(&pending.name) != Some(&pending.op) {
-                LiveDelivery::Stale
-            } else if let Some(play) = &self.play {
-                if play.script_native_run(&pending.name) != pending.live.run {
+            let delivery =
+                if !self.native_edit_current(&pending.name, &pending.live.identity, pending.op) {
                     LiveDelivery::Stale
-                } else {
-                    match prepared {
-                        Ok(config) => {
-                            pending.live.prepared = Some(config);
-                            deliver_settings(play, &pending.name, Some(pending.live))
+                } else if let Some(play) = &self.play {
+                    if play.script_native_run(&pending.name) != pending.live.run {
+                        LiveDelivery::Stale
+                    } else {
+                        match prepared {
+                            Ok(config) => {
+                                pending.live.prepared = Some(config);
+                                deliver_settings(play, &pending.name, Some(pending.live))
+                            }
+                            Err(error) => LiveDelivery::Rejected(error),
                         }
-                        Err(error) => LiveDelivery::Rejected(error),
                     }
-                }
-            } else {
-                LiveDelivery::Stale
-            };
+                } else {
+                    LiveDelivery::Stale
+                };
             self.settings_writes.push(SettingsWrite {
                 op: pending.op,
                 profile: pending.name,
@@ -133,11 +143,26 @@ impl<Io> OperatorSession<Io> {
     }
 
     pub(crate) fn profile_for_edit(&self, name: &str) -> Option<&Profile> {
-        self.profile_edits
-            .get(name)
-            .and_then(|op| self.preparations.get(op))
-            .map(|pending| &pending.profile)
+        self.preparations
+            .iter()
+            .filter(|(op, pending)| {
+                pending.profile.username == name
+                    && pending
+                        .mirror
+                        .native_identity()
+                        .is_some_and(|card| self.native_edit_current(name, &card, **op))
+            })
+            .max_by_key(|(op, _)| *op)
+            .map(|(_, pending)| &pending.profile)
             .or_else(|| self.vault.as_ref()?.get(name))
+    }
+
+    fn native_edit_current(&self, name: &str, card: &str, op: OperationId) -> bool {
+        self.native_edits.get(&(name.to_owned(), card.to_owned())) == Some(&op)
+            && self
+                .profile_edits
+                .get(name)
+                .is_none_or(|removed| *removed < op)
     }
 
     pub(super) fn queue_native_settings(
@@ -176,8 +201,11 @@ impl<Io> OperatorSession<Io> {
             }
         };
         self.operations.set(op, &profile.username, Outcome::Pending);
-        self.profile_edits.insert(source.to_owned(), op);
-        self.profile_edits.insert(profile.username.clone(), op);
+        let card = script::compiled_identity_key(id);
+        self.native_edits
+            .insert((source.to_owned(), card.clone()), op);
+        self.native_edits
+            .insert((profile.username.clone(), card), op);
         self.preparations.insert(
             op,
             PendingPreparation {
@@ -203,19 +231,23 @@ impl<Io> OperatorSession<Io> {
             .collect();
         ready.sort_unstable();
         for op in ready {
-            let pending = self.preparations.remove(&op).expect("ready preparation");
-            let name = &pending.profile.username;
-            let source = pending.renamed_from.as_deref().unwrap_or(name);
+            let mut pending = self.preparations.remove(&op).expect("ready preparation");
+            let name = pending.profile.username.clone();
+            let source = pending.renamed_from.as_deref().unwrap_or(&name);
             let result = pending
                 .worker
                 .join()
                 .map_err(|_| "native settings preparation worker panicked".to_string())
                 .and_then(|result| result.map_err(|error| error.to_string()));
-            let current = self.profile_edits.get(name) == Some(&op)
-                && self.profile_edits.get(source) == Some(&op)
+            let card = pending
+                .mirror
+                .native_identity()
+                .expect("native draft identity");
+            let current = self.native_edit_current(&name, &card, op)
+                && self.native_edit_current(source, &card, op)
                 && self.vault.as_ref().is_some_and(|vault| {
                     vault.get(source).is_some()
-                        && (pending.renamed_from.is_none() || vault.get(name).is_none())
+                        && (pending.renamed_from.is_none() || vault.get(&name).is_none())
                 });
             // Invalid drafts remain failed even if an unrelated durable write
             // overtook them. They were never eligible for persistence.
@@ -223,7 +255,7 @@ impl<Io> OperatorSession<Io> {
                 Ok(config) => config,
                 Err(error) => {
                     self.operations
-                        .set(op, name, Outcome::Failed(error.clone()));
+                        .set(op, &name, Outcome::Failed(error.clone()));
                     self.write_failures
                         .push(format!("{}: {error}", pending.label));
                     if matches!(pending.mirror, ArmMirror::NativeSettings { .. }) {
@@ -237,7 +269,7 @@ impl<Io> OperatorSession<Io> {
                 }
             };
             if !current {
-                self.operations.set(op, name, Outcome::Cancelled);
+                self.operations.set(op, &name, Outcome::Cancelled);
                 if matches!(pending.mirror, ArmMirror::NativeSettings { .. }) {
                     self.settings_writes.push(SettingsWrite {
                         op,
@@ -247,8 +279,24 @@ impl<Io> OperatorSession<Io> {
                 }
                 continue;
             }
+            // Preparation owns this card's entry, not a snapshot of the whole
+            // profile. Preserve unrelated writes that landed while it ran.
+            if let Some(mut latest) = self
+                .vault
+                .as_ref()
+                .and_then(|vault| vault.get(source))
+                .cloned()
+            {
+                if let Some(entry) = pending.profile.settings.script_settings.remove(&card) {
+                    latest.settings.script_settings.insert(card, entry);
+                } else {
+                    latest.settings.script_settings.remove(&card);
+                }
+                latest.username.clone_from(&name);
+                pending.profile = latest;
+            }
             self.ensure_writer();
-            self.hold_durable(name);
+            self.hold_durable(&name);
             api::hostlog::register_secret(&pending.profile.password);
             let mut changes = vec![VaultChange::Upsert(pending.profile.clone())];
             if let Some(old) = pending.renamed_from {

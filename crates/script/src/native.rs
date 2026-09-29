@@ -25,7 +25,7 @@ pub struct PreparedConfig {
     schema: u16,
     revision: u64,
     bag: Arc<SettingsBag>,
-    value: Box<dyn Any + Send + Sync>,
+    value: Option<Box<dyn Any + Send + Sync>>,
 }
 
 impl PreparedConfig {
@@ -42,7 +42,7 @@ impl PreparedConfig {
             schema,
             revision,
             bag,
-            value: Box::new(value),
+            value: Some(Box::new(value)),
         })
     }
 
@@ -59,7 +59,21 @@ impl PreparedConfig {
         &self.bag
     }
     pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
-        self.value.downcast_ref()
+        self.value.as_deref()?.downcast_ref()
+    }
+}
+
+impl Drop for PreparedConfig {
+    fn drop(&mut self) {
+        // Card-owned payloads can be last-released by the UI, a rejected
+        // delivery, or a detached preparation worker's thread packet.
+        // Contain their destructors at the owner, independent of the caller.
+        let value = self.value.take();
+        if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(value)))
+        {
+            // A custom panic payload may itself panic when destroyed.
+            std::mem::forget(payload);
+        }
     }
 }
 
@@ -453,4 +467,35 @@ pub(crate) fn unavailable() -> ActionError {
     static REASON: LazyLock<Arc<str>> =
         LazyLock::new(|| Arc::from("native action facility unavailable"));
     ActionError::Unavailable(Arc::clone(&REASON))
+}
+
+#[cfg(test)]
+mod preparation_drop_tests {
+    use super::*;
+
+    struct PanickingConfig;
+    impl Drop for PanickingConfig {
+        fn drop(&mut self) {
+            panic!("card configuration destructor");
+        }
+    }
+
+    #[test]
+    fn settings_worker_result_can_be_discarded_without_unwinding() {
+        let worker = std::thread::spawn(|| {
+            PreparedConfig::new(
+                CompiledId("test"),
+                1,
+                1,
+                Arc::new(SettingsBag::new()),
+                PanickingConfig,
+            )
+        });
+        let prepared = worker.join().unwrap();
+        let discarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(prepared)));
+        assert!(
+            discarded.is_ok(),
+            "discarding stale settings unwound into the caller"
+        );
+    }
 }
