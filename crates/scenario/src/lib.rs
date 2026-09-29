@@ -571,8 +571,8 @@ const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
 /// ContinueDialog pairs, no deposit) — progressive craft, not a freeze.
 /// Residual at ~8 dirties/item (interrupted rate) × 7 bars + L3→4 + bank
 /// walk pushes arm-to-deposit past 220 dirties; pad explicitly for
-/// dirty≠engine and match the existing bone_burier bank-item pattern →
-/// **240**. Diagnosis remains **provisional** until root LIVE confirms
+/// dirty≠engine → **240**. Diagnosis remains **provisional** until root
+/// LIVE confirms
 /// deposit/restock/return/fresh XP inside unchanged 180s deadline.
 /// Global [`SCRIPT_GOLD_DEADLINE`] (180s) and other gold watches stay 150.
 const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
