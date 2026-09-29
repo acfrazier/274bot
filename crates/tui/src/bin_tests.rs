@@ -892,7 +892,7 @@ fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
     let err = session.bootstrap_interactive_profiles(&[]).unwrap_err();
     assert_eq!(
         err,
-        "vault has no profiles (create one with host-play --user)"
+        "vault has no profiles (start tui-play with --user <name> to create one)"
     );
     assert!(session.names.is_empty(), "names: {:?}", session.names);
     assert!(
