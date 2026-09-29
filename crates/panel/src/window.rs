@@ -5,9 +5,16 @@
 //! then surface config → imgui context (theme/ini) → platform + renderer,
 //! then a per-frame `prepare_frame` → UI body → `prepare_render_with_ui`
 //! → render pass → present cycle driven by an `ApplicationHandler` event
-//! loop. The window/GPU stack is rebuilt on render errors.
+//! loop. The window/GPU stack is rebuilt on render errors. An OS-destroyed
+//! window (`WindowEvent::Destroyed`) drops the stack and exits: winit's X11
+//! backend unwraps `XGetGeometry` (`error_kind: Drawable`, X11 `BadDrawable`)
+//! if a later redraw in the same pump still holds the `Window`. When the
+//! drawable is destroyed *during* redraw (DestroyNotify not yet delivered),
+//! that unwrap is caught and treated as the same window-loss close.
 
+use std::any::Any;
 use std::mem;
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
@@ -1491,11 +1498,42 @@ where
     }
 }
 
+/// winit 0.30 X11 `inner_size_physical` unwraps this after the X window is
+/// gone: `error_kind: Drawable` is X11 `BadDrawable` (code 9).
+fn x11_drawable_loss_message(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("baddrawable")
+        || (lower.contains("error_kind: drawable") && lower.contains("error_code: 9"))
+}
+
+fn x11_drawable_loss_payload(payload: &(dyn Any + Send)) -> bool {
+    if let Some(s) = payload.downcast_ref::<String>() {
+        x11_drawable_loss_message(s)
+    } else if let Some(s) = payload.downcast_ref::<&str>() {
+        x11_drawable_loss_message(s)
+    } else {
+        false
+    }
+}
+
+fn close_for_destroyed_window(
+    window: &mut Option<AppWindow>,
+    pending: &mut Option<PendingGpu>,
+    event_loop: &ActiveEventLoop,
+) {
+    *window = None;
+    *pending = None;
+    event_loop.exit();
+}
+
 impl<F> ApplicationHandler for App<F>
 where
     F: FnMut(&imgui::Ui, &mut Gpu) + 'static,
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if event_loop.exiting() {
+            return;
+        }
         if self.window.is_none() && self.pending.is_none() {
             self.start_gpu(event_loop);
         }
@@ -1510,33 +1548,53 @@ where
         // We may recreate the window/gpu stack on fatal GPU errors, so we avoid
         // holding a mutable borrow of self.window across the whole match.
         match event {
+            // Close and OS-destroy both drop the stack before `exit`. winit
+            // still delivers `RedrawRequested` later in this pump; if the
+            // `Window` is alive, imgui-winit/`inner_size` hits the X11
+            // BadDrawable unwrap (error_code 9) after DestroyNotify.
+            WindowEvent::Destroyed | WindowEvent::CloseRequested => {
+                close_for_destroyed_window(&mut self.window, &mut self.pending, event_loop);
+            }
             WindowEvent::RedrawRequested => {
                 // Render and, on fatal errors, attempt a full GPU/window rebuild.
                 let mut need_recreate = false;
+                let mut lost = false;
                 if let Some(window) = self.window.as_mut() {
                     let full_event: winit::event::Event<()> = winit::event::Event::WindowEvent {
                         window_id,
                         event: event.clone(),
                     };
-                    window.imgui.platform.handle_event(
-                        &mut window.imgui.context,
-                        &window.window,
-                        &full_event,
-                    );
-
-                    if let Err(e) =
-                        window.render(&mut self.ui_frame, &self.cfg.docking, self.shots.as_ref())
-                    {
-                        eprintln!(
-                            "Render error: {e}; attempting to recover by recreating GPU state"
+                    let docking = self.cfg.docking;
+                    let redraw = self.cfg.redraw;
+                    let result = catch_unwind(AssertUnwindSafe(|| {
+                        window.imgui.platform.handle_event(
+                            &mut window.imgui.context,
+                            &window.window,
+                            &full_event,
                         );
-                        need_recreate = true;
-                    } else if matches!(self.cfg.redraw, RedrawMode::Poll) {
-                        window.window.request_redraw();
+                        window.render(&mut self.ui_frame, &docking, self.shots.as_ref())
+                    }));
+                    match result {
+                        Ok(Ok(())) => {
+                            if matches!(redraw, RedrawMode::Poll) {
+                                window.window.request_redraw();
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            eprintln!(
+                                "Render error: {e}; attempting to recover by recreating GPU state"
+                            );
+                            need_recreate = true;
+                        }
+                        Err(payload) if x11_drawable_loss_payload(&payload) => lost = true,
+                        Err(payload) => resume_unwind(payload),
                     }
                 }
 
-                if need_recreate {
+                if lost {
+                    eprintln!("[panel] OS window was destroyed during redraw; closing");
+                    close_for_destroyed_window(&mut self.window, &mut self.pending, event_loop);
+                } else if need_recreate && !event_loop.exiting() {
                     // Drop the existing window and rebuild the whole stack
                     // the same way startup builds it.
                     self.window = None;
@@ -1544,61 +1602,70 @@ where
                 }
             }
             _ => {
-                let window = match self.window.as_mut() {
-                    Some(window) => window,
-                    // No device yet: only a close request means anything.
-                    None => {
-                        if matches!(event, WindowEvent::CloseRequested) {
-                            event_loop.exit();
-                        }
+                let result = {
+                    let Some(window) = self.window.as_mut() else {
+                        // Close/destroy already dropped the stack. Other events
+                        // before GPU bring-up finishes are ignored.
                         return;
-                    }
-                };
+                    };
 
-                let full_event: winit::event::Event<()> = winit::event::Event::WindowEvent {
-                    window_id,
-                    event: event.clone(),
-                };
-                window.imgui.platform.handle_event(
-                    &mut window.imgui.context,
-                    &window.window,
-                    &full_event,
-                );
-                if let WindowEvent::KeyboardInput { event, .. } = &event {
-                    // The backend queues event.text for text widgets, but
-                    // shifted punctuation has no ImGui key identity there.
-                    // Add only the missing key lifecycle and record the
-                    // produced/named capture ch in event order: text must
-                    // not be queued a second time, and key-repeat must not
-                    // extra-deliver.
-                    if !event.repeat {
-                        crate::input_capture::add_shifted_key_event(
-                            window.imgui.context.io_mut(),
-                            &event.logical_key,
-                            event.location,
-                            event.state == winit::event::ElementState::Pressed,
+                    let full_event: winit::event::Event<()> = winit::event::Event::WindowEvent {
+                        window_id,
+                        event: event.clone(),
+                    };
+                    catch_unwind(AssertUnwindSafe(|| {
+                        window.imgui.platform.handle_event(
+                            &mut window.imgui.context,
+                            &window.window,
+                            &full_event,
                         );
-                    }
-                }
+                        if let WindowEvent::KeyboardInput { event, .. } = &event {
+                            // The backend queues event.text for text widgets, but
+                            // shifted punctuation has no ImGui key identity there.
+                            // Add only the missing key lifecycle and record the
+                            // produced/named capture ch in event order: text must
+                            // not be queued a second time, and key-repeat must not
+                            // extra-deliver.
+                            if !event.repeat {
+                                crate::input_capture::add_shifted_key_event(
+                                    window.imgui.context.io_mut(),
+                                    &event.logical_key,
+                                    event.location,
+                                    event.state == winit::event::ElementState::Pressed,
+                                );
+                            }
+                        }
 
-                match event {
-                    WindowEvent::Resized(physical_size) => {
-                        window.resize(physical_size);
-                        window.window.request_redraw();
+                        match event {
+                            WindowEvent::Resized(physical_size) => {
+                                window.resize(physical_size);
+                                window.window.request_redraw();
+                            }
+                            WindowEvent::ScaleFactorChanged { .. } => {
+                                let new_size = window.window.inner_size();
+                                window.resize(new_size);
+                                window.window.request_redraw();
+                            }
+                            _ => {}
+                        }
+                    }))
+                };
+                match result {
+                    Ok(()) => {}
+                    Err(payload) if x11_drawable_loss_payload(&payload) => {
+                        eprintln!("[panel] OS window was destroyed; closing");
+                        close_for_destroyed_window(&mut self.window, &mut self.pending, event_loop);
                     }
-                    WindowEvent::ScaleFactorChanged { .. } => {
-                        let new_size = window.window.inner_size();
-                        window.resize(new_size);
-                        window.window.request_redraw();
-                    }
-                    WindowEvent::CloseRequested => event_loop.exit(),
-                    _ => {}
+                    Err(payload) => resume_unwind(payload),
                 }
             }
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if event_loop.exiting() {
+            return;
+        }
         if self.poll_gpu(event_loop) {
             event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + GPU_INIT_POLL));
             return;

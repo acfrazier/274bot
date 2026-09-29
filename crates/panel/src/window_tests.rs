@@ -768,3 +768,34 @@ fn glyph_font_merges_status_and_remove_codepoints() {
         "FA Free Solid PUA (home/desktop/docs/downloads/folder/file/chevron) must resolve"
     );
 }
+
+/// The Linux X11 BadDrawable panic (winit `inner_size_physical` unwrap
+/// after the drawable is destroyed) must be classified as window loss so
+/// the loop closes instead of aborting. Unrelated panics must not match.
+#[test]
+fn x11_baddrawable_unwrap_is_window_loss_other_panics_are_not() {
+    // Same text winit 0.30 emits on Linux (`inner_size_physical` unwrap).
+    // `panic_any(String)` is the payload type of `Result::unwrap` (`unwrap_failed`).
+    let observed_msg = "called `Result::unwrap()` on an `Err` value: X11(X11Error { error_kind: Drawable, error_code: 9, sequence: 617, bad_value: 4194306 })";
+    assert!(
+        x11_drawable_loss_message(observed_msg),
+        "observed winit BadDrawable unwrap text must be window loss"
+    );
+    let observed = std::panic::catch_unwind(|| {
+        std::panic::panic_any(observed_msg.to_string());
+    })
+    .expect_err("expected the observed winit unwrap panic");
+    assert!(
+        x11_drawable_loss_payload(&*observed),
+        "String payload of the winit unwrap must close the panel"
+    );
+
+    let other = std::panic::catch_unwind(|| {
+        std::panic::panic_any("index out of bounds: the len is 3 but the index is 4".to_string());
+    })
+    .expect_err("expected an unrelated panic");
+    assert!(
+        !x11_drawable_loss_payload(&*other),
+        "unrelated panics must not be swallowed as window loss"
+    );
+}
