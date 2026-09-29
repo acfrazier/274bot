@@ -815,7 +815,7 @@ impl AppWindow {
     {
         let _profile_frame = client::profiling::UI_FRAME.start();
         #[cfg(feature = "memory-profile")]
-        let mut memory_profile_frame = host_play::memory::PanelFrameTimer::start();
+        let memory_profile_frame = host_play::memory::PanelFrameTimer::start();
         self.imgui
             .platform
             .prepare_frame(&self.window, &mut self.imgui.context);

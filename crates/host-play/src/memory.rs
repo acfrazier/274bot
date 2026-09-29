@@ -38,23 +38,22 @@ const READY_SETTLE: Duration = Duration::from_secs(2);
 /// OS unresponsive interval lives) and the first presented frame.
 pub struct PanelFrameTimer {
     start: Instant,
-    presented: bool,
 }
 
 impl PanelFrameTimer {
     pub fn start() -> Self {
         let start = Instant::now();
         crate::memory_startup::render_started(start);
-        Self {
-            start,
-            presented: false,
-        }
+        Self { start }
     }
 
-    /// The frame's swapchain image was presented. Frames that return early on
-    /// a lost, outdated, timed-out or occluded surface never call this.
-    pub fn presented(&mut self) {
-        self.presented = true;
+    /// The frame's swapchain image was just presented: call this right after
+    /// `present()`, before readback mapping or other post-present work, so the
+    /// first-presented milestone is not inflated by it. Frames that return
+    /// early on a lost, outdated, timed-out or occluded surface never call
+    /// this.
+    pub fn presented(&self) {
+        crate::memory_startup::mark_startup(StartupMark::FirstFramePresented);
     }
 }
 
@@ -67,7 +66,7 @@ impl Drop for PanelFrameTimer {
         PANEL_FRAME_MS[elapsed_ms].fetch_add(1, Relaxed);
         let elapsed_ns = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
         PANEL_FRAME_INTERVAL_MAX_NS.fetch_max(elapsed_ns, Relaxed);
-        crate::memory_startup::render_ended(end, self.presented);
+        crate::memory_startup::render_ended(end);
     }
 }
 
@@ -449,25 +448,10 @@ fn widen_fleet_post_start_waits(scenario: &mut scenario::Scenario, n: usize) {
         step.wait.budget_ticks = step.wait.budget_ticks.max(minimum);
     }
 }
-
-/// The largest fleet the natural Ardougne field is known to serve. The
-/// kickoff N=10 cell qualified there; N=50 qualified 25 to 30 slots in the
-/// 30-minute bound on both platforms, because the field holds four Moss giants
-/// and every catalog combat card skips a giant another player targets, so each
-/// giant serves one slot at a time and the rest queue behind a lottery.
-const MOSS_NATURAL_FIELD_FLEET_LIMIT: usize = 10;
-
-/// Giants stocked beside each returned slot of a larger fleet: two, so a slot
-/// whose first is taken or that dies still has a free one.
-const MOSS_PRIVATE_GIANTS_PER_SLOT: usize = 2;
-
-const MOSS_RETURN_WATCH: &str = "watch return to the moss-giant safespot after startup banking";
-
 /// Shared single-combat actors cannot award XP to every fleet member: the
 /// frozen card counts another player's target disappearing as a kill. Keep the
 /// ordinary N=1 XP proof, but require a fail-closed local engagement for W2
 /// fleets so denied contenders do not block an otherwise representative load.
-/// Fleets beyond [`MOSS_NATURAL_FIELD_FLEET_LIMIT`] also get private giants.
 fn qualify_contentious_moss_fleet(
     scenario: &mut scenario::Scenario,
     n: usize,
@@ -489,44 +473,36 @@ fn qualify_contentious_moss_fleet(
         .ok_or("moss fleet qualification is missing its post-return Strength XP watch")?;
     step.name = "watch the local player target a Moss giant after the startup bank return";
     step.wait.arm = scenario::Proof::LocalTargetingNpcName { name: "Moss giant" };
-    if n > MOSS_NATURAL_FIELD_FLEET_LIMIT {
-        stock_private_moss_giants(scenario, start)?;
-    }
     Ok(())
 }
 
-/// A fleet larger than the field can serve stocks its own targets. Real
-/// spawns cannot: the content places 42 Moss giants in the whole world and
-/// four in this field, so no split of a 50-slot fleet across spots gives every
-/// slot a giant. After a slot returns to the safespot it spawns giants with the
-/// engine's `::npcadd` (an admin command like the `::give` and `::setstat` the
-/// fixture already sends), before the engagement watch and the final
-/// Strength-XP proof, both of which stay mandatory.
-fn stock_private_moss_giants(
-    scenario: &mut scenario::Scenario,
-    start: usize,
-) -> Result<(), String> {
-    let returned = scenario.steps[start + 1..]
+/// Step budget for a fleet's first completed duel: the runner's own 30-minute
+/// deadline is the real bound, so the budget must not end the wait first.
+const DUEL_COMPLETED_DUEL_BUDGET_TICKS: u32 = 3_000;
+
+/// The Duel Arena card duels other players, so a fleet of it pairs among
+/// itself: `n` slots make `n / 2` fights, and an odd fleet would leave one
+/// slot without an opponent to qualify against. Each slot must finish a duel
+/// after Start, seen from its own snapshots as a fight-pen visit followed by a
+/// return to the lobby. A duel changes only the two fighters, so unlike a
+/// spawned target it leaves nothing in the world.
+fn qualify_duel_arena_fleet(scenario: &mut scenario::Scenario, n: usize) -> Result<(), String> {
+    if scenario.name != "duel_arena" {
+        return Ok(());
+    }
+    if n < 2 || !n.is_multiple_of(2) {
+        return Err(format!(
+            "the duel_arena benchmark pairs its slots and needs an even fleet, got N={n}"
+        ));
+    }
+    let start = scenario
+        .steps
         .iter()
-        .position(|step| step.name == MOSS_RETURN_WATCH)
-        .map(|offset| start + 1 + offset)
-        .ok_or("moss fleet qualification is missing its safespot-return watch")?;
-    let arm = scenario.steps[returned].wait.arm;
+        .position(|step| matches!(step.kind, scenario::StepKind::StartScript))
+        .ok_or("duel fleet qualification is missing StartScript")?;
     scenario.steps.insert(
-        returned + 1,
-        scenario::Step {
-            name: "stock private Moss giants beside the slot that returned to the safespot",
-            kind: scenario::StepKind::Perform {
-                send: Box::new(|client, _| {
-                    (0..MOSS_PRIVATE_GIANTS_PER_SLOT)
-                        .all(|_| api::interact::cheat(client, "npcadd mossgiant"))
-                }),
-            },
-            wait: scenario::Wait {
-                arm,
-                budget_ticks: 300,
-            },
-        },
+        start + 1,
+        scenario::duel_arena_completed_duel_step(DUEL_COMPLETED_DUEL_BUDGET_TICKS),
     );
     Ok(())
 }
@@ -871,6 +847,7 @@ impl Run {
             };
             widen_fleet_post_start_waits(&mut scenario, self.config.n);
             qualify_contentious_moss_fleet(&mut scenario, self.config.n)?;
+            qualify_duel_arena_fleet(&mut scenario, self.config.n)?;
             scenario.settings.terminal_shot = None;
             let seed = seed_runner(scenario, name, seed_world.clone());
             seeds.insert(name.clone(), Arc::new(Mutex::new(seed)));
@@ -1256,7 +1233,7 @@ impl Run {
     /// One outcome per slot: whether it ever reached `ingame && scene_state
     /// == 2` and its last observed session, scenario and script state.
     fn slot_outcomes(&self, play: &Play) -> Vec<serde_json::Value> {
-        use crate::memory_slots::{slot_outcome, ScriptView, SeedView};
+        use crate::memory_slots::{slot_outcome, slot_qualified, ScriptView, SeedView};
         let now = Instant::now();
         let statuses = play.statuses();
         let seeds = SEEDS.lock().unwrap();
@@ -1267,12 +1244,24 @@ impl Run {
                     .as_ref()
                     .and_then(|map| map.get(name))
                     .map(|seed| seed.lock().unwrap());
+                let status = statuses.iter().find(|s| &s.username == name);
+                let script_state = play.script_state(name);
+                let qualified_now = slot_qualified(
+                    self.config.workload,
+                    self.card.is_some(),
+                    status.is_some_and(|s| s.ingame && s.scene_state == 2),
+                    seed.as_ref()
+                        .map(|seed| (seed.runner.status(), seed.runner.on_start_script()))
+                        .as_ref()
+                        .map(|(status, on_start)| (status, *on_start)),
+                    script_state == script::RunState::Running,
+                );
                 slot_outcome(
                     name,
                     self.ready_latch
                         .first_ready(name)
                         .map(|at| at.saturating_duration_since(self.started).as_secs_f64()),
-                    statuses.iter().find(|s| &s.username == name),
+                    status,
                     now,
                     seed.as_ref().map(|seed| SeedView {
                         status: seed.runner.status(),
@@ -1281,10 +1270,11 @@ impl Run {
                         last_step: seed.last_step,
                     }),
                     ScriptView {
-                        state: format!("{:?}", play.script_state(name)),
+                        state: format!("{script_state:?}"),
                         error: play.script_last_error(name),
                         runtime: play.memory_script_progress(name),
                     },
+                    qualified_now,
                 )
             })
             .collect()
@@ -2006,68 +1996,44 @@ mod tests {
         );
     }
 
-    fn step_names_of(scenario: &scenario::Scenario) -> Vec<&'static str> {
-        scenario.steps.iter().map(|step| step.name).collect()
-    }
-
-    /// A fleet the natural field can serve keeps the kickoff cell exactly; a
-    /// larger one stocks giants for each slot after it returns to the safespot
-    /// and before it must engage one, and still owes the final XP proof.
+    /// The Duel Arena card pairs its own slots: an even fleet adds exactly one
+    /// post-Start completed-duel watch and keeps the scenario's proof, while a
+    /// fleet that cannot pair (or another scenario) is refused or untouched.
     #[test]
-    fn moss_fleets_beyond_the_natural_field_stock_private_giants_after_the_return() {
-        const STOCK: &str =
-            "stock private Moss giants beside the slot that returned to the safespot";
-        let baseline = scenario::get("moss_giant_bank_start").expect("moss scenario");
-        let baseline_steps = step_names_of(&baseline);
+    fn duel_fleets_pair_up_and_owe_a_completed_duel_after_start() {
+        let baseline = scenario::get("duel_arena").expect("duel scenario");
+        let start = baseline
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, scenario::StepKind::StartScript))
+            .expect("Start");
+        assert_eq!(start + 1, baseline.steps.len(), "Start is the last step");
 
-        for n in [1, 10] {
-            let mut natural = scenario::get("moss_giant_bank_start").expect("moss scenario");
-            qualify_contentious_moss_fleet(&mut natural, n).expect("natural qualifier");
-            assert!(
-                !step_names_of(&natural).contains(&STOCK),
-                "N={n} is the kickoff cell and must not stock giants"
-            );
-            assert_eq!(natural.steps.len(), baseline_steps.len());
-        }
-
-        for n in [16, 50] {
-            let mut fleet = scenario::get("moss_giant_bank_start").expect("moss scenario");
-            qualify_contentious_moss_fleet(&mut fleet, n).expect("fleet qualifier");
-            let names = step_names_of(&fleet);
-            assert_eq!(
-                names.len(),
-                baseline_steps.len() + 1,
-                "N={n}: one added step"
-            );
-            let stock = names
-                .iter()
-                .position(|name| *name == STOCK)
-                .expect("stock step");
-            assert_eq!(
-                names[stock - 1],
-                MOSS_RETURN_WATCH,
-                "N={n}: giants are stocked only after the slot is back at the safespot"
-            );
-            assert_eq!(
-                names[stock + 1],
-                "watch the local player target a Moss giant after the startup bank return",
-                "N={n}: giants exist before the slot must engage one"
-            );
-            assert_eq!(
-                fleet.steps[stock].wait.arm,
-                fleet.steps[stock - 1].wait.arm,
-                "N={n}: the stock step waits on the safespot arrival it follows"
-            );
+        for n in [2, 10, 50] {
+            let mut fleet = scenario::get("duel_arena").expect("duel scenario");
+            qualify_duel_arena_fleet(&mut fleet, n).expect("even fleet");
+            assert_eq!(fleet.steps.len(), baseline.steps.len() + 1, "N={n}");
             assert!(matches!(
-                fleet.steps[stock].kind,
-                scenario::StepKind::Perform { .. }
+                fleet.steps[start].kind,
+                scenario::StepKind::StartScript
             ));
-            assert_eq!(
-                fleet.proof,
-                scenario::Proof::StatXpGain { id: 2, min: 1 },
-                "N={n}: stocking targets must not weaken the final Strength XP proof"
-            );
+            let watch = &fleet.steps[start + 1];
+            assert!(matches!(watch.kind, scenario::StepKind::Await { .. }));
+            assert_eq!(watch.wait.budget_ticks, DUEL_COMPLETED_DUEL_BUDGET_TICKS);
+            assert_eq!(fleet.proof, baseline.proof, "N={n}");
         }
+
+        for n in [1, 3, 49] {
+            let mut fleet = scenario::get("duel_arena").expect("duel scenario");
+            let error = qualify_duel_arena_fleet(&mut fleet, n).expect_err("unpairable");
+            assert!(error.contains("even fleet"), "N={n}: {error}");
+            assert_eq!(fleet.steps.len(), baseline.steps.len(), "N={n}");
+        }
+
+        let mut moss = scenario::get("moss_giant_bank_start").expect("moss scenario");
+        let steps = moss.steps.len();
+        qualify_duel_arena_fleet(&mut moss, 1).expect("other scenarios pass through");
+        assert_eq!(moss.steps.len(), steps);
     }
 
     #[test]

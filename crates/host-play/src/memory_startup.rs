@@ -170,14 +170,9 @@ pub(crate) fn render_started(at: Instant) {
     RENDER_GAPS.render_started(ns);
 }
 
-/// A render callback ended now; `presented` when its image reached the
-/// swapchain (a lost, outdated or occluded surface presents nothing).
-pub(crate) fn render_ended(at: Instant, presented: bool) {
-    let ns = since_process_start_ns(at);
-    if presented {
-        MARKS_SEEN.mark(StartupMark::FirstFramePresented, ns);
-    }
-    RENDER_GAPS.render_ended(ns);
+/// A render callback ended now.
+pub(crate) fn render_ended(at: Instant) {
+    RENDER_GAPS.render_ended(since_process_start_ns(at));
 }
 
 /// Structured wgpu adapter identity. Vendor and device are backend ids

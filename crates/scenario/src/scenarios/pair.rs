@@ -1652,6 +1652,72 @@ pub(crate) fn duel_arena_scenario() -> Scenario {
     }
 }
 
+/// The six Duel Arena fight pens as `(min_x, max_x, min_z, max_z)`, level 0:
+/// the frozen `api/duel/Duel.ts` `DUEL_FIGHT_ARENAS`.
+const DUEL_FIGHT_PENS: [(i32, i32, i32, i32); 6] = [
+    (3333, 3357, 3244, 3258),
+    (3364, 3388, 3225, 3239),
+    (3333, 3357, 3206, 3220),
+    (3364, 3388, 3244, 3258),
+    (3333, 3357, 3225, 3239),
+    (3364, 3388, 3206, 3220),
+];
+
+/// The frozen `DuelArenaLogic.ts` `DUEL_ZONE`: the arena and its lobby.
+const DUEL_ZONE: (i32, i32, i32, i32) = (3328, 3393, 3203, 3325);
+
+fn within(rect: (i32, i32, i32, i32), x: i32, z: i32) -> bool {
+    (rect.0..=rect.1).contains(&x) && (rect.2..=rect.3).contains(&z)
+}
+
+/// One slot's completed-duel witness, from its own snapshots alone: it stood
+/// in a fight pen and was later seen back in the arena's lobby. The server
+/// sends both fighters to the lobby when a duel ends, so this is the same
+/// transition the card counts as a finished duel, and it needs a real
+/// counterpart: a lone slot never enters a pen.
+#[derive(Default)]
+struct DuelRoundTrip {
+    fought: bool,
+}
+
+impl DuelRoundTrip {
+    fn observe(&mut self, snap: &GameSnapshot) -> bool {
+        if !snap.ingame() || snap.scene_state() != 2 {
+            return false;
+        }
+        let Some((x, z, level)) = snap.tile() else {
+            return false;
+        };
+        if level != 0 {
+            return false;
+        }
+        if DUEL_FIGHT_PENS.iter().any(|pen| within(*pen, x, z)) {
+            self.fought = true;
+            return false;
+        }
+        self.fought && within(DUEL_ZONE, x, z)
+    }
+}
+
+/// Fleet qualification for the frozen DuelArena card: after Start, this slot
+/// must finish one duel against another fleet member. The slots pair among
+/// themselves; nothing here spawns or changes the world. The witness holds
+/// per-slot state, so build one step per slot.
+pub fn duel_arena_completed_duel_step(budget_ticks: u32) -> Step {
+    let witness = Mutex::new(DuelRoundTrip::default());
+    Step {
+        name: "watch this slot finish a duel with another fleet member",
+        kind: StepKind::Await {
+            evidence: "duel_arena_pen_entered_and_lobby_returned",
+            ready: Box::new(move |snap| witness.lock().expect("duel witness mutex").observe(snap)),
+        },
+        wait: Wait {
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks,
+        },
+    }
+}
+
 /// Two-account clue 3554 gold: the solver and dedicated Duel helper start
 /// together, complete the no-stakes handshake, obtain/open the casket, and
 /// return through a fresh bank before closing it.
@@ -2066,5 +2132,74 @@ mod clue_witness_tests {
         assert!(!witness.slots[0].saw_peer, "a stranger is not the helper");
         witness.observe(0, &seen("Solver", &["Stranger", "helper one"]));
         assert!(witness.slots[0].saw_peer, "the helper by its own name");
+    }
+}
+
+#[cfg(test)]
+mod duel_round_trip_tests {
+    use super::DuelRoundTrip;
+    use api::snapshot::GameSnapshot;
+    use client::client::{Client, ClientPlayer};
+    use client::io::ServerProt;
+
+    const BASE_X: i32 = 3296;
+    const BASE_Z: i32 = 3200;
+
+    /// The local player standing on world tile `(x, z)`; `scene_state` 2 is a
+    /// loaded scene.
+    fn at(x: i32, z: i32, level: i32, scene_state: i32) -> GameSnapshot {
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = scene_state;
+        client.map_build_base_x = BASE_X;
+        client.map_build_base_z = BASE_Z;
+        client.minusedlevel = level;
+        client.local_player = Some(ClientPlayer::at(x - BASE_X, z - BASE_Z));
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        snapshot
+    }
+
+    /// A duel is the pen visit and the return, not either alone: a slot
+    /// waiting in the lobby, or one still fighting, has not finished one.
+    #[test]
+    fn a_duel_needs_a_pen_visit_and_a_return_to_the_lobby() {
+        let mut witness = DuelRoundTrip::default();
+        assert!(!witness.observe(&at(3368, 3274, 0, 2)), "lobby only");
+
+        assert!(!witness.observe(&at(3340, 3250, 0, 2)), "fighting in a pen");
+        assert!(!witness.observe(&at(3340, 3250, 0, 2)), "still fighting");
+        assert!(
+            !witness.observe(&at(3368, 3274, 0, 1)),
+            "a scene that is still loading is not an observation"
+        );
+        assert!(witness.observe(&at(3368, 3274, 0, 2)), "back in the lobby");
+    }
+
+    /// Leaving the pens somewhere that is not the arena lobby (a logout to the
+    /// spawn, another level) is not a finished duel, and a pen tile on another
+    /// level is not a pen.
+    #[test]
+    fn only_the_arena_lobby_after_a_pen_completes_a_duel() {
+        let mut witness = DuelRoundTrip::default();
+        assert!(
+            !witness.observe(&at(3340, 3250, 1, 2)),
+            "upstairs is no pen"
+        );
+        assert!(!witness.observe(&at(3368, 3274, 0, 2)), "so no duel yet");
+
+        assert!(!witness.observe(&at(3340, 3250, 0, 2)));
+        assert!(
+            !witness.observe(&at(3222, 3218, 0, 2)),
+            "Lumbridge is not the lobby"
+        );
+        assert!(witness.observe(&at(3372, 3270, 0, 2)));
     }
 }
