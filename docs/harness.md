@@ -170,12 +170,17 @@ scenario's final Strength-XP-since-Start proof remains mandatory.
 Combat Trainer, so N=10 is five duels and N=50 is twenty-five, and an odd N is
 refused at start. The fixture seeds a bronze scimitar (the existing
 `duel_arena` pair seed) and stages mint-order pairs so that at Start the only
-free challenge-area candidate is the partner: unstarted and already-fought
-slots wait outside the lobby. Each slot qualifies only after its own snapshots
-show a fight pen visit followed by a return to the lobby, the transition the
-card counts as a finished duel. A duel only moves its two fighters (no stakes,
-HP restored, no spawned or dropped world state), so a cell leaves nothing for
-the next one.
+free challenge-area candidate is the partner. Unstarted slots wait outside the
+lobby. A finished pair is parked back outside before the next pair is admitted,
+so an already-fought slot is never a lobby candidate for a starting pair —
+including on the frame the completed-duel watch advances and the parking tele
+has not yet been sent (`ScenarioRunner` only `advance_step()`s that tick;
+`play_slots` then runs `slot_frame`). Each slot qualifies only after its own
+snapshots show a fight pen visit followed by a return to the lobby, the
+transition the card counts as a finished duel. After every slot has entered a
+pen, parked slots are released to the lobby so observation is a fighting fleet.
+A duel only moves its two fighters (no stakes, HP restored, no spawned or
+dropped world state), so a cell leaves nothing for the next one.
 
 Seed/proof or script failures fail the run and return a nonzero exit, and so does
 a fleet that has not qualified after 30 minutes (`blocked: ready=… seeded=…

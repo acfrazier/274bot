@@ -1700,8 +1700,9 @@ impl DuelRoundTrip {
 }
 
 /// Apply one snapshot to a completed-duel witness. `on_pen` fires once, the
-/// first time the slot is seen inside a fight pen, so a fleet gate can admit
-/// the next pair without waiting for this duel to finish.
+/// first time the slot is seen inside a fight pen, so a fleet gate can latch
+/// pen entry (the observation-release condition) without waiting for this
+/// duel to finish. Next-pair admission waits until this pair is parked.
 fn observe_completed_duel(
     witness: &Mutex<DuelRoundTrip>,
     snap: &GameSnapshot,
