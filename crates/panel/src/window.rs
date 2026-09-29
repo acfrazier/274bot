@@ -517,43 +517,18 @@ fn first_surface(
     }
 }
 
-/// Adapter and device for `surface`, off the UI thread. When the current
-/// backend has no adapter, the next attempt gets a fresh instance and
-/// surface here (only Windows has a next attempt, and a Win32 window
-/// accepts a surface from any thread). Low power by default: on a hybrid
-/// laptop that is the integrated GPU driving the display, which skips the
-/// discrete GPU's cold start; single-GPU machines get their only adapter
-/// either way. `WGPU_POWER_PREF=high` overrides.
-fn request_gpu(
-    mut instance: wgpu::Instance,
-    mut surface: wgpu::Surface<'static>,
-    window: Arc<Window>,
-    fallbacks: Vec<wgpu::Backends>,
-) -> Result<GpuParts, PanelError> {
-    let power_preference =
-        wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower);
-    let mut fallbacks = fallbacks.into_iter();
-    let adapter = loop {
-        let error = match block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        })) {
-            Ok(adapter) => break adapter,
-            Err(error) => error,
-        };
-        let next = fallbacks.by_ref().find_map(|backends| {
-            let candidate = instance_for(backends);
-            let candidate_surface = candidate.create_surface(window.clone()).ok()?;
-            Some((candidate, candidate_surface))
-        });
-        let Some((next_instance, next_surface)) = next else {
-            return Err(PanelError::AdapterUnavailable(error));
-        };
-        surface = next_surface;
-        instance = next_instance;
-    };
-
+/// Adapter and device for `surface` on one backend.
+fn adapter_and_device(
+    instance: &wgpu::Instance,
+    surface: &wgpu::Surface<'static>,
+    power_preference: wgpu::PowerPreference,
+) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue), PanelError> {
+    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference,
+        compatible_surface: Some(surface),
+        force_fallback_adapter: false,
+    }))
+    .map_err(PanelError::AdapterUnavailable)?;
     let device_desc = wgpu::DeviceDescriptor {
         label: None,
         required_features: wgpu::Features::empty(),
@@ -563,13 +538,50 @@ fn request_gpu(
     };
     let (device, queue) =
         block_on(adapter.request_device(&device_desc)).map_err(PanelError::DeviceRequest)?;
-    Ok(GpuParts {
-        instance,
-        surface,
-        adapter,
-        device,
-        queue,
-    })
+    Ok((adapter, device, queue))
+}
+
+/// Adapter and device for `surface`, off the UI thread. When the current
+/// backend yields no usable adapter or device, the next attempt gets a
+/// fresh instance and surface here (only Windows has a next attempt, and a
+/// Win32 window accepts a surface from any thread). Low power by default:
+/// on a hybrid laptop that is the integrated GPU driving the display, which
+/// skips the discrete GPU's cold start; single-GPU machines get their only
+/// adapter either way. `WGPU_POWER_PREF=high` overrides.
+fn request_gpu(
+    instance: wgpu::Instance,
+    surface: wgpu::Surface<'static>,
+    window: Arc<Window>,
+    fallbacks: Vec<wgpu::Backends>,
+) -> Result<GpuParts, PanelError> {
+    let power_preference =
+        wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower);
+    let mut fallbacks = fallbacks.into_iter();
+    let mut attempt = (instance, surface);
+    loop {
+        let error = match adapter_and_device(&attempt.0, &attempt.1, power_preference) {
+            Ok((adapter, device, queue)) => {
+                let (instance, surface) = attempt;
+                return Ok(GpuParts {
+                    instance,
+                    surface,
+                    adapter,
+                    device,
+                    queue,
+                });
+            }
+            Err(error) => error,
+        };
+        let next = fallbacks.by_ref().find_map(|backends| {
+            let candidate = instance_for(backends);
+            let candidate_surface = candidate.create_surface(window.clone()).ok()?;
+            Some((candidate, candidate_surface))
+        });
+        match next {
+            Some(next) => attempt = next,
+            None => return Err(error),
+        }
+    }
 }
 
 impl AppWindow {
