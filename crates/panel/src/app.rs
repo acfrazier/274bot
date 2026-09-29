@@ -1063,9 +1063,9 @@ fn dock_panel_tabs(ui: &Ui, panel: Id) {
 /// Do not call `Window::inner_size()` here: that is a per-frame X11
 /// `GetGeometry` round trip and panics with BadDrawable if the drawable
 /// is already gone.
-/// The need is clamped into the current monitor (M-003), so opening the
-/// rail on a small screen fits the screen instead of pushing the frame
-/// off it.
+/// The need is clamped into the current monitor work area (M-003), so
+/// opening the rail on a small screen shrinks and repositions instead of
+/// pushing the frame off the right edge.
 fn ensure_window_fits(state: &mut PanelState, rail_open: bool, current: [f32; 2]) {
     let Some(window) = state.os_window.as_ref() else {
         return;
@@ -1078,10 +1078,7 @@ fn ensure_window_fits(state: &mut PanelState, rail_open: bool, current: [f32; 2]
     if (w - cur_w).abs() <= 1.0 && (h - cur_h).abs() <= 1.0 {
         return;
     }
-    let (fit_w, fit_h) = window::clamp_to_window_monitor(window, (w, h));
-    if (fit_w - cur_w).abs() > 1.0 || (fit_h - cur_h).abs() > 1.0 {
-        let _ = window.request_inner_size(winit::dpi::LogicalSize::new(fit_w, fit_h));
-    }
+    window::fit_window_to_work_area(window, (w, h));
 }
 
 /// Fullscreen dock host: game left, 330px panel right, optional 264px rail.
