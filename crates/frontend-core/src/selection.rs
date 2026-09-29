@@ -212,6 +212,7 @@ pub fn start_marked<Io>(
         affected: 0,
         skipped: Vec::new(),
     };
+    let batch = scripts.open_bulk("Start selected");
     let profiles = profile_rows(core);
     for identity in selection.iter() {
         let Some((name, _)) = profiles.iter().find(|(_, id)| *id == identity) else {
@@ -219,14 +220,24 @@ pub fn start_marked<Io>(
                 profile: format!("profile#{}", identity.raw()),
                 reason: "profile unavailable".into(),
             });
+            scripts.bulk_skip(
+                batch,
+                &format!("profile#{}", identity.raw()),
+                "profile unavailable",
+            );
             continue;
         };
-        if core.play().is_none() {
-            report.skipped.push(skip(name, "no play"));
+        if scripts.start_queue_place(name).is_some() {
             continue;
         }
-        if script_active(core, name) || scripts.start_queue_place(name).is_some() {
+        if core.play().is_none() {
+            report.skipped.push(skip(name, "no play"));
+            scripts.bulk_fail(batch, name, "no play");
+            continue;
+        }
+        if script_active(core, name) {
             report.skipped.push(skip(name, "script already active"));
+            scripts.bulk_skip(batch, name, "already active");
             continue;
         }
         let result = match card {
@@ -236,6 +247,7 @@ pub fn start_marked<Io>(
                 card.clone(),
                 crate::scripts::StartKind::Start,
                 None,
+                batch,
             ),
             None => match Scripts::assignment(core, name)
                 .and_then(|a| crate::scripts::sel_from_assignment(&a))
@@ -246,16 +258,21 @@ pub fn start_marked<Io>(
                     sel.clone(),
                     crate::scripts::StartKind::Start,
                     Some(sel),
+                    batch,
                 ),
                 None => Err("no assignment".to_string()),
             },
         };
         match result {
             Ok(()) => report.affected += 1,
-            Err(reason) => report.skipped.push(skip(name, reason)),
+            Err(reason) => {
+                scripts.bulk_fail(batch, name, reason.as_str());
+                report.skipped.push(skip(name, reason));
+            }
         }
     }
     scripts.admit_starts(core, catalog_root);
+    scripts.publish_bulk();
     report
 }
 

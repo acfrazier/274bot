@@ -3550,6 +3550,9 @@ impl Session {
     /// IF logout. The slot stays up and focused; only the login intent
     /// changes.
     pub fn logout(&mut self, name: &str) {
+        self.scripts.cancel_queued_as(name, "logged out");
+        self.scripts.publish_start_places(&mut self.core);
+        self.apply_script_notice();
         self.core.logout(name);
     }
 
@@ -3871,6 +3874,9 @@ impl Session {
     }
 
     fn rail_remove_at(&mut self, name: &str, now: Instant) {
+        self.scripts.cancel_queued_as(name, "removed");
+        self.scripts.publish_start_places(&mut self.core);
+        self.apply_script_notice();
         let (core, mut surface) = self.core_and_surface();
         let removal = core.remove(name, now, &mut surface);
         self.sync_wall_focus();

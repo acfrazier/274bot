@@ -535,7 +535,8 @@ fn start_all_and_stop_all_cover_every_member() {
     assert_eq!(
         f.scripts.take_notice(),
         Some(Notice::Show(
-            "Start all: started 1, skipped 1, failed 1: carol: no assignment".into()
+            "Start all: started 1, skipped 1: bob: already active, failed 1: carol: no assignment"
+                .into(),
         ))
     );
     f.settle();
@@ -545,7 +546,14 @@ fn start_all_and_stop_all_cover_every_member() {
     f.core.stop_script("bob");
     let sel = script::ScriptSel::Loaded(thiever.source, thiever.identity_id());
     f.scripts
-        .start_sel(&mut f.core, "bob", sel, None, super::StartKind::Reload)
+        .start_sel(
+            &mut f.core,
+            "bob",
+            sel,
+            None,
+            super::StartKind::Reload,
+            None,
+        )
         .unwrap();
     assert_eq!(f.state("bob"), script::RunState::Stopping);
     assert_eq!(f.scripts.stop_all(&mut f.core), 2);
@@ -890,6 +898,7 @@ fn start_sherlock(f: &mut Fixture, name: &str) {
             script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
             None,
             super::StartKind::Start,
+            None,
         )
         .unwrap();
     f.settle();
@@ -997,6 +1006,7 @@ fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
             script::ScriptSel::Compiled(id),
             None,
             super::StartKind::Start,
+            None,
         )
         .unwrap();
     f.settle();
@@ -1162,6 +1172,7 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
                     script::ScriptSel::Compiled(id),
                     None,
                     super::StartKind::Start,
+                    None,
                 )
                 .unwrap();
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -1214,6 +1225,7 @@ fn valid_native_draft_survives_unrelated_writes() {
                     script::ScriptSel::Compiled(id),
                     None,
                     super::StartKind::Start,
+                    None,
                 )
                 .unwrap();
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -1402,6 +1414,7 @@ fn deleting_a_profile_cancels_its_unsettled_native_start() {
             script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
             None,
             super::StartKind::Start,
+            None,
         )
         .unwrap();
     f.core.vault_remove("alice").unwrap();
@@ -1462,6 +1475,28 @@ fn native_bulk_reports_and_preserves_each_account_partner() {
 
 fn bulk_names(n: usize) -> Vec<String> {
     (0..n).map(|i| format!("bot{i}")).collect()
+}
+
+fn start_accepted(f: &Fixture, name: &str) -> usize {
+    (1..)
+        .map_while(|id| f.core.operation(crate::OperationId(id)))
+        .filter(|report| {
+            report.action == crate::ActionKind::ScriptStart && report.outcome(name).is_some()
+        })
+        .count()
+}
+
+fn mark_uids(uids: &[i32]) -> MarkedSelection {
+    let mut selected = MarkedSelection::default();
+    selected.mark_all(uids.iter().copied().map(ProfileIdentity::uid));
+    selected
+}
+
+fn shown_bulk(f: &Fixture) -> String {
+    f.scripts
+        .last_bulk_report()
+        .expect("expected a bulk Start report")
+        .to_string()
 }
 
 fn starting_among(f: &Fixture, names: &[String]) -> usize {
@@ -1639,10 +1674,27 @@ fn remove_while_queued_does_not_start_stale_work() {
     f.core.remove(&queued, Instant::now(), &mut surface);
 
     f.settle();
+    assert_eq!(
+        start_accepted(&f, &queued),
+        0,
+        "frontend dispatched a Start for removed {queued}"
+    );
     assert_ne!(
         f.state(&queued),
         script::RunState::Running,
         "{queued} started after it was removed from the wall"
+    );
+    let report = f
+        .scripts
+        .last_bulk_report()
+        .expect("Start all report after a queued remove");
+    assert!(
+        report.contains(&format!("{queued}: removed")),
+        "grant-time remove must name the member: {report}"
+    );
+    assert!(
+        !report.contains("no slot"),
+        "a wall-member refuse must not reach start_script: {report}"
     );
 }
 
@@ -1704,5 +1756,167 @@ fn single_start_of_a_queued_member_is_immediate() {
     );
     f.settle();
     f.wait_state(&queued, script::RunState::Running);
+    assert_eq!(
+        start_accepted(&f, &queued),
+        1,
+        "{queued} must receive exactly one Start"
+    );
+    let report = f
+        .scripts
+        .last_bulk_report()
+        .expect("Start all report after a single-start handoff");
+    assert!(
+        report.starts_with("Start all: started 5, skipped 0"),
+        "the handoff credits the member once: {report}"
+    );
     f.core.play().unwrap().script_stop(&queued);
+}
+
+/// A marked Start with a missing card must not count the click as started,
+/// and every later dispatch error must appear with its reason.
+#[test]
+fn marked_start_missing_card_reports_each_skip_as_grants_land() {
+    let mut f = fixture("pace-marked-missing", &["alice", "bob", "carol"]);
+    let gone = script::ScriptSel::Loaded(script::ScriptSource::File, "gone.ts".into());
+    let selected = mark_uids(&[1, 2, 3]);
+    let click = start_marked(&selected, &mut f.core, &mut f.scripts, Some(&gone), None);
+    assert_eq!(click.affected, 3, "the click accepts every marked row");
+    let click_report = shown_bulk(&f);
+    assert!(
+        click_report.contains("queued") && !click_report.contains("started 3"),
+        "click must not count waiting members as started: {click_report}"
+    );
+    f.settle();
+    let report = shown_bulk(&f);
+    assert!(
+        report.starts_with("Start selected: started 0")
+            && report.contains("alice: missing file: gone.ts")
+            && report.contains("bob: missing file: gone.ts")
+            && report.contains("carol: missing file: gone.ts"),
+        "{report}"
+    );
+    for name in ["alice", "bob", "carol"] {
+        assert_eq!(f.state(name), script::RunState::Idle, "{name}");
+        assert_eq!(start_accepted(&f, name), 0, "{name} must not Start");
+    }
+}
+
+/// A member removed while waiting for a marked Start is named as skipped
+/// and the frontend never dispatches a Start for it.
+#[test]
+fn marked_start_removed_member_is_named_and_never_dispatched() {
+    let mut f = fixture("pace-marked-remove", &["alice", "bob", "carol"]);
+    let card = f.card("loop.ts", LOOPING);
+    for name in ["alice", "bob", "carol"] {
+        f.assign(name, &card);
+    }
+    let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+    let selected = mark_uids(&[1, 2, 3]);
+    start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
+    let click_report = shown_bulk(&f);
+    assert!(
+        click_report.contains("queued") && !click_report.contains("started 3"),
+        "click must not count waiting members as started: {click_report}"
+    );
+    let queued = ["alice", "bob", "carol"]
+        .into_iter()
+        .find(|name| f.state(name) == script::RunState::Idle)
+        .expect("need a queued member")
+        .to_string();
+    let mut surface = crate::surface::HeadlessSurface::new();
+    f.core.remove(&queued, Instant::now(), &mut surface);
+    f.settle();
+    let report = shown_bulk(&f);
+    assert!(
+        report.contains(&format!("{queued}: removed")),
+        "grant-time remove must name the member: {report}"
+    );
+    assert_eq!(start_accepted(&f, &queued), 0);
+    assert_ne!(f.state(&queued), script::RunState::Running);
+    for name in ["alice", "bob", "carol"] {
+        if name != queued {
+            f.wait_state(name, script::RunState::Running);
+            f.core.play().unwrap().script_stop(name);
+        }
+    }
+}
+
+/// Start all while a marked batch is still waiting must publish its own
+/// banner and must not count the waiting members again.
+#[test]
+fn start_all_while_a_marked_batch_waits_has_its_own_tally() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-overlap-marked", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+    let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+    let selected = mark_uids(&[1, 2, 3]);
+    start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
+    let marked = shown_bulk(&f);
+    assert!(
+        marked.starts_with("Start selected:"),
+        "marked click owns its banner: {marked}"
+    );
+    f.scripts.start_all(&mut f.core, None);
+    let start_all = shown_bulk(&f);
+    assert!(
+        start_all.starts_with("Start all:"),
+        "Start all while a marked batch waits must publish its own banner: {start_all}"
+    );
+    assert!(
+        !start_all.contains("skipped 3") && !start_all.contains("skipped 5"),
+        "members already waiting must not be counted again: {start_all}"
+    );
+    f.settle();
+    let final_all = shown_bulk(&f);
+    assert!(
+        final_all.starts_with("Start all: started 2, skipped 1")
+            && final_all.contains("already active")
+            && !final_all.contains("bot1")
+            && !final_all.contains("bot2"),
+        "Start all owns the two new members and the already-started one, not the waiters: {final_all}"
+    );
+    for name in &names {
+        f.wait_state(name, script::RunState::Running);
+        f.core.play().unwrap().script_stop(name);
+    }
+}
+
+/// A second Start all on the same waiting wall is a new tally: already
+/// waiting members are not skipped again.
+#[test]
+fn start_all_twice_does_not_count_waiting_members_twice() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-overlap-twice", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+    f.scripts.start_all(&mut f.core, None);
+    let first = shown_bulk(&f);
+    assert_eq!(first, "Start all: started 1, queued 4, skipped 0");
+    f.scripts.start_all(&mut f.core, None);
+    let second = shown_bulk(&f);
+    assert!(
+        second.starts_with("Start all: started 0, skipped 1"),
+        "second click reports only the already-started member: {second}"
+    );
+    assert!(
+        !second.contains("skipped 5") && !second.contains("queued 3"),
+        "waiting members must not join the second tally: {second}"
+    );
+    f.settle();
+    let final_report = shown_bulk(&f);
+    assert!(
+        final_report.starts_with("Start all: started 0, skipped 1"),
+        "the second click stays its own tally: {final_report}"
+    );
+    for name in &names {
+        f.wait_state(name, script::RunState::Running);
+        f.core.play().unwrap().script_stop(name);
+    }
 }

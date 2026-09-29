@@ -223,6 +223,8 @@ pub struct OperatorSession<Io> {
     bypass_asset_startup: bool,
     /// Fleet rows and the selected slot's detail, refreshed by each poll.
     views: Views,
+    /// Start-all / marked-Start places fed into the single row derivation.
+    start_places: HashMap<String, QueuePlace>,
     /// Operation outcomes taken by the last poll (reused buffer).
     op_changes: Vec<OpChange>,
     /// Reused buffer for operation log lines.
@@ -270,6 +272,7 @@ impl<Io> OperatorSession<Io> {
             #[cfg(any(test, feature = "test-support"))]
             bypass_asset_startup: false,
             views: Views::default(),
+            start_places: HashMap::new(),
             op_changes: Vec::new(),
             op_line: String::new(),
             resources: Resources::default(),
@@ -945,10 +948,16 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    /// Overlay Start-all k-of-n places. No row walk when `Scripts` skips
-    /// the call (admit overlay not stale).
+    /// Replace the Start-all / marked-Start places used by [`update_row`].
+    /// Called only when the admit queue published a change.
     pub fn publish_start_queue(&mut self, place_of: impl Fn(&str) -> Option<QueuePlace>) {
-        self.views.apply_start_queue(place_of);
+        self.start_places.clear();
+        for name in self.fleet.members() {
+            if let Some(place) = place_of(name) {
+                self.start_places.insert(name.clone(), place);
+            }
+        }
+        self.refresh_views();
     }
 
     fn refresh_views(&mut self) {
@@ -976,6 +985,7 @@ impl<Io> OperatorSession<Io> {
             play: self.play.as_ref(),
             walks: walks.as_deref(),
             card,
+            start_places: &self.start_places,
         };
         self.views.refresh(&input, &self.op_changes);
     }

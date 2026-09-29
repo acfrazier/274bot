@@ -548,7 +548,7 @@ impl Scripts {
         if core.play().is_none() {
             return Err("no play".into());
         }
-        let _ = self.admit.leave(profile);
+        self.cancel_queued(profile);
         let card = &prepared.card;
         let bag = self.merged_profile_bag(
             core,
@@ -577,6 +577,7 @@ impl Scripts {
             PendingStart {
                 card: PendingCard::Loaded(Box::new(card.clone())),
                 kind: StartKind::Reload,
+                batch: None,
             },
         );
         Ok(())

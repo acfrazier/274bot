@@ -1882,10 +1882,7 @@ fn start_all_lists_a_member_whose_setup_fails_after_the_click() {
     s.persist_successful_assignment("bob", bad.assignment());
     s.script_start_all();
     let click = s.error.clone().unwrap_or_default();
-    assert!(
-        click.starts_with("Start all:") && click.contains("started"),
-        "{click}"
-    );
+    assert_eq!(click, "Start all: started 1, queued 1, skipped 0");
     settle(&mut s);
     let report = s.error.clone().unwrap_or_default();
     assert!(

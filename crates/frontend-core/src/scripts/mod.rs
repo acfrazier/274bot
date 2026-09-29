@@ -138,6 +138,10 @@ pub(crate) enum StartKind {
     Reload,
 }
 
+/// One operator click's Start-all or marked-Start tally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct BulkId(u64);
+
 /// A Start whose worker has not settled. Assignment changes only on Ready.
 #[derive(Debug, Clone)]
 enum PendingCard {
@@ -149,16 +153,32 @@ enum PendingCard {
 struct PendingStart {
     card: PendingCard,
     kind: StartKind,
+    batch: Option<BulkId>,
 }
 
-/// The last Start all tally. A member whose setup fails after the click
-/// moves from started to failed, so the report lists it.
-#[derive(Debug, Clone, Default)]
+/// One click's Start tally. A later click opens a new one so overlapping
+/// batches stay independent.
+#[derive(Debug, Clone)]
 struct BulkStart {
+    label: &'static str,
     started: usize,
     queued: usize,
     skipped: usize,
+    skips: Vec<String>,
     failures: Vec<String>,
+}
+
+impl BulkStart {
+    fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            started: 0,
+            queued: 0,
+            skipped: 0,
+            skips: Vec::new(),
+            failures: Vec::new(),
+        }
+    }
 }
 
 /// One shared Browse card: a compiled registry card or a loaded JS card.
@@ -250,7 +270,9 @@ pub struct Scripts {
     admit: StartAdmit,
     /// Catalog root for grants that settle after the click frame.
     admit_catalog: Option<PathBuf>,
-    bulk_start: Option<BulkStart>,
+    next_bulk: u64,
+    bulks: HashMap<BulkId, BulkStart>,
+    latest_bulk: Option<BulkId>,
     last_bulk_report: Option<String>,
     catalog_filled: bool,
     reload: reload::ReloadState,
@@ -277,7 +299,9 @@ impl Scripts {
             starts: HashMap::new(),
             admit: StartAdmit::default(),
             admit_catalog: None,
-            bulk_start: None,
+            next_bulk: 0,
+            bulks: HashMap::new(),
+            latest_bulk: None,
             last_bulk_report: None,
             catalog_filled: false,
             reload: reload::ReloadState::default(),
@@ -713,17 +737,41 @@ impl Scripts {
     /// Drop a queued-but-not-yet-admitted Start. Returns whether a place
     /// was removed. Already-dispatched Starts are stopped through the host.
     pub fn cancel_queued(&mut self, profile: &str) -> bool {
+        self.cancel_queued_as(profile, "cancelled")
+    }
+
+    /// Drop a waiting Start and credit `reason` on its click tally.
+    pub fn cancel_queued_as(&mut self, profile: &str, reason: &str) -> bool {
         let Some(entry) = self.admit.leave(profile) else {
             return false;
         };
-        if entry.kind == StartKind::StartAll {
-            if let Some(bulk) = &mut self.bulk_start {
-                bulk.queued = bulk.queued.saturating_sub(1);
-                bulk.skipped += 1;
-            }
-            self.publish_bulk();
-        }
+        self.credit_skipped(entry.batch, profile, reason);
         true
+    }
+
+    /// Open a new click tally. Later grants credit this id; a newer click
+    /// does not fold into it.
+    pub(crate) fn open_bulk(&mut self, label: &'static str) -> BulkId {
+        self.next_bulk += 1;
+        let id = BulkId(self.next_bulk);
+        self.bulks.insert(id, BulkStart::new(label));
+        self.latest_bulk = Some(id);
+        id
+    }
+
+    pub(crate) fn bulk_skip(&mut self, id: BulkId, profile: &str, reason: impl Into<String>) {
+        let reason = reason.into();
+        if let Some(bulk) = self.bulks.get_mut(&id) {
+            bulk.skipped += 1;
+            bulk.skips.push(format!("{profile}: {reason}"));
+        }
+    }
+
+    pub(crate) fn bulk_fail(&mut self, id: BulkId, profile: &str, reason: impl Into<String>) {
+        let reason = reason.into();
+        if let Some(bulk) = self.bulks.get_mut(&id) {
+            bulk.failures.push(format!("{profile}: {reason}"));
+        }
     }
 
     /// Start `profile` on its last successful assignment.
@@ -739,7 +787,7 @@ impl Scripts {
         let sel = Self::assignment(core, profile)
             .and_then(|a| sel_from_assignment(&a))
             .ok_or_else(|| "no assignment".to_string())?;
-        self.start_sel(core, profile, sel, catalog_root, StartKind::Start)
+        self.start_sel(core, profile, sel, catalog_root, StartKind::Start, None)
     }
 
     /// Operator Start on `profile`: its pending Browse selection, else the
@@ -763,7 +811,7 @@ impl Scripts {
             .or_else(|| heading.cloned())
             .or_else(|| Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a)))
             .ok_or_else(|| "no assignment".to_string())?;
-        self.start_sel(core, profile, sel, catalog_root, StartKind::Start)
+        self.start_sel(core, profile, sel, catalog_root, StartKind::Start, None)
     }
 
     fn start_sel<Io>(
@@ -773,13 +821,15 @@ impl Scripts {
         sel: script::ScriptSel,
         catalog_root: Option<&Path>,
         kind: StartKind,
+        batch: Option<BulkId>,
     ) -> Result<(), String> {
         let from_queue = self.admit.leave(profile);
+        let batch = from_queue.as_ref().map(|entry| entry.batch).or(batch);
         if core.play().is_none() {
             self.credit_queue_outcome(from_queue, profile, Err("no play"));
             return Err("no play".into());
         }
-        let result = self.dispatch_start(core, profile, sel, catalog_root, kind);
+        let result = self.dispatch_start(core, profile, sel, catalog_root, kind, batch);
         match &result {
             Ok(()) => self.credit_queue_outcome(from_queue, profile, Ok(())),
             Err(error) => self.credit_queue_outcome(from_queue, profile, Err(error.as_str())),
@@ -794,6 +844,7 @@ impl Scripts {
         sel: script::ScriptSel,
         catalog_root: Option<&Path>,
         kind: StartKind,
+        batch: Option<BulkId>,
     ) -> Result<(), String> {
         match sel {
             script::ScriptSel::Compiled(id) => {
@@ -805,6 +856,7 @@ impl Scripts {
                     PendingStart {
                         card: PendingCard::Compiled(id),
                         kind,
+                        batch,
                     },
                 );
                 Ok(())
@@ -862,6 +914,7 @@ impl Scripts {
                     PendingStart {
                         card: PendingCard::Loaded(Box::new(card)),
                         kind,
+                        batch,
                     },
                 );
                 Ok(())
@@ -883,37 +936,33 @@ impl Scripts {
         if let Some(root) = catalog_root {
             self.admit_catalog = Some(root.to_path_buf());
         }
-        if self.admit.is_empty() {
-            self.bulk_start = Some(BulkStart::default());
-        }
+        let batch = self.open_bulk("Start all");
         for name in members {
-            if script_active(core, &name) || self.admit.contains(&name) {
-                if let Some(bulk) = &mut self.bulk_start {
-                    bulk.skipped += 1;
-                }
+            if self.admit.contains(&name) {
+                continue;
+            }
+            if script_active(core, &name) {
+                self.bulk_skip(batch, &name, "already active");
                 continue;
             }
             let sel = Self::assignment(core, &name).and_then(|a| sel_from_assignment(&a));
             let Some(sel) = sel else {
-                if let Some(bulk) = &mut self.bulk_start {
-                    bulk.failures.push(format!("{name}: no assignment"));
-                }
+                self.bulk_fail(batch, &name, "no assignment");
                 continue;
             };
             if core.play().is_none() {
-                if let Some(bulk) = &mut self.bulk_start {
-                    bulk.failures.push(format!("{name}: no play"));
-                }
+                self.bulk_fail(batch, &name, "no play");
                 continue;
             }
-            if let Err(error) =
-                self.queue_start(core, &name, sel.clone(), StartKind::StartAll, Some(sel))
-            {
-                if let Some(bulk) = &mut self.bulk_start {
-                    bulk.failures.push(format!("{name}: {error}"));
-                }
-            } else if let Some(bulk) = &mut self.bulk_start {
-                bulk.queued += 1;
+            if let Err(error) = self.queue_start(
+                core,
+                &name,
+                sel.clone(),
+                StartKind::StartAll,
+                Some(sel),
+                batch,
+            ) {
+                self.bulk_fail(batch, &name, error);
             }
         }
         self.admit_starts(core, catalog_root);
@@ -929,6 +978,7 @@ impl Scripts {
         sel: script::ScriptSel,
         kind: StartKind,
         assigned: Option<script::ScriptSel>,
+        batch: BulkId,
     ) -> Result<(), String> {
         if core.play().is_none() {
             return Err("no play".into());
@@ -947,7 +997,11 @@ impl Scripts {
             assigned,
             latched,
             had_arm,
+            batch,
         });
+        if let Some(bulk) = self.bulks.get_mut(&batch) {
+            bulk.queued += 1;
+        }
         Ok(())
     }
 
@@ -970,12 +1024,9 @@ impl Scripts {
     /// Any reload in preparation or awaiting confirmation is cancelled.
     /// Returns how many were stopped.
     pub fn stop_all<Io>(&mut self, core: &mut OperatorSession<Io>) -> usize {
-        let cancelled = self.admit.clear();
-        if cancelled > 0 {
-            if let Some(bulk) = &mut self.bulk_start {
-                bulk.skipped += cancelled;
-                bulk.queued = 0;
-            }
+        let cancelled = self.admit.drain();
+        for entry in &cancelled {
+            self.credit_skipped(entry.batch, &entry.profile, "cancelled");
         }
         self.publish_start_places(core);
         if core.play().is_none() {
@@ -989,7 +1040,7 @@ impl Scripts {
             return stopped;
         }
         self.last_bulk_report = Some(report);
-        if stopped > 0 || cancelled > 0 {
+        if stopped > 0 || !cancelled.is_empty() {
             self.clear_notice();
         }
         stopped
@@ -1092,17 +1143,38 @@ impl Scripts {
                             .unwrap_or(error),
                         PendingCard::Compiled(_) => error,
                     };
-                    self.report_start_failure(&name, pending.kind, diagnostic);
+                    self.report_start_failure(&name, pending.kind, pending.batch, diagnostic);
                 }
                 Some(script::StartOutcome::Rejected(error)) => {
-                    self.report_start_failure(&name, pending.kind, error.to_string());
+                    self.report_start_failure(
+                        &name,
+                        pending.kind,
+                        pending.batch,
+                        error.to_string(),
+                    );
                 }
                 Some(script::StartOutcome::Cancelled) | None => {}
             }
         }
     }
 
-    fn report_start_failure(&mut self, name: &str, kind: StartKind, diagnostic: String) {
+    fn report_start_failure(
+        &mut self,
+        name: &str,
+        kind: StartKind,
+        batch: Option<BulkId>,
+        diagnostic: String,
+    ) {
+        if let Some(id) = batch {
+            if let Some(bulk) = self.bulks.get_mut(&id) {
+                bulk.started = bulk.started.saturating_sub(1);
+                bulk.failures.push(format!("{name}: {diagnostic}"));
+            }
+            if self.latest_bulk == Some(id) {
+                self.publish_bulk();
+            }
+            return;
+        }
         match kind {
             StartKind::Start => {
                 let message = format!("script: {diagnostic}");
@@ -1111,10 +1183,13 @@ impl Scripts {
                 self.show(message);
             }
             StartKind::StartAll => {
-                let bulk = self.bulk_start.get_or_insert_with(BulkStart::default);
-                bulk.started = bulk.started.saturating_sub(1);
-                bulk.failures.push(format!("{name}: {diagnostic}"));
-                self.publish_bulk();
+                if let Some(id) = self.latest_bulk {
+                    if let Some(bulk) = self.bulks.get_mut(&id) {
+                        bulk.started = bulk.started.saturating_sub(1);
+                        bulk.failures.push(format!("{name}: {diagnostic}"));
+                    }
+                    self.publish_bulk();
+                }
             }
             StartKind::Reload => self.show(format!("reload: {name}: {diagnostic}")),
         }
@@ -1137,29 +1212,29 @@ impl Scripts {
 
     /// `true` when `start_sel` ran (counts against the frame budget).
     fn dispatch_queued<Io>(&mut self, core: &mut OperatorSession<Io>, entry: QueuedStart) -> bool {
-        if !wall_member(core, &entry.profile) {
-            self.drop_queued(&entry);
+        if !wall_member(core, &entry.profile) || core.removal_pending(&entry.profile) {
+            self.drop_queued(&entry, "removed");
             return false;
         }
         if script_active(core, &entry.profile) {
-            self.drop_queued(&entry);
+            self.drop_queued(&entry, "already active");
             return false;
         }
         if let Some(required) = &entry.assigned {
             let current =
                 Self::assignment(core, &entry.profile).and_then(|a| sel_from_assignment(&a));
             if current.as_ref() != Some(required) {
-                self.drop_queued(&entry);
+                self.drop_queued(&entry, "reassigned");
                 return false;
             }
         }
         let (has_arm, latched_now) = arm_flags(core, &entry.profile);
         if entry.had_arm && !has_arm {
-            self.drop_queued(&entry);
+            self.drop_queued(&entry, "disconnected");
             return false;
         }
         if !entry.latched && latched_now {
-            self.drop_queued(&entry);
+            self.drop_queued(&entry, "logged out");
             return false;
         }
         let catalog = self.admit_catalog.clone();
@@ -1169,39 +1244,21 @@ impl Scripts {
             entry.sel,
             catalog.as_deref(),
             entry.kind,
+            Some(entry.batch),
         ) {
             Ok(()) => {
-                if entry.kind == StartKind::StartAll {
-                    if let Some(bulk) = &mut self.bulk_start {
-                        bulk.queued = bulk.queued.saturating_sub(1);
-                        bulk.started += 1;
-                    }
-                    self.publish_bulk();
-                }
+                self.credit_started(entry.batch);
                 true
             }
             Err(error) => {
-                if entry.kind == StartKind::StartAll {
-                    if let Some(bulk) = &mut self.bulk_start {
-                        bulk.queued = bulk.queued.saturating_sub(1);
-                        bulk.failures.push(format!("{}: {error}", entry.profile));
-                    }
-                    self.publish_bulk();
-                }
+                self.credit_failed(entry.batch, &entry.profile, &error);
                 true
             }
         }
     }
 
-    fn drop_queued(&mut self, entry: &QueuedStart) {
-        if entry.kind != StartKind::StartAll {
-            return;
-        }
-        if let Some(bulk) = &mut self.bulk_start {
-            bulk.queued = bulk.queued.saturating_sub(1);
-            bulk.skipped += 1;
-        }
-        self.publish_bulk();
+    fn drop_queued(&mut self, entry: &QueuedStart, reason: &str) {
+        self.credit_skipped(entry.batch, &entry.profile, reason);
     }
 
     fn credit_queue_outcome(
@@ -1213,28 +1270,56 @@ impl Scripts {
         let Some(entry) = from_queue else {
             return;
         };
-        if entry.kind != StartKind::StartAll {
-            return;
+        match outcome {
+            Ok(()) => self.credit_started(entry.batch),
+            Err(error) => self.credit_failed(entry.batch, profile, error),
         }
-        if let Some(bulk) = &mut self.bulk_start {
-            bulk.queued = bulk.queued.saturating_sub(1);
-            match outcome {
-                Ok(()) => bulk.started += 1,
-                Err(error) => bulk.failures.push(format!("{profile}: {error}")),
-            }
-        }
-        self.publish_bulk();
     }
 
-    fn publish_bulk(&mut self) {
-        let Some(bulk) = &self.bulk_start else {
+    fn credit_started(&mut self, batch: BulkId) {
+        if let Some(bulk) = self.bulks.get_mut(&batch) {
+            bulk.queued = bulk.queued.saturating_sub(1);
+            bulk.started += 1;
+        }
+        if self.latest_bulk == Some(batch) {
+            self.publish_bulk();
+        }
+    }
+
+    fn credit_failed(&mut self, batch: BulkId, profile: &str, error: &str) {
+        if let Some(bulk) = self.bulks.get_mut(&batch) {
+            bulk.queued = bulk.queued.saturating_sub(1);
+            bulk.failures.push(format!("{profile}: {error}"));
+        }
+        if self.latest_bulk == Some(batch) {
+            self.publish_bulk();
+        }
+    }
+
+    fn credit_skipped(&mut self, batch: BulkId, profile: &str, reason: &str) {
+        if let Some(bulk) = self.bulks.get_mut(&batch) {
+            bulk.queued = bulk.queued.saturating_sub(1);
+            bulk.skipped += 1;
+            bulk.skips.push(format!("{profile}: {reason}"));
+        }
+        if self.latest_bulk == Some(batch) {
+            self.publish_bulk();
+        }
+    }
+
+    pub(crate) fn publish_bulk(&mut self) {
+        let Some(id) = self.latest_bulk else {
+            return;
+        };
+        let Some(bulk) = self.bulks.get(&id) else {
             return;
         };
         let report = format_bulk(
-            "Start all",
+            bulk.label,
             bulk.started,
             bulk.queued,
             bulk.skipped,
+            &bulk.skips,
             &bulk.failures,
         );
         if self.last_bulk_report.as_deref() == Some(report.as_str()) {
@@ -1317,13 +1402,19 @@ fn format_bulk(
     started: usize,
     queued: usize,
     skipped: usize,
+    skips: &[String],
     failures: &[String],
 ) -> String {
-    let head = if queued == 0 {
+    let mut head = if queued == 0 {
         format!("{op}: started {started}, skipped {skipped}")
     } else {
         format!("{op}: started {started}, queued {queued}, skipped {skipped}")
     };
+    if !skips.is_empty() {
+        let shown: Vec<&str> = skips.iter().take(6).map(String::as_str).collect();
+        head.push_str(": ");
+        head.push_str(&shown.join(", "));
+    }
     if failures.is_empty() {
         return head;
     }

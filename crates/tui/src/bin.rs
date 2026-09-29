@@ -884,6 +884,9 @@ impl TuiSession {
     /// Log out the focused member; the slot stays loaded and latched.
     fn logout(&mut self, app: &mut TuiApp) {
         if let Some(name) = app.focused_name() {
+            self.scripts.cancel_queued_as(&name, "logged out");
+            self.scripts.publish_start_places(&mut self.core);
+            self.apply_script_notice(app);
             self.core.logout(&name);
         }
     }
@@ -896,6 +899,9 @@ impl TuiSession {
     /// Remove `name` (frozen when the operator confirmed): clean logout,
     /// then its worker stops. The neighbour becomes selected when it was.
     fn remove(&mut self, app: &mut TuiApp, name: &str) {
+        self.scripts.cancel_queued_as(name, "removed");
+        self.scripts.publish_start_places(&mut self.core);
+        self.apply_script_notice(app);
         let (core, mut surface) = self.core_and_surface();
         let removal = core.remove(name, Instant::now(), &mut surface);
         if let Some(next) = removal.reselected {
@@ -1696,16 +1702,14 @@ impl TuiSession {
     fn script_start_all(&mut self, app: &mut TuiApp) {
         let root = self.start_catalog_root();
         if !app.table.selection.is_empty() {
-            let report = frontend_core::start_marked(
+            frontend_core::start_marked(
                 &app.table.selection,
                 &mut self.core,
                 &mut self.scripts,
                 app.script_sel.as_ref(),
                 root.as_deref(),
             );
-            self.scripts.show_load_failures();
             self.apply_script_notice(app);
-            app.error = Some(report.summary());
         } else {
             self.scripts.start_all(&mut self.core, root.as_deref());
             self.apply_script_notice(app);
