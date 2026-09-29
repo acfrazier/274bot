@@ -177,21 +177,26 @@ candidate on the frame the completed-duel watch advances and the parking tele
 has not yet been sent (`ScenarioRunner` only `advance_step()`s that tick;
 `play_slots` then runs `slot_frame`). A pair is admitted, and its Start is
 re-checked on the Start frame, only while every other slot's latest in-scene
-tile is inside the hold area (30 tiles from the hold) and no breach has been
-recorded.
+tile is at least 20 steps from the challenge area (`DUEL_ZONE`) and no breach
+has been recorded.
 
 The frozen card walks a parked slot back toward the arena. The fixture
-re-teleports it once it is 8 tiles out, but that tele is neither acknowledged
-nor sent while the scene settles, so it is not the guarantee. The hold-area
-fence is: every client frame of a waiting or parked slot reports its tile, not
-gated by scene settling, and until every pair has entered a pen the first such
-tile outside the area latches `duel fleet hold breach: slot … was seen at …`.
-The breach refuses every later admission and Start, and the next benchmark poll
-fails the run with it. The nearest challenge-area tile is 59 steps from the
-hold, so a slot last seen inside the area is at least 29 steps, 15 running game
-ticks (9 s), from becoming a candidate. The qualification records carry a
-`duel_gate` object with the area radius and the largest distance at which a
-fenced slot was seen. Each slot qualifies only after its own snapshots show a
+re-teleports it once it is 8 tiles from the hold, but that tele is neither
+acknowledged nor sent while the scene settles, so it is not the guarantee. The
+zone-clearance fence is: every client frame of a waiting or parked slot
+reports its tile, not gated by scene settling, and until every pair has entered
+a pen the first such tile closer than 20 steps to the challenge area latches
+`duel fleet clearance breach: slot … was seen at …`. The breach refuses every
+later admission and Start, and the next benchmark poll fails the run with it. A
+step moves at most one tile on each axis and a running player takes two steps
+per game tick, so a slot last seen outside the clearance is at least 10 game
+ticks (6 s) from becoming a candidate. The hold is 59 steps from the challenge
+area, which leaves room for the correction's own excursion (22 tiles from the
+hold at most in the live N=50 runs). The fence bounds distance to the arena,
+not to the hold: parked slots have landed at the Lumbridge spawn, 106 steps
+out, and are simply re-teleported. The qualification records carry a
+`duel_gate` object with the clearance, the closest approach and the farthest
+hold distance seen for a fenced slot. Each slot qualifies only after its own snapshots show a
 fight pen visit followed by a return to the lobby, the transition the card
 counts as a finished duel. After every slot has entered a pen, parked slots are
 released to the lobby so observation is a fighting fleet. A duel only moves its

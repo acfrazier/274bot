@@ -443,7 +443,7 @@ fn duel_scene_tile(c: &client::client::Client) -> Option<(i32, i32, i32)> {
     })
 }
 
-/// The installed duel fleet's hold-area record, for qualification rows.
+/// The installed duel fleet's zone-clearance record, for qualification rows.
 fn duel_gate_summary() -> Option<serde_json::Value> {
     let seeds = SEEDS.lock().unwrap();
     let seed = seeds.as_ref()?.values().next()?;
@@ -553,20 +553,21 @@ const DUEL_LOBBY: WorldTile = WorldTile {
 /// level 0: the arena and its challenge lobby.
 const DUEL_ZONE: (i32, i32, i32, i32) = (3328, 3393, 3203, 3325);
 
-/// Fewest steps from [`DUEL_HOLD`] onto any `DUEL_ZONE` tile. A step moves at
-/// most one tile on each axis, so this is the Chebyshev distance: 59.
-const DUEL_HOLD_TO_ZONE_STEPS: i32 = {
-    let dx = if DUEL_HOLD.x < DUEL_ZONE.0 {
-        DUEL_ZONE.0 - DUEL_HOLD.x
-    } else if DUEL_HOLD.x > DUEL_ZONE.1 {
-        DUEL_HOLD.x - DUEL_ZONE.1
+/// Fewest steps from `(x, z)` onto any `DUEL_ZONE` tile (0 inside it). A step
+/// moves at most one tile on each axis, so this is the Chebyshev distance.
+/// Level is ignored: that only ever makes the fence stricter.
+const fn duel_zone_steps(x: i32, z: i32) -> i32 {
+    let dx = if x < DUEL_ZONE.0 {
+        DUEL_ZONE.0 - x
+    } else if x > DUEL_ZONE.1 {
+        x - DUEL_ZONE.1
     } else {
         0
     };
-    let dz = if DUEL_HOLD.z < DUEL_ZONE.2 {
-        DUEL_ZONE.2 - DUEL_HOLD.z
-    } else if DUEL_HOLD.z > DUEL_ZONE.3 {
-        DUEL_HOLD.z - DUEL_ZONE.3
+    let dz = if z < DUEL_ZONE.2 {
+        DUEL_ZONE.2 - z
+    } else if z > DUEL_ZONE.3 {
+        z - DUEL_ZONE.3
     } else {
         0
     };
@@ -575,36 +576,42 @@ const DUEL_HOLD_TO_ZONE_STEPS: i32 = {
     } else {
         dz
     }
-};
+}
 
-/// The hold area: the Chebyshev radius around [`DUEL_HOLD`] that every
-/// waiting or parked slot must stay inside until every pair has entered a pen.
+/// 59: the hold is this many steps from the nearest challenge-area tile.
+const DUEL_HOLD_TO_ZONE_STEPS: i32 = duel_zone_steps(DUEL_HOLD.x, DUEL_HOLD.z);
+
+/// The zone clearance: the fewest steps from `DUEL_ZONE` at which a waiting
+/// or parked slot may be seen until every pair has entered a pen.
 ///
 /// The frozen card walks a parked slot back toward the arena (`TravelToArena`).
-/// The keep-parked Repeat re-teles it once it leaves radius 8, but that send is
-/// unacknowledged and waits for the scenario's 2 s scene-settle gate, so it
-/// cannot by itself keep an already-fought slot out of the lobby. The fence
-/// does: [`DuelPairGate::observe`] runs on every in-scene client frame of the
-/// slot (not settle-gated) and latches a named breach the first time a fenced
-/// slot is seen outside this radius. A breach refuses every further admission
-/// and Start and fails the run.
+/// The keep-parked Repeat re-teles it once it is 8 tiles from the hold, but
+/// that send is unacknowledged and waits for the scenario's 2 s scene-settle
+/// gate, so it cannot by itself keep an already-fought slot out of the lobby.
+/// The fence does: [`DuelPairGate::observe`] runs on every in-scene client
+/// frame of the slot (not settle-gated) and latches a named breach the first
+/// time a fenced slot is seen closer to the zone than this. A breach refuses
+/// every further admission and Start and fails the run.
 ///
-/// Margin: a slot seen inside the area is at least
-/// `DUEL_HOLD_TO_ZONE_STEPS - DUEL_HOLD_AREA_RADIUS` = 29 steps from the zone.
-/// A running player takes at most two steps per 600 ms game tick, so it is
-/// at least 15 game ticks (9 s) from being a `challengeTargets()` candidate —
+/// Margin: a slot seen at the clearance is still 20 steps from the zone. A
+/// running player takes at most two steps per 600 ms game tick, so it is at
+/// least 10 game ticks (6 s) from being a `challengeTargets()` candidate —
 /// against a slot frame that sees each `PLAYER_INFO` move and a benchmark poll
-/// that fails the run on its next call. Nominal corrections stay far inside:
-/// radius 8 plus at most the ~7 steps a 2 s settle wait allows; the
-/// qualification records carry the largest fenced excursion actually seen.
-const DUEL_HOLD_AREA_RADIUS: i32 = 30;
+/// that fails the run on its next call. The fence bounds distance to the zone,
+/// not to the hold: a slot that lands far away (live N=50 runs saw parked slots
+/// land at the Lumbridge spawn, 106 steps out) is no candidate and is re-teled
+/// by the Repeat. Nominal corrections leave room: the hold is 59 steps out and
+/// the live N=50 correction excursion reached 22 tiles from the hold; the
+/// qualification records carry the closest approach actually seen.
+const DUEL_ZONE_CLEARANCE_STEPS: i32 = 20;
 
-/// The fence must leave at least ten game ticks of running (two steps per
-/// tick) between the hold area and the zone.
-const _: () = assert!(DUEL_HOLD_TO_ZONE_STEPS - DUEL_HOLD_AREA_RADIUS >= 2 * 10);
+/// At least ten game ticks of running (two steps per tick) inside the fence.
+const _: () = assert!(DUEL_ZONE_CLEARANCE_STEPS >= 2 * 10);
+/// At least 30 steps of nominal correction excursion between hold and fence.
+const _: () = assert!(DUEL_HOLD_TO_ZONE_STEPS - DUEL_ZONE_CLEARANCE_STEPS >= 30);
 
-/// The first fenced slot seen outside the hold area.
-struct DuelHoldBreach {
+/// The first fenced slot seen inside the zone clearance.
+struct DuelZoneBreach {
     slot: usize,
     message: String,
 }
@@ -617,28 +624,30 @@ struct DuelHoldBreach {
 /// a fight pen.
 ///
 /// The gate keeps each Start's only free lobby candidate the partner: a pair
-/// is admitted, and Starts, only while every other slot is *currently* seen in
-/// the hold area ([`DUEL_HOLD_AREA_RADIUS`]) and no breach is recorded; the
-/// next pair is admitted only after both members of the finished pair have
-/// arrived back at the hold (so a completed-duel lobby snapshot cannot overlap
-/// a starting pair, including on the frame `ScenarioRunner` only
-/// `advance_step()`s and the parking send has not yet run); and a waiting or
-/// parked slot seen leaving the hold area before every pair has entered a pen
-/// is a breach that fails the run before it can reach the lobby. After every
-/// slot has entered a pen, parked slots are released to the lobby for
-/// observation.
+/// is admitted, and Starts, only while every other slot is *currently* seen
+/// outside the zone clearance ([`DUEL_ZONE_CLEARANCE_STEPS`]) and no breach is
+/// recorded; the next pair is admitted only after both members of the
+/// finished pair have arrived back at the hold (so a completed-duel lobby
+/// snapshot cannot overlap a starting pair, including on the frame
+/// `ScenarioRunner` only `advance_step()`s and the parking send has not yet
+/// run); and a waiting or parked slot seen inside the clearance before every
+/// pair has entered a pen is a breach that fails the run before it can reach
+/// the lobby. After every slot has entered a pen, parked slots are released to
+/// the lobby for observation.
 struct DuelPairGate {
     n: usize,
     holding: Vec<AtomicBool>,
     in_pen: Vec<AtomicBool>,
     penned: AtomicUsize,
     parked: Vec<AtomicBool>,
-    /// The slot's latest in-scene observation was inside the hold area.
-    at_hold: Vec<AtomicBool>,
+    /// The slot's latest in-scene observation was outside the zone clearance.
+    clear_of_zone: Vec<AtomicBool>,
     admitted_pair: AtomicUsize,
+    /// Fewest zone steps at which a fenced slot was seen.
+    closest_fenced_zone_steps: AtomicI32,
     /// Largest hold distance at which a fenced slot was seen.
-    max_fenced_excursion: AtomicI32,
-    breach: OnceLock<DuelHoldBreach>,
+    farthest_fenced_hold_distance: AtomicI32,
+    breach: OnceLock<DuelZoneBreach>,
 }
 
 impl DuelPairGate {
@@ -650,9 +659,10 @@ impl DuelPairGate {
             in_pen: flags(),
             penned: AtomicUsize::new(0),
             parked: flags(),
-            at_hold: flags(),
+            clear_of_zone: flags(),
             admitted_pair: AtomicUsize::new(0),
-            max_fenced_excursion: AtomicI32::new(0),
+            closest_fenced_zone_steps: AtomicI32::new(i32::MAX),
+            farthest_fenced_hold_distance: AtomicI32::new(0),
             breach: OnceLock::new(),
         })
     }
@@ -666,18 +676,18 @@ impl DuelPairGate {
     }
 
     /// `slot`'s pair may enter the lobby and Start: every slot has reached the
-    /// hold, the pair is admitted, every other slot is inside the hold area on
-    /// its latest observation, and no breach is recorded.
+    /// hold, the pair is admitted, every other slot is outside the zone
+    /// clearance on its latest observation, and no breach is recorded.
     fn may_enter_lobby(&self, slot: usize) -> bool {
         let pair = slot / 2;
         self.breach.get().is_none()
             && self.all_holding()
             && self.admitted_pair.load(Ordering::Acquire) >= pair
             && self
-                .at_hold
+                .clear_of_zone
                 .iter()
                 .enumerate()
-                .all(|(other, at_hold)| other / 2 == pair || at_hold.load(Ordering::Acquire))
+                .all(|(other, clear)| other / 2 == pair || clear.load(Ordering::Acquire))
     }
 
     fn mark_in_pen(&self, slot: usize) {
@@ -707,9 +717,10 @@ impl DuelPairGate {
         self.penned.load(Ordering::Acquire) == self.n
     }
 
-    /// A slot must stay in the hold area once it has reached the hold, unless
-    /// it is the admitted pair on its way to or from its duel, until every pair
-    /// has entered a pen. A parked member of the admitted pair is fenced too.
+    /// A slot must stay outside the zone clearance once it has reached the
+    /// hold, unless it is the admitted pair on its way to or from its duel,
+    /// until every pair has entered a pen. A parked member of the admitted pair
+    /// is fenced too.
     fn fenced(&self, slot: usize) -> bool {
         self.holding[slot].load(Ordering::Acquire)
             && !self.all_in_pen()
@@ -719,37 +730,42 @@ impl DuelPairGate {
 
     /// One in-scene observation of `slot`'s own tile.
     fn observe(&self, slot: usize, (x, z, level): (i32, i32, i32)) {
-        let distance = (x - DUEL_HOLD.x).abs().max((z - DUEL_HOLD.z).abs());
-        let inside = level == DUEL_HOLD.level && distance <= DUEL_HOLD_AREA_RADIUS;
-        self.at_hold[slot].store(inside, Ordering::Release);
+        let steps = duel_zone_steps(x, z);
+        let clear = steps >= DUEL_ZONE_CLEARANCE_STEPS;
+        self.clear_of_zone[slot].store(clear, Ordering::Release);
         if !self.fenced(slot) {
             return;
         }
-        self.max_fenced_excursion.fetch_max(distance, Relaxed);
-        if !inside {
+        self.closest_fenced_zone_steps.fetch_min(steps, Relaxed);
+        let from_hold = (x - DUEL_HOLD.x).abs().max((z - DUEL_HOLD.z).abs());
+        self.farthest_fenced_hold_distance
+            .fetch_max(from_hold, Relaxed);
+        if !clear {
             let pair = self.admitted_pair.load(Ordering::Acquire);
-            let _ = self.breach.set(DuelHoldBreach {
+            let _ = self.breach.set(DuelZoneBreach {
                 slot,
                 message: format!(
-                    "duel fleet hold breach: slot {slot} was seen at ({x}, {z}, level {level}), \
-                     {distance} tiles from the hold (hold area radius {DUEL_HOLD_AREA_RADIUS}), \
-                     while pair {pair} was admitted and not every pair had entered a pen; \
-                     its keep-at-hold tele did not hold it, so no further pair may be admitted \
-                     or Start"
+                    "duel fleet clearance breach: slot {slot} was seen at ({x}, {z}, level \
+                     {level}), {steps} steps from the challenge area (clearance \
+                     {DUEL_ZONE_CLEARANCE_STEPS}), while pair {pair} was admitted and not every \
+                     pair had entered a pen; its keep-at-hold tele did not hold it, so no \
+                     further pair may be admitted or Start"
                 ),
             });
         }
     }
 
-    fn breach(&self) -> Option<&DuelHoldBreach> {
+    fn breach(&self) -> Option<&DuelZoneBreach> {
         self.breach.get()
     }
 
     fn summary(&self) -> serde_json::Value {
+        let closest = self.closest_fenced_zone_steps.load(Relaxed);
         serde_json::json!({
-            "hold_area_radius": DUEL_HOLD_AREA_RADIUS,
+            "zone_clearance_steps": DUEL_ZONE_CLEARANCE_STEPS,
             "hold_to_zone_steps": DUEL_HOLD_TO_ZONE_STEPS,
-            "max_fenced_excursion": self.max_fenced_excursion.load(Relaxed),
+            "closest_fenced_zone_steps": (closest != i32::MAX).then_some(closest),
+            "farthest_fenced_hold_distance": self.farthest_fenced_hold_distance.load(Relaxed),
             "breach": self.breach().map(|breach| breach.message.as_str()),
         })
     }
@@ -794,7 +810,7 @@ fn duel_tele_step(name: &'static str, dest: WorldTile, budget_ticks: u32) -> sce
 /// challenge-area candidate, park a finished pair at the hold (the completed-
 /// duel Await advances without sending the parking tele on that tick), and
 /// admit the next pair only once both members have arrived there. A Repeat
-/// then re-teles a parked slot the card walks away; the gate's hold-area fence
+/// then re-teles a parked slot the card walks away; the gate's zone-clearance fence
 /// fails the run if that correction does not hold it (see [`DuelPairGate`]).
 fn qualify_duel_arena_fleet(
     scenario: &mut scenario::Scenario,
@@ -885,7 +901,7 @@ fn qualify_duel_arena_fleet(
     // single Repeat cannot both leave the lobby and wait there for release.
     // Tele to the hold first (next pair still cannot enter), then Repeat to
     // re-tele the slot the frozen card walks away. The correction is not
-    // acknowledged; the gate's hold-area fence is the guarantee.
+    // acknowledged; the gate's zone-clearance fence is the guarantee.
     scenario.steps.insert(
         start + 2,
         duel_tele_step(
@@ -1429,8 +1445,8 @@ impl Run {
                             if let Some(duel) = &duel {
                                 if !duel.gate.may_enter_lobby(duel.slot) {
                                     return Err(format!(
-                                        "duel fleet: refusing to Start {name}: another slot is not \
-                                         inside the hold area on its latest observation"
+                                        "duel fleet: refusing to Start {name}: another slot is \
+                                         inside the zone clearance on its latest observation"
                                     ));
                                 }
                             }
@@ -2548,7 +2564,7 @@ mod tests {
     }
 
     /// Pair 1 cannot occupy the lobby until both members of pair 0 have parked
-    /// at the hold and every other slot is seen in the hold area. Pen entry
+    /// at the hold and every other slot is seen clear of the zone. Pen entry
     /// latches all_in_pen for the observation release but does not admit the
     /// next Start. The admitted pair's own trip to the lobby is not a breach.
     #[test]
@@ -2793,11 +2809,13 @@ mod tests {
     /// back toward the arena, and the keep-parked Repeat's re-tele is neither
     /// acknowledged nor sent while the scene settles. If it does not apply, the
     /// already-fought slot can reach the lobby while a later admitted pair is
-    /// still negotiating. Leaving the hold area must be a named breach, seen on
-    /// the slot's own frame even when the Repeat sends nothing, that refuses
-    /// the admitted pair's Start and every later admission.
+    /// still negotiating. Nearing the challenge area must be a named breach,
+    /// seen on the slot's own frame even when the Repeat sends nothing, that
+    /// refuses the admitted pair's Start and every later admission. Landing
+    /// far from the arena (the Lumbridge spawn, seen live) is not a breach.
     #[test]
-    fn a_parked_fighter_leaving_the_hold_fails_the_fleet_before_a_later_pair_can_meet_it() {
+    fn a_parked_fighter_nearing_the_challenge_area_fails_the_fleet_before_a_later_pair_can_meet_it()
+    {
         let gate = DuelPairGate::new(4);
         for slot in 0..4 {
             gate.mark_holding(slot);
@@ -2811,39 +2829,49 @@ mod tests {
         gate.observe(3, duel_tile(DUEL_LOBBY));
 
         // Pair 1 is admitted and has not entered a pen. The card walks slot 0
-        // off the hold; the Repeat re-teles it from inside the hold area.
-        let walked = WorldTile {
-            x: DUEL_HOLD.x + 12,
-            z: DUEL_HOLD.z + 6,
+        // off the hold, or it lands at the Lumbridge spawn; the Repeat re-teles
+        // it either way and neither is near the challenge area.
+        const LUMBRIDGE: WorldTile = WorldTile {
+            x: 3222,
+            z: 3218,
             level: 0,
         };
-        set_duel_tile(&mut client, walked);
-        let out_before = client.out.pos;
-        seed_frame(&mut seed, &mut client, false);
-        let sent = &client.out.data()[out_before..client.out.pos];
-        assert!(
-            sent.windows(hold_tele_cheat().len())
-                .any(|window| window == hold_tele_cheat().as_bytes()),
-            "the Repeat corrects a walk off the hold"
-        );
-        assert!(
-            gate.breach().is_none(),
-            "a correction inside the area is nominal"
-        );
-        assert!(gate.may_enter_lobby(2), "pair 1 may still Start");
+        let walked = WorldTile {
+            x: DUEL_HOLD.x + 22,
+            z: DUEL_HOLD.z + 22,
+            level: 0,
+        };
+        for tile in [walked, LUMBRIDGE] {
+            set_duel_tile(&mut client, tile);
+            let out_before = client.out.pos;
+            seed_frame(&mut seed, &mut client, false);
+            let sent = &client.out.data()[out_before..client.out.pos];
+            assert!(
+                sent.windows(hold_tele_cheat().len())
+                    .any(|window| window == hold_tele_cheat().as_bytes()),
+                "the Repeat corrects ({}, {})",
+                tile.x,
+                tile.z
+            );
+            assert!(gate.breach().is_none(), "({}, {}) is clear", tile.x, tile.z);
+            assert!(gate.may_enter_lobby(2), "pair 1 may still Start");
+        }
 
         // That tele does not apply. A scene load arms the settle gate, so the
         // Repeat sends nothing while the card walks on toward the arena.
         seed.runner.set_scene_settle(Duration::from_secs(3600));
         client.scene_state = 1;
         seed_frame(&mut seed, &mut client, false);
-        let away = WorldTile {
-            x: DUEL_HOLD.x + DUEL_HOLD_AREA_RADIUS + 1,
-            z: DUEL_HOLD.z + 20,
+        let near = WorldTile {
+            x: DUEL_ZONE.0 - DUEL_ZONE_CLEARANCE_STEPS + 1,
+            z: 3230,
             level: 0,
         };
-        assert!(away.x < DUEL_ZONE.0, "still outside the challenge area");
-        set_duel_tile(&mut client, away);
+        assert!(
+            duel_zone_steps(near.x, near.z) > 0,
+            "still outside the challenge area"
+        );
+        set_duel_tile(&mut client, near);
         let out_before = client.out.pos;
         seed_frame(&mut seed, &mut client, false);
         assert_eq!(
@@ -2856,10 +2884,10 @@ mod tests {
         );
         let breach = gate
             .breach()
-            .expect("leaving the hold area is a named breach");
+            .expect("nearing the challenge area is a named breach");
         assert_eq!(breach.slot, 0);
         assert!(
-            breach.message.contains("hold breach") && breach.message.contains("slot 0"),
+            breach.message.contains("clearance breach") && breach.message.contains("slot 0"),
             "{}",
             breach.message
         );
