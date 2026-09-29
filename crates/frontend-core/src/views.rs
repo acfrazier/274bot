@@ -286,7 +286,12 @@ impl FleetRow {
                 let _ = write!(self.brief, "queued {}/{}", place.position, place.total);
                 return;
             }
-            Phase::Ready if self.busy() => "running",
+            Phase::Ready
+                if self.walking
+                    || matches!(self.script, RunState::Running | RunState::Starting) =>
+            {
+                "running"
+            }
             Phase::Ready => "idle",
             Phase::Preparing => "starting",
             Phase::LoginError => "error",
@@ -490,6 +495,8 @@ pub(crate) struct Inputs<'a> {
     pub walks: Option<&'a WalkRoutes>,
     /// The selected profile's assignment display name.
     pub card: Option<&'a str>,
+    /// Start-all / marked-Start places. Login-queue phases ignore this.
+    pub start_places: &'a HashMap<String, QueuePlace>,
 }
 
 /// The cached projections owned by the session.
@@ -513,24 +520,6 @@ pub(crate) struct Views {
 impl Views {
     pub(crate) fn view<'a>(&'a self, last: Option<&'a OperationReport>) -> FleetView<'a> {
         FleetView { views: self, last }
-    }
-
-    /// Overlay Start-all k-of-n places onto rows that are not already
-    /// showing a login-queue place. Idle callers skip this: `Scripts` only
-    /// invokes it when the admit overlay is stale.
-    pub(crate) fn apply_start_queue(&mut self, place_of: impl Fn(&str) -> Option<QueuePlace>) {
-        let mut changed = false;
-        for row in &mut self.rows {
-            changed |= overlay_start_place(row, place_of(&row.name));
-        }
-        if let Some(detail) = &mut self.detail {
-            let place = place_of(&detail.row.name);
-            changed |= overlay_start_place(&mut detail.row, place);
-        }
-        if changed {
-            self.rows_generation += 1;
-            self.generation += 1;
-        }
     }
 
     /// Bring every projection up to date. `changes` are the operation
@@ -717,18 +706,6 @@ fn find_status<'a>(
     Some(&statuses[index])
 }
 
-fn overlay_start_place(row: &mut FleetRow, place: Option<QueuePlace>) -> bool {
-    if matches!(row.phase, Phase::Queued | Phase::LoginError) {
-        return false;
-    }
-    if row.queue == place {
-        return false;
-    }
-    row.queue = place;
-    row.write_brief();
-    true
-}
-
 /// Derive `row`'s facts from the host and the front end's walk arms.
 /// Returns whether any changed (the caller then rebuilds the label).
 fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> bool {
@@ -739,7 +716,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
     let (phase, retrying) = phase_of(status, arm.as_deref());
     let queue = match phase {
         Phase::Queued | Phase::LoginError => status.and_then(QueuePlace::of),
-        _ => None,
+        _ => input.start_places.get(row.name.as_str()).copied(),
     };
     let script = match (input.play, arm.is_some()) {
         (Some(play), true) => play.script_state(&row.name),

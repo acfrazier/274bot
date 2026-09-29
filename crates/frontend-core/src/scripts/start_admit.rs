@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-use super::StartKind;
+use super::{BulkId, StartKind};
 use crate::views::QueuePlace;
 
 /// One Start-all (or marked bulk) Start may be dispatched per operator
@@ -42,6 +42,8 @@ pub(super) struct QueuedStart {
     pub latched: bool,
     /// Whether the slot had an arm at enqueue. Losing it is a disconnect.
     pub had_arm: bool,
+    /// The click that enqueued this place. Credits go to that tally.
+    pub batch: BulkId,
 }
 
 #[derive(Debug, Default)]
@@ -90,13 +92,12 @@ impl StartAdmit {
         self.queue.remove(index)
     }
 
-    pub fn clear(&mut self) -> usize {
-        let n = self.queue.len();
-        if n > 0 {
-            self.queue.clear();
-            self.publish = true;
+    pub fn drain(&mut self) -> Vec<QueuedStart> {
+        if self.queue.is_empty() {
+            return Vec::new();
         }
-        n
+        self.publish = true;
+        self.queue.drain(..).collect()
     }
 
     pub fn status(&self, profile: &str) -> Option<QueuePlace> {

@@ -16,7 +16,7 @@ use crate::session::Session;
 
 impl Session {
     /// Show the coordinator's latest notice on the banner.
-    fn apply_script_notice(&mut self) {
+    pub(crate) fn apply_script_notice(&mut self) {
         if let Some(notice) = self.scripts.take_notice() {
             notice.apply(&mut self.error);
         }
@@ -153,7 +153,7 @@ impl Session {
     /// operator-facing report rather than replacing it with per-row banners.
     pub fn fleet_start_selected(&mut self) {
         let root = self.start_catalog_root();
-        let report = frontend_core::start_marked(
+        let _ = frontend_core::start_marked(
             &self.fleet_selection,
             &mut self.core,
             &mut self.scripts,
@@ -161,7 +161,7 @@ impl Session {
             root.as_deref(),
         );
         self.apply_script_notice();
-        self.fleet_report = Some(report.summary());
+        self.fleet_report = self.scripts.last_bulk_report().map(str::to_string);
     }
 
     /// Stop marked rows through the shared core stop path. The core skips
@@ -185,6 +185,11 @@ impl Session {
             }
         }
         self.apply_script_notice();
+        if let Some(report) = self.scripts.last_bulk_report() {
+            if report.starts_with("Start selected") {
+                self.fleet_report = Some(report.to_string());
+            }
+        }
     }
 
     pub fn reload_validation_pending(&self) -> bool {

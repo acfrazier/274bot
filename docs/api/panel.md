@@ -310,9 +310,12 @@ the `PROCESS` key.
 matching running bots and **Stops** matching paused bots. Browse’s
 **Refresh catalog** re-scans the catalog root (“Nothing changed.” when the
 scan is identical) with the same confirm/restart/stop policy when owners
-are affected. MultiBox rail **Start all / Stop all** are script bulk
-controls (not login): Start all skips already running/paused/stopping
-members; Stop all stops running and paused wall members and live slots.
+are affected. MultiBox rail **Start all / Start selected / Stop all** are
+script bulk controls (not login): Start all and Start on marked bots start
+one bot per frame instead of all at once, waiting rows show `queued k/n`,
+and Start selected with a heading card starts that card on every marked
+row. Stop and Stop all cancel bots that are still waiting; Stop all also
+stops running and paused wall members and live slots.
 Parameters **Edit** is live for a loaded card with a settings schema
 (typed editors honour `showIf` / `group`; File Load parses
 `export const SETTINGS` with no V8) and writes the focused profile’s vault

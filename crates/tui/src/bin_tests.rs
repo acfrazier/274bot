@@ -3038,10 +3038,7 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
 
     dispatch(&mut session, &mut app, AppAction::ScriptStartAll);
     let click = app.error.clone().unwrap_or_default();
-    assert!(
-        click.starts_with("Start all:") && click.contains("started"),
-        "{click}"
-    );
+    assert_eq!(click, "Start all: started 1, queued 1, skipped 0");
     settle_starts(&mut session, &mut app);
     let generation = |session: &TuiSession, name: &str| {
         session.core.play().unwrap().script_runtime_generation(name)
