@@ -174,7 +174,10 @@ gives every slot a giant. A fleet above ten slots therefore stocks its own: afte
 a slot returns to the safespot it sends `::npcadd mossgiant` twice (an admin
 command, like the fixture's `::give` and `::setstat`; each giant despawns after
 500 ticks and does not respawn), before the engagement watch. N=1 and N=10 are
-unchanged.
+unchanged. The giants and their drops outlive the run (500-tick despawn, 200-tick
+drops), so leave five minutes before another Moss cell on the same engine: a slot
+that starts among the leftover loot spends its proof window looting and can miss
+the post-return Strength-XP proof.
 
 Seed/proof or script failures fail the run and return a nonzero exit, and so does
 a fleet that has not qualified after 30 minutes (`blocked: ready=… seeded=…
