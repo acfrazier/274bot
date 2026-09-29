@@ -2719,6 +2719,37 @@ fn find_never_uses_a_spell_teleport_but_find_allow_teleports_does() {
 }
 
 #[test]
+fn quest_stage_gated_teleport_routes_only_on_proven_evidence() {
+    let wc = walled_5x5();
+    let dest = tile(4, 4, 0);
+    let gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let mut g = teleport(dest, 3, vec![], vec![]);
+    g.quest_family = Some(gate_family(1));
+    g.teleports[0].quest_gates =
+        Some(QuestGates::new(gate_family(1), [gate]).expect("valid stage gate"));
+
+    assert_eq!(
+        find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &WorldState::empty()),
+        Err(RouteError::NoPath),
+        "missing quest evidence refuses the gated teleport"
+    );
+    let disproven = evidenced(tbwt_evidence(gate_range(Some(4), Some(6))));
+    assert_eq!(
+        find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &disproven),
+        Err(RouteError::NoPath),
+        "evidence outside the stage window refuses the gated teleport"
+    );
+
+    let proven = evidenced(tbwt_evidence(gate_range(Some(3), Some(3))));
+    let route = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &proven)
+        .expect("proven quest evidence opens the gated teleport");
+    assert!(route
+        .legs
+        .iter()
+        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.quest_gates.is_some())));
+}
+
+#[test]
 fn find_never_uses_a_jewellery_teleport_by_default() {
     let wc = walled_5x5();
     let dest = tile(4, 4, 0);
