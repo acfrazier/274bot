@@ -83,6 +83,11 @@ format, the round count, and every stored profile are unchanged by an upgrade;
 nothing is rewritten until the next ordinary save, and that save keeps the
 header it found.
 
+The passphrase is used exactly as typed, spaces included, in every frontend.
+The panel's 0.1.9.1 unlock window stored and matched the trimmed text, so when
+a typed passphrase with surrounding spaces is wrong the panel tries the trimmed
+text once before reporting a wrong passphrase.
+
 ## Passphrase sourcing
 
 The passphrase is **never** read from the environment or the command line:

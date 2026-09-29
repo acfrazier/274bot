@@ -3826,3 +3826,38 @@ fn opening_another_profile_over_unsaved_edits_asks_first() {
     assert!(discarded.has("Editing bob"), "{}", discarded.text);
     assert_eq!(ui.session.cred_pass, "bpass", "bob's own row loads");
 }
+
+#[test]
+fn unlock_sends_the_passphrase_exactly_as_typed() {
+    let mut session = crate::session::Session::new();
+    session.pass_scratch.push_str("  spaced pass ");
+    super::submit_vault_pass(&mut session, true);
+    let sent = session.take_requested_unlock().expect("unlock requested");
+    assert_eq!(sent.as_str(), "  spaced pass ");
+
+    // Create still needs something besides spaces.
+    session.pass_scratch.push_str("   ");
+    super::submit_vault_pass(&mut session, false);
+    assert!(session.take_requested_unlock().is_none());
+}
+
+#[test]
+fn typed_unlock_opens_terminal_and_trimmed_panel_vaults() {
+    use crate::session::Session;
+    let dir = TestDir::new("vault-typed-unlock");
+
+    // Made in the terminal with the spaces kept: only the typed text opens it.
+    let terminal = dir.join("terminal");
+    drop(vault::Vault::create(&terminal, " pad ").unwrap());
+    assert!(Session::open_vault_typed(&terminal, " pad ").is_ok());
+
+    // Made by the 0.1.9.1 panel, which stored the trimmed text.
+    let legacy = dir.join("legacy");
+    drop(vault::Vault::create(&legacy, "pad").unwrap());
+    assert!(Session::open_vault_typed(&legacy, "  pad ").is_ok());
+
+    assert!(matches!(
+        Session::open_vault_typed(&legacy, " nope "),
+        Err(vault::VaultError::WrongPassphrase)
+    ));
+}
