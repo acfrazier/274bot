@@ -3753,6 +3753,11 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
     assert!(bot.walk_outcome_failed);
     assert_eq!(bot.walk_outcome_request_id, 7);
     assert_eq!(bot.walk_outcome_seq, 4);
+    assert_eq!(
+        bot.native_walk_failure,
+        Some((7, script::native::WalkEnd::Refused)),
+        "a host send refusal is the native owner's Refused, not the generic Failed"
+    );
 
     bot.route = Some(route);
     bot.walk_request_id = 8;
@@ -3771,6 +3776,11 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
     assert!(bot.walk_outcome_failed);
     assert_eq!(bot.walk_outcome_request_id, 8);
     assert_eq!(bot.walk_outcome_seq, 5);
+    assert_eq!(
+        bot.native_walk_failure,
+        Some((8, script::native::WalkEnd::Blocked)),
+        "an unworkable leg is the native owner's Blocked"
+    );
 }
 
 #[test]
