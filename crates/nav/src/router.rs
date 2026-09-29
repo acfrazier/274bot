@@ -818,10 +818,16 @@ pub enum MissingReq {
 
 /// Diagnose a strict [`find_with`] `NoPath`: run the same search with
 /// only the `item_req`/`worn_req` gates ignored, and collect every such
-/// fact on the relaxed route that `state` could not prove. Returns
-/// `None` when the relaxed search also fails — a skill/quest/varp gate
-/// or a plain hole in the graph blocks, and no fetch-and-wear session
-/// can help. This is the BankBudget session's diagnosis arm
+/// fact on the relaxed route that `state` could not prove. When that
+/// search fails too, a crossing may need a fetched item *and* a quest-stage
+/// gate the evidence leaves `Unknown`: the search runs once more also
+/// crossing `Unknown` gates, and names only the carry/wear facts on that
+/// route ([`find_unresolved_quest_gates`] names its gates), so neither
+/// diagnosis hides behind the other's gate. Returns `None` when no relaxed
+/// search routes, or the one that does needs no item — a
+/// skill/quest/varp gate, a `False` stage gate or a plain hole in the graph
+/// blocks, or only a journal read can help, and no fetch-and-wear session
+/// can. This is the BankBudget session's diagnosis arm
 /// ([`crate::bank_fetch::plan_bank_fetch`]); [`find`] and [`find_with`]
 /// themselves never ignore an item gate — missing facts still fail
 /// closed. The relaxed search carries the backward [`ReverseProof`], so an
@@ -875,22 +881,37 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
     avoid: &[AvoidRect],
     budget: usize,
 ) -> Option<Vec<MissingReq>> {
-    let route = first_search(
-        collision,
-        graph,
-        from,
-        std::slice::from_ref(&to),
-        &[],
-        opts,
-        state,
-        Relax::CarryWorn,
-        avoid,
-        budget,
-        budget,
-    )
-    .into_route()
-    .ok()?;
-    Some(missing_item_reqs(&route, state))
+    let search = |relax| {
+        first_search(
+            collision,
+            graph,
+            from,
+            std::slice::from_ref(&to),
+            &[],
+            opts,
+            state,
+            relax,
+            avoid,
+            budget,
+            budget,
+        )
+        .into_route()
+        .ok()
+    };
+    if let Some(route) = search(Relax::CarryWorn) {
+        return Some(missing_item_reqs(&route, state));
+    }
+    // Only an `Unknown` stage gate can make the combined search differ.
+    if !graph
+        .edges
+        .iter()
+        .chain(&graph.teleports)
+        .any(|edge| state.quest_gates(edge) == Truth::Unknown)
+    {
+        return None;
+    }
+    let missing = missing_item_reqs(&search(Relax::CarryWornUnknownQuest)?, state);
+    (!missing.is_empty()).then_some(missing)
 }
 
 /// Every `item_req`/`worn_req` fact on `route` that `state` cannot prove,
@@ -927,16 +948,20 @@ pub fn missing_item_reqs(route: &Route, state: &WorldState) -> Vec<MissingReq> {
 /// Diagnose a strict search that could not route through a quest-stage
 /// gate: search again crossing every gate the state's evidence leaves
 /// `Unknown` (a `False` gate still closes, every other requirement stays
-/// strict), and name those gates on the cheapest such route. `Ok(Some)` is
-/// what the caller's action owner must resolve — read the named journals,
-/// refresh its provider, search again; the gates come back as values, never
-/// as a diagnostic string. `Ok(None)`: no evidence can open a route (the
-/// relaxed search fails too, or its route needs no undecided gate). `Err`:
-/// the state's evidence was prepared from another quest family than the
-/// pack's gates, so no evidence it supplies can decide them; the caller
-/// refuses rather than re-reading journals. A search that routes never
-/// crosses an `Unknown` gate. Runs only after a failure: the strict searches
-/// never collect anything.
+/// strict), and name those gates on the cheapest such route. When that
+/// search fails too, a crossing may need an `Unknown` gate *and* a
+/// carry/wear fact the state lacks: the search runs once more also ignoring
+/// `item_req`/`worn_req`, and names only the undecided gates on that route
+/// ([`find_missing_item_reqs`] names its items), so neither diagnosis hides
+/// behind the other's gate. `Ok(Some)` is what the caller's action owner
+/// must resolve — read the named journals, refresh its provider, search
+/// again; the gates come back as values, never as a diagnostic string.
+/// `Ok(None)`: no evidence can open a route (no relaxed search routes, or
+/// its route needs no undecided gate). `Err`: the state's evidence was
+/// prepared from another quest family than the pack's gates, so no evidence
+/// it supplies can decide them; the caller refuses rather than re-reading
+/// journals. A search that routes never crosses an `Unknown` gate. Runs only
+/// after a failure: the strict searches never collect anything.
 pub fn find_unresolved_quest_gates(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -954,20 +979,25 @@ pub fn find_unresolved_quest_gates(
             });
         }
     }
-    let Ok(route) = first_search(
-        collision,
-        graph,
-        from,
-        targets,
-        &[],
-        opts,
-        state,
-        Relax::UnknownQuest,
-        avoid,
-        NODE_BUDGET,
-        NODE_BUDGET,
-    )
-    .into_route() else {
+    let search = |relax| {
+        first_search(
+            collision,
+            graph,
+            from,
+            targets,
+            &[],
+            opts,
+            state,
+            relax,
+            avoid,
+            NODE_BUDGET,
+            NODE_BUDGET,
+        )
+        .into_route()
+        .ok()
+    };
+    let Some(route) = search(Relax::UnknownQuest).or_else(|| search(Relax::CarryWornUnknownQuest))
+    else {
         return Ok(None);
     };
     let mut unresolved: Vec<QuestGate> = Vec::new();
@@ -1445,6 +1475,11 @@ enum Relax {
     /// The quest-evidence diagnosis ([`find_unresolved_quest_gates`]): a
     /// stage gate the evidence leaves `Unknown` is crossed; `False` closes.
     UnknownQuest,
+    /// Both diagnosis arms' fallback: carry/wear gates are ignored and
+    /// `Unknown` stage gates crossed, so a crossing that needs a fetched item
+    /// and a journal read together is visible to each arm. Each arm still
+    /// reports only its own kind of gate from the route.
+    CarryWornUnknownQuest,
 }
 
 /// Whether `state` proves `edge`'s requirements under `relax`.
@@ -1454,6 +1489,9 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
         Relax::CarryWorn => state.allows_without_carry_worn(edge),
         Relax::UnknownQuest => {
             state.snapshot_allows(edge) && state.quest_gates(edge) != Truth::False
+        }
+        Relax::CarryWornUnknownQuest => {
+            state.fixed_reqs_allow(edge) && state.quest_gates(edge) != Truth::False
         }
     }
 }
@@ -1775,8 +1813,9 @@ fn find_bounded_impl(
 
 /// The Dijkstra kernel shared by every search shape. `relax` is
 /// [`Relax::Strict`] for every routing search; the diagnosis arms relax
-/// only their own gates so a caller can tell what is missing from a
-/// skill/quest/varp gate or a hole in the graph. `budget` caps every
+/// only the carry/wear and `Unknown` stage gates a session can supply, so a
+/// caller can tell what is missing from a skill/quest/varp gate, a `False`
+/// stage gate or a hole in the graph. `budget` caps every
 /// search; within it, `goals` decide at each settled node whether the
 /// search goes on (a first-goal search's sets run their own budgets and
 /// backward proofs).

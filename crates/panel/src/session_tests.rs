@@ -41,6 +41,9 @@ use vault::{Profile, ProfileSettings, Vault};
 #[path = "../../host-play/tests/support/map_fixture.rs"]
 mod map_fixture;
 use map_fixture::MapFixture;
+#[path = "../../host-play/tests/support/upgrade_home.rs"]
+mod upgrade_home;
+use upgrade_home::UpgradeHome;
 
 #[test]
 fn memory_override_changes_spawn_profile_without_persisting_it() {
@@ -397,6 +400,56 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     assert!(session.core.play().is_some());
     assert!(session.core.vault().is_some());
     assert!(session.core.slots().is_empty());
+}
+
+/// Install a template bound against the upgraded home and unlock a first-run
+/// vault inside it, as panel startup does.
+fn unlock_upgrade_home(template: &Arc<map_host::SharedClientTemplate>) -> Session {
+    let mut session = preparation_only_session();
+    session
+        .configure_profile(ProfileOptions::default())
+        .unwrap();
+    let generation = session.profile_generation();
+    assert_eq!(
+        session.finish_profile_preparation(generation, Ok(Arc::clone(template))),
+        ProfilePreparationCompletion::Installed
+    );
+    session
+        .install_validated_template(template.validate_for_play().unwrap())
+        .unwrap();
+    assert!(session.unlock("upgrade-pass"), "{:?}", session.error);
+    session
+}
+
+/// A 0.1.9.x home keeps its v10 pack at the default path. The panel's play
+/// routes on the packaged v11 bundle's one shared world and leaves the old file
+/// alone; an explicit override to the old file still unlocks, with no world.
+#[test]
+fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
+    let home = UpgradeHome::new();
+    let profile = home.bind(None);
+    assert!(profile.nav_origin().is_bundled());
+    let template = map_host::SharedClientTemplate::load(profile).unwrap();
+    let session = unlock_upgrade_home(&template);
+    let world = session
+        .core
+        .play()
+        .and_then(|play| play.world())
+        .expect("the panel play has the packaged world");
+    assert!(Arc::ptr_eq(&world, &template.world().unwrap()));
+    assert!(home.old_pack_untouched());
+
+    let overridden = home.bind(Some(home.old_pack.clone()));
+    assert!(matches!(
+        overridden.nav_availability(),
+        map_host::profile::NavAvailability::Unavailable(message)
+            if message.contains("rebuild it with nav-pack")
+    ));
+    let template = map_host::SharedClientTemplate::load(overridden).unwrap();
+    let session = unlock_upgrade_home(&template);
+    assert!(session.error.is_none(), "{:?}", session.error);
+    assert!(session.core.play().unwrap().world().is_none());
+    assert!(home.old_pack_untouched());
 }
 
 #[test]

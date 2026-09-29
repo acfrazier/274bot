@@ -934,6 +934,65 @@ fn stage_gate_diagnosis_names_only_undecided_gates() {
     assert_eq!(&named[..], &[heroes]);
 }
 
+/// A door that needs a carried rope *and* an exact stage window: each
+/// diagnosis sees past the other's gate and names only its own kind, so a
+/// host with neither fact learns both what to fetch and what to read.
+#[test]
+fn rope_and_stage_door_diagnoses_name_each_missing_kind() {
+    const ROPE: i32 = 954;
+    let wc = walled_5x5();
+    let window = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let mut g = stage_door_graph(vec![window.clone()]);
+    g.edges[0].item_req = vec![(ROPE, 1)];
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let opts = FindOptions::default();
+    let rope = vec![MissingReq::Carry { id: ROPE, count: 1 }];
+    let read: Option<Arc<[QuestGate]>> = Some(Arc::from(vec![window]));
+    let with_rope = |state: WorldState| WorldState {
+        inv: HashMap::from([(ROPE, 1)]),
+        ..state
+    };
+    let undecided = || evidenced(tbwt_evidence(gate_range(Some(2), Some(3))));
+    let proven = || evidenced(tbwt_evidence(gate_range(Some(3), Some(3))));
+    let disproven = || evidenced(tbwt_evidence(gate_range(Some(4), Some(6))));
+
+    for (label, state, fetch, journal, routes) in [
+        (
+            "neither",
+            undecided(),
+            Some(rope.clone()),
+            read.clone(),
+            false,
+        ),
+        (
+            "rope only",
+            with_rope(undecided()),
+            None,
+            read.clone(),
+            false,
+        ),
+        ("stage only", proven(), Some(rope.clone()), None, false),
+        ("both", with_rope(proven()), Some(vec![]), None, true),
+        ("stage disproven", disproven(), None, None, false),
+    ] {
+        assert_eq!(
+            find_with(&wc, &g, from, to, opts, &state).is_ok(),
+            routes,
+            "{label}"
+        );
+        assert_eq!(
+            find_missing_item_reqs(&wc, &g, from, to, opts, &state),
+            fetch,
+            "{label}: carry diagnosis"
+        );
+        assert_eq!(
+            find_unresolved_quest_gates(&wc, &g, from, &[to], opts, &state, &[]),
+            Ok(journal),
+            "{label}: stage diagnosis"
+        );
+    }
+}
+
 #[test]
 fn many_targets_keep_shortcuts_duplicates_budget_and_deadline_distinct() {
     let wc = bake(5, 1, &[]);

@@ -1,3 +1,4 @@
+use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
@@ -47,10 +48,11 @@ impl EvidenceProvider for Resolved {
 }
 
 pub(crate) fn family(byte: u8) -> QuestFamilyId {
-    QuestFamilyId {
-        quest_facts_sha256: [byte; 32],
-        quest_extractor_schema: 1,
-    }
+    family_schema(byte, 1)
+}
+
+pub(crate) fn family_schema(byte: u8, schema: u16) -> QuestFamilyId {
+    QuestFamilyId::new([byte; 32], NonZeroU16::new(schema).unwrap())
 }
 
 pub(crate) fn stamp(tick: u64) -> EvidenceStamp {
@@ -148,10 +150,7 @@ fn missing_stale_or_foreign_evidence_never_authorizes() {
         Truth::Unknown,
         "another quest family digest"
     );
-    let other_schema = QuestFamilyId {
-        quest_extractor_schema: 2,
-        ..family(1)
-    };
+    let other_schema = family_schema(1, 2);
     assert_eq!(
         exact.test(Some(&with(other_schema, stamp(5)))),
         Truth::Unknown,
@@ -246,10 +245,7 @@ fn pack_admission_requires_the_manifest_quest_family() {
             expected: family(2),
         })
     );
-    let newer_schema = QuestFamilyId {
-        quest_extractor_schema: 2,
-        ..family(1)
-    };
+    let newer_schema = family_schema(1, 2);
     assert!(bound.admit_quest_family(&newer_schema).is_err());
     let unbound = TransportGraph::default();
     assert_eq!(

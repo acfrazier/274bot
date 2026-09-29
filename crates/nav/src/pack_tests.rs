@@ -11,7 +11,9 @@ use super::{
 use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
 use crate::grid::StepGrid;
 use crate::pack::PackError;
-use crate::quest_gates::tests::{family as gate_family, window as gate_window};
+use crate::quest_gates::tests::{
+    family as gate_family, family_schema as gate_family_schema, window as gate_window,
+};
 use crate::quest_gates::QuestGates;
 use crate::tile::Tile;
 use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
@@ -1580,6 +1582,28 @@ fn v11_roundtrips_quest_family_and_stage_gates() {
 
     let plain = encode(&tiny_collision(), &TransportGraph::default(), &[]);
     assert_eq!(decode(&plain).unwrap().1.quest_family, None);
+}
+
+/// Encode never writes a family binding its own decoder refuses: every
+/// family a caller can build — extractor schema 1 through `u16::MAX`, the
+/// schema 0 the decoder rejects being unconstructible — binds a gated pack
+/// that decodes to the same family and gates.
+#[test]
+fn every_constructible_quest_family_encodes_a_decodable_pack() {
+    for (digest, schema) in [(0x00, 1), (0x7f, 0x0100), (0xff, u16::MAX)] {
+        let family = gate_family_schema(digest, schema);
+        let gates =
+            QuestGates::new(family, [gate_window("tbwt", "tbwt_main", Some(3), Some(3))]).unwrap();
+        let mut graph = TransportGraph {
+            quest_family: Some(family),
+            ..TransportGraph::default()
+        };
+        graph.edges.push(gated_door(Some(gates.clone())));
+        let (_, g, _) = decode(&encode(&tiny_collision(), &graph, &[]))
+            .unwrap_or_else(|e| panic!("schema {schema}: {e:?}"));
+        assert_eq!(g.quest_family, Some(family), "schema {schema}");
+        assert_eq!(g.edges[0].quest_gates, Some(gates), "schema {schema}");
+    }
 }
 
 /// Gates a pack cannot bind, or a malformed binding, refuse the whole pack

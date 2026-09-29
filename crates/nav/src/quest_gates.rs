@@ -12,6 +12,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
+use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
@@ -22,10 +23,32 @@ use crate::transport::TransportGraph;
 /// The selected quest family a pack's gates were baked against: the family
 /// artifact digest (`manifest.families.quests.sha256`) and its extractor
 /// schema. Never the final manifest hash, which is computed after the bake.
+/// No extractor schema is 0, so the pack's family binding never is either:
+/// every family a caller can build encodes into a pack that decodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct QuestFamilyId {
-    pub quest_facts_sha256: [u8; 32],
-    pub quest_extractor_schema: u16,
+    quest_facts_sha256: [u8; 32],
+    quest_extractor_schema: NonZeroU16,
+}
+
+impl QuestFamilyId {
+    /// The family artifact digest and its (nonzero) extractor schema.
+    pub fn new(quest_facts_sha256: [u8; 32], quest_extractor_schema: NonZeroU16) -> Self {
+        Self {
+            quest_facts_sha256,
+            quest_extractor_schema,
+        }
+    }
+
+    /// The quest family artifact's SHA-256 digest.
+    pub fn quest_facts_sha256(&self) -> &[u8; 32] {
+        &self.quest_facts_sha256
+    }
+
+    /// The family's extractor schema.
+    pub fn quest_extractor_schema(&self) -> NonZeroU16 {
+        self.quest_extractor_schema
+    }
 }
 
 impl fmt::Display for QuestFamilyId {

@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 use host_play as map_host;
 #[path = "../../host-play/tests/support/map_fixture.rs"]
 mod map_fixture;
+#[path = "../../host-play/tests/support/upgrade_home.rs"]
+mod upgrade_home;
 
 fn wait_script_state(play: &host_play::Play, name: &str, want: script::RunState) {
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -861,6 +863,48 @@ fn create_profile_upsert_error_returns_err() {
         err.starts_with("profile:"),
         "upsert failure must return Err, got {err:?}"
     );
+}
+
+/// A 0.1.9.x home keeps its v10 pack at the default path. The TUI's play and
+/// its WalkTo/scenario world are the packaged v11 bundle's one shared world,
+/// and the old file is left alone; an explicit override to the old file still
+/// starts, with no world.
+#[test]
+fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
+    let home = upgrade_home::UpgradeHome::new();
+    let start = |profile: Arc<host_play::ServerProfile>, vault: &str| {
+        let template = SharedClientTemplate::load(profile).unwrap();
+        let mut session =
+            TuiSession::new_bound(Arc::clone(&template), host_play::InstancePermit::SkipLock);
+        let vault = Vault::create(&home.root.join(vault), "bot").unwrap();
+        session.start_play(vault).unwrap();
+        (session, template)
+    };
+
+    let profile = home.bind(None);
+    assert!(profile.nav_origin().is_bundled());
+    let (session, template) = start(profile, "bundled.vault");
+    let world = template.world().expect("the packaged world decodes");
+    let played = session
+        .core
+        .play()
+        .and_then(|play| play.world())
+        .expect("the TUI play has the packaged world");
+    assert!(Arc::ptr_eq(&played, &world));
+    let routed = session.nav_world.lock().unwrap().clone();
+    assert!(Arc::ptr_eq(&routed.expect("WalkTo world"), &world));
+    assert!(home.old_pack_untouched());
+
+    let overridden = home.bind(Some(home.old_pack.clone()));
+    assert!(matches!(
+        overridden.nav_availability(),
+        host_play::profile::NavAvailability::Unavailable(message)
+            if message.contains("rebuild it with nav-pack")
+    ));
+    let (session, _) = start(overridden, "override.vault");
+    assert!(session.core.play().unwrap().world().is_none());
+    assert!(session.nav_world.lock().unwrap().is_none());
+    assert!(home.old_pack_untouched());
 }
 
 fn fake_rs2b0t_tree(dir: &Path, include_jive_kq: bool) -> PathBuf {
