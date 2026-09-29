@@ -33,9 +33,10 @@ witness qualifies, exactly as the panel watches do; see
 The vault passphrase is never an argument or an environment variable:
 `tui-play` asks on the terminal, or reads one line from a pipe with
 `--vault-pass-stdin` (`printf '%s\n' "$PASS" | tui-play --profile local-289
---vault-pass-stdin`). A new vault needs at least 12 characters; an existing one
-opens with the passphrase it was created with. In a pty, send the passphrase
-at the prompt and end it with Enter (`\r` or `\n`). `BOT_VAULT_PASS` and
+--vault-pass-stdin`). A new vault needs a non-empty passphrase after trimming
+surrounding whitespace; strength is the user's choice. An existing one opens
+with the passphrase it was created with. In a pty, send the passphrase at the
+prompt and end it with Enter (`\r` or `\n`). `BOT_VAULT_PASS` and
 `--vault-pass` were removed; see [vault.md](vault.md#passphrase-sourcing).
 
 `--map-bundle OUT --revision 289 --cache JAG_DIR --unpack SNAPSHOT_ROOT` is a

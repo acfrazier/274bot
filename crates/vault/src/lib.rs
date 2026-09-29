@@ -6,17 +6,15 @@
 //! passwords never appear in plaintext. A wrong passphrase fails the unlock
 //! without modifying the file.
 //!
-//! # Passphrase policy and upgrades
+//! # Passphrase policy
 //!
-//! A **new** vault needs a passphrase of at least [`MIN_PASSPHRASE_CHARS`]
-//! characters ([`check_new_passphrase`]). An **existing** vault is never held
-//! to that floor: [`Vault::unlock`] accepts whatever passphrase decrypts the
-//! file, so a vault created under the old empty-only rule keeps opening, keeps
-//! saving, and loses nothing. The floor applies again wherever a new passphrase
-//! is chosen (create, and any future re-key). The KDF is untouched by an
-//! upgrade: the round count stored in the file header is kept on every save,
-//! and a header outside `1..=MAX_PBKDF2_ROUNDS` is rejected before any key
-//! derivation runs.
+//! A **new** vault needs a passphrase that is not empty after surrounding
+//! whitespace is trimmed ([`check_new_passphrase`]). Passphrase strength is
+//! the user's choice. An **existing** vault accepts any passphrase that
+//! decrypts the file, so vaults created under an earlier policy keep opening,
+//! saving, and retaining their data. The KDF is untouched by an upgrade: the
+//! round count stored in the file header is kept on every save, and a header
+//! outside `1..=MAX_PBKDF2_ROUNDS` is rejected before any key derivation runs.
 //!
 //! Secrets are held in [`Secret`] (zeroed on drop) and the derived key and the
 //! serialized profiles in `zeroize` buffers, so a copy does not outlive its
@@ -52,9 +50,6 @@ const FORMAT_VERSION: u8 = 1;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
-/// Shortest passphrase [`Vault::create`] accepts, counted in characters
-/// (Unicode scalar values) with surrounding whitespace ignored.
-pub const MIN_PASSPHRASE_CHARS: usize = 12;
 /// PBKDF2 iterations used when creating a new vault. Unlock reads the round
 /// count from the file header and every save keeps it, so a file written at a
 /// different count never breaks.
@@ -202,8 +197,6 @@ impl std::fmt::Debug for Profile {
 pub enum VaultError {
     #[error("passphrase must not be empty")]
     EmptyPassphrase,
-    #[error("passphrase must be at least {min} characters (got {got})")]
-    PassphraseTooShort { min: usize, got: usize },
     #[error("vault already exists: {0}")]
     AlreadyExists(PathBuf),
     #[error("no vault at {0}")]
@@ -257,10 +250,9 @@ impl Vault {
         })
     }
 
-    /// Opens the vault at `path` with the given passphrase. Any non-empty
-    /// passphrase that decrypts the file is accepted, however short: the
-    /// [`MIN_PASSPHRASE_CHARS`] floor is for new vaults, so a vault created
-    /// before it existed is never locked out.
+    /// Opens the vault at `path` with the given passphrase. Any passphrase
+    /// that decrypts the file is accepted, provided it is not empty after
+    /// surrounding whitespace is trimmed.
     pub fn unlock(path: &Path, passphrase: &str) -> Result<Self, VaultError> {
         require_passphrase(passphrase)?;
         let blob = read_vault_file(path)?;
@@ -432,25 +424,17 @@ fn persist(
     atomic_write(path, &blob)
 }
 
-/// The policy for a passphrase that will protect a **new** vault: not empty,
-/// and at least [`MIN_PASSPHRASE_CHARS`] characters once surrounding
-/// whitespace is ignored, so padding cannot buy length. [`Vault::create`]
-/// applies it; a caller that prompts can apply it first and ask again instead
-/// of failing late. It is not applied to unlock.
+/// The policy for a passphrase that will protect a **new** vault: it must not
+/// be empty after surrounding whitespace is trimmed. Passphrase strength is
+/// the user's choice. [`Vault::create`] applies it; a caller that prompts can
+/// apply it first and ask again instead of failing late. It is also used when
+/// opening a missing vault through a frontend.
 pub fn check_new_passphrase(passphrase: &str) -> Result<(), VaultError> {
-    require_passphrase(passphrase)?;
-    let got = passphrase.trim().chars().count();
-    if got < MIN_PASSPHRASE_CHARS {
-        return Err(VaultError::PassphraseTooShort {
-            min: MIN_PASSPHRASE_CHARS,
-            got,
-        });
-    }
-    Ok(())
+    require_passphrase(passphrase)
 }
 
 fn require_passphrase(passphrase: &str) -> Result<(), VaultError> {
-    if passphrase.is_empty() {
+    if passphrase.trim().is_empty() {
         Err(VaultError::EmptyPassphrase)
     } else {
         Ok(())
@@ -586,15 +570,14 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        build_blob, check_new_passphrase, derive_key, parse_header, serialize_profiles, Profile,
-        ProfileSettings, Vault, VaultChange, VaultError, MAX_PBKDF2_ROUNDS, MAX_VAULT_FILE_BYTES,
-        MIN_PASSPHRASE_CHARS, SALT_LEN,
+        build_blob, derive_key, parse_header, serialize_profiles, Profile, ProfileSettings, Vault,
+        VaultChange, VaultError, MAX_PBKDF2_ROUNDS, MAX_VAULT_FILE_BYTES, SALT_LEN,
     };
 
-    /// A passphrase that satisfies the floor, for the vaults these tests create.
+    /// A passphrase used by the vaults these tests create.
     const PASS: &str = "test-passphrase-01";
 
-    /// A real vault written by the code that shipped before the floor (0.1.9:
+    /// A real vault written by the code that shipped before this policy (0.1.9:
     /// passphrase `bot`, 100,000 rounds, two synthetic profiles). It is that
     /// writer's own output, not something this build produced.
     const LEGACY_VAULT: &[u8] = include_bytes!("../tests/fixtures/legacy-0.1.9.vault");
@@ -715,75 +698,38 @@ mod tests {
     }
 
     #[test]
-    fn empty_passphrase_rejected() {
+    fn empty_or_whitespace_passphrase_rejected() {
         let path = tmp_path("empty.vault");
 
-        assert!(matches!(create_err(&path, ""), VaultError::EmptyPassphrase));
-        // Nothing written on failure.
-        assert!(!path.exists());
-
-        // Unlock must reject an empty passphrase too.
-        Vault::create(&path, PASS).unwrap();
-        assert!(matches!(
-            Vault::unlock(&path, ""),
-            Err(VaultError::EmptyPassphrase)
-        ));
-    }
-
-    #[test]
-    fn the_passphrase_floor_rejects_below_and_accepts_at_the_boundary() {
-        let path = tmp_path("floor.vault");
-        let below = "a".repeat(MIN_PASSPHRASE_CHARS - 1);
-        match create_err(&path, &below) {
-            VaultError::PassphraseTooShort { min, got } => {
-                assert_eq!((min, got), (MIN_PASSPHRASE_CHARS, MIN_PASSPHRASE_CHARS - 1));
-            }
-            other => panic!("expected PassphraseTooShort, got {other}"),
+        for passphrase in ["", "   ", "\t\n"] {
+            assert!(matches!(
+                create_err(&path, passphrase),
+                VaultError::EmptyPassphrase
+            ));
+            assert!(!path.exists(), "nothing written for {passphrase:?}");
         }
-        assert!(
-            !path.exists(),
-            "nothing is written for a rejected passphrase"
-        );
 
-        let at = "a".repeat(MIN_PASSPHRASE_CHARS);
-        Vault::create(&path, &at).unwrap();
-        Vault::unlock(&path, &at).unwrap();
+        Vault::create(&path, PASS).unwrap();
+        for passphrase in ["", "   ", "\t\n"] {
+            assert!(matches!(
+                Vault::unlock(&path, passphrase),
+                Err(VaultError::EmptyPassphrase)
+            ));
+        }
+    }
+    #[test]
+    fn short_passphrase_creates_and_unlocks() {
+        let path = tmp_path("short.vault");
+        Vault::create(&path, "x").unwrap();
+        Vault::unlock(&path, "x").unwrap();
     }
 
     #[test]
-    fn the_floor_counts_characters_and_ignores_surrounding_whitespace() {
-        // 12 characters in 36 bytes, and 11 characters in 33 bytes: the byte
-        // count is over the floor either way, the character count decides.
-        let twelve = "口令口令口令口令口令口令";
-        assert_eq!(twelve.chars().count(), MIN_PASSPHRASE_CHARS);
-        assert!(check_new_passphrase(twelve).is_ok());
-        assert!(matches!(
-            check_new_passphrase("口令口令口令口令口令口"),
-            Err(VaultError::PassphraseTooShort { got: 11, .. })
-        ));
-        // Padding buys no length; interior spaces (a phrase) count.
-        let padded = format!("   {}   ", "b".repeat(MIN_PASSPHRASE_CHARS - 1));
-        assert!(matches!(
-            check_new_passphrase(&padded),
-            Err(VaultError::PassphraseTooShort { got: 11, .. })
-        ));
-        assert!(check_new_passphrase("correct horse battery").is_ok());
-        assert!(matches!(
-            check_new_passphrase(""),
-            Err(VaultError::EmptyPassphrase)
-        ));
-    }
-
-    #[test]
-    fn a_vault_from_before_the_floor_opens_saves_and_keeps_its_data() {
+    fn a_legacy_vault_opens_saves_and_keeps_its_data() {
         let path = tmp_path("legacy.vault");
         std::fs::write(&path, LEGACY_VAULT).unwrap();
-        assert!(
-            "bot".chars().count() < MIN_PASSPHRASE_CHARS,
-            "the fixture passphrase is below today's floor"
-        );
 
-        let mut v = Vault::unlock(&path, "bot").expect("an old-floor passphrase still opens");
+        let mut v = Vault::unlock(&path, "bot").expect("the legacy passphrase still opens");
         let alice = v.get("alice").unwrap().clone();
         assert_eq!(alice.password, "alice-password-legacy");
         assert_eq!(alice.uid, 274_000_001);
@@ -823,12 +769,6 @@ mod tests {
             100_000,
             "the KDF is not silently changed"
         );
-
-        // The floor is for new vaults: the same passphrase cannot create one.
-        assert!(matches!(
-            create_err(&tmp_path("legacy-new.vault"), "bot"),
-            VaultError::PassphraseTooShort { got: 3, .. }
-        ));
     }
 
     #[test]

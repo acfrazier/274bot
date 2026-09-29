@@ -65,9 +65,10 @@ The vault passphrase is **never** taken from the environment or the command
 line (other users can read both, and children inherit the environment). The
 panel asks in its unlock window; `host-play` and `tui-play` ask on the
 terminal (hidden; a new vault asks twice); all three read one line from a
-pipe with `--vault-pass-stdin`. A new vault needs at least 12 characters; an
-existing one opens with whatever passphrase it was created with. `BOT_VAULT_PASS`
-and `--vault-pass` are gone (`docs/api/vault.md`).
+pipe with `--vault-pass-stdin`. A new vault needs a non-empty passphrase after
+trimming surrounding whitespace; strength is the user's choice. An existing
+one opens with whatever passphrase it was created with, however short.
+`BOT_VAULT_PASS` and `--vault-pass` are gone (`docs/api/vault.md`).
 
 **tui-play** (`cargo run --release -p tui --bin tui-play -- --profile local-289`)
 is the headless operator panel: ratatui + crossterm, same profile flags and

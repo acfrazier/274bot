@@ -39,8 +39,8 @@ pub const MAX_PASSPHRASE_BYTES: usize = 4096;
 const MAX_ATTEMPTS: usize = 3;
 
 /// Why the passphrase is being read: an existing vault is opened with whatever
-/// its passphrase is; a new vault's passphrase must meet the floor and is
-/// entered twice.
+/// passphrase decrypts it; a new vault's passphrase must be non-empty after
+/// surrounding whitespace is trimmed and is entered twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Purpose {
     Unlock,
@@ -94,10 +94,7 @@ fn ask(
         return read("Vault passphrase: ");
     }
     for _ in 0..MAX_ATTEMPTS {
-        let first = read(&format!(
-            "New vault passphrase (at least {} characters): ",
-            vault::MIN_PASSPHRASE_CHARS
-        ))?;
+        let first = read("New vault passphrase: ")?;
         if let Err(e) = check_new_passphrase(&first) {
             let _ = writeln!(notes, "{program}: {e}");
             continue;
@@ -357,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    fn unlocking_asks_once_and_applies_no_floor() {
+    fn unlocking_asks_once_and_accepts_a_short_passphrase() {
         let (result, prompts, _) = scripted(&["bot"], Purpose::Unlock);
         assert_eq!(result.unwrap(), "bot");
         assert_eq!(prompts, ["Vault passphrase: "]);
@@ -367,31 +364,39 @@ mod tests {
     fn a_new_passphrase_is_asked_twice_and_must_match() {
         let (result, prompts, _) = scripted(&[TYPED, TYPED], Purpose::Create);
         assert_eq!(result.unwrap(), TYPED);
-        assert_eq!(prompts.len(), 2);
-        assert!(prompts[0].contains("at least 12 characters"), "{prompts:?}");
+        assert_eq!(
+            prompts,
+            ["New vault passphrase: ", "Repeat the passphrase: "]
+        );
 
         let (result, _, messages) =
             scripted(&[TYPED, "typo typo typo", TYPED, TYPED], Purpose::Create);
         assert_eq!(result.unwrap(), TYPED, "a mismatch asks again");
         assert!(messages.contains("do not match"), "{messages}");
     }
-
     #[test]
-    fn a_too_short_new_passphrase_is_explained_and_asked_again_before_the_repeat() {
-        let (result, prompts, messages) = scripted(&["short", TYPED, TYPED], Purpose::Create);
-        assert_eq!(result.unwrap(), TYPED);
-        assert!(
-            messages.contains("at least 12 characters (got 5)"),
-            "{messages}"
+    fn a_short_new_passphrase_is_accepted_and_repeated() {
+        let (result, prompts, messages) = scripted(&["bot", "bot"], Purpose::Create);
+        assert_eq!(result.unwrap(), "bot");
+        assert_eq!(
+            prompts,
+            ["New vault passphrase: ", "Repeat the passphrase: "]
         );
-        assert_eq!(prompts.len(), 3, "the short entry is not repeated back");
+        assert!(messages.is_empty(), "{messages}");
     }
 
     #[test]
-    fn a_new_passphrase_gives_up_after_three_bad_attempts() {
-        let (result, _, messages) = scripted(&["a", "b", "c", TYPED, TYPED], Purpose::Create);
+    fn empty_or_whitespace_new_passphrase_is_explained_and_asked_again() {
+        let (result, prompts, messages) = scripted(&["", "   ", "x", "x"], Purpose::Create);
+        assert_eq!(result.unwrap(), "x");
+        assert_eq!(prompts.len(), 4);
+        assert_eq!(messages.matches("passphrase must not be empty").count(), 2);
+    }
+    #[test]
+    fn a_new_passphrase_gives_up_after_three_mismatches() {
+        let (result, _, messages) = scripted(&["a", "b", "c", "d", "e", "f"], Purpose::Create);
         assert!(result.unwrap_err().contains("after 3 attempts"));
-        assert_eq!(messages.matches("at least 12").count(), 3, "{messages}");
+        assert_eq!(messages.matches("do not match").count(), 3, "{messages}");
     }
 
     #[test]
@@ -611,7 +616,7 @@ mod tests {
         fn a_new_vault_on_a_terminal_asks_for_the_passphrase_twice() {
             let (mut spawned, mut master) = on_a_terminal("terminal-create");
             let mut seen = String::new();
-            until_shown(&mut master, &mut seen, "(at least 12 characters): ");
+            until_shown(&mut master, &mut seen, "New vault passphrase: ");
             master.write_all(format!("{TYPED}\r").as_bytes()).unwrap();
             until_shown(&mut master, &mut seen, "Repeat the passphrase: ");
             master.write_all(format!("{TYPED}\r").as_bytes()).unwrap();
@@ -685,9 +690,9 @@ mod tests {
         }
 
         #[test]
-        fn a_piped_new_passphrase_must_meet_the_floor() {
-            let short = piped("stdin-create", b"short\n");
-            assert!(short.contains("at least 12 characters (got 5)"), "{short}");
+        fn a_piped_short_new_passphrase_is_accepted() {
+            let short = piped("stdin-create", b"x\n");
+            assert!(short.contains("CHILD-RESULT match=false len=1"), "{short}");
             let fine = piped("stdin-create", format!("{TYPED}\n").as_bytes());
             assert!(fine.contains("CHILD-RESULT match=true"), "{fine}");
         }

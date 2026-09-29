@@ -123,7 +123,8 @@ not expect `give` / TutSkip / `tele` to work on the public world.
 
 ```bash
 # host-play and tui-play ask for the vault passphrase on the terminal; the panel
-# asks in its unlock window. A new vault needs at least 12 characters.
+# asks in its unlock window. A new vault needs a non-empty passphrase after
+# trimming surrounding whitespace; strength is the user's choice.
 
 cargo run --release -p host-play -- --profile public-289 --user YOUR_NAME
 cargo run --release -p panel --bin panel-play -- --profile public-289
