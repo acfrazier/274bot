@@ -506,12 +506,17 @@ const DUEL_LOBBY: WorldTile = WorldTile {
 /// `sortChallengeTargets` / 1.5 s `CHALLENGE_RESULT_WAIT_MS`); starting every
 /// slot at once is an all-to-all race that can drop `opponent` to null inside
 /// a fight pen. This gate keeps each Start's only free lobby candidate the
-/// partner: unstarted slots wait at [`DUEL_HOLD`], a finished pair is parked
-/// there until every slot has entered a pen, then released back to the lobby.
+/// partner by construction: unstarted slots wait at [`DUEL_HOLD`], and a
+/// finished pair is not followed by the next pair until both members have
+/// arrived back at the hold — so a completed-duel lobby snapshot cannot
+/// overlap a starting pair, including on the frame `ScenarioRunner` only
+/// `advance_step()`s and the parking send has not yet run. After every slot
+/// has entered a pen, parked slots are released to the lobby for observation.
 struct DuelPairGate {
     n: usize,
     holding: Vec<AtomicBool>,
     in_pen: Vec<AtomicBool>,
+    parked: Vec<AtomicBool>,
     admitted_pair: AtomicUsize,
 }
 
@@ -521,6 +526,7 @@ impl DuelPairGate {
             n,
             holding: (0..n).map(|_| AtomicBool::new(false)).collect(),
             in_pen: (0..n).map(|_| AtomicBool::new(false)).collect(),
+            parked: (0..n).map(|_| AtomicBool::new(false)).collect(),
             admitted_pair: AtomicUsize::new(0),
         })
     }
@@ -538,13 +544,17 @@ impl DuelPairGate {
     }
 
     fn mark_in_pen(&self, slot: usize) {
-        if self.in_pen[slot].swap(true, Ordering::AcqRel) {
+        self.in_pen[slot].store(true, Ordering::Release);
+    }
+
+    fn mark_parked(&self, slot: usize) {
+        if self.parked[slot].swap(true, Ordering::AcqRel) {
             return;
         }
         let pair = slot / 2;
         let a = pair * 2;
         let b = a + 1;
-        if self.in_pen[a].load(Ordering::Acquire) && self.in_pen[b].load(Ordering::Acquire) {
+        if self.parked[a].load(Ordering::Acquire) && self.parked[b].load(Ordering::Acquire) {
             let _ = self.admitted_pair.compare_exchange(
                 pair,
                 pair + 1,
@@ -595,9 +605,10 @@ fn duel_tele_step(name: &'static str, dest: WorldTile, budget_ticks: u32) -> sce
 ///
 /// Staging (same path for every even N): hold every slot outside the lobby,
 /// Start one mint-order pair at a time once that pair is the only free
-/// challenge-area candidate, admit the next pair when both members have
-/// entered a pen, and park a finished pair outside the lobby until the whole
-/// fleet has done so.
+/// challenge-area candidate, park a finished pair at the hold (the completed-
+/// duel Await advances without sending the parking tele on that tick), and
+/// admit the next pair only once both members have arrived there. A Repeat
+/// then keeps them outside the lobby until the whole fleet has entered a pen.
 fn qualify_duel_arena_fleet(
     scenario: &mut scenario::Scenario,
     n: usize,
@@ -683,19 +694,32 @@ fn qualify_duel_arena_fleet(
             },
         ),
     );
+    // ArrivedNear lobby would hold on the completed-duel snapshot, so a
+    // single Repeat cannot both leave the lobby and wait there for release.
+    // Tele to the hold first (next pair still cannot enter), then Repeat
+    // so the frozen card cannot walk this slot back into challengeTargets.
     scenario.steps.insert(
         start + 2,
+        duel_tele_step(
+            "park this slot outside the challenge area after its duel",
+            DUEL_HOLD,
+            200,
+        ),
+    );
+    scenario.steps.insert(
+        start + 3,
         scenario::Step {
             name: "keep this slot out of the lobby until every pair has entered a pen",
             kind: scenario::StepKind::Repeat {
                 send: Box::new(move |c, snap| {
-                    let dest = if park_gate.all_in_pen() {
-                        DUEL_LOBBY
+                    if park_gate.all_in_pen() {
+                        if !duel_near(snap, DUEL_LOBBY, 8) {
+                            cheat(c, &tele_args(DUEL_LOBBY.level, DUEL_LOBBY.x, DUEL_LOBBY.z));
+                        }
+                    } else if duel_near(snap, DUEL_HOLD, 8) {
+                        park_gate.mark_parked(slot);
                     } else {
-                        DUEL_HOLD
-                    };
-                    if !duel_near(snap, dest, 8) {
-                        cheat(c, &tele_args(dest.level, dest.x, dest.z));
+                        cheat(c, &tele_args(DUEL_HOLD.level, DUEL_HOLD.x, DUEL_HOLD.z));
                     }
                     true
                 }),
@@ -1569,6 +1593,8 @@ impl Run {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use client::client::{Client, ClientPlayer};
+    use client::io::ServerProt;
     use std::sync::Mutex;
 
     /// Env mutation is process-global; serialize these tests.
@@ -2227,9 +2253,9 @@ mod tests {
 
     /// The Duel Arena card pairs its own slots: an even fleet stages one
     /// mint-order pair at a time (hold outside the lobby, admit, Start, completed
-    /// duel, park until every pair has entered a pen) and keeps the scenario's
-    /// proof. A fleet that cannot pair, or another scenario, is refused or
-    /// untouched. N=2, N=10 and N=50 share that path.
+    /// duel, park at the hold, keep parked until every pair has entered a pen)
+    /// and keeps the scenario's proof. A fleet that cannot pair, or another
+    /// scenario, is refused or untouched. N=2, N=10 and N=50 share that path.
     #[test]
     fn duel_fleets_pair_up_and_owe_a_completed_duel_after_start() {
         let baseline = scenario::get("duel_arena").expect("duel scenario");
@@ -2244,7 +2270,7 @@ mod tests {
             let gate = DuelPairGate::new(n);
             let mut fleet = scenario::get("duel_arena").expect("duel scenario");
             qualify_duel_arena_fleet(&mut fleet, n, 0, Some(&gate)).expect("even fleet");
-            assert_eq!(fleet.steps.len(), baseline.steps.len() + 5, "N={n}");
+            assert_eq!(fleet.steps.len(), baseline.steps.len() + 6, "N={n}");
             assert_eq!(
                 fleet.steps[start].name,
                 "hold this slot outside the challenge area until its pair is admitted"
@@ -2264,8 +2290,12 @@ mod tests {
             let watch = &fleet.steps[start + 4];
             assert!(matches!(watch.kind, scenario::StepKind::Await { .. }));
             assert_eq!(watch.wait.budget_ticks, DUEL_COMPLETED_DUEL_BUDGET_TICKS);
+            assert_eq!(
+                fleet.steps[start + 5].name,
+                "park this slot outside the challenge area after its duel"
+            );
             assert!(matches!(
-                fleet.steps[start + 5].kind,
+                fleet.steps[start + 6].kind,
                 scenario::StepKind::Repeat { .. }
             ));
             assert_eq!(fleet.proof, baseline.proof, "N={n}");
@@ -2284,10 +2314,11 @@ mod tests {
         assert_eq!(moss.steps.len(), steps);
     }
 
-    /// Pair 1 cannot occupy the lobby until both members of pair 0 have entered
-    /// a pen, and nobody Starts until every slot has left the lobby for the hold.
+    /// Pair 1 cannot occupy the lobby until both members of pair 0 have parked
+    /// at the hold. Pen entry latches all_in_pen for the observation release
+    /// but does not admit the next Start.
     #[test]
-    fn duel_pair_gate_admits_one_pair_after_both_enter_a_pen() {
+    fn duel_pair_gate_admits_one_pair_after_both_are_parked() {
         let gate = DuelPairGate::new(4);
         assert!(!gate.may_enter_lobby(0), "hold is empty");
         assert!(!gate.may_enter_lobby(2), "later pair");
@@ -2297,20 +2328,176 @@ mod tests {
         }
         assert!(gate.may_enter_lobby(0));
         assert!(gate.may_enter_lobby(1));
-        assert!(!gate.may_enter_lobby(2), "pair 1 waits on pair 0's pens");
+        assert!(!gate.may_enter_lobby(2), "pair 1 waits on pair 0");
 
         gate.mark_in_pen(0);
         assert!(!gate.may_enter_lobby(2), "one fighter is not a pair");
         gate.mark_in_pen(0);
         assert!(!gate.all_in_pen());
         gate.mark_in_pen(1);
-        assert!(gate.may_enter_lobby(2), "pair 0 is in a pen");
-        assert!(gate.may_enter_lobby(3));
+        assert!(
+            !gate.may_enter_lobby(2),
+            "a pair still in a pen can return to the lobby; do not admit the next Start"
+        );
         assert!(!gate.all_in_pen());
+
+        gate.mark_parked(0);
+        assert!(!gate.may_enter_lobby(2), "one parked fighter is not a pair");
+        gate.mark_parked(0);
+        gate.mark_parked(1);
+        assert!(gate.may_enter_lobby(2), "pair 0 is parked at the hold");
+        assert!(gate.may_enter_lobby(3));
 
         gate.mark_in_pen(2);
         gate.mark_in_pen(3);
         assert!(gate.all_in_pen());
+    }
+
+    fn duel_client_at(tile: WorldTile) -> Client {
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.map_build_base_x = (tile.x >> 6) << 6;
+        client.map_build_base_z = (tile.z >> 6) << 6;
+        client.minusedlevel = tile.level;
+        client.local_player = Some(ClientPlayer::at(
+            tile.x - client.map_build_base_x,
+            tile.z - client.map_build_base_z,
+        ));
+        for prot in [
+            ServerProt::PLAYER_INFO,
+            ServerProt::REBUILD_NORMAL,
+            ServerProt::UPDATE_STAT,
+        ] {
+            client.bump_gens(prot);
+        }
+        client
+    }
+
+    fn set_duel_tile(client: &mut Client, tile: WorldTile) {
+        client.map_build_base_x = (tile.x >> 6) << 6;
+        client.map_build_base_z = (tile.z >> 6) << 6;
+        client.minusedlevel = tile.level;
+        client.local_player = Some(ClientPlayer::at(
+            tile.x - client.map_build_base_x,
+            tile.z - client.map_build_base_z,
+        ));
+        client.scene_state = 2;
+        client.bump_gens(ServerProt::REBUILD_NORMAL);
+        client.bump_gens(ServerProt::PLAYER_INFO);
+    }
+
+    fn out_contains(client: &Client, needle: &str) -> bool {
+        let bytes = &client.out.data()[..client.out.pos];
+        bytes
+            .windows(needle.len())
+            .any(|window| window == needle.as_bytes())
+    }
+
+    fn hold_tele_cheat() -> String {
+        tele_args(DUEL_HOLD.level, DUEL_HOLD.x, DUEL_HOLD.z)
+    }
+
+    /// `play_slots` runs `memory::client_frame` (this tick) then `slot_frame`
+    /// (the frozen card). `ScenarioRunner` only `advance_step()`s when the
+    /// completed-duel Await holds, so the parking send is not applied on that
+    /// same tick: the already-fought slot is still in the challenge lobby when
+    /// the card's `challengeTargets()` would run. Pair 1 must not be a lobby
+    /// candidate then — it stays outside until this pair is parked at the hold.
+    #[test]
+    fn already_fought_pair_is_not_a_lobby_candidate_on_the_completed_duel_advance_frame() {
+        let gate = DuelPairGate::new(4);
+        for slot in 0..4 {
+            gate.mark_holding(slot);
+        }
+
+        let mut scenario = scenario::get("duel_arena").expect("duel scenario");
+        qualify_duel_arena_fleet(&mut scenario, 4, 0, Some(&gate)).expect("even fleet");
+        let watch = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "watch this slot finish a duel with another fleet member")
+            .expect("completed-duel watch");
+        scenario.steps.drain(..watch);
+        scenario.seed.mainland = false;
+        scenario.settings.require_mainland_base = false;
+
+        let mut runner = scenario::ScenarioRunner::with_world(scenario, None);
+        runner.set_scene_settle(Duration::ZERO);
+        let mut client = duel_client_at(DUEL_LOBBY);
+
+        runner.tick(&mut client);
+        assert_eq!(
+            runner.status(),
+            scenario::RunnerStatus::Running { step: 0, total: 3 },
+            "seed falls into the completed-duel watch"
+        );
+
+        const PEN: WorldTile = WorldTile {
+            x: 3340,
+            z: 3250,
+            level: 0,
+        };
+        set_duel_tile(&mut client, PEN);
+        runner.tick(&mut client);
+        gate.mark_in_pen(1);
+        assert!(
+            !gate.may_enter_lobby(2),
+            "pen entry must not admit the next pair while this one can still return to the lobby"
+        );
+
+        let out_before = client.out.pos;
+        set_duel_tile(&mut client, DUEL_LOBBY);
+        runner.tick(&mut client);
+        assert_eq!(
+            runner.status(),
+            scenario::RunnerStatus::Running { step: 1, total: 3 },
+            "completed-duel advances onto the parking tele"
+        );
+        assert_eq!(
+            client.out.pos, out_before,
+            "parking send is not applied on the advance tick"
+        );
+        assert!(
+            !out_contains(&client, &hold_tele_cheat()),
+            "the hold tele must not have gone out before slot_frame"
+        );
+        assert!(
+            !gate.may_enter_lobby(2),
+            "a starting pair must not share the lobby with an already-fought slot on the advance frame"
+        );
+
+        runner.tick(&mut client);
+        assert!(
+            out_contains(&client, &hold_tele_cheat()),
+            "the next tick sends the parking tele"
+        );
+        assert!(!gate.may_enter_lobby(2), "in-flight tele is not parked");
+
+        set_duel_tile(&mut client, DUEL_HOLD);
+        runner.tick(&mut client);
+        assert_eq!(
+            runner.status(),
+            scenario::RunnerStatus::Running { step: 2, total: 3 },
+            "arrival at the hold advances onto the keep-parked Repeat"
+        );
+        assert!(
+            !gate.may_enter_lobby(2),
+            "arrival without the Repeat send has not latched parked"
+        );
+
+        runner.tick(&mut client);
+        gate.mark_parked(1);
+        assert!(
+            gate.may_enter_lobby(2),
+            "both members parked at the hold admits the next pair"
+        );
     }
 
     #[test]
