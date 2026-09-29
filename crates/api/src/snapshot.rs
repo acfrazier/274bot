@@ -11,7 +11,9 @@ use serde::Serialize;
 mod views;
 pub use views::*;
 mod native;
-pub use native::{JournalModalView, Observed, SnapshotView};
+pub use native::{
+    ChatLines, ChatModalView, CombatView, JournalModalView, Observed, SnapshotView,
+};
 mod decode;
 pub use decode::{attacked_by_player, cache_held_ops, tab_inv_component, PLAYER_FACE_BASE};
 use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIfaceGate};
@@ -352,6 +354,74 @@ impl Default for GameSnapshot {
 impl GameSnapshot {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Offline fixture seed: an in-game frame. Production rebuilds never
+    /// call this; readiness getters then observe empty families instead of
+    /// treating a disconnected default as an empty world.
+    pub fn seed_ingame(&mut self, scene_state: i32) {
+        self.ingame = true;
+        self.scene_state = scene_state;
+    }
+
+    pub fn seed_quest_statuses(&mut self, rows: Vec<QuestStatusView>, available: bool) {
+        self.quest_statuses = rows;
+        self.quest_statuses_available = available;
+    }
+
+    pub fn seed_varps(&mut self, rows: Vec<VarpView>) {
+        self.varps = rows;
+    }
+
+    pub fn seed_inventory(&mut self, rows: Vec<ItemView>, size: i32) {
+        self.inventory = rows;
+        self.inventory_size = size;
+    }
+
+    pub fn seed_equipment(&mut self, rows: Vec<ItemView>) {
+        self.equipment = rows;
+    }
+
+    pub fn seed_stats(&mut self, rows: Vec<StatView>) {
+        self.stats = rows;
+    }
+
+    pub fn seed_chat_lines(&mut self, rows: Vec<ChatLineView>) {
+        self.chat_lines = rows;
+    }
+
+    pub fn seed_chat_options(&mut self, rows: Vec<ChatOptionView>, continue_component_id: i32) {
+        self.chat_options = rows;
+        self.chat_continue_component_id = continue_component_id;
+    }
+
+    pub fn seed_chat_modal(&mut self, root: i32, texts: Vec<String>) {
+        self.modals.chat = root;
+        self.chat_modal_texts = texts;
+    }
+
+    pub fn seed_main_modal_texts(&mut self, texts: Vec<String>) {
+        self.main_modal_texts = texts;
+    }
+
+    pub fn seed_npcs(&mut self, rows: Vec<NpcView>) {
+        self.npc = rows;
+    }
+
+    pub fn seed_locs(&mut self, rows: Vec<LocView>) {
+        self.loc = rows;
+    }
+
+    pub fn seed_ground_items(&mut self, rows: Vec<GroundItemView>) {
+        self.ground_item = rows;
+    }
+
+    pub fn seed_runenergy(&mut self, energy: i32) {
+        self.runenergy = energy;
+    }
+
+    pub fn seed_local_player(&mut self, player: LocalPlayerView) {
+        self.player = Some(player);
     }
 
     /// Drop every session-derived view while retaining the client-owned
