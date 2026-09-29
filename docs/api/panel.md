@@ -24,9 +24,9 @@ cargo run --release -p panel --bin panel-play -- --profile local-289
 # 50-head 50fps Game+sidecar: --live stress50_full
 ```
 
-A passphrase is required and an empty one is rejected. A **new** vault needs
-at least 12 characters (the prompt says so); an existing vault opens with
-whatever passphrase it was created with. First run **Create
+A passphrase is required and an empty or whitespace-only one is rejected. A
+new vault accepts any non-empty passphrase; strength is the user's choice. An
+existing vault opens with whatever passphrase it was created with. First run **Create
 vault** writes `~/.274bot/vault` **empty** — panel-play does **not**
 auto-create `test`/`test` (that is host-play CLI: `--user test` defaults,
 `password = username`). A wrong passphrase never replaces the file;

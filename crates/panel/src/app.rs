@@ -1682,14 +1682,12 @@ fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
             false
         }
     };
-    // A new vault has a passphrase floor; an existing one opens with what it has.
+    // A new vault needs a non-empty passphrase; existing vaults open with
+    // whatever passphrase decrypts them.
     let hint = if exists {
         "vault passphrase".to_string()
     } else {
-        format!(
-            "new vault passphrase ({}+ characters)",
-            vault::MIN_PASSPHRASE_CHARS
-        )
+        "new vault passphrase".to_string()
     };
     ui.input_text("##vault-pass", &mut session.pass_scratch)
         .password(true)

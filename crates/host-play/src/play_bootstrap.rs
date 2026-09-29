@@ -103,8 +103,8 @@ pub fn profile_password(username: &str) -> String {
 
 /// Passphrase of a throwaway local-engine live vault. Public on purpose: that
 /// vault lives in a temp directory and holds only `username == password`
-/// accounts for a local engine, so it protects nothing. It still has to meet
-/// the vault's passphrase floor like any other new vault.
+/// accounts for a local engine, so it protects nothing. Like any new vault,
+/// it must use a non-empty passphrase.
 const LOCAL_LIVE_VAULT_PASSPHRASE: &str = "local-live-vault";
 
 /// Ephemeral live-vault passphrase: the fixed throwaway one for a local
@@ -544,11 +544,10 @@ pub(super) fn bot_client_config(options: &PlayOptions, profile: &Profile) -> Cli
 }
 
 /// Unlock `path`, or create it (and parent dirs) when missing. Any other
-/// unlock error (`WrongPassphrase`, `Corrupt`, `EmptyPassphrase`) is
-/// returned as-is so the CLI can print it instead of falling through to
-/// `AlreadyExists`. A passphrase that does not meet the floor for a *new*
-/// vault is refused before any directory is created; an existing vault is
-/// never held to the floor.
+/// unlock error (`WrongPassphrase`, `Corrupt`, `EmptyPassphrase`) is returned
+/// as-is so the CLI can print it instead of falling through to `AlreadyExists`.
+/// A new vault requires only a non-empty passphrase after trimming surrounding
+/// whitespace; an existing vault is opened with whatever decrypts it.
 pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
     match Vault::unlock(path, passphrase) {
         Ok(v) => Ok(v),

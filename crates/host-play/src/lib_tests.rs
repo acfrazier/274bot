@@ -577,7 +577,7 @@ fn mint_live_entries_prod_refuses_username_as_password() {
 #[test]
 fn every_live_vault_passphrase_can_create_a_vault() {
     // The live harness creates a throwaway vault per run, so its passphrase
-    // must meet the vault's floor for every target.
+    // must be non-empty for every target.
     for target in [client::BotTarget::Local, client::BotTarget::Prod] {
         let pass = live_vault_passphrase_for(target);
         vault::check_new_passphrase(&pass)
@@ -1027,35 +1027,29 @@ fn open_vault_wrong_pass_is_not_already_exists() {
 }
 
 #[test]
-fn open_vault_holds_a_new_vault_to_the_floor_but_never_an_old_one() {
+fn open_vault_accepts_short_new_and_legacy_vaults() {
     // A vault written by the released code under passphrase `bot`.
-    let old = tmp_vault("old-floor");
+    let old = tmp_vault("old");
     std::fs::create_dir_all(old.parent().unwrap()).unwrap();
     std::fs::write(
         &old,
         include_bytes!("../../vault/tests/fixtures/legacy-0.1.9.vault"),
     )
     .unwrap();
-    let opened = open_vault(&old, "bot").expect("an old-floor vault still opens");
+    let opened = open_vault(&old, "bot").expect("a legacy vault still opens");
     assert_eq!(
         opened.get("alice").unwrap().password,
         "alice-password-legacy"
     );
 
-    // The same passphrase cannot create a new vault, and nothing is written:
-    // not the file, and not the directories that would have held it.
-    let fresh = old.parent().unwrap().join("never-made");
-    match open_vault(&fresh.join("vault"), "bot") {
-        Err(VaultError::PassphraseTooShort { min, got: 3 }) => {
-            assert_eq!(min, vault::MIN_PASSPHRASE_CHARS);
-        }
-        Err(e) => panic!("expected PassphraseTooShort, got {e}"),
-        Ok(_) => panic!("created a vault under a 3 character passphrase"),
-    }
-    assert!(
-        !fresh.exists(),
-        "no directory is created for a rejected passphrase"
-    );
+    let fresh = old.parent().unwrap().join("new");
+    let created =
+        open_vault(&fresh.join("vault"), "bot").expect("a short passphrase creates a new vault");
+    assert!(created.get("alice").is_none());
+    drop(created);
+    let reopened =
+        open_vault(&fresh.join("vault"), "bot").expect("the short passphrase unlocks the vault");
+    assert!(reopened.get("alice").is_none());
 }
 
 #[test]

@@ -35,7 +35,7 @@ and none replaces an existing vault.
 ## API
 
 ```rust
-let mut v = Vault::create(path, passphrase)?;   // fails if the file exists; passphrase floor applies
+let mut v = Vault::create(path, passphrase)?;   // fails if the file exists; passphrase must be non-empty
 let v = Vault::unlock(path, passphrase)?;       // WrongPassphrase on a bad key
 Vault::reset_file(path)?;                       // delete the file (forgotten passphrase)
 v.get(username) -> Option<&Profile>             // { username, password: Secret, uid, settings }
@@ -60,9 +60,8 @@ reason when the source later disappears). `ProfileSettings.script_settings`
 holds per-card override bags keyed by card identity. See
 [script.md](script.md).
 
-Errors: `EmptyPassphrase`, `PassphraseTooShort { min, got }`,
-`AlreadyExists`, `NotFound`, `WrongPassphrase` (the file is left
-unmodified), `Corrupt`, `Io`. A missing file is
+Errors: `EmptyPassphrase`, `AlreadyExists`, `NotFound`, `WrongPassphrase` (the
+file is left unmodified), `Corrupt`, `Io`. A missing file is
 `NotFound`; other read failures are `Io` (never treated as missing, so
 `open_vault` will not create over an unreadable path). Wrong passphrase
 and corrupt files never delete or replace the vault — the panel's
@@ -71,20 +70,18 @@ and corrupt files never delete or replace the vault — the panel's
 
 ## Passphrase policy and upgrading an existing vault
 
-A **new** vault needs a passphrase of at least **12 characters**
-(`MIN_PASSPHRASE_CHARS`, counted as Unicode characters with surrounding
-whitespace ignored, so padding buys no length). `Vault::create`, and so
-first-run **Create vault** in every front end, refuses a shorter one with
-`PassphraseTooShort` and writes nothing. `check_new_passphrase` applies the
-same rule for a caller that prompts and wants to ask again.
+A **new** vault needs a passphrase that is not empty after surrounding
+whitespace is trimmed. Passphrase strength is the user's choice. `Vault::create`
+and first-run **Create vault** in every frontend refuse an empty or
+whitespace-only passphrase and write nothing. `check_new_passphrase` applies
+the same rule for a caller that prompts and wants to ask again.
 
-An **existing** vault is never held to the floor (accept-on-open): `unlock`
-accepts any non-empty passphrase that decrypts the file, so a vault created
-under the old empty-only rule keeps opening, keeps saving, and loses no data
-after an upgrade. The floor applies again wherever a new passphrase is chosen
-(create, and any future re-key). The file format, the round count and every
-stored profile are unchanged by an upgrade; nothing is rewritten until the
-next ordinary save, and that save keeps the header it found.
+An **existing** vault is opened with any passphrase that decrypts the file,
+provided it is not empty after trimming surrounding whitespace. A vault created
+under an earlier policy keeps opening, saving, and retaining its data. The file
+format, the round count, and every stored profile are unchanged by an upgrade;
+nothing is rewritten until the next ordinary save, and that save keeps the
+header it found.
 
 ## Passphrase sourcing
 
