@@ -736,6 +736,152 @@ fn parse_getvar_line_reads_engine_reply() {
     assert_eq!(parse_getvar_line("hello"), None);
 }
 
+/// Pump fixture for the getvar-reply drain: focused `alice`, a local live
+/// `Play`, our own capture channel standing in for the view's, and no
+/// vault (TutSkip unknown, so the probe fires).
+fn getvar_drain_session() -> (Session, std::sync::mpsc::Receiver<host::InputEv>) {
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    s.core.insert_slot_io(
+        "alice",
+        SlotIo {
+            input: SlotInput::new(),
+            pixels: FrameBuf::new(),
+        },
+    );
+    s.set_focus_for_test("alice");
+    let (tx, rx) = std::sync::mpsc::channel();
+    s.capture_tx = Some(tx);
+    (s, rx)
+}
+
+/// One ingame scene-2 status row for `alice` with this chat head.
+fn push_alice_row(s: &mut Session, chat_head: &str) {
+    let mut rows = s.core.play().unwrap().statuses.lock().unwrap();
+    rows.clear();
+    rows.push(SlotStatus {
+        username: "alice".into(),
+        connected: true,
+        ingame: true,
+        scene_state: 2,
+        chat_head: chat_head.into(),
+        ..SlotStatus::default()
+    });
+}
+
+/// Drain whatever the capture channel holds.
+fn drain_capture(rx: &std::sync::mpsc::Receiver<host::InputEv>) -> Vec<host::InputEv> {
+    std::iter::from_fn(|| rx.try_recv().ok()).collect()
+}
+
+/// A click inside the chat text zone: above the y467 mode-button strip,
+/// left of the side panel, below the 3D view — nothing else binds there.
+fn is_chat_zone_click(x: i32, y: i32) -> bool {
+    (8..512).contains(&x) && (350..467).contains(&y)
+}
+
+#[test]
+fn getvar_drain_clicks_own_reply_once() {
+    let iso = script::IsolatedEnv::enter("getvar-drain-once");
+    let (mut s, rx) = getvar_drain_session();
+    // The probe goes out on the first ingame scene-2 pump (TutSkip unknown).
+    push_alice_row(&mut s, "");
+    s.pump_status();
+    assert!(drain_capture(&rx).is_empty());
+    // The engine reply becomes the chat head: exactly one chat click.
+    push_alice_row(&mut s, "get tutorial: 1");
+    s.pump_status();
+    let clicks = drain_capture(&rx);
+    assert_eq!(clicks.len(), 3, "one Move + Down + Up, got {clicks:?}");
+    let (mx, my) = match &clicks[0] {
+        host::InputEv::Move { x, y } => (*x, *y),
+        other => panic!("first event is a Move, got {other:?}"),
+    };
+    assert!(
+        is_chat_zone_click(mx, my),
+        "drain clicks the chat text zone, got ({mx}, {my})"
+    );
+    match &clicks[1] {
+        host::InputEv::Down { button: 1, x, y } => assert_eq!((*x, *y), (mx, my)),
+        other => panic!("second event is a left Down at the Move point, got {other:?}"),
+    }
+    assert!(
+        matches!(&clicks[2], host::InputEv::Up),
+        "third event releases the click, got {:?}",
+        clicks[2]
+    );
+    // The same head on later pumps never clicks again.
+    push_alice_row(&mut s, "get tutorial: 1");
+    s.pump_status();
+    assert!(
+        drain_capture(&rx).is_empty(),
+        "the reply drains exactly once"
+    );
+    let _iso = iso;
+}
+
+#[test]
+fn getvar_drain_leaves_unrelated_dialogue_text_alone() {
+    let iso = script::IsolatedEnv::enter("getvar-drain-unrelated");
+    let (mut s, rx) = getvar_drain_session();
+    push_alice_row(&mut s, "");
+    s.pump_status();
+    // Same pending-text box shape, but none of these is our probe reply:
+    // a chat line, the setvar reply, and a getvar reply for another var.
+    for head in [
+        "Welcome to RuneScape",
+        "set tutorial: to 1000",
+        "get coins: 25",
+    ] {
+        push_alice_row(&mut s, head);
+        s.pump_status();
+        assert!(
+            drain_capture(&rx).is_empty(),
+            "no click for unrelated text {head:?}"
+        );
+    }
+    let _iso = iso;
+}
+
+#[test]
+fn getvar_drain_ignores_matching_text_without_probe() {
+    let iso = script::IsolatedEnv::enter("getvar-drain-unprobed");
+    let path = tmp_vault("getvar-drain-unprobed.vault");
+    let (mut s, rx) = getvar_drain_session();
+    // TutSkip already known: the probe never goes out, so a matching line
+    // is another actor's and must not drain.
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    let mut alice = profile("alice", "pw", 42);
+    alice.settings.tutorial_skipped = Some(true);
+    s.core.vault_mut().unwrap().upsert(alice).unwrap();
+    push_alice_row(&mut s, "get tutorial: 1");
+    s.pump_status();
+    assert!(
+        drain_capture(&rx).is_empty(),
+        "only the dialogue our own probe caused drains"
+    );
+    let _iso = iso;
+}
+
+#[test]
+fn getvar_drain_stays_local_only() {
+    let iso = script::IsolatedEnv::enter("getvar-drain-local");
+    let (mut s, rx) = getvar_drain_session();
+    // Non-loopback session host: no probe goes out and no reply ever drains.
+    s.set_map_host("192.168.1.2");
+    push_alice_row(&mut s, "");
+    s.pump_status();
+    push_alice_row(&mut s, "get tutorial: 1");
+    s.pump_status();
+    assert!(
+        drain_capture(&rx).is_empty(),
+        "the probe drain keeps its local-engine gating"
+    );
+    let _iso = iso;
+}
+
 #[test]
 fn tutskip_button_omitted_until_known_open() {
     assert_eq!(
