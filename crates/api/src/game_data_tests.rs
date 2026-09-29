@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn embedded_game_data_json_is_lf_so_the_pin_hashes_the_audited_bytes() {
+    for (name, bytes) in [
+        ("274.json", REVISION_274),
+        ("289.json", REVISION_289),
+        ("manifest.json", MANIFEST),
+    ] {
+        assert!(
+            !bytes.contains(&b'\r'),
+            "{name} is include_bytes'd; a CRLF checkout changes the pin hash and rejects Sherlock"
+        );
+    }
+    for_revision(ClientRevision::R289)
+        .unwrap()
+        .selected_pin()
+        .expect("289 pin");
+    for_revision(ClientRevision::R274)
+        .unwrap()
+        .selected_pin()
+        .expect("274 pin");
+}
+
+#[test]
 fn selected_pin_is_shared_and_unbound_facts_fail_closed() {
     let data = for_revision(ClientRevision::R289).unwrap();
     let first = data.selected_pin().unwrap();
