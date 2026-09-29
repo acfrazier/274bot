@@ -170,22 +170,42 @@ scenario's final Strength-XP-since-Start proof remains mandatory.
 Combat Trainer, so N=10 is five duels and N=50 is twenty-five, and an odd N is
 refused at start. The fixture seeds a bronze scimitar (the existing
 `duel_arena` pair seed) and stages mint-order pairs so that at Start the only
-free challenge-area candidate is the partner. Unstarted slots wait outside the
-lobby. A finished pair is parked back outside before the next pair is admitted,
-so an already-fought slot is never a lobby candidate for a starting pair —
-including on the frame the completed-duel watch advances and the parking tele
+free challenge-area candidate is the partner. Unstarted slots wait at the Al
+Kharid bank hold, outside the lobby. A finished pair is parked back at the hold
+before the next pair is admitted, so an already-fought slot is not a lobby
+candidate on the frame the completed-duel watch advances and the parking tele
 has not yet been sent (`ScenarioRunner` only `advance_step()`s that tick;
-`play_slots` then runs `slot_frame`). Each slot qualifies only after its own
-snapshots show a fight pen visit followed by a return to the lobby, the
-transition the card counts as a finished duel. After every slot has entered a
-pen, parked slots are released to the lobby so observation is a fighting fleet.
-A duel only moves its two fighters (no stakes, HP restored, no spawned or
-dropped world state), so a cell leaves nothing for the next one.
+`play_slots` then runs `slot_frame`). A pair is admitted, and its Start is
+re-checked on the Start frame, only while every other slot's latest in-scene
+tile is inside the hold area (30 tiles from the hold) and no breach has been
+recorded.
+
+The frozen card walks a parked slot back toward the arena. The fixture
+re-teleports it once it is 8 tiles out, but that tele is neither acknowledged
+nor sent while the scene settles, so it is not the guarantee. The hold-area
+fence is: every client frame of a waiting or parked slot reports its tile, not
+gated by scene settling, and until every pair has entered a pen the first such
+tile outside the area latches `duel fleet hold breach: slot … was seen at …`.
+The breach refuses every later admission and Start, and the next benchmark poll
+fails the run with it. The nearest challenge-area tile is 59 steps from the
+hold, so a slot last seen inside the area is at least 29 steps, 15 running game
+ticks (9 s), from becoming a candidate. The qualification records carry a
+`duel_gate` object with the area radius and the largest distance at which a
+fenced slot was seen. Each slot qualifies only after its own snapshots show a
+fight pen visit followed by a return to the lobby, the transition the card
+counts as a finished duel. After every slot has entered a pen, parked slots are
+released to the lobby so observation is a fighting fleet. A duel only moves its
+two fighters (no stakes, HP restored, no spawned or dropped world state), so a
+cell leaves nothing for the next one.
 
 Seed/proof or script failures fail the run and return a nonzero exit, and so does
 a fleet that has not qualified after 30 minutes (`blocked: ready=… seeded=…
 proved=… wanted=… ever_ready=…`). A `duel_arena` fleet stages one pair at a time,
-so that bound is 60 minutes. Every such failure first appends one
+so that bound is 60 minutes; on the reference M4 Max host N=50 qualifies in
+about 40 minutes and N=10 in about 8. The perf runner's default per-cell timeout
+is this bound plus the warmup, observe and teardown windows and 300 s of launch
+and exit time, so the product's own bound, not the runner's kill, ends an
+unqualified cell. Every such failure first appends one
 `"phase":"failed"` record to `samples.qualification.jsonl` with the error and,
 for every slot, whether it ever reached `ingame && scene_state == 2` (and when),
 its last observed session state (startup phase and how long it has been in it,
