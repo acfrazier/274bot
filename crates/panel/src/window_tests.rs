@@ -1,3 +1,6 @@
+use super::work_area::{
+    cocoa_visible_frame_to_physical, fit_frame_to_work_area, win32_work_rect_to_physical, WorkArea,
+};
 use super::*;
 
 /// Headless wgpu device/queue for the renderer-backed test. `None` when
@@ -769,15 +772,15 @@ fn glyph_font_merges_status_and_remove_codepoints() {
     );
 }
 
-/// M-003: a saved geometry larger than the work area clamps to the area.
-/// A 1920x1080 geometry restored after moving to a 1366x768 display must
-/// come back as the work area, not the saved size.
+/// M-003: an oversized request clamps to the work area. The default
+/// 1120x580 panel is the launch size; nothing in this crate saves OS
+/// window geometry.
 #[test]
-fn saved_geometry_larger_than_work_area_clamps_to_fit() {
+fn oversized_request_clamps_to_the_work_area() {
     assert_eq!(
         clamp_inner_size((1920.0, 1080.0), (1366.0, 768.0)),
         (1366.0, 768.0),
-        "restored geometry bigger than the display must shrink to fit it"
+        "a request bigger than the work area must shrink to fit it"
     );
 }
 
@@ -793,8 +796,7 @@ fn fitting_launch_geometry_is_untouched_by_the_clamp() {
 }
 
 /// M-003: the rail-open need (1120 + 264 = 1384 wide) on a 1366-wide
-/// screen clamps the width to the screen while the height survives, so
-/// opening MultiBox fits the frame on-screen instead of pushing it off.
+/// work area clamps the width while the height survives.
 #[test]
 fn rail_open_overflow_clamps_width_but_keeps_height() {
     assert_eq!(
@@ -891,5 +893,245 @@ fn clamp_never_collapses_or_panics_on_degenerate_input() {
     assert!(
         (0.0..=1266.0).contains(&x) && (0.0..=668.0).contains(&y),
         "NaN position must settle inside the area, got ({x}, {y})"
+    );
+}
+
+/// M-003 glue: a centered 1120-wide launch grown to the 1384 rail need on a
+/// 1366-wide work area must shrink *and* move. Size-only clamp leaves the
+/// origin at 123 and hangs 123 px off the right edge — the BreakMac failure.
+/// These helpers did not exist at `a110ce92b`; the old rail path never
+/// called `clamp_outer_position`.
+#[test]
+fn rail_grow_on_centered_launch_repositions_onto_the_work_area() {
+    let work = WorkArea {
+        origin: (0.0, 0.0),
+        size: (1366.0, 768.0),
+    };
+    let fit = fit_frame_to_work_area(
+        work,
+        (123.0, 94.0),
+        (1120.0, 580.0),
+        (1120.0, 580.0),
+        (1384.0, 580.0),
+    );
+    assert_eq!(
+        fit.inner_size,
+        (1366.0, 580.0),
+        "rail grow must shrink to the work-area width"
+    );
+    assert_eq!(
+        fit.outer_position,
+        (0.0, 94.0),
+        "rail grow must slide the centered origin to the work-area left, not keep x=123"
+    );
+}
+
+/// M-003 glue: a menu-bar inset is a work area whose origin is *below* the
+/// monitor origin. An oversized frame must pin to that origin, not (0, 0)
+/// (which puts the title bar under the menu bar).
+#[test]
+fn menu_bar_inset_pins_oversized_frame_to_the_work_origin() {
+    let work = WorkArea {
+        origin: (0.0, 34.0),
+        size: (1366.0, 734.0),
+    };
+    let fit = fit_frame_to_work_area(
+        work,
+        (100.0, 0.0),
+        (2000.0, 1000.0),
+        (2000.0, 972.0),
+        (2000.0, 972.0),
+    );
+    assert_eq!(
+        fit.outer_position,
+        (0.0, 34.0),
+        "title bar must land on the work-area origin, not behind the menu bar"
+    );
+}
+
+/// M-003 glue: a bottom taskbar shrinks the work-area height. A frame that
+/// would sit on the taskbar is pulled up.
+#[test]
+fn bottom_taskbar_pulls_a_frame_up_into_the_work_area() {
+    let work = WorkArea {
+        origin: (0.0, 0.0),
+        size: (1366.0, 728.0),
+    };
+    let fit = fit_frame_to_work_area(
+        work,
+        (100.0, 200.0),
+        (800.0, 600.0),
+        (800.0, 572.0),
+        (800.0, 572.0),
+    );
+    assert_eq!(
+        fit.outer_position,
+        (100.0, 128.0),
+        "200+600 overshoots a 728-tall work area; y must be 728-600=128"
+    );
+}
+
+/// M-003 glue: a left taskbar (or left Dock) shifts the work origin. A
+/// frame at x=0, or an oversized frame, pins to that origin, not the
+/// monitor's 0.
+#[test]
+fn left_taskbar_pins_to_the_work_origin_not_the_monitor_origin() {
+    let work = WorkArea {
+        origin: (48.0, 0.0),
+        size: (1318.0, 768.0),
+    };
+    let shifted = fit_frame_to_work_area(
+        work,
+        (0.0, 50.0),
+        (800.0, 600.0),
+        (800.0, 572.0),
+        (800.0, 572.0),
+    );
+    assert_eq!(
+        shifted.outer_position,
+        (48.0, 50.0),
+        "a frame over the left taskbar must slide to the work origin"
+    );
+    let oversized = fit_frame_to_work_area(
+        work,
+        (100.0, 50.0),
+        (2000.0, 600.0),
+        (2000.0, 572.0),
+        (2000.0, 572.0),
+    );
+    assert_eq!(
+        oversized.outer_position,
+        (48.0, 50.0),
+        "an oversized frame must pin x to the work origin, not 0"
+    );
+}
+
+/// M-003 glue: a secondary monitor with a negative origin is a real
+/// layout. The clamp must pin to that origin, not jump to 0.
+#[test]
+fn negative_origin_secondary_monitor_stays_on_that_display() {
+    let work = WorkArea {
+        origin: (-1920.0, 0.0),
+        size: (1920.0, 1080.0),
+    };
+    let fit = fit_frame_to_work_area(
+        work,
+        (-2000.0, 40.0),
+        (800.0, 600.0),
+        (800.0, 572.0),
+        (800.0, 572.0),
+    );
+    assert_eq!(
+        fit.outer_position,
+        (-1920.0, 40.0),
+        "a frame left of a negative-origin display must pin to -1920, not 0"
+    );
+}
+
+/// M-003 glue: scale 2.0 is physical = logical × 2. A 34 pt menu bar is 68
+/// physical px; the 1384 logical rail need is 2768 physical and must clamp
+/// to the 2732-wide work area and move the centered origin.
+#[test]
+fn scale_2_work_area_converts_logical_insets_and_repositions_rail_grow() {
+    let work = cocoa_visible_frame_to_physical((0.0, 0.0), (1366.0, 734.0), 768.0, 2.0);
+    assert_eq!(
+        work,
+        WorkArea {
+            origin: (0.0, 68.0),
+            size: (2732.0, 1468.0),
+        },
+        "visibleFrame under a 34 pt menu bar at scale 2 is origin y=68, not the full monitor"
+    );
+    let fit = fit_frame_to_work_area(
+        work,
+        (246.0, 188.0),
+        (2240.0, 1216.0),
+        (2240.0, 1160.0),
+        (2768.0, 1160.0),
+    );
+    assert_eq!(
+        fit.inner_size,
+        (2732.0, 1160.0),
+        "physical rail width must clamp to the scaled work-area width"
+    );
+    assert_eq!(
+        fit.outer_position,
+        (0.0, 188.0),
+        "centered origin 246 must slide to the scaled work-area left"
+    );
+}
+
+/// M-003 glue: position clamp uses the outer size, so a title-bar chrome
+/// of 28 px at the bottom of a menu-bar-inset area does not hang the frame
+/// past the work area. Using the inner size would leave y 28 px too low.
+#[test]
+fn position_clamp_uses_outer_size_not_inner() {
+    let work = WorkArea {
+        origin: (0.0, 34.0),
+        size: (1366.0, 734.0),
+    };
+    let fit = fit_frame_to_work_area(
+        work,
+        (100.0, 200.0),
+        (1120.0, 608.0),
+        (1120.0, 580.0),
+        (1120.0, 580.0),
+    );
+    assert_eq!(
+        fit.outer_position,
+        (100.0, 160.0),
+        "outer 608 against work bottom 768 must land at y=160, not inner-based y=188"
+    );
+}
+
+/// M-003 provider: AppKit visibleFrame (bottom-left points) becomes winit
+/// physical top-left, including a left Dock + menu bar.
+#[test]
+fn cocoa_visible_frame_flips_and_scales_into_winit_space() {
+    assert_eq!(
+        cocoa_visible_frame_to_physical((0.0, 0.0), (1512.0, 948.0), 982.0, 2.0),
+        WorkArea {
+            origin: (0.0, 68.0),
+            size: (3024.0, 1896.0),
+        },
+        "1512x948 visibleFrame on a 982-tall main display at scale 2 is a 34 pt (68 px) top inset"
+    );
+    assert_eq!(
+        cocoa_visible_frame_to_physical((80.0, 0.0), (1286.0, 734.0), 768.0, 1.0),
+        WorkArea {
+            origin: (80.0, 34.0),
+            size: (1286.0, 734.0),
+        },
+        "a left Dock plus menu bar must keep both insets after the y-flip"
+    );
+}
+
+/// M-003 provider: Win32 `rcWork` is already top-left physical. Passing the
+/// taskbar-subtracted rect (not `rcMonitor`) is what the Windows FFI does.
+#[test]
+fn win32_rc_work_keeps_taskbar_insets() {
+    assert_eq!(
+        win32_work_rect_to_physical(0, 0, 1920, 1040),
+        WorkArea {
+            origin: (0.0, 0.0),
+            size: (1920.0, 1040.0),
+        },
+        "a bottom taskbar rcWork is shorter than rcMonitor"
+    );
+    assert_eq!(
+        win32_work_rect_to_physical(40, 0, 1920, 1080),
+        WorkArea {
+            origin: (40.0, 0.0),
+            size: (1880.0, 1080.0),
+        },
+        "a left taskbar rcWork origin is not the monitor origin"
+    );
+    assert_eq!(
+        win32_work_rect_to_physical(-1920, 0, 0, 1080),
+        WorkArea {
+            origin: (-1920.0, 0.0),
+            size: (1920.0, 1080.0),
+        },
+        "a secondary monitor's rcWork keeps the negative origin"
     );
 }

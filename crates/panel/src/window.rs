@@ -31,6 +31,10 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+#[path = "work_area.rs"]
+mod work_area;
+pub(crate) use work_area::fit_window_to_work_area;
+
 /// What the panel window needs from the graphics stack, appended to the
 /// startup errors a missing driver produces. `BOT_CPU=1` selects the game
 /// view's CPU rasterizer; the window itself always presents through wgpu.
@@ -589,11 +593,10 @@ fn request_gpu(
     }
 }
 
-/// Clamp a requested window inner size into a work area, in matching units
-/// (the winit glue below passes physical pixels). A saved geometry larger
-/// than the area comes back as the area; a fitting geometry is untouched.
-/// A degenerate area (non-positive) keeps the request floored at 1 px, so
-/// a bogus monitor report never collapses the window to zero.
+/// Clamp a requested size into a work area, in matching units. A request
+/// larger than the area comes back as the area; a fitting size is
+/// untouched. A degenerate area (non-positive) keeps the request floored
+/// at 1 px, so a bogus monitor report never collapses the window to zero.
 pub fn clamp_inner_size(requested: (f64, f64), work_area: (f64, f64)) -> (f64, f64) {
     (
         clamp_dim(requested.0, work_area.0),
@@ -638,80 +641,16 @@ fn clamp_pos(pos: f64, size: f64, origin: f64, area: f64) -> f64 {
     pos.min(hi).max(lo)
 }
 
-/// Monitor rectangle behind `window` as a work-area approximation, in
-/// physical pixels: `(origin, size)`. winit 0.30 exposes no work-area
-/// (menu bar / dock / taskbar) query, so this is the full monitor rect.
-/// The pure [`clamp_inner_size`]/[`clamp_outer_position`] above take any
-/// rect, so a platform work-area provider can replace this without
-/// touching the behavior or its tests.
-fn monitor_area_for(
-    window: &Window,
-    event_loop: &ActiveEventLoop,
-) -> Option<((f64, f64), (f64, f64))> {
-    let monitor = window
-        .current_monitor()
-        .or_else(|| event_loop.primary_monitor())
-        .or_else(|| event_loop.available_monitors().next())?;
-    let pos = monitor.position();
-    let size = monitor.size();
-    Some((
-        (f64::from(pos.x), f64::from(pos.y)),
-        (f64::from(size.width), f64::from(size.height)),
-    ))
-}
-
-/// Clamp a requested logical inner size into the window's current monitor,
-/// returning it unchanged when the monitor (or its scale factor) is
-/// unknown. The rail grow path uses this so opening MultiBox on a small
-/// screen fits the screen instead of pushing the frame off it. When the
-/// work area is smaller than the layout minimum the frame still shrinks:
-/// fitting the screen wins, and the dock layout lays out against its own
-/// minimum internally.
-pub fn clamp_to_window_monitor(window: &Window, requested_logical: (f64, f64)) -> (f64, f64) {
-    let Some(monitor) = window.current_monitor() else {
-        return requested_logical;
-    };
-    let scale = monitor.scale_factor();
-    if !scale.is_finite() || scale <= 0.0 {
-        return requested_logical;
-    }
-    let size = monitor.size();
-    let area = (
-        f64::from(size.width) / scale,
-        f64::from(size.height) / scale,
-    );
-    clamp_inner_size(requested_logical, area)
-}
-
-/// Fit a freshly created panel window into its monitor: shrink an
-/// oversized frame (the launch size, or a restored geometry that no longer
-/// fits after moving to a smaller display) and pull an off-screen position
-/// back on-screen. Best-effort: an unreadable position or an unknown
-/// monitor leaves the window as created, and the layout's own minimum
-/// sizes are untouched — only the OS frame is constrained.
+/// Fit a freshly created panel window into the monitor work area: shrink
+/// an oversized launch size and pull an off-screen origin back so the
+/// title bar stays reachable. Same provider and glue as rail grow. The
+/// layout's own minimum sizes are untouched — only the OS frame is
+/// constrained. Best-effort: an unknown work area leaves the window as
+/// created.
 fn fit_new_window(window: &Window, event_loop: &ActiveEventLoop) {
-    let Some((origin, area)) = monitor_area_for(window, event_loop) else {
-        return;
-    };
-    let physical = window.inner_size();
-    let size = (f64::from(physical.width), f64::from(physical.height));
-    let clamped = clamp_inner_size(size, area);
-    if (clamped.0 - size.0).abs() > 1.0 || (clamped.1 - size.1).abs() > 1.0 {
-        let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(
-            clamped.0.round().max(1.0),
-            clamped.1.round().max(1.0),
-        ));
-    }
-    if let Ok(pos) = window.outer_position() {
-        let at = (f64::from(pos.x), f64::from(pos.y));
-        let placed = clamp_outer_position(at, clamped, origin, area);
-        if (placed.0 - at.0).abs() > 1.0 || (placed.1 - at.1).abs() > 1.0 {
-            window.set_outer_position(winit::dpi::PhysicalPosition::new(
-                placed.0.round() as i32,
-                placed.1.round() as i32,
-            ));
-        }
-    }
+    let scale = window.scale_factor();
+    let logical: LogicalSize<f64> = window.inner_size().to_logical(scale);
+    work_area::fit_window(window, (logical.width, logical.height), Some(event_loop));
 }
 
 impl AppWindow {
@@ -732,8 +671,8 @@ impl AppWindow {
             )
         };
         // Launch fit (M-003): shrink a launch size that exceeds this
-        // monitor, and pull an OS-restored position back on-screen, before
-        // GPU bring-up shows the frame.
+        // work area, and pull a centered or off-screen origin back inside
+        // it, before GPU bring-up shows the frame.
         fit_new_window(&window, event_loop);
         #[cfg(feature = "memory-profile")]
         host_play::memory::mark_startup(host_play::memory::StartupMark::WindowCreated);
