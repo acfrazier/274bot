@@ -539,25 +539,4 @@ impl GatherCatalog {
         locs.sort_unstable();
         locs.into_iter().filter_map(|loc| self.rock(loc)).collect()
     }
-
-    /// Gas-event rock loc ids: every hazard target of a mining method whose resource `keep` accepts, ascending
-    /// and without repeats.
-    pub fn hazard_locs(&self, keep: impl Fn(&str) -> bool) -> Vec<i32> {
-        let mut ids: Vec<i32> = self
-            .methods
-            .iter()
-            .filter(|method| {
-                method.skill == GatherSkill::Mining
-                    && method.resources.iter().any(|key| keep(&key.0))
-            })
-            .flat_map(|method| known_rows(&method.targets))
-            .filter_map(|target| match (target.class, target.entity) {
-                (TargetClass::Hazard, EntityId::Loc(id)) => Some(id),
-                _ => None,
-            })
-            .collect();
-        ids.sort_unstable();
-        ids.dedup();
-        ids
-    }
 }

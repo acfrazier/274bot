@@ -914,6 +914,8 @@ pub struct SelectedGameData {
     bank_placements: Option<crate::named_banks::BankPlacementFacts>,
     #[serde(default)]
     cook_surfaces: Option<crate::cook_locations::CookSurfaceFacts>,
+    #[serde(default)]
+    mining_hazards: Option<Vec<crate::gather_methods::MiningHazard>>,
     #[serde(skip)]
     item_id_index: Vec<Option<usize>>,
     #[serde(skip)]
@@ -1436,6 +1438,12 @@ impl SelectedGameData {
         self.cook_surfaces
             .as_ref()
             .map_or(&[], |facts| facts.rows.as_slice())
+    }
+
+    /// The gathering family's hazard (gas) rock slice, carried by the core so it never needs the family
+    /// decoded. `None` when not generated.
+    pub fn mining_hazards(&self) -> Option<&[crate::gather_methods::MiningHazard]> {
+        self.mining_hazards.as_deref()
     }
 
     pub fn herb_by_key(&self, key: &str) -> Option<&HerbFact> {

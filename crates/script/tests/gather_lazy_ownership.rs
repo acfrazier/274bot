@@ -1,7 +1,6 @@
 //! Own test binary with one test: the prepared gathering catalog is process-wide, so who holds it cannot share a
-//! process with other Load isolates of the same revision. Startup must not make an isolate a family consumer;
-//! only a script that really touches gathering facts acquires the family, and a `GAS_ROCK_IDS` consumer lets it
-//! go as soon as its own set is filled.
+//! process with other Load isolates of the same revision. Startup must not make an isolate a family consumer, and
+//! `GAS_ROCK_IDS` is built from the selected core, so neither importing nor using it ever acquires the family.
 use client::io::ClientRevision;
 use script::{LoadIsolate, LoadShape};
 
@@ -45,32 +44,21 @@ fn idle_isolates_never_acquire_the_family_and_consumers_release_it() {
         .collect();
     assert!(
         data.try_gathering().is_none(),
-        "importing the mining facts is not consuming them"
+        "importing the mining facts decodes no family"
     );
-    for (tick, iso) in (1u64..).zip(&consumers) {
-        iso.on_game_tick(tick);
-        assert_eq!(
-            iso.probe("globalThis.__probe").unwrap(),
-            serde_json::json!(true)
-        );
+    for tick in 1u64..=2 {
+        for iso in &consumers {
+            iso.on_game_tick(tick);
+            assert_eq!(
+                iso.probe("globalThis.__probe").unwrap(),
+                serde_json::json!(true)
+            );
+            assert!(
+                data.try_gathering().is_none(),
+                "gas-rock checks are answered by the isolate's own set, never by the family"
+            );
+        }
     }
-    // Each consumer acquired the family for its first touch, copied the ids into its own set and let go: no
-    // consumer, live or joined, is left holding the catalog while the idle isolates are still running.
-    assert!(
-        data.try_gathering().is_none(),
-        "a materialized gas set holds no reference to the family"
-    );
-    for (tick, iso) in (10u64..).zip(&consumers) {
-        iso.on_game_tick(tick);
-        assert_eq!(
-            iso.probe("globalThis.__probe").unwrap(),
-            serde_json::json!(true)
-        );
-    }
-    assert!(
-        data.try_gathering().is_none(),
-        "later checks are served by the isolate's own set and never reacquire the family"
-    );
     for iso in consumers {
         iso.join();
     }

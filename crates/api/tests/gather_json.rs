@@ -314,14 +314,6 @@ fn resource_lookup_matches_the_trimmed_key_only() {
 }
 
 #[test]
-fn gas_rock_ids_are_derived_from_each_selected_cache() {
-    let expected: Vec<i32> = (2119..=2139).collect();
-    for (revision, catalog) in both() {
-        assert_eq!(gas_rock_ids(Some(catalog)).unwrap(), expected, "{revision}");
-    }
-}
-
-#[test]
 fn placements_are_content_rows_in_ascending_order() {
     for (revision, catalog) in both() {
         let oak = gather_placements(

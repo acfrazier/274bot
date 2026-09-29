@@ -4,7 +4,7 @@ import path from 'node:path';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, revisions, requestedRevisions } from './generate.ts';
 import { parsePack } from './extractors/common.ts';
-import { extractGatheringFamily } from './extractors/gathering.ts';
+import { extractGatheringFamily, miningHazards } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs } from './generate.ts';
 const root = path.resolve(import.meta.dirname, '../..');
@@ -239,6 +239,7 @@ async function verifyRevision(revision: number) {
     if (!fs.readFileSync(familyFile).equals(Buffer.from(familyBytes(familyInputs(spec, pinnedCommits), gathering, 'gathering')))) throw new Error(`${revision}: gathering family differs from the writer extract`);
     assertEqual(JSON.stringify(manifestRow.families?.gathering), JSON.stringify({ path: `${revision}/gathering.json`, schema: gathering.schema, ...digest(familyFile) }), `${revision} manifest gathering descriptor`);
     assertEqual(JSON.stringify(manifestRow.gathering), JSON.stringify(gathering.summary), `${revision} manifest gathering summary`);
+    assertEqual(JSON.stringify(payload.mining_hazards), JSON.stringify(miningHazards(gathering.payload)), `${revision} core mining_hazards is the family's hazard slice`);
     // Content pins: the family and the writer could agree and both be wrong, so anchor a few facts to the pinned content.
     const gatherFacts = gathering.payload;
     const aliases = new Map(gatherFacts.entities.map((row) => { const [kind, id, alias] = row.split(' '); return [`${kind}:${id}`, alias]; }));

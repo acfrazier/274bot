@@ -75603,5 +75603,113 @@
         "kind": "fire"
       }
     ]
-  }
+  },
+  "mining_hazards": [
+    {
+      "resources": [
+        "clay"
+      ],
+      "locs": [
+        2137,
+        2138
+      ]
+    },
+    {
+      "resources": [
+        "copper"
+      ],
+      "locs": [
+        2119,
+        2120
+      ]
+    },
+    {
+      "resources": [
+        "tin"
+      ],
+      "locs": [
+        2123,
+        2124
+      ]
+    },
+    {
+      "resources": [
+        "iron"
+      ],
+      "locs": [
+        2121,
+        2122
+      ]
+    },
+    {
+      "resources": [
+        "coal"
+      ],
+      "locs": [
+        2125,
+        2126
+      ]
+    },
+    {
+      "resources": [
+        "gold"
+      ],
+      "locs": [
+        2127,
+        2128
+      ]
+    },
+    {
+      "resources": [
+        "silver"
+      ],
+      "locs": [
+        2129,
+        2130
+      ]
+    },
+    {
+      "resources": [
+        "mithril"
+      ],
+      "locs": [
+        2131,
+        2132
+      ]
+    },
+    {
+      "resources": [
+        "adamantite"
+      ],
+      "locs": [
+        2133,
+        2134
+      ]
+    },
+    {
+      "resources": [
+        "runite"
+      ],
+      "locs": [
+        2135,
+        2136
+      ]
+    },
+    {
+      "resources": [
+        "blurite"
+      ],
+      "locs": [
+        2139
+      ]
+    },
+    {
+      "resources": [
+        "gems"
+      ],
+      "locs": [
+        2140
+      ]
+    }
+  ]
 }

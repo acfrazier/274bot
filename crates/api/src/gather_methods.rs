@@ -41,18 +41,37 @@ pub fn gather_methods(
     Ok(json!({ "rows": rows, "coverage": coverage(catalog) }))
 }
 
+/// Hazard (gas) rock locs of one mining method, with the resource keys the method mines: one row of the tiny
+/// slice of the gathering family the selected core carries (`mining_hazards`), so the gas-rock ids never need the
+/// family decoded.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MiningHazard {
+    pub resources: Vec<String>,
+    pub locs: Vec<i32>,
+}
+
 /// Gas-event rock loc ids, derived from the selected mining methods' hazard targets rather than copied from the
-/// JavaScript catalog: the selectable ore ladder plus quest-only blurite, not the separate gem rock.
-pub fn gas_rock_ids(catalog: Option<&GatherCatalog>) -> Result<Vec<i32>, &'static str> {
-    let Some(catalog) = catalog else {
+/// JavaScript catalog: the selectable ore ladder plus quest-only blurite, not the separate gem rock. Ascending,
+/// without repeats; `None` (no generated slice) is unavailable, never an empty list.
+pub fn gas_rock_ids(hazards: Option<&[MiningHazard]>) -> Result<Vec<i32>, &'static str> {
+    let Some(hazards) = hazards else {
         return Err(FAMILY_UNAVAILABLE);
     };
-    Ok(catalog.hazard_locs(|key| {
+    let keep = |key: &String| {
         key.eq_ignore_ascii_case("blurite")
             || crate::content::ROCK_TYPE_NAMES
                 .iter()
                 .any(|name| key.eq_ignore_ascii_case(name))
-    }))
+    };
+    let mut ids: Vec<i32> = hazards
+        .iter()
+        .filter(|row| row.resources.iter().any(keep))
+        .flat_map(|row| row.locs.iter().copied())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
 }
 
 /// `{ rows }` of the methods a resource key names (trim, ASCII case-insensitive). Zero matches is
