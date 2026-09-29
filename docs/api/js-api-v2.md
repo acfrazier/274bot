@@ -199,44 +199,68 @@ Example: `crates/script/examples/supply_helpers_v2.ts`.
 
 ## Gather query helpers
 
-Three sync `HelperResult` methods over the selected pin's gather-methods
-family. They are not Promises, not `request()` ops, and they do not push
+Three sync `HelperResult` methods over the selected pin's typed gathering
+catalog (the checked `gathering.json` family: woodcutting, mining and fishing
+methods, their targets, products, tools, consumed bait, requirements and world
+placements). They are not Promises, not `request()` ops, and they do not push
 `h.interact`. `bestAxe` and `bestPickaxe` stay `notImpl`.
 
 | Method | OK | Errors |
 | --- | --- | --- |
 | `gatherMethods(input?)` | `{ rows, coverage }` | `invalid-args`, `missing-selected-data`, `family-unavailable:gather_methods`, `unknown-skill` |
 | `gatherResource({ name })` | `{ rows }` | `invalid-args`, `missing-selected-data`, `family-unavailable:gather_methods`, `unknown-resource` |
-| `gatherPlacements({ resource, region, limit })` | `{ rows, truncated, resource_ids, qualification }` | `invalid-args`, `missing-region`, `missing-selected-data`, `family-unavailable:gather_placements`, `unknown-resource` |
+| `gatherPlacements({ resource, region, limit, after? })` | `{ rows, truncated, next, resource_ids, qualification, gaps? }` | `invalid-args`, `missing-region`, `missing-selected-data`, `family-unavailable:gather_placements`, `unknown-resource` |
+
+The catalog is prepared once per selected pin the first time a helper needs
+it, shared with every other holder, and released after its last holder. An
+unbound pin, or a family whose bytes, manifest digest, extractor schema or
+identities do not match the pin, is `family-unavailable:*` and is never an
+empty list.
+
+A method row is one tree kind, one rock kind or one fishing option of one spot
+type (`fishing.freshfish.op1` is Lure, `.op3` is Bait). It carries `id`,
+`skill`, `resource_key`/`resources` (wood or ore key; fish item aliases), `op`,
+the target ids by class (`loc_ids`, `npc_ids`, `empty_ids`, `hazard_ids`,
+`unclassified_ids`, each `{ alias, id }`) and the facts `targets` (with a
+per-target `respawn`), `products` (alternative catches with their levels),
+`tools`, `consumes` (bait), `requirements` and `placements`. Every fact is a
+cell `{ state, value?, gaps? }`: `known` is a complete set, `partial` keeps the
+rows found and lists gaps (for example `incidental-gem-roll`), `unknown` has no
+rows and is never an empty set. `qualification` is `complete` only when every
+cell is known. Respawn belongs to each target: `null` inside a known cell means
+no respawn applies (fishing spots, rune essence), otherwise it carries the raw
+content value and the source-derived tick bounds.
 
 `gatherMethods()` and `gatherMethods({})` omit the skill. Accepted skills, after
 trim and ASCII case-fold, are only `woodcutting`, `mining`, and `fishing`. A
-skill filter keeps that bucket's order and does not filter coverage. Coverage
-is the loaded pin's full array, beside `rows`. `gatherResource` matches
-`resource_key` only (trim, ASCII case-insensitive). One match is `rows` of
-length 1. Zero matches is `unknown-resource`, not `{ rows: [] }`. Loc ids stay
-`{ alias, id }`. Fishing rows have no loc ids.
+skill filter keeps the woodcutting, mining, fishing content order and does not
+filter coverage. `coverage` is the loaded pin's full gap list, beside `rows`:
+one entry per incomplete method cell and one per entity content could not
+classify (`class: 'unclassified'`, with the content reason such as
+`custom-handler`). `gatherResource` matches `resources` (trim, ASCII
+case-insensitive): a wood or ore key, or a fish item alias, and one key can
+name several methods. Zero matches is `unknown-resource`, not `{ rows: [] }`.
 
 Example: `crates/script/examples/gather_methods_v2.ts`.
 
-`gatherPlacements` joins the `gather_placements` world family to one
-`gather_methods` `resource` row. `region` is the required `SceneRegionInput`
-box on one `level`: no `plane` key and no `{ cx, cz, radius }` form, and an
-omitted key is `missing-region` before any other field. `limit` is 1..=64 and
-is never clamped. The spatial filter is rust over the stored rows: the methods
-row's `loc_ids` only (never `empty_ids` or stumps), then `row.plane ===
-region.level` and `row.x`/`row.z` inside the box, in family order, capped at
-`limit` with `truncated` set when more rows matched. Returned rows keep
-`plane`. `resource_ids` is that methods loc-id set, not the hit list, so a box
-with no hits is `ok: true` with an empty `rows` and still carries the ids.
-`qualification` is the methods row's. Only the six published woods are
-queryable: unpublished and conditional woods (`jungle`, `burnt`, `achey`,
-`hollow`), fishing categories, and loc ids or display names are
-`unknown-resource`, as is a pin whose `gather_methods` family is absent. A
-mining `resource_key` is the marked empty `{ rows: [], truncated: false,
-resource_ids: [], qualification: 'unknown' }`, not world-empty and never
-`family-unavailable:gather_placements`; absent placements is that family token,
-never `{ rows: [] }`.
+`gatherPlacements` returns the placements of every method a `resource` key
+names, as `GatherPlacementRow`s in ascending catalog-local id order. `region` is
+the required `SceneRegionInput` box on one `level`: no `plane` key and no
+`{ cx, cz, radius }` form, and an omitted key is `missing-region` before any
+other field. `limit` is 1..=64 and is never clamped. A page cut by `limit` sets
+`truncated` and gives `next`, the cursor to pass as `after` (a decimal string;
+any other type or text is `invalid-args`, and a cursor past the last id is an
+empty complete page).
+Only resource-class targets are placed (never depleted stumps or gas
+variants); `resource_ids` names them for the matched methods, so a box with no
+hits is `ok: true` with empty `rows`, `qualification: 'complete'` and still
+carries the ids. A resource whose placements content cannot resolve
+(`woodcutting.jungle`) is `{ rows: [], truncated: false, next: null,
+qualification: 'unknown', gaps }`, never an empty complete page. Each row
+carries the loc or npc id, its content alias, the world tile, the footprint at
+its rotation, the wander `movement` region of a fishing spot and the map row it
+came from (`source`). Display names, loc ids and fishing categories are not
+keys: they are `unknown-resource`, as is an absent key.
 
 Example: `crates/script/examples/gather_placements_v2.ts`.
 

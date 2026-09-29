@@ -1025,6 +1025,9 @@ api.gatherPlacements = function (input) {
   }
   if (typeof input.resource !== 'string') return helperErr('invalid-args');
   if (!sceneLimitOk(input.limit)) return helperErr('invalid-args');
+  if (Object.prototype.hasOwnProperty.call(input, 'after') && typeof input.after !== 'string') {
+    return helperErr('invalid-args');
+  }
   if (sceneRegionValue(input.region) === null) return helperErr('invalid-args');
   return gatherV2('gatherPlacements', input);
 };

@@ -61,10 +61,10 @@ fn gather_methods_op<'s>(
     input: v8::Local<v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let skill = optional_skill(scope, input)?;
-    let Some(data) = supply_v2::selected_data() else {
+    if supply_v2::selected_data().is_none() {
         return Err("missing-selected-data".into());
-    };
-    match api::gather_methods::gather_methods(data.gather_methods(), skill.as_deref()) {
+    }
+    match api::gather_methods::gather_methods(supply_v2::gathering().as_deref(), skill.as_deref()) {
         Ok(value) => {
             let value = materialize(scope, &value)?;
             helper_ok(scope, value)
@@ -78,10 +78,10 @@ fn gather_resource_op<'s>(
     input: v8::Local<v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let name = required_name(scope, input)?;
-    let Some(data) = supply_v2::selected_data() else {
+    if supply_v2::selected_data().is_none() {
         return Err("missing-selected-data".into());
-    };
-    match api::gather_methods::gather_resource(data.gather_methods(), &name) {
+    }
+    match api::gather_methods::gather_resource(supply_v2::gathering().as_deref(), &name) {
         Ok(value) => {
             let value = materialize(scope, &value)?;
             helper_ok(scope, value)
@@ -98,14 +98,14 @@ fn gather_placements_op<'s>(
     input: v8::Local<v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let request = placement_request(scope, input)?;
-    let Some(data) = supply_v2::selected_data() else {
+    if supply_v2::selected_data().is_none() {
         return Err("missing-selected-data".into());
-    };
+    }
     match api::gather_methods::gather_placements(
-        data.gather_placements(),
-        data.gather_methods(),
+        supply_v2::gathering().as_deref(),
         &request.resource,
         &request.region,
+        request.after.as_deref(),
         request.limit,
     ) {
         Ok(value) => {
@@ -119,13 +119,15 @@ fn gather_placements_op<'s>(
 struct PlacementRequest {
     resource: String,
     region: api::gather_methods::SceneRegionInput,
+    after: Option<String>,
     limit: usize,
 }
 
 /// `limit` is 1..=64, the same numeric gate as the scene helpers, and never
 /// clamped. `is_int32` is false for a string, a fraction, a bigint, a boxed
 /// number, and negative zero, so each region field and the limit are integers
-/// or `invalid-args`. Extra keys are ignored.
+/// or `invalid-args`. An `after` cursor, when present, must be a string.
+/// Extra keys are ignored.
 fn placement_request(
     scope: &mut v8::HandleScope,
     input: v8::Local<v8::Value>,
@@ -156,9 +158,18 @@ fn placement_request(
         max_z: required_i32(scope, region, "max_z")?,
         level: required_i32(scope, region, "level")?,
     };
+    let after = field(scope, input, "after")?;
+    let after = if after.is_undefined() {
+        None
+    } else if after.is_string() {
+        Some(js_to_string(scope, after)?)
+    } else {
+        return Err("invalid-args".into());
+    };
     Ok(PlacementRequest {
         resource,
         region,
+        after,
         limit: limit as usize,
     })
 }

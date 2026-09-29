@@ -78,6 +78,26 @@ fn family_preparation_runs_off_the_callers_thread() {
     ));
 }
 
+#[test]
+fn unbound_selected_data_refuses_the_gathering_family() {
+    let (cached, refused) = crate::selected::FamilyPreparation::run(|worker| {
+        let unbound = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
+            .expect("schema 4 without provenance commits still decodes");
+        (
+            unbound.try_gathering().is_some(),
+            unbound.prepare_gathering(worker).map(|_| ()),
+        )
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    assert!(!cached, "an unbound pin never hits the cache");
+    assert!(
+        matches!(refused, Err(FactError::FamilyUnavailable(_))),
+        "{refused:?}"
+    );
+}
+
 fn minimal_json(tail: &str) -> String {
     format!(
         r#"{{
@@ -145,109 +165,6 @@ fn selected_lookup_indexes_match_straight_scans() {
         }
         assert_eq!(data.fixed_food_heal("not a selected food"), None);
     }
-}
-
-#[test]
-fn missing_gather_methods_is_absent_not_an_empty_list() {
-    let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
-        .expect("schema 4 without the field still decodes");
-    assert!(data.gather_methods().is_none());
-}
-
-#[test]
-fn bare_gather_methods_vec_does_not_decode() {
-    let error = SelectedGameData::decode(
-        minimal_json(r#", "gather_methods": []"#).as_bytes(),
-        ClientRevision::R274,
-    )
-    .expect_err("a bare vec must not decode as an empty family");
-    assert!(
-        error.contains("gather_methods") || error.contains("decode"),
-        "unexpected error: {error}"
-    );
-}
-
-#[test]
-fn empty_gather_methods_object_is_not_success() {
-    let error = SelectedGameData::decode(
-        minimal_json(r#", "gather_methods": {"woods": [], "mining": [], "fishing": []}"#)
-            .as_bytes(),
-        ClientRevision::R274,
-    )
-    .expect_err("Some with no extracted rows is not success");
-    assert!(
-        error.contains("no extracted rows"),
-        "unexpected error: {error}"
-    );
-}
-
-#[test]
-fn published_placements_decode() {
-    let data = SelectedGameData::decode(
-            minimal_json(
-                r#", "gather_placements": {"rows": [{"loc_id": 1306, "x": 2735, "z": 3582, "plane": 0}], "coverage": [{"class": "unknown", "family": "mining", "reason": "no selected published-ore set"}]}"#,
-            )
-            .as_bytes(),
-            ClientRevision::R274,
-        )
-        .expect("published placements decode");
-    let facts = data
-        .gather_placements()
-        .expect("a present family is not absence");
-    assert_eq!(facts.rows.len(), 1);
-    assert_eq!(facts.rows[0].loc_id, 1306);
-    assert_eq!(
-        (facts.rows[0].x, facts.rows[0].z, facts.rows[0].plane),
-        (2735, 3582, 0)
-    );
-    assert_eq!(facts.coverage[0].class, "unknown");
-    assert_eq!(facts.coverage[0].family, "mining");
-}
-
-#[test]
-fn missing_gather_placements_is_absent_not_an_empty_list() {
-    let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
-        .expect("schema 4 without the field still decodes");
-    assert!(data.gather_placements().is_none());
-}
-
-#[test]
-fn bare_gather_placements_vec_does_not_decode() {
-    let error = SelectedGameData::decode(
-        minimal_json(r#", "gather_placements": []"#).as_bytes(),
-        ClientRevision::R274,
-    )
-    .expect_err("a bare vec must not decode as an empty family");
-    assert!(
-        error.contains("gather_placements") || error.contains("decode"),
-        "unexpected error: {error}"
-    );
-}
-
-#[test]
-fn empty_gather_placements_object_is_not_success() {
-    let error = SelectedGameData::decode(
-            minimal_json(
-                r#", "gather_placements": {"rows": [], "coverage": [{"class": "unknown", "family": "mining", "reason": "no selected published-ore set"}]}"#,
-            )
-            .as_bytes(),
-            ClientRevision::R274,
-        )
-        .expect_err("Some with no world rows is not success");
-    assert!(error.contains("no world rows"), "unexpected error: {error}");
-}
-
-#[test]
-fn coverage_less_gather_placements_does_not_decode() {
-    let error = SelectedGameData::decode(
-            minimal_json(
-                r#", "gather_placements": {"rows": [{"loc_id": 1306, "x": 2735, "z": 3582, "plane": 0}], "coverage": []}"#,
-            )
-            .as_bytes(),
-            ClientRevision::R274,
-        )
-        .expect_err("a present family must carry its coverage");
-    assert!(error.contains("no coverage"), "unexpected error: {error}");
 }
 
 #[test]

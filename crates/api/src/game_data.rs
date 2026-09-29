@@ -12,7 +12,7 @@ use crate::selected::{FactError, SelectedPin};
 const SCHEMA_VERSION: u16 = 4;
 const REVISION_274: &[u8] = include_bytes!("../data/game-data/274.json");
 const REVISION_289: &[u8] = include_bytes!("../data/game-data/289.json");
-const MANIFEST: &[u8] = include_bytes!("../data/game-data/manifest.json");
+pub(crate) const MANIFEST: &[u8] = include_bytes!("../data/game-data/manifest.json");
 
 static DATA_274: OnceLock<Result<Arc<SelectedGameData>, String>> = OnceLock::new();
 static DATA_289: OnceLock<Result<Arc<SelectedGameData>, String>> = OnceLock::new();
@@ -614,104 +614,6 @@ impl EquipmentNamesFacts {
     }
 }
 
-/// One packed loc or depleted-stage id joined from this pin. Alias is the pack key, not a display name.
-#[derive(Debug, Deserialize, Clone)]
-pub struct GatherLocId {
-    pub alias: String,
-    pub id: i32,
-}
-
-/// Item produced by a loc-resource row. Absent when the table names no output.
-#[derive(Debug, Deserialize, Clone)]
-pub struct GatherOutput {
-    pub alias: String,
-    pub id: i32,
-}
-
-/// Wood or mining identity. Not a fishing method. Resource key is the wood key or `ore_name`, never the loc display name.
-#[derive(Debug, Deserialize, Clone)]
-pub struct GatherLocResource {
-    pub table: String,
-    pub resource_key: String,
-    pub loc_ids: Vec<GatherLocId>,
-    pub empty_ids: Vec<GatherLocId>,
-    pub output: Option<GatherOutput>,
-    pub level: i32,
-    pub qualification: String,
-    pub partial_sides: Vec<String>,
-    pub missing_transform: Vec<String>,
-    #[serde(default)]
-    pub publication: Option<String>,
-}
-
-/// Fishing method identity: category plus posted ops. Not a spawn tile.
-#[derive(Debug, Deserialize, Clone)]
-pub struct GatherFishingMethod {
-    pub category: String,
-    pub primary_op: String,
-    pub pair_op: Option<String>,
-    pub level: Option<i32>,
-    pub output: Option<GatherOutput>,
-    pub qualification: String,
-    pub partial_sides: Vec<String>,
-}
-
-/// Coverage for conditional woods and revision-absent locs. Not a copied id.
-#[derive(Debug, Deserialize, Clone)]
-pub struct GatherCoverageRecord {
-    pub class: String,
-    #[serde(default)]
-    pub table: Option<String>,
-    #[serde(default)]
-    pub resource_key: Option<String>,
-    #[serde(default)]
-    pub alias: Option<String>,
-    #[serde(default)]
-    pub on_revision: Option<i32>,
-    #[serde(default)]
-    pub other_pin_id: Option<i32>,
-    #[serde(default)]
-    pub copied: Option<bool>,
-    pub reason: String,
-}
-
-/// One gather family. Absence is `None`, not an empty list.
-#[derive(Debug, Deserialize, Clone)]
-pub struct GatherMethodsFacts {
-    pub woods: Vec<GatherLocResource>,
-    pub mining: Vec<GatherLocResource>,
-    pub fishing: Vec<GatherFishingMethod>,
-    #[serde(default)]
-    pub coverage: Vec<GatherCoverageRecord>,
-}
-
-/// One world LOC placement of a published resource loc id. `x`/`z` are world
-/// coordinates; no local coords, shape, or angle is stored.
-#[derive(Debug, Deserialize, Clone)]
-pub struct GatherPlacement {
-    pub loc_id: i32,
-    pub x: i32,
-    pub z: i32,
-    pub plane: i32,
-}
-
-/// A gather family with no selected published set. Unknown is not empty rows.
-#[derive(Debug, Deserialize, Clone)]
-pub struct GatherPlacementCoverage {
-    pub class: String,
-    pub family: String,
-    pub reason: String,
-}
-
-/// Published-resource world placements. Absence is `None`, not an empty list.
-/// `coverage` records what this family does not publish, so a present family
-/// that omits it is a decode error and so is an empty row list.
-#[derive(Debug, Deserialize, Clone)]
-pub struct GatherPlacementsFacts {
-    pub rows: Vec<GatherPlacement>,
-    pub coverage: Vec<GatherPlacementCoverage>,
-}
-
 /// Script alias from a selected handler. Not a pack-joined display name.
 /// `quantity` is the `inv_del` count; a use-site check has none.
 #[derive(Debug, Deserialize, Clone)]
@@ -1001,10 +903,6 @@ pub struct SelectedGameData {
     #[serde(default)]
     equipment_names: Option<EquipmentNamesFacts>,
     #[serde(default)]
-    gather_methods: Option<GatherMethodsFacts>,
-    #[serde(default)]
-    gather_placements: Option<GatherPlacementsFacts>,
-    #[serde(default)]
     quest_identity: Option<QuestIdentityFacts>,
     #[serde(default)]
     trails: Option<TrailFacts>,
@@ -1114,14 +1012,12 @@ impl SelectedGameData {
         ))
     }
 
-    /// Body owned by M-306: no typed gathering family is installed before its asset cutover.
+    /// Verify and decode the selected gathering family, or share the copy another user holds. Off-pump only.
     pub fn prepare_gathering(
         &self,
-        _worker: &mut crate::selected::FamilyPreparation,
+        worker: &mut crate::selected::FamilyPreparation,
     ) -> Result<Arc<crate::gather_methods::GatherCatalog>, crate::selected::FactError> {
-        Err(crate::selected::FactError::FamilyUnavailable(
-            crate::selected::GATHERING_FAMILY.clone(),
-        ))
+        crate::gather_methods::prepare(self, worker)
     }
 
     /// Cache-only; M-296 installs the weak cache with the typed family.
@@ -1129,9 +1025,9 @@ impl SelectedGameData {
         None
     }
 
-    /// Cache-only; M-306 installs the weak cache with the typed family.
+    /// Cache-only: the prepared gathering catalog if some user still holds it. Never decodes.
     pub fn try_gathering(&self) -> Option<Arc<crate::gather_methods::GatherCatalog>> {
-        None
+        crate::gather_methods::cached(self)
     }
 
     fn decode(bytes: &[u8], expected_revision: ClientRevision) -> Result<Arc<Self>, String> {
@@ -1158,19 +1054,6 @@ impl SelectedGameData {
             .is_some_and(|facts| facts.rows.is_empty())
         {
             return Err("cook_surfaces present with no placed surfaces".to_string());
-        }
-        if let Some(facts) = &data.gather_methods {
-            if facts.woods.is_empty() && facts.mining.is_empty() && facts.fishing.is_empty() {
-                return Err("gather_methods present with no extracted rows".to_string());
-            }
-        }
-        if let Some(facts) = &data.gather_placements {
-            if facts.rows.is_empty() {
-                return Err("gather_placements present with no world rows".to_string());
-            }
-            if facts.coverage.is_empty() {
-                return Err("gather_placements present with no coverage".to_string());
-            }
         }
         if let Some(facts) = &data.quest_identity {
             if facts.rows.is_empty() {
@@ -1503,16 +1386,6 @@ impl SelectedGameData {
 
     pub fn equipment_names(&self) -> Option<&EquipmentNamesFacts> {
         self.equipment_names.as_ref()
-    }
-
-    /// Gather methods and loc-resource ids. `None` is family absence, not an empty extract.
-    pub fn gather_methods(&self) -> Option<&GatherMethodsFacts> {
-        self.gather_methods.as_ref()
-    }
-
-    /// Published-wood world placements. `None` is family absence, not an empty extract.
-    pub fn gather_placements(&self) -> Option<&GatherPlacementsFacts> {
-        self.gather_placements.as_ref()
     }
 
     /// Six-seed quest identity. `None` is family absence, not an empty extract.

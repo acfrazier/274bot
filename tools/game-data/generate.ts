@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import generatedInputPins from './generated-inputs.json';
 import { sha256, sourceFile, parseRows, parsePack, integer, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
-import { gatherContentFiles, extractGatherMethodsFacts, extractGatherPlacementsFacts } from './extractors/gathering.ts';
+import { extractGatheringFamily } from './extractors/gathering.ts';
 import { questIdentityContentFiles, extractQuestIdentityFacts } from './extractors/quests.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; params?: Map<number, number | string> };
@@ -62,7 +62,7 @@ export const trailContentFiles = [
     'scripts/minigames/game_trail/configs/trail_hard.obj',
     'scripts/minigames/game_trail/configs/trail_casket.obj',
 ];
-const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles, ...gatherContentFiles, ...questIdentityContentFiles, ...trailContentFiles];
+const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles, ...questIdentityContentFiles, ...trailContentFiles];
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 export function assertPinned(spec: Revision) {
     const engineCommit = commit(spec.engine); const contentCommit = commit(spec.content);
@@ -135,6 +135,11 @@ export type FamilyInputs = {
 };
 export type FamilyDraft = { schema: number; payload: unknown };
 export type FamilyArtifact = { path: string; schema: number; bytes: number; sha256: string };
+/** The one serialization of a family artifact: extractor schema, upstream identities and inputs, then the facts. */
+export function familyBytes(upstream: FamilyInputs, draft: FamilyDraft, name = 'family') {
+    if (!Number.isInteger(draft.schema) || draft.schema < 1 || draft.schema > 65535) throw new Error(`${name}: invalid extractor schema`);
+    return `${JSON.stringify({ schema: draft.schema, ...upstream, facts: draft.payload }, null, 2)}\n`;
+}
 export type SelectedFamilies = { quests: FamilyArtifact; gathering: FamilyArtifact };
 export type BakedNavigation = {
     nav: string; flags: string; quest_facts_sha256: string; quest_extractor_schema: number;
@@ -163,6 +168,15 @@ function selectedInputHashes(spec: Revision): InputHash[] {
     }
     return inputs.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 }
+/** Upstream identities and the complete sorted input inventory every family is extracted from. */
+export function familyInputs(spec: Revision, pinned: { engineCommit: string; contentCommit: string }): FamilyInputs {
+    if (!spec.cacheIdentity.content_id) throw new Error('selected build requires content identity');
+    return {
+        revision: spec.revision, engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit,
+        cache_id: spec.cacheIdentity.cache_id, content_id: spec.cacheIdentity.content_id,
+        inputs: selectedInputHashes(spec),
+    };
+}
 
 /**
  * The family cutover's one-way build, called by this entry point's selected
@@ -172,12 +186,7 @@ function selectedInputHashes(spec: Revision): InputHash[] {
 export async function generateSelected(spec: Revision, build: SelectedBuild) {
     const pinned = assertPinned(spec);
     verifyCacheIdentity(spec.revision, spec.engine, spec.cacheIdentity);
-    if (!spec.cacheIdentity.content_id) throw new Error('selected build requires content identity');
-    const upstream: FamilyInputs = {
-        revision: spec.revision, engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit,
-        cache_id: spec.cacheIdentity.cache_id, content_id: spec.cacheIdentity.content_id,
-        inputs: selectedInputHashes(spec),
-    };
+    const upstream = familyInputs(spec, pinned);
     const parent = path.dirname(spec.output);
     fs.mkdirSync(parent, { recursive: true });
     const directory = path.join(parent, String(spec.revision));
@@ -189,8 +198,7 @@ export async function generateSelected(spec: Revision, build: SelectedBuild) {
             return { path: file, ...sha256(file) };
         };
         const family = (name: string, draft: FamilyDraft): FamilyArtifact => {
-            if (!Number.isInteger(draft.schema) || draft.schema < 1 || draft.schema > 65535) throw new Error(`${name}: invalid extractor schema`);
-            const bytes = `${JSON.stringify({ schema: draft.schema, ...upstream, facts: draft.payload }, null, 2)}\n`;
+            const bytes = familyBytes(upstream, draft, name);
             return { ...emit(`${name}.json`, bytes), schema: draft.schema };
         };
         // Nothing downstream exists or is supplied to the extractors at this point.
@@ -2568,15 +2576,13 @@ async function generate(spec: Revision) {
     const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8'));
     if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`);
     const equipmentNames = extractEquipmentNamesFacts(items, objPack);
-    const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision);
-    if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) {
-        throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`);
-    }
-    const gatherPlacements = extractGatherPlacementsFacts(spec.content, gatherMethods.woods);
-    if (gatherPlacements.woods.length !== 6) throw new Error(`${spec.revision}: expected six published woods, got ${gatherPlacements.woods.length}`);
-    if (gatherPlacements.facts.coverage.length !== 1 || gatherPlacements.facts.coverage[0].class !== 'unknown' || gatherPlacements.facts.coverage[0].family !== 'mining') {
-        throw new Error(`${spec.revision}: gather placements must record mining as unknown coverage`);
-    }
+    const gatheringInputs = familyInputs(spec, pinned);
+    const gathering = extractGatheringFamily(spec.content);
+    if (JSON.stringify(selectedInputHashes(spec)) !== JSON.stringify(gatheringInputs.inputs)) throw new Error(`${spec.revision}: selected inputs changed during gathering extraction`);
+    const gatheringFile = path.join(path.dirname(spec.output), String(spec.revision), 'gathering.json');
+    fs.mkdirSync(path.dirname(gatheringFile), { recursive: true });
+    fs.writeFileSync(gatheringFile, familyBytes(gatheringInputs, gathering, 'gathering'));
+    const gatheringArtifact = { path: path.relative(path.dirname(spec.output), gatheringFile), schema: gathering.schema, ...sha256(gatheringFile) };
     const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision);
     if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) {
         throw new Error(`${spec.revision}: quest identity join mismatch`);
@@ -2612,7 +2618,7 @@ async function generate(spec: Revision) {
     const cookSurfaces = extractCookSurfaces(spec.content, cookCatalog);
     const cookInputs = { catalog: Object.values(cookFiles).map((file) => ({ path: `rs2b0t-00d39a17e0/${file}`, ...sha256(path.join(rs2b0tRoot, file)) })), ...cookSurfaces.inputs };
     fs.writeFileSync(path.join(root, 'crates/api/data/game-data/cook-catalog.rs'), cookCatalogRust(cookCatalog));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, placement_inputs: gatherPlacements.inputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, gather_placements: gatherPlacements.facts, quest_identity: questIdentity, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, gather_placements: { rows: gatherPlacements.facts.rows.length, maps: gatherPlacements.inputs.maps.files, published_loc_ids: gatherPlacements.inputs.published_loc_ids.count, coverage: gatherPlacements.facts.coverage.length, woods: gatherPlacements.woods }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') }, trio_givers: { rows: trioGivers.facts.rows.length, with_spawn: trioGivers.facts.rows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.facts.coverage.length, maps: trioGivers.inputs.maps.files, handlers: trioGivers.inputs.handlers.length, npc_configs: trioGivers.inputs.npc_configs.length, digest: crypto.createHash('sha256').update(JSON.stringify(trioGivers.facts)).digest('hex') }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing }, cook_inputs: cookInputs, cook_surfaces: cookSurfaces.facts.rows.length };
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, quest_identity: questIdentity, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, families: { gathering: gatheringArtifact }, gathering: gathering.summary, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') }, trio_givers: { rows: trioGivers.facts.rows.length, with_spawn: trioGivers.facts.rows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.facts.coverage.length, maps: trioGivers.inputs.maps.files, handlers: trioGivers.inputs.handlers.length, npc_configs: trioGivers.inputs.npc_configs.length, digest: crypto.createHash('sha256').update(JSON.stringify(trioGivers.facts)).digest('hex') }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing }, cook_inputs: cookInputs, cook_surfaces: cookSurfaces.facts.rows.length };
 }
 
 /** Shared CLI selection. With no flag, 274 is best-effort corroboration of 289. */

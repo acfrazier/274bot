@@ -5,10 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows } from './extractors/common.ts';
-import { extractGatherMethodsFacts, extractGatherPlacementsFacts } from './extractors/gathering.ts';
+import { extractGatheringFamily, GATHERING_SCHEMA, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
-import { generateSelected, revisions, requestedRevisions, type SelectedBuild } from './generate.ts';
+import { familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, type SelectedBuild } from './generate.ts';
 import { sha256, sourceFile } from './extractors/common.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
@@ -664,374 +664,25 @@ assert.equal(
     'no_exact_selected_match',
 );
 
-const gatherTreeLocs = ['achey.loc', 'burnt.loc', 'hollow.loc', 'magic.loc', 'maple.loc', 'normal.loc', 'oak.loc', 'willow.loc', 'yew.loc'];
-function writeGatherFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
+/** Minimal tracked content tree for the write-gate and pipeline tests below: packs, one map, one script. */
+function gateContentFixture() {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-pin-content-'));
     const files: Record<string, string> = {
-        'scripts/skill_mining/configs/mine.dbrow': `[copper_rock_table]
-data=rock,copperrock1
-data=rock,macro_copperrock1
-data=ore_name,copper
-data=rock_output,copper_ore
-data=rock_level,1
-data=rock_exp,175
-[gem_rock]
-data=rock,gemrock
-data=ore_name,gems
-data=rock_level,40
-[limestone_rock3]
-data=rock,loc_4027
-data=ore_name,limestone
-data=rock_output,limestone
-data=rock_level,10
-[limestone_rock2]
-data=rock,loc_4028
-data=ore_name,limestone
-data=rock_output,limestone
-data=rock_level,10
-[limestone_rock1]
-data=rock,loc_4029
-data=ore_name,limestone
-data=rock_output,limestone
-data=rock_level,10
-[desertrescue_rock]
-data=rock,punishrocks
-data=ore_name,rock
-data=rock_output,thpunishrock
-data=rock_level,1
-[rune_essence_table]
-data=rock,blankrunestone
-data=ore_name,rune stones
-data=rock_output,blankrune
-data=rock_level,1
-`,
-        'scripts/skill_woodcutting/configs/trees.dbrow': `[normal_tree_table]
-data=tree,tree
-data=levelrequired,0
-data=product,logs
-data=productexp,250
-[jungle_tree_table]
-data=tree,kharazi_jungle_tree1
-data=levelrequired,0
-data=product,logs
-[achey_tree_table]
-data=tree,achey_tree
-data=levelrequired,0
-data=product,achey_tree_logs
-[burnt_tree_table]
-data=tree,deadtree_burnt
-data=levelrequired,0
-data=product,charcoal
-`,
-        'scripts/skill_mining/configs/rocks.loc': `[copperrock1]
-name=Rocks
-param=next_loc_stage_mining,rocks1
-[macro_copperrock1]
-name=Rocks
-category=mining_rock_macro_gas
-[gemrock]
-name=Rocks
-param=next_loc_stage_mining,rocks1
-[blankrunestone]
-name=Rune Essence
-[loc_4027]
-name=Rocks
-param=next_loc_stage_mining,loc_4028
-[loc_4028]
-name=Rocks
-param=next_loc_stage_mining,loc_4029
-[loc_4029]
-name=Rocks
-param=next_loc_stage_mining,loc_4030
-`,
-        'scripts/skill_woodcutting/configs/trees/normal.loc': `[tree]
-name=Tree
-param=next_loc_stage,treestump2
-`,
-        'scripts/skill_woodcutting/configs/trees/achey.loc': `[achey_tree]
-name=Tree
-param=next_loc_stage,achey_tree_stump
-`,
-        'scripts/skill_woodcutting/configs/trees/burnt.loc': `[deadtree_burnt]
-name=Tree
-param=next_loc_stage,deadtree_burnt_stump
-`,
-        'scripts/skill_fishing/configs/fishing.npc': `[spot_a]
-name=Fishing spot
-op1=Lure
-op3=Bait
-category=freshfish
-param=fishing_movement_enum,fishing_movement_gnome_stronghold_enum
-[spot_b]
-name=Fishing spot
-op1=Lure
-op3=Bait
-category=freshfish
-param=fishing_movement_enum,fishing_movement_other_enum
-[lava]
-name=Fishing spot
-op1=Bait
-op3=hidden
-[member_a]
-name=Fishing spot
-op1=Net
-op3=Harpoon
-category=memberfish
-[member_b]
-name=Fishing spot
-op1=Net
-op3=Harpoon
-category=memberfish
-`,
-        'pack/loc.pack': `450=rocks1
-1306=tree
-1342=treestump2
-1356=deadtree_burnt
-3370=achey_tree
-2090=copperrock1
-2091=macro_copperrock1
-2111=gemrock
-2491=blankrunestone
-2704=punishrocks
-3371=achey_tree_stump
-1359=deadtree_burnt_stump
-4027=loc_4027
-4028=loc_4028
-4029=loc_4029
-4030=loc_4030
-4818=kharazi_jungle_tree1
-`,
-        'pack/obj.pack': `436=copper_ore
-973=charcoal
-1436=blankrune
-1511=logs
-1855=thpunishrock
-2862=achey_tree_logs
-3211=limestone
-`,
-        'scripts/_unpack/225/all.loc': `[punishrocks]
-name=Rocks
-param=next_loc_stage_mining,rocks1
-`,
+        'pack/loc.pack': '1306=tree\n',
+        'pack/obj.pack': '1511=logs\n',
+        'maps/m42_55.jm2': '==== LOC ====\n0 47 62: 1306 10 1\n',
+        'scripts/example/example.rs2': '[proc,example]\nreturn;\n',
     };
-    for (const file of gatherTreeLocs) {
-        const relative = `scripts/skill_woodcutting/configs/trees/${file}`;
-        files[relative] ??= '// selected tree loc; no jungle.loc\n';
-    }
-    mutate?.(files);
     for (const [relative, body] of Object.entries(files)) {
         const absolute = path.join(rootDir, relative);
         fs.mkdirSync(path.dirname(absolute), { recursive: true });
         fs.writeFileSync(absolute, body);
     }
-}
-function gatherFixture(mutate?: (files: Record<string, string>) => void) {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gather-methods-'));
-    writeGatherFixture(rootDir, mutate);
-    return rootDir;
-}
-
-const gatherRoot = gatherFixture();
-const gathered = extractGatherMethodsFacts(gatherRoot, 274);
-assert.equal(gathered.mining.length > 0 && gathered.woods.length > 0 && gathered.fishing.length > 0, true, 'extracted rows are required');
-const copper = gathered.mining.find((row) => row.table === 'copper_rock_table');
-assert.equal(copper?.resource_key, 'copper');
-assert.equal(copper?.resource_key === 'Rocks', false);
-assert.deepEqual(copper?.loc_ids.map((loc) => loc.alias), ['copperrock1', 'macro_copperrock1']);
-assert.equal(copper?.loc_ids.find((loc) => loc.alias === 'copperrock1')?.id, 2090);
-assert.equal(copper?.qualification, 'partial');
-assert.ok(copper?.missing_transform.includes('macro_copperrock1'));
-assert.equal(copper?.empty_ids.some((loc) => loc.alias === 'rocks1' && loc.id === 450), true);
-assert.equal(copper?.publication, undefined);
-assert.equal('published_for_placement' in (copper ?? {}), false);
-assert.equal(copper?.output?.alias, 'copper_ore');
-assert.equal('exp' in (copper ?? {}), false);
-const gem = gathered.mining.find((row) => row.table === 'gem_rock');
-assert.equal(gem?.resource_key, 'gems');
-assert.equal(gem?.output, null);
-assert.equal(gem?.qualification, 'partial');
-assert.ok(gem?.partial_sides.includes('output'));
-const limestone = gathered.mining.filter((row) => row.resource_key === 'limestone');
-assert.deepEqual(limestone.map((row) => row.table), ['limestone_rock3', 'limestone_rock2', 'limestone_rock1']);
-assert.equal(new Set(limestone.map((row) => row.loc_ids[0]?.id)).size, 3);
-const essence = gathered.mining.find((row) => row.table === 'rune_essence_table');
-assert.equal(essence?.output?.alias, 'blankrune');
-assert.equal(essence?.output?.id, 1436);
-assert.ok(essence?.missing_transform.includes('blankrunestone'));
-const desert = gathered.mining.find((row) => row.table === 'desertrescue_rock');
-assert.equal(desert?.resource_key, 'rock');
-assert.equal(desert?.empty_ids.length, 0);
-assert.equal(gathered.mining.filter((row) => row.resource_key === 'rock').length, 1);
-const normalWood = gathered.woods.find((row) => row.resource_key === 'normal');
-assert.equal(normalWood?.table, 'normal_tree_table');
-assert.equal(normalWood?.publication, 'published');
-assert.equal(normalWood?.resource_key === 'Tree', false);
-assert.equal(normalWood?.qualification, 'complete');
-const jungle = gathered.woods.find((row) => row.resource_key === 'jungle');
-assert.equal(jungle?.publication, 'unpublished');
-assert.equal(jungle?.empty_ids.length, 0);
-assert.equal(jungle?.loc_ids[0]?.alias, 'kharazi_jungle_tree1');
-assert.equal(jungle?.qualification, 'partial');
-assert.equal(gathered.woods.find((row) => row.resource_key === 'achey')?.publication, 'conditional');
-assert.equal(gathered.woods.find((row) => row.resource_key === 'burnt')?.publication, 'unpublished');
-assert.equal(gathered.coverage.filter((row) => row.class === 'conditional').map((row) => row.resource_key).includes('achey'), true);
-assert.equal(gathered.fishing.length, 3, 'dedupe type plus actions, not one row per npc block');
-assert.equal(gathered.fishing.some((row) => 'loc_ids' in row || 'fishing_movement_enum' in row), false);
-const lavaSpot = gathered.fishing.find((row) => row.primary_op === 'Bait' && row.pair_op === 'hidden');
-assert.equal(lavaSpot?.category, 'unknown');
-assert.equal(lavaSpot?.qualification, 'partial');
-assert.equal(lavaSpot?.level, null);
-assert.equal(lavaSpot?.output, null);
-assert.equal(gathered.coverage.filter((row) => row.class === 'revision-absent').map((row) => row.alias).join(','), 'dungeon_tree_closed,karam_dungeon_exit');
-assert.equal(gathered.coverage.every((row) => row.class !== 'revision-absent' || row.copied === false), true);
-const gatheredIds = [...gathered.mining, ...gathered.woods].flatMap((row) => [...row.loc_ids, ...row.empty_ids].map((loc) => loc.id));
-assert.equal(gatheredIds.includes(5083) || gatheredIds.includes(5084), false);
-
-assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { files['scripts/skill_mining/configs/mine.dbrow'] = '// no tables\n'; }), 274), /no extracted/);
-assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['scripts/skill_mining/configs/mine.dbrow']; }), 274), /mine\.dbrow/);
-assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['scripts/skill_woodcutting/configs/trees.dbrow']; }), 274), /trees\.dbrow/);
-assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['pack/loc.pack']; }), 274), /loc\.pack/);
-assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['pack/obj.pack']; }), 274), /obj\.pack/);
-assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['scripts/skill_mining/configs/rocks.loc']; }), 274), /rocks\.loc/);
-assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['scripts/skill_woodcutting/configs/trees/oak.loc']; }), 274), /oak\.loc/);
-assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['scripts/skill_fishing/configs/fishing.npc']; }), 274), /fishing\.npc/);
-assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => {
-    files['scripts/skill_mining/configs/mine.dbrow'] += 'data=rock,missing_from_pack\n';
-}), 274), /failed join/);
-assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => {
-    files['scripts/skill_mining/configs/rocks.loc'] = '[copperrock1]\nname=Rocks\ncategory=mining_rock_normal\n';
-}), 274), /next_loc_stage_mining/);
-assert.doesNotThrow(() => extractGatherMethodsFacts(gatherRoot, 274));
-const withoutJungleLoc = extractGatherMethodsFacts(gatherRoot, 274);
-assert.equal(withoutJungleLoc.woods.some((row) => row.resource_key === 'jungle'), true);
-assert.equal(extractGatherMethodsFacts(gatherRoot, 289).coverage.some((row) => row.class === 'revision-absent'), false);
-
-const pin274 = extractGatherMethodsFacts('/Users/acfrazier/experiments/Server/content', 274);
-const pin289 = extractGatherMethodsFacts('/Users/acfrazier/experiments/lostcity-289/content', 289);
-assert.equal(pin274.mining.length, 17);
-assert.equal(pin289.mining.length, 17);
-assert.equal(pin274.woods.length, 10);
-assert.equal(pin289.woods.length, 10);
-assert.equal(pin274.fishing.length, 9);
-assert.equal(pin289.fishing.length, 9);
-assert.deepEqual(pin274.fishing.map((row) => [row.category, row.primary_op, row.pair_op]), pin289.fishing.map((row) => [row.category, row.primary_op, row.pair_op]));
-for (const facts of [pin274, pin289]) {
-    assert.equal(facts.mining.some((row) => row.publication !== undefined || 'published_for_placement' in row), false);
-    assert.equal(facts.mining.some((row) => row.resource_key === 'Rocks' || row.table === 'Rocks'), false);
-    assert.equal(facts.woods.some((row) => row.resource_key === 'Tree'), false);
-    assert.equal(facts.fishing.some((row) => 'loc_ids' in row || row.category === 'Fishing spot' || 'fishing_movement_enum' in row), false);
-    assert.equal(facts.fishing.every((row) => row.level === null && row.output === null && row.qualification === 'partial'), true);
-    const published = facts.woods.filter((row) => row.publication === 'published').map((row) => row.resource_key);
-    assert.deepEqual(published, ['normal', 'oak', 'willow', 'maple', 'yew', 'magic']);
-    assert.deepEqual(facts.woods.filter((row) => row.publication === 'conditional').map((row) => row.resource_key), ['achey', 'hollow']);
-    assert.deepEqual(facts.woods.filter((row) => row.publication === 'unpublished').map((row) => row.resource_key), ['jungle', 'burnt']);
-    assert.equal(facts.mining.filter((row) => row.resource_key === 'limestone').length, 3);
-    const gemRow = facts.mining.find((row) => row.table === 'gem_rock');
-    assert.equal(gemRow?.resource_key, 'gems');
-    assert.equal(gemRow?.output, null);
-    assert.equal(gemRow?.qualification, 'partial');
-    const essenceRow = facts.mining.find((row) => row.table === 'rune_essence_table');
-    assert.equal(essenceRow?.output?.alias, 'blankrune');
-    assert.equal(essenceRow?.output?.id, 1436);
-    const copperRow = facts.mining.find((row) => row.table === 'copper_rock_table');
-    assert.equal(copperRow?.loc_ids.find((loc) => loc.alias === 'copperrock1')?.id, 2090);
-    assert.equal((copperRow?.loc_ids.length ?? 0) > 2, true);
-    const ironRow = facts.mining.find((row) => row.table === 'iron_rock_table');
-    assert.equal(ironRow?.loc_ids.find((loc) => loc.alias === 'ironrock1')?.id, 2092);
-    assert.equal(ironRow?.loc_ids.find((loc) => loc.alias === 'ironrock2')?.id, 2093);
-    const desertRow = facts.mining.find((row) => row.table === 'desertrescue_rock');
-    assert.equal(desertRow?.empty_ids.length, 0);
-    assert.equal(desertRow?.resource_key, 'rock');
-    const lavaRow = facts.fishing.find((row) => row.category === 'unknown');
-    assert.equal(lavaRow?.primary_op, 'Bait');
-    assert.equal(lavaRow?.pair_op, 'hidden');
-    assert.equal(facts.fishing.filter((row) => row.category === 'memberfish').length, 1);
-    assert.equal(facts.coverage.filter((row) => row.class === 'conditional').map((row) => row.resource_key).sort().join(','), 'achey,hollow');
-}
-assert.equal(pin274.coverage.filter((row) => row.class === 'revision-absent').map((row) => `${row.alias}:${row.other_pin_id}`).join(','), 'dungeon_tree_closed:5083,karam_dungeon_exit:5084');
-assert.equal(pin289.coverage.some((row) => row.class === 'revision-absent'), false);
-const pin274Ids = [...pin274.mining, ...pin274.woods].flatMap((row) => [...row.loc_ids, ...row.empty_ids].map((loc) => loc.id));
-assert.equal(pin274Ids.includes(5083) || pin274Ids.includes(5084), false);
-assert.equal(pin274.mining.find((row) => row.table === 'coal_rock_table')?.loc_ids.some((loc) => loc.alias === 'misc_dummy_coalrock1'), false);
-assert.equal(pin289.mining.find((row) => row.table === 'coal_rock_table')?.loc_ids.some((loc) => loc.alias === 'misc_dummy_coalrock1' && loc.id === 4676), true);
-assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.loc_ids.some((loc) => loc.alias === 'mm_bush_kharazi_jungle_tree1'), true);
-assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.empty_ids.some((loc) => loc.alias.includes('mm_bush')), false);
-assert.equal(pin274.woods.find((row) => row.resource_key === 'normal')?.qualification, 'complete');
-assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.qualification, 'partial');
-
-// --- gather placements: published woods only, LOC-only, world coords, maps as required input ---
-
-/** The published-woods input this family consumes. Not read from a fixture tree. */
-type PlacementSource = Parameters<typeof extractGatherPlacementsFacts>[1];
-
-function placementFixture(mutate?: (files: Record<string, string>) => void) {
-    const rootDir = gatherFixture((files) => {
-        // 1306 is the published normal tree; 1342 is its stump, 3370 a conditional
-        // achey tree, and 2090 a mining rock. The NPC section repeats 1306.
-        files['maps/m42_55.jm2'] = '==== LOC ====\n0 47 62: 1306 10 1\n0 48 62: 1306 10 1\n0 49 62: 1342 10 1\n0 50 62: 3370 10 1\n0 51 62: 2090 10 1\n==== NPC ====\n0 10 20: 1306\n';
-        mutate?.(files);
-    });
     execFileSync('git', ['init', '-q'], { cwd: rootDir });
     execFileSync('git', ['add', '-A'], { cwd: rootDir });
     return rootDir;
 }
 
-const placementSource: PlacementSource = [{ resource_key: 'normal', publication: 'published', loc_ids: [{ alias: 'tree', id: 1306 }] }];
-const placementRoot = placementFixture();
-const placements274 = extractGatherPlacementsFacts(placementRoot, extractGatherMethodsFacts(placementRoot, 274).woods);
-assert.deepEqual(placements274.facts.rows, [
-    { loc_id: 1306, x: 42 * 64 + 47, z: 55 * 64 + 62, plane: 0 },
-    { loc_id: 1306, x: 42 * 64 + 48, z: 55 * 64 + 62, plane: 0 },
-]);
-assert.equal(placements274.facts.rows.every((row) => Object.keys(row).join(',') === 'loc_id,x,z,plane'), true, 'stored rows are world loc_id/x/z/plane only');
-assert.deepEqual(placements274.facts.coverage, [{ class: 'unknown', family: 'mining', reason: 'no selected published-ore set' }]);
-assert.deepEqual(placements274.woods, [{ resource_key: 'normal', loc_ids: 1, placements: 2 }]);
-assert.equal(placements274.inputs.maps_directory, 'maps');
-assert.equal(placements274.inputs.maps.files, 1);
-assert.equal(placements274.inputs.loc_pack.path, 'pack/loc.pack');
-assert.equal(placements274.inputs.published_loc_ids.count, 1);
-assert.equal(placements274.facts.rows.some((row) => [1342, 3370, 2090].includes(row.loc_id)), false, 'stump, conditional wood, and mining ids stay out');
-
-// invalidation: every scanned map, the published pack, and the published id set move the identity
-const mutatedMaps = extractGatherPlacementsFacts(placementFixture((files) => {
-    files['maps/m42_55.jm2'] = files['maps/m42_55.jm2'].replace('==== NPC ====', '0 52 62: 1306\n==== NPC ====');
-}), placementSource);
-assert.equal(mutatedMaps.inputs.maps.files, placements274.inputs.maps.files);
-assert.notEqual(mutatedMaps.inputs.maps.sha256, placements274.inputs.maps.sha256, 'the maps digest must move with the maps tree');
-assert.equal(mutatedMaps.facts.rows.length, placements274.facts.rows.length + 1);
-const repacked = extractGatherPlacementsFacts(placementFixture((files) => {
-    files['pack/loc.pack'] += '9999=extra\n';
-}), placementSource);
-assert.notEqual(repacked.inputs.loc_pack.sha256, placements274.inputs.loc_pack.sha256, 'the published pack digest must move with loc.pack');
-const widerSet: PlacementSource = [...placementSource, { resource_key: 'oak', publication: 'published', loc_ids: [{ alias: 'tree', id: 1306 }] }];
-assert.notEqual(extractGatherPlacementsFacts(placementRoot, widerSet).inputs.published_loc_ids.sha256, placements274.inputs.published_loc_ids.sha256, 'the published id digest must move with the set');
-const zeroHitWood: PlacementSource = [...placementSource, { resource_key: 'oak', publication: 'published', loc_ids: [{ alias: 'oak', id: 1281 }] }];
-assert.throws(() => extractGatherPlacementsFacts(placementRoot, zeroHitWood), /published wood oak has no LOC placements/, 'a published wood with zero hits must fail');
-
-// fail closed: maps/ is a required input, the LOC section is the only placement source,
-// and a published wood with no hits is not an empty extract
-assert.throws(() => extractGatherPlacementsFacts(gatherFixture(), placementSource), /required directory missing/, 'a missing maps directory must fail');
-assert.throws(() => extractGatherPlacementsFacts(placementFixture((files) => {
-    delete files['maps/m42_55.jm2'];
-    files['maps/labels.txt'] = 'not a map\n';
-}), placementSource), /has no maps/, 'a maps directory without a map must fail');
-assert.throws(() => extractGatherPlacementsFacts(placementFixture((files) => {
-    files['maps/m42.jm2'] = '==== LOC ====\n';
-}), placementSource), /mapsquare path/, 'a badly named map must fail');
-assert.throws(() => extractGatherPlacementsFacts(placementFixture((files) => {
-    files['maps/m42_55.jm2'] = '==== LOC ====\n0 47 62: 1306 10 1 extra\n';
-}), placementSource), /extra tokens/, 'a malformed scanned map fails closed instead of skipping');
-assert.throws(() => extractGatherPlacementsFacts(placementFixture((files) => {
-    files['maps/m42_55.jm2'] = '==== NPC ====\n0 47 62: 1306\n';
-}), placementSource), /has no LOC placements/, 'an NPC section is not a placement source');
-assert.throws(() => extractGatherPlacementsFacts(placementFixture((files) => {
-    delete files['pack/loc.pack'];
-}), placementSource), /pack\/loc\.pack/, 'the published pack is a required input');
-assert.throws(() => extractGatherPlacementsFacts(placementRoot, [{ resource_key: 'achey', publication: 'conditional', loc_ids: [{ alias: 'achey_tree', id: 3370 }] }]), /no published woods/, 'a family without a published wood must fail');
-const truncatedMaps = placementFixture((files) => {
-    files['maps/m43_55.jm2'] = '==== LOC ====\n0 1 1: 1306\n';
-});
-fs.rmSync(path.join(truncatedMaps, 'maps/m43_55.jm2'));
-assert.throws(() => extractGatherPlacementsFacts(truncatedMaps, placementSource), /maps\/m43_55\.jm2: tracked map missing/, 'a truncated maps tree must fail rather than under-extract');
 
 // write gate: generate refuses the same dirty placement inputs verify does — the whole
 // scanned maps tree, not just the two maps content_files names, plus the published pack
@@ -1040,7 +691,7 @@ fs.writeFileSync(path.join(gateEngine, 'pin.txt'), 'engine fixture\n');
 fs.writeFileSync(path.join(gateEngine, '.gitignore'), 'data/pack/\n');
 execFileSync('git', ['init', '-q'], { cwd: gateEngine });
 execFileSync('git', ['add', '-A'], { cwd: gateEngine });
-const gateContent = placementFixture();
+const gateContent = gateContentFixture();
 fs.writeFileSync(path.join(gateContent, 'maps/m43_55.jm2'), '==== LOC ====\n0 1 1: 1306\n');
 fs.writeFileSync(path.join(gateContent, '.gitignore'), 'pack/param.pack\npack/unknown.pack\n.DS_Store\n');
 execFileSync('git', ['add', '-A'], { cwd: gateContent });
@@ -1135,6 +786,12 @@ try {
     const published = await generateSelected(pipelineSpec, build);
     const manifestBytes = fs.readFileSync(published.path, 'utf8');
     const manifest = JSON.parse(manifestBytes);
+    // The exported serializer is the one the pipeline uses: byte-identical for both families.
+    const upstream = familyInputs(pipelineSpec, assertPinned(pipelineSpec));
+    assert.equal(fs.readFileSync(path.join(liveDirectory, 'gathering.json'), 'utf8'), familyBytes(upstream, { schema: 3, payload: { resource: 'oak' } }, 'gathering'));
+    assert.equal(fs.readFileSync(path.join(liveDirectory, 'quests.json'), 'utf8'), familyBytes(upstream, { schema: 2, payload: { quest: 'cook' } }, 'quests'));
+    assert.equal(sha256(path.join(liveDirectory, 'gathering.json')).sha256, manifest.families.gathering.sha256, 'the manifest digests the exact family bytes');
+    assert.throws(() => familyBytes(upstream, { schema: 0, payload: {} }, 'gathering'), /invalid extractor schema/);
     assert.equal(published.sha256, sha256(published.path).sha256);
     assert.equal(manifestBytes.includes(published.sha256), false, 'manifest digest must be external');
     assert.equal(sha256(path.join(liveDirectory, 'quests.json')).sha256, manifest.families.quests.sha256);
@@ -1175,31 +832,6 @@ try {
 }
 assert.deepEqual(requestedRevisions(['--revision', '289']), [289]);
 assert.throws(() => requestedRevisions(['--revision', '999']), /usage/);
-
-// content pins: the six published woods carry world placements and mining stays unknown
-const pinPlacements274 = extractGatherPlacementsFacts('/Users/acfrazier/experiments/Server/content', pin274.woods);
-const pinPlacements289 = extractGatherPlacementsFacts('/Users/acfrazier/experiments/lostcity-289/content', pin289.woods);
-for (const pin of [
-    { revision: 274, root: '/Users/acfrazier/experiments/Server/content', placements: pinPlacements274, methods: pin274 },
-    { revision: 289, root: '/Users/acfrazier/experiments/lostcity-289/content', placements: pinPlacements289, methods: pin289 },
-]) {
-    assert.deepEqual(pin.placements.woods.map((row) => row.resource_key), ['normal', 'oak', 'willow', 'maple', 'yew', 'magic'], `${pin.revision} published wood order`);
-    assert.equal(pin.placements.woods.every((row) => row.placements > 0), true, `${pin.revision} every published wood carries placements`);
-    assert.equal(pin.placements.woods.every((row) => row.loc_ids > 0), true, `${pin.revision} published wood variant counts`);
-    assert.equal(pin.placements.facts.rows.length, pin.placements.woods.reduce((sum, row) => sum + row.placements, 0), `${pin.revision} row total is the per-wood sum`);
-    assert.deepEqual(pin.placements.facts.coverage, [{ class: 'unknown', family: 'mining', reason: 'no selected published-ore set' }], `${pin.revision} mining is unknown coverage`);
-    assert.equal(pin.placements.facts.rows.every((row) => Object.keys(row).join(',') === 'loc_id,x,z,plane'), true, `${pin.revision} placement row shape`);
-    assert.equal(pin.placements.facts.rows.every((row) => row.plane >= 0 && row.plane <= 3 && row.x >= 0 && row.z >= 0), true, `${pin.revision} placement world range`);
-    assert.equal(new Set(pin.placements.facts.rows.map((row) => `${row.loc_id}:${row.x}:${row.z}:${row.plane}`)).size, pin.placements.facts.rows.length, `${pin.revision} placements are unique`);
-    const placementKeys = pin.placements.facts.rows.map((row) => [row.loc_id, row.x, row.z, row.plane]);
-    assert.deepEqual(placementKeys, [...placementKeys].sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3] - b[3]), `${pin.revision} placements are sorted by loc_id, x, z, plane`);
-    const publishedIds = new Set(pin.methods.woods.filter((row) => row.publication === 'published').flatMap((row) => row.loc_ids.map((loc) => loc.id)));
-    assert.equal(pin.placements.facts.rows.every((row) => publishedIds.has(row.loc_id)), true, `${pin.revision} rows are published wood ids`);
-    assert.equal(pin.placements.facts.rows.some((row) => row.loc_id === 2662 || row.loc_id === 2492), false, `${pin.revision} flour and essence stay one-off, not this family`);
-    assert.equal(pin.placements.inputs.maps.files, fs.readdirSync(path.join(pin.root, 'maps')).filter((name) => name.endsWith('.jm2')).length, `${pin.revision} scanned map count`);
-    assert.equal(pin.placements.inputs.maps.sha256.length, 64, `${pin.revision} maps digest`);
-    assert.equal(pin.placements.inputs.published_loc_ids.count, publishedIds.size, `${pin.revision} published id set`);
-}
 
 function writeQuestFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
     const files: Record<string, string> = {
@@ -2330,5 +1962,262 @@ const pinTrioGiverBlob = JSON.stringify(pinTrioGiver289.facts);
 for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS', 'frozen', 'invented', 'family-unavailable']) {
     assert.equal(pinTrioGiverBlob.includes(banned), false, `trio_givers must never publish ${banned}`);
 }
+
+// ---- gathering family (M-306 / M-215): real pinned content, plus real-script fixtures with one drifted construct ----
+
+const gatheringPins = [
+    { revision: 274, root: '/Users/acfrazier/experiments/Server/content' },
+    { revision: 289, root: '/Users/acfrazier/experiments/lostcity-289/content' },
+];
+
+function gatherView(family: GatheringFamily) {
+    const alias = new Map<string, string>();
+    for (const row of family.payload.entities) {
+        const [kind, id, name] = row.split(' ');
+        alias.set(`${kind}:${id}`, name);
+    }
+    return {
+        name: (kind: string, id: number) => alias.get(`${kind}:${id}`) ?? `?${id}`,
+        method(id: string): MethodWire {
+            const found = family.payload.methods.find((each) => each.id === id);
+            assert.ok(found, `missing gather method ${id}`);
+            return found;
+        },
+    };
+}
+function knownValue<T>(cell: Know<T>, label: string): T {
+    if (cell.state === 'unknown') throw new Error(`${label}: unknown (${cell.gap.code})`);
+    return cell.value;
+}
+const targetsOf = (method: MethodWire, cls?: TargetWire['class']) => knownValue(method.targets, `${method.id} targets`).filter((target) => cls === undefined || target.class === cls);
+function listContentFiles(root: string, dir: string, extension: string, out: string[] = []) {
+    for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+        if (entry.isDirectory()) listContentFiles(root, `${dir}/${entry.name}`, extension, out);
+        else if (entry.name.endsWith(extension)) out.push(`${dir}/${entry.name}`);
+    }
+    return out;
+}
+/** Loc aliases whose config section matches `line`, read independently of the extractor. */
+function locSectionsWith(root: string, line: RegExp) {
+    const found = new Set<string>();
+    for (const file of listContentFiles(root, 'scripts', '.loc')) {
+        let current = '';
+        for (const raw of fs.readFileSync(path.join(root, file), 'utf8').split(/\r?\n/)) {
+            const text = raw.trim();
+            if (text.startsWith('[') && text.endsWith(']')) current = text.slice(1, -1);
+            else if (current && line.test(text)) found.add(current);
+        }
+    }
+    return found;
+}
+/** `file:line:plane:lx:lz:id` for every map row of `section` whose id is wanted. */
+function mapRowKeys(root: string, section: 'LOC' | 'NPC', ids: ReadonlySet<number>) {
+    const keys = new Set<string>();
+    for (const name of fs.readdirSync(path.join(root, 'maps')).filter((each) => each.endsWith('.jm2')).sort()) {
+        let inside = false;
+        fs.readFileSync(path.join(root, 'maps', name), 'utf8').split(/\r?\n/).forEach((raw, index) => {
+            if (raw.startsWith('====')) inside = raw.trim() === `==== ${section} ====`;
+            else if (inside) {
+                const match = /^(\d+) (\d+) (\d+): (\d+)/.exec(raw);
+                if (match && ids.has(Number(match[4]))) keys.add(`maps/${name}:${index + 1}:${match[1]}:${match[2]}:${match[3]}:${match[4]}`);
+            }
+        });
+    }
+    return keys;
+}
+/** The same keys read from the family's compact placement rows. */
+function familyRowKeys(family: GatheringFamily, kind: 'l' | 'n', ids: ReadonlySet<number>) {
+    const keys = new Set<string>();
+    for (const file of family.payload.placements) {
+        for (const row of file.rows) {
+            const [rowLine, plane, lx, lz, entity] = row.split(' ');
+            if (entity[0] === kind && ids.has(Number(entity.slice(1)))) keys.add(`${file.file}:${rowLine}:${plane}:${lx}:${lz}:${entity.slice(1)}`);
+        }
+    }
+    return keys;
+}
+
+for (const { revision, root } of gatheringPins) {
+    const family = extractGatheringFamily(root);
+    const view = gatherView(family);
+    const locPack = parsePack(fs.readFileSync(path.join(root, 'pack/loc.pack'), 'utf8'));
+    const facts: GatheringFacts = family.payload;
+    assert.equal(family.schema, GATHERING_SCHEMA);
+    assert.equal(JSON.stringify(extractGatheringFamily(root).payload), JSON.stringify(facts), `${revision} extraction is deterministic`);
+    assert.deepEqual(family.summary.methods, { woodcutting: 10, mining: 15, fishing: 15 }, `${revision} method inventory`);
+
+    // M-215: every rock loc the content offers a Mine op on is classified or left Unknown with a gap code.
+    const rockClass = new Map<number, string>();
+    for (const method of facts.methods.filter((each) => each.skill === 'mining')) for (const target of method.targets.state === 'unknown' ? [] : method.targets.value) rockClass.set(target.id, target.class);
+    for (const loose of facts.loose.filter((each) => each.skill === 'mining')) rockClass.set(loose.id, loose.class);
+    const mineOps = locSectionsWith(root, /^op[1-5]=mine$/i);
+    for (const alias of mineOps) assert.ok(rockClass.has(locPack.get(alias)!), `${revision} ${alias} has a class or a gap`);
+    for (const alias of locSectionsWith(root, /^category=mining_rock_macro_gas$/)) assert.equal(rockClass.get(locPack.get(alias)!), 'hazard', `${revision} ${alias} is a gas hazard, never a resource`);
+    for (const alias of locSectionsWith(root, /^param=mining_rock_empty,1$/)) assert.equal(rockClass.get(locPack.get(alias)!), 'depleted', `${revision} ${alias} is depleted`);
+    const rocks = family.summary.rocks;
+    assert.equal(rocks.population, rocks.resource + rocks.depleted + rocks.hazard + rocks.unclassified, `${revision} every rock accounted exactly once`);
+    assert.equal(rocks.resource, 27, `${revision} resource rocks`);
+    assert.equal(rocks.hazard, 22, `${revision} gas rocks`);
+    assert.equal(rocks.depleted, 5, `${revision} depleted rocks`);
+    for (const loose of facts.loose.filter((each) => each.class === 'unclassified')) {
+        assert.ok(loose.gap && loose.gap.code && loose.gap.sources.length > 0, `${revision} ${view.name(loose.kind, loose.id)} unclassified rows carry a gap and its sources`);
+    }
+    const dummy = facts.loose.find((each) => each.kind === 'loc' && view.name('loc', each.id) === 'misc_dummy_coalrock1');
+    assert.equal(dummy?.gap?.code, revision === 289 ? 'custom-handler' : undefined, `${revision} the Miscellania dummy rock has its own handler, so it is no coal target`);
+    assert.equal(targetsOf(view.method('mining.coal'), 'resource').some((target) => view.name('loc', target.id) === 'misc_dummy_coalrock1'), false);
+    assert.equal(facts.loose.some((each) => each.gap?.code === 'no-handler' && view.name('loc', each.id) === 'loc_4976'), revision === 289, `${revision} the unhandled mineral veins stay Unknown`);
+
+    // Distinct per-target respawn (limestone 10/20/40) and no respawn at all for rune essence.
+    const limestone = targetsOf(view.method('mining.limestone'), 'resource');
+    assert.deepEqual(limestone.map((target) => knownValue(target.respawn, 'limestone respawn')?.raw), [10, 20, 40]);
+    assert.deepEqual(targetsOf(view.method('mining.limestone'), 'depleted').map((target) => view.name('loc', target.id)), ['loc_4030']);
+    assert.equal(knownValue(targetsOf(view.method('mining.rune stones'))[0].respawn, 'essence respawn'), null);
+    const iron = targetsOf(view.method('mining.iron'), 'resource');
+    assert.deepEqual(iron.map((target) => view.name('loc', target.id)), ['ironrock1', 'ironrock2']);
+    const ironRespawn = knownValue(iron[0].respawn, 'iron respawn');
+    assert.equal(ironRespawn?.raw, 20);
+    assert.deepEqual(knownValue(ironRespawn!.scale, 'iron scale'), { rule: 'scale_by_playercount', min_ticks: 10, max_ticks: 20, sources: ['scripts/general/scripts/player_count.rs2:1-4'] });
+    const normalTrees = targetsOf(view.method('woodcutting.normal'), 'resource')[0];
+    assert.deepEqual(knownValue(knownValue(normalTrees.respawn, 'tree respawn')!.scale, 'tree scale').min_ticks, 60, `${revision} zero-rate trees scale over 120..199`);
+    assert.equal(knownValue(normalTrees.respawn, 'tree respawn')!.raw, 0, `${revision} the content's zero is preserved`);
+
+    // Tools: pickaxe use gates are Mining levels, axes have none, wield gates are Attack.
+    const tools = (id: string) => knownValue(view.method(id).tools, `${id} tools`).map((tool) => [view.name('obj', tool.item), tool.use_gate, tool.wield_gate] as const);
+    assert.deepEqual(tools('mining.iron')[0], ['rune_pickaxe', { skill: 14, level: 41 }, { skill: 0, level: 40 }]);
+    assert.deepEqual(tools('woodcutting.oak')[0], ['rune_axe', null, { skill: 0, level: 40 }]);
+    assert.equal(tools('woodcutting.oak').every(([, use]) => use === null), true);
+
+    // Fishing: method, tool, bait and level-gated product set come from the handler, not a category/op pair.
+    const fishing = (id: string) => {
+        const method = view.method(id);
+        return {
+            tools: knownValue(method.tools, `${id} tools`).map((tool) => view.name('obj', tool.item)),
+            consumes: knownValue(method.consumes, `${id} consumes`).map((each) => `${view.name('obj', each.item)}x${each.count}`),
+            products: knownValue(method.products, `${id} products`).map((each) => `${view.name('obj', each.item)}@${each.level}`),
+            op: method.op,
+        };
+    };
+    assert.deepEqual(fishing('fishing.freshfish.op1'), { tools: ['fly_fishing_rod'], consumes: ['featherx1'], products: ['raw_trout@20', 'raw_salmon@30'], op: { slot: 1, label: 'Lure' } });
+    assert.deepEqual(fishing('fishing.freshfish.op3'), { tools: ['fishing_rod'], consumes: ['fishing_baitx1'], products: ['raw_pike@25'], op: { slot: 3, label: 'Bait' } });
+    assert.deepEqual(fishing('fishing.saltfish.op1'), { tools: ['net'], consumes: [], products: ['raw_shrimp@0', 'raw_anchovies@15'], op: { slot: 1, label: 'Net' } });
+    assert.deepEqual(fishing('fishing.saltfish.op3'), { tools: ['fishing_rod'], consumes: ['fishing_baitx1'], products: ['raw_sardine@5', 'raw_herring@10'], op: { slot: 3, label: 'Bait' } });
+    assert.deepEqual(fishing('fishing.rarefish.op1').tools, ['lobster_pot']);
+    assert.deepEqual(fishing('fishing.rarefish.op3').products, ['raw_tuna@35', 'raw_swordfish@50']);
+    assert.deepEqual(fishing('fishing.memberfish.op1').products.slice(-2), ['raw_cod@23', 'raw_bass@46']);
+    assert.deepEqual(fishing('fishing.0_45_152_lavafish.op1').tools, ['oily_fishing_rod']);
+    const bigNet = view.method('fishing.memberfish.op1').requirements;
+    assert.equal(bigNet.state, revision === 289 ? 'partial' : 'known', `${revision} the 289 monkey-form gate is not modelled, so big-net requirements are partial there; 274 has no such gate`);
+    assert.equal(bigNet.state !== 'partial' || bigNet.gaps.every((each) => each.code === 'monkey-form-forbidden'), true);
+    assert.equal(targetsOf(view.method('fishing.freshfish.op1'), 'hazard').map((target) => view.name('npc', target.id)).join(), 'macro_whirlpool_freshfish', `${revision} whirlpool spots are hazards, not fishing targets`);
+
+    // Placements are the map rows themselves.
+    for (const [id, kind] of [['mining.iron', 'l'], ['mining.coal', 'l'], ['woodcutting.oak', 'l'], ['fishing.freshfish.op1', 'n']] as const) {
+        const ids = new Set(targetsOf(view.method(id), 'resource').map((target) => target.id));
+        const expected = mapRowKeys(root, kind === 'l' ? 'LOC' : 'NPC', ids);
+        assert.ok(expected.size > 0, `${revision} ${id} is placed`);
+        assert.deepEqual([...familyRowKeys(family, kind, ids)].sort(), [...expected].sort(), `${revision} ${id} placements equal the content's map rows`);
+    }
+    const gasIds = new Set(facts.methods.filter((each) => each.skill === 'mining').flatMap((each) => targetsOf(each, 'hazard').map((target) => target.id)));
+    assert.equal(familyRowKeys(family, 'l', gasIds).size, 0, `${revision} hazards are never published as placements`);
+
+    // Unknown is not empty: a custom-handler wood publishes neither targets nor spots.
+    const jungle = view.method('woodcutting.jungle');
+    assert.equal(jungle.targets.state, 'unknown');
+    assert.equal(jungle.spots.state, 'unknown');
+    assert.equal(jungle.targets.state === 'unknown' && jungle.targets.gap.code, 'no-resource-target');
+    assert.equal(facts.loose.filter((each) => each.skill === 'woodcutting').every((each) => each.gap?.code === 'custom-handler' && each.gap.sources.some((source) => source.includes('jungle_tree.rs2'))), true);
+
+    // Content-defined zones: 289 Miscellania intercepts coal, trees and fish, but not iron; 274 has no such content.
+    const intercepted = facts.zones.filter((zone) => zone.effect === 'yield-intercepted').flatMap((zone) => zone.methods);
+    if (revision === 289) assert.equal(intercepted.includes('mining.coal') && intercepted.includes('woodcutting.oak') && intercepted.includes('fishing.freshfish.op1'), true);
+    else assert.deepEqual(intercepted, [], '274 content has no yield intercepts, so none are invented');
+    assert.equal(intercepted.includes('mining.iron') || intercepted.includes('fishing.memberfish.op1'), false, `${revision} iron and big-net yields are not intercepted`);
+    assert.equal(facts.zones.some((zone) => zone.effect === 'product-substituted' && zone.methods.includes('mining.gold') && !zone.methods.includes('mining.iron')), true);
+}
+
+// Real script text, tiny maps: mutate exactly one construct and prove the extractor degrades honestly.
+const realGathering = gatheringPins[1].root;
+function gatheringFixture(mutate?: (rootDir: string) => void) {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gathering-fixture-'));
+    fs.cpSync(path.join(realGathering, 'scripts'), path.join(rootDir, 'scripts'), { recursive: true });
+    fs.mkdirSync(path.join(rootDir, 'pack'));
+    for (const pack of ['loc', 'npc', 'obj']) fs.copyFileSync(path.join(realGathering, `pack/${pack}.pack`), path.join(rootDir, `pack/${pack}.pack`));
+    const loc = parsePack(fs.readFileSync(path.join(rootDir, 'pack/loc.pack'), 'utf8'));
+    const npc = parsePack(fs.readFileSync(path.join(rootDir, 'pack/npc.pack'), 'utf8'));
+    fs.mkdirSync(path.join(rootDir, 'maps'));
+    fs.writeFileSync(path.join(rootDir, 'maps/m50_50.jm2'), `==== LOC ====\n0 10 10: ${loc.get('ironrock1')} 10 0\n0 11 10: ${loc.get('ironrock2')} 10 1\n0 12 10: ${loc.get('copperrock1')} 10 0\n==== NPC ====\n0 20 20: ${npc.get('0_48_53_freshfish')}\n`);
+    mutate?.(rootDir);
+    execFileSync('git', ['init', '-q'], { cwd: rootDir });
+    if (fs.existsSync(path.join(rootDir, 'maps'))) execFileSync('git', ['add', 'maps'], { cwd: rootDir });
+    return rootDir;
+}
+function replaceIn(rootDir: string, relative: string, from: string, to: string) {
+    const file = path.join(rootDir, relative);
+    const before = fs.readFileSync(file, 'utf8');
+    const after = before.replace(from, to);
+    assert.notEqual(after, before, `${relative}: fixture mutation did not apply`);
+    fs.writeFileSync(file, after);
+}
+const mineScript = 'scripts/skill_mining/scripts/mining.rs2';
+const fishScript = 'scripts/skill_fishing/scripts/fishing_spots/freshfish.rs2';
+
+const baseline = extractGatheringFamily(gatheringFixture());
+assert.equal(family289Rows(baseline, 'mining.iron'), 2, 'the fixture places exactly its two iron rocks');
+function family289Rows(family: GatheringFamily, method: string) {
+    return family.summary.placements.by_method[method] ?? 0;
+}
+assert.equal(family289Rows(baseline, 'mining.copper'), 1);
+assert.equal(family289Rows(baseline, 'fishing.freshfish.op1'), 1);
+assert.equal(family289Rows(baseline, 'fishing.freshfish.op3'), 1);
+assert.equal(baseline.payload.placements.length, 1);
+
+// A drifted label is not silently trusted: the first direct-output yield (the iron label) changed.
+const drifted = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, mineScript, 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1);', 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 2);')));
+const driftedView = gatherView(drifted);
+assert.equal(drifted.payload.methods.find((each) => each.id === 'mining.iron')?.targets.state, 'unknown', 'a drifted handler leaves iron unclassified, never an empty known list');
+assert.equal(drifted.payload.methods.find((each) => each.id === 'mining.iron')?.spots.state, 'unknown');
+assert.equal(drifted.payload.loose.some((each) => driftedView.name('loc', each.id) === 'ironrock1' && each.gap?.code === 'mining-handler-unrecognized'), true);
+assert.equal(family289Rows(drifted, 'mining.iron'), 0);
+assert.equal(family289Rows(drifted, 'mining.copper'), 1, 'unrelated labels still classify');
+
+// A player-count scale that no longer parses keeps the raw content value and reports the scale as unknown.
+const unscaled = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, 'scripts/general/scripts/player_count.rs2', '4000, $base', '3000, $base')));
+const copperRespawn = knownValue(targetsOf(gatherView(unscaled).method('mining.copper'), 'resource')[0].respawn, 'copper respawn');
+assert.equal(copperRespawn?.raw, 10);
+assert.equal(copperRespawn?.scale.state, 'unknown');
+
+// A depleting rock without a next stage, or a row without its rate, has an unknown respawn, not a zero one.
+const noStage = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, 'scripts/skill_mining/configs/rocks.loc', 'category=mining_rock_normal\nparam=next_loc_stage_mining,rocks1\nparam=macro_gas,macro_copperrock1', 'category=mining_rock_normal\nparam=macro_gas,macro_copperrock1')));
+const noStageView = gatherView(noStage);
+const copperTargets = targetsOf(noStageView.method('mining.copper'), 'resource');
+assert.equal(copperTargets.find((target) => noStageView.name('loc', target.id) === 'copperrock1')?.respawn.state, 'unknown');
+assert.equal(copperTargets.find((target) => noStageView.name('loc', target.id) === 'copperrock2')?.respawn.state, 'known');
+const noRate = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, 'scripts/skill_mining/configs/mine.dbrow', 'data=rock_respawnrate,10\n\n[tin_rock_table]', '\n[tin_rock_table]')));
+const noRateRespawn = targetsOf(gatherView(noRate).method('mining.copper'), 'resource')[0].respawn;
+assert.equal(noRateRespawn.state === 'unknown' && noRateRespawn.gap.code, 'respawn-rate-missing');
+
+// A quest handler that takes over one rock alias removes it from the ore's targets and records why.
+const takenOver = extractGatheringFamily(gatheringFixture((rootDir) => fs.appendFileSync(path.join(rootDir, 'scripts/areas/area_miscellania/scripts/miner_magnus.rs2'), '\n[oploc1,ironrock1]\nmes("Someone else uses this rock.");\n')));
+const takenView = gatherView(takenOver);
+assert.deepEqual(targetsOf(takenView.method('mining.iron'), 'resource').map((target) => takenView.name('loc', target.id)), ['ironrock2']);
+assert.equal(takenOver.payload.loose.find((each) => takenView.name('loc', each.id) === 'ironrock1')?.gap?.code, 'custom-handler');
+assert.equal(family289Rows(takenOver, 'mining.iron'), 1);
+
+// Bait must agree between the equipment struct and the roll; an unmodelled guard makes requirements partial.
+const wrongBait = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, fishScript, '~fish_roll(raw_pike, null, fishing_rod, fishing_bait)', '~fish_roll(raw_pike, null, fishing_rod, feather)')));
+const pike = gatherView(wrongBait).method('fishing.freshfish.op3');
+assert.equal(pike.products.state === 'partial' && pike.products.gaps.some((each) => each.code === 'bait-disagrees-with-equipment'), true);
+const gated = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, fishScript, '// check level\nif (stat(fishing) < 25) {', 'if (%tbwt_lubufu < 3) {\n    return;\n}\n// check level\nif (stat(fishing) < 25) {')));
+const gatedPike = gatherView(gated).method('fishing.freshfish.op3').requirements;
+assert.equal(gatedPike.state === 'partial' && gatedPike.gaps.some((each) => each.code === 'varp-gate'), true, 'an unmodelled quest guard is a gap, never silently ignored');
+assert.equal(gatherView(gated).method('fishing.freshfish.op1').requirements.state, 'known', 'other methods are unaffected');
+
+// Required inputs fail closed.
+assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.rmSync(path.join(rootDir, 'scripts/skill_mining/configs/mine.dbrow')))), /mine\.dbrow/);
+assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.rmSync(path.join(rootDir, 'pack/npc.pack')))), /npc\.pack/);
+assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.rmSync(path.join(rootDir, 'maps'), { recursive: true }))), /maps.*required directory missing|ENOENT/);
+assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.writeFileSync(path.join(rootDir, 'maps/m50_50.jm2'), '==== LOC ====\n0 10 10: 2092 10 0 extra tokens\n'))), /tokens/);
+assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, 'scripts/skill_mining/configs/mine.dbrow', 'data=rock,copperrock1', 'data=rock,not_a_packed_loc'))), /failed join/);
+
 
 console.log('generate fixture passed');

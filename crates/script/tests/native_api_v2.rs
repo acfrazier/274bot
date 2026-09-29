@@ -1152,6 +1152,9 @@ export function tick(api) {
     methodsOk: methods.ok,
     methodsThen: typeof methods.then,
     resourceLen: resource.value && resource.value.rows.length,
+    limestoneRates: resource.value && resource.value.rows[0].targets.value
+      .filter((target) => target.class === 'resource')
+      .map((target) => target.respawn.value.raw),
     placementsOk: placements.ok,
     placementsThen: typeof placements.then,
     placementsRows: placements.value && placements.value.rows.length,
@@ -1171,7 +1174,15 @@ export function tick(api) {
     let probe = iso.probe("globalThis.__probe").unwrap();
     assert_eq!(probe["methodsOk"], true, "{probe:?}");
     assert_eq!(probe["methodsThen"], "undefined", "{probe:?}");
-    assert_eq!(probe["resourceLen"], 3, "{probe:?}");
+    assert_eq!(
+        probe["resourceLen"], 1,
+        "one method, three rocks: {probe:?}"
+    );
+    assert_eq!(
+        probe["limestoneRates"],
+        serde_json::json!([10, 20, 40]),
+        "respawn is per target: {probe:?}"
+    );
     assert_eq!(probe["placementsOk"], true, "{probe:?}");
     assert_eq!(probe["placementsThen"], "undefined", "{probe:?}");
     assert_eq!(probe["placementsRows"], 2, "{probe:?}");
