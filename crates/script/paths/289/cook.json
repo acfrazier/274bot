@@ -1,0 +1,298 @@
+{
+  "schema": 2,
+  "id": "cook",
+  "display_name": "Cook's Assistant",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      { "obj": "egg", "qty": 1, "kind": "acquirable", "acquire": "acquire:egg" },
+      { "obj": "bucket_milk", "qty": 1, "kind": "acquirable", "acquire": "acquire:milk" },
+      { "obj": "pot_flour", "qty": 1, "kind": "acquirable", "acquire": "acquire:flour" }
+    ],
+    "acquire": {
+      "acquire:egg": [
+        {
+          "id": "take-egg",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": { "ground": "egg" },
+            "op": "Take",
+            "anchor": { "tile": [3227, 3300, 0], "source": "A defs/cooksassistant.ts:12" },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "egg" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "egg" } } }
+        }
+      ],
+      "acquire:milk": [
+        {
+          "id": "take-bucket",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": { "ground": "bucket_empty" },
+            "op": "Take",
+            "anchor": { "tile": [3225, 3294, 0], "source": "A defs/cooksassistant.ts:13" },
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } }
+        },
+        {
+          "id": "milk-cow",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "bucket_empty",
+            "target": { "npc": "cow" },
+            "anchor": { "tile": [3255, 3288, 0], "source": "A defs/cooksassistant.ts:14" },
+            "radius": 4,
+            "product": "bucket_milk"
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } }
+        }
+      ],
+      "acquire:flour": [
+        {
+          "id": "take-pot",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": { "ground": "pot_empty" },
+            "op": "Take",
+            "anchor": { "tile": [3208, 3213, 0], "source": "A defs/cooksassistant.ts:16" },
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_empty" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_empty" } } }
+        },
+        {
+          "id": "pick-wheat",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": { "loc": "wheat" },
+            "op": "Pick",
+            "anchor": { "tile": [3158, 3300, 0], "source": "A defs/cooksassistant.ts:15" },
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } }
+        },
+        {
+          "id": "walk-mill-top",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3166, 3306, 2],
+            "source": "A defs/cooksassistant.ts:17",
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 2], "radius": 6 } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 2], "radius": 2 } } }
+        },
+        {
+          "id": "fill-hopper",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "grain",
+            "target": { "loc": "hopper_lumbridge" },
+            "radius": 8,
+            "settle_message": [
+              "you put the grain in the hopper",
+              "there is already grain in the hopper"
+            ],
+            "settle_ms": 20000
+          },
+          "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } } },
+          "settle": {
+            "Fact": {
+              "kind": "message",
+              "version": 1,
+              "args": {
+                "any": [
+                  "you put the grain in the hopper",
+                  "there is already grain in the hopper"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": "operate-controls",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": { "name": "Hopper controls" },
+            "op": "Operate",
+            "radius": 8,
+            "settle_ms": 20000
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } },
+          "settle": {
+            "Fact": {
+              "kind": "message",
+              "version": 1,
+              "args": {
+                "any": [
+                  "the grain slides down the chute",
+                  "flour bin downstairs is full, i should empty"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": "walk-mill-base",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3166, 3306, 0],
+            "source": "A defs/cooksassistant.ts:18",
+            "radius": 2
+          },
+          "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 0], "radius": 6 } } },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 0], "radius": 2 } } }
+        },
+        {
+          "id": "empty-bin",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": { "name": "Flour bin" },
+            "op": "Empty",
+            "radius": 8,
+            "settle_ms": 15000
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+        }
+      ]
+    },
+    "bank": { "tile": [3093, 3243, 0], "source": "A defs/cooksassistant.ts:145" },
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": ["obj:pot_empty", "obj:grain", "obj:bucket_empty", "obj:egg"],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:cook",
+      "progress": {
+        "colour": { "not_started": "cook:0", "complete": "cook:2" },
+        "rules": [],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "cook:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "cook",
+                "anchor": { "tile": [3209, 3215, 0], "source": "A defs/cooksassistant.ts:11" },
+                "leash": 6,
+                "prefer": ["What's wrong?", "Yes, I'll help you."]
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "cook", "is": "in_progress" } } }
+            }
+          ]
+        },
+        {
+          "stage": "cook:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "egg",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:egg" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "egg" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "egg" } } }
+            },
+            {
+              "id": "milk",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:milk" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } }
+            },
+            {
+              "id": "flour",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:flour" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+            },
+            {
+              "id": "hand-in",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "cook",
+                "anchor": { "tile": [3209, 3215, 0], "source": "A defs/cooksassistant.ts:11" },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "cook", "is": "complete" } } }
+            }
+          ]
+        },
+        {
+          "stage": "cook:2",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

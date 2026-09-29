@@ -1,16 +1,26 @@
-//! Shared typed handler/runner seam; M-296 owns compilation and plan storage.
+//! Lazy per-activation Path compiler and the `(pin, digest, ABI)` weak cache.
+use super::families::{self, CompiledAcquireStep};
+use super::path::{PathDocument, StepDocument};
 use crate::native::{ActionContext, ActionError, NativeActions, NativeTick};
 use api::game_data::SelectedGameData;
 use api::gather_methods::GatherCatalog;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestProgress};
-use api::selected::{FactKey, SourceSpan, Truth};
-use std::{any::Any, sync::Arc, task::Poll};
+use api::selected::{ClientRevision, FactKey, SourceSpan, Truth};
+use sha2::{Digest, Sha256};
+use std::{
+    any::Any,
+    collections::HashMap,
+    sync::{Arc, Mutex, Weak},
+    task::Poll,
+};
 
 pub struct CompileContext<'a> {
     pub selected: &'a SelectedGameData,
     pub quests: &'a QuestCatalog,
     pub gathering: Option<&'a GatherCatalog>,
+    pub areas: &'a HashMap<String, Vec<[i32; 5]>>,
+    pub recipes: &'a HashMap<String, Vec<CompiledAcquireStep>>,
 }
 #[derive(Debug, Clone)]
 pub struct CompileError {
@@ -20,8 +30,48 @@ pub struct CompileError {
     pub code: Arc<str>,
     pub source: Option<SourceSpan>,
 }
+
+impl CompileError {
+    pub fn code(code: &'static str) -> Self {
+        Self {
+            path: FactKey::new(""),
+            role: None,
+            step: None,
+            code: Arc::from(code),
+            source: None,
+        }
+    }
+
+    pub fn with_path(mut self, path: FactKey) -> Self {
+        self.path = path;
+        self
+    }
+}
+
 pub struct CompiledPath {
-    _private: (),
+    pub id: FactKey,
+    pub display_name: Arc<str>,
+    pub digest: [u8; 32],
+    pub colour_not_started: FactKey,
+    pub colour_complete: FactKey,
+    pub prelude: Vec<CompiledStep>,
+    pub sequences: Vec<CompiledSequence>,
+    pub warnings: Vec<Arc<str>>,
+}
+
+pub struct CompiledSequence {
+    pub stage: FactKey,
+    pub terminal: bool,
+    pub steps: Vec<CompiledStep>,
+}
+
+pub struct CompiledStep {
+    pub id: FactKey,
+    pub kind: Arc<str>,
+    pub advances: bool,
+    pub skip_if: Arc<dyn PredicatePlan>,
+    pub settle: Arc<dyn PredicatePlan>,
+    pub plan: Arc<dyn StepPlan>,
 }
 
 pub struct PredicateContext<'a, 'frame> {
@@ -70,4 +120,503 @@ pub struct PredicateHandler {
     pub kind: &'static str,
     pub version: u16,
     pub compile: CompilePredicate,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct CacheKey {
+    revision: u16,
+    engine: Arc<str>,
+    content: Arc<str>,
+    digest: [u8; 32],
+    abi: u64,
+}
+
+static CACHE: std::sync::LazyLock<Mutex<HashMap<CacheKey, Weak<CompiledPath>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub fn abi_set() -> u64 {
+    let mut hasher = Sha256::new();
+    let mut rows: Vec<_> = families::handlers()
+        .iter()
+        .map(|h| (h.kind, h.version))
+        .collect();
+    rows.sort_unstable();
+    for (kind, version) in rows {
+        hasher.update(kind.as_bytes());
+        hasher.update(version.to_le_bytes());
+    }
+    let out = hasher.finalize();
+    u64::from_le_bytes(out[..8].try_into().unwrap())
+}
+
+pub fn digest_bytes(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
+pub fn compile_path(
+    document: &PathDocument,
+    bytes: &[u8],
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    let digest = digest_bytes(bytes);
+    let (revision, engine, content) = match selected.selected_pin() {
+        Ok(pin) => {
+            let revision = match pin.revision {
+                ClientRevision::R274 => 274,
+                ClientRevision::R289 => 289,
+            };
+            (
+                revision,
+                Arc::clone(&pin.engine_commit),
+                Arc::clone(&pin.content_commit),
+            )
+        }
+        Err(_) => (0, Arc::from(""), Arc::from("")),
+    };
+    let key = CacheKey {
+        revision,
+        engine,
+        content,
+        digest,
+        abi: abi_set(),
+    };
+    if let Ok(cache) = CACHE.lock() {
+        if let Some(hit) = cache.get(&key).and_then(Weak::upgrade) {
+            return Ok(hit);
+        }
+    }
+    let compiled = Arc::new(compile_uncached(document, digest, selected, quests)?);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.retain(|_, weak| weak.strong_count() > 0);
+        cache.insert(key, Arc::downgrade(&compiled));
+    }
+    Ok(compiled)
+}
+
+/// Test helper: compile without the process cache.
+pub fn compile_uncached_for_test(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    compile_uncached(document, digest_bytes(b"test"), selected, quests).map(Arc::new)
+}
+
+fn reject_always_skipped(document: &PathDocument) -> Result<(), CompileError> {
+    let header = document.quest.as_ref();
+    let mut steps: Vec<&StepDocument> = Vec::new();
+    if let Some(header) = header {
+        for recipe in header.acquire.values() {
+            steps.extend(recipe.iter());
+        }
+    }
+    for role in &document.roles {
+        steps.extend(role.prelude.iter());
+        for sequence in &role.sequences {
+            steps.extend(sequence.steps.iter());
+        }
+    }
+    for step in steps {
+        if step.skip_if.constant_truth() == Some(true) {
+            return Err(CompileError {
+                path: document.id.clone(),
+                role: None,
+                step: Some(step.id.clone()),
+                code: Arc::from("always-skipped"),
+                source: None,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn compile_uncached(
+    document: &PathDocument,
+    digest: [u8; 32],
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+) -> Result<CompiledPath, CompileError> {
+    if document.schema != 2 {
+        return Err(CompileError::code("unsupported-schema").with_path(document.id.clone()));
+    }
+    reject_always_skipped(document)?;
+    let header = document
+        .quest
+        .as_ref()
+        .ok_or_else(|| CompileError::code("missing-quest-header").with_path(document.id.clone()))?;
+    let role = document
+        .roles
+        .first()
+        .ok_or_else(|| CompileError::code("missing-role").with_path(document.id.clone()))?;
+    let progress = role
+        .progress
+        .as_ref()
+        .ok_or_else(|| CompileError::code("missing-progress").with_path(document.id.clone()))?;
+    let mut areas = HashMap::new();
+    for (name, area) in &header.areas {
+        areas.insert(name.clone(), area.boxes.clone());
+    }
+    let empty_recipes = HashMap::new();
+    let mut recipe_ctx = CompileContext {
+        selected,
+        quests,
+        gathering: None,
+        areas: &areas,
+        recipes: &empty_recipes,
+    };
+    let mut recipes = HashMap::new();
+    for (name, steps) in &header.acquire {
+        recipes.insert(
+            name.clone(),
+            compile_steps(steps, &recipe_ctx, document)?
+                .into_iter()
+                .map(|step| CompiledAcquireStep {
+                    skip_if: step.skip_if,
+                    settle: step.settle,
+                    plan: step.plan,
+                })
+                .collect(),
+        );
+    }
+    recipe_ctx.recipes = &recipes;
+    let mut warnings = Vec::new();
+    if role.prelude.len() > 4 {
+        warnings.push(Arc::from("prelude-size"));
+    }
+    let prelude = compile_steps(&role.prelude, &recipe_ctx, document)?;
+    let mut sequences = Vec::new();
+    let mut seen_stages = std::collections::HashSet::new();
+    let mut global_ids = std::collections::HashSet::new();
+    for step in header.acquire.values().flatten() {
+        if !global_ids.insert(step.id.0.clone()) {
+            return Err(CompileError {
+                path: document.id.clone(),
+                role: None,
+                step: Some(step.id.clone()),
+                code: Arc::from("duplicate-step"),
+                source: None,
+            });
+        }
+    }
+    for step in role
+        .prelude
+        .iter()
+        .chain(role.sequences.iter().flat_map(|s| s.steps.iter()))
+    {
+        if !global_ids.insert(step.id.0.clone()) {
+            return Err(CompileError {
+                path: document.id.clone(),
+                role: None,
+                step: Some(step.id.clone()),
+                code: Arc::from("duplicate-step"),
+                source: None,
+            });
+        }
+    }
+    for sequence in &role.sequences {
+        if !seen_stages.insert(sequence.stage.0.clone()) {
+            return Err(CompileError::code("duplicate-stage").with_path(document.id.clone()));
+        }
+        if sequence.steps.is_empty() && !sequence.terminal {
+            return Err(CompileError::code("empty-nonterminal").with_path(document.id.clone()));
+        }
+        let steps = compile_steps(&sequence.steps, &recipe_ctx, document)?;
+        sequences.push(CompiledSequence {
+            stage: sequence.stage.clone(),
+            terminal: sequence.terminal,
+            steps,
+        });
+    }
+    Ok(CompiledPath {
+        id: document.id.clone(),
+        display_name: Arc::from(document.display_name.as_str()),
+        digest,
+        colour_not_started: progress.colour.not_started.clone(),
+        colour_complete: progress.colour.complete.clone(),
+        prelude,
+        sequences,
+        warnings,
+    })
+}
+
+fn compile_steps(
+    steps: &[StepDocument],
+    cx: &CompileContext<'_>,
+    document: &PathDocument,
+) -> Result<Vec<CompiledStep>, CompileError> {
+    let mut out = Vec::new();
+    let mut ids = std::collections::HashSet::new();
+    for step in steps {
+        if !ids.insert(step.id.0.clone()) {
+            return Err(CompileError {
+                path: document.id.clone(),
+                role: None,
+                step: Some(step.id.clone()),
+                code: Arc::from("duplicate-step"),
+                source: None,
+            });
+        }
+        if step.skip_if.constant_truth() == Some(true) {
+            return Err(CompileError {
+                path: document.id.clone(),
+                role: None,
+                step: Some(step.id.clone()),
+                code: Arc::from("always-skipped"),
+                source: None,
+            });
+        }
+        let handler = families::handlers()
+            .iter()
+            .find(|handler| handler.kind == step.kind && handler.version == step.version)
+            .ok_or_else(|| CompileError {
+                path: document.id.clone(),
+                role: None,
+                step: Some(step.id.clone()),
+                code: Arc::from("unknown-handler"),
+                source: None,
+            })?;
+        let plan = if step.kind == "acquire" {
+            compile_acquire_step(&step.args, cx, document)?
+        } else {
+            (handler.compile)(&step.args, cx).map_err(|err| CompileError {
+                path: document.id.clone(),
+                role: None,
+                step: Some(step.id.clone()),
+                code: err.code,
+                source: None,
+            })?
+        };
+        let skip_if =
+            families::compile_predicate(&step.skip_if, cx).map_err(|err| CompileError {
+                path: document.id.clone(),
+                role: None,
+                step: Some(step.id.clone()),
+                code: err.code,
+                source: None,
+            })?;
+        let settle = families::compile_predicate(&step.settle, cx).map_err(|err| CompileError {
+            path: document.id.clone(),
+            role: None,
+            step: Some(step.id.clone()),
+            code: err.code,
+            source: None,
+        })?;
+        out.push(CompiledStep {
+            id: step.id.clone(),
+            kind: Arc::from(step.kind.as_str()),
+            advances: step.advances,
+            skip_if,
+            settle,
+            plan,
+        });
+    }
+    Ok(out)
+}
+
+fn compile_acquire_step(
+    args: &serde_json::Value,
+    cx: &CompileContext<'_>,
+    document: &PathDocument,
+) -> Result<Arc<dyn StepPlan>, CompileError> {
+    #[derive(serde::Deserialize)]
+    struct AcquireArgs {
+        recipe: String,
+    }
+    let arg: AcquireArgs =
+        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    let steps =
+        cx.recipes.get(&arg.recipe).cloned().ok_or_else(|| {
+            CompileError::code("unresolved-recipe").with_path(document.id.clone())
+        })?;
+    Ok(Arc::new(families::AcquirePlan {
+        recipe: Arc::from(arg.recipe),
+        steps,
+    }))
+}
+
+pub const COOK_JSON: &str = include_str!("../../paths/289/cook.json");
+pub const INDEX_JSON: &str = include_str!("../../paths/289/index.json");
+
+pub fn cook_bytes() -> &'static [u8] {
+    COOK_JSON.as_bytes()
+}
+
+pub fn decode_cook() -> Result<PathDocument, CompileError> {
+    serde_json::from_str(COOK_JSON).map_err(|_| CompileError::code("invalid-json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::quester::path::PredicateDocument;
+    use api::selected::ClientRevision;
+
+    fn selected() -> Arc<SelectedGameData> {
+        api::game_data::for_revision(ClientRevision::R289).unwrap()
+    }
+
+    fn quests(data: &SelectedGameData) -> QuestCatalog {
+        QuestCatalog::from_identity(data.quest_identity()).unwrap_or_else(|_| QuestCatalog::empty())
+    }
+
+    #[test]
+    fn cook_path_decodes_schema2() {
+        let document = decode_cook().expect("cook json");
+        assert_eq!(document.schema, 2);
+        assert_eq!(document.id.0.as_ref(), "cook");
+        assert!(document.quest.is_some());
+        let start = &document.roles[0].sequences[0].steps[0];
+        assert_eq!(start.skip_if.constant_truth(), Some(false));
+        assert!(start.advances);
+    }
+
+    #[test]
+    fn always_skipped_all_empty_is_rejected() {
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].steps[0].skip_if = PredicateDocument::All(vec![]);
+        let data = selected();
+        let quests = quests(&data);
+        let err = match compile_uncached_for_test(&document, &data, &quests) {
+            Err(err) => err,
+            Ok(_) => panic!("always-skipped must fail compile"),
+        };
+        assert_eq!(err.code.as_ref(), "always-skipped");
+    }
+
+    #[test]
+    fn any_empty_is_never_skip_and_compiles_when_names_exist() {
+        let document = decode_cook().unwrap();
+        assert_eq!(
+            document.roles[0].sequences[0].steps[0]
+                .skip_if
+                .constant_truth(),
+            Some(false)
+        );
+        let data = selected();
+        if data.npc_names().is_none() || data.loc_names().is_none() {
+            return;
+        }
+        let quests = quests(&data);
+        let compiled = compile_path(&document, cook_bytes(), &data, &quests).unwrap();
+        let again = compile_path(&document, cook_bytes(), &data, &quests).unwrap();
+        assert!(Arc::ptr_eq(&compiled, &again));
+        let mut other = cook_bytes().to_vec();
+        other.extend_from_slice(b" ");
+        let missed = compile_path(&document, &other, &data, &quests).unwrap();
+        assert!(!Arc::ptr_eq(&compiled, &missed));
+    }
+
+    fn compile_err(mut edit: impl FnMut(&mut PathDocument)) -> CompileError {
+        let mut document = decode_cook().unwrap();
+        edit(&mut document);
+        let data = selected();
+        let quests = quests(&data);
+        match compile_uncached_for_test(&document, &data, &quests) {
+            Err(err) => err,
+            Ok(_) => panic!("compile must fail"),
+        }
+    }
+
+    #[test]
+    fn unknown_handler_is_rejected() {
+        let err = compile_err(|document| {
+            document.roles[0].sequences[0].steps[0].kind = "combat".into();
+        });
+        assert_eq!(err.code.as_ref(), "unknown-handler");
+    }
+
+    #[test]
+    fn unresolved_npc_obj_loc_and_area_are_rejected() {
+        assert_eq!(
+            compile_err(|document| {
+                document.roles[0].sequences[0].steps[0].args["npc"] =
+                    serde_json::json!("no_such_npc");
+            })
+            .code
+            .as_ref(),
+            "unresolved-npc"
+        );
+        assert_eq!(
+            compile_err(|document| {
+                document.roles[0].sequences[1].steps[0].skip_if = PredicateDocument::Fact {
+                    kind: "has_item".into(),
+                    version: 1,
+                    args: serde_json::json!({"obj": "no_such_obj"}),
+                };
+            })
+            .code
+            .as_ref(),
+            "unresolved-obj"
+        );
+        assert_eq!(
+            compile_err(|document| {
+                document
+                    .quest
+                    .as_mut()
+                    .unwrap()
+                    .acquire
+                    .get_mut("acquire:flour")
+                    .unwrap()[3]
+                    .args["target"]["loc"] = serde_json::json!("no_such_loc");
+            })
+            .code
+            .as_ref(),
+            "unresolved-loc"
+        );
+        assert_eq!(
+            compile_err(|document| {
+                document.roles[0].sequences[0].steps[0].skip_if = PredicateDocument::Fact {
+                    kind: "in_area".into(),
+                    version: 1,
+                    args: serde_json::json!({"area": "no_such_area"}),
+                };
+            })
+            .code
+            .as_ref(),
+            "unresolved-area"
+        );
+    }
+
+    #[test]
+    fn empty_nonterminal_and_duplicate_step_are_rejected() {
+        assert_eq!(
+            compile_err(|document| {
+                document.roles[0].sequences[0].steps.clear();
+            })
+            .code
+            .as_ref(),
+            "empty-nonterminal"
+        );
+        assert_eq!(
+            compile_err(|document| {
+                let step = document.roles[0].sequences[0].steps[0].clone();
+                document.roles[0].sequences[1].steps.push(step);
+            })
+            .code
+            .as_ref(),
+            "duplicate-step"
+        );
+    }
+
+    #[test]
+    fn prelude_over_four_steps_warns() {
+        let mut document = decode_cook().unwrap();
+        let step = document.roles[0].sequences[0].steps[0].clone();
+        document.roles[0].prelude = (0..5)
+            .map(|i| {
+                let mut row = step.clone();
+                row.id = api::selected::FactKey::new(&format!("pre-{i}"));
+                row.skip_if = PredicateDocument::Any(vec![]);
+                row
+            })
+            .collect();
+        let data = selected();
+        let quests = quests(&data);
+        let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        assert!(compiled
+            .warnings
+            .iter()
+            .any(|warning| warning.as_ref() == "prelude-size"));
+    }
 }
