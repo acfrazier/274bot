@@ -52,8 +52,8 @@ use crate::session::{
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
-    integer_ui_scale, native_applet, panel_split_ratio, ACCENT, ACCENT_HOVER, BG, ERROR, GREEN,
-    PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM,
+    integer_ui_scale, native_applet, panel_split_ratio, ACCENT, ACCENT_HOVER, BG, DOCKHOST_PADDING,
+    ERROR, GREEN, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM,
 };
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
 use frontend_core::scripts::BrowseCard;
@@ -1091,6 +1091,13 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
     // Until winit applies a grow, lay out against the need so the blit
     // is not parked under the panel/rail for a frame.
     let size = [vs[0].max(need_w), vs[1].max(1.0)];
+    // Zero host padding: the dockspace must span the viewport, because the
+    // split ratio below divides the viewport width. Default 8px padding
+    // narrowed the dockspace by 16px, starving the game leaf below the
+    // 765px blit (778.7px leaf, 762.7 content) so the blit clamped
+    // flush-left: 16px gray left, ~6 right. Docked leaves keep their own
+    // padding; only the host frame goes edge to edge.
+    let _host_pad = ui.push_style_var(StyleVar::WindowPadding(DOCKHOST_PADDING));
     ui.window("##274bot-dockhost")
         .flags(
             WindowFlags::NO_TITLE_BAR
@@ -1180,7 +1187,7 @@ fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
     state.session.set_game_pane_open(built.is_some());
 }
 
-/// Single-bot / rail Game pane: native 765×503, flush to the panel (right).
+/// Single-bot / rail Game pane: native 765×503, centred in the leaf.
 /// Does not scale with the host window; grid mode fits cells to avail.
 fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let size = native_applet();

@@ -42,6 +42,21 @@ pub const PANEL_WINDOW: &str = "274bot";
 /// Stable ImGui window name for the MultiBox sidecar rail.
 pub const RAIL_WINDOW: &str = "274bot-rail";
 
+/// Thin global scrollbar width (ImGui default 14 eats the 330px strip and
+/// the Browse/log lists). A base value: `apply_ui_scale`'s `ScaleAllSizes`
+/// multiplies it by the integer UI scale.
+pub const THIN_SCROLLBAR_SIZE: f32 = 6.0;
+/// Scrollbar rounding: half the thin width, so the grab stays a pill.
+pub const THIN_SCROLLBAR_ROUNDING: f32 = 3.0;
+/// Fullscreen dock-host window padding. Zero, so the dockspace spans the
+/// viewport and [`panel_split_ratio`] (computed against the viewport width)
+/// divides it exactly. Any padding here shrinks the dockspace while the
+/// ratio still divides the full width: the game leaf loses more than the
+/// panel leaf, its content dips below the 765px blit, [`applet_offset`]
+/// clamps to zero, and the blit sits flush-left (16px gray left, ~6 right
+/// at the default size) instead of centred.
+pub const DOCKHOST_PADDING: [f32; 2] = [0.0, 0.0];
+
 /// Integer UI scale for ImGui chrome. Never mutates 765×503. Do **not** also
 /// multiply the Game Image by this — HiDpi already maps logical pixels.
 pub fn integer_ui_scale(dpi: f32) -> f32 {
@@ -74,6 +89,24 @@ pub fn fit_applet(avail: [f32; 2]) -> [f32; 2] {
 /// Right-split ratio so the panel stays [`PANEL_WIDTH`] px at `width`.
 pub fn panel_split_ratio(width: f32) -> f32 {
     (PANEL_WIDTH / width.max(1.0)).clamp(0.05, 0.85)
+}
+
+/// Horizontal gray on each side of the native blit in a `viewport_w`-wide
+/// window: `(left, right)`, from the viewport edge (left) and the panel
+/// leaf edge (right). Models the real chain — [`DOCKHOST_PADDING`] dock
+/// host, [`panel_split_ratio`] leaf, `game_pad_x`-padded game window,
+/// [`applet_offset`] placement. Equal while the leaf fits the blit.
+pub fn game_blit_gaps(viewport_w: f32, game_pad_x: f32) -> (f32, f32) {
+    let host_pad = DOCKHOST_PADDING[0];
+    let space = (viewport_w - 2.0 * host_pad).max(1.0);
+    let leaf = space * (1.0 - panel_split_ratio(viewport_w));
+    let avail = (leaf - 2.0 * game_pad_x).max(1.0);
+    let off = applet_offset([avail, 1.0], native_applet())[0];
+    let blit_w = native_applet()[0];
+    (
+        host_pad + game_pad_x + off,
+        leaf - game_pad_x - off - blit_w,
+    )
 }
 
 /// Title bar of the Game pane: focused vault username, else `"Game"`.
@@ -215,6 +248,12 @@ pub fn apply_amber(style: &mut Style, chrome: &ChromeColors) {
     style.set_color(StyleColor::TitleBgActive, [0.12, 0.09, 0.02, 1.0]);
     style.set_color(StyleColor::TitleBgCollapsed, bg_deep);
     style.set_color(StyleColor::MenuBarBg, bg_deep);
+    // Thin scrollbars globally (ImGui default 14). A base size so
+    // `apply_ui_scale`'s ScaleAllSizes keeps them proportional on HiDpi;
+    // rounding is half the width so the grab stays a pill. The amber
+    // grab on the deep track below keeps the overflow cue.
+    style.set_scrollbar_size(THIN_SCROLLBAR_SIZE);
+    style.set_scrollbar_rounding(THIN_SCROLLBAR_ROUNDING);
     style.set_color(StyleColor::ScrollbarBg, bg_deep);
     style.set_color(StyleColor::ScrollbarGrab, [0.35, 0.25, 0.05, 1.0]);
     style.set_color(StyleColor::ScrollbarGrabHovered, accent_hover);
