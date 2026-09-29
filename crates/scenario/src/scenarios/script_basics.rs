@@ -12,10 +12,14 @@ pub(crate) fn bone_burier_scenario() -> Scenario {
         },
         wait: Wait {
             // The off-scene trip may legitimately outlast the ordinary
-            // 150-tick action observation. Observe the script's existing
-            // 120-second travel timeout instead of ending the proof first.
+            // 150-dirty action observation. Budgets count runner dirty
+            // snapshots (~1.25-1.5 per engine tick), so covering the
+            // script's 120-second (200 engine tick) travel timeout needs
+            // 200 * 1.5 = 300 dirties, rounded to 320. Without coins the
+            // Lumbridge -> Al Kharid route detours north (~155 engine
+            // ticks of walking); 240 expired mid-walk.
             budget_ticks: if matches!(arm, Proof::BankItem { .. }) {
-                240
+                320
             } else {
                 SCRIPT_GOLD_WATCH_TICKS
             },
