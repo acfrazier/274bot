@@ -15674,6 +15674,7 @@ export default class T extends LoopingBot {
         (3, 3, 0),
     );
     rig.client.main_modal_id = -1;
+    rig.client.gens.iface = rig.client.gens.iface.wrapping_add(1);
     rig.snap.rebuild(&rig.client);
     rig.frame(1, true);
     assert_eq!(
@@ -15686,6 +15687,7 @@ export default class T extends LoopingBot {
     );
     // No intervening frame folds the newly parked wait into the watchdog.
     rig.client.main_modal_id = 600;
+    rig.client.gens.iface = rig.client.gens.iface.wrapping_add(1);
     rig.snap.rebuild(&rig.client);
     rig.frame_dirty(1, false, true);
     assert_eq!(

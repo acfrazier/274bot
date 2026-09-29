@@ -1854,6 +1854,36 @@ impl IsolateBuf {
         (self.copy_finished(), fp)
     }
 
+    /// Wake posts do not observe the tick-only screen projection. Retain its
+    /// fingerprint without copying it, so the next tick still detects changes.
+    /// Inventory is retained only when the wake has no decoded inventory.
+    pub fn encode_snapshot_wake_with_native(
+        &mut self,
+        last: Option<&mut SnapshotFingerprint>,
+        input: &SnapshotInput<'_>,
+        native: NativeFactsInput<'_>,
+        force_banks: bool,
+        preserve_inv: bool,
+    ) -> (Vec<u8>, SnapshotFingerprint) {
+        let Some(last) = last else {
+            return self.encode_snapshot_delta_with_native(None, input, native, force_banks);
+        };
+        let mut fp = SnapshotFingerprint::from_input_with_native(input, native);
+        fp.collision = collision_fp(Some(&last.collision), native.collision);
+        let mut mask = DeltaMask::changed(last, &fp, force_banks);
+        mask.npc_boxes = false;
+        fp.npc_boxes = last.npc_boxes.take();
+        if preserve_inv {
+            mask.inv = false;
+            mask.inv_size = false;
+            fp.inv = std::mem::take(&mut last.inv);
+            fp.inv_size = last.inv_size;
+        }
+        self.builder.reset();
+        encode_snapshot_masked_into(&mut self.builder, input, native, &mask);
+        (self.copy_finished(), fp)
+    }
+
     /// Encode the tick's shim interact queue as a root-`InteractBatch`.
     pub fn encode_interact_batch(&mut self, reqs: &[crate::shim::InteractReq]) -> Vec<u8> {
         self.builder.reset();
@@ -4607,6 +4637,58 @@ pub(crate) mod tests {
         assert!(d2.has_self_target_kind());
         assert_eq!(d2.self_target_kind(), 2);
         assert_eq!(d2.self_target_index(), 7);
+    }
+
+    #[test]
+    fn wake_retains_unobserved_projections_until_a_tick_explicitly_clears_them() {
+        let mut buf = IsolateBuf::new();
+        let mut input = empty_input(5);
+        let inventory = [ItemRowInput::nc(Some("Coins"), 42)];
+        input.inv = &inventory;
+        input.inv_size = 28;
+        let boxes = [NpcBoxInput {
+            index: 7,
+            points: [(12, 34); 8],
+        }];
+        let (_, mut fp) = buf.encode_snapshot_delta_with_native(
+            None,
+            &input,
+            NativeFactsInput {
+                npc_boxes: Some(&boxes),
+                ..NativeFactsInput::default()
+            },
+            false,
+        );
+        input.inv_size = 0;
+        input.inv = &[];
+        for _ in 0..2 {
+            let (bytes, next) = buf.encode_snapshot_wake_with_native(
+                Some(&mut fp),
+                &input,
+                NativeFactsInput::default(),
+                false,
+                true,
+            );
+            let wake = decode_snapshot(&bytes).unwrap();
+            assert!(!wake.has_npc_boxes_available());
+            assert!(!wake.has_npc_boxes());
+            assert!(!wake.has_inv());
+            assert!(!wake.has_inv_size());
+            fp = next;
+        }
+        let (bytes, _) = buf.encode_snapshot_delta_with_native(
+            Some(&fp),
+            &input,
+            NativeFactsInput::default(),
+            false,
+        );
+        let tick = decode_snapshot(&bytes).unwrap();
+        assert!(tick.has_npc_boxes_available());
+        assert!(!tick.npc_boxes_available());
+        assert!(tick.has_inv_size());
+        assert_eq!(tick.inv_size(), 0);
+        assert!(tick.has_inv());
+        assert_eq!(tick.inv().unwrap().len(), 0);
     }
 
     /// The local player's animation id rides the keyframe, is omitted while

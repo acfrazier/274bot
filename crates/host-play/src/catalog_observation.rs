@@ -41,8 +41,7 @@ pub struct Observation {
     pub local_target_npc: Option<usize>,
     pub local_health: i32,
     pub local_animation: i32,
-    /// Prior-frame guardian publication. Snapshot observe runs before this
-    /// frame's status-row copy of `RandomStatus`.
+    /// Current-frame guardian publication, produced before snapshot observe.
     pub guardian: BoundedGuardian,
     pub equipment_ids: BTreeMap<i32, i32>,
     pub main_modal: i32,

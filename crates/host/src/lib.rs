@@ -478,6 +478,10 @@ impl Host {
             }
         }
         slot.apply_auto_run(client);
+        // Observe and guardian actions enqueue after mainloop's socket send.
+        // Keep frame cadence until those bytes drain; an otherwise idle slot
+        // must not park for a server tick with a client command pending.
+        let busy = busy || (client.stream.is_some() && client.out.pos > 0);
         // Channel-tune / first rebuild: TV static must re-roll every 20 ms,
         // not the 1 fps watch cadence (otherwise the zap is one snow frame
         // a second and looks like a frozen splash).

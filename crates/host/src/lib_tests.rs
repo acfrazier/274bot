@@ -1467,6 +1467,61 @@ fn observe_sees_packets_applied_in_the_same_frame() {
 }
 
 #[test]
+fn idle_observe_wire_reaches_socket_on_the_next_frame_without_parking() {
+    use std::io::Read;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut c = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    c.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    let (mut server, _) = listener.accept().unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    c.ingame = true;
+    c.ptype = -1;
+    let mut slot = SlotLoop::new();
+    let mut sends = 0;
+    let (busy, _) = Host::client_tick(
+        &mut c,
+        &mut slot,
+        "alice",
+        None,
+        None,
+        &mut sends,
+        &mut |client, _, _, _, _| {
+            client.out.p1(42);
+            false
+        },
+        None,
+    );
+    assert!(
+        busy,
+        "an idle slot must not park with an observed wire pending"
+    );
+    Host::client_tick(
+        &mut c,
+        &mut slot,
+        "alice",
+        None,
+        None,
+        &mut sends,
+        &mut |_, _, _, _, _| false,
+        None,
+    );
+    let mut received = [0];
+    server.read_exact(&mut received).unwrap();
+    assert_eq!(received, [42]);
+    assert_eq!(c.out.pos, 0);
+}
+
+#[test]
 fn client_tick_observe_runs_before_the_frame_paint() {
     force_cpu_backend();
     let mut c = prepare_client(
