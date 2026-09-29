@@ -91,24 +91,6 @@ pub fn panel_split_ratio(width: f32) -> f32 {
     (PANEL_WIDTH / width.max(1.0)).clamp(0.05, 0.85)
 }
 
-/// Horizontal gray on each side of the native blit in a `viewport_w`-wide
-/// window: `(left, right)`, from the viewport edge (left) and the panel
-/// leaf edge (right). Models the real chain — [`DOCKHOST_PADDING`] dock
-/// host, [`panel_split_ratio`] leaf, `game_pad_x`-padded game window,
-/// [`applet_offset`] placement. Equal while the leaf fits the blit.
-pub fn game_blit_gaps(viewport_w: f32, game_pad_x: f32) -> (f32, f32) {
-    let host_pad = DOCKHOST_PADDING[0];
-    let space = (viewport_w - 2.0 * host_pad).max(1.0);
-    let leaf = space * (1.0 - panel_split_ratio(viewport_w));
-    let avail = (leaf - 2.0 * game_pad_x).max(1.0);
-    let off = applet_offset([avail, 1.0], native_applet())[0];
-    let blit_w = native_applet()[0];
-    (
-        host_pad + game_pad_x + off,
-        leaf - game_pad_x - off - blit_w,
-    )
-}
-
 /// Title bar of the Game pane: focused vault username, else `"Game"`.
 pub fn game_window_title(focused: Option<&str>) -> String {
     match focused {
