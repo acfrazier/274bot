@@ -103,8 +103,10 @@ treats them as untrusted input:
   bound, belongs to another user (root is accepted) or is writable by its group
   or by others is **refused**; a file others can only read (written before the
   `0o600` writer) is tightened to `0o600` and read
-  ([vault.md](vault.md#state-files-beside-the-vault)). Windows and filesystems
-  that report every file `0o777` have no such mode to check.
+  ([vault.md](vault.md#state-files-beside-the-vault)). On Unix a filesystem
+  that reports every file `0o777` is therefore refused too. Windows has no such
+  mode to check and no ACL is inspected: the directory's inherited ACL is the
+  only protection there.
 - A refused `js-scripts.json` restores nothing, is reported on stderr (and in
   the panel log), and nothing is saved over it until the operator fixes or
   removes it: **Load** then reports that it could not save instead of replacing
@@ -114,8 +116,11 @@ treats them as untrusted input:
   against the working directory when it is loaded). Restore skips, and lists as
   a load failure (“not restored: …”), an entry whose path is relative, has
   `..`, or names something that is not a regular file or is over 8 MiB; a
-  missing file is dropped quietly as before. Script sources themselves are not
-  permission-checked: they live wherever the operator keeps them.
+  missing file is dropped quietly as before. Each source is opened once
+  (without blocking) and its shape and size are checked on that open file, so a
+  swap after the check cannot substitute a FIFO or an endless file. Script
+  sources themselves are not permission-checked: they live wherever the
+  operator keeps them.
 
 ### Content-addressed transpile cache
 

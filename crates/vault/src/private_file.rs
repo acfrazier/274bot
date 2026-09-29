@@ -1,54 +1,240 @@
 //! Owner-only persistence helpers for the vault and the state files beside it.
 //!
-//! [`write_private_file`] is the one writer: an exclusive same-directory temp
-//! file created `0o600`, flushed, then renamed over the target, so a reader
-//! never sees a torn file, a leftover temp can never redirect the write, and
-//! the umask cannot widen the mode. [`read_private_file`] is the matching
-//! reader for state that later decides what the host loads or runs.
+//! [`write_private_file`] replaces a file and [`create_private_file`] creates
+//! one that must not exist yet. Both stage the bytes in a **unique**,
+//! exclusively created temp file `0o600` in the target's directory, flush it,
+//! and publish it by an atomic name operation, so a reader never sees a torn
+//! file, no other writer's temp can be confused with this one, and the umask
+//! cannot widen the mode. [`read_private_file`] is the matching reader for
+//! state that later decides what the host loads or runs.
 
+use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
+
+use rand_core::{OsRng, RngCore};
 
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 
-/// Writes `data` to `path` atomically. On Unix the parent directory is created
-/// `0o700` when missing and the file is `0o600` from the moment it exists.
+/// Longest prefix of the target's file name kept in a temp name, so the temp
+/// name stays inside the 255-byte component limit however long the target is.
+const TEMP_NAME_PREFIX_MAX: usize = 100;
+/// Fresh names tried before giving up when every candidate already exists.
+const TEMP_NAME_ATTEMPTS: usize = 16;
+
+/// Writes `data` to `path`, replacing any file there, atomically: a reader (or
+/// a crash) sees the old bytes or the new bytes, never a mix.
 ///
-/// The temp file is `path` with the extension `tmp`. It is created with
-/// `create_new`, which fails on any existing name instead of following it, so a
-/// planted symlink cannot make the write land elsewhere; a leftover plain file
-/// or symlink from a writer that died is replaced, a directory is never
-/// touched. On failure the temp file is removed and `path` is unchanged.
+/// Every write stages its bytes in its own temp file, `.<name>.<random>.tmp`,
+/// created with `create_new` (so it can never be an existing name, a planted
+/// symlink or a directory) and `0o600` from the moment it exists. This call
+/// removes only the temp it created, and only while the name still refers to
+/// that same file; before publishing it checks that it does, and returns an
+/// error instead of acknowledging bytes that are not its own. The target
+/// directory is created `0o700` when missing and, on Unix, must be owned by
+/// this user or root and not writable by group or others (a sticky directory
+/// such as `/tmp` is accepted: others cannot remove or rename this user's
+/// entries in it). That check is what keeps the temp bound to this writer
+/// between the check and the rename; a failing one is `PermissionDenied`.
+///
+/// Writers to the same target inside one process are serialized, so the file
+/// left behind is the one whose call returned last. Processes are not
+/// serialized against each other: each publication is still atomic and each
+/// writer's `Ok` means its own bytes were published, but a later writer
+/// replaces an earlier one (last writer wins), so a read-modify-write across
+/// processes needs its own lock. A writer that dies leaves its temp file
+/// behind; it is never reused or removed by a later call.
+///
+/// Windows: the temp is unique, exclusive and opened with sharing denied while
+/// it is written, but there are no mode bits to check and this crate does not
+/// inspect or set ACLs, so the directory's inherited ACL is what protects the
+/// file.
 pub fn write_private_file(path: &Path, data: &[u8]) -> Result<(), io::Error> {
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
-    if let Some(parent) = parent {
-        ensure_private_dir(parent)?;
-    }
-    let tmp = path.with_extension("tmp");
-    let mut file = create_temp(&tmp)?;
-    let written = file.write_all(data).and_then(|()| file.sync_all());
-    drop(file);
-    if let Err(error) = written.and_then(|()| fs::rename(&tmp, path)) {
-        let _ = fs::remove_file(&tmp);
-        return Err(error);
-    }
-    Ok(())
+    publish(path, data, Publish::Replace)
 }
 
-fn create_temp(tmp: &Path) -> io::Result<File> {
-    match open_exclusive(tmp) {
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            match fs::symlink_metadata(tmp) {
-                Ok(meta) if meta.is_dir() => return Err(error),
-                Ok(_) => fs::remove_file(tmp)?,
-                Err(gone) if gone.kind() == io::ErrorKind::NotFound => {}
-                Err(other) => return Err(other),
+/// Creates `path` with `data`, failing with [`io::ErrorKind::AlreadyExists`]
+/// (and leaving whatever is there untouched) when anything, including a
+/// dangling symlink, already has that name. Same staging and directory rules
+/// as [`write_private_file`]. Of any number of concurrent callers, in this
+/// process or another, exactly one succeeds.
+///
+/// The staged file is linked to its final name, which the filesystem refuses
+/// when the name exists and never replaces. On a filesystem without hard
+/// links the final name is instead claimed with `create_new` and written in
+/// place: still exclusive, but a crash mid-write leaves a truncated file
+/// where a new file was being created (no earlier data is at risk).
+pub fn create_private_file(path: &Path, data: &[u8]) -> Result<(), io::Error> {
+    publish(path, data, Publish::CreateNew)
+}
+
+#[derive(Clone, Copy)]
+enum Publish {
+    Replace,
+    CreateNew,
+}
+
+fn publish(path: &Path, data: &[u8], mode: Publish) -> io::Result<()> {
+    let name = path.file_name().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{}: not a file path", path.display()),
+        )
+    })?;
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    ensure_private_dir(dir)?;
+    serialized(fs::canonicalize(dir)?.join(name), || {
+        publish_staged(dir, name, path, data, mode)
+    })
+}
+
+fn publish_staged(
+    dir: &Path,
+    name: &OsStr,
+    path: &Path,
+    data: &[u8],
+    mode: Publish,
+) -> io::Result<()> {
+    let staged = Staged::write(dir, name, data)?;
+    if !staged.is_ours() {
+        // The name now belongs to someone else: leave it alone.
+        return Err(io::Error::other(format!(
+            "{}: the staging file was replaced while it was written; nothing was published",
+            staged.path.display()
+        )));
+    }
+    let published = match mode {
+        Publish::Replace => fs::rename(&staged.path, path),
+        Publish::CreateNew => link_without_replacing(&staged, path, data),
+    };
+    if published.is_err() || matches!(mode, Publish::CreateNew) {
+        staged.discard();
+    }
+    published
+}
+
+/// Publishes the staged file at `path` unless something is there. The staged
+/// name is left for the caller to discard.
+fn link_without_replacing(staged: &Staged, path: &Path, data: &[u8]) -> io::Result<()> {
+    match fs::hard_link(&staged.path, path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(error),
+        // No hard links here (FAT/exFAT, some network filesystems): claim the
+        // final name exclusively and write it in place.
+        Err(_) => {
+            let mut file = open_exclusive(path)?;
+            let claimed = Identity::of(&file)?;
+            if let Err(error) = file.write_all(data).and_then(|()| file.sync_all()) {
+                drop(file);
+                if claimed.names(path) {
+                    let _ = fs::remove_file(path);
+                }
+                return Err(error);
             }
-            open_exclusive(tmp)
+            Ok(())
         }
-        other => other,
+    }
+}
+
+/// A temp file this call created, with the identity it had when created.
+struct Staged {
+    path: PathBuf,
+    id: Identity,
+}
+
+impl Staged {
+    /// Creates a fresh temp beside the target and fills and flushes it. Any
+    /// failure removes the temp again before returning.
+    fn write(dir: &Path, name: &OsStr, data: &[u8]) -> io::Result<Self> {
+        let prefix: String = name
+            .to_string_lossy()
+            .chars()
+            .take(TEMP_NAME_PREFIX_MAX)
+            .collect();
+        let mut last = None;
+        for _ in 0..TEMP_NAME_ATTEMPTS {
+            let path = dir.join(format!(".{prefix}.{:016x}.tmp", OsRng.next_u64()));
+            match open_exclusive(&path) {
+                Ok(mut file) => {
+                    let staged = Staged {
+                        id: Identity::of(&file)?,
+                        path,
+                    };
+                    return match file.write_all(data).and_then(|()| file.sync_all()) {
+                        Ok(()) => Ok(staged),
+                        Err(error) => {
+                            drop(file);
+                            staged.discard();
+                            Err(error)
+                        }
+                    };
+                }
+                // Somebody else's name: never touch it, try another.
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => last = Some(error),
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last.unwrap_or_else(|| io::Error::other("no free temp file name")))
+    }
+
+    /// Whether the temp name still refers to the file this call created.
+    fn is_ours(&self) -> bool {
+        self.id.names(&self.path)
+    }
+
+    /// Removes the temp name if, and only if, it is still this call's file.
+    fn discard(&self) {
+        if self.is_ours() {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// Which file a name refers to: device and inode on Unix. There is no stable
+/// equivalent in `std` on Windows, where the check always holds and the
+/// unique name plus the sharing-denied handle stand in for it.
+#[cfg(unix)]
+struct Identity {
+    dev: u64,
+    ino: u64,
+}
+
+#[cfg(unix)]
+impl Identity {
+    fn of(file: &File) -> io::Result<Self> {
+        let meta = file.metadata()?;
+        Ok(Self {
+            dev: meta.dev(),
+            ino: meta.ino(),
+        })
+    }
+
+    fn names(&self, path: &Path) -> bool {
+        fs::symlink_metadata(path)
+            .is_ok_and(|meta| meta.is_file() && meta.dev() == self.dev && meta.ino() == self.ino)
+    }
+}
+
+#[cfg(not(unix))]
+struct Identity;
+
+#[cfg(not(unix))]
+impl Identity {
+    fn of(_file: &File) -> io::Result<Self> {
+        Ok(Self)
+    }
+
+    fn names(&self, path: &Path) -> bool {
+        fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file())
     }
 }
 
@@ -57,24 +243,100 @@ fn open_exclusive(path: &Path) -> io::Result<File> {
     options.write(true).create_new(true);
     #[cfg(unix)]
     options.mode(0o600);
+    // Nobody may open, rename or delete the temp while it is being written.
+    #[cfg(windows)]
+    options.share_mode(0);
     options.open(path)
+}
+
+type TargetLocks = HashMap<PathBuf, Arc<Mutex<()>>>;
+
+static TARGET_LOCKS: Mutex<Option<TargetLocks>> = Mutex::new(None);
+
+/// Runs `work` while holding the lock for `key`, so writers to one target
+/// within this process take turns.
+fn serialized<T>(key: PathBuf, work: impl FnOnce() -> T) -> T {
+    let lock = TARGET_LOCKS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get_or_insert_with(HashMap::new)
+        .entry(key.clone())
+        .or_default()
+        .clone();
+    let result = {
+        let _turn = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        work()
+    };
+    let mut locks = TARGET_LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
+    // Only the map and this call hold the lock: nobody is waiting on it.
+    if Arc::strong_count(&lock) == 2 {
+        if let Some(map) = locks.as_mut() {
+            map.remove(&key);
+        }
+    }
+    result
 }
 
 #[cfg(unix)]
 fn ensure_private_dir(dir: &Path) -> io::Result<()> {
-    if !dir.exists() {
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)?;
+    // `recursive` accepts a directory that already exists, so there is no
+    // exists-then-create window.
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)?;
+    let meta = fs::metadata(dir)?;
+    match dir_verdict(
+        &DirFacts {
+            is_dir: meta.is_dir(),
+            mode: meta.mode(),
+            owner: meta.uid(),
+        },
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        unsafe { libc::geteuid() },
+    ) {
+        Ok(()) => Ok(()),
+        Err(reason) => Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{}: {reason}", dir.display()),
+        )),
     }
-    Ok(())
 }
 
 #[cfg(not(unix))]
 fn ensure_private_dir(dir: &Path) -> io::Result<()> {
-    if !dir.exists() {
-        fs::create_dir_all(dir)?;
+    fs::create_dir_all(dir)
+}
+
+#[cfg(unix)]
+struct DirFacts {
+    is_dir: bool,
+    mode: u32,
+    owner: u32,
+}
+
+/// Whether private state may be staged and published in a directory: owned by
+/// this user or root, and not one others can add, remove or rename entries in
+/// (group/other write), unless it is sticky, where they can only touch their
+/// own entries.
+#[cfg(unix)]
+fn dir_verdict(facts: &DirFacts, euid: u32) -> Result<(), String> {
+    if !facts.is_dir {
+        return Err("is not a directory".into());
+    }
+    if facts.owner != euid && facts.owner != 0 {
+        return Err(format!(
+            "is owned by another user (uid {}); refusing to keep private state in it",
+            facts.owner
+        ));
+    }
+    let sticky = facts.mode & 0o1000 != 0;
+    if facts.mode & 0o022 != 0 && !sticky {
+        return Err(format!(
+            "is writable by other users (mode {:04o}); they could replace the file \
+             while it is being written. Run `chmod go-w` on it",
+            facts.mode & 0o7777
+        ));
     }
     Ok(())
 }
@@ -91,8 +353,9 @@ fn ensure_private_dir(dir: &Path) -> io::Result<()> {
 /// the opened file, not the path, so the file cannot be swapped after the
 /// check. A missing file is `NotFound`, which callers treat as a first run.
 ///
-/// Windows has no Unix mode bits here, so only the regular-file and size checks
-/// apply; the same holds on filesystems that report every file as `0o777`.
+/// Windows has no Unix mode bits here and this crate reads no ACLs, so only the
+/// regular-file and size checks apply there. On Unix a filesystem that reports
+/// every file as `0o777` is refused like any other group/other-writable file.
 pub fn read_private_file(path: &Path, max_bytes: u64) -> io::Result<String> {
     let file = open_for_check(path)?;
     let meta = file.metadata()?;
@@ -122,15 +385,40 @@ pub fn read_private_file(path: &Path, max_bytes: u64) -> io::Result<String> {
         }
     }
     #[cfg(not(unix))]
-    if !meta.is_file() || meta.len() > max_bytes {
+    check_regular_and_size(path, &meta, max_bytes)?;
+    read_bounded(file, path, max_bytes)
+}
+
+/// Reads a file the caller only needs to be a regular file of bounded size (a
+/// script source: it lives wherever the operator keeps it, including
+/// filesystems that show every file world-writable, so there is no owner or
+/// mode check). Opened once without blocking; the shape and size are checked
+/// on that open file and the read is bounded, so a swap after the check cannot
+/// substitute a FIFO or an endless file. Refusals are `PermissionDenied`; a
+/// missing file is `NotFound`.
+pub fn read_regular_file(path: &Path, max_bytes: u64) -> io::Result<String> {
+    let file = open_for_check(path)?;
+    check_regular_and_size(path, &file.metadata()?, max_bytes)?;
+    read_bounded(file, path, max_bytes)
+}
+
+fn check_regular_and_size(path: &Path, meta: &fs::Metadata, max_bytes: u64) -> io::Result<()> {
+    if !meta.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!(
-                "{}: not a regular file of at most {max_bytes} bytes",
-                path.display()
-            ),
+            format!("{}: not a regular file", path.display()),
         ));
     }
+    if meta.len() > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{}: larger than {max_bytes} bytes", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+fn read_bounded(file: File, path: &Path, max_bytes: u64) -> io::Result<String> {
     let mut text = String::new();
     // `take` also bounds a file that grows after the size check.
     file.take(max_bytes.saturating_add(1))
@@ -202,6 +490,8 @@ fn store_file_verdict(facts: &StoreFacts, euid: u32, max_bytes: u64) -> Verdict 
 mod tests {
     use std::os::unix::fs::{symlink, PermissionsExt};
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
 
     use super::*;
 
@@ -217,13 +507,23 @@ mod tests {
         fs::metadata(path).unwrap().permissions().mode() & 0o7777
     }
 
+    /// Every name in `dir`, sorted.
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
     #[test]
-    fn a_planted_temp_symlink_is_replaced_not_followed() {
+    fn a_symlink_at_the_target_is_replaced_never_written_through() {
         let dir = scratch("symlink");
         let victim = dir.join("victim");
         fs::write(&victim, "precious").unwrap();
         let target = dir.join("state.json");
-        symlink(&victim, target.with_extension("tmp")).unwrap();
+        symlink(&victim, &target).unwrap();
 
         write_private_file(&target, b"new state").unwrap();
 
@@ -239,47 +539,217 @@ mod tests {
     }
 
     #[test]
-    fn a_wide_leftover_temp_or_target_never_widens_the_result() {
+    fn a_wide_target_never_widens_the_result_and_no_temp_survives() {
         let dir = scratch("wide");
         let target = dir.join("state.json");
         fs::write(&target, "old").unwrap();
         fs::set_permissions(&target, fs::Permissions::from_mode(0o666)).unwrap();
-        let tmp = target.with_extension("tmp");
-        fs::write(&tmp, "stale").unwrap();
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o666)).unwrap();
 
         write_private_file(&target, b"fresh").unwrap();
 
         assert_eq!(fs::read_to_string(&target).unwrap(), "fresh");
         assert_eq!(mode_of(&target), 0o600);
-        assert!(!tmp.exists(), "no temp file survives a successful write");
+        assert_eq!(names(&dir), ["state.json"], "no temp file survives");
     }
 
     #[test]
-    fn a_failed_write_leaves_the_target_and_no_temp_behind() {
+    fn a_failed_publish_leaves_the_target_and_no_temp_behind() {
         let dir = scratch("fail");
-        // Renaming a file over a directory fails on every Unix.
+        // Renaming a file over a directory fails on every platform.
         let target = dir.join("state.json");
         fs::create_dir(&target).unwrap();
 
         assert!(write_private_file(&target, b"data").is_err());
 
         assert!(target.is_dir(), "the target is untouched");
-        assert!(!target.with_extension("tmp").exists());
+        assert_eq!(names(&dir), ["state.json"], "the temp was removed");
     }
 
     #[test]
-    fn a_directory_at_the_temp_name_fails_the_write_and_survives() {
-        let dir = scratch("blocker");
+    fn a_long_file_name_still_gets_a_valid_temp_name() {
+        let dir = scratch("long");
+        let target = dir.join("n".repeat(250));
+
+        write_private_file(&target, b"data").unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"data");
+    }
+
+    #[test]
+    fn concurrent_writers_each_succeed_and_the_target_is_one_whole_payload() {
+        let dir = scratch("concurrent");
         let target = dir.join("state.json");
         fs::write(&target, "old").unwrap();
-        let blocker = target.with_extension("tmp");
-        fs::create_dir(&blocker).unwrap();
+        let size = 512 * 1024;
 
-        assert!(write_private_file(&target, b"new").is_err());
+        let writers: Vec<_> = (0..8u8)
+            .map(|id| {
+                let target = target.clone();
+                thread::spawn(move || {
+                    let payload = vec![b'a' + id; size];
+                    for round in 0..8 {
+                        write_private_file(&target, &payload)
+                            .unwrap_or_else(|e| panic!("writer {id} round {round}: {e}"));
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
 
-        assert!(blocker.is_dir(), "a directory is never removed");
-        assert_eq!(fs::read_to_string(&target).unwrap(), "old");
+        let bytes = fs::read(&target).unwrap();
+        assert_eq!(bytes.len(), size, "a whole payload, not a torn one");
+        assert!(bytes.iter().all(|b| *b == bytes[0]), "one writer's bytes");
+        assert_eq!(names(&dir), ["state.json"], "no temp survives");
+    }
+
+    /// An actor that can already write the directory unlinks the writer's
+    /// staging file mid-write and puts its own bytes at that name. The writer
+    /// must not acknowledge those bytes as its own, and must not remove them.
+    #[test]
+    fn a_swapped_staging_file_is_never_acknowledged_as_the_writers_data() {
+        let dir = scratch("swap");
+        let target = dir.join("state.json");
+        fs::write(&target, "old").unwrap();
+        let payload = vec![b'W'; 32 * 1024 * 1024];
+
+        let mut swaps = 0;
+        for _ in 0..5 {
+            let stop = Arc::new(AtomicBool::new(false));
+            let attacker = {
+                let (dir, stop) = (dir.clone(), stop.clone());
+                thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        for entry in fs::read_dir(&dir).unwrap().flatten() {
+                            let path = entry.path();
+                            if path.extension().is_some_and(|e| e == "tmp") {
+                                let _ = fs::remove_file(&path);
+                                fs::write(&path, b"ATTACKER").unwrap();
+                                return Some(path);
+                            }
+                        }
+                    }
+                    None
+                })
+            };
+            let outcome = write_private_file(&target, &payload);
+            stop.store(true, Ordering::Relaxed);
+            let Some(planted) = attacker.join().unwrap() else {
+                continue;
+            };
+            swaps += 1;
+
+            match outcome {
+                Ok(()) => assert!(
+                    fs::read(&target).unwrap() == payload,
+                    "acknowledged, but the target does not hold the writer's bytes"
+                ),
+                Err(_) => {
+                    assert_eq!(fs::read(&target).unwrap(), b"old", "nothing published");
+                    assert_eq!(
+                        fs::read(&planted).unwrap(),
+                        b"ATTACKER",
+                        "the writer removed a file it did not create"
+                    );
+                }
+            }
+            let _ = fs::remove_file(&planted);
+            fs::write(&target, "old").unwrap();
+        }
+        assert!(swaps > 0, "the attacker never got to swap a staging file");
+    }
+
+    #[test]
+    fn a_directory_others_can_write_is_refused_and_named() {
+        let dir = scratch("wide-dir");
+        let target = dir.join("state.json");
+        for mode in [0o777, 0o775, 0o757] {
+            fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).unwrap();
+
+            let error = write_private_file(&target, b"data").unwrap_err();
+
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{mode:o}");
+            assert!(error.to_string().contains("chmod go-w"), "{error}");
+            assert!(!target.exists(), "{mode:o}: nothing was written");
+            assert!(names(&dir).is_empty(), "{mode:o}: no temp was staged");
+        }
+        // A sticky directory (like /tmp) only lets others touch their own entries.
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o1777)).unwrap();
+        write_private_file(&target, b"data").unwrap();
+        // Owner-only and world-readable are fine.
+        fs::remove_file(&target).unwrap();
+        for mode in [0o700, 0o755] {
+            fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).unwrap();
+            write_private_file(&target, b"data").unwrap();
+        }
+    }
+
+    #[test]
+    fn directory_owner_rule_accepts_the_current_user_and_root_only() {
+        let facts = |owner| DirFacts {
+            is_dir: true,
+            mode: 0o700,
+            owner,
+        };
+        assert!(dir_verdict(&facts(501), 501).is_ok());
+        assert!(dir_verdict(&facts(0), 501).is_ok());
+        assert!(dir_verdict(&facts(502), 501)
+            .unwrap_err()
+            .contains("another user"));
+    }
+
+    #[test]
+    fn create_refuses_anything_at_the_name_and_leaves_it_untouched() {
+        let dir = scratch("create-exists");
+        let existing = dir.join("vault");
+        fs::write(&existing, "keep").unwrap();
+        let dangling = dir.join("dangling");
+        let elsewhere = dir.join("elsewhere");
+        symlink(&elsewhere, &dangling).unwrap();
+
+        for path in [&existing, &dangling] {
+            let error = create_private_file(path, b"new").unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{path:?}");
+        }
+
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "keep");
+        assert!(
+            !elsewhere.exists(),
+            "a dangling link is not written through"
+        );
+        assert_eq!(names(&dir), ["dangling", "vault"], "no temp survives");
+    }
+
+    #[test]
+    fn of_many_concurrent_creators_exactly_one_wins_and_its_bytes_are_kept() {
+        let dir = scratch("create-race");
+        let target = dir.join("vault");
+        let start = Arc::new(std::sync::Barrier::new(8));
+
+        let creators: Vec<_> = (0..8u8)
+            .map(|id| {
+                let (target, start) = (target.clone(), start.clone());
+                thread::spawn(move || {
+                    start.wait();
+                    create_private_file(&target, &[id; 4096]).map(|()| id)
+                })
+            })
+            .collect();
+        let outcomes: Vec<_> = creators.into_iter().map(|c| c.join().unwrap()).collect();
+
+        let winners: Vec<u8> = outcomes
+            .iter()
+            .filter_map(|o| o.as_ref().ok())
+            .copied()
+            .collect();
+        assert_eq!(winners.len(), 1, "{outcomes:?}");
+        for lost in outcomes.iter().filter_map(|o| o.as_ref().err()) {
+            assert_eq!(lost.kind(), io::ErrorKind::AlreadyExists);
+        }
+        assert_eq!(fs::read(&target).unwrap(), vec![winners[0]; 4096]);
+        assert_eq!(names(&dir), ["vault"], "no temp survives");
+        assert_eq!(mode_of(&target), 0o600);
     }
 
     #[test]

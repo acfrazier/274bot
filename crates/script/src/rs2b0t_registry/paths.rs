@@ -198,7 +198,9 @@ pub(crate) fn absolute_clean(path: &Path) -> std::io::Result<PathBuf> {
 /// checkout path), as an absolute path. Writes only when the file would change.
 pub fn persist_rs2b0t_root_at(root: &Path, path_file: &Path) -> Result<(), String> {
     let root = absolute_clean(root).map_err(|e| format!("rs2b0t-path: {}: {e}", root.display()))?;
-    if let Ok(existing) = std::fs::read_to_string(path_file) {
+    // The unchanged-file shortcut reads through the same checked, non-blocking
+    // reader as the load path; a refused or unreadable file is rewritten.
+    if let Ok(existing) = vault::read_private_file(path_file, MAX_ROOT_FILE_BYTES) {
         if existing.trim() == root.to_string_lossy() {
             return Ok(());
         }

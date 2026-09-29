@@ -2036,9 +2036,12 @@ fn a_failed_parameter_save_is_not_pushed_to_the_run() {
     settle(&mut s);
     wait_state(&s, "alice", script::RunState::Running);
     s.core.flush_writes();
-    // The writer's temp file cannot be created where a directory sits.
-    let blocker = dir.join("v.vault").with_extension("tmp");
-    fs::create_dir_all(&blocker).unwrap();
+    // The publish cannot replace a directory: keep the vault aside and put one
+    // at its name.
+    let vault_file = dir.join("v.vault");
+    let aside = vault_file.with_extension("aside");
+    fs::rename(&vault_file, &aside).unwrap();
+    fs::create_dir(&vault_file).unwrap();
     s.set_profile_setting(
         "alice",
         script::ScriptSource::File,
@@ -2048,7 +2051,8 @@ fn a_failed_parameter_save_is_not_pushed_to_the_run() {
         Value::String("2".into()),
     );
     s.core.flush_writes();
-    fs::remove_dir_all(&blocker).unwrap();
+    fs::remove_dir(&vault_file).unwrap();
+    fs::rename(&aside, &vault_file).unwrap();
     assert_eq!(s.core.take_write_failures().len(), 1, "the save failed");
     let play = s.core.play().unwrap();
     let identity = play.script_source_identity("alice").unwrap();

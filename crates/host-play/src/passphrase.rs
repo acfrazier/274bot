@@ -14,6 +14,13 @@
 //! `--vault-pass PASS` are gone with no alias: [`legacy_env_notice`] tells an
 //! operator whose shell still exports the variable that it is ignored, and
 //! [`removed_flag_error`] rejects the flag without echoing the value.
+//!
+//! Wiping is best effort. The buffers that carry the passphrase from here are
+//! reserved at [`MAX_PASSPHRASE_BYTES`] up front (input past it is refused, or
+//! ignored at the prompt) so none grows and leaves a freed copy, and they are
+//! zeroed when dropped. Not covered: the standard library's buffered `stdin`
+//! reader, which keeps its own copy of what it read from a pipe and is not
+//! wiped; the terminal driver's queue; and the key-derivation internals.
 
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -111,8 +118,9 @@ fn ask(
 /// end of input before any byte, a line longer than [`MAX_PASSPHRASE_BYTES`],
 /// and text that is not UTF-8. Only the first line is consumed.
 pub fn read_line_from(reader: impl BufRead) -> Result<Secret, String> {
-    let mut raw = Zeroizing::new(Vec::with_capacity(128));
-    // Room for the longest passphrase and its `\r\n`.
+    // Room for the longest passphrase and its `\r\n`, reserved up front: a
+    // buffer that grew would leave freed, unwiped copies of the text behind.
+    let mut raw = Zeroizing::new(Vec::with_capacity(MAX_PASSPHRASE_BYTES + 2));
     reader
         .take(MAX_PASSPHRASE_BYTES as u64 + 2)
         .read_until(b'\n', &mut raw)
@@ -166,7 +174,8 @@ fn read_hidden(prompt: &str) -> Result<Secret, String> {
     let _ = write!(err, "{prompt}");
     let _ = err.flush();
 
-    let mut typed = Secret::with_capacity(256);
+    // Reserved at the limit and never grown past it (see `push` below).
+    let mut typed = Secret::with_capacity(MAX_PASSPHRASE_BYTES);
     let outcome = loop {
         let event = match read() {
             Ok(event) => event,
@@ -193,7 +202,11 @@ fn read_hidden(prompt: &str) -> Result<Secret, String> {
             KeyCode::Backspace => {
                 typed.pop();
             }
-            KeyCode::Char(c) if !ctrl => typed.push(c),
+            // Input past the limit is ignored: growing the buffer would leave
+            // an unwiped copy of the text in freed memory.
+            KeyCode::Char(c) if !ctrl && typed.len() + c.len_utf8() <= MAX_PASSPHRASE_BYTES => {
+                typed.push(c);
+            }
             _ => {}
         }
     };
@@ -307,6 +320,13 @@ mod tests {
     }
 
     #[test]
+    fn a_piped_passphrase_is_read_into_a_buffer_reserved_at_the_bound() {
+        // Nothing accepted (up to the bound) reallocates, so no earlier,
+        // smaller copy is left behind unwiped.
+        assert!(line(b"short passphrase\n").unwrap().capacity() >= MAX_PASSPHRASE_BYTES);
+    }
+
+    #[test]
     fn text_that_is_not_utf8_is_refused() {
         assert!(line(b"caf\xe9 au lait 123\n")
             .unwrap_err()
@@ -415,7 +435,12 @@ mod tests {
             _ => (Purpose::Unlock, false),
         };
         match obtain("child", from_stdin, purpose) {
-            Ok(secret) => println!("CHILD-RESULT match={}", secret == TYPED),
+            Ok(secret) => println!(
+                "CHILD-RESULT match={} len={} cap={}",
+                secret == TYPED,
+                secret.len(),
+                secret.capacity()
+            ),
             Err(error) => println!("CHILD-RESULT error={error}"),
         }
     }
@@ -428,7 +453,7 @@ mod tests {
         use std::process::{Command, Stdio};
         use std::time::{Duration, Instant};
 
-        use super::TYPED;
+        use super::{MAX_PASSPHRASE_BYTES, TYPED};
 
         fn child(mode: &str) -> Command {
             let mut command = Command::new(std::env::current_exe().unwrap());
@@ -593,6 +618,43 @@ mod tests {
             until_reported(&mut spawned, &mut master, &mut seen);
             assert!(seen.contains("CHILD-RESULT match=true"), "{seen:?}");
             assert!(!seen.contains("horse"), "{seen:?}");
+        }
+
+        /// Sends `keys` to the terminal in small pieces, waiting while the
+        /// terminal's input queue is full.
+        fn send(master: &mut std::fs::File, keys: &[u8]) {
+            for piece in keys.chunks(256) {
+                let mut rest = piece;
+                while !rest.is_empty() {
+                    match master.write(rest) {
+                        Ok(n) => rest = &rest[n..],
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(e) => panic!("write to the terminal: {e}"),
+                    }
+                }
+            }
+        }
+
+        /// The prompt keeps at most [`MAX_PASSPHRASE_BYTES`] and never grows
+        /// its buffer to hold more: growth would leave an unwiped copy of the
+        /// text behind.
+        #[test]
+        fn the_terminal_prompt_stops_at_the_byte_limit_without_growing_its_buffer() {
+            let (mut spawned, mut master) = on_a_terminal("terminal");
+            let mut seen = String::new();
+            until_shown(&mut master, &mut seen, "Vault passphrase: ");
+            let mut keys = "a".repeat(MAX_PASSPHRASE_BYTES + 900).into_bytes();
+            keys.push(b'\r');
+            send(&mut master, &keys);
+            until_reported(&mut spawned, &mut master, &mut seen);
+            assert!(
+                seen.contains(&format!(
+                    "len={MAX_PASSPHRASE_BYTES} cap={MAX_PASSPHRASE_BYTES}"
+                )),
+                "{seen:?}"
+            );
         }
 
         /// A child whose stdin is a pipe, never a terminal.
