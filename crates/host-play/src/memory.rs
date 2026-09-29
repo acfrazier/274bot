@@ -7,12 +7,12 @@
 
 use crate::Play;
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use api::interact::{cheat, tele_args};
@@ -524,7 +524,7 @@ fn qualify_contentious_moss_fleet(
 
 /// Step budget for a fleet's completed-duel watch, admit wait, and park
 /// Repeat. Staging admits one pair at a time, so the first pair's park-Repeat
-/// waits until every later pair has entered a pen. A 3000-tick budget ended
+/// waits until every later pair has fought and parked. A 3000-tick budget ended
 /// that wait at ~21 min with 12 of 25 pairs parked; dirty snapshots run faster
 /// than one per engine tick. The runner deadline is the real bound.
 const DUEL_COMPLETED_DUEL_BUDGET_TICKS: u32 = 30_000;
@@ -582,16 +582,18 @@ const fn duel_zone_steps(x: i32, z: i32) -> i32 {
 const DUEL_HOLD_TO_ZONE_STEPS: i32 = duel_zone_steps(DUEL_HOLD.x, DUEL_HOLD.z);
 
 /// The zone clearance: the fewest steps from `DUEL_ZONE` at which a waiting
-/// or parked slot may be seen until every pair has entered a pen.
+/// or parked slot may be seen while the fence is up. The fence is up from a
+/// slot's first hold until staging is over: the last pair has parked and
+/// every slot has since reported a clear position (see [`DuelFence`]).
 ///
 /// The frozen card walks a parked slot back toward the arena (`TravelToArena`).
 /// The keep-parked Repeat re-teles it once it is 8 tiles from the hold, but
 /// that send is unacknowledged and waits for the scenario's 2 s scene-settle
 /// gate, so it cannot by itself keep an already-fought slot out of the lobby.
 /// The fence does: [`DuelPairGate::observe`] runs on every in-scene client
-/// frame of the slot (not settle-gated) and latches a named breach the first
-/// time a fenced slot is seen closer to the zone than this. A breach refuses
-/// every further admission and Start and fails the run.
+/// frame of the slot (not settle-gated) and, under the admission lock,
+/// records a named breach the first time a fenced slot is seen closer to the
+/// zone than this. A breach refuses every further permit and fails the run.
 ///
 /// Margin: a slot seen at the clearance is still 20 steps from the zone. A
 /// running player takes at most two steps per 600 ms game tick, so it is at
@@ -610,164 +612,367 @@ const _: () = assert!(DUEL_ZONE_CLEARANCE_STEPS >= 2 * 10);
 /// At least 30 steps of nominal correction excursion between hold and fence.
 const _: () = assert!(DUEL_HOLD_TO_ZONE_STEPS - DUEL_ZONE_CLEARANCE_STEPS >= 30);
 
-/// The first fenced slot seen inside the zone clearance.
-struct DuelZoneBreach {
+/// Why a duel fleet failed: the first fenced slot seen inside the zone
+/// clearance, or a slot whose client thread stopped reporting while fenced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DuelFleetFailure {
     slot: usize,
     message: String,
 }
 
-/// Shared pair-admission gate for one duel fleet. Mint order is pairing:
-/// slots `(2i, 2i+1)` are pair `i`. The frozen card challenges every named,
-/// out-of-combat player in the lobby (`DuelArena.ts` `challengeTargets` /
-/// `sortChallengeTargets` / 1.5 s `CHALLENGE_RESULT_WAIT_MS`); starting every
-/// slot at once is an all-to-all race that can drop `opponent` to null inside
-/// a fight pen.
-///
-/// The gate keeps each Start's only free lobby candidate the partner: a pair
-/// is admitted, and Starts, only while every other slot is *currently* seen
-/// outside the zone clearance ([`DUEL_ZONE_CLEARANCE_STEPS`]) and no breach is
-/// recorded; the next pair is admitted only after both members of the
-/// finished pair have arrived back at the hold (so a completed-duel lobby
-/// snapshot cannot overlap a starting pair, including on the frame
-/// `ScenarioRunner` only `advance_step()`s and the parking send has not yet
-/// run); and a waiting or parked slot seen inside the clearance before every
-/// pair has entered a pen is a breach that fails the run before it can reach
-/// the lobby. After every slot has entered a pen, parked slots are released to
-/// the lobby for observation.
-struct DuelPairGate {
-    n: usize,
-    holding: Vec<AtomicBool>,
-    in_pen: Vec<AtomicBool>,
-    penned: AtomicUsize,
-    parked: Vec<AtomicBool>,
-    /// The slot's latest in-scene observation was outside the zone clearance.
-    clear_of_zone: Vec<AtomicBool>,
-    admitted_pair: AtomicUsize,
-    /// Fewest zone steps at which a fenced slot was seen.
-    closest_fenced_zone_steps: AtomicI32,
-    /// Largest hold distance at which a fenced slot was seen.
-    farthest_fenced_hold_distance: AtomicI32,
-    breach: OnceLock<DuelZoneBreach>,
+/// Outcome of [`DuelPairGate::poll_start`] for a slot on its Start step.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum StartPermit {
+    /// Start now: every slot outside this pair reported a clear position
+    /// after this request, under the same lock.
+    Granted,
+    /// Not yet: a slot has not reported since the request, or an earlier
+    /// request is ahead in the queue.
+    Wait,
+    /// Never: the fleet has failed.
+    Refused(DuelFleetFailure),
 }
 
-impl DuelPairGate {
-    fn new(n: usize) -> Arc<Self> {
-        let flags = || (0..n).map(|_| AtomicBool::new(false)).collect();
-        Arc::new(Self {
-            n,
-            holding: flags(),
-            in_pen: flags(),
-            penned: AtomicUsize::new(0),
-            parked: flags(),
-            clear_of_zone: flags(),
-            admitted_pair: AtomicUsize::new(0),
-            closest_fenced_zone_steps: AtomicI32::new(i32::MAX),
-            farthest_fenced_hold_distance: AtomicI32::new(0),
-            breach: OnceLock::new(),
-        })
-    }
+/// The zone-clearance fence's lifecycle. It never lapses while a Start or a
+/// challenge under exclusion can still happen: it comes down only after the
+/// last pair has parked back at the hold and every slot has reported a clear
+/// position since. A slot that entered the zone earlier is still there on
+/// that report (only its own thread's keep-at-hold tele moves it out, and
+/// that thread reports the in-zone tile first on the same frame), so a late
+/// reporter breaches instead of being released.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DuelFence {
+    Up,
+    /// The last pair parked at this epoch.
+    Lowering {
+        since: u64,
+    },
+    /// Staging is over; parked slots are released to the lobby.
+    Down,
+}
 
-    fn mark_holding(&self, slot: usize) {
-        self.holding[slot].store(true, Ordering::Release);
+/// One slot's standing with the admission owner.
+#[derive(Default)]
+struct DuelSlotState {
+    holding: bool,
+    parked: bool,
+    /// Latest in-scene position report: `(epoch, steps to DUEL_ZONE)`.
+    report: Option<(u64, i32)>,
+}
+
+/// One queued Start request: the slot and the epoch it was made at.
+struct DuelStartRequest {
+    slot: usize,
+    epoch: u64,
+}
+
+/// Everything [`DuelPairGate`] decides on, behind its one lock. `epoch` is
+/// the lock-order clock: every position report and every Start request takes
+/// the next value, so "reported after the request" is a comparison of two
+/// epochs taken under the same lock.
+struct DuelAdmission {
+    epoch: u64,
+    slots: Vec<DuelSlotState>,
+    admitted_pair: usize,
+    /// Start requests in arrival order (owner token = slot); only the head
+    /// may be granted.
+    starts: VecDeque<DuelStartRequest>,
+    fence: DuelFence,
+    failure: Option<DuelFleetFailure>,
+    granted: usize,
+    /// Fewest zone steps at which a fenced slot was seen.
+    closest_fenced_zone_steps: Option<i32>,
+    /// Largest hold distance at which a fenced slot was seen.
+    farthest_fenced_hold_distance: i32,
+}
+
+impl DuelAdmission {
+    fn next_epoch(&mut self) -> u64 {
+        self.epoch += 1;
+        self.epoch
     }
 
     fn all_holding(&self) -> bool {
-        self.holding.iter().all(|flag| flag.load(Ordering::Acquire))
-    }
-
-    /// `slot`'s pair may enter the lobby and Start: every slot has reached the
-    /// hold, the pair is admitted, every other slot is outside the zone
-    /// clearance on its latest observation, and no breach is recorded.
-    fn may_enter_lobby(&self, slot: usize) -> bool {
-        let pair = slot / 2;
-        self.breach.get().is_none()
-            && self.all_holding()
-            && self.admitted_pair.load(Ordering::Acquire) >= pair
-            && self
-                .clear_of_zone
-                .iter()
-                .enumerate()
-                .all(|(other, clear)| other / 2 == pair || clear.load(Ordering::Acquire))
-    }
-
-    fn mark_in_pen(&self, slot: usize) {
-        if !self.in_pen[slot].swap(true, Ordering::AcqRel) {
-            self.penned.fetch_add(1, Ordering::AcqRel);
-        }
-    }
-
-    fn mark_parked(&self, slot: usize) {
-        if self.parked[slot].swap(true, Ordering::AcqRel) {
-            return;
-        }
-        let pair = slot / 2;
-        let a = pair * 2;
-        let b = a + 1;
-        if self.parked[a].load(Ordering::Acquire) && self.parked[b].load(Ordering::Acquire) {
-            let _ = self.admitted_pair.compare_exchange(
-                pair,
-                pair + 1,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            );
-        }
-    }
-
-    fn all_in_pen(&self) -> bool {
-        self.penned.load(Ordering::Acquire) == self.n
+        self.slots.iter().all(|slot| slot.holding)
     }
 
     /// A slot must stay outside the zone clearance once it has reached the
     /// hold, unless it is the admitted pair on its way to or from its duel,
-    /// until every pair has entered a pen. A parked member of the admitted pair
-    /// is fenced too.
+    /// until the fence is down. A parked member of the admitted pair is
+    /// fenced too, and so is every slot once the last pair has parked.
     fn fenced(&self, slot: usize) -> bool {
-        self.holding[slot].load(Ordering::Acquire)
-            && !self.all_in_pen()
-            && (slot / 2 != self.admitted_pair.load(Ordering::Acquire)
-                || self.parked[slot].load(Ordering::Acquire))
+        let state = &self.slots[slot];
+        state.holding
+            && self.fence != DuelFence::Down
+            && (slot / 2 != self.admitted_pair || state.parked)
     }
 
-    /// One in-scene observation of `slot`'s own tile.
-    fn observe(&self, slot: usize, (x, z, level): (i32, i32, i32)) {
-        let steps = duel_zone_steps(x, z);
-        let clear = steps >= DUEL_ZONE_CLEARANCE_STEPS;
-        self.clear_of_zone[slot].store(clear, Ordering::Release);
-        if !self.fenced(slot) {
+    /// `slot`'s latest report is clear of the zone and newer than `epoch`.
+    fn clear_since(&self, slot: usize, epoch: u64) -> bool {
+        self.slots[slot]
+            .report
+            .is_some_and(|(at, steps)| at > epoch && steps >= DUEL_ZONE_CLEARANCE_STEPS)
+    }
+
+    /// Record the fleet's first failure; later ones keep the first.
+    fn fail(&mut self, slot: usize, message: String) -> DuelFleetFailure {
+        self.failure
+            .get_or_insert(DuelFleetFailure { slot, message })
+            .clone()
+    }
+
+    fn lower_once_reported(&mut self) {
+        if let DuelFence::Lowering { since } = self.fence {
+            if self.failure.is_none()
+                && (0..self.slots.len()).all(|slot| self.clear_since(slot, since))
+            {
+                self.fence = DuelFence::Down;
+            }
+        }
+    }
+
+    /// Slots outside the head request's pair that have not reported clear
+    /// since it was made.
+    fn unreported_for(&self, request: &DuelStartRequest) -> Vec<usize> {
+        (0..self.slots.len())
+            .filter(|&other| {
+                other / 2 != request.slot / 2 && !self.clear_since(other, request.epoch)
+            })
+            .collect()
+    }
+}
+
+/// Shared pair-admission owner for one duel fleet, the login FIFO's shape
+/// (one mutex, owner tokens, a FIFO of requests, a grant, a retirement guard)
+/// applied to Starts. Mint order is pairing: slots `(2i, 2i+1)` are pair `i`.
+/// The frozen card challenges every named, out-of-combat player in the lobby
+/// (`DuelArena.ts` `challengeTargets` / `sortChallengeTargets` / 1.5 s
+/// `CHALLENGE_RESULT_WAIT_MS`); starting every slot at once is an all-to-all
+/// race that can drop `opponent` to null inside a fight pen.
+///
+/// The owner keeps each Start's only free lobby candidate the partner. Every
+/// slot thread's position report ([`Self::observe`]), every admission and
+/// Start decision ([`Self::admitted`], [`Self::poll_start`]), every breach
+/// and every fence transition happen under the one lock, so no decision reads
+/// a half-updated fleet. A pair is admitted to leave the hold only after both
+/// members of the previous pair have parked back at it (so a completed-duel
+/// lobby snapshot cannot overlap a starting pair, including on the frame
+/// `ScenarioRunner` only `advance_step()`s and the parking send has not yet
+/// run). `Run::poll` Starts a slot only on a granted permit, and the grant
+/// needs every slot outside the pair to have reported a clear position with
+/// an epoch newer than the request: a latest reading from before the request
+/// (a stalled or delayed slot thread) cannot admit it. A fenced slot seen
+/// inside the clearance is a breach; after it no permit is granted and the
+/// run fails with the breach.
+///
+/// Residual: a grant proves every other slot was clear at a moment after the
+/// request, not at the instant the started card evaluates
+/// `challengeTargets()`. A slot that walks in needs 10 game ticks from its
+/// last clear report and is reported on the way. A fought slot moved
+/// straight into `DUEL_ZONE` after a grant and before its next report would
+/// be a candidate first and a breach (the run fails) second. The fixture has
+/// no such mover: its corrective teles target the hold, observed respawns
+/// land 106+ steps out, and the card walks at least 10 ticks through the
+/// fence.
+struct DuelPairGate {
+    n: usize,
+    state: parking_lot::Mutex<DuelAdmission>,
+}
+
+impl DuelPairGate {
+    fn new(n: usize) -> Arc<Self> {
+        Arc::new(Self {
+            n,
+            state: parking_lot::Mutex::new(DuelAdmission {
+                epoch: 0,
+                slots: (0..n).map(|_| DuelSlotState::default()).collect(),
+                admitted_pair: 0,
+                starts: VecDeque::new(),
+                fence: DuelFence::Up,
+                failure: None,
+                granted: 0,
+                closest_fenced_zone_steps: None,
+                farthest_fenced_hold_distance: 0,
+            }),
+        })
+    }
+
+    fn mark_holding(&self, slot: usize) {
+        self.state.lock().slots[slot].holding = true;
+    }
+
+    /// `slot`'s pair may leave the hold for the lobby: every slot has reached
+    /// the hold, the pair is admitted, staging is not over, and the fleet has
+    /// not failed. Its Start still needs a permit from [`Self::poll_start`].
+    fn admitted(&self, slot: usize) -> bool {
+        let state = self.state.lock();
+        state.failure.is_none()
+            && state.fence == DuelFence::Up
+            && state.admitted_pair == slot / 2
+            && state.all_holding()
+    }
+
+    /// Enter `slot`'s Start request once (its epoch is taken now) and grant
+    /// it when it is the queue head and every slot outside its pair has
+    /// reported clear of the zone since.
+    fn poll_start(&self, slot: usize) -> StartPermit {
+        let mut state = self.state.lock();
+        if let Some(failure) = &state.failure {
+            return StartPermit::Refused(failure.clone());
+        }
+        let pair = slot / 2;
+        if state.fence != DuelFence::Up || state.admitted_pair != pair || !state.all_holding() {
+            let message = format!(
+                "duel fleet: refusing to Start slot {slot}: its pair {pair} is not the admitted \
+                 pair (admitted pair {}, fence {:?}), so no further pair may Start",
+                state.admitted_pair, state.fence
+            );
+            return StartPermit::Refused(state.fail(slot, message));
+        }
+        if !state.starts.iter().any(|request| request.slot == slot) {
+            let epoch = state.next_epoch();
+            state.starts.push_back(DuelStartRequest { slot, epoch });
+        }
+        let head = state.starts.front().expect("a request was just queued");
+        if head.slot != slot || !state.unreported_for(head).is_empty() {
+            return StartPermit::Wait;
+        }
+        state.starts.pop_front();
+        state.granted += 1;
+        StartPermit::Granted
+    }
+
+    /// `slot` is at the hold after its duel. Both members parked admits the
+    /// next pair; the last pair parked starts lowering the fence.
+    fn mark_parked(&self, slot: usize) {
+        let mut state = self.state.lock();
+        if std::mem::replace(&mut state.slots[slot].parked, true) {
             return;
         }
-        self.closest_fenced_zone_steps.fetch_min(steps, Relaxed);
-        let from_hold = (x - DUEL_HOLD.x).abs().max((z - DUEL_HOLD.z).abs());
-        self.farthest_fenced_hold_distance
-            .fetch_max(from_hold, Relaxed);
-        if !clear {
-            let pair = self.admitted_pair.load(Ordering::Acquire);
-            let _ = self.breach.set(DuelZoneBreach {
-                slot,
-                message: format!(
-                    "duel fleet clearance breach: slot {slot} was seen at ({x}, {z}, level \
-                     {level}), {steps} steps from the challenge area (clearance \
-                     {DUEL_ZONE_CLEARANCE_STEPS}), while pair {pair} was admitted and not every \
-                     pair had entered a pen; its keep-at-hold tele did not hold it, so no \
-                     further pair may be admitted or Start"
-                ),
-            });
+        let pair = slot / 2;
+        if state.admitted_pair == pair
+            && state.slots[2 * pair].parked
+            && state.slots[2 * pair + 1].parked
+        {
+            state.admitted_pair += 1;
+            if 2 * state.admitted_pair == self.n {
+                let since = state.next_epoch();
+                state.fence = DuelFence::Lowering { since };
+            }
         }
     }
 
-    fn breach(&self) -> Option<&DuelZoneBreach> {
-        self.breach.get()
+    /// Staging is over: parked slots may go to the lobby for observation.
+    fn released(&self) -> bool {
+        self.state.lock().fence == DuelFence::Down
+    }
+
+    /// One in-scene observation of `slot`'s own tile, from its own thread.
+    fn observe(&self, slot: usize, (x, z, level): (i32, i32, i32)) {
+        let mut state = self.state.lock();
+        let epoch = state.next_epoch();
+        let steps = duel_zone_steps(x, z);
+        state.slots[slot].report = Some((epoch, steps));
+        if state.fenced(slot) {
+            state.closest_fenced_zone_steps = Some(
+                state
+                    .closest_fenced_zone_steps
+                    .map_or(steps, |closest| closest.min(steps)),
+            );
+            let from_hold = (x - DUEL_HOLD.x).abs().max((z - DUEL_HOLD.z).abs());
+            state.farthest_fenced_hold_distance =
+                state.farthest_fenced_hold_distance.max(from_hold);
+            if steps < DUEL_ZONE_CLEARANCE_STEPS {
+                let stage = if 2 * state.admitted_pair < self.n {
+                    format!("while pair {} was admitted", state.admitted_pair)
+                } else {
+                    "after the last pair parked, before the fence came down".to_string()
+                };
+                state.fail(
+                    slot,
+                    format!(
+                        "duel fleet clearance breach: slot {slot} was seen at ({x}, {z}, level \
+                         {level}), {steps} steps from the challenge area (clearance \
+                         {DUEL_ZONE_CLEARANCE_STEPS}), {stage}; its keep-at-hold tele did not \
+                         hold it, so no further pair may Start"
+                    ),
+                );
+            }
+        }
+        state.lower_once_reported();
+    }
+
+    /// `slot`'s client thread has exited: it can no longer report, so while
+    /// the fence is up the fleet fails instead of waiting on it.
+    fn retire(&self, slot: usize) {
+        let mut state = self.state.lock();
+        state.starts.retain(|request| request.slot != slot);
+        if state.fence != DuelFence::Down {
+            state.fail(
+                slot,
+                format!(
+                    "duel fleet: slot {slot}'s client thread exited while the zone-clearance \
+                     fence was up, so its position can no longer be reported; no further pair \
+                     may Start"
+                ),
+            );
+        }
+    }
+
+    fn failure(&self) -> Option<DuelFleetFailure> {
+        self.state.lock().failure.clone()
     }
 
     fn summary(&self) -> serde_json::Value {
-        let closest = self.closest_fenced_zone_steps.load(Relaxed);
+        let state = self.state.lock();
+        let pending_start = state.starts.front().map(|request| {
+            serde_json::json!({
+                "slot": request.slot,
+                "awaiting_clear_reports_from": state.unreported_for(request),
+            })
+        });
         serde_json::json!({
             "zone_clearance_steps": DUEL_ZONE_CLEARANCE_STEPS,
             "hold_to_zone_steps": DUEL_HOLD_TO_ZONE_STEPS,
-            "closest_fenced_zone_steps": (closest != i32::MAX).then_some(closest),
-            "farthest_fenced_hold_distance": self.farthest_fenced_hold_distance.load(Relaxed),
-            "breach": self.breach().map(|breach| breach.message.as_str()),
+            "closest_fenced_zone_steps": state.closest_fenced_zone_steps,
+            "farthest_fenced_hold_distance": state.farthest_fenced_hold_distance,
+            "fence": match state.fence {
+                DuelFence::Up => "up",
+                DuelFence::Lowering { .. } => "lowering",
+                DuelFence::Down => "down",
+            },
+            "start_permits_granted": state.granted,
+            "pending_start": pending_start,
+            "failure": state.failure.as_ref().map(|failure| failure.message.as_str()),
         })
+    }
+}
+
+/// Slot-worker guard: every return and unwind of a slot's client thread
+/// retires its place with the duel admission owner, so a slot that can no
+/// longer report its position fails the fleet instead of stalling a permit.
+pub(crate) struct DuelReportRetirement<'a> {
+    pub(crate) name: &'a str,
+}
+
+impl Drop for DuelReportRetirement<'_> {
+    fn drop(&mut self) {
+        let seed = SEEDS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(|seeds| seeds.get(self.name).cloned());
+        let Some(seed) = seed else {
+            return;
+        };
+        let duel = seed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .duel
+            .clone();
+        if let Some(duel) = duel {
+            duel.gate.retire(duel.slot);
+        }
     }
 }
 
@@ -806,12 +1011,13 @@ fn duel_tele_step(name: &'static str, dest: WorldTile, budget_ticks: u32) -> sce
 /// spawned target it leaves nothing in the world.
 ///
 /// Staging (same path for every even N): hold every slot outside the lobby,
-/// Start one mint-order pair at a time once that pair is the only free
-/// challenge-area candidate, park a finished pair at the hold (the completed-
-/// duel Await advances without sending the parking tele on that tick), and
-/// admit the next pair only once both members have arrived there. A Repeat
-/// then re-teles a parked slot the card walks away; the gate's zone-clearance fence
-/// fails the run if that correction does not hold it (see [`DuelPairGate`]).
+/// admit one mint-order pair at a time to the lobby, Start each member only on
+/// a permit granted once every other slot has freshly reported clear of the
+/// challenge area, park a finished pair at the hold (the completed-duel Await
+/// advances without sending the parking tele on that tick), and admit the
+/// next pair only once both members have arrived there. A Repeat then re-teles
+/// a parked slot the card walks away; the gate's zone-clearance fence fails
+/// the run if that correction does not hold it (see [`DuelPairGate`]).
 fn qualify_duel_arena_fleet(
     scenario: &mut scenario::Scenario,
     n: usize,
@@ -847,7 +1053,6 @@ fn qualify_duel_arena_fleet(
         .ok_or("duel fleet qualification is missing StartScript")?;
 
     let hold_gate = Arc::clone(gate);
-    let pen_gate = Arc::clone(gate);
     let park_gate = Arc::clone(gate);
 
     scenario.steps.insert(
@@ -861,12 +1066,12 @@ fn qualify_duel_arena_fleet(
     scenario.steps.insert(
         start + 1,
         scenario::Step {
-            name: "wait until this pair is the only free challenge-area candidates",
+            name: "wait until this pair is admitted to the challenge area",
             kind: scenario::StepKind::Await {
                 evidence: "duel_pair_admitted_to_empty_lobby",
                 ready: Box::new(move |_| {
                     hold_gate.mark_holding(slot);
-                    hold_gate.may_enter_lobby(slot)
+                    hold_gate.admitted(slot)
                 }),
             },
             wait: scenario::Wait {
@@ -890,12 +1095,7 @@ fn qualify_duel_arena_fleet(
     ));
     scenario.steps.insert(
         start + 1,
-        scenario::duel_arena_completed_duel_step_on_pen(
-            DUEL_COMPLETED_DUEL_BUDGET_TICKS,
-            move || {
-                pen_gate.mark_in_pen(slot);
-            },
-        ),
+        scenario::duel_arena_completed_duel_step(DUEL_COMPLETED_DUEL_BUDGET_TICKS),
     );
     // ArrivedNear lobby would hold on the completed-duel snapshot, so a
     // single Repeat cannot both leave the lobby and wait there for release.
@@ -913,10 +1113,10 @@ fn qualify_duel_arena_fleet(
     scenario.steps.insert(
         start + 3,
         scenario::Step {
-            name: "keep this slot out of the lobby until every pair has entered a pen",
+            name: "keep this slot out of the lobby until every pair has fought",
             kind: scenario::StepKind::Repeat {
                 send: Box::new(move |c, snap| {
-                    if park_gate.all_in_pen() {
+                    if park_gate.released() {
                         if !duel_near(snap, DUEL_LOBBY, 8) {
                             cheat(c, &tele_args(DUEL_LOBBY.level, DUEL_LOBBY.x, DUEL_LOBBY.z));
                         }
@@ -1418,12 +1618,8 @@ impl Run {
                         seed.duel.clone(),
                     )
                 };
-                if let Some(breach) = duel.as_ref().and_then(|duel| duel.gate.breach()) {
-                    let failure = format!("{} ({})", breach.message, self.names[breach.slot]);
-                    if self.diagnostics {
-                        self.write_diagnostics(play, Some(&failure))?;
-                    }
-                    return Err(failure);
+                if let Some(failure) = duel.as_ref().and_then(|duel| duel.gate.failure()) {
+                    return Err(self.duel_fleet_failure(play, failure)?);
                 }
                 match status {
                     scenario::RunnerStatus::Failed(msg) => {
@@ -1440,18 +1636,21 @@ impl Run {
                     _ if on_start => {
                         seeded += 1;
                         if !already_started {
-                            // Re-check on the Start frame itself: admission
-                            // was frames ago, before the lobby tele.
-                            if let Some(duel) = &duel {
-                                if !duel.gate.may_enter_lobby(duel.slot) {
-                                    return Err(format!(
-                                        "duel fleet: refusing to Start {name}: another slot is \
-                                         inside the zone clearance on its latest observation"
-                                    ));
-                                }
+                            // A duel slot Starts only on a permit the
+                            // admission owner grants after every other slot
+                            // has reported clear since this request.
+                            let permitted =
+                                match duel.as_ref().map(|duel| duel.gate.poll_start(duel.slot)) {
+                                    None | Some(StartPermit::Granted) => true,
+                                    Some(StartPermit::Wait) => false,
+                                    Some(StartPermit::Refused(failure)) => {
+                                        return Err(self.duel_fleet_failure(play, failure)?);
+                                    }
+                                };
+                            if permitted {
+                                self.start_script(play, name)?;
+                                seed_arc.lock().unwrap().started = true;
                             }
-                            self.start_script(play, name)?;
-                            seed_arc.lock().unwrap().started = true;
                         }
                     }
                     _ => {}
@@ -1779,6 +1978,20 @@ impl Run {
         writeln!(self.qualification_output, "{value}").map_err(|e| e.to_string())
     }
 
+    /// The duel fleet's recorded failure, named with its slot's account,
+    /// after the diagnostics it owes when they are enabled.
+    fn duel_fleet_failure(
+        &mut self,
+        play: &Play,
+        failure: DuelFleetFailure,
+    ) -> Result<String, String> {
+        let failure = format!("{} ({})", failure.message, self.names[failure.slot]);
+        if self.diagnostics {
+            self.write_diagnostics(play, Some(&failure))?;
+        }
+        Ok(failure)
+    }
+
     /// The fail-closed record: which slots ever qualified and where each of
     /// the others stopped. Best effort, and never replaces the failure it
     /// documents.
@@ -1840,6 +2053,7 @@ mod tests {
     use super::*;
     use client::client::{Client, ClientPlayer};
     use client::io::ServerProt;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
 
     /// Env mutation is process-global; serialize these tests.
@@ -2498,7 +2712,7 @@ mod tests {
 
     /// The Duel Arena card pairs its own slots: an even fleet stages one
     /// mint-order pair at a time (hold outside the lobby, admit, Start, completed
-    /// duel, park at the hold, keep parked until every pair has entered a pen)
+    /// duel, park at the hold, keep parked until every pair has fought)
     /// and keeps the scenario's proof. A fleet that cannot pair, or another
     /// scenario, is refused or untouched. N=2, N=10 and N=50 share that path.
     #[test]
@@ -2522,7 +2736,7 @@ mod tests {
             );
             assert_eq!(
                 fleet.steps[start + 1].name,
-                "wait until this pair is the only free challenge-area candidates"
+                "wait until this pair is admitted to the challenge area"
             );
             assert_eq!(
                 fleet.steps[start + 2].name,
@@ -2563,63 +2777,315 @@ mod tests {
         (tile.x, tile.z, tile.level)
     }
 
-    /// Pair 1 cannot occupy the lobby until both members of pair 0 have parked
-    /// at the hold and every other slot is seen clear of the zone. Pen entry
-    /// latches all_in_pen for the observation release but does not admit the
-    /// next Start. The admitted pair's own trip to the lobby is not a breach.
-    #[test]
-    fn duel_pair_gate_admits_one_pair_after_both_are_parked() {
-        let gate = DuelPairGate::new(4);
-        assert!(!gate.may_enter_lobby(0), "hold is empty");
-        assert!(!gate.may_enter_lobby(2), "later pair");
+    fn report_at(gate: &DuelPairGate, slots: &[usize], tile: WorldTile) {
+        for &slot in slots {
+            gate.observe(slot, duel_tile(tile));
+        }
+    }
 
+    /// One step inside the zone clearance, still outside the challenge area.
+    const DUEL_NEAR_ZONE: WorldTile = WorldTile {
+        x: DUEL_ZONE.0 - DUEL_ZONE_CLEARANCE_STEPS + 1,
+        z: 3230,
+        level: 0,
+    };
+
+    /// A four-slot fleet whose pair 0 has fought and parked, so pair 1 is
+    /// admitted. Every slot's latest report is clear at the hold and was made
+    /// before any pair-1 Start request.
+    fn duel_gate_with_pair1_admitted() -> Arc<DuelPairGate> {
+        let gate = DuelPairGate::new(4);
         for slot in 0..4 {
             gate.mark_holding(slot);
         }
-        assert!(
-            !gate.may_enter_lobby(0),
-            "a waiting slot not yet seen at the hold keeps pair 0 out"
-        );
-        for slot in 0..4 {
-            gate.observe(slot, duel_tile(DUEL_HOLD));
+        for slot in [0, 1] {
+            assert_eq!(gate.poll_start(slot), StartPermit::Wait);
         }
-        assert!(gate.may_enter_lobby(0));
-        assert!(gate.may_enter_lobby(1));
-        assert!(!gate.may_enter_lobby(2), "pair 1 waits on pair 0");
-
-        gate.observe(0, duel_tile(DUEL_LOBBY));
-        gate.observe(1, duel_tile(DUEL_LOBBY));
-        assert!(
-            gate.breach().is_none(),
-            "the admitted pair may leave the hold"
-        );
-        gate.mark_in_pen(0);
-        assert!(!gate.may_enter_lobby(2), "one fighter is not a pair");
-        gate.mark_in_pen(0);
-        assert!(!gate.all_in_pen());
-        gate.mark_in_pen(1);
-        assert!(
-            !gate.may_enter_lobby(2),
-            "a pair still in a pen can return to the lobby; do not admit the next Start"
-        );
-        assert!(!gate.all_in_pen());
-
-        gate.observe(0, duel_tile(DUEL_HOLD));
+        report_at(&gate, &[2, 3], DUEL_HOLD);
+        for slot in [0, 1] {
+            assert_eq!(gate.poll_start(slot), StartPermit::Granted);
+        }
+        report_at(&gate, &[0, 1], DUEL_PEN);
+        report_at(&gate, &[0, 1], DUEL_HOLD);
         gate.mark_parked(0);
-        assert!(!gate.may_enter_lobby(2), "one parked fighter is not a pair");
-        gate.mark_parked(0);
-        gate.observe(1, duel_tile(DUEL_HOLD));
         gate.mark_parked(1);
-        assert!(gate.may_enter_lobby(2), "pair 0 is parked at the hold");
-        assert!(gate.may_enter_lobby(3));
+        report_at(&gate, &[0, 1, 2, 3], DUEL_HOLD);
+        assert!(gate.admitted(2) && gate.admitted(3));
+        gate
+    }
 
-        gate.mark_in_pen(2);
-        gate.mark_in_pen(3);
-        assert!(gate.all_in_pen());
-        gate.observe(0, duel_tile(DUEL_LOBBY));
+    /// Poll `slot`'s Start until it is decided, failing on a hang.
+    fn decided_start(gate: &DuelPairGate, slot: usize) -> StartPermit {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match gate.poll_start(slot) {
+                StartPermit::Wait => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "slot {slot}'s Start never decided"
+                    );
+                    std::thread::yield_now();
+                }
+                decided => return decided,
+            }
+        }
+    }
+
+    fn assert_slot0_breach(permit: StartPermit) {
+        let StartPermit::Refused(failure) = permit else {
+            panic!("expected slot 0's breach to refuse the Start, got {permit:?}");
+        };
+        assert_eq!(failure.slot, 0);
         assert!(
-            gate.breach().is_none(),
-            "once every pair has entered a pen, parked slots are released"
+            failure.message.contains("clearance breach") && failure.message.contains("slot 0"),
+            "{}",
+            failure.message
+        );
+    }
+
+    /// Pair 1 cannot leave the hold until both members of pair 0 have parked
+    /// at it. A Start needs a permit, granted in request order and only once
+    /// every slot outside the pair has reported clear since the request. The
+    /// admitted pair's own trips to the lobby and the pens are not breaches,
+    /// and the fence comes down only once the last pair has parked and every
+    /// slot has reported clear since.
+    #[test]
+    fn duel_pair_gate_admits_one_pair_after_both_are_parked() {
+        let gate = DuelPairGate::new(4);
+        assert!(!gate.admitted(0), "hold is empty");
+        for slot in 0..4 {
+            gate.mark_holding(slot);
+        }
+        assert!(gate.admitted(0) && gate.admitted(1));
+        assert!(!gate.admitted(2), "pair 1 waits on pair 0");
+
+        assert_eq!(
+            gate.poll_start(0),
+            StartPermit::Wait,
+            "nobody has reported since the request"
+        );
+        assert_eq!(gate.poll_start(1), StartPermit::Wait);
+        report_at(&gate, &[2], DUEL_HOLD);
+        assert_eq!(
+            gate.poll_start(0),
+            StartPermit::Wait,
+            "slot 3 has not reported"
+        );
+        report_at(&gate, &[3], DUEL_HOLD);
+        assert_eq!(
+            gate.poll_start(1),
+            StartPermit::Wait,
+            "slot 0 heads the queue"
+        );
+        assert_eq!(gate.poll_start(0), StartPermit::Granted);
+        assert_eq!(
+            gate.poll_start(1),
+            StartPermit::Granted,
+            "the same reports postdate its request"
+        );
+
+        report_at(&gate, &[0, 1], DUEL_LOBBY);
+        report_at(&gate, &[0, 1], DUEL_PEN);
+        report_at(&gate, &[0, 1], DUEL_LOBBY);
+        assert_eq!(gate.failure(), None, "the admitted pair may leave the hold");
+        assert!(
+            !gate.admitted(2),
+            "a pair back from its duel is still in the lobby"
+        );
+
+        report_at(&gate, &[0], DUEL_HOLD);
+        gate.mark_parked(0);
+        assert!(!gate.admitted(2), "one parked fighter is not a pair");
+        gate.mark_parked(0);
+        report_at(&gate, &[1], DUEL_HOLD);
+        gate.mark_parked(1);
+        assert!(gate.admitted(2) && gate.admitted(3), "pair 0 is parked");
+        assert!(!gate.admitted(0), "a fought pair is not admitted again");
+
+        assert_eq!(gate.poll_start(2), StartPermit::Wait);
+        report_at(&gate, &[0, 1], DUEL_HOLD);
+        assert_eq!(gate.poll_start(2), StartPermit::Granted);
+        assert_eq!(
+            gate.poll_start(3),
+            StartPermit::Wait,
+            "its request postdates those reports"
+        );
+        report_at(&gate, &[0, 1], DUEL_HOLD);
+        assert_eq!(gate.poll_start(3), StartPermit::Granted);
+
+        report_at(&gate, &[2, 3], DUEL_PEN);
+        report_at(&gate, &[2, 3], DUEL_HOLD);
+        gate.mark_parked(2);
+        gate.mark_parked(3);
+        assert!(
+            !gate.released(),
+            "no slot has reported since the last pair parked"
+        );
+        report_at(&gate, &[0, 1, 2], DUEL_HOLD);
+        assert!(!gate.released(), "slot 3 has not reported since");
+        report_at(&gate, &[3], DUEL_HOLD);
+        assert!(gate.released(), "staging is over");
+        report_at(&gate, &[0, 1, 2, 3], DUEL_LOBBY);
+        assert_eq!(gate.failure(), None, "released slots may enter the lobby");
+    }
+
+    /// R5: the frontend Started on each slot's latest clear bit, which could
+    /// predate the Start by any amount (a stalled slot thread while the
+    /// server moved the player). A grant now needs a report made after the
+    /// request, so a stalled thread holds the Start and its report on
+    /// resuming decides it.
+    #[test]
+    fn a_stale_clear_report_cannot_grant_a_start_while_its_slot_thread_is_stalled() {
+        for resumed_at in [DUEL_NEAR_ZONE, DUEL_HOLD] {
+            let gate = duel_gate_with_pair1_admitted();
+            let live = AtomicBool::new(true);
+            let (resume, stalled) = std::sync::mpsc::channel::<()>();
+            std::thread::scope(|scope| {
+                let slot0 = scope.spawn({
+                    let gate = &gate;
+                    move || {
+                        stalled.recv().expect("resume slot 0");
+                        gate.observe(0, duel_tile(resumed_at));
+                    }
+                });
+                let slot1 = scope.spawn(|| {
+                    while live.load(Ordering::Acquire) {
+                        gate.observe(1, duel_tile(DUEL_HOLD));
+                        std::thread::yield_now();
+                    }
+                });
+                for _ in 0..200 {
+                    assert_eq!(
+                        gate.poll_start(2),
+                        StartPermit::Wait,
+                        "slot 0's clear reading predates the request while its thread is stalled"
+                    );
+                    std::thread::sleep(Duration::from_micros(200));
+                }
+                resume.send(()).expect("slot 0 is waiting");
+                slot0.join().expect("slot 0 reports");
+                let permit = decided_start(&gate, 2);
+                live.store(false, Ordering::Release);
+                slot1.join().expect("slot 1 reports");
+                if resumed_at == DUEL_HOLD {
+                    assert_eq!(permit, StartPermit::Granted, "a fresh clear report grants");
+                } else {
+                    assert_slot0_breach(permit);
+                }
+            });
+        }
+    }
+
+    /// R5: admission checked the breach, then scanned independent per-slot
+    /// bits, so a breach recorded between the two still Started the pair. A
+    /// breach and a grant now share one lock, and the grant needs a report
+    /// after the request: a breach reported concurrently with a Start request
+    /// is never granted, whichever takes the lock first.
+    #[test]
+    fn a_breach_reported_concurrently_with_a_start_request_is_never_granted() {
+        let gate = duel_gate_with_pair1_admitted();
+        assert_eq!(gate.poll_start(2), StartPermit::Wait, "request first");
+        report_at(&gate, &[0], DUEL_NEAR_ZONE);
+        report_at(&gate, &[1], DUEL_HOLD);
+        assert_slot0_breach(gate.poll_start(2));
+        assert_slot0_breach(gate.poll_start(3));
+
+        for _ in 0..500 {
+            let gate = duel_gate_with_pair1_admitted();
+            let barrier = std::sync::Barrier::new(3);
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    gate.observe(0, duel_tile(DUEL_NEAR_ZONE));
+                });
+                scope.spawn(|| {
+                    barrier.wait();
+                    for _ in 0..20 {
+                        gate.observe(1, duel_tile(DUEL_HOLD));
+                    }
+                });
+                barrier.wait();
+                assert_slot0_breach(decided_start(&gate, 2));
+            });
+        }
+    }
+
+    /// R5: the fence lapsed once every slot had entered a pen, so a parked
+    /// slot's late report from near the arena recorded nothing. It now stays
+    /// up after every pair has entered a pen, and comes down only after the
+    /// last pair has parked and every slot has reported clear since: a late
+    /// in-zone report then is a breach, not a release.
+    #[test]
+    fn the_fence_stays_up_after_every_pair_has_entered_a_pen() {
+        for last_pair_parked in [false, true] {
+            let gate = duel_gate_with_pair1_admitted();
+            assert_eq!(gate.poll_start(2), StartPermit::Wait);
+            assert_eq!(gate.poll_start(3), StartPermit::Wait);
+            report_at(&gate, &[0, 1], DUEL_HOLD);
+            assert_eq!(gate.poll_start(2), StartPermit::Granted);
+            assert_eq!(gate.poll_start(3), StartPermit::Granted);
+            report_at(&gate, &[2, 3], DUEL_PEN);
+            if last_pair_parked {
+                report_at(&gate, &[2, 3], DUEL_HOLD);
+                gate.mark_parked(2);
+                gate.mark_parked(3);
+                report_at(&gate, &[1, 2, 3], DUEL_HOLD);
+                assert!(
+                    !gate.released(),
+                    "slot 0 has not reported since the last pair parked"
+                );
+            }
+            report_at(&gate, &[0], DUEL_NEAR_ZONE);
+            let failure = gate
+                .failure()
+                .expect("near the arena after every pair has entered a pen is a breach");
+            assert_eq!(failure.slot, 0);
+            assert!(
+                failure.message.contains("clearance breach"),
+                "{}",
+                failure.message
+            );
+            report_at(&gate, &[0], DUEL_HOLD);
+            assert!(!gate.released(), "a breach never lowers the fence");
+        }
+    }
+
+    /// A slot whose client thread exits can no longer report, so while the
+    /// fence is up its exit fails the fleet instead of stalling every later
+    /// Start; once staging is over (teardown), it does not.
+    #[test]
+    fn a_slot_thread_exit_fails_the_fleet_only_while_the_fence_is_up() {
+        let gate = duel_gate_with_pair1_admitted();
+        assert_eq!(gate.poll_start(2), StartPermit::Wait);
+        gate.retire(0);
+        let StartPermit::Refused(failure) = gate.poll_start(2) else {
+            panic!("a retired slot must refuse the pending Start");
+        };
+        assert_eq!(failure.slot, 0);
+        assert!(
+            failure.message.contains("client thread exited"),
+            "{}",
+            failure.message
+        );
+
+        let gate = duel_gate_with_pair1_admitted();
+        for slot in [2, 3] {
+            assert_eq!(gate.poll_start(slot), StartPermit::Wait);
+            report_at(&gate, &[0, 1], DUEL_HOLD);
+            assert_eq!(gate.poll_start(slot), StartPermit::Granted);
+        }
+        report_at(&gate, &[2, 3], DUEL_HOLD);
+        gate.mark_parked(2);
+        gate.mark_parked(3);
+        report_at(&gate, &[0, 1, 2, 3], DUEL_HOLD);
+        assert!(gate.released());
+        for slot in 0..4 {
+            gate.retire(slot);
+        }
+        assert_eq!(
+            gate.failure(),
+            None,
+            "teardown after staging is not a failure"
         );
     }
 
@@ -2708,12 +3174,12 @@ mod tests {
     };
 
     /// Drive slot 0 from the lobby through its duel back to the hold, where
-    /// the keep-parked Repeat parks it. Pair 0's other member is `mark_*`ed.
+    /// the keep-parked Repeat parks it. Pair 0's other member is reported and
+    /// parked directly.
     fn park_duel_slot0(gate: &DuelPairGate, seed: &mut Seed, client: &mut Client) {
         seed_frame(seed, client, false);
         set_duel_tile(client, DUEL_PEN);
         seed_frame(seed, client, false);
-        gate.mark_in_pen(1);
         set_duel_tile(client, DUEL_LOBBY);
         seed_frame(seed, client, false);
         seed_frame(seed, client, false);
@@ -2750,9 +3216,8 @@ mod tests {
 
         set_duel_tile(&mut client, DUEL_PEN);
         seed_frame(&mut seed, &mut client, false);
-        gate.mark_in_pen(1);
         assert!(
-            !gate.may_enter_lobby(2),
+            !gate.admitted(2),
             "pen entry must not admit the next pair while this one can still return to the lobby"
         );
 
@@ -2773,7 +3238,7 @@ mod tests {
             "the hold tele must not have gone out before slot_frame"
         );
         assert!(
-            !gate.may_enter_lobby(2),
+            !gate.admitted(2),
             "a starting pair must not share the lobby with an already-fought slot on the advance frame"
         );
 
@@ -2782,7 +3247,7 @@ mod tests {
             out_contains(&client, &hold_tele_cheat()),
             "the next tick sends the parking tele"
         );
-        assert!(!gate.may_enter_lobby(2), "in-flight tele is not parked");
+        assert!(!gate.admitted(2), "in-flight tele is not parked");
 
         set_duel_tile(&mut client, DUEL_HOLD);
         seed_frame(&mut seed, &mut client, false);
@@ -2792,7 +3257,7 @@ mod tests {
             "arrival at the hold advances onto the keep-parked Repeat"
         );
         assert!(
-            !gate.may_enter_lobby(2),
+            !gate.admitted(2),
             "arrival without the Repeat send has not latched parked"
         );
 
@@ -2800,7 +3265,7 @@ mod tests {
         gate.observe(1, duel_tile(DUEL_HOLD));
         gate.mark_parked(1);
         assert!(
-            gate.may_enter_lobby(2),
+            gate.admitted(2),
             "both members parked at the hold admits the next pair"
         );
     }
@@ -2811,8 +3276,9 @@ mod tests {
     /// already-fought slot can reach the lobby while a later admitted pair is
     /// still negotiating. Nearing the challenge area must be a named breach,
     /// seen on the slot's own frame even when the Repeat sends nothing, that
-    /// refuses the admitted pair's Start and every later admission. Landing
-    /// far from the arena (the Lumbridge spawn, seen live) is not a breach.
+    /// refuses the admitted pair's Start permits and every later admission.
+    /// Landing far from the arena (the Lumbridge spawn, seen live) is not a
+    /// breach.
     #[test]
     fn a_parked_fighter_nearing_the_challenge_area_fails_the_fleet_before_a_later_pair_can_meet_it()
     {
@@ -2824,7 +3290,7 @@ mod tests {
         let mut seed = duel_slot0_after_start(&gate);
         let mut client = duel_client_at(DUEL_LOBBY);
         park_duel_slot0(&gate, &mut seed, &mut client);
-        assert!(gate.may_enter_lobby(2) && gate.may_enter_lobby(3));
+        assert!(gate.admitted(2) && gate.admitted(3));
         gate.observe(2, duel_tile(DUEL_LOBBY));
         gate.observe(3, duel_tile(DUEL_LOBBY));
 
@@ -2853,8 +3319,8 @@ mod tests {
                 tile.x,
                 tile.z
             );
-            assert!(gate.breach().is_none(), "({}, {}) is clear", tile.x, tile.z);
-            assert!(gate.may_enter_lobby(2), "pair 1 may still Start");
+            assert_eq!(gate.failure(), None, "({}, {}) is clear", tile.x, tile.z);
+            assert!(gate.admitted(2), "pair 1 stays admitted");
         }
 
         // That tele does not apply. A scene load arms the settle gate, so the
@@ -2862,42 +3328,28 @@ mod tests {
         seed.runner.set_scene_settle(Duration::from_secs(3600));
         client.scene_state = 1;
         seed_frame(&mut seed, &mut client, false);
-        let near = WorldTile {
-            x: DUEL_ZONE.0 - DUEL_ZONE_CLEARANCE_STEPS + 1,
-            z: 3230,
-            level: 0,
-        };
         assert!(
-            duel_zone_steps(near.x, near.z) > 0,
+            duel_zone_steps(DUEL_NEAR_ZONE.x, DUEL_NEAR_ZONE.z) > 0,
             "still outside the challenge area"
         );
-        set_duel_tile(&mut client, near);
+        set_duel_tile(&mut client, DUEL_NEAR_ZONE);
         let out_before = client.out.pos;
         seed_frame(&mut seed, &mut client, false);
         assert_eq!(
             client.out.pos, out_before,
             "the settle-gated Repeat sent no correction"
         );
+        assert_slot0_breach(gate.poll_start(2));
+        assert_slot0_breach(gate.poll_start(3));
         assert!(
-            !gate.may_enter_lobby(2) && !gate.may_enter_lobby(3),
-            "an admitted pair must not Start once an already-fought slot has left the hold"
-        );
-        let breach = gate
-            .breach()
-            .expect("nearing the challenge area is a named breach");
-        assert_eq!(breach.slot, 0);
-        assert!(
-            breach.message.contains("clearance breach") && breach.message.contains("slot 0"),
-            "{}",
-            breach.message
+            !gate.admitted(2),
+            "an admitted pair is withdrawn by the breach"
         );
 
         set_duel_tile(&mut client, DUEL_HOLD);
         seed_frame(&mut seed, &mut client, false);
-        assert!(
-            !gate.may_enter_lobby(2),
-            "a breach is final; returning to the hold does not re-open Start"
-        );
+        gate.observe(1, duel_tile(DUEL_HOLD));
+        assert_slot0_breach(gate.poll_start(2));
     }
 
     #[test]

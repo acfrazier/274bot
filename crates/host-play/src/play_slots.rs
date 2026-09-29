@@ -697,6 +697,8 @@ fn spawn_slot_thread(
                 username: &username,
                 arm: &arm,
             };
+            #[cfg(feature = "memory-profile")]
+            let _duel_retirement = memory::DuelReportRetirement { name: &username };
             #[cfg(test)]
             if let Some(published) = startup_entries_published {
                 published.send(()).unwrap();
