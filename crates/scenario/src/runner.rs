@@ -192,6 +192,10 @@ pub struct ScenarioRunner {
     /// published paint (first row per prefix). Host-fed through
     /// [`ScenarioRunner::observe_script_paint`]; not snapshot state.
     script_receipts: Vec<String>,
+    /// Compiled Start reached Running. Host-fed through
+    /// [`ScenarioRunner::observe_script_running`]; [`Proof::ScriptRunning`]
+    /// reads this latch, never the snapshot.
+    script_running: bool,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
     /// panel fills this with its window capture; the headless twin keeps
@@ -272,6 +276,7 @@ impl ScenarioRunner {
             script_started: false,
             receipt_prefixes,
             script_receipts: Vec::new(),
+            script_running: false,
             shot_sink: None,
         }
     }
@@ -433,6 +438,30 @@ impl ScenarioRunner {
         self.script_started
             && !matches!(self.phase, Phase::Done)
             && self.receipt_prefixes.len() > self.script_receipts.len()
+    }
+
+    /// Latch that the compiled Start reached Running. The live pump calls
+    /// this when `poll_start` settles Ready; [`Proof::ScriptRunning`] then
+    /// holds.
+    pub fn observe_script_running(&mut self) {
+        self.script_running = true;
+    }
+
+    /// Fail the current step with `reason` (compiled Start Rejected/Failed).
+    /// No-op after the run has already finished.
+    pub fn fail_start(&mut self, reason: &str) {
+        if matches!(self.phase, Phase::Done) {
+            return;
+        }
+        if matches!(self.phase, Phase::Running) && self.step < self.scenario.steps.len() {
+            self.finish_fail(&format!(
+                "step {} ({}): {reason}",
+                self.step + 1,
+                self.current_step().name
+            ));
+        } else {
+            self.finish_fail(reason);
+        }
     }
 
     /// Latch the first published paint row that starts with each receipt
@@ -760,6 +789,7 @@ impl ScenarioRunner {
         .then_some(StallCombatObservation::FirstSession);
         if matches!(self.current_step().kind, StepKind::StartScript) {
             self.script_started = true;
+            self.script_running = false;
             self.script_receipts.clear();
             // Several skills can advance before their sequential watches
             // begin (a catching Guard can die before the first cake is stolen).
@@ -786,6 +816,7 @@ impl ScenarioRunner {
                 .script_receipts
                 .iter()
                 .any(|row| row.starts_with(prefix)),
+            Proof::ScriptRunning => self.script_running,
             other => other.check_with_xp_context(
                 &self.snapshot,
                 self.obj_names.as_deref(),

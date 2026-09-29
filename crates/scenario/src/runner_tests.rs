@@ -1546,6 +1546,66 @@ fn start_script_step_is_a_client_noop_and_the_arm_holds_immediately() {
     );
 }
 
+fn compiled_start_scenario(budget: u32) -> Scenario {
+    Scenario {
+        name: "compiled-start",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "start the compiled card",
+            kind: StepKind::StartScript,
+            wait: wait(Proof::ScriptRunning, budget),
+        }],
+        proof: Proof::Stat { id: 16, min: 0 },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    }
+}
+
+#[test]
+fn compiled_start_script_waits_until_running() {
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::new(compiled_start_scenario(50));
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    assert!(
+        runner.on_start_script(),
+        "StartScript is current before the compiled Start settles"
+    );
+    assert_running_for(
+        &mut runner,
+        &mut c,
+        8,
+        "ScriptRunning must not hold before observe_script_running",
+    );
+    runner.observe_script_running();
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+#[test]
+fn compiled_start_script_fails_with_the_rejection_reason() {
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::new(compiled_start_scenario(50));
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    assert!(runner.on_start_script());
+    runner.fail_start("start rejected: Sherlock clue facts unavailable");
+    match runner.status() {
+        RunnerStatus::Failed(message) => {
+            assert!(
+                message.contains("start rejected: Sherlock clue facts unavailable"),
+                "{message}"
+            );
+            assert!(message.contains("start the compiled card"), "{message}");
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+}
+
 #[test]
 fn shot_step_with_the_default_sink_is_a_noop_and_passes() {
     // The headless twin leaves the default (no-op) sink: a Shot step

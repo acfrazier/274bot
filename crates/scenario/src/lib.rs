@@ -489,9 +489,10 @@ pub enum StepKind {
         stand: WorldTile,
         guard_ready: Proof,
     },
-    /// Host starts the catalog isolate (`script_start_load`) once when
-    /// the live pump sees this step. No-op on the client. The wait is an
-    /// immediate / one-tick arm that does not require XP.
+    /// Host starts the catalog isolate (`script_start_load`) or compiled
+    /// card (`start_compiled`) once when the live pump sees this step.
+    /// No-op on the client. File cards wait a one-tick arm; compiled
+    /// cards wait until Start is Running (or fail with the rejection).
     StartScript,
 }
 
@@ -778,6 +779,25 @@ fn start_catalog_step() -> Step {
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
             budget_ticks: 1,
+        },
+    }
+}
+
+/// Dirty-tick budget for a compiled Start to reach Running. Preparation is
+/// off-pump and usually settles in milliseconds; this is a miss detector,
+/// not a soak.
+const COMPILED_START_TICKS: u32 = 50;
+
+/// Compiled registry Start after the last seed wait: live pumps call
+/// `start_compiled` once, then this arm waits until Running. A Rejected
+/// or Failed Start fails the step with that reason instead of waiting.
+fn start_compiled_step() -> Step {
+    Step {
+        name: "start the compiled card",
+        kind: StepKind::StartScript,
+        wait: Wait {
+            arm: Proof::ScriptRunning,
+            budget_ticks: COMPILED_START_TICKS,
         },
     }
 }

@@ -140,32 +140,61 @@ impl ScriptStartHandle {
         id: script::CompiledId,
         bag: serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), String> {
-        let slot = script_slot(&self.scripts, name).ok_or_else(|| format!("no slot: {name}"))?;
-        if script::compiled_card(id).is_none() {
-            return Err(format!("not ported: {}", id.0));
+        host_log!(
+            Category::ScriptLifecycle,
+            Level::Info,
+            slot = name,
+            "start compiled"
+        );
+        let result = (|| {
+            let slot =
+                script_slot(&self.scripts, name).ok_or_else(|| format!("no slot: {name}"))?;
+            if script::compiled_card(id).is_none() {
+                return Err(format!("not ported: {}", id.0));
+            }
+            let selected = self
+                .game_data
+                .clone()
+                .ok_or("selected game data unavailable")?;
+            let mut slot = slot
+                .lock()
+                .map_err(|_| format!("script slot retiring: {name}"))?;
+            slot.start_compiled(
+                name,
+                id,
+                Arc::new(bag),
+                selected,
+                Arc::clone(&self.named_banks),
+            )
+            .map_err(|error| error.to_string())?;
+            invalidate_bank_pick(&self.navs, name);
+            Ok(())
+        })();
+        if let Err(e) = &result {
+            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {e}");
         }
-        let selected = self
-            .game_data
-            .clone()
-            .ok_or("selected game data unavailable")?;
-        let mut slot = slot
-            .lock()
-            .map_err(|_| format!("script slot retiring: {name}"))?;
-        slot.start_compiled(
-            name,
-            id,
-            Arc::new(bag),
-            selected,
-            Arc::clone(&self.named_banks),
-        )
-        .map_err(|error| error.to_string())?;
-        invalidate_bank_pick(&self.navs, name);
-        Ok(())
+        result
     }
 
     /// `name`'s latest Start, read atomically (see [`Play::script_poll_start`]).
     pub fn poll_start(&self, name: &str) -> script::StartPoll {
         poll_start(&self.scripts, name)
+    }
+
+    /// `name`'s script lifecycle, `Idle` when the slot is missing or retiring.
+    pub fn run_state(&self, name: &str) -> script::RunState {
+        script_slot(&self.scripts, name)
+            .and_then(|slot| slot.lock().ok().map(|slot| slot.state()))
+            .unwrap_or(script::RunState::Idle)
+    }
+
+    /// `name`'s script `last_error`; `None` when the slot has none.
+    pub fn last_error(&self, name: &str) -> Option<String> {
+        script_slot(&self.scripts, name).and_then(|slot| {
+            slot.lock()
+                .ok()
+                .and_then(|slot| slot.last_error().map(str::to_string))
+        })
     }
 
     /// `name`'s latest recorded paint frame (the frame its status row
