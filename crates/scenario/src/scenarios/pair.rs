@@ -1699,44 +1699,17 @@ impl DuelRoundTrip {
     }
 }
 
-/// Apply one snapshot to a completed-duel witness. `on_pen` fires once, the
-/// first time the slot is seen inside a fight pen, so a fleet gate can latch
-/// pen entry (the observation-release condition) without waiting for this
-/// duel to finish. Next-pair admission waits until this pair is parked.
-fn observe_completed_duel(
-    witness: &Mutex<DuelRoundTrip>,
-    snap: &GameSnapshot,
-    on_pen: &dyn Fn(),
-) -> bool {
-    let mut trip = witness.lock().expect("duel witness mutex");
-    let already = trip.fought;
-    let done = trip.observe(snap);
-    if trip.fought && !already {
-        on_pen();
-    }
-    done
-}
-
 /// Fleet qualification for the frozen DuelArena card: after Start, this slot
 /// must finish one duel against another fleet member. The slots pair among
 /// themselves; nothing here spawns or changes the world. The witness holds
 /// per-slot state, so build one step per slot.
 pub fn duel_arena_completed_duel_step(budget_ticks: u32) -> Step {
-    duel_arena_completed_duel_step_on_pen(budget_ticks, || {})
-}
-
-/// Same completed-duel watch as [`duel_arena_completed_duel_step`], plus a
-/// one-shot pen-entry callback for memory-fleet pair staging.
-pub fn duel_arena_completed_duel_step_on_pen(
-    budget_ticks: u32,
-    on_pen: impl Fn() + Send + Sync + 'static,
-) -> Step {
     let witness = Mutex::new(DuelRoundTrip::default());
     Step {
         name: "watch this slot finish a duel with another fleet member",
         kind: StepKind::Await {
             evidence: "duel_arena_pen_entered_and_lobby_returned",
-            ready: Box::new(move |snap| observe_completed_duel(&witness, snap, &on_pen)),
+            ready: Box::new(move |snap| witness.lock().expect("duel witness mutex").observe(snap)),
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -2228,48 +2201,5 @@ mod duel_round_trip_tests {
             "Lumbridge is not the lobby"
         );
         assert!(witness.observe(&at(3372, 3270, 0, 2)));
-    }
-
-    /// The staging gate needs pen entry, not the lobby return: fire once on
-    /// the first pen tile and not again on later pen or lobby snapshots.
-    #[test]
-    fn pen_entry_notifies_once_before_the_lobby_return() {
-        use super::observe_completed_duel;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::sync::Mutex;
-
-        let hits = AtomicUsize::new(0);
-        let witness = Mutex::new(DuelRoundTrip::default());
-        let on_pen = || {
-            hits.fetch_add(1, Ordering::Relaxed);
-        };
-
-        assert!(!observe_completed_duel(
-            &witness,
-            &at(3368, 3274, 0, 2),
-            &on_pen
-        ));
-        assert_eq!(hits.load(Ordering::Relaxed), 0, "lobby is not a pen");
-
-        assert!(!observe_completed_duel(
-            &witness,
-            &at(3340, 3250, 0, 2),
-            &on_pen
-        ));
-        assert_eq!(hits.load(Ordering::Relaxed), 1, "first pen tile");
-
-        assert!(!observe_completed_duel(
-            &witness,
-            &at(3340, 3250, 0, 2),
-            &on_pen
-        ));
-        assert_eq!(hits.load(Ordering::Relaxed), 1, "still in the pen");
-
-        assert!(observe_completed_duel(
-            &witness,
-            &at(3368, 3274, 0, 2),
-            &on_pen
-        ));
-        assert_eq!(hits.load(Ordering::Relaxed), 1, "lobby return is not a pen");
     }
 }
