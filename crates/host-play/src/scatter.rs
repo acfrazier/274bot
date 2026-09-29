@@ -119,6 +119,7 @@ mod tests {
             worn_req: vec![],
             members_req: false,
             wildy_cap: None,
+            quest_gates: None,
         }
     }
 

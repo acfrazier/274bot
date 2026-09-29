@@ -7270,6 +7270,7 @@ fn producers_require_transmission_or_a_unique_completed_journal_proof() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let raw = [
         edge(10, 150, 160),

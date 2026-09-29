@@ -11,8 +11,11 @@ use super::{
 use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
 use crate::grid::StepGrid;
 use crate::pack::PackError;
+use crate::quest_gates::tests::{family as gate_family, window as gate_window};
+use crate::quest_gates::QuestGates;
 use crate::tile::Tile;
 use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
+use api::selected::{FactKey, QuestGate};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
@@ -493,6 +496,7 @@ fn roundtrip_collision_and_transport_graph() {
         worn_req: vec![772], // dramen_staff on the Zanaris shed door
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let ladder = TransportEdge {
         kind: TransportKind::Ladder,
@@ -518,6 +522,7 @@ fn roundtrip_collision_and_transport_graph() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let di = graph.edges.len();
     graph.edges.push(door);
@@ -547,6 +552,7 @@ fn roundtrip_collision_and_transport_graph() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let gi = graph.edges.len();
     graph.edges.push(glider);
@@ -576,6 +582,7 @@ fn roundtrip_collision_and_transport_graph() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let si = graph.edges.len();
     graph.edges.push(spirit);
@@ -603,6 +610,7 @@ fn roundtrip_collision_and_transport_graph() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let ni = graph.edges.len();
     graph.edges.push(npc);
@@ -632,6 +640,7 @@ fn roundtrip_collision_and_transport_graph() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     });
     graph.at.entry(graph.edges[di].at).or_default().push(di);
     graph.at.entry(graph.edges[li].at).or_default().push(li);
@@ -748,6 +757,7 @@ fn v8_roundtrips_worn_req() {
         worn_req: vec![772],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let mut graph = TransportGraph::default();
     graph.edges.push(door.clone());
@@ -803,20 +813,20 @@ fn v9_roundtrips_members_req_true_and_false() {
         worn_req: vec![],
         members_req,
         wildy_cap: None,
+        quest_gates: None,
     };
     for members_req in [true, false] {
         let mut graph = TransportGraph::default();
         graph.edges.push(edge(members_req));
         let bytes = encode(&collision, &graph, &[]);
         assert_eq!(bytes[4], VERSION);
-        assert_eq!(FORMAT_ID, "274V10");
         let (_, g, _) = decode(&bytes).unwrap();
         assert_eq!(g.edges[0].members_req, members_req);
     }
 }
 
 #[test]
-fn v10_decode_rejects_older_version_bytes() {
+fn v11_decode_rejects_older_version_bytes() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -836,6 +846,10 @@ fn v10_decode_rejects_older_version_bytes() {
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(8))));
     bytes[4] = 9;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(9))));
+    // A v10 pack predates quest-family binding and stage gates: it is
+    // refused for a rebake, never loaded as an ungated v11 pack.
+    bytes[4] = 10;
+    assert!(matches!(decode(&bytes), Err(PackError::BadVersion(10))));
 }
 
 #[test]
@@ -878,13 +892,15 @@ fn v9_decode_rejects_invalid_members_req_flag() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let mut graph = TransportGraph::default();
     graph.edges.push(door);
     let mut bytes = encode(&collision, &graph, &[]);
-    // members_req sits just before wildy_cap (i32), the bank-stand count
-    // (u32), and the wilderness trailer (zone count + divisor + offset).
-    let flag_at = bytes.len() - 12 - 4 - 4 - 1;
+    // members_req sits just before wildy_cap (i32), the edge's quest-gate
+    // count (u32), the bank-stand count (u32), and the wilderness trailer
+    // (zone count + divisor + offset).
+    let flag_at = bytes.len() - 12 - 4 - 4 - 4 - 1;
     bytes[flag_at] = 2;
     assert!(matches!(decode(&bytes), Err(PackError::BadLength(_))));
 }
@@ -1473,11 +1489,166 @@ fn v10_roundtrips_wilderness_rules_and_wildy_cap() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: Some(20),
+        quest_gates: None,
     });
     let bytes = encode(&collision, &graph, &[]);
     assert_eq!(bytes[4], VERSION);
-    assert_eq!(FORMAT_ID, "274V10");
     let (_, g, _) = decode(&bytes).unwrap();
     assert_eq!(g.wilderness, graph.wilderness);
     assert_eq!(g.teleports[0].wildy_cap, Some(20));
+}
+
+/// A 2×2 open collision: the smallest pack body the gate tests append to.
+fn tiny_collision() -> WorldCollision {
+    let (walk, blocked) = pack_walk(&[0u32; 4 * 2 * 2]);
+    WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width: 2,
+        height: 2,
+        walk,
+        blocked,
+        flags: None,
+    }
+}
+
+/// One door crossing carrying `quest_gates`.
+fn gated_door(quest_gates: Option<QuestGates>) -> TransportEdge {
+    TransportEdge {
+        kind: TransportKind::Door,
+        at: WorldTile {
+            x: 1,
+            z: 0,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2,
+            z: 0,
+            level: 0,
+        },
+        loc_id: 2621,
+        option: 1,
+        ticks: 1,
+        dir: Some(DoorDir::E),
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates,
+    }
+}
+
+/// v11 binds the quest family in the header and carries each edge's typed
+/// stage gates: an equality window, an upper-only window and a completed
+/// quest come back exactly, keys and open bounds included. A bake that
+/// consumed no family binds none.
+#[test]
+fn v11_roundtrips_quest_family_and_stage_gates() {
+    let family = gate_family(7);
+    let gates = QuestGates::new(
+        family,
+        [
+            gate_window("tbwt", "tbwt_main", Some(3), Some(3)),
+            gate_window("heroes", "heroes_main", None, Some(4)),
+            QuestGate::Complete(FactKey::new("arrav")),
+        ],
+    )
+    .unwrap();
+    let mut graph = TransportGraph {
+        quest_family: Some(family),
+        ..TransportGraph::default()
+    };
+    graph.edges.push(gated_door(Some(gates.clone())));
+    let completed = QuestGates::new(family, [QuestGate::Complete(FactKey::new("tbwt"))]).unwrap();
+    graph.teleports.push(TransportEdge {
+        kind: TransportKind::Teleport,
+        ..gated_door(Some(completed))
+    });
+    let bytes = encode(&tiny_collision(), &graph, &[]);
+    let (_, g, _) = decode(&bytes).unwrap();
+    assert_eq!(g.quest_family, Some(family));
+    assert_eq!(g.edges, graph.edges);
+    assert_eq!(g.edges[0].quest_gates, Some(gates));
+    assert_eq!(g.teleports, graph.teleports);
+
+    let plain = encode(&tiny_collision(), &TransportGraph::default(), &[]);
+    assert_eq!(decode(&plain).unwrap().1.quest_family, None);
+}
+
+/// Gates a pack cannot bind, or a malformed binding, refuse the whole pack
+/// as inconsistent; nothing loads as silently ungated.
+#[test]
+fn v11_decode_refuses_unbound_or_malformed_quest_gates() {
+    // The single edge's gate list ends its record, before the bank-stand
+    // count (u32) and the wilderness trailer (zone count, divisor, offset).
+    const TRAILER: usize = 4 + 12;
+    let mut graph = TransportGraph::default();
+    graph.edges.push(gated_door(None));
+    let unbound = encode(&tiny_collision(), &graph, &[]);
+    let count_at = unbound.len() - TRAILER - 4;
+    let mut spliced = unbound[..count_at].to_vec();
+    spliced.extend_from_slice(&1u32.to_le_bytes());
+    spliced.push(0); // a completed-quest gate
+    spliced.extend_from_slice(&5u32.to_le_bytes());
+    spliced.extend_from_slice(b"arrav");
+    spliced.extend_from_slice(&unbound[count_at + 4..]);
+    assert!(
+        matches!(decode(&spliced), Err(PackError::BadLength(_))),
+        "gates on a pack that binds no quest family"
+    );
+    let mut bad_tag = unbound.clone();
+    bad_tag[5] = 2; // the binding tag follows the version byte
+    assert!(matches!(decode(&bad_tag), Err(PackError::BadLength(_))));
+
+    let family = gate_family(7);
+    let mut bound = TransportGraph {
+        quest_family: Some(family),
+        ..TransportGraph::default()
+    };
+    let exact = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    bound
+        .edges
+        .push(gated_door(Some(QuestGates::new(family, [exact]).unwrap())));
+    let bytes = encode(&tiny_collision(), &bound, &[]);
+    assert!(decode(&bytes).is_ok());
+    let mut schema_zero = bytes.clone();
+    schema_zero[6 + 32..6 + 34].copy_from_slice(&0u16.to_le_bytes());
+    assert!(matches!(decode(&schema_zero), Err(PackError::BadLength(_))));
+    // The window's bounds close the record: min flag + i32, max flag + i32.
+    let max_at = bytes.len() - TRAILER - 4;
+    let min_at = max_at - 1 - 4;
+    let mut empty_window = bytes.clone();
+    empty_window[min_at..min_at + 4].copy_from_slice(&4i32.to_le_bytes());
+    assert!(
+        matches!(decode(&empty_window), Err(PackError::BadLength(_))),
+        "a [4,3] window admits no value"
+    );
+    let mut bad_flag = bytes.clone();
+    bad_flag[max_at - 1] = 2;
+    assert!(matches!(decode(&bad_flag), Err(PackError::BadLength(_))));
+}
+
+/// One pack binds one quest family: an edge whose gates name another family
+/// cannot be written, so its keys are never silently rebound.
+#[test]
+#[should_panic(expected = "another quest family")]
+fn encode_refuses_gates_of_another_quest_family() {
+    let foreign = QuestGates::new(
+        gate_family(8),
+        [gate_window("tbwt", "tbwt_main", Some(3), Some(3))],
+    )
+    .unwrap();
+    let mut graph = TransportGraph {
+        quest_family: Some(gate_family(7)),
+        ..TransportGraph::default()
+    };
+    graph.edges.push(gated_door(Some(foreign)));
+    encode(&tiny_collision(), &graph, &[]);
 }

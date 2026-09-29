@@ -33,12 +33,16 @@ maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **10** (v10 keeps the content-derived bank-stand table after
+the derived `TransportGraph`. Magic `b"274V"`, version byte **11** (v11 binds
+the selected quest family — its `quest_facts_sha256` and
+`quest_extractor_schema` — right after the version byte and carries typed
+per-edge quest-stage gates; it keeps the content-derived bank-stand table after
 the edges, per-edge `members_req`, a per-edge wilderness teleport cap, and
 the wilderness-level formula after the banks; raw `u32` flags are not on
 the pack wire, the optional `274F` sidecar holds them for collision paint;
 the paint-reach bitset is a separate `274R` sidecar bound to the pack
-identity). `decode` accepts version 10 only — v9 and older are `BadVersion`. The `274N` grid
+identity). `decode` accepts version 11 only — v10 and older are `BadVersion`
+and must be rebaked. The `274N` grid
 decoder (`decode_grid`) stays for old boolean-walk files.
 
 ### Build-time selection, reuse and overrides
@@ -125,7 +129,8 @@ otherwise the captured identity must be one of the checked-in
 Warm builds reuse unchanged artifacts: the staged `nav-build.json` stamp
 records the cache identity, the pack/flags/reach/canlight/navpois digests, the
 generator identity (the manual id plus the bytes of `bake.rs`/`collision.rs`/
-`pack.rs`/`paint.rs`/`router.rs`/`transport.rs`), the navpois generator
+`pack.rs`/`paint.rs`/`quest_gates.rs`/`router.rs`/`transport.rs` and the
+transport producers), the navpois generator
 identity (`map/services.rs`/`map/poi.rs`) and a fingerprint (size + mtime) of every canonical input
 (content tree, config jag, cache archives). Any change to those inputs, to the
 pack format identity (`nav::pack::FORMAT_ID`), to the generator, to the cache
@@ -178,6 +183,39 @@ no zones (a legacy 274N grid) gates nothing. Packed spell and
 jewellery teleports also carry a content-derived wilderness cap; `find`
 will not take them from a tile whose packed `wilderness_level` exceeds
 that cap. `find` also fail-closes on live `WorldState`.
+
+### Quest-stage gates (`nav::quest_gates`)
+
+An edge that a quest stage opens carries `quest_gates: Option<QuestGates>`:
+typed `api::selected::QuestGate`s — a completed quest, or a closed
+`StageWindow` over a selected progress signal (`[n,n]` for one stage,
+`[None,n]` for "up to n") — bound to the quest family the pack consumed
+(`TransportGraph::quest_family`). A stage is never faked as a minimum varp
+threshold. Only resolved progress evidence decides a gate:
+`WorldState::with_quest_evidence(QuestEvidence::new(provider, family,
+required_after))` attaches the caller's immutable `EvidenceProvider` snapshot,
+the family it was prepared from and its causal freshness floor. Snapshot varps
+and green quest rows never open a stage gate, and nav reads no journal.
+
+`WorldState::quest_gates(edge)` is three-valued. `True` (every value still
+possible lies inside every window) alone lets `find`/`find_with` take the edge.
+`False` (disjoint) and `Unknown` (no, stale or other-family evidence, or values
+straddling a bound) never do, however much the edge would save; the BankBudget
+diagnosis keeps them strict too. After a strict search fails,
+`router::find_unresolved_quest_gates` searches again crossing only `Unknown`
+gates and returns the ones its route needs, as values — the caller reads those
+journals, refreshes its provider and searches again. It returns `Ok(None)` when
+no evidence could help (for example a disproven window) and
+`Err(QuestFamilyMismatch)` for evidence from another quest family. The
+routing searches evaluate gates without allocating; only the failure diagnosis
+collects them.
+
+Runtime admission compares the pack with the selected manifest:
+`TransportGraph::admit_quest_family(&manifest_family)` refuses a pack baked
+against another family digest or extractor schema, or against none. The
+current bake consumes no quest family yet, so it binds none and emits no stage
+gates; exact and upper-bound stage crossings stay unavailable until the
+selected quest family feeds the bake.
 
 ## Router (`nav::router`)
 

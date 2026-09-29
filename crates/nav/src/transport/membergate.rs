@@ -158,6 +158,7 @@ pub(super) fn membergate_edges(
                     worn_req: vec![],
                     members_req: true,
                     wildy_cap: None,
+                    quest_gates: None,
                 });
             }
         }

@@ -1614,6 +1614,7 @@ mod bank_fetch_fixtures {
             worn_req: vec![knife_id],
             members_req: false,
             wildy_cap: None,
+            quest_gates: None,
         };
         let mut graph = TransportGraph::default();
         graph.at.entry(edge.at).or_default().push(0);
@@ -2239,6 +2240,7 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let aborted_route = Route {
         dest: destination,

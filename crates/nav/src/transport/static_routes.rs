@@ -306,6 +306,7 @@ pub(super) fn boat_edges(
                 worn_req: vec![],
                 members_req: false,
                 wildy_cap: None,
+                quest_gates: None,
             },
             audit,
         );
@@ -326,6 +327,7 @@ pub(super) fn boat_edges(
                 worn_req: vec![],
                 members_req: false,
                 wildy_cap: None,
+                quest_gates: None,
             });
         }
     }
@@ -421,6 +423,7 @@ pub(super) fn cart_edges(graph: &mut TransportGraph) {
             worn_req: vec![],
             members_req: false,
             wildy_cap: None,
+            quest_gates: None,
         });
     }
 }

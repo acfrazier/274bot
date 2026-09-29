@@ -138,6 +138,7 @@ pub(super) fn spirit_tree_edges(
                         worn_req: vec![],
                         members_req,
                         wildy_cap: None,
+                        quest_gates: None,
                     },
                     audit,
                 );

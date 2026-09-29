@@ -61,6 +61,7 @@ fn gated_edge() -> TransportEdge {
         worn_req: vec![1712],       // a charged glory
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     }
 }
 
@@ -189,6 +190,7 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         at: HashMap::from([(at, vec![0, 1])]),
         teleports: vec![],
         wilderness: crate::transport::WildernessRules::default(),
+        quest_family: None,
     };
     let from = WorldTile {
         x: 3267,
@@ -289,6 +291,7 @@ fn allows_requires_every_req_kind() {
         varps: HashMap::from([(150, 160)]),
         quests: HashSet::from(["Rune Mysteries".to_string()]),
         map_members: false,
+        quest_evidence: None,
     };
     assert!(s.allows(&e), "all facts present");
     // One missing fact at a time, each failing closed.
@@ -314,6 +317,40 @@ fn allows_requires_every_req_kind() {
     assert!(!s.allows(&e), "quest not done -> refused");
     s.quests.insert("Rune Mysteries".to_string());
     assert!(s.allows(&e), "all facts back -> passes");
+}
+
+/// A stage gate is decided by resolved evidence only: the snapshot's varp
+/// sitting on the window's value, or a green quest row, never opens it,
+/// and the carry/worn-relaxed gate keeps it strict. Proven evidence
+/// opens it alongside every snapshot requirement the edge still has.
+#[test]
+fn stage_gates_open_on_evidence_never_on_snapshot_facts() {
+    use crate::quest_gates::tests::{family, range, tbwt_evidence, window};
+    use crate::quest_gates::QuestGates;
+
+    let mut e = gated_edge();
+    e.quest_gates =
+        Some(QuestGates::new(family(1), [window("tbwt", "tbwt_main", Some(3), Some(3))]).unwrap());
+    let snapshot_only = WorldState {
+        inv: HashMap::from([(995, 10)]),
+        worn: HashSet::from([1712]),
+        stats: HashMap::from([(6, 25)]),
+        varps: HashMap::from([(150, 160), (320, 3)]),
+        quests: HashSet::from(["Rune Mysteries".to_string(), "Tribal Totem".to_string()]),
+        ..WorldState::empty()
+    };
+    assert_eq!(snapshot_only.quest_gates(&e), api::selected::Truth::Unknown);
+    assert!(!snapshot_only.allows(&e));
+    assert!(!snapshot_only.allows_without_carry_worn(&e));
+
+    let proven = snapshot_only
+        .clone()
+        .with_quest_evidence(tbwt_evidence(range(Some(3), Some(3))));
+    assert!(proven.allows(&e));
+    assert!(proven.allows_without_carry_worn(&e));
+    let mut unpaid = proven.clone();
+    unpaid.inv.clear();
+    assert!(!unpaid.allows(&e), "evidence waives no other requirement");
 }
 
 /// `worn_req` is any-of: a slash-weapon web hop lists every blade

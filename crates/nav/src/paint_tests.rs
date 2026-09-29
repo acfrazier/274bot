@@ -47,6 +47,7 @@ fn edge(kind: TransportKind, at: WorldTile, to: WorldTile, loc_id: i32) -> Trans
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     }
 }
 

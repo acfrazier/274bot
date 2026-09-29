@@ -202,6 +202,7 @@ pub(super) fn door_edges(
                         worn_req: vec![],
                         members_req: members_only.contains(id),
                         wildy_cap: None,
+                        quest_gates: None,
                     },
                     audit,
                 );

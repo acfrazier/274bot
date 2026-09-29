@@ -84,6 +84,7 @@ pub(super) fn rangingguild_door_edges(
             worn_req: vec![],
             members_req: false,
             wildy_cap: None,
+            quest_gates: None,
         });
     }
 }

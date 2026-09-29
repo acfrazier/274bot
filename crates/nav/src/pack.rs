@@ -12,7 +12,10 @@
 //! (see [`parse_door_config`]). Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 10, collision origin
+//! Pack format (274V): magic `b"274V"`, version `u8` 11, the quest-family
+//! binding (`u8` `0` = the bake consumed no quest family, `1` = bound, then
+//! the family artifact's 32-byte `quest_facts_sha256` and its
+//! `quest_extractor_schema` as a nonzero u16le), collision origin
 //! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`]
 //! packed walk surface — first the `u8` face byte per tile per level,
 //! four planes, level-major, each `width × height` (row-major z then x),
@@ -22,7 +25,12 @@
 //! loc_id, option, ticks, dir u8, open_loc_id)` i32le plus the five
 //! requirement vectors (count u32le, then `(id, value)` i32le pairs;
 //! quest names as length-prefixed UTF-8; `worn_req` as plain i32le ids;
-//! then `members_req` as a `u8` `0`/`1`). `dir` encodes [`DoorDir`] as `0=None,
+//! then `members_req` as a `u8` `0`/`1`, the wilderness cap i32le, and the
+//! quest-stage gates: count u32le, then per gate a `u8` tag — `0` a
+//! completed quest (length-prefixed quest key), `1` a stage window (quest
+//! key, signal key, then min and max each as a `u8` presence flag plus an
+//! i32le when present). Gates need the header's family binding; their keys
+//! are that family's. `dir` encodes [`DoorDir`] as `0=None,
 //! 1=N, 2=E, 3=S, 4=W`; `open_loc_id` is `-1` for `None`. The any-tile
 //! teleport layer (`TransportGraph::teleports`) round-trips inside
 //! the same edges array as kind-4 edges; [`decode`] splits them back out
@@ -43,11 +51,11 @@
 //! access (`u8` tag: 0 = [`BankAccess::Booth`] `op` i32le, 1 =
 //! [`BankAccess::Npc`] length-prefixed npc name + `op` i32le + an optional
 //! dialog choice as a presence `u8` then a length-prefixed string), see
-//! [`derive_banks`]. [`decode`] accepts version 10 only — a v9 stream (or
+//! [`derive_banks`]. [`decode`] accepts version 11 only — a v10 stream (or
 //! any earlier one, the v6 packed u16 words included) is
 //! [`PackError::BadVersion`];
 //! there is no flags→walk compat load. The 274N grid decoder stays for
-//! old `.navpack` files; `nav-pack` now writes v10.
+//! old `.navpack` files; `nav-pack` now writes v11.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -55,10 +63,12 @@ use std::fs;
 use std::io::{self, Cursor, Read};
 use std::path::Path;
 
+use api::selected::{FactKey, FactStrings, InclusiveRange, QuestGate, StageWindow};
 use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
 use crate::grid::{DoorEdge, StepGrid};
+use crate::quest_gates::{QuestFamilyId, QuestGates};
 use crate::tile::Tile;
 use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
 
@@ -102,21 +112,24 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// [`derive_banks`]) after the transport edges; the v4 wire also carries
 /// the spirit-tree (7) and reserved NPC (8) transport kinds on the same
 /// kind byte — no version bump. v9 appends a per-edge `members_req` `u8`
-/// (`0`/`1`) after `worn_req`. v10 — the current wire — appends a per-edge
+/// (`0`/`1`) after `worn_req`. v10 appends a per-edge
 /// wilderness teleport cap (`i32le`, `-1` = none) after `members_req` and
-/// the wilderness-level formula after the bank table. [`decode`] accepts
-/// version 10 only; 9, 8, 7, 6, 5, and older streams are rejected rather
-/// than compat-loaded.
+/// the wilderness-level formula after the bank table. v11 — the current
+/// wire — binds the selected quest family (digest + extractor schema) after
+/// the version byte and appends typed quest-stage gates (completed quests
+/// and closed stage windows) after `wildy_cap`, instead of fabricating a
+/// varp threshold for a stage. [`decode`] accepts version 11 only; 10, 9,
+/// 8, 7, 6, 5, and older streams are rejected rather than compat-loaded.
 /// Rebake with `nav-pack` over `$ENGINE_DIR/../content/maps` whenever the
 /// Server content changes (new loc/NPC placements, pack bumps).
-pub const VERSION: u8 = 10;
+pub const VERSION: u8 = 11;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Pack format identity as it appears in bundled navigation identities: the
-/// file magic followed by the format version (`274V10` for the current wire).
+/// file magic followed by the format version (`274V11` for the current wire).
 /// A format improvement changes this identity and therefore invalidates
 /// staged build artifacts.
-pub const FORMAT_ID: &str = "274V10";
+pub const FORMAT_ID: &str = "274V11";
 /// Bytes per door entry.
 const DOOR_BYTES: usize = 40;
 /// Largest grid side a pack may decode (16384×16384 tiles ≈ 256 MB of walk
@@ -143,7 +156,9 @@ impl fmt::Display for PackError {
         match self {
             PackError::Io(e) => write!(f, "io error: {e}"),
             PackError::BadMagic => write!(f, "bad pack magic (expected b\"274N\" or b\"274V\")"),
-            PackError::BadVersion(v) => write!(f, "unsupported pack version {v}"),
+            PackError::BadVersion(v) => {
+                write!(f, "unsupported pack version {v}; rebake it with nav-pack")
+            }
             PackError::Truncated => write!(f, "pack file truncated"),
             PackError::BadLength(m) => write!(f, "inconsistent pack: {m}"),
         }
@@ -250,19 +265,24 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
 }
 
 /// Serialize the whole-world collision + transport graph + bank stand
-/// table to the v8 pack byte format. The graph's `at` index is not
+/// table to the v11 pack byte format. The graph's `at` index is not
 /// stored; [`decode`]
 /// rebuilds it from the edges. Teleports (kind-4 edges) are written after
-/// the ordinary edges in the same array. The v8 wire (version byte 8)
-/// carries the [`WorldCollision`] as the `u8` face bytes per tile per
+/// the ordinary edges in the same array. The wire carries the
+/// [`WorldCollision`] as the `u8` face bytes per tile per
 /// level (four level-major planes) plus the packed `SQ_BLOCKED`
-/// bit-plane, the per-edge `worn_req` id list, and the trailing bank
-/// stand table (see [`BankStand`]); the raw flags are
+/// bit-plane, the per-edge requirement lists and quest-stage gates, and
+/// the trailing bank stand table (see [`BankStand`]); the raw flags are
 /// not resident and not on the wire (see the flags sidecar).
+///
+/// Panics when an edge's quest gates name a family other than
+/// [`TransportGraph::quest_family`]: one pack binds one quest family, and
+/// writing such an edge would silently rebind its keys to another family.
 pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankStand]) -> Vec<u8> {
     let edge_count = graph.edges.len() + graph.teleports.len();
     let mut out = Vec::with_capacity(
         4 + 1
+            + 35
             + 12
             + 8
             + collision.walk.len()
@@ -274,6 +294,7 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
     );
     out.extend_from_slice(MAGIC);
     out.push(VERSION);
+    write_quest_family(&mut out, graph.quest_family.as_ref());
     for v in [
         collision.origin.x,
         collision.origin.z,
@@ -305,6 +326,16 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
         out.push(if e.members_req { 1 } else { 0 });
         let cap = e.wildy_cap.unwrap_or(-1);
         out.extend_from_slice(&cap.to_le_bytes());
+        if let Some(gates) = &e.quest_gates {
+            assert_eq!(
+                graph.quest_family.as_ref(),
+                Some(gates.family()),
+                "{:?} loc {} carries quest gates of another quest family than the pack's",
+                e.kind,
+                e.loc_id
+            );
+        }
+        write_quest_gates(&mut out, e.quest_gates.as_ref());
     }
     write_bank_stands(&mut out, banks);
     write_wilderness_rules(&mut out, &graph.wilderness);
@@ -314,12 +345,14 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
 /// Deserialize the whole-world pack, validating magic, version, and
 /// lengths. The `at` index is rebuilt from the decoded edges; kind-4
 /// (teleport) edges split back into [`TransportGraph::teleports`] and are
-/// excluded from it. Version 10 is the only accepted wire: the collision
+/// excluded from it. Version 11 is the only accepted wire: the collision
 /// decodes as the `u8` face bytes plus the packed `SQ_BLOCKED`
 /// bit-plane with no resident flags (`flags` is
 /// `None` until the sidecar is loaded), and the trailing bank stand table
-/// (see [`BankStand`]) decodes after the edges; any other version — 9, 8, 7, 6,
-/// 5, or older — is rejected rather than mis-read or compat-loaded.
+/// (see [`BankStand`]) decodes after the edges; any other version — 10, 9,
+/// 8, 7, 6, 5, or older — is rejected rather than mis-read or
+/// compat-loaded. Quest-stage gates bind to the header's quest family; a
+/// gate without one, or a malformed gate, is rejected.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
     let mut r = Cursor::new(bytes);
     let mut magic = [0u8; 4];
@@ -333,6 +366,10 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
     if version[0] != VERSION {
         return Err(PackError::BadVersion(version[0]));
     }
+    let quest_family = read_quest_family(&mut r)?;
+    // Gate keys share one allocation per distinct string; the table itself
+    // is dropped with this decode.
+    let mut keys = FactStrings::default();
     let origin = WorldTile {
         x: read_i32(&mut r)?,
         z: read_i32(&mut r)?,
@@ -365,6 +402,7 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
     let remaining = bytes.len().saturating_sub(r.position() as usize);
     let mut graph = TransportGraph {
         edges: Vec::with_capacity(n_edges.min(remaining / 41)),
+        quest_family,
         ..Default::default()
     };
     for _ in 0..n_edges {
@@ -421,6 +459,7 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
                     Some(cap)
                 }
             },
+            quest_gates: read_quest_gates(&mut r, quest_family.as_ref(), &mut keys)?,
         };
         if edge.kind == TransportKind::Teleport {
             graph.teleports.push(edge);
@@ -571,6 +610,148 @@ fn read_req_ids(r: &mut Cursor<&[u8]>) -> Result<Vec<i32>, PackError> {
     Ok(out)
 }
 
+/// The v11 header's quest-family binding: `0`, or `1` + digest + schema.
+fn write_quest_family(out: &mut Vec<u8>, family: Option<&QuestFamilyId>) {
+    match family {
+        None => out.push(0),
+        Some(family) => {
+            out.push(1);
+            out.extend_from_slice(&family.quest_facts_sha256);
+            out.extend_from_slice(&family.quest_extractor_schema.to_le_bytes());
+        }
+    }
+}
+
+/// Read the header's quest-family binding; extractor schema 0 is never
+/// emitted by the generator, so it is malformed rather than "no schema".
+fn read_quest_family(r: &mut Cursor<&[u8]>) -> Result<Option<QuestFamilyId>, PackError> {
+    match read_u8(r)? {
+        0 => Ok(None),
+        1 => {
+            let mut quest_facts_sha256 = [0u8; 32];
+            r.read_exact(&mut quest_facts_sha256)
+                .map_err(|_| PackError::Truncated)?;
+            let quest_extractor_schema = read_u16(r)?;
+            if quest_extractor_schema == 0 {
+                return Err(PackError::BadLength(
+                    "quest family extractor schema is 0".into(),
+                ));
+            }
+            Ok(Some(QuestFamilyId {
+                quest_facts_sha256,
+                quest_extractor_schema,
+            }))
+        }
+        other => Err(PackError::BadLength(format!(
+            "quest family binding tag {other} is not 0 or 1"
+        ))),
+    }
+}
+
+/// An edge's quest-stage gates, count-prefixed (`0` = ungated).
+fn write_quest_gates(out: &mut Vec<u8>, gates: Option<&QuestGates>) {
+    let gates = gates.map_or(&[][..], QuestGates::gates);
+    out.extend_from_slice(&(gates.len() as u32).to_le_bytes());
+    for gate in gates {
+        match gate {
+            QuestGate::Complete(quest) => {
+                out.push(0);
+                write_key(out, quest);
+            }
+            QuestGate::Window(window) => {
+                out.push(1);
+                write_key(out, &window.quest);
+                write_key(out, &window.signal);
+                write_bound(out, window.values.min);
+                write_bound(out, window.values.max);
+            }
+        }
+    }
+}
+
+/// Read an edge's quest-stage gates, bound to the header's `family`. Gates
+/// on a pack that binds no family, or that fail [`QuestGates::new`]'s
+/// validation (an empty key, an empty or unbounded window), are malformed.
+fn read_quest_gates(
+    r: &mut Cursor<&[u8]>,
+    family: Option<&QuestFamilyId>,
+    keys: &mut FactStrings,
+) -> Result<Option<QuestGates>, PackError> {
+    let n = read_u32(r)? as usize;
+    if n == 0 {
+        return Ok(None);
+    }
+    let Some(family) = family else {
+        return Err(PackError::BadLength(
+            "quest gates without a quest-family binding".into(),
+        ));
+    };
+    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let mut gates = Vec::with_capacity(n.min(remaining / 6));
+    for _ in 0..n {
+        gates.push(match read_u8(r)? {
+            0 => QuestGate::Complete(read_key(r, keys)?),
+            1 => QuestGate::Window(StageWindow {
+                quest: read_key(r, keys)?,
+                signal: read_key(r, keys)?,
+                values: InclusiveRange {
+                    min: read_bound(r)?,
+                    max: read_bound(r)?,
+                },
+            }),
+            other => {
+                return Err(PackError::BadLength(format!(
+                    "quest gate tag {other} is not 0 or 1"
+                )));
+            }
+        });
+    }
+    QuestGates::new(*family, gates)
+        .map(Some)
+        .map_err(|error| PackError::BadLength(error.to_string()))
+}
+
+/// A fact key as a length-prefixed UTF-8 string.
+fn write_key(out: &mut Vec<u8>, key: &FactKey) {
+    out.extend_from_slice(&(key.0.len() as u32).to_le_bytes());
+    out.extend_from_slice(key.0.as_bytes());
+}
+
+/// Read a length-prefixed UTF-8 fact key through the decode's interner.
+fn read_key(r: &mut Cursor<&[u8]>, keys: &mut FactStrings) -> Result<FactKey, PackError> {
+    let len = read_u32(r)? as usize;
+    let start = r.position() as usize;
+    let text = r
+        .get_ref()
+        .get(start..start.saturating_add(len))
+        .ok_or(PackError::Truncated)?;
+    let text = std::str::from_utf8(text)
+        .map_err(|_| PackError::BadLength("quest gate key is not UTF-8".into()))?;
+    r.set_position((start + len) as u64);
+    Ok(FactKey(keys.intern(text)))
+}
+
+/// One stage-window bound: `0` unbounded, `1` + i32le.
+fn write_bound(out: &mut Vec<u8>, bound: Option<i32>) {
+    match bound {
+        None => out.push(0),
+        Some(value) => {
+            out.push(1);
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+}
+
+fn read_bound(r: &mut Cursor<&[u8]>) -> Result<Option<i32>, PackError> {
+    match read_u8(r)? {
+        0 => Ok(None),
+        1 => Ok(Some(read_i32(r)?)),
+        other => Err(PackError::BadLength(format!(
+            "stage window bound flag {other} is not 0 or 1"
+        ))),
+    }
+}
+
 fn write_wilderness_rules(out: &mut Vec<u8>, rules: &crate::transport::WildernessRules) {
     out.extend_from_slice(&(rules.zones.len() as u32).to_le_bytes());
     for z in &rules.zones {
@@ -621,6 +802,12 @@ fn read_u8(r: &mut Cursor<&[u8]>) -> Result<u8, PackError> {
     let mut b = [0u8; 1];
     r.read_exact(&mut b).map_err(|_| PackError::Truncated)?;
     Ok(b[0])
+}
+
+fn read_u16(r: &mut Cursor<&[u8]>) -> Result<u16, PackError> {
+    let mut b = [0u8; 2];
+    r.read_exact(&mut b).map_err(|_| PackError::Truncated)?;
+    Ok(u16::from_le_bytes(b))
 }
 
 fn read_u32(r: &mut Cursor<&[u8]>) -> Result<u32, PackError> {

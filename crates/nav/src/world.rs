@@ -193,6 +193,7 @@ impl NavWorld {
                 worn_req: vec![],
                 members_req: false,
                 wildy_cap: None,
+                quest_gates: None,
             });
             graph.at.entry(graph.edges[i].at).or_default().push(i);
         }

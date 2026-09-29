@@ -5107,6 +5107,7 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let mut arm = WalkArm {
         route: Some(Route {
@@ -10324,6 +10325,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     });
     let (walk, blocked) = nav::collision::pack_walk(&flags);
     let world = Some(Arc::new(NavWorld::from_parts(
@@ -11017,6 +11019,7 @@ fn knife_nav_world_with_target(knife_id: i32, solid_target: bool) -> NavWorld {
         worn_req: vec![knife_id],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
@@ -18762,6 +18765,7 @@ fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
@@ -19188,6 +19192,7 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
         worn_req: vec![2],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let mut graph = TransportGraph::default();
     graph.at.entry(door.at).or_default().push(0);
@@ -19289,6 +19294,7 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
                 worn_req: vec![worn],
                 members_req: false,
                 wildy_cap: None,
+                quest_gates: None,
             });
         }
         graph
@@ -19398,6 +19404,7 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
         worn_req: vec![3],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     });
     let booth = nav::pack::BankStand {
         name: "Bank booth".into(),
@@ -19570,6 +19577,7 @@ fn glory_edge() -> TransportEdge {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     }
 }
 
@@ -19810,6 +19818,7 @@ fn toll_nav_world() -> NavWorld {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);

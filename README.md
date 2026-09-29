@@ -144,7 +144,7 @@ table and the build-time identity rules: [docs/api/nav.md](docs/api/nav.md).
 cargo run -p nav --bin nav-pack
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **10**). **Rebake existing v9 packs after updating:** v10 adds per-edge wilderness teleport caps and the packed wilderness-level formula; `decode` rejects v9 as `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
+Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **11**). **Rebake existing v10 packs after updating:** v11 binds the selected quest family and carries typed quest-stage gates; `decode` rejects v10 as `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
 
 ## Live tests and suite runner
 

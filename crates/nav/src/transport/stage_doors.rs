@@ -1438,5 +1438,6 @@ fn gated_edge(
         worn_req: worn.into_iter().map(|(obj, _)| obj).collect(),
         members_req: needs.members,
         wildy_cap: None,
+        quest_gates: None,
     })
 }

@@ -21,17 +21,22 @@
 //! 274N grid) gates nothing. Every transport edge — walked or teleported
 //! — is additionally gated by the search's [`WorldState`]: an edge whose
 //! requirements the state cannot prove is never relaxed (missing facts
-//! fail closed).
+//! fail closed). A quest-stage gate the state's evidence leaves `Unknown`
+//! is such a requirement; [`find_unresolved_quest_gates`] names the gates
+//! fresh evidence would have to decide, it never crosses them for a route.
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::Instant;
 
+use api::selected::{QuestGate, Truth};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
+use crate::quest_gates::QuestFamilyMismatch;
 use crate::transport::{TransportEdge, TransportGraph};
 
 use crate::world_state::WorldState;
@@ -229,9 +234,11 @@ pub fn find(
 /// [`FindOptions::allow_wilderness`], and [`FindOptions::allow_bank_fetch`])
 /// and the gating [`WorldState`]: an edge is relaxed only when
 /// every `skill_req` / `item_req` / `quest_req` / `varp_req` / `worn_req`
-/// is satisfied by the state. Missing facts fail closed — the flag alone
+/// is satisfied by the state and every quest-stage gate is `True` under its
+/// evidence. Missing facts fail closed — the flag alone
 /// never fetches ([`find_missing_item_reqs`] is the session's diagnosis
-/// arm, and the session itself lives in [`crate::bank_fetch`]).
+/// arm, and the session itself lives in [`crate::bank_fetch`]); an
+/// `Unknown` stage gate is named by [`find_unresolved_quest_gates`].
 pub fn find_with(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -506,7 +513,7 @@ pub fn find_first_with_fallback_avoid(
         fallback,
         opts,
         state,
-        false,
+        Relax::Strict,
         avoid,
         FIRST_TARGET_BUDGET,
         NODE_BUDGET,
@@ -514,8 +521,8 @@ pub fn find_first_with_fallback_avoid(
 }
 
 /// The proof-carrying goal search behind [`find_first_with_fallback`]
-/// (strict gates) and the single-target BankBudget diagnosis
-/// (`relax_carry_worn`). The backward closures honor the same gates as the
+/// (strict gates) and the single-target diagnoses ([`Relax`]). The
+/// backward closures honor the same gates as the
 /// forward search, so a strict proof never hides a relaxed route. Each goal
 /// set's `budget` holds until its own proof shows it reachable, then
 /// `reachable_budget` applies ([`FirstGoals`]).
@@ -528,7 +535,7 @@ fn first_search(
     fallback: &[WorldTile],
     opts: FindOptions,
     state: &WorldState,
-    relax_carry_worn: bool,
+    relax: Relax,
     avoid: &[AvoidRect],
     budget: usize,
     reachable_budget: usize,
@@ -564,7 +571,7 @@ fn first_search(
         from,
         use_teleports: opts.allow_teleports,
         allow_wilderness: opts.allow_wilderness,
-        relax_carry_worn,
+        relax,
     };
     let mut goals = Goals::First(Box::new(FirstGoals::new(
         gates,
@@ -584,7 +591,7 @@ fn first_search(
         opts.allow_wilderness,
         state,
         opts.essence.as_ref(),
-        relax_carry_worn,
+        relax,
         avoid,
         &mut goals,
         None,
@@ -764,7 +771,7 @@ pub fn find_many_with_avoid_bounded_until<'a>(
             opts.allow_wilderness,
             state,
             opts.essence.as_ref(),
-            false,
+            Relax::Strict,
             avoid,
             &mut goals,
             deadline,
@@ -876,7 +883,7 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
         &[],
         opts,
         state,
-        true,
+        Relax::CarryWorn,
         avoid,
         budget,
         budget,
@@ -915,6 +922,79 @@ pub fn missing_item_reqs(route: &Route, state: &WorldState) -> Vec<MissingReq> {
     });
     missing.dedup();
     missing
+}
+
+/// Diagnose a strict search that could not route through a quest-stage
+/// gate: search again crossing every gate the state's evidence leaves
+/// `Unknown` (a `False` gate still closes, every other requirement stays
+/// strict), and name those gates on the cheapest such route. `Ok(Some)` is
+/// what the caller's action owner must resolve — read the named journals,
+/// refresh its provider, search again; the gates come back as values, never
+/// as a diagnostic string. `Ok(None)`: no evidence can open a route (the
+/// relaxed search fails too, or its route needs no undecided gate). `Err`:
+/// the state's evidence was prepared from another quest family than the
+/// pack's gates, so no evidence it supplies can decide them; the caller
+/// refuses rather than re-reading journals. A search that routes never
+/// crosses an `Unknown` gate. Runs only after a failure: the strict searches
+/// never collect anything.
+pub fn find_unresolved_quest_gates(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+) -> Result<Option<Arc<[QuestGate]>>, QuestFamilyMismatch> {
+    if let (Some(evidence), Some(pack)) = (&state.quest_evidence, graph.quest_family) {
+        if *evidence.family() != pack {
+            return Err(QuestFamilyMismatch {
+                pack: Some(pack),
+                expected: *evidence.family(),
+            });
+        }
+    }
+    let Ok(route) = first_search(
+        collision,
+        graph,
+        from,
+        targets,
+        &[],
+        opts,
+        state,
+        Relax::UnknownQuest,
+        avoid,
+        NODE_BUDGET,
+        NODE_BUDGET,
+    )
+    .into_route() else {
+        return Ok(None);
+    };
+    let mut unresolved: Vec<QuestGate> = Vec::new();
+    for leg in &route.legs {
+        let Leg::Transport { edge } = leg else {
+            continue;
+        };
+        let Some(gates) = &edge.quest_gates else {
+            continue;
+        };
+        let evidence = match &state.quest_evidence {
+            Some(evidence) if evidence.family() != gates.family() => {
+                return Err(QuestFamilyMismatch {
+                    pack: Some(*gates.family()),
+                    expected: *evidence.family(),
+                });
+            }
+            evidence => evidence.as_ref(),
+        };
+        for gate in gates.gates() {
+            let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
+            if truth == Truth::Unknown && !unresolved.contains(gate) {
+                unresolved.push(gate.clone());
+            }
+        }
+    }
+    Ok((!unresolved.is_empty()).then(|| unresolved.into()))
 }
 
 /// [`find`] with an explicit per-search cost model (the run-vs-walk rate).
@@ -1354,13 +1434,27 @@ impl SearchOutcome {
     }
 }
 
-/// Whether `state` proves `edge`'s requirements; the BankBudget diagnosis
-/// (`relax_carry_worn`) ignores only its `item_req`/`worn_req` gates.
-fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax_carry_worn: bool) -> bool {
-    if relax_carry_worn {
-        state.allows_without_carry_worn(edge)
-    } else {
-        state.allows(edge)
+/// The gates a diagnosis search may cross; every routing search is strict.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Relax {
+    /// Every requirement holds, quest-stage gates only when `True`.
+    Strict,
+    /// The BankBudget diagnosis ([`find_missing_item_reqs`]): only the
+    /// `item_req`/`worn_req` gates are ignored.
+    CarryWorn,
+    /// The quest-evidence diagnosis ([`find_unresolved_quest_gates`]): a
+    /// stage gate the evidence leaves `Unknown` is crossed; `False` closes.
+    UnknownQuest,
+}
+
+/// Whether `state` proves `edge`'s requirements under `relax`.
+fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool {
+    match relax {
+        Relax::Strict => state.allows(edge),
+        Relax::CarryWorn => state.allows_without_carry_worn(edge),
+        Relax::UnknownQuest => {
+            state.snapshot_allows(edge) && state.quest_gates(edge) != Truth::False
+        }
     }
 }
 
@@ -1382,7 +1476,7 @@ struct ProofGates<'a> {
     from: WorldTile,
     use_teleports: bool,
     allow_wilderness: bool,
-    relax_carry_worn: bool,
+    relax: Relax,
 }
 
 /// One goal set's backward proof: not yet started, then live closure
@@ -1462,7 +1556,7 @@ struct ReverseClosure<'a> {
     from: WorldTile,
     use_teleports: bool,
     allow_wilderness: bool,
-    relax_carry_worn: bool,
+    relax: Relax,
     /// Landings of the gated teleports usable from `from` itself.
     landings: HashSet<WorldTile>,
     seen: HashSet<WorldTile>,
@@ -1479,7 +1573,7 @@ impl<'a> ReverseClosure<'a> {
             from,
             use_teleports,
             allow_wilderness,
-            relax_carry_worn,
+            relax,
         } = gates;
         let landings = if use_teleports {
             let level = graph.wilderness.level(from);
@@ -1487,7 +1581,7 @@ impl<'a> ReverseClosure<'a> {
                 .teleports
                 .iter()
                 .filter(|edge| {
-                    edge_allowed(state, edge, relax_carry_worn)
+                    edge_allowed(state, edge, relax)
                         && TransportGraph::teleport_legal_at_level(level, edge)
                         && wildy_step_ok(graph, from, edge.to, allow_wilderness)
                 })
@@ -1504,7 +1598,7 @@ impl<'a> ReverseClosure<'a> {
             from,
             use_teleports,
             allow_wilderness,
-            relax_carry_worn,
+            relax,
             landings,
             seen: HashSet::new(),
             queue: VecDeque::new(),
@@ -1565,15 +1659,16 @@ impl<'a> ReverseClosure<'a> {
         let graph = self.graph;
         let state = self.state;
         if self.use_teleports
-            && graph.teleports.iter().any(|edge| {
-                self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax_carry_worn)
-            })
+            && graph
+                .teleports
+                .iter()
+                .any(|edge| self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax))
         {
             return Some(ReverseProof::Abandoned);
         }
         let admitted = self.seen.len();
         for edge in &graph.edges {
-            if self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax_carry_worn) {
+            if self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax) {
                 if let Some(proof) = self.admit_takeoffs(edge.at, edge.to) {
                     return Some(proof);
                 }
@@ -1656,7 +1751,7 @@ fn find_bounded_impl(
         allow_wilderness,
         state,
         essence,
-        false,
+        Relax::Strict,
         avoid,
         &mut goals,
         None,
@@ -1678,12 +1773,13 @@ fn find_bounded_impl(
     }
 }
 
-/// The Dijkstra kernel shared by every search shape. `relax_carry_worn` is
-/// the BankBudget diagnosis arm only: it drops the `item_req`/`worn_req`
-/// gates so the session can tell a missing-item failure from a
-/// skill/quest/varp gate. `budget` caps every search; within it, `goals`
-/// decide at each settled node whether the search goes on (a first-goal
-/// search's sets run their own budgets and backward proofs).
+/// The Dijkstra kernel shared by every search shape. `relax` is
+/// [`Relax::Strict`] for every routing search; the diagnosis arms relax
+/// only their own gates so a caller can tell what is missing from a
+/// skill/quest/varp gate or a hole in the graph. `budget` caps every
+/// search; within it, `goals` decide at each settled node whether the
+/// search goes on (a first-goal search's sets run their own budgets and
+/// backward proofs).
 #[allow(clippy::too_many_arguments)]
 fn search_kernel(
     collision: &WorldCollision,
@@ -1695,7 +1791,7 @@ fn search_kernel(
     allow_wilderness: bool,
     state: &WorldState,
     essence: Option<&EssenceSession>,
-    relax_carry_worn: bool,
+    relax: Relax,
     avoid: &[AvoidRect],
     goals: &mut Goals<'_>,
     deadline: Option<Instant>,
@@ -1809,7 +1905,7 @@ fn search_kernel(
                     };
                     for &ei in idxs {
                         let edge = &graph.edges[ei];
-                        if !edge_allowed(state, edge, relax_carry_worn) {
+                        if !edge_allowed(state, edge, relax) {
                             continue;
                         }
                         if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
@@ -1877,7 +1973,7 @@ fn search_kernel(
         if use_teleports {
             let wildy_level = graph.wilderness.level(cur);
             for (ti, edge) in graph.teleports.iter().enumerate() {
-                if !edge_allowed(state, edge, relax_carry_worn) {
+                if !edge_allowed(state, edge, relax) {
                     continue;
                 }
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {

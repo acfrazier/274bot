@@ -42,15 +42,17 @@ pub use crate::map::services::{pois_generator_identity, POIS_GENERATOR_SOURCES};
 /// Baker sources whose bytes join the generator identity: a generated
 /// artifact is stale after any change to one of them. Paths are relative to
 /// the `nav` crate root; keep this list to the code that decides artifact
-/// bytes. Pack/flags come from bake/collision/pack/transport; reach bits also
+/// bytes. Pack/flags come from bake/collision/pack/transport (the pack's
+/// quest-gate order and validation from `quest_gates.rs`); reach bits also
 /// depend on `paint.rs` (`bake_reach`) and `router.rs` (`step_ok`). Traveller
 /// and grid-search changes do not decide those bytes.
-pub const GENERATOR_SOURCES: [&str; 39] = [
+pub const GENERATOR_SOURCES: [&str; 40] = [
     "src/bake.rs",
     "src/canlight.rs",
     "src/collision.rs",
     "src/pack.rs",
     "src/paint.rs",
+    "src/quest_gates.rs",
     "src/router.rs",
     "src/transport.rs",
     "src/transport/condparse.rs",
