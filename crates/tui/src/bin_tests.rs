@@ -894,7 +894,7 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
         let template = SharedClientTemplate::load(profile).unwrap();
         let mut session =
             TuiSession::new_bound(Arc::clone(&template), host_play::InstancePermit::SkipLock);
-        let vault = Vault::create(&home.root.join(vault), "bot").unwrap();
+        let vault = Vault::create(&home.root.join(vault), "test-passphrase-01").unwrap();
         session.start_play(vault).unwrap();
         (session, template)
     };
