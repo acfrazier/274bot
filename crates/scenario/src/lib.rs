@@ -48,7 +48,9 @@ pub use fixture::{
 pub use proof::Proof;
 pub use runner::{RunnerStatus, ScenarioRunner};
 pub(crate) use scenarios::script_live_seed_steps;
-pub use scenarios::{nav_full_scenario, thiever_sustained_scenario};
+pub use scenarios::{
+    duel_arena_completed_duel_step, nav_full_scenario, thiever_sustained_scenario,
+};
 
 /// Verbose scenario/closer dumps (`BOT_DEBUG=1`). Cached once per process.
 pub fn debug_enabled() -> bool {

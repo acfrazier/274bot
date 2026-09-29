@@ -6,6 +6,7 @@
 //! outcome per slot: whether it ever reached `ingame && scene_state == 2`,
 //! and its last observed session, scenario and script state.
 
+use crate::memory::Workload;
 use crate::SlotStatus;
 use scenario::RunnerStatus;
 use serde_json::{json, Value};
@@ -135,10 +136,36 @@ fn client_json(status: &SlotStatus, now: Instant) -> Value {
     })
 }
 
+/// Whether a slot currently satisfies the run's own qualification definition:
+/// ready alone for an unseeded idle fleet, seed complete with no running
+/// script for a seeded idle one, and ready, proof passed and script running for
+/// an active or lifecycle one. Readiness plus a non-failed seed is not enough.
+pub(crate) fn slot_qualified(
+    workload: Workload,
+    has_card: bool,
+    ready_now: bool,
+    seed: Option<(&RunnerStatus, bool)>,
+    script_running: bool,
+) -> bool {
+    let seeded =
+        seed.is_some_and(|(status, on_start)| matches!(status, RunnerStatus::Passed) || on_start);
+    let proved = seed.is_some_and(|(status, _)| matches!(status, RunnerStatus::Passed));
+    ready_now
+        && if workload == Workload::SeededIdle {
+            seeded && !script_running
+        } else if !has_card {
+            true
+        } else {
+            seeded && proved && script_running
+        }
+}
+
 /// One slot's outcome. The `state`, `error`, `runtime` and `client.{ingame,
 /// scene_state,x,z,level}` keys are the observation-boundary record's
-/// original contract; the rest says whether the slot ever qualified and
-/// where it stopped.
+/// original contract; the rest says whether the slot ever qualified, whether
+/// it satisfies the qualification definition now (`qualified_now`: the
+/// authority for a stopped-at summary, since `reached_ingame_scene2` is
+/// history and `state` alone says nothing about the proof) and where it stopped.
 pub(crate) fn slot_outcome(
     name: &str,
     first_ready_s: Option<f64>,
@@ -146,12 +173,14 @@ pub(crate) fn slot_outcome(
     now: Instant,
     seed: Option<SeedView<'_>>,
     script: ScriptView,
+    qualified_now: bool,
 ) -> Value {
     json!({
         "name": name,
         "reached_ingame_scene2": first_ready_s.is_some(),
         "first_ingame_scene2_s": first_ready_s,
         "ingame_scene2_now": status.is_some_and(|s| s.ingame && s.scene_state == 2),
+        "qualified_now": qualified_now,
         "state": script.state,
         "error": script.error,
         "runtime": script.runtime,
@@ -243,6 +272,7 @@ mod tests {
             now,
             None,
             script("Idle", None),
+            false,
         );
         assert_eq!(stuck["reached_ingame_scene2"], false);
         assert!(stuck["first_ingame_scene2_s"].is_null());
@@ -266,6 +296,7 @@ mod tests {
                 last_step: Some(2),
             }),
             script("Running", Some("food option blank")),
+            false,
         );
         assert_eq!(mid["reached_ingame_scene2"], true);
         assert_eq!(mid["first_ingame_scene2_s"], 12.5);
@@ -311,5 +342,61 @@ mod tests {
         let never_ran = failed_view(None).to_json();
         assert!(never_ran["last_step"].is_null());
         assert!(never_ran["last_step_name"].is_null());
+    }
+
+    fn qualified(
+        workload: Workload,
+        has_card: bool,
+        ready: bool,
+        seed: Option<(RunnerStatus, bool)>,
+        running: bool,
+    ) -> bool {
+        slot_qualified(
+            workload,
+            has_card,
+            ready,
+            seed.as_ref().map(|(status, on_start)| (status, *on_start)),
+            running,
+        )
+    }
+
+    /// A slot is qualified only while it satisfies the run's own definition:
+    /// an active slot needs a passed proof and a running script, so a ready,
+    /// proven slot whose script has stopped is history, not qualification.
+    #[test]
+    fn an_active_slot_is_qualified_only_while_its_script_runs() {
+        let passed = || Some((RunnerStatus::Passed, false));
+        assert!(qualified(Workload::Active, true, true, passed(), true));
+        assert!(!qualified(Workload::Active, true, true, passed(), false));
+        assert!(!qualified(Workload::Active, true, false, passed(), true));
+        let running = Some((RunnerStatus::Running { step: 1, total: 3 }, false));
+        assert!(!qualified(Workload::Active, true, true, running, true));
+        let waiting_for_script = Some((RunnerStatus::Seeding, true));
+        assert!(
+            !qualified(Workload::Active, true, true, waiting_for_script, true),
+            "waiting at Start is seeded, not proved"
+        );
+        assert!(!qualified(Workload::Lifecycle, true, true, passed(), false));
+        assert!(qualified(Workload::Lifecycle, true, true, passed(), true));
+    }
+
+    /// Idle fleets qualify on readiness alone; a seeded idle slot needs its
+    /// seed complete (passed, or parked at Start) and its script not running.
+    #[test]
+    fn idle_slots_qualify_without_a_script() {
+        assert!(qualified(Workload::Idle, false, true, None, false));
+        assert!(!qualified(Workload::Idle, false, false, None, false));
+        let parked = Some((RunnerStatus::Seeding, true));
+        assert!(qualified(Workload::SeededIdle, false, true, parked, false));
+        let unfinished = Some((RunnerStatus::Seeding, false));
+        assert!(!qualified(
+            Workload::SeededIdle,
+            false,
+            true,
+            unfinished,
+            false
+        ));
+        let passed = Some((RunnerStatus::Passed, false));
+        assert!(!qualified(Workload::SeededIdle, false, true, passed, true));
     }
 }

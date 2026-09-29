@@ -142,7 +142,7 @@ load another copy.
 |---|---|
 | `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128; accepting a count is not a capacity guarantee. |
 | `BOT_MEMORY_WORKLOAD` | `idle`, `seeded-idle`, `active` or `lifecycle`; default `idle`. |
-| `BOT_MEMORY_SCENARIO` | Catalog scenario for `active`/`lifecycle`; default `thiever`. Representative runner cells also use `moss_giant_bank_start`. |
+| `BOT_MEMORY_SCENARIO` | Catalog scenario for `active`/`lifecycle`; default `thiever`. Representative runner cells also use `moss_giant_bank_start` and `duel_arena`. |
 | `BOT_MEMORY_WARMUP_S` / `BOT_MEMORY_OBSERVE_S` | Positive seconds, defaults 120 / 600. |
 | `BOT_MEMORY_TEARDOWN_S` | Positive teardown seconds after scripts Stop; default 60. |
 | `BOT_MEMORY_SUSTAIN=1` | Active/lifecycle Thiever only: four food initially, stock in the bank, target 22 food and restocking at three. Other scenarios reject this setting. |
@@ -164,20 +164,16 @@ milestone separately from `qualification_complete_s`. Qualification additionally
 requires seed/proof completion and running scripts for active workloads.
 Multi-slot `moss_giant_bank_start` replaces only its contended post-return
 fresh-XP checkpoint with fail-closed local-player named-NPC engagement; the
-scenario's final Strength-XP-since-Start proof remains mandatory. The field
-holds four Moss giants and each catalog card skips a giant another slot targets,
-so one giant serves one slot at a time and the rest queue: ten slots qualified
-there at kickoff, but fifty qualified only 25 to 30 in thirty minutes. The
-content has 42 Moss giants in the whole world (never more than five within the
-MossGiant card's ten-tile field radius), so no split of a large fleet across spots
-gives every slot a giant. A fleet above ten slots therefore stocks its own: after
-a slot returns to the safespot it sends `::npcadd mossgiant` twice (an admin
-command, like the fixture's `::give` and `::setstat`; each giant despawns after
-500 ticks and does not respawn), before the engagement watch. N=1 and N=10 are
-unchanged. The giants and their drops outlive the run (500-tick despawn, 200-tick
-drops), so leave five minutes before another Moss cell on the same engine: a slot
-that starts among the leftover loot spends its proof window looting and can miss
-the post-return Strength-XP proof.
+scenario's final Strength-XP-since-Start proof remains mandatory.
+
+`duel_arena` is the pair-script cell: every slot runs the frozen Duel Arena
+Combat Trainer, so N=10 is five duels and N=50 is twenty-five, and an odd N is
+refused at start. The fixture puts each slot in the arena lobby with a bronze
+scimitar (the existing `duel_arena` pair seed), the slots challenge and accept
+one another, and each slot qualifies only after its own snapshots show a fight
+pen visit followed by a return to the lobby, the transition the card counts as a
+finished duel. A duel only moves its two fighters (no stakes, HP restored, no
+spawned or dropped world state), so a cell leaves nothing for the next one.
 
 Seed/proof or script failures fail the run and return a nonzero exit, and so does
 a fleet that has not qualified after 30 minutes (`blocked: ready=… seeded=…
@@ -186,8 +182,12 @@ proved=… wanted=… ever_ready=…`). Every such failure first appends one
 for every slot, whether it ever reached `ingame && scene_state == 2` (and when),
 its last observed session state (startup phase and how long it has been in it,
 login-queue place, error, worker terminal, latch, welcome hold), its scenario
-step by name, and its script state and error. The observation-boundary records
-carry the same per-slot fields. Inspect them before treating a run as a
+step by name, and its script state and error. `qualified_now` says whether the
+slot satisfies the run's own qualification definition at that instant (for an
+active workload: in game, proof passed and script running), so a ready slot
+whose script has stopped is not reported qualified; `reached_ingame_scene2` is
+history. The observation-boundary records carry the same per-slot fields.
+Inspect them before treating a run as a
 benchmark: a process that exits normally is not by itself evidence that every
 bot did useful work for the whole interval.
 
