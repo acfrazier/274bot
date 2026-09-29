@@ -2814,7 +2814,7 @@ impl Session {
                             runner.observe_script_paint(paint.lines.iter().map(String::as_str));
                         }
                     }
-                    if live_start::fire_pending_catalog_start(
+                    match live_start::fire_pending_catalog_start(
                         &mut pending_script.lock().unwrap(),
                         runner.on_start_script(),
                         || StartArming {
@@ -2823,7 +2823,17 @@ impl Session {
                             pair: paired_core_watch.lock().unwrap().clone(),
                         },
                     ) {
-                        runner.tick_with_hold(c, hold);
+                        live_start::StartScriptPump::Continue => {
+                            runner.tick_with_hold(c, hold);
+                        }
+                        live_start::StartScriptPump::Hold => {}
+                        live_start::StartScriptPump::CompiledRunning => {
+                            runner.observe_script_running();
+                            runner.tick_with_hold(c, hold);
+                        }
+                        live_start::StartScriptPump::CompiledFailed(error) => {
+                            runner.fail_start(&error);
+                        }
                     }
                 } else if let Some(index) = runner.companion_for(name) {
                     runner.companion_tick(index, c);

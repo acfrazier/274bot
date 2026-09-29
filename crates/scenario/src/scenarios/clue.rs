@@ -114,7 +114,7 @@ fn sherlock_scenario(
     stand: WorldTile,
 ) -> Scenario {
     let mut steps = seed_pack(seed_name, clue_alias, clue_id, tools, stand);
-    steps.push(start_catalog_step());
+    steps.push(start_compiled_step());
     steps.push(watch_replaced(clue_id));
     Scenario {
         name,

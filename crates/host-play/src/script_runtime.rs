@@ -99,7 +99,40 @@ pub(super) fn poll_start(wall: &ScriptWall, name: &str) -> script::StartPoll {
     let Ok(mut slot) = slot.lock() else {
         return script::StartPoll::NotOwed;
     };
-    slot.poll_start()
+    let poll = slot.poll_start();
+    if let script::StartPoll::Settled(outcome) = &poll {
+        log_start_outcome(name, outcome, slot.state());
+    }
+    poll
+}
+
+fn log_start_outcome(name: &str, outcome: &script::StartOutcome, state: script::RunState) {
+    use api::host_log;
+    use api::hostlog::{Category, Level};
+    match outcome {
+        script::StartOutcome::Ready => {
+            let status = match state {
+                script::RunState::Running => "running",
+                script::RunState::Starting => "starting",
+                _ => "ready",
+            };
+            host_log!(
+                Category::ScriptLifecycle,
+                Level::Info,
+                slot = name,
+                "start {status}"
+            );
+        }
+        script::StartOutcome::Rejected(error) => {
+            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start rejected: {error}");
+        }
+        script::StartOutcome::Failed(error) => {
+            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {error}");
+        }
+        script::StartOutcome::Cancelled => {
+            host_log!(stderr; Category::ScriptLifecycle, Level::Warn, slot = name, "start cancelled");
+        }
+    }
 }
 
 /// Test-only Start that waits (bounded) for the isolate to settle through

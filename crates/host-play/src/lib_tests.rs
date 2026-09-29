@@ -5522,6 +5522,101 @@ fn script_start_unknown_compiled_id_errors_without_v8() {
     assert!(err.contains("not ported"), "err was {err}");
 }
 
+fn compiled_start_play() -> Play {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.bind_script_test_data(
+        api::game_data::for_revision(client::io::ClientRevision::R289).unwrap(),
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    script_slot_or_insert(&play.scripts, "alice");
+    play
+}
+
+fn compiled_arming(handle: &ScriptStartHandle) -> live_start::StartArming {
+    live_start::StartArming {
+        handle: Some(handle.clone()),
+        catalog: None,
+        pair: None,
+    }
+}
+
+fn fire_compiled_until_settled(
+    pending: &mut Vec<live_start::PendingCatalogStart>,
+    handle: &ScriptStartHandle,
+) -> live_start::StartScriptPump {
+    assert_eq!(
+        live_start::fire_pending_catalog_start(pending, true, || compiled_arming(handle)),
+        live_start::StartScriptPump::Continue,
+        "compiled Start is admitted before preparation settles"
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match live_start::fire_pending_catalog_start(pending, true, || compiled_arming(handle)) {
+            live_start::StartScriptPump::Continue | live_start::StartScriptPump::Hold => {
+                assert!(Instant::now() < deadline, "compiled Start did not settle");
+                std::thread::yield_now();
+            }
+            other => return other,
+        }
+    }
+}
+
+#[test]
+fn compiled_catalog_start_pump_reaches_running() {
+    let play = compiled_start_play();
+    let mut pending = vec![live_start::PendingCatalogStart::compiled(
+        "alice",
+        script::CompiledId("Sherlock"),
+        serde_json::Map::new(),
+    )];
+    let handle = play.script_start_handle();
+    assert_eq!(
+        fire_compiled_until_settled(&mut pending, &handle),
+        live_start::StartScriptPump::CompiledRunning
+    );
+    assert_eq!(handle.run_state("alice"), script::RunState::Running);
+}
+
+#[test]
+fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
+    let play = compiled_start_play();
+    let mut bag = serde_json::Map::new();
+    bag.insert("clueDuelPartner".into(), serde_json::json!(7));
+    let mut pending = vec![live_start::PendingCatalogStart::compiled(
+        "alice",
+        script::CompiledId("Sherlock"),
+        bag,
+    )];
+    let handle = play.script_start_handle();
+    match fire_compiled_until_settled(&mut pending, &handle) {
+        live_start::StartScriptPump::CompiledFailed(error) => {
+            assert!(
+                error.contains("start rejected:"),
+                "rejection must name the outcome: {error}"
+            );
+            assert!(
+                error.contains("invalid-settings") || error.contains("clueDuelPartner"),
+                "{error}"
+            );
+        }
+        other => panic!("expected CompiledFailed, got {other:?}"),
+    }
+    assert_eq!(handle.run_state("alice"), script::RunState::Idle);
+    assert!(handle.last_error("alice").is_some());
+}
+
 #[test]
 fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
     let mut play = run_with_io(
