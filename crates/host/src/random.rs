@@ -767,6 +767,13 @@ const MAX_CONTINUES: u32 = 25;
 /// settles the whole flow within a tick or two.
 const MAX_LAMP_WAIT: u32 = 8;
 
+/// Lamp: Rub attempts per redemption (the first plus bounded re-Rubs). A
+/// Rub built from a snapshot that a resolving script burial invalidates
+/// hits a stale slot and the server opens no IF; the pack has settled by
+/// the retry (the hold froze the script), so re-resolving and re-Rubbing
+/// recovers a transient miss. Confirm is never replayed.
+const MAX_LAMP_RUBS: u32 = 3;
+
 /// Lamp: award-dialogue continues before the redemption is given up
 /// (`xplamp_confirm`'s `mesbox` award is a single page).
 const MAX_LAMP_DIALOGUE: u32 = 4;
