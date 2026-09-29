@@ -956,6 +956,11 @@ pub struct Session {
     pub global_settings_open: bool,
     /// Usernames we already sent `getvar tutorial` for this session.
     tutorial_getvar_sent: HashSet<String>,
+    /// Subset of `tutorial_getvar_sent` whose reply pending-text we already
+    /// clicked away (see `maybe_drain_getvar_dialogue`). Cleared when the
+    /// reply scrolls off the chat head so a later genuine reply still
+    /// drains exactly once.
+    tutorial_getvar_drained: HashSet<String>,
     /// Forgotten-password confirm: delete the vault file (locked only).
     pub vault_reset_open: bool,
     pub vault_reset_understood: bool,
@@ -1316,6 +1321,7 @@ impl Session {
             nav_settings_open: false,
             global_settings_open: false,
             tutorial_getvar_sent: HashSet::new(),
+            tutorial_getvar_drained: HashSet::new(),
             vault_reset_open: false,
             vault_reset_understood: false,
             pending_profile_delete: None,
@@ -2929,6 +2935,7 @@ impl Session {
         self.core.copy_statuses_into(&mut current);
         self.ingest_tutorial_chat(&current);
         self.maybe_getvar_tutorial(&current);
+        self.maybe_drain_getvar_dialogue(&current);
         // The core moved transitions and script lines onto the shared
         // log; the external-loader watch still reads its account's lines.
         let watch = if self.core.script_lines().is_empty() {
@@ -3089,6 +3096,55 @@ impl Session {
         if let Some(play) = self.core.play() {
             play.cheat(&name, "getvar tutorial");
         }
+    }
+
+    /// Applet point for the getvar-reply drain click: the chat text zone
+    /// above the y467 mode-button strip and below the 3D view (the chat
+    /// surface is 479x96 ending where the buttons begin). Nothing else
+    /// binds there, and `handle_chat_if_clicks` clears the pending text on
+    /// any left click, so the ack cannot walk, bank, or flip a mode.
+    const GETVAR_DRAIN_CLICK: (i32, i32) = (250, 400);
+
+    /// Click away our own `getvar tutorial` reply out of the 289 tutorial
+    /// pending-text box, once per reply. The engine answers `getvar` with
+    /// `messageGame("get tutorial: N")`, and the 289 client captures every
+    /// type-0 line into `tut_com_message` while the tutorial overlay is up;
+    /// `draw_chat` then paints the reply with "Click to continue" until a
+    /// left click clears it (or a fresh login resets it). It is not a chat
+    /// modal — there is no `BUTTON_CONTINUE`, so `Continue` refuses and
+    /// cannot drain it. The click reuses the panel's own capture channel
+    /// (the exact `Move`/`Down`/`Up` events a user click produces), gated
+    /// to a slot we probed whose chat head still shows the tutorial reply;
+    /// any other text — NPC or quest dialogue with the same box shape —
+    /// never matches and is never touched.
+    fn maybe_drain_getvar_dialogue(&mut self, statuses: &[SlotStatus]) {
+        if !self.debug_ui() {
+            return;
+        }
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        if !self.tutorial_getvar_sent.contains(&name) {
+            return;
+        }
+        let ours = statuses.iter().any(|s| {
+            s.username == name
+                && parse_getvar_line(&s.chat_head).is_some_and(|(var, _)| var == "tutorial")
+        });
+        if !ours {
+            self.tutorial_getvar_drained.remove(&name);
+            return;
+        }
+        let Some(tx) = self.capture_tx.as_ref() else {
+            return;
+        };
+        if !self.tutorial_getvar_drained.insert(name.clone()) {
+            return;
+        }
+        let (x, y) = Self::GETVAR_DRAIN_CLICK;
+        let _ = tx.send(InputEv::Move { x, y });
+        let _ = tx.send(InputEv::Down { button: 1, x, y });
+        let _ = tx.send(InputEv::Up);
     }
 
     /// Frames for the Game pane (the focused slot's mailbox). Every
