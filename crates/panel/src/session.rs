@@ -926,6 +926,9 @@ pub struct Session {
     pub fleet_filter: String,
     pub fleet_sort: crate::fleet::FleetSort,
     pub fleet_report: Option<String>,
+    /// Set by a marked Start: the fleet report follows the running Start
+    /// report (and a later Stop all) until the next marked Stop.
+    pub(crate) fleet_report_follows_start: bool,
     /// One application-owned map view/catalogue, never a copy on each bot.
     pub map_model: host_play::walk_map::MapModel,
     pub map_catalogue: Option<Arc<host_play::walk_map::Catalogue>>,
@@ -1299,6 +1302,7 @@ impl Session {
             fleet_filter: String::new(),
             fleet_sort: crate::fleet::FleetSort::Name,
             fleet_report: None,
+            fleet_report_follows_start: false,
             walkto_open: false,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,

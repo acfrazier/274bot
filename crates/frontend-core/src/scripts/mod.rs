@@ -16,6 +16,7 @@ pub use native::{NativeCommand, NativeDetail, NativeTarget, SchemaView};
 
 mod reload;
 mod start_admit;
+mod start_tally;
 mod sync;
 
 use std::collections::HashMap;
@@ -24,7 +25,9 @@ use std::sync::Arc;
 
 pub use start_admit::START_ADMIT_PER_FRAME;
 use start_admit::{QueuedStart, StartAdmit, StartPermit};
+use start_tally::{Outcome, StartTally};
 
+use api::hostlog::{Level, Source};
 use serde_json::{Map, Value};
 use vault::ScriptAssignment;
 
@@ -134,13 +137,8 @@ impl Notice {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StartKind {
     Start,
-    StartAll,
     Reload,
 }
-
-/// One operator click's Start-all or marked-Start tally.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct BulkId(u64);
 
 /// A Start whose worker has not settled. Assignment changes only on Ready.
 #[derive(Debug, Clone)]
@@ -153,32 +151,20 @@ enum PendingCard {
 struct PendingStart {
     card: PendingCard,
     kind: StartKind,
-    batch: Option<BulkId>,
+    /// Counted as started in the running Start tally: a setup failure
+    /// moves it to failed there.
+    tallied: bool,
 }
 
-/// One click's Start tally. A later click opens a new one so overlapping
-/// batches stay independent.
-#[derive(Debug, Clone)]
-struct BulkStart {
-    label: &'static str,
-    started: usize,
-    queued: usize,
-    skipped: usize,
-    skips: Vec<String>,
-    failures: Vec<String>,
-}
-
-impl BulkStart {
-    fn new(label: &'static str) -> Self {
-        Self {
-            label,
-            started: 0,
-            queued: 0,
-            skipped: 0,
-            skips: Vec::new(),
-            failures: Vec::new(),
-        }
-    }
+/// Where a new skip or failure in the running tally is logged.
+#[derive(Debug, Clone, Copy)]
+enum LogTo {
+    /// The bot's own log.
+    Slot,
+    /// The process log (a marked row with no profile).
+    Process,
+    /// Already logged (a settled Start's operation line) or not a skip.
+    None,
 }
 
 /// One shared Browse card: a compiled registry card or a loaded JS card.
@@ -270,9 +256,8 @@ pub struct Scripts {
     admit: StartAdmit,
     /// Catalog root for grants that settle after the click frame.
     admit_catalog: Option<PathBuf>,
-    next_bulk: u64,
-    bulks: HashMap<BulkId, BulkStart>,
-    latest_bulk: Option<BulkId>,
+    /// The running Start all / marked-Start report (see [`start_tally`]).
+    tally: Option<StartTally>,
     last_bulk_report: Option<String>,
     catalog_filled: bool,
     reload: reload::ReloadState,
@@ -299,9 +284,7 @@ impl Scripts {
             starts: HashMap::new(),
             admit: StartAdmit::default(),
             admit_catalog: None,
-            next_bulk: 0,
-            bulks: HashMap::new(),
-            latest_bulk: None,
+            tally: None,
             last_bulk_report: None,
             catalog_filled: false,
             reload: reload::ReloadState::default(),
@@ -740,37 +723,69 @@ impl Scripts {
         self.cancel_queued_as(profile, "cancelled")
     }
 
-    /// Drop a waiting Start and credit `reason` on its click tally.
+    /// Drop a waiting Start and record `reason` in the running Start tally.
     pub fn cancel_queued_as(&mut self, profile: &str, reason: &str) -> bool {
-        let Some(entry) = self.admit.leave(profile) else {
+        if self.admit.leave(profile).is_none() {
             return false;
-        };
-        self.credit_skipped(entry.batch, profile, reason);
+        }
+        self.credit_skipped(profile, reason);
         true
     }
 
-    /// Open a new click tally. Later grants credit this id; a newer click
-    /// does not fold into it.
-    pub(crate) fn open_bulk(&mut self, label: &'static str) -> BulkId {
-        self.next_bulk += 1;
-        let id = BulkId(self.next_bulk);
-        self.bulks.insert(id, BulkStart::new(label));
-        self.latest_bulk = Some(id);
-        id
-    }
-
-    pub(crate) fn bulk_skip(&mut self, id: BulkId, profile: &str, reason: impl Into<String>) {
-        let reason = reason.into();
-        if let Some(bulk) = self.bulks.get_mut(&id) {
-            bulk.skipped += 1;
-            bulk.skips.push(format!("{profile}: {reason}"));
+    /// Open the running tally for a Start click. While a bot it holds still
+    /// waits for its permit or its setup, the click folds into it (and
+    /// names it); otherwise the finished tally is replaced.
+    pub(crate) fn open_tally(&mut self, label: &'static str) {
+        let open = self.tally.as_ref().is_some_and(StartTally::waiting)
+            || self.starts.values().any(|pending| pending.tallied);
+        match self.tally.as_mut() {
+            Some(tally) if open => tally.relabel(label),
+            _ => self.tally = Some(StartTally::new(label)),
         }
     }
 
-    pub(crate) fn bulk_fail(&mut self, id: BulkId, profile: &str, reason: impl Into<String>) {
-        let reason = reason.into();
-        if let Some(bulk) = self.bulks.get_mut(&id) {
-            bulk.failures.push(format!("{profile}: {reason}"));
+    /// A click-time skip. A bot this tally already started stays started.
+    pub(crate) fn tally_skip(&mut self, profile: &str, reason: &str) {
+        self.tally_record(profile, Outcome::Skipped(reason.to_string()), LogTo::Slot);
+    }
+
+    /// A click-time skip of a marked row with no profile (no slot to log on).
+    pub(crate) fn tally_skip_unavailable(&mut self, row: &str, reason: &str) {
+        self.tally_record(row, Outcome::Skipped(reason.to_string()), LogTo::Process);
+    }
+
+    pub(crate) fn tally_fail(&mut self, profile: &str, reason: &str) {
+        self.tally_record(profile, Outcome::Failed(reason.to_string()), LogTo::Slot);
+    }
+
+    /// Record `profile`'s outcome in the running tally. A new skip or
+    /// failure also goes to the log (`log`), so it survives a later banner.
+    fn tally_record(&mut self, profile: &str, outcome: Outcome, log: LogTo) {
+        let Some(tally) = self.tally.as_mut() else {
+            return;
+        };
+        if !tally.set(profile, outcome) {
+            return;
+        }
+        let (level, verb, reason) = match tally.outcome(profile) {
+            Some(Outcome::Skipped(reason)) => (Level::Info, "skipped", reason),
+            Some(Outcome::Failed(reason)) => (Level::Error, "failed", reason),
+            _ => return,
+        };
+        let label = tally.label();
+        match log {
+            LogTo::Slot => crate::log::global().slot_line(
+                profile,
+                Source::Host,
+                level,
+                &format!("{label} {verb}: {reason}"),
+            ),
+            LogTo::Process => crate::log::global().process_line(
+                Source::Host,
+                level,
+                &format!("{label} {verb} {profile}: {reason}"),
+            ),
+            LogTo::None => {}
         }
     }
 
@@ -787,7 +802,7 @@ impl Scripts {
         let sel = Self::assignment(core, profile)
             .and_then(|a| sel_from_assignment(&a))
             .ok_or_else(|| "no assignment".to_string())?;
-        self.start_sel(core, profile, sel, catalog_root, StartKind::Start, None)
+        self.start_sel(core, profile, sel, catalog_root, StartKind::Start, false)
     }
 
     /// Operator Start on `profile`: its pending Browse selection, else the
@@ -811,7 +826,7 @@ impl Scripts {
             .or_else(|| heading.cloned())
             .or_else(|| Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a)))
             .ok_or_else(|| "no assignment".to_string())?;
-        self.start_sel(core, profile, sel, catalog_root, StartKind::Start, None)
+        self.start_sel(core, profile, sel, catalog_root, StartKind::Start, false)
     }
 
     fn start_sel<Io>(
@@ -821,15 +836,15 @@ impl Scripts {
         sel: script::ScriptSel,
         catalog_root: Option<&Path>,
         kind: StartKind,
-        batch: Option<BulkId>,
+        tallied: bool,
     ) -> Result<(), String> {
-        let from_queue = self.admit.leave(profile);
-        let batch = from_queue.as_ref().map(|entry| entry.batch).or(batch);
+        let from_queue = self.admit.leave(profile).is_some();
+        let tallied = tallied || from_queue;
         if core.play().is_none() {
             self.credit_queue_outcome(from_queue, profile, Err("no play"));
             return Err("no play".into());
         }
-        let result = self.dispatch_start(core, profile, sel, catalog_root, kind, batch);
+        let result = self.dispatch_start(core, profile, sel, catalog_root, kind, tallied);
         match &result {
             Ok(()) => self.credit_queue_outcome(from_queue, profile, Ok(())),
             Err(error) => self.credit_queue_outcome(from_queue, profile, Err(error.as_str())),
@@ -844,7 +859,7 @@ impl Scripts {
         sel: script::ScriptSel,
         catalog_root: Option<&Path>,
         kind: StartKind,
-        batch: Option<BulkId>,
+        tallied: bool,
     ) -> Result<(), String> {
         match sel {
             script::ScriptSel::Compiled(id) => {
@@ -856,7 +871,7 @@ impl Scripts {
                     PendingStart {
                         card: PendingCard::Compiled(id),
                         kind,
-                        batch,
+                        tallied,
                     },
                 );
                 Ok(())
@@ -914,7 +929,7 @@ impl Scripts {
                     PendingStart {
                         card: PendingCard::Loaded(Box::new(card)),
                         kind,
-                        batch,
+                        tallied,
                     },
                 );
                 Ok(())
@@ -925,7 +940,7 @@ impl Scripts {
     /// Start every wall member idle on its last successful assignment.
     /// Eligible Starts are enqueued and released through the Start-all
     /// permit (at most [`START_ADMIT_PER_FRAME`] in this click). Active
-    /// members are skipped; the tally is shown and a member whose setup
+    /// members are skipped. The running tally is shown; a member whose setup
     /// fails later moves from started to failed.
     pub fn start_all<Io>(&mut self, core: &mut OperatorSession<Io>, catalog_root: Option<&Path>) {
         let members = core.members().to_vec();
@@ -936,49 +951,37 @@ impl Scripts {
         if let Some(root) = catalog_root {
             self.admit_catalog = Some(root.to_path_buf());
         }
-        let batch = self.open_bulk("Start all");
+        self.open_tally("Start all");
         for name in members {
             if self.admit.contains(&name) {
                 continue;
             }
             if script_active(core, &name) {
-                self.bulk_skip(batch, &name, "already active");
+                self.tally_skip(&name, "already active");
                 continue;
             }
             let sel = Self::assignment(core, &name).and_then(|a| sel_from_assignment(&a));
             let Some(sel) = sel else {
-                self.bulk_fail(batch, &name, "no assignment");
+                self.tally_fail(&name, "no assignment");
                 continue;
             };
-            if core.play().is_none() {
-                self.bulk_fail(batch, &name, "no play");
-                continue;
-            }
-            if let Err(error) = self.queue_start(
-                core,
-                &name,
-                sel.clone(),
-                StartKind::StartAll,
-                Some(sel),
-                batch,
-            ) {
-                self.bulk_fail(batch, &name, error);
+            if let Err(error) = self.queue_start(core, &name, sel.clone(), Some(sel)) {
+                self.tally_fail(&name, &error);
             }
         }
         self.admit_starts(core, catalog_root);
         self.publish_bulk();
     }
 
-    /// Enqueue `profile` for a paced Start. Immediate Start paths call
-    /// [`Self::start_sel`] instead. Idempotent per profile.
+    /// Enqueue `profile` for a paced Start in the running tally (opened by
+    /// the click). Immediate Start paths call [`Self::start_sel`] instead.
+    /// Idempotent per profile.
     pub(crate) fn queue_start<Io>(
         &mut self,
         core: &OperatorSession<Io>,
         profile: &str,
         sel: script::ScriptSel,
-        kind: StartKind,
         assigned: Option<script::ScriptSel>,
-        batch: BulkId,
     ) -> Result<(), String> {
         if core.play().is_none() {
             return Err("no play".into());
@@ -993,15 +996,11 @@ impl Scripts {
         self.admit.enqueue(QueuedStart {
             profile: profile.to_string(),
             sel,
-            kind,
             assigned,
             latched,
             had_arm,
-            batch,
         });
-        if let Some(bulk) = self.bulks.get_mut(&batch) {
-            bulk.queued += 1;
-        }
+        self.tally_record(profile, Outcome::Queued, LogTo::None);
         Ok(())
     }
 
@@ -1026,7 +1025,14 @@ impl Scripts {
     pub fn stop_all<Io>(&mut self, core: &mut OperatorSession<Io>) -> usize {
         let cancelled = self.admit.drain();
         for entry in &cancelled {
-            self.credit_skipped(entry.batch, &entry.profile, "cancelled");
+            self.tally_record(
+                &entry.profile,
+                Outcome::Skipped("cancelled".into()),
+                LogTo::Slot,
+            );
+        }
+        if !cancelled.is_empty() {
+            self.publish_bulk();
         }
         self.publish_start_places(core);
         if core.play().is_none() {
@@ -1046,7 +1052,8 @@ impl Scripts {
         stopped
     }
 
-    /// The last Start all / Stop all report.
+    /// The running Start all / marked-Start report, or the last Stop all
+    /// report when that came later.
     pub fn last_bulk_report(&self) -> Option<&str> {
         self.last_bulk_report.as_deref()
     }
@@ -1143,13 +1150,13 @@ impl Scripts {
                             .unwrap_or(error),
                         PendingCard::Compiled(_) => error,
                     };
-                    self.report_start_failure(&name, pending.kind, pending.batch, diagnostic);
+                    self.report_start_failure(&name, pending.kind, pending.tallied, diagnostic);
                 }
                 Some(script::StartOutcome::Rejected(error)) => {
                     self.report_start_failure(
                         &name,
                         pending.kind,
-                        pending.batch,
+                        pending.tallied,
                         error.to_string(),
                     );
                 }
@@ -1158,41 +1165,32 @@ impl Scripts {
         }
     }
 
+    /// A Start that failed during setup. Its operation already logged the
+    /// failure on the bot.
     fn report_start_failure(
         &mut self,
         name: &str,
         kind: StartKind,
-        batch: Option<BulkId>,
+        tallied: bool,
         diagnostic: String,
     ) {
-        if let Some(id) = batch {
-            if let Some(bulk) = self.bulks.get_mut(&id) {
-                bulk.started = bulk.started.saturating_sub(1);
-                bulk.failures.push(format!("{name}: {diagnostic}"));
-            }
-            if self.latest_bulk == Some(id) {
-                self.publish_bulk();
-            }
+        if kind == StartKind::Reload {
+            self.show(format!("reload: {name}: {diagnostic}"));
             return;
         }
-        match kind {
-            StartKind::Start => {
-                let message = format!("script: {diagnostic}");
-                self.start_failures
-                    .push((name.to_string(), message.clone()));
-                self.show(message);
-            }
-            StartKind::StartAll => {
-                if let Some(id) = self.latest_bulk {
-                    if let Some(bulk) = self.bulks.get_mut(&id) {
-                        bulk.started = bulk.started.saturating_sub(1);
-                        bulk.failures.push(format!("{name}: {diagnostic}"));
-                    }
-                    self.publish_bulk();
-                }
-            }
-            StartKind::Reload => self.show(format!("reload: {name}: {diagnostic}")),
+        let message = format!("script: {diagnostic}");
+        if tallied
+            && self
+                .tally
+                .as_ref()
+                .is_some_and(|t| t.outcome(name).is_some())
+        {
+            self.tally_record(name, Outcome::Failed(diagnostic), LogTo::None);
+            self.publish_bulk();
+        } else {
+            self.show(message.clone());
         }
+        self.start_failures.push((name.to_string(), message));
     }
 
     fn admit_ready<Io>(&mut self, core: &mut OperatorSession<Io>) {
@@ -1243,85 +1241,51 @@ impl Scripts {
             &entry.profile,
             entry.sel,
             catalog.as_deref(),
-            entry.kind,
-            Some(entry.batch),
+            StartKind::Start,
+            true,
         ) {
-            Ok(()) => {
-                self.credit_started(entry.batch);
-                true
-            }
-            Err(error) => {
-                self.credit_failed(entry.batch, &entry.profile, &error);
-                true
-            }
+            Ok(()) => self.credit_started(&entry.profile),
+            Err(error) => self.credit_failed(&entry.profile, &error),
         }
+        true
     }
 
     fn drop_queued(&mut self, entry: &QueuedStart, reason: &str) {
-        self.credit_skipped(entry.batch, &entry.profile, reason);
+        self.credit_skipped(&entry.profile, reason);
     }
 
-    fn credit_queue_outcome(
-        &mut self,
-        from_queue: Option<QueuedStart>,
-        profile: &str,
-        outcome: Result<(), &str>,
-    ) {
-        let Some(entry) = from_queue else {
+    /// Credit a Start that left the queue through [`Self::start_sel`].
+    fn credit_queue_outcome(&mut self, from_queue: bool, profile: &str, outcome: Result<(), &str>) {
+        if !from_queue {
             return;
-        };
+        }
         match outcome {
-            Ok(()) => self.credit_started(entry.batch),
-            Err(error) => self.credit_failed(entry.batch, profile, error),
+            Ok(()) => self.credit_started(profile),
+            Err(error) => self.credit_failed(profile, error),
         }
     }
 
-    fn credit_started(&mut self, batch: BulkId) {
-        if let Some(bulk) = self.bulks.get_mut(&batch) {
-            bulk.queued = bulk.queued.saturating_sub(1);
-            bulk.started += 1;
-        }
-        if self.latest_bulk == Some(batch) {
-            self.publish_bulk();
-        }
+    fn credit_started(&mut self, profile: &str) {
+        self.tally_record(profile, Outcome::Started, LogTo::None);
+        self.publish_bulk();
     }
 
-    fn credit_failed(&mut self, batch: BulkId, profile: &str, error: &str) {
-        if let Some(bulk) = self.bulks.get_mut(&batch) {
-            bulk.queued = bulk.queued.saturating_sub(1);
-            bulk.failures.push(format!("{profile}: {error}"));
-        }
-        if self.latest_bulk == Some(batch) {
-            self.publish_bulk();
-        }
+    fn credit_failed(&mut self, profile: &str, error: &str) {
+        self.tally_record(profile, Outcome::Failed(error.to_string()), LogTo::Slot);
+        self.publish_bulk();
     }
 
-    fn credit_skipped(&mut self, batch: BulkId, profile: &str, reason: &str) {
-        if let Some(bulk) = self.bulks.get_mut(&batch) {
-            bulk.queued = bulk.queued.saturating_sub(1);
-            bulk.skipped += 1;
-            bulk.skips.push(format!("{profile}: {reason}"));
-        }
-        if self.latest_bulk == Some(batch) {
-            self.publish_bulk();
-        }
+    fn credit_skipped(&mut self, profile: &str, reason: &str) {
+        self.tally_record(profile, Outcome::Skipped(reason.to_string()), LogTo::Slot);
+        self.publish_bulk();
     }
 
+    /// Show the running tally when its text changed.
     pub(crate) fn publish_bulk(&mut self) {
-        let Some(id) = self.latest_bulk else {
+        let Some(tally) = self.tally.as_ref() else {
             return;
         };
-        let Some(bulk) = self.bulks.get(&id) else {
-            return;
-        };
-        let report = format_bulk(
-            bulk.label,
-            bulk.started,
-            bulk.queued,
-            bulk.skipped,
-            &bulk.skips,
-            &bulk.failures,
-        );
+        let report = tally.report();
         if self.last_bulk_report.as_deref() == Some(report.as_str()) {
             return;
         }
@@ -1395,31 +1359,6 @@ fn lookup_name(source: script::ScriptSource, name: &str, path: &Path) -> String 
         script::ScriptSource::File => path.to_string_lossy().into_owned(),
         _ => name.to_string(),
     }
-}
-
-fn format_bulk(
-    op: &str,
-    started: usize,
-    queued: usize,
-    skipped: usize,
-    skips: &[String],
-    failures: &[String],
-) -> String {
-    let mut head = if queued == 0 {
-        format!("{op}: started {started}, skipped {skipped}")
-    } else {
-        format!("{op}: started {started}, queued {queued}, skipped {skipped}")
-    };
-    if !skips.is_empty() {
-        let shown: Vec<&str> = skips.iter().take(6).map(String::as_str).collect();
-        head.push_str(": ");
-        head.push_str(&shown.join(", "));
-    }
-    if failures.is_empty() {
-        return head;
-    }
-    let shown: Vec<&str> = failures.iter().take(6).map(String::as_str).collect();
-    format!("{head}, failed {}: {}", failures.len(), shown.join("; "))
 }
 
 #[cfg(test)]

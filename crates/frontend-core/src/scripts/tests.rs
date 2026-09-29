@@ -535,7 +535,7 @@ fn start_all_and_stop_all_cover_every_member() {
     assert_eq!(
         f.scripts.take_notice(),
         Some(Notice::Show(
-            "Start all: started 1, skipped 1: bob: already active, failed 1: carol: no assignment"
+            "Start all: started 1, skipped 1, failed 1: carol: no assignment; skipped bob: already active"
                 .into(),
         ))
     );
@@ -552,7 +552,7 @@ fn start_all_and_stop_all_cover_every_member() {
             sel,
             None,
             super::StartKind::Reload,
-            None,
+            false,
         )
         .unwrap();
     assert_eq!(f.state("bob"), script::RunState::Stopping);
@@ -843,40 +843,47 @@ fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
         ProfileIdentity::uid(3),
     ]);
     let card_sel = script::ScriptSel::Loaded(card.source, card.identity_id());
-    let first = start_marked(
+    start_marked(
         &selected,
         &mut f.core,
         &mut f.scripts,
         Some(&card_sel),
         None,
     );
-    assert_eq!(first.affected, 2);
-    assert_eq!(first.skipped.len(), 1);
-    assert_eq!(first.skipped[0].profile, "alice");
-    assert!(first.skipped[0].reason.contains("active"));
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 1, queued 1, skipped 1: alice: already active"
+    );
 
     f.settle();
     f.wait_state("bob", script::RunState::Running);
     f.wait_state("carol", script::RunState::Running);
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 2, skipped 1: alice: already active"
+    );
 
-    let duplicate = start_marked(
+    // The first report finished, so the repeat is a fresh report.
+    start_marked(
         &selected,
         &mut f.core,
         &mut f.scripts,
         Some(&card_sel),
         None,
     );
-    assert_eq!(duplicate.affected, 0);
-    assert_eq!(duplicate.skipped.len(), 3);
-    assert!(duplicate
-        .skipped
-        .iter()
-        .all(|skip| skip.reason.contains("active")));
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 0, skipped 3: alice: already active, \
+         bob: already active, carol: already active"
+    );
+    for name in ["alice", "bob", "carol"] {
+        assert_eq!(start_accepted(&f, name), 1, "{name}");
+    }
 
     let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
-    assert_eq!(stop.affected, 3);
+    assert_eq!((stop.stopped, stop.cancelled), (3, 0));
     let duplicate_stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
-    assert_eq!(duplicate_stop.affected, 0);
+    assert_eq!(duplicate_stop.stopped, 0);
     assert!(duplicate_stop
         .skipped
         .iter()
@@ -898,7 +905,7 @@ fn start_sherlock(f: &mut Fixture, name: &str) {
             script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
             None,
             super::StartKind::Start,
-            None,
+            false,
         )
         .unwrap();
     f.settle();
@@ -1006,7 +1013,7 @@ fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
             script::ScriptSel::Compiled(id),
             None,
             super::StartKind::Start,
-            None,
+            false,
         )
         .unwrap();
     f.settle();
@@ -1172,7 +1179,7 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
                     script::ScriptSel::Compiled(id),
                     None,
                     super::StartKind::Start,
-                    None,
+                    false,
                 )
                 .unwrap();
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -1225,7 +1232,7 @@ fn valid_native_draft_survives_unrelated_writes() {
                     script::ScriptSel::Compiled(id),
                     None,
                     super::StartKind::Start,
-                    None,
+                    false,
                 )
                 .unwrap();
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -1414,7 +1421,7 @@ fn deleting_a_profile_cancels_its_unsettled_native_start() {
             script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
             None,
             super::StartKind::Start,
-            None,
+            false,
         )
         .unwrap();
     f.core.vault_remove("alice").unwrap();
@@ -1779,8 +1786,7 @@ fn marked_start_missing_card_reports_each_skip_as_grants_land() {
     let mut f = fixture("pace-marked-missing", &["alice", "bob", "carol"]);
     let gone = script::ScriptSel::Loaded(script::ScriptSource::File, "gone.ts".into());
     let selected = mark_uids(&[1, 2, 3]);
-    let click = start_marked(&selected, &mut f.core, &mut f.scripts, Some(&gone), None);
-    assert_eq!(click.affected, 3, "the click accepts every marked row");
+    start_marked(&selected, &mut f.core, &mut f.scripts, Some(&gone), None);
     let click_report = shown_bulk(&f);
     assert!(
         click_report.contains("queued") && !click_report.contains("started 3"),
@@ -1841,10 +1847,10 @@ fn marked_start_removed_member_is_named_and_never_dispatched() {
     }
 }
 
-/// Start all while a marked batch is still waiting must publish its own
-/// banner and must not count the waiting members again.
+/// Start all while a marked batch is still waiting joins its report: the
+/// waiting members are neither dropped from it nor counted twice.
 #[test]
-fn start_all_while_a_marked_batch_waits_has_its_own_tally() {
+fn start_all_while_a_marked_batch_waits_joins_its_report() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = fixture("pace-overlap-marked", &name_refs);
@@ -1855,68 +1861,160 @@ fn start_all_while_a_marked_batch_waits_has_its_own_tally() {
     let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
     let selected = mark_uids(&[1, 2, 3]);
     start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
-    let marked = shown_bulk(&f);
-    assert!(
-        marked.starts_with("Start selected:"),
-        "marked click owns its banner: {marked}"
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 1, queued 2, skipped 0"
     );
     f.scripts.start_all(&mut f.core, None);
-    let start_all = shown_bulk(&f);
-    assert!(
-        start_all.starts_with("Start all:"),
-        "Start all while a marked batch waits must publish its own banner: {start_all}"
-    );
-    assert!(
-        !start_all.contains("skipped 3") && !start_all.contains("skipped 5"),
-        "members already waiting must not be counted again: {start_all}"
+    assert_eq!(
+        shown_bulk(&f),
+        "Start all: started 2, queued 3, skipped 0",
+        "the marked rows still waiting stay counted, the started one is not skipped"
     );
     f.settle();
-    let final_all = shown_bulk(&f);
-    assert!(
-        final_all.starts_with("Start all: started 2, skipped 1")
-            && final_all.contains("already active")
-            && !final_all.contains("bot1")
-            && !final_all.contains("bot2"),
-        "Start all owns the two new members and the already-started one, not the waiters: {final_all}"
-    );
+    assert_eq!(shown_bulk(&f), "Start all: started 5, skipped 0");
     for name in &names {
+        f.wait_state(name, script::RunState::Running);
+        assert_eq!(start_accepted(&f, name), 1, "{name}");
+        f.core.play().unwrap().script_stop(name);
+    }
+}
+
+fn slot_lines(slot: &str) -> Vec<(api::hostlog::Level, String)> {
+    let mut view = crate::log::LogView::new(crate::log::LogScope::Slot(slot.into()));
+    crate::log::global().refresh(&mut view);
+    view.rows()
+        .iter()
+        .map(|e| (e.level, e.message.to_string()))
+        .collect()
+}
+
+/// A second Start all while the first still waits must not lose the first
+/// click's later failures: they stay on the report (failures before
+/// skips), a setup failure reaches `take_start_failures`, and a dispatch
+/// failure reaches the bot's log.
+#[test]
+fn start_all_twice_keeps_every_outcome_of_the_first_click() {
+    let names: Vec<String> = (0..6).map(|i| format!("dbl-bot{i}")).collect();
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-overlap-twice", &name_refs);
+    let good = f.card("loop.ts", LOOPING);
+    let bad = f.card(
+        "bad.ts",
+        "export const apiVersion = 2;\nthrow new Error('setup-fails');\nexport function tick(api) {}\n",
+    );
+    let vanish = f.card("vanish.ts", LOOPING);
+    for name in [&names[0], &names[1], &names[2], &names[5]] {
+        f.assign(name, &good);
+    }
+    f.assign(&names[3], &bad);
+    f.assign(&names[4], &vanish);
+    f.start_running(&names[5]);
+    std::fs::remove_file(f.dir.join("vanish.ts")).unwrap();
+
+    f.scripts.start_all(&mut f.core, None);
+    assert_eq!(
+        shown_bulk(&f),
+        "Start all: started 1, queued 4, skipped 1: dbl-bot5: already active"
+    );
+    f.scripts.start_all(&mut f.core, None);
+    assert_eq!(
+        shown_bulk(&f),
+        "Start all: started 2, queued 3, skipped 1: dbl-bot5: already active",
+        "a second click while the first still waits joins its report"
+    );
+    f.settle();
+    let report = shown_bulk(&f);
+    assert!(
+        report.starts_with("Start all: started 3, skipped 1, failed 2: dbl-bot3: ")
+            && report.contains("setup-fails")
+            && report.contains("; dbl-bot4: missing file: ")
+            && report.ends_with("; skipped dbl-bot5: already active"),
+        "{report}"
+    );
+    let failures = f.scripts.take_start_failures();
+    assert!(
+        failures
+            .iter()
+            .any(|(name, message)| name == "dbl-bot3" && message.contains("setup-fails")),
+        "{failures:?}"
+    );
+    let bot4_log = slot_lines("dbl-bot4");
+    assert!(
+        bot4_log.iter().any(|(level, line)| {
+            *level == api::hostlog::Level::Error
+                && line.starts_with("Start all failed: missing file: ")
+        }),
+        "{bot4_log:?}"
+    );
+    for (i, name) in names.iter().enumerate() {
+        assert_eq!(start_accepted(&f, name), usize::from(i != 4), "{name}");
+    }
+    for name in [&names[0], &names[1], &names[2], &names[5]] {
         f.wait_state(name, script::RunState::Running);
         f.core.play().unwrap().script_stop(name);
     }
 }
 
-/// A second Start all on the same waiting wall is a new tally: already
-/// waiting members are not skipped again.
+/// A bot logged out while it still waits after a second Start all is
+/// named on the running report and in its own log, and never starts.
 #[test]
-fn start_all_twice_does_not_count_waiting_members_twice() {
-    let names = bulk_names(5);
+fn logout_while_waiting_after_a_second_start_all_is_reported() {
+    let names: Vec<String> = (0..4).map(|i| format!("lgo-bot{i}")).collect();
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let mut f = fixture("pace-overlap-twice", &name_refs);
+    let mut f = fixture("pace-overlap-logout", &name_refs);
     let card = f.card("loop.ts", LOOPING);
     for name in &names {
         f.assign(name, &card);
     }
     f.scripts.start_all(&mut f.core, None);
-    let first = shown_bulk(&f);
-    assert_eq!(first, "Start all: started 1, queued 4, skipped 0");
     f.scripts.start_all(&mut f.core, None);
-    let second = shown_bulk(&f);
-    assert!(
-        second.starts_with("Start all: started 0, skipped 1"),
-        "second click reports only the already-started member: {second}"
-    );
-    assert!(
-        !second.contains("skipped 5") && !second.contains("queued 3"),
-        "waiting members must not join the second tally: {second}"
-    );
+    let last = &names[3];
+    assert!(f.scripts.cancel_queued_as(last, "logged out"));
+    f.core.logout(last);
     f.settle();
-    let final_report = shown_bulk(&f);
-    assert!(
-        final_report.starts_with("Start all: started 0, skipped 1"),
-        "the second click stays its own tally: {final_report}"
+    assert_eq!(
+        shown_bulk(&f),
+        "Start all: started 3, skipped 1: lgo-bot3: logged out"
     );
-    for name in &names {
+    assert!(
+        slot_lines(last)
+            .iter()
+            .any(|(_, line)| line == "Start all skipped: logged out"),
+        "{:?}",
+        slot_lines(last)
+    );
+    assert_eq!(start_accepted(&f, last), 0);
+    for name in &names[..3] {
         f.wait_state(name, script::RunState::Running);
         f.core.play().unwrap().script_stop(name);
+    }
+}
+
+/// Stop on marked rows cancels the rows still waiting for their Start and
+/// says so, instead of counting them as stopped.
+#[test]
+fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
+    let mut f = fixture("pace-stop-marked", &["alice", "bob", "carol"]);
+    let card = f.card("loop.ts", LOOPING);
+    for name in ["alice", "bob", "carol"] {
+        f.assign(name, &card);
+    }
+    let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+    let selected = mark_uids(&[1, 2, 3]);
+    start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
+    let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
+    assert_eq!(
+        stop.summary(),
+        "Stop selected: stopped 1, cancelled 2, skipped 0"
+    );
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 1, skipped 2: bob: cancelled, carol: cancelled"
+    );
+    f.settle();
+    for name in ["bob", "carol"] {
+        assert_eq!(start_accepted(&f, name), 0, "{name}");
+        assert_eq!(f.state(name), script::RunState::Idle, "{name}");
     }
 }
