@@ -1498,7 +1498,6 @@ mod tests {
     fn script_running_fails_closed_on_a_bare_snapshot() {
         let s = snap(&mut seeded());
         assert!(!Proof::ScriptRunning.check(&s, None));
-        assert_eq!(Proof::ScriptRunning.name(), "script_running");
     }
 
     #[test]

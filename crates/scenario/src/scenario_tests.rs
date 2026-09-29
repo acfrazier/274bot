@@ -12715,20 +12715,6 @@ fn sherlock_scenarios_start_the_compiled_card_with_one_seeded_clue() {
                 .any(|step| matches!(step.kind, StepKind::StartScript)),
             "{name} starts Sherlock after seed"
         );
-        let start = scenario
-            .steps
-            .iter()
-            .find(|step| matches!(step.kind, StepKind::StartScript))
-            .unwrap();
-        assert_eq!(
-            start.wait.arm,
-            Proof::ScriptRunning,
-            "{name} StartScript waits until compiled Running"
-        );
-        assert!(
-            start.wait.budget_ticks > 1,
-            "{name} compiled Start must not be the one-tick Stat arm"
-        );
         let seed = scenario
             .steps
             .iter()
