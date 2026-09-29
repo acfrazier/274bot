@@ -88,10 +88,6 @@ fn id_matches_seed_id_only_and_name_matches_display_only() {
             "Waterfall",
             "Lost City Of Zanaris",
             "routequest",
-            "In Search of the Myreque",
-            "misc",
-            "troll_love",
-            "mm",
             "",
             "   ",
             "Death  Plateau",
@@ -110,11 +106,7 @@ fn id_matches_seed_id_only_and_name_matches_display_only() {
             "Death Plateau",
             "314",
             "219",
-            "routequest",
             "In Search of the Myreque",
-            "misc",
-            "troll_love",
-            "mm",
             "Cook's Assistant",
             "",
             "   ",
@@ -123,6 +115,33 @@ fn id_matches_seed_id_only_and_name_matches_display_only() {
                 identity(revision, IdentityPin::Id(miss)),
                 Err("unknown-quest"),
                 "{revision:?} id {miss:?}"
+            );
+        }
+        if revision == ClientRevision::R289 {
+            let myreque =
+                identity(revision, IdentityPin::Name("In Search of the Myreque")).unwrap();
+            assert_eq!(myreque["id"], "routequest");
+            assert_eq!(
+                identity(revision, IdentityPin::Id("routequest")).unwrap()["display"],
+                "In Search of the Myreque"
+            );
+            for id in ["misc", "troll_love", "mm"] {
+                assert!(
+                    identity(revision, IdentityPin::Id(id)).is_ok(),
+                    "{id} is on the 69-row roster"
+                );
+            }
+        } else {
+            for miss in ["routequest", "misc", "troll_love", "mm"] {
+                assert_eq!(
+                    identity(revision, IdentityPin::Id(miss)),
+                    Err("unknown-quest"),
+                    "{revision:?} id {miss:?}"
+                );
+            }
+            assert_eq!(
+                identity(revision, IdentityPin::Name("In Search of the Myreque")),
+                Err("unknown-quest")
             );
         }
     }
@@ -224,11 +243,7 @@ fn prereqs_value_is_the_requirements_object_only() {
         assert_eq!(zanaris["skills"][1]["level"], 31);
         for miss in [
             "Cook's Assistant",
-            "routequest",
             "In Search of the Myreque",
-            "misc",
-            "troll_love",
-            "mm",
             "314",
             "219",
             "death_equiproom",
@@ -240,6 +255,18 @@ fn prereqs_value_is_the_requirements_object_only() {
                 Err("unknown-quest"),
                 "{revision:?} {miss:?}"
             );
+        }
+        if revision == ClientRevision::R289 {
+            assert!(prereqs(revision, "routequest").is_ok());
+            assert!(prereqs(revision, "misc").is_ok());
+        } else {
+            for miss in ["routequest", "misc", "troll_love", "mm"] {
+                assert_eq!(
+                    prereqs(revision, miss),
+                    Err("unknown-quest"),
+                    "{revision:?} {miss:?}"
+                );
+            }
         }
     }
 }
@@ -425,7 +452,12 @@ export function tick(api) {
         assert_eq!(value["string314"]["error"], "unknown-quest");
         assert_eq!(value["blank"]["error"], "unknown-quest");
         assert_eq!(value["nameDeath"]["error"], "unknown-quest");
-        assert_eq!(value["route"]["error"], "unknown-quest");
+        if revision == ClientRevision::R289 {
+            assert_eq!(value["route"]["ok"], true, "{value:?}");
+            assert_eq!(value["route"]["value"]["id"], "routequest");
+        } else {
+            assert_eq!(value["route"]["error"], "unknown-quest");
+        }
         assert_eq!(value["prereqOmitted"]["error"], "invalid-args");
         assert_eq!(value["prereqEmpty"]["error"], "invalid-args");
         assert_eq!(value["prereqName"]["error"], "invalid-args");

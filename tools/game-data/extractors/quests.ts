@@ -1,4 +1,5 @@
 // M-296 owns full-roster extraction/resolution programs; this preserves the existing query asset.
+import fs from 'node:fs';
 import { integer, parsePack, requireGatherText } from './common.ts';
 export const questIdentityContentFiles = [
     'scripts/general/scripts/quests.rs2',
@@ -159,18 +160,94 @@ function requirementsFor(id: string, content: string): QuestRequirements {
     if (id === 'cook') return cookRequirements(requireGatherText(content, 'scripts/quests/quest_cook/scripts/quest_cook.rs2'));
     if (id === 'waterfall') return waterfallRequirements(requireGatherText(content, 'scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2'));
     if (id === 'zanaris') return zanarisRequirements(requireGatherText(content, 'scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2'));
-    if (id === 'runemysteries' || id === 'murder' || id === 'death') return emptyMustHave();
-    throw new Error(`quest_identity: unknown seed ${id}`);
+    return emptyMustHave();
+}
+
+function parseQuestListEntries(text: string) {
+    const entries: { component: string; display: string; members: boolean; stub: boolean }[] = [];
+    let section: string | null = null;
+    let members = false;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('//')) continue;
+        if (line.startsWith('[') && line.endsWith(']')) {
+            section = line.slice(1, -1);
+            continue;
+        }
+        if (!section || !line.startsWith('text=')) continue;
+        const display = line.slice('text='.length).trim();
+        if (!display) throw new Error(`questlist.if: empty text= for ${section}`);
+        if (display === 'FREE QUESTS:') {
+            members = false;
+            continue;
+        }
+        if (display === 'MEMBERS QUESTS:') {
+            members = true;
+            continue;
+        }
+        if (display === 'Quest Journal') continue;
+        if (section.startsWith('com_') && display === 'Haunted Mine') {
+            entries.push({ component: 'hauntedmine', display, members, stub: true });
+            continue;
+        }
+        if (section.startsWith('com_')) continue;
+        entries.push({ component: section, display, members, stub: false });
+    }
+    return entries;
+}
+
+function journalIndex(content: string) {
+    const titles = new Map<string, { title: string; script: string }>();
+    const root = `${content}/scripts/quests`;
+    const walk = (dir: string) => {
+        let names: string[] = [];
+        try {
+            names = fs.readdirSync(dir);
+        } catch {
+            return;
+        }
+        for (const name of names) {
+            const full = `${dir}/${name}`;
+            let stat;
+            try {
+                stat = fs.statSync(full);
+            } catch {
+                continue;
+            }
+            if (stat.isDirectory()) {
+                walk(full);
+                continue;
+            }
+            if (!name.endsWith('.rs2') || !name.includes('journal')) continue;
+            const text = fs.readFileSync(full, 'utf8');
+            const button = /\[if_button,questlist:([A-Za-z0-9_]+)\]/.exec(text);
+            const title = /~quest_journal\("([^"]+)"/.exec(text);
+            if (button && title) {
+                titles.set(button[1], { title: title[1], script: full.slice(content.length + 1) });
+            }
+        }
+    };
+    walk(root);
+    return titles;
+}
+
+function firstVarpCall(calls: { component: string; progress: string; complete: string }[], component: string) {
+    const found = calls.filter((call) => call.component === component);
+    return found.find((call) => call.progress.startsWith('%')) ?? found[0] ?? null;
 }
 
 export function extractQuestIdentityFacts(content: string, revision: number) {
     const quests = requireGatherText(content, 'scripts/general/scripts/quests.rs2');
     const constants = parseQuestConstants(requireGatherText(content, 'scripts/general/configs/quest.constant'));
-    const displays = parseQuestListText(requireGatherText(content, 'scripts/player/interfaces/questlist.if'));
+    const questlistText = requireGatherText(content, 'scripts/player/interfaces/questlist.if');
+    const displays = parseQuestListText(questlistText);
+    const listEntries = parseQuestListEntries(questlistText);
     const varpPack = parsePack(requireGatherText(content, 'pack/varp.pack'));
     const enumNames = parseQuestEnumDisplays(requireGatherText(content, 'scripts/general/configs/quest.enum'));
     if (varpPack.size === 0) throw new Error('pack/varp.pack: required file missing ids');
     const calls = parseQuestColourCalls(quests);
+    const journals = journalIndex(content);
+    const seedIds = new Set(QUEST_IDENTITY_SEEDS.map((seed) => seed.id));
     const rows = QUEST_IDENTITY_SEEDS.map((seed) => {
         const found = calls.filter((call) => call.component === seed.component);
         if (found.length === 0) throw new Error(`quest_identity: no extracted rows; quests.rs2 has no colour call for ${seed.id}`);
@@ -196,6 +273,8 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         const display = displays.get(seed.component);
         if (!display) throw new Error(`questlist.if: missing text= for ${seed.component}`);
         if (!enumNames.has(display)) throw new Error(`quest.enum: display mismatch for ${seed.id}: ${display}`);
+        const list = listEntries.find((entry) => entry.component === seed.component);
+        const journal = journals.get(seed.component);
         return {
             id: seed.id,
             component: seed.component,
@@ -206,9 +285,70 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             quest_points: questPoints,
             unknown_sides: [] as string[],
             requirements: requirementsFor(seed.id, content),
+            members: list?.members ?? false,
+            kind: 'quest',
+            journal_title: journal?.title ?? null,
+            journal_script: journal?.script ?? null,
         };
     });
-    if (rows.length !== QUEST_IDENTITY_SEEDS.length) throw new Error('quest_identity: no extracted rows');
+    for (const entry of listEntries) {
+        if (seedIds.has(entry.component)) continue;
+        if (revision === 274 && entry.component === 'routequest') continue;
+        const call = firstVarpCall(calls, entry.component);
+        let varp = '';
+        let varpId = -1;
+        let complete = 0;
+        if (call) {
+            const progress = /^%([A-Za-z0-9_]+)$/.exec(call.progress);
+            if (progress) {
+                varp = progress[1];
+                varpId = varpPack.get(varp) ?? -1;
+            } else {
+                varp = call.progress;
+            }
+            if (call.complete.startsWith('^')) {
+                const name = call.complete.slice(1);
+                complete = constants.get(name) ?? 0;
+            }
+        }
+        const questPoints = entry.component === 'fortress'
+            ? (constants.get('blackknight_questpoints') ?? 0)
+            : (constants.get(`${entry.component}_questpoints`) ?? 0);
+        const journal = journals.get(entry.component);
+        rows.push({
+            id: entry.component,
+            component: entry.component,
+            display: entry.display,
+            varp,
+            varp_id: varpId,
+            complete,
+            quest_points: questPoints,
+            unknown_sides: [],
+            requirements: emptyMustHave(),
+            members: entry.members,
+            kind: entry.stub ? 'stub' : 'quest',
+            journal_title: journal?.title ?? null,
+            journal_script: journal?.script ?? null,
+        });
+    }
+    if (listEntries.length >= 60 && !rows.some((row) => row.id === 'barcrawl')) {
+        rows.push({
+            id: 'barcrawl',
+            component: 'barcrawl',
+            display: "Alfred Grimhand's Barcrawl",
+            varp: 'barcrawl',
+            varp_id: varpPack.get('barcrawl') ?? 77,
+            complete: 2,
+            quest_points: 0,
+            unknown_sides: [],
+            requirements: emptyMustHave(),
+            members: true,
+            kind: 'miniquest',
+            journal_title: null,
+            journal_script: null,
+        });
+    }
+    if (rows.length === 0) throw new Error('quest_identity: no extracted rows');
     if (rows.some((row) => row.requirements.qualification !== 'partial' || row.requirements.unknown_as_satisfied)) {
         throw new Error('quest_identity: requirements must stay partial');
     }
