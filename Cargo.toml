@@ -16,3 +16,14 @@ dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu-0.15.1" }
 # stay unoptimized so TDD rebuilds stay cheap.
 [profile.dev.package.client]
 opt-level = 3
+
+# Debug info is most of `target/` and link work. Our crates keep file:line
+# for panics and backtraces; third-party crates carry none and are lightly
+# optimized (they rarely rebuild, and unoptimized wgpu/deno make debug runs
+# and tests slow and memory-hungry).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 1
