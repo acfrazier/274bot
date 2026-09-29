@@ -10,7 +10,7 @@ use script::hunt_bank::{
     BankObservation, BankRow, APPROACH_RADIUS, CLOSE_MS, OPEN_MS, WALK_LEG_MS, WITHDRAW_MS,
 };
 use script::hunt_fight::Tile;
-use script::isolate_fb::{encode_snapshot, ItemRowInput, SnapshotInput, SnapshotReader, TileInput};
+use script::isolate_fb::{encode_snapshot, ItemRowInput, Snapshot, SnapshotInput, TileInput};
 use script::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
 
@@ -247,7 +247,7 @@ fn snapshot_slot_minus_one_is_not_a_real_held_row() {
     snap.bank_loaded = true;
     snap.bank_generation = 4;
     let bytes = encode_snapshot(&snap);
-    let reader = SnapshotReader::from_bytes(&bytes).unwrap();
+    let reader = Snapshot::from_bytes(&bytes).unwrap();
     script::observed::apply(&reader);
     let step = call(token, proj, Some(json!({ "opened": true })));
     assert_ne!(kind(&step), "withdraw", "{step}");

@@ -16,7 +16,7 @@
 //! identity in `refused_id{,_2,_3}` without touching the ring. Last-seen
 //! `unobserved` may local-stale begin/authorize; it is not a reservation.
 
-use crate::isolate_fb::{InspectHopReader, SnapshotReader};
+use crate::isolate_fb::{InspectHop as InspectHopTable, Snapshot};
 use crate::shim::{InspectAvoidWire, InteractReq};
 use crate::task_clock::InstantTaskClock;
 use crate::walk_wait;
@@ -289,7 +289,7 @@ impl InspectSlot {
         self.settled.push_back(waiter);
     }
 
-    fn observe(&mut self, snap: &SnapshotReader<'_>) {
+    fn observe(&mut self, snap: &Snapshot<'_>) {
         let before = self.applied_seq;
         self.host = HostInspect {
             latest_seq: snap.route_inspect_seq(),
@@ -330,7 +330,7 @@ impl InspectSlot {
         self.apply_refused();
     }
 
-    fn apply_published(&mut self, snap: &SnapshotReader<'_>) {
+    fn apply_published(&mut self, snap: &Snapshot<'_>) {
         let latest = published_terminal(
             snap.route_inspect_seq(),
             snap.route_inspect_request_id(),
@@ -601,7 +601,7 @@ impl InspectSlot {
     }
 }
 
-fn published_seq_for(snap: &SnapshotReader<'_>, request_id: u64) -> u64 {
+fn published_seq_for(snap: &Snapshot<'_>, request_id: u64) -> u64 {
     if snap.route_inspect_request_id() == request_id {
         return snap.route_inspect_seq();
     }
@@ -618,7 +618,7 @@ fn published_terminal<'a>(
     reason: Option<&str>,
     bank_planned: bool,
     ticks: f64,
-    hops: Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<InspectHopReader<'a>>>>,
+    hops: Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<InspectHopTable<'a>>>>,
 ) -> Option<Terminal> {
     if seq == 0 || request_id == 0 {
         return None;
@@ -637,7 +637,7 @@ fn published_terminal<'a>(
     })
 }
 
-fn hop_from_reader(h: &InspectHopReader<'_>) -> InspectHop {
+fn hop_from_reader(h: &InspectHopTable<'_>) -> InspectHop {
     InspectHop {
         kind: h.kind().unwrap_or_default().to_string(),
         loc_id: h.loc_id(),
@@ -832,7 +832,7 @@ pub(crate) fn filter_public_inspect_wire(reqs: &mut Vec<InteractReq>) {
     });
 }
 
-pub(crate) fn on_snapshot(snap: &SnapshotReader<'_>) {
+pub(crate) fn on_snapshot(snap: &Snapshot<'_>) {
     SLOT.with(|slot| slot.borrow_mut().observe(snap));
 }
 
@@ -998,7 +998,7 @@ mod tests {
 
     fn observe(input: SnapshotInput<'_>, native: NativeFactsInput<'_>) {
         let bytes = encode_snapshot_with_native(&input, native);
-        let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         on_snapshot(&snap);
     }
 
@@ -1323,7 +1323,7 @@ mod tests {
         on_reset();
         let token = begin();
         let bytes = encode_snapshot(&empty_input(1));
-        let snap = SnapshotReader::from_bytes(&bytes).expect("old snapshot");
+        let snap = Snapshot::from_bytes(&bytes).expect("old snapshot");
         on_snapshot(&snap);
         assert_eq!(snap.route_inspect_seq(), 0);
         assert_eq!(snap.route_inspect_request_id(), 0);

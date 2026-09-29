@@ -49,7 +49,7 @@ pub struct LeaveObservation {
     pub ours: bool,
     pub locs: Vec<LeaveLoc>,
     pub inv: Vec<LeaveInv>,
-    /// `StatReader::base` for Magic. `None` is a shortfall, including a
+    /// `Stat::base` for Magic. `None` is a shortfall, including a
     /// missing stats table or a missing magic row.
     pub magic_base: Option<i32>,
     pub tick: u64,

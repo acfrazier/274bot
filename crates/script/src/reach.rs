@@ -12,7 +12,7 @@
 //! click produced), [`crate::reach_entity::NpcReach`]. Game actions reuse the
 //! existing FlatBuffer walk, loc and npc verbs.
 
-use crate::isolate_fb::SnapshotReader;
+use crate::isolate_fb::Snapshot;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, Ops, Scene, Text};
 use crate::reach_entity::{NpcReach, NpcReachOpts, TalkExpect};
@@ -145,7 +145,7 @@ enum Phase {
 /// After the isolate applied `snap` to the scene: count a post that carries
 /// the cooperative interrupt, so a live reach or dialogue sees one posted
 /// between its steps.
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
+pub fn on_snapshot(snap: &Snapshot<'_>) {
     walk_wait::on_snapshot(snap);
     if observed::with(Observation::pending_in) {
         PENDING_POSTS.with(|posts| posts.set(posts.get() + 1));
@@ -610,7 +610,7 @@ mod tests {
 
     fn observe(input: &SnapshotInput<'_>, native: NativeFactsInput<'_>) {
         let bytes = encode_snapshot_with_native(input, native);
-        let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         observed::apply(&snap);
         on_snapshot(&snap);
     }
@@ -739,7 +739,7 @@ mod tests {
         crate::inspect_wait::on_reset();
         observed::on_reset();
         let bytes = encode_snapshot(&base());
-        let snap = SnapshotReader::from_bytes(&bytes).expect("base");
+        let snap = Snapshot::from_bytes(&bytes).expect("base");
         observed::apply(&snap);
         on_snapshot(&snap);
     }

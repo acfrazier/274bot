@@ -11,7 +11,7 @@ use script::hunt_cell::{
 };
 use script::hunt_fight::Tile;
 use script::isolate_fb::{
-    encode_snapshot, ItemRowInput, SceneEntityInput, SnapshotInput, SnapshotReader, TileInput,
+    encode_snapshot, ItemRowInput, SceneEntityInput, Snapshot, SnapshotInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -412,7 +412,7 @@ fn posted_npc_distance_zero_does_not_skip_the_walk() {
         angle: 0,
     };
     let bytes = encode_snapshot(&snap_scene(cell_here(), &[], &[], &[npc]));
-    let reader = SnapshotReader::from_bytes(&bytes).unwrap();
+    let reader = Snapshot::from_bytes(&bytes).unwrap();
     script::observed::apply(&reader);
     let step = call(token, proj.clone(), Some(json!({ "held": true })));
     assert_eq!(kind(&step), "delay-ticks", "{step}");
@@ -558,7 +558,7 @@ fn posted_loc_distance_does_not_pick_the_door() {
         &[far, near, other_level],
         &[],
     ));
-    let reader = SnapshotReader::from_bytes(&bytes).unwrap();
+    let reader = Snapshot::from_bytes(&bytes).unwrap();
     script::observed::apply(&reader);
     let token = begin();
     let proj = site(json!({}));
@@ -1047,7 +1047,7 @@ fn snapshot_bank_row_is_not_completion() {
         slot: 1,
     };
     let bytes = encode_snapshot(&snap_rows(outside(), &[cert], &[bank]));
-    let reader = SnapshotReader::from_bytes(&bytes).unwrap();
+    let reader = Snapshot::from_bytes(&bytes).unwrap();
     script::observed::apply(&reader);
     let step = call(begin(), site(json!({})), None);
     assert_ne!(

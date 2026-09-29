@@ -224,7 +224,9 @@ fn unchanged_delta_retains_and_despawn_delta_removes_the_box() {
     next.tick = 2;
     let (unchanged, fingerprint) =
         encode_snapshot_delta_with_native(Some(&fingerprint), &next, native, false);
-    assert!(!decode_snapshot(&unchanged).unwrap().has_npc_boxes_update());
+    assert!(!decode_snapshot(&unchanged)
+        .unwrap()
+        .has_npc_boxes_available());
     assert!(tick(&iso, unchanged, 2).is_array());
 
     next.tick = 3;
@@ -239,7 +241,7 @@ fn unchanged_delta_retains_and_despawn_delta_removes_the_box() {
         false,
     );
     let update = decode_snapshot(&despawned).unwrap();
-    assert!(update.has_npc_boxes_update());
+    assert!(update.has_npc_boxes_available());
     assert!(update.npc_boxes_available());
     assert!(update.npc_boxes().expect("npc box rows").is_empty());
     assert!(tick(&iso, despawned, 3).is_null());

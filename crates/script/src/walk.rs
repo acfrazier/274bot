@@ -2552,8 +2552,7 @@ pub(crate) mod tests {
     #[test]
     fn walk_resilient_closest_with_fresh_negative_reach_does_not_arrive() {
         use crate::isolate_fb::{
-            encode_snapshot_with_native, NativeFactsInput, ReachViewInput, SnapshotReader,
-            TileInput,
+            encode_snapshot_with_native, NativeFactsInput, ReachViewInput, Snapshot, TileInput,
         };
 
         reset();
@@ -2630,7 +2629,7 @@ pub(crate) mod tests {
                     ..Default::default()
                 });
             let bytes = encode_snapshot_with_native(&input, native);
-            let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+            let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
             observed::apply(&snap);
             crate::load::reach_query::apply(&snap);
             walk_wait::on_snapshot(&snap);

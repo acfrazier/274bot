@@ -11,7 +11,7 @@ use script::hunt_leave::{
     set_observation, LeaveInv, LeaveLoc, LeaveObservation, DOOR_MS, WALK_LEG_MS,
 };
 use script::isolate_fb::{
-    encode_snapshot, ItemRowInput, SnapshotInput, SnapshotReader, StatInput, TileInput,
+    encode_snapshot, ItemRowInput, Snapshot, SnapshotInput, StatInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -313,7 +313,7 @@ fn magic_gate_reads_base_not_effective() {
         effective: 99,
     }];
     let bytes = encode_snapshot(&snap_with(inside(), &low, &inv));
-    let reader = SnapshotReader::from_bytes(&bytes).unwrap();
+    let reader = Snapshot::from_bytes(&bytes).unwrap();
     script::observed::apply(&reader);
     let token = begin();
     let short = call(Some(&data), token, site(json!({})), None);
@@ -332,7 +332,7 @@ fn magic_gate_reads_base_not_effective() {
         effective: 1,
     }];
     let bytes = encode_snapshot(&snap_with(inside(), &high, &inv));
-    let reader = SnapshotReader::from_bytes(&bytes).unwrap();
+    let reader = Snapshot::from_bytes(&bytes).unwrap();
     script::observed::apply(&reader);
     let token = begin();
     let ready = call(Some(&data), token, site(json!({})), None);

@@ -31,17 +31,10 @@ use std::sync::Arc;
 pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
-    AvoidRect as AvoidRectReader, BankApproach as BankApproachReader, BankStand as BankStandReader,
-    Booth as BoothReader, Carry as CarryReader, ChatLine as ChatLineReader,
-    ChatOption as ChatOptionReader, Collision as CollisionReader, CombatStyle as CombatStyleReader,
-    InspectHop as InspectHopReader, Interact as InteractReader,
-    InteractBatch as InteractBatchReader, MainModalTexts as MainModalTextsReader,
-    MakeButton as MakeButtonReader, MakeProduct as MakeProductReader,
-    NearestBooth as NearestBoothReader, NpcBox as NpcBoxReader, PuzzleBoard as PuzzleBoardReader,
-    QuestStatus as QuestStatusReader, Reach as ReachReader, Row as RowReader,
-    SceneEntity as SceneEntityReader, SideTabIface as SideTabIfaceReader,
-    Snapshot as SnapshotReader, Stat as StatReader, Tile as TileReader, Varp as VarpReader,
-    WidgetText as WidgetTextReader,
+    AvoidRect, BankApproach, BankStand, Booth, Carry, ChatLine, ChatOption, Collision, CombatStyle,
+    InspectHop, Interact, InteractBatch, MainModalTexts, MakeButton, MakeProduct, NearestBooth,
+    NpcBox, PuzzleBoard, QuestStatus, Reach, Row, SceneEntity, SideTabIface, Snapshot, Stat, Tile,
+    Varp, WidgetText,
 };
 
 fn isolate_verify_opts() -> VerifierOptions {
@@ -623,8 +616,8 @@ pub struct WidgetTextInput<'a> {
     pub item_count: i32,
 }
 /// Decode `buf` as a root-`Snapshot` FlatBuffer after bounded verification.
-pub fn decode_snapshot(buf: &[u8]) -> Result<SnapshotReader<'_>, String> {
-    SnapshotReader::from_bytes(buf)
+pub fn decode_snapshot(buf: &[u8]) -> Result<Snapshot<'_>, String> {
+    Snapshot::from_bytes(buf)
 }
 
 impl<'a> Snapshot<'a> {
@@ -770,25 +763,13 @@ impl<'a> Snapshot<'a> {
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
-        unsafe {
-            Some(BankSelectionInput {
-                request_id: self
-                    ._tab
-                    .get::<u64>(Self::VT_BANK_SELECTION_REQUEST_ID, None)?,
-                generation: self
-                    ._tab
-                    .get::<u64>(Self::VT_BANK_SELECTION_GENERATION, Some(0))
-                    .unwrap_or(0),
-                bank_index: self
-                    ._tab
-                    .get::<i32>(Self::VT_BANK_SELECTION_INDEX, Some(-1))
-                    .unwrap_or(-1),
-                kind: self
-                    ._tab
-                    .get::<u8>(Self::VT_BANK_SELECTION_KIND, Some(0))
-                    .unwrap_or(0),
+        self.has_bank_selection_request_id()
+            .then(|| BankSelectionInput {
+                request_id: self.bank_selection_request_id(),
+                generation: self.bank_selection_generation(),
+                bank_index: self.bank_selection_index(),
+                kind: self.bank_selection_kind(),
             })
-        }
     }
 
     pub fn has_hint_tile(&self) -> bool {
@@ -810,14 +791,6 @@ impl<'a> Snapshot<'a> {
         let off = self.retaliate_off_com_id();
         (on >= 0 && off >= 0).then_some((on, off))
     }
-
-    pub fn has_quest_statuses_update(&self) -> bool {
-        self.has_quest_statuses_available()
-    }
-
-    pub fn has_npc_boxes_update(&self) -> bool {
-        self.has_npc_boxes_available()
-    }
 }
 
 impl Row<'_> {
@@ -833,27 +806,11 @@ impl Carry<'_> {
     }
 }
 
-impl<'a> Interact<'a> {
-    #[inline]
-    fn present_i32(&self, slot: flatbuffers::VOffsetT) -> Option<i32> {
-        // Safety: `Self` was constructed from a verified FlatBuffer table.
-        unsafe { self._tab.get::<i32>(slot, None) }
-    }
-
-    pub fn required_x(&self) -> Option<i32> {
-        self.present_i32(Self::VT_X)
-    }
-
-    pub fn required_z(&self) -> Option<i32> {
-        self.present_i32(Self::VT_Z)
-    }
-
-    pub fn required_level(&self) -> Option<i32> {
-        self.present_i32(Self::VT_LEVEL)
-    }
-
-    pub fn allow_teleports_explicit(&self) -> bool {
-        self.allow_teleports()
+impl Interact<'_> {
+    presence_methods! {
+        has_x => VT_X,
+        has_z => VT_Z,
+        has_level => VT_LEVEL,
     }
 }
 
@@ -2691,7 +2648,7 @@ fn encode_snapshot_masked_into(
     b.finish(root, None);
 }
 
-fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<TileReader<'b>> {
+fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<Tile<'b>> {
     let mut table = TileBuilder::new(b);
     table.add_x(t.x);
     table.add_z(t.z);
@@ -2714,7 +2671,7 @@ fn avoid_rect_off<'b>(
     min_z: i32,
     max_z: i32,
     level: Option<i32>,
-) -> WIPOffset<AvoidRectReader<'b>> {
+) -> WIPOffset<AvoidRect<'b>> {
     let mut table = AvoidRectBuilder::new(b);
     table.add_min_x(min_x);
     table.add_max_x(max_x);
@@ -2727,7 +2684,7 @@ fn avoid_rect_off<'b>(
 fn inspect_hop_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     hop: &InspectHopInput<'_>,
-) -> WIPOffset<InspectHopReader<'b>> {
+) -> WIPOffset<InspectHop<'b>> {
     let kind = b.create_string(hop.kind);
     let loc_name = b.create_string(hop.loc_name);
     let action = b.create_string(hop.action);
@@ -2750,7 +2707,7 @@ fn inspect_hop_off<'b>(
 fn bank_approach_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     row: &BankApproachInput,
-) -> WIPOffset<BankApproachReader<'b>> {
+) -> WIPOffset<BankApproach<'b>> {
     let mut table = BankApproachBuilder::new(b);
     table.add_loc_id(row.loc_id);
     table.add_x(row.x);
@@ -2767,7 +2724,7 @@ fn bank_approach_off<'b>(
 fn collision_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     c: &CollisionViewInput<'_>,
-) -> WIPOffset<CollisionReader<'b>> {
+) -> WIPOffset<Collision<'b>> {
     let flags = b.create_vector(c.flags);
     let mut table = CollisionBuilder::new(b);
     table.add_available(c.available);
@@ -2780,10 +2737,7 @@ fn collision_off<'b>(
     table.finish()
 }
 
-fn reach_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    r: &ReachViewInput<'_>,
-) -> WIPOffset<ReachReader<'b>> {
+fn reach_off<'b>(b: &mut FlatBufferBuilder<'b>, r: &ReachViewInput<'_>) -> WIPOffset<Reach<'b>> {
     let walkable = b.create_vector(r.walkable);
     let reachable = b.create_vector(r.reachable);
     let reachable_adj = b.create_vector(r.reachable_adj);
@@ -2808,7 +2762,7 @@ fn reach_off<'b>(
     table.finish()
 }
 
-fn row_off<'b>(b: &mut FlatBufferBuilder<'b>, r: &ItemRowInput<'_>) -> WIPOffset<RowReader<'b>> {
+fn row_off<'b>(b: &mut FlatBufferBuilder<'b>, r: &ItemRowInput<'_>) -> WIPOffset<Row<'b>> {
     let name_off = r.name.map(|n| b.create_string(n));
     let ops_offs: Vec<_> = r.ops.iter().map(|a| b.create_string(a)).collect();
     let ops_off = b.create_vector(&ops_offs);
@@ -2828,7 +2782,7 @@ fn row_off<'b>(b: &mut FlatBufferBuilder<'b>, r: &ItemRowInput<'_>) -> WIPOffset
     table.finish()
 }
 
-fn stat_off<'b>(b: &mut FlatBufferBuilder<'b>, s: &StatInput<'_>) -> WIPOffset<StatReader<'b>> {
+fn stat_off<'b>(b: &mut FlatBufferBuilder<'b>, s: &StatInput<'_>) -> WIPOffset<Stat<'b>> {
     let name_off = b.create_string(s.name);
     let mut table = StatBuilder::new(b);
     table.add_index(s.index);
@@ -2842,7 +2796,7 @@ fn stat_off<'b>(b: &mut FlatBufferBuilder<'b>, s: &StatInput<'_>) -> WIPOffset<S
 fn scene_entity_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     e: &SceneEntityInput<'_>,
-) -> WIPOffset<SceneEntityReader<'b>> {
+) -> WIPOffset<SceneEntity<'b>> {
     let name_off = e.name.map(|n| b.create_string(n));
     let action_offs: Vec<_> = e.actions.iter().map(|a| b.create_string(a)).collect();
     let actions_off = b.create_vector(&action_offs);
@@ -2883,7 +2837,7 @@ fn scene_entity_off<'b>(
 fn chat_option_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     o: &ChatOptionInput<'_>,
-) -> WIPOffset<ChatOptionReader<'b>> {
+) -> WIPOffset<ChatOption<'b>> {
     let text_off = b.create_string(o.text);
     let mut table = ChatOptionBuilder::new(b);
     table.add_text(text_off);
@@ -2894,7 +2848,7 @@ fn chat_option_off<'b>(
 fn chat_line_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     l: &ChatLineInput<'_>,
-) -> WIPOffset<ChatLineReader<'b>> {
+) -> WIPOffset<ChatLine<'b>> {
     let text_off = b.create_string(l.text);
     let username_off = l.username.map(|name| b.create_string(name));
     let mut table = ChatLineBuilder::new(b);
@@ -2910,7 +2864,7 @@ fn chat_line_off<'b>(
 fn widget_text_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     w: &WidgetTextInput<'_>,
-) -> WIPOffset<WidgetTextReader<'b>> {
+) -> WIPOffset<WidgetText<'b>> {
     let text_off = b.create_string(w.text);
     let mut table = WidgetTextBuilder::new(b);
     table.add_component_id(w.component_id);
@@ -2922,7 +2876,7 @@ fn widget_text_off<'b>(
 fn main_modal_texts_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     pair: &MainModalTextsInput<'_>,
-) -> WIPOffset<MainModalTextsReader<'b>> {
+) -> WIPOffset<MainModalTexts<'b>> {
     let text_offs = pair
         .texts
         .iter()
@@ -2942,7 +2896,7 @@ fn main_modal_texts_off<'b>(
 fn puzzle_board_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     board: &PuzzleBoardInput<'_>,
-) -> WIPOffset<PuzzleBoardReader<'b>> {
+) -> WIPOffset<PuzzleBoard<'b>> {
     let item_offs = board
         .items
         .iter()
@@ -2959,10 +2913,7 @@ fn puzzle_board_off<'b>(
 /// One navigator-named gate short. `id` and `count` are always written — the
 /// row's identity is the id — and the name only when the host obj table
 /// resolved one, so a nameless short is never dropped and never invented.
-fn carry_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    row: &CarryInput<'_>,
-) -> WIPOffset<CarryReader<'b>> {
+fn carry_off<'b>(b: &mut FlatBufferBuilder<'b>, row: &CarryInput<'_>) -> WIPOffset<Carry<'b>> {
     let name_off = row.name.map(|name| b.create_string(name));
     let mut table = CarryBuilder::new(b);
     table.add_id(row.id);
@@ -2976,7 +2927,7 @@ fn carry_off<'b>(
 fn quest_status_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     q: &QuestStatusInput<'_>,
-) -> WIPOffset<QuestStatusReader<'b>> {
+) -> WIPOffset<QuestStatus<'b>> {
     let name_off = b.create_string(q.name);
     let status_off = b.create_string(q.status);
     let mut table = QuestStatusBuilder::new(b);
@@ -2991,10 +2942,7 @@ fn quest_status_off<'b>(
     table.finish()
 }
 
-fn npc_box_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    row: &NpcBoxInput,
-) -> WIPOffset<NpcBoxReader<'b>> {
+fn npc_box_off<'b>(b: &mut FlatBufferBuilder<'b>, row: &NpcBoxInput) -> WIPOffset<NpcBox<'b>> {
     let points = row
         .points
         .iter()
@@ -3010,7 +2958,7 @@ fn npc_box_off<'b>(
 fn side_tab_iface_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     t: SideTabIfaceInput,
-) -> WIPOffset<SideTabIfaceReader<'b>> {
+) -> WIPOffset<SideTabIface<'b>> {
     let mut table = SideTabIfaceBuilder::new(b);
     table.add_index(t.index);
     table.add_id(t.id);
@@ -3020,7 +2968,7 @@ fn side_tab_iface_off<'b>(
 fn make_button_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     btn: &MakeButtonInput,
-) -> WIPOffset<MakeButtonReader<'b>> {
+) -> WIPOffset<MakeButton<'b>> {
     let mut table = MakeButtonBuilder::new(b);
     table.add_qty(btn.qty);
     table.add_com_id(btn.com_id);
@@ -3030,7 +2978,7 @@ fn make_button_off<'b>(
 fn make_product_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     p: &MakeProductInput<'_>,
-) -> WIPOffset<MakeProductReader<'b>> {
+) -> WIPOffset<MakeProduct<'b>> {
     let name_off = b.create_string(p.name);
     let btn_offs = p
         .buttons
@@ -3048,7 +2996,7 @@ fn make_product_off<'b>(
 fn combat_style_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     c: &CombatStyleInput<'_>,
-) -> WIPOffset<CombatStyleReader<'b>> {
+) -> WIPOffset<CombatStyle<'b>> {
     let label_off = b.create_string(c.label);
     let mut table = CombatStyleBuilder::new(b);
     table.add_mode(c.mode);
@@ -3057,7 +3005,7 @@ fn combat_style_off<'b>(
     table.finish()
 }
 
-fn varp_off<'b>(b: &mut FlatBufferBuilder<'b>, v: &VarpInput) -> WIPOffset<VarpReader<'b>> {
+fn varp_off<'b>(b: &mut FlatBufferBuilder<'b>, v: &VarpInput) -> WIPOffset<Varp<'b>> {
     let mut table = VarpBuilder::new(b);
     table.add_index(v.index);
     table.add_value(v.value);
@@ -3067,7 +3015,7 @@ fn varp_off<'b>(b: &mut FlatBufferBuilder<'b>, v: &VarpInput) -> WIPOffset<VarpR
 fn bank_stand_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     s: &BankStandInput<'_>,
-) -> WIPOffset<BankStandReader<'b>> {
+) -> WIPOffset<BankStand<'b>> {
     let name_off = b.create_string(s.name);
     let kind_off = b.create_string(s.kind);
     let choose_off = s.choose.map(|c| b.create_string(c));
@@ -3087,7 +3035,7 @@ fn bank_stand_off<'b>(
 fn nearest_booth_table_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     s: &NearestBoothInput<'_>,
-) -> WIPOffset<NearestBoothReader<'b>> {
+) -> WIPOffset<NearestBooth<'b>> {
     let name_off = b.create_string(s.name);
     let op_off = b.create_string(s.op);
     let mut table = NearestBoothBuilder::new(b);
@@ -3164,7 +3112,7 @@ pub fn cap_paint(paint: &crate::shim::ScriptPaint) -> Result<(), String> {
 /// the whole batch — the host logs it and drops the batch, never fatal,
 /// exactly like the old JSON parse.
 /// A row's typed avoid rectangles (inspect route and world walks).
-fn decoded_avoid(row: &InteractReader<'_>) -> Vec<crate::shim::InspectAvoidWire> {
+fn decoded_avoid(row: &Interact<'_>) -> Vec<crate::shim::InspectAvoidWire> {
     let Some(rects) = row.avoid() else {
         return Vec::new();
     };
@@ -3180,7 +3128,7 @@ fn decoded_avoid(row: &InteractReader<'_>) -> Vec<crate::shim::InspectAvoidWire>
         .collect()
 }
 fn decoded_run_policy(
-    row: &InteractReader<'_>,
+    row: &Interact<'_>,
 ) -> Result<Option<api::run_policy::RunPolicyOverride>, String> {
     use api::run_policy::{RunEnergyMin, RunPolicyOverride};
 
@@ -3210,7 +3158,7 @@ fn decoded_run_policy(
 }
 
 pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>, String> {
-    let batch = InteractBatchReader::from_bytes(buf)?;
+    let batch = InteractBatch::from_bytes(buf)?;
     let Some(rows) = batch.reqs() else {
         return Ok(Vec::new());
     };
@@ -3228,13 +3176,16 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
         match op {
             "open-booth" => out.push(crate::shim::InteractReq::OpenBooth {
                 x: row
-                    .required_x()
+                    .has_x()
+                    .then(|| row.x())
                     .ok_or_else(|| "open-booth has no x".to_string())?,
                 z: row
-                    .required_z()
+                    .has_z()
+                    .then(|| row.z())
                     .ok_or_else(|| "open-booth has no z".to_string())?,
                 level: row
-                    .required_level()
+                    .has_level()
+                    .then(|| row.level())
                     .ok_or_else(|| "open-booth has no level".to_string())?,
                 id: row
                     .index()
@@ -3292,7 +3243,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 from_x: row.from_x(),
                 from_z: row.from_z(),
                 from_level: row.from_level(),
-                allow_teleports: row.allow_teleports_explicit(),
+                allow_teleports: row.allow_teleports(),
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
                 avoid: decoded_avoid(&row),
@@ -3638,7 +3589,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
 fn interact_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     req: &crate::shim::InteractReq,
-) -> WIPOffset<InteractReader<'b>> {
+) -> WIPOffset<Interact<'b>> {
     use crate::shim::InteractReq;
     let op_off = b.create_string(match req {
         InteractReq::OpenBooth { .. } => "open-booth",
@@ -4313,7 +4264,7 @@ pub(crate) mod tests {
         snapshot.add_tick(7);
         let root = snapshot.finish();
         b.finish(root, None);
-        let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
+        let view = Snapshot::from_bytes(b.finished_data()).expect("old snapshot");
         assert!(!view.has_walk_outcome_seq());
         assert_eq!(view.walk_outcome_seq(), 0);
         assert_eq!(view.walk_outcome_generation(), 0);
@@ -4420,11 +4371,11 @@ pub(crate) mod tests {
             vec!["Attack", "Pick-up"]
         );
         assert!(
-            unsafe { npc._tab.get::<i32>(SceneEntityReader::VT_SHAPE, None) }.is_none(),
+            unsafe { npc._tab.get::<i32>(SceneEntity::VT_SHAPE, None) }.is_none(),
             "non-loc rows omit zero-valued loc geometry slots"
         );
         assert!(
-            unsafe { npc._tab.get::<i32>(SceneEntityReader::VT_ANGLE, None) }.is_none(),
+            unsafe { npc._tab.get::<i32>(SceneEntity::VT_ANGLE, None) }.is_none(),
             "non-loc rows omit zero-valued loc geometry slots"
         );
     }
@@ -4487,7 +4438,7 @@ pub(crate) mod tests {
             snapshot.finish()
         };
         snap_b.finish(root, None);
-        let snap = SnapshotReader::from_bytes(snap_b.finished_data()).expect("old snap");
+        let snap = Snapshot::from_bytes(snap_b.finished_data()).expect("old snap");
         let got = snap.npcs().expect("npc vector");
         assert_eq!(got.len(), 1);
         let npc = got.get(0);
@@ -4504,7 +4455,7 @@ pub(crate) mod tests {
         snapshot.add_tick(7);
         let root = snapshot.finish();
         b.finish(root, None);
-        let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
+        let view = Snapshot::from_bytes(b.finished_data()).expect("old snapshot");
         assert!(!view.has_self_target_kind());
         assert!(!view.has_self_target_index());
         assert_eq!(view.self_target_kind(), 0);
@@ -4964,7 +4915,7 @@ pub(crate) mod tests {
     fn one_isolate_buf_encodes_snapshot_then_paint_then_interact() {
         let mut buf = IsolateBuf::new();
         let bytes = buf.encode_snapshot(&empty_input(1));
-        let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         assert_eq!(snap.tick(), 1);
 
         let reqs = vec![
@@ -5117,7 +5068,7 @@ pub(crate) mod tests {
         let mut buf = IsolateBuf::new();
         let _ = buf.encode_snapshot(&empty_input(1));
         let bytes = buf.encode_snapshot(&empty_input(2));
-        let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         assert_eq!(snap.tick(), 2);
     }
 
@@ -5451,7 +5402,7 @@ pub(crate) mod tests {
         snapshot.add_tick(7);
         let root = snapshot.finish();
         b.finish(root, None);
-        let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
+        let view = Snapshot::from_bytes(b.finished_data()).expect("old snapshot");
         assert!(!view.has_puzzle_board());
         assert!(view.puzzle_board().is_none());
         assert!(!view.has_puzzle_board_generation());
@@ -5645,7 +5596,7 @@ pub(crate) mod tests {
             snapshot.finish()
         };
         b.finish(root, None);
-        let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
+        let view = Snapshot::from_bytes(b.finished_data()).expect("old snapshot");
         assert!(view.has_walk_outcome_seq());
         assert!(!view.has_walk_missing_carry());
         assert!(view.walk_missing_carry().is_none());

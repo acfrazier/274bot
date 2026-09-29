@@ -13858,7 +13858,7 @@ fn publish_script_snapshot(
     )
 }
 
-fn posted_varp(view: &script::isolate_fb::SnapshotReader<'_>, index: i32) -> Option<i32> {
+fn posted_varp(view: &script::isolate_fb::Snapshot<'_>, index: i32) -> Option<i32> {
     view.varps()?
         .iter()
         .find(|row| row.index() == index)
@@ -14035,7 +14035,7 @@ fn script_snapshot_posts_native_quest_rows_and_clears_them_without_a_snapshot() 
         false,
     );
     let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
-    assert!(posted.has_quest_statuses_update());
+    assert!(posted.has_quest_statuses_available());
     assert!(posted.quest_statuses_available());
     let rows = posted.quest_statuses().expect("quest rows");
     let got = rows
@@ -14073,7 +14073,7 @@ fn script_snapshot_posts_native_quest_rows_and_clears_them_without_a_snapshot() 
     );
     let clear = script::isolate_fb::decode_snapshot(&clear_bytes).expect("clear decodes");
     assert!(
-        clear.has_quest_statuses_update(),
+        clear.has_quest_statuses_available(),
         "clear update must be present"
     );
     assert!(!clear.quest_statuses_available());

@@ -295,7 +295,7 @@ tiles already verified).
 | `slot/pending.rs` | bank settlement records | host-owned pending accessors |
 | `machine.rs` | step-machine host | one multi-tick behavior in Rust |
 | `observed.rs` | per-isolate decoded scene | delta-merge, owned rows |
-| `isolate_fb.rs` | isolate wire codec | hand-written builder and reader, no JSON per tick |
+| `isolate_fb.rs` | isolate wire codec | flatc-generated bindings (`schema/generated`) plus delta/`IsolateBuf` domain layer; one verified root per message |
 | `host_js.rs` | generated Host JS types | from verb tables, not rs2b0t names |
 | `content.rs` | curated sites and hostile predicate | bank aliases posted via the shim payload |
 | `ent.rs` | Ent lookup over caller rows | no scene scan |

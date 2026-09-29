@@ -23,7 +23,7 @@ type TableVector<'a, T> = Option<Vector<'a, ForwardsUOffset<T>>>;
 /// of 50+ isolates never parses a JSON document per tick.
 pub(super) fn materialize_snapshot(
     runtime: &mut Runtime,
-    snap: &crate::isolate_fb::SnapshotReader<'_>,
+    snap: &crate::isolate_fb::Snapshot<'_>,
     host_hold: bool,
 ) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
@@ -567,7 +567,7 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "widgets", empty_rows)?;
     }
-    if snap.has_quest_statuses_update() {
+    if snap.has_quest_statuses_available() {
         if snap.quest_statuses_available() {
             let quests = quest_status_array(&mut scope, snap.quest_statuses())?;
             set(&mut scope, obj, "quest_statuses", quests)?;
@@ -581,7 +581,7 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "quest_statuses", none)?;
     }
-    if snap.has_npc_boxes_update() {
+    if snap.has_npc_boxes_available() {
         if snap.npc_boxes_available() {
             let boxes = npc_box_array(&mut scope, snap.npc_boxes())?;
             set(&mut scope, obj, "npc_boxes", boxes)?;
@@ -1158,7 +1158,7 @@ fn delete_key<'s>(
 /// One `{id, name, ops, count, noted, cert, component_id, slot}` row from ItemView.
 fn row_object<'s>(
     scope: &mut v8::HandleScope<'s>,
-    row: &crate::isolate_fb::RowReader<'_>,
+    row: &crate::isolate_fb::Row<'_>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let o = v8::Object::new(scope);
     match row.name() {
@@ -1200,7 +1200,7 @@ fn row_object<'s>(
 
 fn row_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: TableVector<'a, crate::isolate_fb::RowReader<'a>>,
+    rows: TableVector<'a, crate::isolate_fb::Row<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
     for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
@@ -1213,7 +1213,7 @@ fn row_array<'s, 'a>(
 
 fn stat_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    stats: TableVector<'a, crate::isolate_fb::StatReader<'a>>,
+    stats: TableVector<'a, crate::isolate_fb::Stat<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, stats.as_ref().map_or(0, |stats| stats.len()) as i32);
     for (i, st) in stats.into_iter().flat_map(|stats| stats.iter()).enumerate() {
@@ -1237,7 +1237,7 @@ fn stat_array<'s, 'a>(
 
 fn tile_object<'s>(
     scope: &mut v8::HandleScope<'s>,
-    t: &crate::isolate_fb::TileReader<'_>,
+    t: &crate::isolate_fb::Tile<'_>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     tile_values_object(scope, t.x(), t.z(), t.level())
 }
@@ -1266,7 +1266,7 @@ fn unavailable_collision<'s>(
 
 fn collision_object<'s>(
     scope: &mut v8::HandleScope<'s>,
-    collision: Option<crate::isolate_fb::CollisionReader<'_>>,
+    collision: Option<crate::isolate_fb::Collision<'_>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let Some(c) = collision else {
         return unavailable_collision(scope);
@@ -1367,7 +1367,7 @@ fn unavailable_reach<'s>(
 
 fn reach_object<'s>(
     scope: &mut v8::HandleScope<'s>,
-    reach: Option<crate::isolate_fb::ReachReader<'_>>,
+    reach: Option<crate::isolate_fb::Reach<'_>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let Some(r) = reach else {
         return unavailable_reach(scope);
@@ -1390,7 +1390,7 @@ fn reach_object<'s>(
 
 fn nearest_booth_object<'s>(
     scope: &mut v8::HandleScope<'s>,
-    nb: &crate::isolate_fb::NearestBoothReader<'_>,
+    nb: &crate::isolate_fb::NearestBooth<'_>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let o = v8::Object::new(scope);
     let x = num(scope, nb.x() as f64);
@@ -1410,7 +1410,7 @@ fn nearest_booth_object<'s>(
 
 fn tile_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    tiles: TableVector<'a, crate::isolate_fb::BoothReader<'a>>,
+    tiles: TableVector<'a, crate::isolate_fb::Booth<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, tiles.as_ref().map_or(0, |tiles| tiles.len()) as i32);
     for (i, t) in tiles.into_iter().flat_map(|tiles| tiles.iter()).enumerate() {
@@ -1423,7 +1423,7 @@ fn tile_array<'s, 'a>(
 
 fn scene_entity_object<'s>(
     scope: &mut v8::HandleScope<'s>,
-    ent: &crate::isolate_fb::SceneEntityReader<'_>,
+    ent: &crate::isolate_fb::SceneEntity<'_>,
     npc: bool,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let o = v8::Object::new(scope);
@@ -1516,7 +1516,7 @@ fn scene_entity_object<'s>(
 
 fn scene_entity_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    ents: TableVector<'a, crate::isolate_fb::SceneEntityReader<'a>>,
+    ents: TableVector<'a, crate::isolate_fb::SceneEntity<'a>>,
     npc: bool,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, ents.as_ref().map_or(0, |ents| ents.len()) as i32);
@@ -1530,7 +1530,7 @@ fn scene_entity_array<'s, 'a>(
 
 fn chat_option_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    opts: TableVector<'a, crate::isolate_fb::ChatOptionReader<'a>>,
+    opts: TableVector<'a, crate::isolate_fb::ChatOption<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, opts.as_ref().map_or(0, |opts| opts.len()) as i32);
     for (i, opt) in opts.into_iter().flat_map(|opts| opts.iter()).enumerate() {
@@ -1548,7 +1548,7 @@ fn chat_option_array<'s, 'a>(
 
 fn make_product_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    products: TableVector<'a, crate::isolate_fb::MakeProductReader<'a>>,
+    products: TableVector<'a, crate::isolate_fb::MakeProduct<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(
         scope,
@@ -1592,7 +1592,7 @@ fn make_product_array<'s, 'a>(
 
 fn varp_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    varps: TableVector<'a, crate::isolate_fb::VarpReader<'a>>,
+    varps: TableVector<'a, crate::isolate_fb::Varp<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, varps.as_ref().map_or(0, |varps| varps.len()) as i32);
     for (i, v) in varps.into_iter().flat_map(|varps| varps.iter()).enumerate() {
@@ -1610,7 +1610,7 @@ fn varp_array<'s, 'a>(
 
 fn combat_style_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    styles: TableVector<'a, crate::isolate_fb::CombatStyleReader<'a>>,
+    styles: TableVector<'a, crate::isolate_fb::CombatStyle<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(
         scope,
@@ -1637,7 +1637,7 @@ fn combat_style_array<'s, 'a>(
 
 fn side_tab_iface_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    tabs: TableVector<'a, crate::isolate_fb::SideTabIfaceReader<'a>>,
+    tabs: TableVector<'a, crate::isolate_fb::SideTabIface<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, tabs.as_ref().map_or(0, |tabs| tabs.len()) as i32);
     for (i, t) in tabs.into_iter().flat_map(|tabs| tabs.iter()).enumerate() {
@@ -1654,7 +1654,7 @@ fn side_tab_iface_array<'s, 'a>(
 
 fn chat_line_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    lines: TableVector<'a, crate::isolate_fb::ChatLineReader<'a>>,
+    lines: TableVector<'a, crate::isolate_fb::ChatLine<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, lines.as_ref().map_or(0, |lines| lines.len()) as i32);
     for (i, line) in lines.into_iter().flat_map(|lines| lines.iter()).enumerate() {
@@ -1681,7 +1681,7 @@ fn chat_line_array<'s, 'a>(
 /// never a missing property.
 fn puzzle_board_object<'s>(
     scope: &mut v8::HandleScope<'s>,
-    board: Option<crate::isolate_fb::PuzzleBoardReader<'_>>,
+    board: Option<crate::isolate_fb::PuzzleBoard<'_>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     match board {
         Some(board) => board_object(scope, board.component_id(), board.size(), board.items()),
@@ -1701,7 +1701,7 @@ fn board_object<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
     component_id: i32,
     size: i32,
-    rows: TableVector<'a, crate::isolate_fb::RowReader<'a>>,
+    rows: TableVector<'a, crate::isolate_fb::Row<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let o = v8::Object::new(scope);
     let component_id = num(scope, component_id as f64);
@@ -1715,7 +1715,7 @@ fn board_object<'s, 'a>(
 
 fn widget_text_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: TableVector<'a, crate::isolate_fb::WidgetTextReader<'a>>,
+    rows: TableVector<'a, crate::isolate_fb::WidgetText<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
     for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
@@ -1741,14 +1741,14 @@ fn widget_text_array<'s, 'a>(
 
 fn quest_status_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: TableVector<'a, crate::isolate_fb::QuestStatusReader<'a>>,
+    rows: TableVector<'a, crate::isolate_fb::QuestStatus<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
     for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
         let o = v8::Object::new(scope);
         let name = js_string(scope, row.name().unwrap_or_default())?;
         set(scope, o, "name", name)?;
-        let status = js_string(scope, row.status().unwrap_or_default())?;
+        let status = js_string(scope, row.status().unwrap_or("unknown"))?;
         set(scope, o, "status", status)?;
         // Only a posted id becomes a property. An absent slot is "no click
         // target" — not `0`, and not a sentinel the page could click.
@@ -1764,7 +1764,7 @@ fn quest_status_array<'s, 'a>(
 
 fn npc_box_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: TableVector<'a, crate::isolate_fb::NpcBoxReader<'a>>,
+    rows: TableVector<'a, crate::isolate_fb::NpcBox<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
     for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
@@ -1795,7 +1795,7 @@ fn npc_box_array<'s, 'a>(
 
 fn bank_stand_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    stands: TableVector<'a, crate::isolate_fb::BankStandReader<'a>>,
+    stands: TableVector<'a, crate::isolate_fb::BankStand<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(
         scope,
@@ -1841,7 +1841,7 @@ fn bank_stand_array<'s, 'a>(
 /// otherwise — the join is the id, and a nameless short is still posted).
 fn carry_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: TableVector<'a, crate::isolate_fb::CarryReader<'a>>,
+    rows: TableVector<'a, crate::isolate_fb::Carry<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
     for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
@@ -1868,7 +1868,7 @@ fn carry_array<'s, 'a>(
 
 fn bank_approach_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: TableVector<'a, crate::isolate_fb::BankApproachReader<'a>>,
+    rows: TableVector<'a, crate::isolate_fb::BankApproach<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
     for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
@@ -1899,7 +1899,7 @@ fn bank_approach_array<'s, 'a>(
 
 fn inspect_hop_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
-    rows: TableVector<'a, crate::isolate_fb::InspectHopReader<'a>>,
+    rows: TableVector<'a, crate::isolate_fb::InspectHop<'a>>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
     for (i, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
@@ -1940,6 +1940,7 @@ fn inspect_hop_array<'s, 'a>(
 
 #[cfg(test)]
 mod tests {
+    use crate::isolate_fb::generated::rs_2b_0t::isolate::{QuestStatusBuilder, SnapshotBuilder};
     use crate::isolate_fb::tests::empty_input;
     use crate::isolate_fb::{
         encode_snapshot, encode_snapshot_with_native, ItemRowInput, NativeFactsInput,
@@ -1964,6 +1965,26 @@ mod tests {
     fn generation(iso: &LoadIsolate) -> serde_json::Value {
         iso.probe("globalThis.__rs2b0t_host.snapshot.puzzle_board_generation")
             .expect("generation probe")
+    }
+
+    fn absent_quest_status_snapshot() -> Vec<u8> {
+        let mut b = flatbuffers::FlatBufferBuilder::new();
+        let name = b.create_string("Mystery Quest");
+        let status = {
+            let mut row = QuestStatusBuilder::new(&mut b);
+            row.add_name(name);
+            row.finish()
+        };
+        let statuses = b.create_vector(&[status]);
+        let root = {
+            let mut snapshot = SnapshotBuilder::new(&mut b);
+            snapshot.add_tick(1);
+            snapshot.add_quest_statuses(statuses);
+            snapshot.add_quest_statuses_available(true);
+            snapshot.finish()
+        };
+        b.finish(root, None);
+        b.finished_data().to_vec()
     }
 
     fn piece(ops: &[String], id: i32, slot: i32, component_id: i32) -> ItemRowInput<'_> {
@@ -2061,6 +2082,18 @@ mod tests {
         assert_eq!(board["size"], 0);
         assert_eq!(board["items"], serde_json::json!([]));
         assert_eq!(generation(&iso), 8);
+        iso.join();
+    }
+
+    #[test]
+    fn absent_quest_status_materializes_unknown() {
+        let iso = spawn_isolate();
+        iso.post_snapshot(absent_quest_status_snapshot());
+        assert_eq!(
+            iso.probe("globalThis.__rs2b0t_host.snapshot.quest_statuses[0].status")
+                .expect("quest status probe"),
+            serde_json::json!("unknown")
+        );
         iso.join();
     }
 }

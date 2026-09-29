@@ -9,7 +9,7 @@ use api::snapshot::WorldTile;
 use rustyscript::Runtime;
 use std::cell::RefCell;
 
-use crate::isolate_fb::{ReachReader, SnapshotReader};
+use crate::isolate_fb::{Reach, Snapshot};
 
 const PENDING: &str = "__pending__";
 
@@ -27,7 +27,7 @@ thread_local! {
 
 /// Refresh the cached view when [`crate::observed::Lens::reach_stamp`] moves.
 /// An omitted delta keeps the last stamp and the last view.
-pub(crate) fn apply(snap: &SnapshotReader<'_>) {
+pub(crate) fn apply(snap: &Snapshot<'_>) {
     let stamp = crate::observed::with(|scene| scene.latest().reach_stamp());
     REACH.with(|slot| {
         let mut cached = slot.borrow_mut();
@@ -138,7 +138,7 @@ pub(crate) fn arrived_at(x: f64, z: f64, level: f64, radius: f64) -> bool {
     })
 }
 
-fn view_from_reader(r: ReachReader<'_>) -> ReachQueryView {
+fn view_from_reader(r: Reach<'_>) -> ReachQueryView {
     ReachQueryView {
         available: r.available(),
         base_x: r.base_x(),
@@ -611,7 +611,7 @@ mod tests {
             };
         }
         let bytes = encode_snapshot(&input);
-        let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         crate::observed::apply(&snap);
         apply(&snap);
     }
