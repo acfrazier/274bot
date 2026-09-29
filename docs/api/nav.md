@@ -209,6 +209,13 @@ and `Err(QuestFamilyMismatch)` for evidence from another quest family. The
 routing searches evaluate gates without allocating; only the failure diagnosis
 collects them.
 
+Route selection is not permission to send later. `TravelOptions::quest_evidence`
+borrows the evidence for the active route. The traveller checks gated transport
+legs at entry and again on each active-hop poll, including the poll after an
+approach walk and before its interaction. Only `True` permits continuation;
+missing, disproven, stale or undecided evidence ends the leg as `Blocked`
+without another transport send. Ungated legs need no provider.
+
 The two diagnoses see across each other. When the BankBudget diagnosis
 (`find_missing_item_reqs`, which ignores only carry/wear gates) finds no route,
 it searches once more also crossing `Unknown` stage gates, and

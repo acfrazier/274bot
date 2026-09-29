@@ -281,6 +281,12 @@ impl FollowRun {
     ) -> Poll {
         let mut hop = self.transport.take().expect("transport hop present");
         let here = here(snapshot);
+        if let Leg::Transport { edge } = &hop.leg {
+            if let Some(outcome) = self.check_transport_gate(edge, here, options.quest_evidence) {
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                return Poll::Terminal(outcome);
+            }
+        }
         if let (Some(cb), Leg::Transport { edge }) = (options.on_event.as_mut(), &hop.leg) {
             cb(TravelEvent::TransportState {
                 tick: snapshot.tick(),
