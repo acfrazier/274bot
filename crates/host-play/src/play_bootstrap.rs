@@ -312,6 +312,11 @@ impl Play {
     /// maps. `per_frame` starts as a no-op — slots stay draw-off (headless)
     /// until a caller's own per-frame hook turns a slot's renderer on.
     pub(super) fn new(options: &PlayOptions) -> Play {
+        assert_eq!(
+            options.transport,
+            client::Transport::Tcp,
+            "direct PlayOptions supports only tcp"
+        );
         let (cache, ifaces, ifaces_mut_template) = load_template(&options.cache_dir);
         let cache = Arc::new(cache);
         Self::assemble(

@@ -394,7 +394,7 @@ impl Driver for Recorder {
                 client::CheatSend::Sent
             }
             client::CheatAdmission::Denied => {
-                client::CheatSend::Refused(client::CheatRefusal::Offline)
+                client::CheatSend::Refused(client::CheatRefusal::NotAuthorized)
             }
             client::CheatAdmission::Remote(transport) => {
                 client::CheatSend::Refused(client::CheatRefusal::RemoteProfile { transport })
@@ -602,6 +602,20 @@ fn cheat_allowed_only_when_admission_is_granted() {
     assert!(!cheat_allowed(client::CheatAdmission::Remote(
         client::Transport::Wss
     )));
+}
+
+#[test]
+fn denied_cheat_reports_missing_authorization() {
+    let mut r = Recorder {
+        cheat_admission: Some(client::CheatAdmission::Denied),
+        ..Recorder::default()
+    };
+    assert_eq!(
+        cheat(&mut r, "ping"),
+        client::CheatSend::Refused(client::CheatRefusal::NotAuthorized)
+    );
+    assert!(r.cheats.is_empty());
+    assert!(r.out.0.is_empty());
 }
 
 #[test]

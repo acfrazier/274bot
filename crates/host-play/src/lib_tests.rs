@@ -957,6 +957,38 @@ fn servers_reject_ambiguous_names_and_unsafe_vault_or_transport_settings() {
     assert!(servers.validate().is_err());
 }
 
+#[test]
+fn servers_load_rejects_case_insensitive_vault_collisions() {
+    let root = std::env::temp_dir().join(format!("274bot-vault-collision-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let bot_dir = root.join(".274bot");
+    std::fs::create_dir_all(&bot_dir).unwrap();
+    let mut servers = Servers::builtins(&root);
+    servers.servers[1].vault = "VAULT-PROD".into();
+    std::fs::write(
+        bot_dir.join("servers.json"),
+        serde_json::to_vec_pretty(&servers).unwrap(),
+    )
+    .unwrap();
+
+    let error = Servers::load(&bot_dir, &root).unwrap_err();
+    assert!(error.contains("duplicate vault"), "{error}");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[should_panic(expected = "direct PlayOptions supports only tcp")]
+fn direct_play_options_reject_wss_transport() {
+    let _ = Play::new(&PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Wss,
+        port: 443,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+}
+
 fn tmp_vault(name: &str) -> std::path::PathBuf {
     let dir =
         std::env::temp_dir().join(format!("274bot-host-play-{}-{}", std::process::id(), name));

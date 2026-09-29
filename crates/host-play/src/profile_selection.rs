@@ -21,18 +21,18 @@ impl ProfileOptions {
             return Err("--rs2b2t conflicts with --profile".into());
         }
         let cli_named = self.profile.is_some() || self.rs2b2t;
-        let env_named = !cli_named && self.revision.is_none() && env.profile.is_some();
+        let env_named = !cli_named && env.profile.is_some();
         let requested = if let Some(name) = &self.profile {
             name.clone()
         } else if self.rs2b2t {
             "rs2b2t".into()
+        } else if let Some(name) = &env.profile {
+            name.clone()
         } else if let Some(revision) = self.revision.as_deref() {
             match parse_revision(revision)? {
                 ClientRevision::R274 => "local-274".into(),
                 ClientRevision::R289 => "local-289".into(),
             }
-        } else if let Some(name) = &env.profile {
-            name.clone()
         } else {
             match env
                 .revision
@@ -50,7 +50,7 @@ impl ProfileOptions {
         let revision_override = if cli_named {
             self.revision.as_deref()
         } else if env_named {
-            env.revision.as_deref()
+            self.revision.as_deref().or(env.revision.as_deref())
         } else {
             None
         };

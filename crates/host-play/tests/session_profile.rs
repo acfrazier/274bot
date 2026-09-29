@@ -396,6 +396,14 @@ fn removed_legacy_flags_and_profile_conflicts_fail_before_vault_access() {
         let (options, _) = parse_profile_args(args).unwrap();
         assert!(options.resolve_with_env(None, &fixture.env()).is_err());
     }
+    let mut env_profile = fixture.env();
+    env_profile.profile = Some("rs2b2t".into());
+    let (options, _) = parse_profile_args(["--revision", "274"]).unwrap();
+    let error = options.resolve_with_env(None, &env_profile).unwrap_err();
+    assert!(
+        error.contains("--revision conflicts with the selected --profile"),
+        "{error}"
+    );
     let mut legacy = fixture.env();
     legacy.legacy_target = Some("prod".into());
     assert!(ProfileOptions::default()

@@ -401,7 +401,10 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
         .prepare_template()
         .unwrap();
     let mut state = PanelState::default();
-    state.session.configure_profile(options).unwrap();
+    state
+        .session
+        .configure_profile_with_env(options, env)
+        .unwrap();
     let generation = state.session.profile_generation();
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     sender.send(Ok(template)).unwrap();
@@ -510,16 +513,23 @@ fn startup_progress_is_latest_only_and_generation_scoped() {
 fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     use host_play::progress::{ProfileProgress, ProfileProgressStage};
 
-    let (_root, cache, manifest) = checked_fixture(274);
+    let (root, cache, manifest) = checked_fixture(274);
     let mut state = PanelState::default();
     state
         .session
-        .configure_profile(host_play::ProfileOptions {
-            profile: Some("local-274".into()),
-            cache_dir: Some(cache),
-            cache_manifest: Some(manifest),
-            ..host_play::ProfileOptions::default()
-        })
+        .configure_profile_with_env(
+            host_play::ProfileOptions {
+                profile: Some("local-274".into()),
+                cache_dir: Some(cache),
+                cache_manifest: Some(manifest),
+                ..host_play::ProfileOptions::default()
+            },
+            ProfileEnvironment {
+                home: Some(root.to_path_buf()),
+                working_dir: Some(root.to_path_buf()),
+                ..ProfileEnvironment::default()
+            },
+        )
         .unwrap();
     let generation = state.session.profile_generation();
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
