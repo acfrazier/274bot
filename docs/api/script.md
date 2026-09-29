@@ -178,12 +178,18 @@ incarnation/run/session, and reports Applied, PendingBoundary, RestartRequired,
 Unchanged, Stale or rejection separately from the save. Pending-boundary
 acknowledgements must name the latest revision; restart-required drafts never
 become effective just because they were saved.
+Discarding a prepared card configuration contains card-owned destructor panics,
+including late worker results and stale UI deliveries.
 
 Only native parameter edits compose over an unvalidated draft; assignments,
 Start-Ready commits and Loaded-card edits use the durable-staged profile.
+A valid preparation rebases only its own card's settings onto that latest row;
+unrelated writes do not supersede it. A newer settings edit for the same card
+or profile removal does supersede it.
 Profile-form credentials and partner fields persist independently of native
 preparation. Their live bag prepares only after a successful save; Stop or a
 replacement Start makes delivery Stale without cancelling that save.
+Unrelated profile writes do not make a live partner delivery stale.
 
 Native Apply to all uses the same coordinator as loaded cards. Its confirmation
 and result identify excluded per-account fields for each target. Full copy

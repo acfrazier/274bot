@@ -1201,6 +1201,113 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
 }
 
 #[test]
+fn valid_native_draft_survives_unrelated_writes() {
+    for writer in ["assignment", "ready", "loaded"] {
+        let mut f = native_fixture("native-valid-draft", &["alice"]);
+        let id = script::CompiledId("Sherlock");
+        if writer == "ready" {
+            f.scripts
+                .start_sel(
+                    &mut f.core,
+                    "alice",
+                    script::ScriptSel::Compiled(id),
+                    None,
+                    super::StartKind::Start,
+                )
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while f.state("alice") != script::RunState::Running {
+                assert!(Instant::now() < deadline);
+                f.core.poll();
+                std::thread::yield_now();
+            }
+        }
+        let op = f
+            .scripts
+            .set_compiled_overrides(
+                &mut f.core,
+                "alice",
+                id,
+                bag(&[(script::CLUE_DUEL_PARTNER, json!("bob"))]),
+            )
+            .unwrap();
+        if writer == "ready" {
+            f.scripts.poll(&mut f.core);
+        } else if writer == "loaded" {
+            let card = f.card("other.ts", LOOPING);
+            f.set("alice", &card, "target", json!("Guard"));
+        } else {
+            assert!(f.scripts.persist_assignment(
+                &mut f.core,
+                "alice",
+                script::compiled_assignment(id),
+            ));
+        }
+        let mut expected = f
+            .core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .clone();
+        f.core.flush_writes();
+        let entry = f
+            .saved_bag("alice", &script::compiled_identity_key(id))
+            .unwrap();
+        assert_eq!(
+            entry["values"][script::CLUE_DUEL_PARTNER],
+            "bob",
+            "{writer}"
+        );
+        expected
+            .script_settings
+            .insert(script::compiled_identity_key(id), entry);
+        assert_eq!(
+            f.core.durable_profile("alice").unwrap().settings,
+            expected,
+            "{writer}"
+        );
+        assert!(
+            f.core
+                .take_settings_writes()
+                .iter()
+                .any(|write| write.op == op
+                    && matches!(write.result, super::SettingsResult::Saved(_)))
+        );
+    }
+}
+
+#[test]
+fn profile_partner_delivery_survives_unrelated_write() {
+    let mut f = native_fixture("native-partner-unrelated", &["alice"]);
+    start_sherlock(&mut f, "alice");
+    let run = f.core.play().unwrap().script_native_run("alice");
+    let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+    row.settings.clue_duel_partner = "bob".into();
+    let live = f
+        .scripts
+        .profile_save_live(&f.core, "alice", &row.settings)
+        .unwrap();
+    let op = f
+        .core
+        .save_profile(row, crate::ArmMirror::Remember(Some(live)), "form")
+        .unwrap();
+    f.core.set_auto_login("alice", true).unwrap();
+    f.core.flush_writes();
+    assert_eq!(f.core.play().unwrap().script_native_run("alice"), run);
+    assert!(f
+        .core
+        .take_settings_writes()
+        .iter()
+        .any(|write| write.op == op
+            && matches!(
+                write.result,
+                super::SettingsResult::Saved(super::LiveDelivery::Applied)
+            )));
+}
+
+#[test]
 fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
     let mut f = native_fixture("native-form-preparation-failure", &["alice"]);
     start_sherlock(&mut f, "alice");

@@ -208,6 +208,8 @@ pub struct OperatorSession<Io> {
     latest_write: HashMap<String, OperationId>,
     /// Tombstones retained across removal/recreation fence preparation replies.
     profile_edits: HashMap<String, OperationId>,
+    /// Only edits of the same card supersede its pending preparation/delivery.
+    native_edits: HashMap<(String, String), OperationId>,
     preparations: HashMap<OperationId, PendingPreparation>,
     deliveries: Vec<PendingDelivery>,
     write_failures: Vec<String>,
@@ -257,6 +259,7 @@ impl<Io> OperatorSession<Io> {
             write_gate: Arc::default(),
             latest_write: HashMap::new(),
             profile_edits: HashMap::new(),
+            native_edits: HashMap::new(),
             preparations: HashMap::new(),
             deliveries: Vec::new(),
             write_failures: Vec::new(),
@@ -1537,7 +1540,12 @@ impl<Io> OperatorSession<Io> {
         self.operations.set(op, &member, Outcome::Pending);
         for change in &changes {
             self.latest_write.insert(change.username().to_string(), op);
-            self.profile_edits.insert(change.username().to_string(), op);
+            if matches!(change, VaultChange::Remove(_)) {
+                self.profile_edits.insert(change.username().to_string(), op);
+            }
+        }
+        if let Some(card) = mirror.native_identity() {
+            self.native_edits.insert((member.clone(), card), op);
         }
         self.writes.insert(
             op,
