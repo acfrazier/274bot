@@ -42,8 +42,14 @@ impl ActionContext<'_> {
         self.eligible && self.budget.transition()
     }
 
+    /// Queue one game interaction. Walks go through [`Self::walk`], which owns
+    /// their follow and terminal receipt; route, channel, mouse, run-policy
+    /// and lifecycle requests are host-owned and never native interactions.
     pub fn emit(&mut self, request: InteractReq) -> Result<u64, ActionError> {
         let owner = self.owner()?;
+        if !native_interaction(&request) {
+            return Err(not_an_interaction());
+        }
         if !self.budget.event(false) {
             return Err(ActionError::BudgetExhausted);
         }
@@ -130,6 +136,42 @@ impl ActionContext<'_> {
                 .retain(|action| action.request_id != request_id);
         }
     }
+}
+
+/// Whether `emit` may queue `request`: a game interaction the host dispatches
+/// once, not a route (the typed walk owns those), broker channel, script
+/// mouse, host run policy or isolate lifecycle marker.
+fn native_interaction(request: &InteractReq) -> bool {
+    !matches!(
+        request,
+        InteractReq::Walk { .. }
+            | InteractReq::WalkNear { .. }
+            | InteractReq::WalkNearestBank
+            | InteractReq::SelectBank { .. }
+            | InteractReq::AbortWalk { .. }
+            | InteractReq::InspectRoute { .. }
+            | InteractReq::InspectAck { .. }
+            | InteractReq::ChannelOpen { .. }
+            | InteractReq::ChannelPost { .. }
+            | InteractReq::ChannelClose { .. }
+            | InteractReq::ChannelMessage { .. }
+            | InteractReq::ChannelStatus { .. }
+            | InteractReq::Mouse { .. }
+            | InteractReq::RunPolicyOverride { .. }
+            | InteractReq::NoteProgress
+            | InteractReq::LoopSettled
+            | InteractReq::WaitEnqueued
+            | InteractReq::WaitSettled
+            | InteractReq::RecoveryAnchor { .. }
+            | InteractReq::RecoveryAnchorNone
+    )
+}
+
+fn not_an_interaction() -> ActionError {
+    // One process allocation, never a new error string per refusal.
+    static REASON: LazyLock<Arc<str>> =
+        LazyLock::new(|| Arc::from("not a native interaction: walks use ActionContext::walk"));
+    ActionError::Unavailable(Arc::clone(&REASON))
 }
 
 impl QuietReadLease {
@@ -402,5 +444,116 @@ mod tests {
         };
         assert!(catch_unwind(AssertUnwindSafe(|| drop(handle))).is_ok());
         assert!(!owner.live());
+    }
+
+    /// An eligible frame on tick 1 over the slot's persistent ledger.
+    fn with_frame<R>(
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        active_now: Duration,
+        f: impl FnOnce(&mut ActionContext<'_>) -> R,
+    ) -> R {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let pin = selected.selected_pin().unwrap();
+        let evidence = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let mut retained = RetainedMemory::default();
+        let mut budget = ledger::TickBudget::default();
+        budget.observe(1);
+        let mut cx = ActionContext {
+            evidence,
+            pin: &pin,
+            snapshot: SnapshotView::new(None, evidence),
+            retained: &mut retained,
+            action_id: 0,
+            active_now,
+            wall_now: Instant::now(),
+            ledger,
+            budget: &mut budget,
+            eligible: true,
+        };
+        f(&mut cx)
+    }
+
+    #[test]
+    fn emit_refuses_walk_family_and_host_control_without_queueing_or_charging() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = Owner::new(cx.run(), cx.ledger.as_mut().unwrap().next_id().unwrap());
+            cx.ledger.as_mut().unwrap().owner = Some(Arc::clone(&owner));
+            cx.action_id = owner.id.get();
+            for request in [
+                InteractReq::Walk {
+                    x: 1,
+                    z: 1,
+                    level: 0,
+                    allow_teleports: false,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                    request_id: 0,
+                    avoid: Vec::new(),
+                },
+                InteractReq::WalkNearestBank,
+                InteractReq::AbortWalk { request_id: 0 },
+                InteractReq::LoopSettled,
+            ] {
+                assert!(matches!(cx.emit(request), Err(ActionError::Unavailable(_))));
+            }
+            assert!(cx.ledger.as_ref().unwrap().outbox.is_empty());
+            // A refused request spends no event: the tick's one dispatch is
+            // still available, and exhaustion leaves the outbox unchanged.
+            cx.emit(InteractReq::CloseModal).unwrap();
+            assert_eq!(
+                cx.emit(InteractReq::CloseModal),
+                Err(ActionError::BudgetExhausted)
+            );
+            assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 1);
+        });
+    }
+
+    #[test]
+    fn a_walk_without_a_host_terminal_fails_at_its_active_deadline() {
+        let mut actions = NativeActions { _private: () };
+        let mut ledger = None;
+        let (handle, authority) = with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let request = WalkRequest {
+                target: api::WorldTile {
+                    x: 9,
+                    z: 9,
+                    level: 0,
+                },
+                radius: 0,
+                options: FindOptions::default(),
+                required_after: cx.evidence(),
+                evidence: None,
+            };
+            let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
+            let authority = cx.ledger.as_ref().unwrap().outbox[0].authority();
+            assert!(actions.poll(&handle, cx).is_pending());
+            (handle, authority)
+        });
+        assert!(authority.live());
+        // A day of eligible time: far past any walk deadline, and no host
+        // receipt ever arrived.
+        with_frame(&mut ledger, Duration::from_secs(24 * 60 * 60), |cx| {
+            let ended = actions.poll(&handle, cx);
+            assert!(
+                matches!(
+                    &ended,
+                    Poll::Ready(Ok(WalkReceipt {
+                        end: WalkEnd::Failed,
+                        ..
+                    }))
+                ),
+                "{ended:?}"
+            );
+        });
+        assert!(!authority.live(), "the expired walk's follow is revoked");
     }
 }

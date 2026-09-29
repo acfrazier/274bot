@@ -281,7 +281,10 @@ impl FollowRun {
     ) -> Poll {
         let mut hop = self.transport.take().expect("transport hop present");
         let here = here(snapshot);
-        if let Leg::Transport { edge } = &hop.leg {
+        // Before the interaction: an approach still pending sends it on this
+        // poll. Once sent, the crossing is not rechecked; aborting it would
+        // report a physically completed crossing as unproven.
+        if let (Some(_), Leg::Transport { edge }) = (&hop.approach, &hop.leg) {
             if let Some(outcome) = self.check_transport_gate(edge, here, options.quest_evidence) {
                 fire_leg(options, &hop.leg, LegPhase::Failed);
                 return Poll::Terminal(outcome);

@@ -346,6 +346,7 @@ fn terminal_at(outcome: &nav::traveller::TravelOutcome) -> WorldTile {
         | TravelOutcome::Stalled { at, .. }
         | TravelOutcome::Refused { at, .. }
         | TravelOutcome::Blocked { at, .. }
+        | TravelOutcome::EvidenceUnproven { at, .. }
         | TravelOutcome::GaveUp { at, .. } => *at,
     }
 }
@@ -380,6 +381,9 @@ impl fmt::Display for TerminalReason<'_> {
             TravelOutcome::Stalled { why, .. } => write!(f, "Stalled({why:?})"),
             TravelOutcome::Refused { reason, .. } => write!(f, "{reason:?}"),
             TravelOutcome::Blocked { .. } => f.write_str("Blocked"),
+            TravelOutcome::EvidenceUnproven { verdict, .. } => {
+                write!(f, "EvidenceUnproven({verdict:?})")
+            }
             TravelOutcome::GaveUp { .. } => f.write_str("GaveUp"),
         }
     }

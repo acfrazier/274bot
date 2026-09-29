@@ -145,6 +145,17 @@ impl CompiledRun {
         }
     }
 
+    /// A session boundary keeps the run and advances only its session, so
+    /// stale-evidence fences see the reconnect. Controls re-read the key.
+    pub(super) fn rekey_session(&mut self, session: u64) {
+        self.run.session = session;
+        if let Some(status) = self.output.status.as_mut() {
+            if status.run != self.run {
+                Arc::make_mut(status).run = self.run;
+            }
+        }
+    }
+
     pub(super) fn tick(
         &mut self,
         ctx: &mut ScriptCtx<'_>,
@@ -221,6 +232,51 @@ impl CompiledRun {
                 retryable: false,
             }),
         }
+    }
+}
+
+/// Watchdog recreation starts from the effective revision. An accepted
+/// boundary revision is then offered to the new instance through its
+/// configure receiver, exactly as a live edit would be; its answer decides.
+/// A restart-required revision stays pending for an operator restart. A
+/// re-offer the new instance refuses is dropped visibly, never activated.
+fn reoffer_pending(
+    script: &mut ScriptOwner,
+    output: &mut Output,
+    effective: Arc<PreparedConfig>,
+    pending: Option<PendingConfig>,
+) -> Result<(Arc<PreparedConfig>, Option<PendingConfig>), StartError> {
+    let pending = match pending {
+        Some(pending) if pending.boundary => pending,
+        other => return Ok((effective, other)),
+    };
+    match catch_unwind(AssertUnwindSafe(|| {
+        script.configure(Arc::clone(&pending.config))
+    })) {
+        Ok(Ok(SettingsApply::Applied)) => Ok((pending.config, None)),
+        Ok(Ok(SettingsApply::PendingBoundary)) => Ok((effective, Some(pending))),
+        Ok(Ok(SettingsApply::RestartRequired)) => Ok((
+            effective,
+            Some(PendingConfig {
+                boundary: false,
+                ..pending
+            }),
+        )),
+        Ok(Err(error)) => {
+            output.log(
+                api::hostlog::Level::Warn,
+                &format!(
+                    "settings revision {} dropped on watchdog restart: {} ({})",
+                    pending.revision(),
+                    error.message,
+                    error.code
+                ),
+            );
+            Ok((effective, None))
+        }
+        Err(payload) => Err(StartError::Unavailable(
+            format!("configure panic: {}", panic_message(&payload)).into(),
+        )),
     }
 }
 
@@ -359,6 +415,12 @@ impl SlotScript {
         // Only the accepted configuration is effective; pending edits must not
         // become active merely because the watchdog recreates the instance.
         let config = Arc::clone(&current.config);
+        // An accepted pending revision is not dropped: the new instance is
+        // offered it again below, as a settings edit would offer it.
+        let pending = current.pending.as_ref().map(|pending| PendingConfig {
+            config: Arc::clone(&pending.config),
+            boundary: pending.boundary,
+        });
         let selected = Arc::clone(&current.selected);
         let pin = Arc::clone(&current.pin);
         let account = current.output.account.clone();
@@ -378,17 +440,20 @@ impl SlotScript {
                         format!("factory panic: {}", panic_message(&payload)).into(),
                     )
                 })??;
+                let mut script = ScriptOwner(Some(script));
+                let mut output = Output {
+                    account,
+                    ..Default::default()
+                };
+                let (config, pending) = reoffer_pending(&mut script, &mut output, config, pending)?;
                 Ok(CompiledRun {
-                    script: ScriptOwner(Some(script)),
+                    script,
                     config,
-                    pending: None,
+                    pending,
                     run,
                     selected,
                     pin,
-                    output: Output {
-                        account,
-                        ..Default::default()
-                    },
+                    output,
                     actions: NativeActions { _private: () },
                 })
             })()))

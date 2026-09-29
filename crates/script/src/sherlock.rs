@@ -184,6 +184,12 @@ pub struct Sherlock {
 
 impl Script for Sherlock {
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        // A reconnect advances the run's session; publish the current key.
+        let run = tick.cx.run();
+        if self.run != Some(run) {
+            self.run = Some(run);
+            self.dirty = true;
+        }
         self.tick_frame(&mut tick.frame, tick.output);
         self.publish(tick.output);
         Ok(ScriptFlow::Continue)

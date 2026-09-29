@@ -20418,3 +20418,6 @@ fn abort_walk_request_stops_only_the_machines_own_follow() {
     assert!(bot.route.is_none());
     assert!(bot.requested_route.is_none());
 }
+
+#[path = "script_native_walk_tests.rs"]
+mod native_walk;

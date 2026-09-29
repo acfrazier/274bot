@@ -210,11 +210,16 @@ routing searches evaluate gates without allocating; only the failure diagnosis
 collects them.
 
 Route selection is not permission to send later. `TravelOptions::quest_evidence`
-borrows the evidence for the active route. The traveller checks gated transport
-legs at entry and again on each active-hop poll, including the poll after an
-approach walk and before its interaction. Only `True` permits continuation;
-missing, disproven, stale or undecided evidence ends the leg as `Blocked`
-without another transport send. Ungated legs need no provider.
+borrows the evidence for the active route. The traveller checks a gated
+transport leg at entry and again on each approach poll, including the poll
+after the approach walk settles and before its interaction. Once the
+interaction is sent the crossing is not rechecked. Only `True` permits
+continuation; missing, disproven, stale or undecided evidence ends the leg as
+`TravelOutcome::EvidenceUnproven { at, leg, verdict, unresolved }` without a
+transport send. `verdict` is `False` or `Unknown`; `unresolved` names the gates
+the evidence leaves `Unknown` (every gate without evidence, none for evidence
+from another quest family), so a caller can acquire them and retry. Ungated
+legs need no provider.
 
 The two diagnoses see across each other. When the BankBudget diagnosis
 (`find_missing_item_reqs`, which ignores only carry/wear gates) finds no route,
@@ -263,7 +268,7 @@ the spell or rub is not resent.
 `Traveller::follow(client, snapshot, route, &mut options)` is **pollable**:
 call it once per delivered server tick; it returns `None` while in
 progress and `Some(TravelOutcome)` at a terminal state
-(`Arrived`/`Stalled`/`Refused`/`Blocked`/`GaveUp`). One driver send per
+(`Arrived`/`Stalled`/`Refused`/`Blocked`/`EvidenceUnproven`/`GaveUp`). One driver send per
 call. `TravelOptions { close_enough, budget_ticks_per_hop, max_hops,
 on_leg, troll_doors }`.
 

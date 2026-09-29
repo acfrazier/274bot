@@ -1600,15 +1600,19 @@ fn follow_transport_leg_interacts_and_arrives() {
 fn gated_transport_rechecks_evidence_after_approach_before_send() {
     use crate::quest_gates::tests::{family, range, tbwt_evidence, window};
     use crate::quest_gates::QuestGates;
+    use api::selected::Truth;
 
     let proven = tbwt_evidence(range(Some(3), Some(3)));
     let blocked = tbwt_evidence(range(Some(4), Some(4)));
     let unknown = tbwt_evidence(range(Some(3), Some(4)));
-    for (current, allowed) in [
-        (Some(&blocked), false),
-        (Some(&unknown), false),
-        (None, false),
-        (Some(&proven), true),
+    let gate = window("tbwt", "tbwt_main", Some(3), Some(3));
+    // `None`: the crossing is allowed. Otherwise the typed terminal's verdict
+    // and whether it names the gate as still undecided.
+    for (current, refused) in [
+        (Some(&blocked), Some((Truth::False, false))),
+        (Some(&unknown), Some((Truth::Unknown, true))),
+        (None, Some((Truth::Unknown, true))),
+        (Some(&proven), None),
     ] {
         let mut c = scene_client();
         plant_ladder(&mut c, Some("Climb"));
@@ -1618,12 +1622,10 @@ fn gated_transport_rechecks_evidence_after_approach_before_send() {
             ..FollowRec::default()
         };
         let mut edge = ladder_edge();
-        edge.quest_gates = Some(
-            QuestGates::new(family(1), [window("tbwt", "tbwt_main", Some(3), Some(3))]).unwrap(),
-        );
+        edge.quest_gates = Some(QuestGates::new(family(1), [gate.clone()]).unwrap());
         assert_eq!(
             edge.quest_gates.as_ref().unwrap().test(Some(&proven)),
-            api::selected::Truth::True
+            Truth::True
         );
         let route = Route {
             dest: edge.to,
@@ -1645,25 +1647,46 @@ fn gated_transport_rechecks_evidence_after_approach_before_send() {
         bump_rebuild(&mut c, &mut snap);
         options.quest_evidence = current;
         let outcome = traveller.follow(&mut rec, &snap, route.clone(), &mut options);
-        if allowed {
-            assert!(outcome.is_none());
-            assert_eq!(rec.loc_ops, 1);
-            plant_player(&mut c, 2, 5);
-            bump_rebuild(&mut c, &mut snap);
-            assert!(matches!(
-                traveller.follow(&mut rec, &snap, route, &mut options),
-                Some(TravelOutcome::Arrived { .. })
-            ));
-            assert_eq!(rec.loc_ops, 1, "a proven gate sends the interact once");
-        } else {
-            assert_eq!(
-                rec.loc_ops, 0,
-                "gate closure must prevent the pending interact"
-            );
-            assert!(matches!(
-                outcome,
-                Some(TravelOutcome::Blocked { leg: 0, .. })
-            ));
+        match refused {
+            None => {
+                assert!(outcome.is_none());
+                assert_eq!(rec.loc_ops, 1);
+                // Sent: evidence changing now does not abort a crossing that
+                // is already under way; its settle poll still arrives.
+                options.quest_evidence = Some(&blocked);
+                plant_player(&mut c, 2, 5);
+                bump_rebuild(&mut c, &mut snap);
+                assert!(matches!(
+                    traveller.follow(&mut rec, &snap, route, &mut options),
+                    Some(TravelOutcome::Arrived { .. })
+                ));
+                assert_eq!(rec.loc_ops, 1, "a proven gate sends the interact once");
+            }
+            Some((verdict, undecided)) => {
+                assert_eq!(
+                    rec.loc_ops, 0,
+                    "gate closure must prevent the pending interact"
+                );
+                let expected: std::sync::Arc<[_]> = if undecided {
+                    [gate.clone()].into()
+                } else {
+                    Vec::new().into()
+                };
+                assert_eq!(
+                    outcome,
+                    Some(TravelOutcome::EvidenceUnproven {
+                        // Scene (2, 3) on the fixture's 3200 build base.
+                        at: WorldTile {
+                            x: 3202,
+                            z: 3203,
+                            level: 0
+                        },
+                        leg: 0,
+                        verdict,
+                        unresolved: expected,
+                    })
+                );
+            }
         }
     }
 }
