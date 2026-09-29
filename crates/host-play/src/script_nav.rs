@@ -1243,11 +1243,14 @@ impl NavBot {
     }
 
     /// The terminal a follow failure owes a native walk beyond `Failed`: a
+    /// host send refusal is `Refused`, an unworkable leg is `Blocked`, and a
     /// crossing whose quest evidence was unproven at send time names the
     /// gates to acquire, or blocks honestly when evidence disproves them.
     pub(crate) fn note_native_follow_failure(&mut self, outcome: &nav::traveller::TravelOutcome) {
         use api::selected::Truth;
         let end = match outcome {
+            nav::traveller::TravelOutcome::Refused { .. } => Some(script::native::WalkEnd::Refused),
+            nav::traveller::TravelOutcome::Blocked { .. } => Some(script::native::WalkEnd::Blocked),
             nav::traveller::TravelOutcome::EvidenceUnproven {
                 verdict: Truth::Unknown,
                 unresolved,

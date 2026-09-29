@@ -253,6 +253,7 @@ pub(crate) fn apply_nav_follow_outcome(
                         0,
                         bot.allow_teleports,
                     );
+                    bot.note_native_follow_failure(&failure);
                 }
             }
             bot.route = None;
