@@ -407,6 +407,8 @@ pub struct TuiApp {
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: RunState,
+    /// Focused member holds a Start-all permit place (Stop still applies).
+    pub script_queued: bool,
     /// The focused profile's script heading; Start keys on `(source, name)`.
     pub script_sel: Option<ScriptSel>,
     /// The operator picked a card in Browse since the last pump: the
@@ -511,6 +513,7 @@ impl TuiApp {
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
             script_state: RunState::Idle,
+            script_queued: false,
             script_sel: None,
             browse_changed: false,
             reload_confirm: false,

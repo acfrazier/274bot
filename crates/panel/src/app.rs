@@ -2123,7 +2123,11 @@ fn script_section(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     {
-        let _stop = if script_stop_enabled(state) {
+        let queued = session
+            .core
+            .selected()
+            .is_some_and(|name| session.scripts.start_queue_place(name).is_some());
+        let _stop = if script_stop_enabled(state) || queued {
             None
         } else {
             Some(ui.begin_disabled())

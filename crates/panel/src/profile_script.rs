@@ -167,7 +167,8 @@ impl Session {
     /// Stop marked rows through the shared core stop path. The core skips
     /// idle/already-stopping rows and records those reasons in the report.
     pub fn fleet_stop_selected(&mut self) {
-        let report = frontend_core::stop_marked(&self.fleet_selection, &mut self.core);
+        let report =
+            frontend_core::stop_marked(&self.fleet_selection, &mut self.core, &mut self.scripts);
         self.apply_script_notice();
         self.fleet_report = Some(report.summary());
     }

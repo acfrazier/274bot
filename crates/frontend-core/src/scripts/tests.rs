@@ -865,9 +865,9 @@ fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
         .iter()
         .all(|skip| skip.reason.contains("active")));
 
-    let stop = stop_marked(&selected, &mut f.core);
+    let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
     assert_eq!(stop.affected, 3);
-    let duplicate_stop = stop_marked(&selected, &mut f.core);
+    let duplicate_stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
     assert_eq!(duplicate_stop.affected, 0);
     assert!(duplicate_stop
         .skipped
@@ -1458,4 +1458,251 @@ fn native_bulk_reports_and_preserves_each_account_partner() {
             .clue_duel_partner,
         ""
     );
+}
+
+fn bulk_names(n: usize) -> Vec<String> {
+    (0..n).map(|i| format!("bot{i}")).collect()
+}
+
+fn starting_among(f: &Fixture, names: &[String]) -> usize {
+    names
+        .iter()
+        .filter(|name| f.state(name) == script::RunState::Starting)
+        .count()
+}
+
+fn idle_among<'a>(f: &Fixture, names: &'a [String]) -> Vec<&'a str> {
+    names
+        .iter()
+        .filter(|name| f.state(name) == script::RunState::Idle)
+        .map(String::as_str)
+        .collect()
+}
+
+/// Start all over more members than one frame may admit must not dispatch
+/// every isolate in the click. The rest wait for later [`Scripts::poll`]s.
+#[test]
+fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_frame() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-click", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+
+    f.core.poll();
+    f.scripts.start_all(&mut f.core, None);
+    let starting = starting_among(&f, &names);
+    let idle = idle_among(&f, &names);
+    assert!(
+        starting <= super::START_ADMIT_PER_FRAME,
+        "Start all dispatched {starting} in the click frame (budget {})",
+        super::START_ADMIT_PER_FRAME
+    );
+    assert!(starting > 0, "Start all granted nobody in the click frame");
+    assert_eq!(starting + idle.len(), names.len());
+    if let Some(name) = idle.first() {
+        let brief = f
+            .core
+            .fleet_view()
+            .row(name)
+            .map(|row| row.brief.clone())
+            .unwrap_or_default();
+        assert!(
+            brief.starts_with("queued "),
+            "{name} should reuse the login-queue brief, got {brief:?}"
+        );
+    }
+    f.core.poll();
+    f.scripts.poll(&mut f.core);
+    let admitted = names
+        .iter()
+        .filter(|name| f.state(name) != script::RunState::Idle)
+        .count();
+    assert!(
+        admitted > starting,
+        "later frames must admit waiting members: click={starting} after_poll={admitted}"
+    );
+    assert!(
+        admitted <= super::START_ADMIT_PER_FRAME * 2,
+        "the second frame exceeded the permit budget: {admitted}"
+    );
+    let notice = f.scripts.take_notice();
+    let text = match &notice {
+        Some(Notice::Show(text)) => text.as_str(),
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        text.contains("queued"),
+        "the Start all report names the waiting members: {text}"
+    );
+
+    f.settle();
+    for name in &names {
+        f.wait_state(name, script::RunState::Running);
+        f.core.play().unwrap().script_stop(name);
+    }
+}
+
+/// Stop all must drop queued-but-not-yet-admitted Starts so they never run.
+#[test]
+fn stop_all_cancels_queued_starts() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-stop", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued: Vec<String> = idle_among(&f, &names)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert!(
+        !queued.is_empty(),
+        "need members still waiting for a permit"
+    );
+
+    f.scripts.stop_all(&mut f.core);
+    for _ in 0..40 {
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for name in &queued {
+        assert_eq!(
+            f.state(name),
+            script::RunState::Idle,
+            "{name} started after Stop all cancelled its place"
+        );
+    }
+}
+
+/// Re-assigning a member that still holds a Start-all place must not start
+/// the card captured at the click.
+#[test]
+fn reassign_while_queued_does_not_start_stale_work() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-reassign", &name_refs);
+    let first = f.card("first.ts", LOOPING);
+    let second = f.card("second.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &first);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = idle_among(&f, &names)
+        .first()
+        .copied()
+        .expect("need a queued member")
+        .to_string();
+    f.assign(&queued, &second);
+
+    f.settle();
+    assert_eq!(
+        f.state(&queued),
+        script::RunState::Idle,
+        "{queued} started after its assignment changed"
+    );
+    assert_ne!(
+        f.core
+            .play()
+            .unwrap()
+            .script_source_identity(&queued)
+            .as_deref(),
+        Some(first.identity_key().as_str())
+    );
+}
+
+/// Removing a member that still holds a Start-all place must not start it.
+#[test]
+fn remove_while_queued_does_not_start_stale_work() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-remove", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = idle_among(&f, &names)
+        .first()
+        .copied()
+        .expect("need a queued member")
+        .to_string();
+    let mut surface = crate::surface::HeadlessSurface::new();
+    f.core.remove(&queued, Instant::now(), &mut surface);
+
+    f.settle();
+    assert_ne!(
+        f.state(&queued),
+        script::RunState::Running,
+        "{queued} started after it was removed from the wall"
+    );
+}
+
+/// Operator logout while a member is still waiting for a Start-all permit
+/// must not start that member.
+#[test]
+fn logout_while_queued_does_not_start_stale_work() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-logout", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = idle_among(&f, &names)
+        .first()
+        .copied()
+        .expect("need a queued member")
+        .to_string();
+    f.core
+        .play()
+        .unwrap()
+        .arm(&queued)
+        .expect("loaded member")
+        .request_logout();
+
+    f.settle();
+    assert_eq!(
+        f.state(&queued),
+        script::RunState::Idle,
+        "{queued} started after logout while queued"
+    );
+}
+
+/// Single Start of a queued member bypasses the remaining permit wait.
+#[test]
+fn single_start_of_a_queued_member_is_immediate() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-single", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = idle_among(&f, &names)
+        .first()
+        .copied()
+        .expect("need a queued member")
+        .to_string();
+    f.scripts.start_profile(&mut f.core, &queued, None).unwrap();
+    assert_eq!(
+        f.state(&queued),
+        script::RunState::Starting,
+        "{queued} should start without waiting for later frames"
+    );
+    f.settle();
+    f.wait_state(&queued, script::RunState::Running);
+    f.core.play().unwrap().script_stop(&queued);
 }

@@ -266,6 +266,17 @@ impl FleetRow {
 
     fn write_brief(&mut self) {
         self.brief.clear();
+        if self.script == RunState::Idle {
+            if let Some(place) = self.queue {
+                if !matches!(
+                    self.phase,
+                    Phase::LoginError | Phase::Connecting | Phase::Preparing | Phase::Loading
+                ) {
+                    let _ = write!(self.brief, "queued {}/{}", place.position, place.total);
+                    return;
+                }
+            }
+        }
         let text = match self.phase {
             Phase::Queued => {
                 let place = self.queue.unwrap_or(QueuePlace {
@@ -504,6 +515,24 @@ impl Views {
         FleetView { views: self, last }
     }
 
+    /// Overlay Start-all k-of-n places onto rows that are not already
+    /// showing a login-queue place. Idle callers skip this: `Scripts` only
+    /// invokes it when the admit overlay is stale.
+    pub(crate) fn apply_start_queue(&mut self, place_of: impl Fn(&str) -> Option<QueuePlace>) {
+        let mut changed = false;
+        for row in &mut self.rows {
+            changed |= overlay_start_place(row, place_of(&row.name));
+        }
+        if let Some(detail) = &mut self.detail {
+            let place = place_of(&detail.row.name);
+            changed |= overlay_start_place(&mut detail.row, place);
+        }
+        if changed {
+            self.rows_generation += 1;
+            self.generation += 1;
+        }
+    }
+
     /// Bring every projection up to date. `changes` are the operation
     /// outcomes recorded since the last refresh, in order.
     pub(crate) fn refresh(&mut self, input: &Inputs<'_>, changes: &[OpChange]) {
@@ -686,6 +715,18 @@ fn find_status<'a>(
     let index = statuses.iter().position(|s| s.username == name)?;
     *hint = index;
     Some(&statuses[index])
+}
+
+fn overlay_start_place(row: &mut FleetRow, place: Option<QueuePlace>) -> bool {
+    if matches!(row.phase, Phase::Queued | Phase::LoginError) {
+        return false;
+    }
+    if row.queue == place {
+        return false;
+    }
+    row.queue = place;
+    row.write_brief();
+    true
 }
 
 /// Derive `row`'s facts from the host and the front end's walk arms.

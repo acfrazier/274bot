@@ -444,7 +444,7 @@ impl Command {
             }
             Command::ScriptStop => {
                 bot()?;
-                (app.script_state != RunState::Idle)
+                (app.script_state != RunState::Idle || app.script_queued)
                     .then_some(())
                     .ok_or("no script running")
             }

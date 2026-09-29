@@ -3037,9 +3037,10 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     assign(&mut session, "bob", &card);
 
     dispatch(&mut session, &mut app, AppAction::ScriptStartAll);
-    assert_eq!(
-        app.error.as_deref(),
-        Some("Start all: started 2, skipped 0")
+    let click = app.error.clone().unwrap_or_default();
+    assert!(
+        click.starts_with("Start all:") && click.contains("started"),
+        "{click}"
     );
     settle_starts(&mut session, &mut app);
     let generation = |session: &TuiSession, name: &str| {
@@ -3230,4 +3231,40 @@ fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
         .is_none());
     assert_eq!(app.error.as_deref(), Some("map: no route"));
     session.core.play().unwrap().script_stop("alice");
+}
+
+#[test]
+fn tui_start_all_paces_admission_through_the_shared_coordinator() {
+    let iso = IsolatedEnv::enter("tui-start-pace");
+    let names = ["p0", "p1", "p2", "p3", "p4"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    let path = iso.dir.join("shared.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.js.load(&path).unwrap();
+    for name in names {
+        assign(&mut session, name, &card);
+    }
+
+    dispatch(&mut session, &mut app, AppAction::ScriptStartAll);
+    let starting = {
+        let play = session.core.play().unwrap();
+        names
+            .iter()
+            .filter(|name| play.script_state(name) == script::RunState::Starting)
+            .count()
+    };
+    assert!(
+        starting <= frontend_core::scripts::START_ADMIT_PER_FRAME,
+        "TUI Start all dispatched {starting} in the click frame"
+    );
+    assert!(starting > 0);
+    settle_starts(&mut session, &mut app);
+    for name in names {
+        wait_script_state(
+            session.core.play().unwrap(),
+            name,
+            script::RunState::Running,
+        );
+        session.core.play().unwrap().script_stop(name);
+    }
 }

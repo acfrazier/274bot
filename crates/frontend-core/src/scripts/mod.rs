@@ -1,7 +1,7 @@
 //! Script coordination shared by the panel and the TUI: the card library
 //! and catalog, per-profile assignment and pending Browse selection,
 //! per-profile parameter bags (legacy migration, typed edits, live push),
-//! Start / Start all / Stop all with their settlement, the reload and
+//! Start / Start all (paced through a login-FIFO-style permit) / Stop all with their settlement, the reload and
 //! catalog-refresh transaction ([`reload`]) and bulk parameter sync
 //! ([`sync`]).
 //!
@@ -15,17 +15,22 @@ mod native;
 pub use native::{NativeCommand, NativeDetail, NativeTarget, SchemaView};
 
 mod reload;
+mod start_admit;
 mod sync;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+pub use start_admit::START_ADMIT_PER_FRAME;
+use start_admit::{QueuedStart, StartAdmit, StartPermit};
 
 use serde_json::{Map, Value};
 use vault::ScriptAssignment;
 
 use crate::operations::OperationId;
 use crate::session::{ArmMirror, OperatorSession, ScriptStart, StartSettled};
+use crate::views::QueuePlace;
 
 pub use reload::{PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning};
 pub use sync::{SyncReport, SyncScope};
@@ -127,7 +132,7 @@ impl Notice {
 /// Which operator action a pending Start came from: it decides where a
 /// setup failure is reported once it is observed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StartKind {
+pub(crate) enum StartKind {
     Start,
     StartAll,
     Reload,
@@ -151,6 +156,7 @@ struct PendingStart {
 #[derive(Debug, Clone, Default)]
 struct BulkStart {
     started: usize,
+    queued: usize,
     skipped: usize,
     failures: Vec<String>,
 }
@@ -240,6 +246,10 @@ pub struct Scripts {
     /// Per-profile Browse selection, never treated as a successful Start.
     pending_browse: HashMap<String, script::ScriptSel>,
     starts: HashMap<String, PendingStart>,
+    /// Paced Start-all / marked-Start places. Empty in the idle path.
+    admit: StartAdmit,
+    /// Catalog root for grants that settle after the click frame.
+    admit_catalog: Option<PathBuf>,
     bulk_start: Option<BulkStart>,
     last_bulk_report: Option<String>,
     catalog_filled: bool,
@@ -265,6 +275,8 @@ impl Scripts {
             inject: None,
             pending_browse: HashMap::new(),
             starts: HashMap::new(),
+            admit: StartAdmit::default(),
+            admit_catalog: None,
             bulk_start: None,
             last_bulk_report: None,
             catalog_filled: false,
@@ -687,9 +699,31 @@ impl Scripts {
 
     // ---- Start / Start all / Stop all ----------------------------------
 
-    /// Whether any Load Start has not settled.
+    /// Whether any Load Start has not settled, including paced Starts still
+    /// waiting for a permit.
     pub fn starts_pending(&self) -> bool {
-        !self.starts.is_empty()
+        !self.starts.is_empty() || !self.admit.is_empty()
+    }
+
+    /// k-of-n place while `profile` waits for a Start-all (or marked) permit.
+    pub fn start_queue_place(&self, profile: &str) -> Option<QueuePlace> {
+        self.admit.status(profile)
+    }
+
+    /// Drop a queued-but-not-yet-admitted Start. Returns whether a place
+    /// was removed. Already-dispatched Starts are stopped through the host.
+    pub fn cancel_queued(&mut self, profile: &str) -> bool {
+        let Some(entry) = self.admit.leave(profile) else {
+            return false;
+        };
+        if entry.kind == StartKind::StartAll {
+            if let Some(bulk) = &mut self.bulk_start {
+                bulk.queued = bulk.queued.saturating_sub(1);
+                bulk.skipped += 1;
+            }
+            self.publish_bulk();
+        }
+        true
     }
 
     /// Start `profile` on its last successful assignment.
@@ -740,9 +774,27 @@ impl Scripts {
         catalog_root: Option<&Path>,
         kind: StartKind,
     ) -> Result<(), String> {
+        let from_queue = self.admit.leave(profile);
         if core.play().is_none() {
+            self.credit_queue_outcome(from_queue, profile, Err("no play"));
             return Err("no play".into());
         }
+        let result = self.dispatch_start(core, profile, sel, catalog_root, kind);
+        match &result {
+            Ok(()) => self.credit_queue_outcome(from_queue, profile, Ok(())),
+            Err(error) => self.credit_queue_outcome(from_queue, profile, Err(error.as_str())),
+        }
+        result
+    }
+
+    fn dispatch_start<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        profile: &str,
+        sel: script::ScriptSel,
+        catalog_root: Option<&Path>,
+        kind: StartKind,
+    ) -> Result<(), String> {
         match sel {
             script::ScriptSel::Compiled(id) => {
                 let bag = self.compiled_bag(core, profile, id)?;
@@ -818,50 +870,114 @@ impl Scripts {
     }
 
     /// Start every wall member idle on its last successful assignment.
-    /// Active members are skipped; the tally is shown and a member whose
-    /// setup fails later moves from started to failed.
+    /// Eligible Starts are enqueued and released through the Start-all
+    /// permit (at most [`START_ADMIT_PER_FRAME`] in this click). Active
+    /// members are skipped; the tally is shown and a member whose setup
+    /// fails later moves from started to failed.
     pub fn start_all<Io>(&mut self, core: &mut OperatorSession<Io>, catalog_root: Option<&Path>) {
         let members = core.members().to_vec();
         if members.is_empty() {
             self.show("Start all: no wall members");
             return;
         }
-        let mut failures = Vec::new();
-        let mut started = 0usize;
-        let mut skipped = 0usize;
+        if let Some(root) = catalog_root {
+            self.admit_catalog = Some(root.to_path_buf());
+        }
+        if self.admit.is_empty() {
+            self.bulk_start = Some(BulkStart::default());
+        }
         for name in members {
-            if script_active(core, &name) {
-                skipped += 1;
+            if script_active(core, &name) || self.admit.contains(&name) {
+                if let Some(bulk) = &mut self.bulk_start {
+                    bulk.skipped += 1;
+                }
                 continue;
             }
             let sel = Self::assignment(core, &name).and_then(|a| sel_from_assignment(&a));
-            let result = match sel {
-                Some(sel) => self.start_sel(core, &name, sel, catalog_root, StartKind::StartAll),
-                None => Err("no assignment".to_string()),
+            let Some(sel) = sel else {
+                if let Some(bulk) = &mut self.bulk_start {
+                    bulk.failures.push(format!("{name}: no assignment"));
+                }
+                continue;
             };
-            match result {
-                Ok(()) => started += 1,
-                Err(e) => failures.push(format!("{name}: {e}")),
+            if core.play().is_none() {
+                if let Some(bulk) = &mut self.bulk_start {
+                    bulk.failures.push(format!("{name}: no play"));
+                }
+                continue;
+            }
+            if let Err(error) =
+                self.queue_start(core, &name, sel.clone(), StartKind::StartAll, Some(sel))
+            {
+                if let Some(bulk) = &mut self.bulk_start {
+                    bulk.failures.push(format!("{name}: {error}"));
+                }
+            } else if let Some(bulk) = &mut self.bulk_start {
+                bulk.queued += 1;
             }
         }
-        let report = format_bulk("Start all", started, skipped, &failures);
-        self.bulk_start = Some(BulkStart {
-            started,
-            skipped,
-            failures,
-        });
-        if self.last_bulk_report.as_deref() == Some(report.as_str()) {
-            return;
+        self.admit_starts(core, catalog_root);
+        self.publish_bulk();
+    }
+
+    /// Enqueue `profile` for a paced Start. Immediate Start paths call
+    /// [`Self::start_sel`] instead. Idempotent per profile.
+    pub(crate) fn queue_start<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        profile: &str,
+        sel: script::ScriptSel,
+        kind: StartKind,
+        assigned: Option<script::ScriptSel>,
+    ) -> Result<(), String> {
+        if core.play().is_none() {
+            return Err("no play".into());
         }
-        self.last_bulk_report = Some(report.clone());
-        self.show(report);
+        if script_active(core, profile) {
+            return Err("script already active: stop it first".into());
+        }
+        if self.admit.contains(profile) {
+            return Ok(());
+        }
+        let (had_arm, latched) = arm_flags(core, profile);
+        self.admit.enqueue(QueuedStart {
+            profile: profile.to_string(),
+            sel,
+            kind,
+            assigned,
+            latched,
+            had_arm,
+        });
+        Ok(())
+    }
+
+    /// Grant up to [`START_ADMIT_PER_FRAME`] waiting Starts.
+    pub(crate) fn admit_starts<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        catalog_root: Option<&Path>,
+    ) {
+        if let Some(root) = catalog_root {
+            self.admit_catalog = Some(root.to_path_buf());
+        }
+        self.admit_ready(core);
+        self.publish_start_places(core);
     }
 
     /// Stop every member's script (and any other running slot), including a
     /// slot still reaping a reload whose replacement Start is queued: that
-    /// Start is dropped. Any reload in preparation or awaiting confirmation
-    /// is cancelled. Returns how many were stopped.
+    /// Start is dropped. Queued-but-not-yet-admitted Starts are cancelled.
+    /// Any reload in preparation or awaiting confirmation is cancelled.
+    /// Returns how many were stopped.
     pub fn stop_all<Io>(&mut self, core: &mut OperatorSession<Io>) -> usize {
+        let cancelled = self.admit.clear();
+        if cancelled > 0 {
+            if let Some(bulk) = &mut self.bulk_start {
+                bulk.skipped += cancelled;
+                bulk.queued = 0;
+            }
+        }
+        self.publish_start_places(core);
         if core.play().is_none() {
             return 0;
         }
@@ -873,7 +989,7 @@ impl Scripts {
             return stopped;
         }
         self.last_bulk_report = Some(report);
-        if stopped > 0 {
+        if stopped > 0 || cancelled > 0 {
             self.clear_notice();
         }
         stopped
@@ -892,6 +1008,10 @@ impl Scripts {
     /// Call once per UI frame, after [`OperatorSession::poll`].
     pub fn poll<Io>(&mut self, core: &mut OperatorSession<Io>) {
         self.poll_reload_validation(core);
+        if !self.admit.is_empty() {
+            self.admit_ready(core);
+        }
+        self.publish_start_places(core);
         self.settle_starts(core);
         for write in core.take_settings_writes() {
             if let Some((op, outcome)) = self.sync.record(&write) {
@@ -994,12 +1114,141 @@ impl Scripts {
                 let bulk = self.bulk_start.get_or_insert_with(BulkStart::default);
                 bulk.started = bulk.started.saturating_sub(1);
                 bulk.failures.push(format!("{name}: {diagnostic}"));
-                let report = format_bulk("Start all", bulk.started, bulk.skipped, &bulk.failures);
-                self.last_bulk_report = Some(report.clone());
-                self.show(report);
+                self.publish_bulk();
             }
             StartKind::Reload => self.show(format!("reload: {name}: {diagnostic}")),
         }
+    }
+
+    fn admit_ready<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        let mut granted = 0;
+        while granted < START_ADMIT_PER_FRAME {
+            if self.admit.poll() != StartPermit::Grant {
+                break;
+            }
+            let Some(entry) = self.admit.take_head() else {
+                break;
+            };
+            if self.dispatch_queued(core, entry) {
+                granted += 1;
+            }
+        }
+    }
+
+    /// `true` when `start_sel` ran (counts against the frame budget).
+    fn dispatch_queued<Io>(&mut self, core: &mut OperatorSession<Io>, entry: QueuedStart) -> bool {
+        if !wall_member(core, &entry.profile) {
+            self.drop_queued(&entry);
+            return false;
+        }
+        if script_active(core, &entry.profile) {
+            self.drop_queued(&entry);
+            return false;
+        }
+        if let Some(required) = &entry.assigned {
+            let current =
+                Self::assignment(core, &entry.profile).and_then(|a| sel_from_assignment(&a));
+            if current.as_ref() != Some(required) {
+                self.drop_queued(&entry);
+                return false;
+            }
+        }
+        let (has_arm, latched_now) = arm_flags(core, &entry.profile);
+        if entry.had_arm && !has_arm {
+            self.drop_queued(&entry);
+            return false;
+        }
+        if !entry.latched && latched_now {
+            self.drop_queued(&entry);
+            return false;
+        }
+        let catalog = self.admit_catalog.clone();
+        match self.start_sel(
+            core,
+            &entry.profile,
+            entry.sel,
+            catalog.as_deref(),
+            entry.kind,
+        ) {
+            Ok(()) => {
+                if entry.kind == StartKind::StartAll {
+                    if let Some(bulk) = &mut self.bulk_start {
+                        bulk.queued = bulk.queued.saturating_sub(1);
+                        bulk.started += 1;
+                    }
+                    self.publish_bulk();
+                }
+                true
+            }
+            Err(error) => {
+                if entry.kind == StartKind::StartAll {
+                    if let Some(bulk) = &mut self.bulk_start {
+                        bulk.queued = bulk.queued.saturating_sub(1);
+                        bulk.failures.push(format!("{}: {error}", entry.profile));
+                    }
+                    self.publish_bulk();
+                }
+                true
+            }
+        }
+    }
+
+    fn drop_queued(&mut self, entry: &QueuedStart) {
+        if entry.kind != StartKind::StartAll {
+            return;
+        }
+        if let Some(bulk) = &mut self.bulk_start {
+            bulk.queued = bulk.queued.saturating_sub(1);
+            bulk.skipped += 1;
+        }
+        self.publish_bulk();
+    }
+
+    fn credit_queue_outcome(
+        &mut self,
+        from_queue: Option<QueuedStart>,
+        profile: &str,
+        outcome: Result<(), &str>,
+    ) {
+        let Some(entry) = from_queue else {
+            return;
+        };
+        if entry.kind != StartKind::StartAll {
+            return;
+        }
+        if let Some(bulk) = &mut self.bulk_start {
+            bulk.queued = bulk.queued.saturating_sub(1);
+            match outcome {
+                Ok(()) => bulk.started += 1,
+                Err(error) => bulk.failures.push(format!("{profile}: {error}")),
+            }
+        }
+        self.publish_bulk();
+    }
+
+    fn publish_bulk(&mut self) {
+        let Some(bulk) = &self.bulk_start else {
+            return;
+        };
+        let report = format_bulk(
+            "Start all",
+            bulk.started,
+            bulk.queued,
+            bulk.skipped,
+            &bulk.failures,
+        );
+        if self.last_bulk_report.as_deref() == Some(report.as_str()) {
+            return;
+        }
+        self.last_bulk_report = Some(report.clone());
+        self.show(report);
+    }
+
+    pub fn publish_start_places<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        if !self.admit.take_publish() {
+            return;
+        }
+        core.publish_start_queue(|name| self.admit.status(name));
     }
 }
 
@@ -1035,6 +1284,17 @@ fn script_active<Io>(core: &OperatorSession<Io>, name: &str) -> bool {
     )
 }
 
+fn wall_member<Io>(core: &OperatorSession<Io>, name: &str) -> bool {
+    core.members().iter().any(|member| member == name)
+}
+
+fn arm_flags<Io>(core: &OperatorSession<Io>, name: &str) -> (bool, bool) {
+    match core.play().and_then(|play| play.arm(name)) {
+        Some(arm) => (true, arm.login_latched() || arm.wants_logout()),
+        None => (false, false),
+    }
+}
+
 /// The Browse selection a saved assignment names.
 pub fn sel_from_assignment(asg: &ScriptAssignment) -> Option<script::ScriptSel> {
     if asg.source_kind == "compiled" {
@@ -1052,16 +1312,23 @@ fn lookup_name(source: script::ScriptSource, name: &str, path: &Path) -> String 
     }
 }
 
-fn format_bulk(op: &str, started: usize, skipped: usize, failures: &[String]) -> String {
+fn format_bulk(
+    op: &str,
+    started: usize,
+    queued: usize,
+    skipped: usize,
+    failures: &[String],
+) -> String {
+    let head = if queued == 0 {
+        format!("{op}: started {started}, skipped {skipped}")
+    } else {
+        format!("{op}: started {started}, queued {queued}, skipped {skipped}")
+    };
     if failures.is_empty() {
-        return format!("{op}: started {started}, skipped {skipped}");
+        return head;
     }
     let shown: Vec<&str> = failures.iter().take(6).map(String::as_str).collect();
-    format!(
-        "{op}: started {started}, skipped {skipped}, failed {}: {}",
-        failures.len(),
-        shown.join("; ")
-    )
+    format!("{head}, failed {}: {}", failures.len(), shown.join("; "))
 }
 
 #[cfg(test)]

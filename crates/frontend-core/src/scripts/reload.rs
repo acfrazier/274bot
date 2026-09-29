@@ -548,6 +548,7 @@ impl Scripts {
         if core.play().is_none() {
             return Err("no play".into());
         }
+        let _ = self.admit.leave(profile);
         let card = &prepared.card;
         let bag = self.merged_profile_bag(
             core,
