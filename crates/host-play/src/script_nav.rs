@@ -103,6 +103,12 @@ pub(crate) struct NavBot {
     /// armed walk may settle that walk's wait.
     pub(crate) route_request_id: u64,
     pub(crate) bank_fetch: Option<PendingBankFetch>,
+    /// Pumps spent on the current non-Walk BankBudget step. Reset when
+    /// the front step pops or the session clears.
+    pub(crate) bank_fetch_attempts: u32,
+    /// Snapshot identity at the last send of the current step, so a
+    /// still-in-flight Deposit/Withdraw/Wear/Close/Open is not re-sent.
+    pub(crate) bank_fetch_flight: Option<BankFetchFlight>,
     /// The clue duel partner this slot's accept gate validated on the offer
     /// screen: its confirm accepts only that partner, in this session.
     pub(crate) duel_offer_partner: Option<String>,
@@ -141,6 +147,16 @@ pub(crate) struct NavBot {
     /// on the first dispatch after the relog or Resume ([`hold_script_nav`],
     /// [`take_carried_walk`]).
     pub(crate) carried_walk: Option<CarriedWalk>,
+}
+
+/// The snapshot facts a BankBudget send latched, so the next pump does
+/// not re-send until the bank or pack actually changes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BankFetchFlight {
+    pub(crate) bank_gen: u64,
+    pub(crate) bank_com: i32,
+    pub(crate) inv: Vec<(i32, i32)>,
+    pub(crate) worn: Vec<i32>,
 }
 
 /// A script walk held across a reconnect or an operator Pause.

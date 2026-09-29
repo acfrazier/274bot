@@ -19,7 +19,7 @@ use crate::walk_plan::{route_or_bank_fetch, PendingBankFetch, RouteOutcome};
 /// overlay read; any terminal outcome clears it (arrival and stall
 /// alike). A pending [`PendingBankFetch`] freezes follow for non-Walk
 /// steps (Open / deposit / withdraw / Wear / Close); Walk follows the
-/// stand sub-route only (never `final_route` until the session clears).
+/// access-tile sub-route only (never `final_route` until the session clears).
 /// Shared by the panel and the TUI so a walk armed from either view
 /// drives the same follow path.
 #[derive(Default)]

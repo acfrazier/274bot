@@ -13,9 +13,9 @@ use nav::WorldState;
 /// A latched BankBudget session: remaining [`BankStep`]s plus the dest
 /// the arm re-finds after the session lands. Follow freezes only for
 /// Open / Deposit / Withdraw / Wear / Close; [`BankStep::Walk`] follows
-/// the stand sub-route. Wear-from-inv and bank-trip deposit/withdraw
+/// the access-tile sub-route. Wear-from-inv and bank-trip deposit/withdraw
 /// both pump through the same path. `final_route` is the post-session
-/// route (status row + follow once steps clear); a Walk-to-stand may
+/// route (status row + follow once steps clear); a Walk-to-access may
 /// temporarily replace `WalkArm::route` / `NavBot::route`.
 #[derive(Debug, Clone)]
 pub struct PendingBankFetch {
@@ -23,7 +23,7 @@ pub struct PendingBankFetch {
     pub dest: WorldTile,
     pub opts: FindOptions,
     pub final_route: Route,
-    /// The walk's avoidance rectangles: the stand sub-route keeps out of
+    /// The walk's avoidance rectangles: the access sub-route keeps out of
     /// them as the walk does.
     pub avoid: Vec<AvoidRect>,
 }
@@ -63,7 +63,9 @@ pub(super) fn route_or_bank_fetch(
             state,
             avoid,
         )
-        .and_then(|missing| plan_bank_fetch(&missing, state, bank, world.banks(), from))
+        .and_then(|missing| {
+            plan_bank_fetch(&missing, state, bank, world.banks(), from, &world.collision)
+        })
         .and_then(|fetch| session_route(world, from, to, fetch, opts, avoid))
         .unwrap_or(RouteOutcome::NoPath),
         Err(_) => RouteOutcome::NoPath,
@@ -210,7 +212,7 @@ fn session_for(
     if missing.is_empty() {
         return Some(RouteOutcome::Routed(route));
     }
-    let fetch = plan_bank_fetch(&missing, state, bank, world.banks(), from)?;
+    let fetch = plan_bank_fetch(&missing, state, bank, world.banks(), from, &world.collision)?;
     session_route(world, from, route.dest, fetch, opts, avoid)
 }
 

@@ -18,14 +18,69 @@ use std::collections::HashSet;
 
 use api::snapshot::WorldTile;
 
+use crate::collision::WorldCollision;
 use crate::pack::BankStand;
 use crate::router::MissingReq;
 use crate::world_state::WorldState;
 
+/// Orthogonal deltas of the router's interact radius 1, matching frozen
+/// `bankStand` (east/west/north/south). The stand tile itself is never
+/// an access tile.
+const ACCESS_DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+
+/// Standable tiles from which `stand` can be used: the orthogonal
+/// neighbours that [`WorldCollision::standable`] accepts. Reuses the
+/// transport take-off neighbourhood (standable, radius 1, never the
+/// interact tile itself) rather than a second reach flood. Booth loc
+/// tiles are not standable; most teller spawns sit in the bankers'
+/// aisle, so walking onto `stand.tile` is not an access.
+pub fn bank_access_tiles(collision: &WorldCollision, stand: &BankStand) -> Vec<WorldTile> {
+    ACCESS_DIRS
+        .into_iter()
+        .map(|(dx, dz)| WorldTile {
+            x: stand.tile.x + dx,
+            z: stand.tile.z + dz,
+            level: stand.tile.level,
+        })
+        .filter(|&tile| collision.standable(tile))
+        .collect()
+}
+
+/// The access tile BankBudget walks to: the nearest stand (same level,
+/// then Chebyshev to `from`) that has a standable neighbour, then that
+/// neighbour nearest `from`. `None` when no packed stand has an access
+/// tile.
+pub fn nearest_bank_access(
+    collision: &WorldCollision,
+    stands: &[BankStand],
+    from: WorldTile,
+) -> Option<WorldTile> {
+    stands
+        .iter()
+        .flat_map(|stand| {
+            bank_access_tiles(collision, stand)
+                .into_iter()
+                .map(move |tile| (stand, tile))
+        })
+        .min_by_key(|(stand, tile)| {
+            (
+                i32::from(stand.tile.level != from.level),
+                (stand.tile.x - from.x)
+                    .abs()
+                    .max((stand.tile.z - from.z).abs()),
+                (tile.x - from.x).abs().max((tile.z - from.z).abs()),
+                tile.x,
+                tile.z,
+            )
+        })
+        .map(|(_, tile)| tile)
+}
+
 /// One step of a [`BankFetch`] session, in execution order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BankStep {
-    /// Walk to the bank stand's tile (the host routes it).
+    /// Walk to a standable access tile of the nearest packed stand (the
+    /// host routes it). Never the stand's own interact tile.
     Walk { x: i32, z: i32, level: i32 },
     /// Open the bank (booth `Use-quickly` / teller op).
     Open,
@@ -63,10 +118,11 @@ pub struct BankFetch {
 /// that is only banked cannot be proved and this returns `None`);
 /// `stands` is the packed bank stand table
 /// ([`crate::world::NavWorld::banks`]), booths and NPC tellers; `from`
-/// is the player's tile, which picks the nearest stand.
+/// is the player's tile, which picks the nearest stand that has a
+/// standable access neighbour ([`nearest_bank_access`]).
 ///
 /// A `worn_req` alternative already carried plans only [`BankStep::Wear`]
-/// — no bank walk. Otherwise the plan walks to the nearest stand, opens
+/// — no bank walk. Otherwise the plan walks to that access tile, opens
 /// the bank, deposits the backpack, withdraws every missing item (a
 /// `worn_req` one is then worn), and closes. The deposit supplies the
 /// bank with the carried stack, so a `worn_req` alternative that is
@@ -80,6 +136,7 @@ pub fn plan_bank_fetch(
     bank: &[(i32, i32)],
     stands: &[BankStand],
     from: WorldTile,
+    collision: &WorldCollision,
 ) -> Option<BankFetch> {
     if missing.is_empty() {
         return None;
@@ -142,19 +199,14 @@ pub fn plan_bank_fetch(
             }
         }
     }
-    // The nearest stand (same level preferred) is the walk target.
-    let stand = stands.iter().min_by_key(|s| {
-        (
-            s.tile.level != from.level,
-            (s.tile.x - from.x).abs().max((s.tile.z - from.z).abs()),
-        )
-    })?;
+    // Walk dest is a standable access tile, never the interact tile.
+    let access = nearest_bank_access(collision, stands, from)?;
 
     let mut steps = vec![
         BankStep::Walk {
-            x: stand.tile.x,
-            z: stand.tile.z,
-            level: stand.tile.level,
+            x: access.x,
+            z: access.z,
+            level: access.level,
         },
         BankStep::Open,
         BankStep::DepositAll,

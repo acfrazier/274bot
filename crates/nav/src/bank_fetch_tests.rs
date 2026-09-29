@@ -3,10 +3,14 @@ use std::collections::{HashMap, HashSet};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
-use super::{fetchable_state, plan_bank_fetch, BankStep};
+use super::{
+    bank_access_tiles, fetchable_state, nearest_bank_access, plan_bank_fetch as plan_with, BankStep,
+};
 use crate::collision::{pack_walk, WorldCollision};
 use crate::pack::{BankAccess, BankStand};
-use crate::router::{find_missing_item_reqs, find_with, FindOptions, MissingReq, RouteError};
+use crate::router::{
+    find_first_with, find_missing_item_reqs, find_with, FindOptions, MissingReq, RouteError,
+};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 use crate::world_state::WorldState;
 
@@ -92,6 +96,29 @@ fn stand(x: i32, z: i32) -> BankStand {
     }
 }
 
+fn open_grid() -> WorldCollision {
+    bake(10, 10, &[])
+}
+
+fn plan_bank_fetch(
+    missing: &[MissingReq],
+    state: &WorldState,
+    bank: &[(i32, i32)],
+    stands: &[BankStand],
+    from: WorldTile,
+) -> Option<super::BankFetch> {
+    plan_with(missing, state, bank, stands, from, &open_grid())
+}
+
+fn access_walk(stands: &[BankStand], from: WorldTile) -> BankStep {
+    let tile = nearest_bank_access(&open_grid(), stands, from).expect("access tile");
+    BankStep::Walk {
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+    }
+}
+
 /// `worn_req` with the knife already carried plans a bare Wear — no
 /// bank walk, no open/deposit/withdraw/close — and the post-session
 /// strict re-find crosses.
@@ -161,11 +188,7 @@ fn bank_trip_deposits_withdraws_wears_then_finds() {
     assert_eq!(
         fetch.steps,
         vec![
-            BankStep::Walk {
-                x: 4,
-                z: 0,
-                level: 0
-            },
+            access_walk(&[stand(4, 0)], tile(0, 0, 0)),
             BankStep::Open,
             BankStep::DepositAll,
             BankStep::Withdraw {
@@ -207,11 +230,7 @@ fn bank_trip_withdraws_an_item_req_stack_without_wearing() {
     assert_eq!(
         fetch.steps,
         vec![
-            BankStep::Walk {
-                x: 4,
-                z: 0,
-                level: 0
-            },
+            access_walk(&[stand(4, 0)], tile(0, 0, 0)),
             BankStep::Open,
             BankStep::DepositAll,
             BankStep::Withdraw { id: 995, count: 10 },
@@ -294,11 +313,7 @@ fn bank_trip_fetches_any_one_worn_alternative() {
     assert_eq!(
         fetch.steps,
         vec![
-            BankStep::Walk {
-                x: 4,
-                z: 0,
-                level: 0
-            },
+            access_walk(&[stand(4, 0)], tile(0, 0, 0)),
             BankStep::Open,
             BankStep::DepositAll,
             BankStep::Withdraw { id: 1321, count: 1 },
@@ -341,11 +356,7 @@ fn bank_trip_supply_includes_the_deposited_backpack() {
     assert_eq!(
         fetch.steps,
         vec![
-            BankStep::Walk {
-                x: 4,
-                z: 0,
-                level: 0
-            },
+            access_walk(&[stand(4, 0)], tile(0, 0, 0)),
             BankStep::Open,
             BankStep::DepositAll,
             BankStep::Withdraw {
@@ -407,25 +418,36 @@ fn plan_fails_closed_when_the_item_is_nowhere() {
     );
 }
 
-/// The session walks to the nearest bank stand.
+/// The session walks to an access tile of the nearest bank stand, not
+/// the stand's own tile.
 #[test]
 fn plans_walk_to_the_nearest_stand() {
+    let stands = [stand(9, 9), stand(4, 0)];
+    let from = tile(0, 0, 0);
     let fetch = plan_bank_fetch(
         &[MissingReq::WearAny { ids: vec![KNIFE] }],
         &WorldState::default(),
         &[(KNIFE, 1)],
-        &[stand(9, 9), stand(4, 0)],
-        tile(0, 0, 0),
+        &stands,
+        from,
     )
     .expect("a banked knife plans a trip");
     assert_eq!(
         fetch.steps[0],
-        BankStep::Walk {
-            x: 4,
-            z: 0,
-            level: 0
-        },
-        "the nearest stand wins"
+        access_walk(&[stand(4, 0)], from),
+        "the nearest stand's access tile wins"
+    );
+    let BankStep::Walk { x, z, level } = fetch.steps[0] else {
+        panic!("expected a Walk");
+    };
+    assert_ne!(
+        (x, z, level),
+        (4, 0, 0),
+        "Walk dest must not be the stand tile"
+    );
+    assert!(
+        open_grid().standable(tile(x, z, level)),
+        "Walk dest must be standable"
     );
 }
 
@@ -575,5 +597,125 @@ fn fetchable_state_opens_exactly_the_gates_a_session_can_meet() {
                 );
             }
         }
+    }
+}
+
+/// Access tiles are orthogonal standable neighbours; the stand tile is
+/// never one of them, even when it itself is standable.
+#[test]
+fn bank_access_tiles_are_standable_neighbours_not_the_stand() {
+    let wc = bake(5, 5, &[(2, 2, CollisionFlag::SQ_BLOCKED as u32)]);
+    let booth = stand(2, 2);
+    let tiles = bank_access_tiles(&wc, &booth);
+    assert!(
+        !tiles.contains(&booth.tile),
+        "the booth loc tile is not an access tile"
+    );
+    assert!(tiles.contains(&tile(3, 2, 0)));
+    assert!(tiles.contains(&tile(1, 2, 0)));
+    assert!(tiles.contains(&tile(2, 3, 0)));
+    assert!(tiles.contains(&tile(2, 1, 0)));
+    assert_eq!(tiles.len(), 4);
+}
+
+/// On the real 289 pack, BankBudget walks to a standable access tile from
+/// the customer street — not onto a booth loc or a teller spawn.
+#[test]
+fn packed_bank_fetch_walks_to_access_from_customer_streets() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let samples = [
+        ("Varrock West", tile(3180, 3430, 0)),
+        ("Draynor", tile(3088, 3240, 0)),
+        ("Falador East", tile(3008, 3352, 0)),
+        ("Al Kharid", tile(3264, 3163, 0)),
+    ];
+    let opts = FindOptions::default();
+    let state = WorldState::default();
+    for (name, from) in samples {
+        assert!(
+            world.collision.standable(from),
+            "{name} street {from:?} must be standable"
+        );
+        let nearby: Vec<_> = world
+            .banks()
+            .iter()
+            .filter(|stand| {
+                stand.tile.level == from.level
+                    && (stand.tile.x - from.x)
+                        .abs()
+                        .max((stand.tile.z - from.z).abs())
+                        <= 16
+            })
+            .cloned()
+            .collect();
+        assert!(
+            !nearby.is_empty(),
+            "{name}: packed stands within 16 of {from:?}"
+        );
+        for stand in &nearby {
+            if matches!(stand.access, BankAccess::Booth { .. }) {
+                assert!(
+                    find_with(
+                        &world.collision,
+                        &world.graph,
+                        from,
+                        stand.tile,
+                        opts,
+                        &state,
+                    )
+                    .is_err(),
+                    "{name}: booth {} at {:?} must not be a walk dest",
+                    stand.name,
+                    stand.tile
+                );
+            }
+        }
+        let access = nearest_bank_access(&world.collision, world.banks(), from)
+            .unwrap_or_else(|| panic!("{name}: a packed access tile from {from:?}"));
+        assert!(
+            world.collision.standable(access),
+            "{name}: access {access:?} must be standable"
+        );
+        assert!(
+            world.banks().iter().all(|stand| stand.tile != access),
+            "{name}: access {access:?} must not be a packed stand tile"
+        );
+        let fetch = plan_with(
+            &[MissingReq::Carry { id: 995, count: 1 }],
+            &state,
+            &[(995, 1)],
+            world.banks(),
+            from,
+            &world.collision,
+        )
+        .unwrap_or_else(|| panic!("{name}: plan from {from:?}"));
+        let BankStep::Walk { x, z, level } = fetch.steps[0] else {
+            panic!("{name}: expected a Walk");
+        };
+        assert!(
+            world
+                .banks()
+                .iter()
+                .all(|stand| stand.tile != WorldTile { x, z, level }),
+            "{name}: planned Walk ({x},{z},{level}) must not be a stand tile"
+        );
+        let access_tiles: Vec<_> = nearby
+            .iter()
+            .flat_map(|stand| bank_access_tiles(&world.collision, stand))
+            .collect();
+        find_first_with(
+            &world.collision,
+            &world.graph,
+            from,
+            &access_tiles,
+            opts,
+            &state,
+        )
+        .into_route()
+        .unwrap_or_else(|err| {
+            panic!("{name}: some nearby access tile must be routable from {from:?}: {err:?}")
+        });
     }
 }

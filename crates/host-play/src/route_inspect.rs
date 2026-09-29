@@ -606,6 +606,7 @@ fn calculate_bank(
         &capture.bank,
         capture.world.banks(),
         capture.from,
+        &capture.world.collision,
     ) else {
         return InspectTerminal::refusal(capture.request_id, capture.generation, "NoPath");
     };

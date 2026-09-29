@@ -11333,15 +11333,24 @@ fn bank_fetch_session_deposits_withdraws_wears_then_finds() {
         vec![nav::router::MissingReq::WearAny { ids: vec![2] }]
     );
     let bank_rows: Vec<(i32, i32)> = snap.bank().iter().map(|it| (it.def.id, it.count)).collect();
-    let fetch = nav::bank_fetch::plan_bank_fetch(&missing, &state, &bank_rows, world.banks(), from)
-        .expect("the banked knife plans a trip");
+    let fetch = nav::bank_fetch::plan_bank_fetch(
+        &missing,
+        &state,
+        &bank_rows,
+        world.banks(),
+        from,
+        &world.collision,
+    )
+    .expect("the banked knife plans a trip");
+    let access = nav::bank_fetch::nearest_bank_access(&world.collision, world.banks(), from)
+        .expect("knife world has an access tile");
     assert_eq!(
         fetch.steps,
         vec![
             nav::bank_fetch::BankStep::Walk {
-                x: 0,
-                z: 4,
-                level: 0
+                x: access.x,
+                z: access.z,
+                level: access.level
             },
             nav::bank_fetch::BankStep::Open,
             nav::bank_fetch::BankStep::DepositAll,
@@ -11427,8 +11436,8 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
 /// on + junk inv + knife in the open bank snapshot must latch a session
 /// on [`ScriptWalkArm::route`] and actually drive Deposit/Withdraw on
 /// the Driver (not only `plan_bank_fetch` in isolation). Start on the
-/// packed bank stand so Walk completes in place; the client's bank is
-/// already open so Open is a no-op; DepositAll + Withdraw must write.
+/// packed booth's access tile so Walk completes in place; the client's
+/// bank is already open so Open is a no-op; DepositAll + Withdraw must write.
 #[test]
 fn allow_bank_fetch_on_script_walk_arm_drives_deposit_withdraw() {
     let mut c = bank_fetch_client();
@@ -11442,10 +11451,10 @@ fn allow_bank_fetch_on_script_walk_arm_drives_deposit_withdraw() {
         "knife is in the open bank"
     );
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
-    // Stand on the packed bank booth so the session's Walk completes
-    // without a follow hop; Open sees the already-open bank.
+    // Stand on the packed booth's access tile so the session's Walk
+    // completes without a follow hop; Open sees the already-open bank.
     let arm = ScriptWalkArm {
-        here: Some((0, 4, 0)),
+        here: Some((0, 3, 0)),
         world: Some(Arc::clone(&world)),
         navs: Arc::clone(&navs),
         name: "alice".into(),
@@ -11496,7 +11505,7 @@ fn allow_bank_fetch_on_script_walk_arm_drives_deposit_withdraw() {
             &snap,
             bot,
             Some(world.as_ref()),
-            Some((0, 4, 0)),
+            Some((0, 3, 0)),
             false,
         );
     }
@@ -11509,10 +11518,10 @@ fn allow_bank_fetch_on_script_walk_arm_drives_deposit_withdraw() {
 }
 
 /// Fix round 2 — BankBudget Walk from off the stand must poll
-/// [`Traveller::follow`] on the stand sub-route. Freeze-all-follow
+/// [`Traveller::follow`] on the access sub-route. Freeze-all-follow
 /// while `bank_fetch` is Some stalls Walk forever; following
-/// `final_route` would skip the booth. Start at (0,0), stand at
-/// (0,4), final dest (4,4).
+/// `final_route` would skip the booth. Start at (0,0), access of
+/// stand (0,4), final dest (4,4).
 #[test]
 fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
     let mut c = bank_fetch_client();
@@ -11533,7 +11542,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         username: "alice".into(),
         ..SlotStatus::default()
     }]));
-    // Off the packed booth: Walk must arm a stand sub-route and follow
+    // Off the packed booth: Walk must arm an access sub-route and follow
     // it — not stall, not jump to the knife-gated final dest.
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
@@ -11594,14 +11603,20 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         "Walk must still be the front step (not skipped to Open/final)"
     );
     let dest = bot.route.as_ref().map(|r| r.dest);
+    let access = nav::bank_fetch::nearest_bank_access(
+        &world.collision,
+        world.banks(),
+        WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+    )
+    .expect("knife world has an access tile");
     assert_eq!(
         dest,
-        Some(WorldTile {
-            x: 0,
-            z: 4,
-            level: 0
-        }),
-        "armed route must be the stand sub-route, not final (4,4)"
+        Some(access),
+        "armed route must be the access sub-route, not final (4,4)"
     );
     assert!(
         bot.traveller.current_aim().is_some(),
@@ -11858,6 +11873,393 @@ fn bank_fetch_open_uses_packed_npc_access() {
     assert!(
         c.out.pos > out_before,
         "Open must send the packed NPC access"
+    );
+}
+
+/// A booth loc tile is not a Walk dest: BankBudget routes to a standable
+/// neighbour, which `find_with` can reach.
+#[test]
+fn bank_fetch_walk_targets_access_tile_not_blocked_booth() {
+    use client::dash3d::CollisionFlag;
+    use nav::bank_fetch::{nearest_bank_access, plan_bank_fetch, BankStep};
+    use nav::collision::pack_walk;
+    use nav::router::{find_with, FindOptions};
+
+    let mut flags = vec![0u32; 25];
+    flags[2 * 5 + 2] |= CollisionFlag::SQ_BLOCKED as u32;
+    let (walk, blocked) = pack_walk(&flags);
+    let booth = WorldTile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let world = NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 5,
+            height: 5,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        vec![nav::pack::BankStand {
+            name: "Bank booth".into(),
+            tile: booth,
+            access: nav::pack::BankAccess::Booth { op: 2 },
+        }],
+    );
+    let from = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    assert!(
+        find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            booth,
+            FindOptions::default(),
+            &WorldState::default(),
+        )
+        .is_err(),
+        "the booth loc itself is not a walk dest"
+    );
+    let access = nearest_bank_access(&world.collision, world.banks(), from).expect("access");
+    assert_ne!(access, booth);
+    find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        access,
+        FindOptions::default(),
+        &WorldState::default(),
+    )
+    .expect("access tile is routable");
+    let fetch = plan_bank_fetch(
+        &[nav::router::MissingReq::Carry { id: 995, count: 1 }],
+        &WorldState::default(),
+        &[(995, 1)],
+        world.banks(),
+        from,
+        &world.collision,
+    )
+    .expect("plans a trip");
+    assert_eq!(
+        fetch.steps[0],
+        BankStep::Walk {
+            x: access.x,
+            z: access.z,
+            level: access.level
+        }
+    );
+}
+
+/// A closed bank cannot deposit: abort instead of hanging on DepositAll.
+#[test]
+fn bank_fetch_deposit_all_aborts_when_bank_closed() {
+    use nav::bank_fetch::BankStep;
+    use std::collections::VecDeque;
+
+    let mut c = bank_client();
+    c.main_modal_id = -1;
+    c.side_modal_id = -1;
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.bank_component_id() < 0);
+    assert!(!snap.inv().is_empty(), "junk still in the pack");
+    let route = dummy_fetch_route();
+    let mut bot = NavBot {
+        bank_fetch: Some(PendingBankFetch {
+            steps: VecDeque::from([BankStep::DepositAll, BankStep::Close]),
+            dest: route.dest,
+            opts: FindOptions::default(),
+            final_route: route,
+            avoid: Vec::new(),
+        }),
+        ..Default::default()
+    };
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
+    assert!(
+        bot.bank_fetch.is_none(),
+        "closed bank DepositAll must abort, not hang"
+    );
+}
+
+/// A wear that never lands aborts after the pump budget, not forever.
+#[test]
+fn bank_fetch_wear_aborts_after_bounded_wait() {
+    use nav::bank_fetch::BankStep;
+    use std::collections::VecDeque;
+
+    let mut c = bank_fetch_client();
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(
+        snap.inv().iter().any(|&(id, n)| id == 1 && n >= 1),
+        "fixture carries junk that Wear can attempt"
+    );
+    let route = dummy_fetch_route();
+    let mut bot = NavBot {
+        bank_fetch: Some(PendingBankFetch {
+            steps: VecDeque::from([BankStep::Wear { id: 1 }]),
+            dest: route.dest,
+            opts: FindOptions::default(),
+            final_route: route,
+            avoid: Vec::new(),
+        }),
+        ..Default::default()
+    };
+    let mut last_pos = c.out.pos;
+    let mut sends = 0u32;
+    for _ in 0..40 {
+        if bot.bank_fetch.is_none() {
+            break;
+        }
+        step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
+        if c.out.pos > last_pos {
+            sends += 1;
+            last_pos = c.out.pos;
+        }
+    }
+    assert!(bot.bank_fetch.is_none(), "Wear that never lands must abort");
+    assert!(sends <= 1, "in-flight Wear must not re-send, sends={sends}");
+}
+
+/// When the packed teller is not in the scene, Open uses the same bank's
+/// booth instead of hanging.
+#[test]
+fn bank_fetch_open_falls_back_to_booth_when_teller_missing() {
+    use nav::collision::pack_walk;
+    use nav::pack::{BankAccess, BankStand};
+
+    let mut c = bank_client();
+    c.main_modal_id = -1;
+    c.side_modal_id = -1;
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(
+        snap.npcs()
+            .iter()
+            .all(|n| n.name.as_deref() != Some("Banker")),
+        "no teller in the scene"
+    );
+    assert!(
+        snap.locs().iter().any(|l| l
+            .actions
+            .iter()
+            .any(|a| a.as_deref() == Some("Use-quickly"))),
+        "scene still has a booth"
+    );
+    let booth = snap
+        .locs()
+        .iter()
+        .find(|l| {
+            l.actions
+                .iter()
+                .any(|a| a.as_deref() == Some("Use-quickly"))
+        })
+        .map(|l| l.tile)
+        .expect("booth loc");
+    let flags = vec![0u32; 25];
+    let (walk, blocked) = pack_walk(&flags);
+    let world = NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: booth.x - 2,
+                z: booth.z - 2,
+                level: 0,
+            },
+            width: 5,
+            height: 5,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        vec![
+            BankStand {
+                name: "Banker".into(),
+                tile: WorldTile {
+                    x: booth.x,
+                    z: booth.z + 1,
+                    level: booth.level,
+                },
+                access: BankAccess::Npc {
+                    name: "Banker".into(),
+                    op: 3,
+                    choose: None,
+                },
+            },
+            BankStand {
+                name: "Bank booth".into(),
+                tile: booth,
+                access: BankAccess::Booth { op: 2 },
+            },
+        ],
+    );
+    let here = snap.tile().expect("player tile");
+    let out_before = c.out.pos;
+    assert!(
+        open_bank_at_here(&mut c, &snap, Some(here), Some(&world)),
+        "missing teller must fall back to the packed booth from {here:?} booth={booth:?}"
+    );
+    assert!(
+        c.out.pos > out_before,
+        "fallback must send booth Use-quickly"
+    );
+}
+
+/// Withdraw must not re-send on an unchanged snapshot.
+#[test]
+fn bank_fetch_withdraw_does_not_resend_while_in_flight() {
+    use nav::bank_fetch::BankStep;
+    use std::collections::VecDeque;
+
+    let mut c = bank_fetch_client();
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(bank_holds_for_test(&snap, 2));
+    let route = dummy_fetch_route();
+    let mut bot = NavBot {
+        bank_fetch: Some(PendingBankFetch {
+            steps: VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }]),
+            dest: route.dest,
+            opts: FindOptions::default(),
+            final_route: route,
+            avoid: Vec::new(),
+        }),
+        ..Default::default()
+    };
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
+    let after_first = c.out.pos;
+    assert!(after_first > 0, "first pump sends");
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
+    assert_eq!(
+        c.out.pos, after_first,
+        "unchanged snapshot must not re-send Withdraw"
+    );
+    assert!(
+        matches!(
+            bot.bank_fetch.as_ref().and_then(|p| p.steps.front()),
+            Some(BankStep::Withdraw { id: 2, count: 1 })
+        ),
+        "Withdraw stays in flight until the pack shows the stack"
+    );
+}
+
+fn bank_holds_for_test(snapshot: &GameSnapshot, id: i32) -> bool {
+    snapshot
+        .bank()
+        .iter()
+        .any(|item| item.def.id == id && item.count >= 1)
+}
+
+/// Teller rows stay on the shared pack: the per-bot snapshot fingerprint
+/// does not grow when the world gains NPC stands.
+#[test]
+fn packed_teller_rows_do_not_grow_script_snapshot_fingerprint() {
+    fn fp_bank_bytes(fp: &script::isolate_fb::SnapshotFingerprint) -> usize {
+        fp.banks
+            .iter()
+            .map(|b| {
+                b.name.len()
+                    + b.kind.len()
+                    + b.choose.as_ref().map(String::len).unwrap_or(0)
+                    + std::mem::size_of_val(b)
+            })
+            .sum()
+    }
+    fn world_with(stands: Vec<nav::pack::BankStand>) -> NavWorld {
+        NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: 2,
+                height: 1,
+                walk: vec![0u8; 2],
+                blocked: vec![0u64; 1],
+                flags: None,
+            },
+            TransportGraph::default(),
+            stands,
+        )
+    }
+    let booth = nav::pack::BankStand {
+        name: "Bank booth".into(),
+        tile: WorldTile {
+            x: 1,
+            z: 0,
+            level: 0,
+        },
+        access: nav::pack::BankAccess::Booth { op: 2 },
+    };
+    let teller = nav::pack::BankStand {
+        name: "Banker".into(),
+        tile: WorldTile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+        access: nav::pack::BankAccess::Npc {
+            name: "Banker".into(),
+            op: 3,
+            choose: Some("I'd like to access my bank account, please.".into()),
+        },
+    };
+    let booths_only = world_with(vec![booth.clone()]);
+    let mixed = world_with(vec![booth, teller]);
+    let inv = vec![(1, 1)];
+    let (_, fp_booths) = script_snapshot_fb(
+        None,
+        false,
+        1,
+        Some((0, 0, 0)),
+        true,
+        Some(&inv),
+        None,
+        None,
+        Some(&booths_only),
+        false,
+        false,
+        false,
+    );
+    let (_, fp_mixed) = script_snapshot_fb(
+        None,
+        false,
+        1,
+        Some((0, 0, 0)),
+        true,
+        Some(&inv),
+        None,
+        None,
+        Some(&mixed),
+        false,
+        false,
+        false,
+    );
+    assert_eq!(fp_booths.banks.len(), 1);
+    assert_eq!(
+        fp_mixed.banks.len(),
+        1,
+        "teller rows must not enter the fingerprint"
+    );
+    assert!(fp_mixed.banks.iter().all(|b| b.kind == "booth"));
+    assert_eq!(
+        fp_bank_bytes(&fp_booths),
+        fp_bank_bytes(&fp_mixed),
+        "per-bot fingerprint bytes must not grow with teller rows"
     );
 }
 
@@ -19668,6 +20070,9 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
     for tile in std::iter::once(from).chain(stands) {
         flags[tile.z as usize * SIZE + tile.x as usize] = 0;
     }
+    // Access neighbour of the packed booth at `from` (the stand tile is
+    // never a Walk dest).
+    flags[from.z as usize * SIZE + from.x as usize + 1] = 0;
     let graph = || {
         let mut graph = TransportGraph::default();
         for (index, (stand, worn)) in stands.into_iter().zip([2, 2, 3]).enumerate() {
@@ -19716,7 +20121,7 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
             vec![booth],
             vec![
                 BankStep::Walk {
-                    x: from.x,
+                    x: from.x + 1,
                     z: from.z,
                     level: from.level,
                 },
