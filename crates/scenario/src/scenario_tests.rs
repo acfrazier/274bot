@@ -9354,30 +9354,40 @@ fn nav_tele_gives_the_ring_and_follows_the_packed_rub_with_teleports_on() {
     assert!(s.seed.mainland);
     assert_eq!(
         s.steps.len(),
-        2,
-        "give the ring + follow with allow_teleports"
+        3,
+        "relog to bind inv tab + give the ring + follow with allow_teleports"
     );
-    // Step 1 clears the backpack and cheats the charged ring (the
-    // packed rub edge's item_req); the arm waits for the ring to land
-    // in the inventory.
+    // MainlandAccount does not relog: side icons stay tutorial-locked.
+    // The jewellery hop reads snapshot.inventory(), which needs tab 3.
     match &s.steps[0].kind {
-        StepKind::Perform { .. } => {}
-        _ => panic!("nav_tele step 1 must be Perform"),
+        StepKind::Relog => {}
+        _ => panic!("nav_tele step 1 must be Relog"),
     }
     assert!(matches!(
         s.steps[0].wait.arm,
+        Proof::SideTabAvailable { index: 3 }
+    ));
+    // Step 2 clears the backpack and cheats the charged ring (the
+    // packed rub edge's item_req); the arm waits for the ring to land
+    // in the inventory.
+    match &s.steps[1].kind {
+        StepKind::Perform { .. } => {}
+        _ => panic!("nav_tele step 2 must be Perform"),
+    }
+    assert!(matches!(
+        s.steps[1].wait.arm,
         Proof::Item {
             name: "Ring of dueling(8)",
             count: 1
         }
     ));
-    // Step 2 is the teleport-layer follow: only a `FollowTele` step
+    // Step 3 is the teleport-layer follow: only a `FollowTele` step
     // arms `allow_teleports`, so the destination must be the packed
     // dueling-ring landing and the arm its scatter radius.
-    let (dest, arm) = match &s.steps[1].kind {
+    let (dest, arm) = match &s.steps[2].kind {
         StepKind::FollowTele { dest } => (
             *dest,
-            match &s.steps[1].wait.arm {
+            match &s.steps[2].wait.arm {
                 Proof::ArrivedNear {
                     x,
                     z,
@@ -9387,7 +9397,7 @@ fn nav_tele_gives_the_ring_and_follows_the_packed_rub_with_teleports_on() {
                 other => panic!("follow-tele arm must be arrivedNear, got {other:?}"),
             },
         ),
-        _ => panic!("nav_tele step 2 must be FollowTele"),
+        _ => panic!("nav_tele step 3 must be FollowTele"),
     };
     assert_eq!(
         dest,

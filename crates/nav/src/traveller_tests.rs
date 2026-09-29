@@ -4290,6 +4290,15 @@ fn plant_inv_item(c: &mut Client, obj_id: i32) {
     );
 }
 
+/// Same charged obj as [`plant_inv_item`], but side tab 3 stays unbound
+/// (`side_icon[3] == -1`). `rebuild_inv` still finds the TYPE_INV via its
+/// first-with-items fallback (so `WorldState` / `Proof::Item` pass); the
+/// jewellery arm reads `inventory()`, which needs the bound tab.
+fn plant_inv_item_unbound_tab(c: &mut Client, obj_id: i32) {
+    plant_inv_item(c, obj_id);
+    c.side_icon[3] = -1;
+}
+
 /// The magic tab (side 6) with the Lumbridge spellbook button: the
 /// live button the spell arm presses when the loaded tree carries the
 /// 2004 button text.
@@ -4397,6 +4406,74 @@ fn follow_jewellery_teleport_rubs_the_packed_item_and_arrives() {
     }
     assert_eq!(rec.held_ops, 1, "one rub total");
     assert_eq!(rec.loc_ops, 0);
+    assert!(rec.sink.strings.is_empty());
+}
+
+#[test]
+fn follow_jewellery_teleport_waits_when_the_inv_tab_is_unbound() {
+    // Live `nav_tele` after mainlandAccount: `inv()` sees the cheated
+    // ring (TYPE_INV fallback) so the router packs the rub, but
+    // `inventory()` is empty until a Relog binds side tab 3. The hop
+    // must Wait, never OP_HELD, and Blocked with the loaded-scene
+    // message once the hop budget lapses.
+    let mut c = scene_client();
+    plant_inv_item_unbound_tab(&mut c, 2552);
+    let mut snap = snap_at(&mut c, 0, 0);
+    assert!(
+        snap.inv().iter().any(|&(id, n)| id == 2552 && n >= 1),
+        "inv() fallback still carries the ring"
+    );
+    assert!(
+        snap.inventory().is_empty(),
+        "inventory() stays empty while tab 3 is unbound"
+    );
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let route = Route {
+        legs: vec![Leg::Transport { edge: ring_edge() }],
+        dest: WorldTile {
+            x: 3315,
+            z: 3235,
+            level: 0,
+        },
+        ticks: 2.0,
+    };
+    let mut options = TravelOptions {
+        teleports: Some(&[ring_edge()]),
+        budget_ticks_per_hop: 2,
+        ..TravelOptions::default()
+    };
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    bump_rebuild(&mut c, &mut snap);
+    match t.follow(&mut rec, &snap, route, &mut options) {
+        Some(TravelOutcome::Blocked { at, detail, .. }) => {
+            assert_eq!(
+                at,
+                WorldTile {
+                    x: 3200,
+                    z: 3200,
+                    level: 0
+                }
+            );
+            assert!(
+                detail.contains(
+                    "packed teleport to (3315, 3235, 0) never became workable in the loaded scene"
+                ),
+                "blocked detail: {detail}"
+            );
+        }
+        other => panic!("expected Blocked after Wait budget, got {other:?}"),
+    }
+    assert_eq!(rec.held_ops, 0, "an unbound inv tab never sends OP_HELD");
     assert!(rec.sink.strings.is_empty());
 }
 
