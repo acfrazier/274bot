@@ -1,0 +1,151 @@
+//! Quester qualification fixtures. Cheats are allowed here only.
+use super::script_basics::script_live_seed_steps;
+use crate::*;
+
+const COOK_DEADLINE: Duration = Duration::from_secs(900);
+const COOK_WATCH: u32 = 3600;
+const COOK_CARD: &str = "Quester";
+const COOK_KITCHEN: WorldTile = WorldTile {
+    x: 3209,
+    z: 3215,
+    level: 0,
+};
+
+/// Generic builder: jump a quest to a stage key with optional items, then
+/// Start Quester. `varp`/`value` seed via `setvar` (fixture only).
+pub fn quester_stage(
+    name: &'static str,
+    quest_display: &'static str,
+    varp: &'static str,
+    value: i32,
+    items: &'static [(&'static str, i32)],
+    stand: WorldTile,
+) -> Scenario {
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "reset quest stage",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &format!("setvar {varp} {value}"));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks: 40,
+        },
+    });
+    if !items.is_empty() {
+        steps.push(Step {
+            name: "seed items",
+            kind: StepKind::Perform {
+                send: Box::new(move |c, _| {
+                    cheat(c, "~clearinv");
+                    for (alias, qty) in items {
+                        cheat(c, &format!("give {alias} {qty}"));
+                    }
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::Stat { id: 16, min: 0 },
+                budget_ticks: 80,
+            },
+        });
+    }
+    steps.push(Step {
+        name: "relog so the quest tab colour matches the seeded varp",
+        kind: StepKind::Relog,
+        wait: Wait {
+            arm: Proof::SideTabAvailable { index: 3 },
+            budget_ticks: 600,
+        },
+    });
+    steps.push(Step {
+        name: "stand at the quest start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &tele_args(stand.level, stand.x, stand.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Arrived {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(start_catalog_step());
+    steps.push(Step {
+        name: "watch the quest tab turn complete",
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            arm: Proof::QuestDone {
+                name: quest_display,
+            },
+            budget_ticks: COOK_WATCH,
+        },
+    });
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: Proof::QuestDone {
+            name: quest_display,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: COOK_DEADLINE,
+            start_script: Some(COOK_CARD),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// Fresh account Cook's Assistant, colour-only, no journal.
+pub(crate) fn quester_cook_scenario() -> Scenario {
+    quester_stage(
+        "quester_cook",
+        "Cook's Assistant",
+        "cookquest",
+        0,
+        &[],
+        COOK_KITCHEN,
+    )
+}
+
+/// Resume Cook from in-progress with the three products already held.
+pub(crate) fn quester_cook_resume_scenario() -> Scenario {
+    quester_stage(
+        "quester_cook_resume",
+        "Cook's Assistant",
+        "cookquest",
+        1,
+        &[("egg", 1), ("bucket_milk", 1), ("pot_flour", 1)],
+        COOK_KITCHEN,
+    )
+}
+
+/// Mid-quest stop/restart seed: in-progress without products.
+pub(crate) fn quester_cook_restart_scenario() -> Scenario {
+    quester_stage(
+        "quester_cook_restart",
+        "Cook's Assistant",
+        "cookquest",
+        1,
+        &[],
+        COOK_KITCHEN,
+    )
+}

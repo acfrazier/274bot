@@ -35,7 +35,6 @@ pub struct PreparedConfig {
 }
 
 impl PreparedConfig {
-    #[cfg(any(feature = "load", feature = "test-hooks", test))]
     pub(crate) fn new<T: Send + Sync + 'static>(
         card: CompiledId,
         schema: u16,

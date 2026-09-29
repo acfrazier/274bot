@@ -1,0 +1,262 @@
+//! Native chat-dialogue driver extracted from the isolate `dialog` family.
+//! Constants and sequencing match `crates/script/src/dialog.rs`.
+
+use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
+use crate::shim::InteractReq;
+use std::sync::Arc;
+use std::task::Poll;
+
+pub const DIALOG_GAP_MS: u64 = 1_500;
+pub const DIALOGUE_OPEN_MS: u64 = 8_000;
+pub const DRIVE_STEPS: u32 = 120;
+pub const PAGE_ACK_MS: u64 = 3_000;
+pub const CONTINUE_TICKS: u64 = 1;
+pub const CHOICE_TICKS: u64 = 2;
+
+#[derive(Clone)]
+pub struct DialogueArgs {
+    pub npc: Arc<str>,
+    pub prefer: Arc<[Arc<str>]>,
+    pub choose: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Open,
+    Drive,
+    WaitContinueAck,
+    WaitContinueTick,
+    WaitChoiceAck,
+    WaitChoiceTicks,
+    WaitGap,
+}
+
+pub struct Dialogue {
+    args: DialogueArgs,
+    phase: Phase,
+    steps: u32,
+    due_tick: u64,
+    ack_modal: i32,
+    npc_index: i32,
+    npc_action: Arc<str>,
+    deadline_ms: u64,
+}
+
+impl NativeMachine for Dialogue {
+    type Args = DialogueArgs;
+    type Output = bool;
+
+    fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        let mut dialogue = Self {
+            args,
+            phase: Phase::Open,
+            steps: 0,
+            due_tick: 0,
+            ack_modal: -1,
+            npc_index: -1,
+            npc_action: Arc::from("Talk-to"),
+            deadline_ms: cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS,
+        };
+        dialogue.open(cx)?;
+        Ok(dialogue)
+    }
+
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        let now = cx.active_now().as_millis() as u64;
+        let Some(obs) = observe(cx) else {
+            return Poll::Pending;
+        };
+        match self.phase {
+            Phase::Open => {
+                if obs.ready {
+                    self.phase = Phase::Drive;
+                    return self.drive(cx, &obs);
+                }
+                if now >= self.deadline_ms {
+                    return Poll::Ready(Ok(false));
+                }
+                Poll::Pending
+            }
+            Phase::WaitContinueAck => {
+                if obs.modal != self.ack_modal || !obs.r#continue {
+                    self.phase = Phase::WaitContinueTick;
+                    self.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
+                    return Poll::Pending;
+                }
+                if now >= self.deadline_ms {
+                    return Poll::Ready(Ok(false));
+                }
+                Poll::Pending
+            }
+            Phase::WaitChoiceAck => {
+                if obs.modal != self.ack_modal || obs.r#continue {
+                    self.phase = Phase::WaitChoiceTicks;
+                    self.due_tick = obs.tick.saturating_add(CHOICE_TICKS);
+                    return Poll::Pending;
+                }
+                if now >= self.deadline_ms {
+                    return Poll::Ready(Ok(false));
+                }
+                Poll::Pending
+            }
+            Phase::WaitContinueTick | Phase::WaitChoiceTicks => {
+                if obs.tick >= self.due_tick {
+                    self.phase = Phase::Drive;
+                    self.drive(cx, &obs)
+                } else {
+                    Poll::Pending
+                }
+            }
+            Phase::WaitGap => {
+                if obs.ready {
+                    self.phase = Phase::Drive;
+                    self.drive(cx, &obs)
+                } else if now >= self.deadline_ms {
+                    Poll::Ready(Ok(!obs.open))
+                } else {
+                    Poll::Pending
+                }
+            }
+            Phase::Drive => self.drive(cx, &obs),
+        }
+    }
+
+    fn cancel(&mut self) {}
+}
+
+impl Dialogue {
+    fn open(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
+        if let Some(obs) = observe(cx) {
+            if obs.ready {
+                self.phase = Phase::Drive;
+                return Ok(());
+            }
+            if let Some((index, action)) = nearest_talk(cx, &self.args.npc) {
+                self.npc_index = index;
+                self.npc_action = action;
+            }
+        }
+        cx.emit(InteractReq::Npc {
+            name: self.args.npc.to_string(),
+            action: self.npc_action.to_string(),
+            index: (self.npc_index >= 0).then_some(self.npc_index),
+        })?;
+        self.phase = Phase::Open;
+        Ok(())
+    }
+
+    fn drive(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        obs: &ChatObs,
+    ) -> Poll<Result<bool, ActionError>> {
+        if self.steps >= DRIVE_STEPS {
+            return Poll::Ready(Ok(!obs.open));
+        }
+        if !obs.ready {
+            self.phase = Phase::WaitGap;
+            self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOG_GAP_MS;
+            return Poll::Pending;
+        }
+        if obs.r#continue {
+            self.steps += 1;
+            self.ack_modal = obs.modal;
+            self.phase = Phase::WaitContinueAck;
+            self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
+            return match cx.emit(InteractReq::ContinueDialog) {
+                Ok(_) => Poll::Pending,
+                Err(error) => Poll::Ready(Err(error)),
+            };
+        }
+        if !obs.options.is_empty() {
+            let option = self.args.choose.unwrap_or_else(|| {
+                pick_preferred(&obs.options, &self.args.prefer)
+                    .map(|index| (index + 1) as i32)
+                    .unwrap_or(obs.options.len() as i32)
+            });
+            self.steps += 1;
+            self.ack_modal = obs.modal;
+            self.phase = Phase::WaitChoiceAck;
+            self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
+            return match cx.emit(InteractReq::Answer { option }) {
+                Ok(_) => Poll::Pending,
+                Err(error) => Poll::Ready(Err(error)),
+            };
+        }
+        self.steps += 1;
+        self.phase = Phase::WaitContinueTick;
+        self.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
+        Poll::Pending
+    }
+}
+
+struct ChatObs {
+    open: bool,
+    ready: bool,
+    r#continue: bool,
+    modal: i32,
+    tick: u64,
+    options: Vec<String>,
+}
+
+fn observe(cx: &ActionContext<'_>) -> Option<ChatObs> {
+    let chat = cx.snapshot().chat_modal()?;
+    let modal = chat.value.root;
+    let r#continue = chat.value.continue_component_id >= 0;
+    let open = modal != -1;
+    Some(ChatObs {
+        open,
+        ready: open || r#continue,
+        r#continue,
+        modal,
+        tick: cx.evidence().tick,
+        options: chat
+            .value
+            .options
+            .iter()
+            .map(|option| option.text.clone())
+            .collect(),
+    })
+}
+
+fn nearest_talk(cx: &ActionContext<'_>, wanted: &str) -> Option<(i32, Arc<str>)> {
+    let npcs = cx.snapshot().npcs()?.value;
+    let want = wanted.trim().to_ascii_lowercase();
+    npcs.iter()
+        .filter_map(|npc| {
+            let name = npc.name.as_deref()?.trim();
+            if name.to_ascii_lowercase() != want {
+                return None;
+            }
+            let action = npc
+                .actions
+                .iter()
+                .flatten()
+                .find(|action| action.len() >= 4 && action[..4].eq_ignore_ascii_case("talk"))?;
+            Some((
+                npc.distance,
+                npc.index as i32,
+                Arc::<str>::from(action.as_str()),
+            ))
+        })
+        .min_by_key(|(distance, _, _)| *distance)
+        .map(|(_, index, action)| (index, action))
+}
+
+pub fn pick_preferred(options: &[String], prefer: &[Arc<str>]) -> Option<usize> {
+    prefer.iter().find_map(|fragment| {
+        let want = fragment.to_ascii_lowercase();
+        options
+            .iter()
+            .position(|option| option.to_ascii_lowercase().contains(&want))
+            .filter(|&index| !options[index].is_empty())
+    })
+}
+
+pub fn poll_dialogue(
+    actions: &mut NativeActions,
+    handle: &ActionHandle<Dialogue>,
+    cx: &mut ActionContext<'_>,
+) -> Poll<Result<bool, ActionError>> {
+    actions.poll(handle, cx)
+}

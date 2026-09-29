@@ -15,6 +15,7 @@ pub(crate) mod navigation;
 pub(crate) mod pair;
 pub(crate) mod prayer;
 pub(crate) mod production;
+pub(crate) mod quester;
 pub(crate) mod ranging_guild;
 pub(crate) mod render;
 pub(crate) mod retreat_spot;
@@ -93,6 +94,10 @@ pub(crate) use production::{
     superheater_silver_low_natures_scenario, superheater_steel_scenario, tanner_bot_hard_scenario,
     tanner_bot_scenario, thiever_diagonal_door_trap_scenario, thiever_scenario,
     vial_filler_east_scenario, vial_filler_scenario, wildy_agility_scenario,
+};
+pub use quester::quester_stage;
+pub(crate) use quester::{
+    quester_cook_restart_scenario, quester_cook_resume_scenario, quester_cook_scenario,
 };
 pub(crate) use ranging_guild::{
     ranging_guild_bank_scenario, ranging_guild_full_scenario, ranging_guild_redeem_scenario,

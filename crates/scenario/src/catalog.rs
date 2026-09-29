@@ -407,6 +407,15 @@ const REGISTRY: &[Entry] = &[
     Entry::new("nature_crafter_air", scenarios::nature_crafter_air_scenario),
     Entry::new("mule_crafter_air", scenarios::mule_crafter_air_scenario),
     Entry::new("flax_runner", scenarios::flax_runner_scenario),
+    Entry::new("quester_cook", scenarios::quester_cook_scenario),
+    Entry::new(
+        "quester_cook_resume",
+        scenarios::quester_cook_resume_scenario,
+    ),
+    Entry::new(
+        "quester_cook_restart",
+        scenarios::quester_cook_restart_scenario,
+    ),
     Entry::new("sherlock_talk", scenarios::sherlock_talk_scenario),
     Entry::new("sherlock_search", scenarios::sherlock_search_scenario),
     Entry::new("sherlock_dig", scenarios::sherlock_dig_scenario),
