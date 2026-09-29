@@ -304,9 +304,9 @@ fn call_hook(
 /// is visible. A kick is nested in the caller's turn; draining would run
 /// unrelated queued microtasks before the caller continues (M-187). The
 /// host still polls this callback's promise, so an already-fulfilled
-/// return settles without touching the rest of the queue. Inside a kick
-/// a continuation's termination stays pending and ends the call like a
-/// terminated callback. At the outermost level V8 consumes it;
+/// return settles without touching the rest of the queue. Inside a kick a
+/// continuation runs later, in the caller's microtasks, so its
+/// termination is not seen here. At the outermost level V8 consumes it;
 /// [`RuntimeJs`] reports that case from the host's halt flag.
 fn checkpoint_terminated(scope: &mut v8::HandleScope, drain_microtasks: bool) -> bool {
     if drain_microtasks {

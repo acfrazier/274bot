@@ -65,11 +65,13 @@
 //!   or queued by its callbacks.
 //! - **Callbacks**: a [`Step::Call`] invokes the held script function
 //!   through the one callback path (`load/callback_v8.rs`), in a fresh
-//!   handle scope per call, followed by a microtask checkpoint. A plain
-//!   return value is the [`Reply`] of the very next step, in the same
-//!   tick; so is a promise that settles through microtasks alone. A
-//!   promise still pending is held; the row does not step until it
-//!   settles. After the tick's pump (and its microtasks) the isolate runs
+//!   handle scope per call. On a tick step a microtask checkpoint
+//!   follows, so a plain return value, or a promise that settles through
+//!   microtasks alone, is the [`Reply`] of the very next step in the same
+//!   tick. A kick runs no checkpoint (see Kick above): its promise settles
+//!   when the caller's own microtasks run, and the row takes it on its
+//!   next step. A promise still pending is held; the row does not step
+//!   until it settles. After the tick's pump (and its microtasks) the isolate runs
 //!   [`resume`], which drives only the rows whose promise was pending, so
 //!   a callback that waited on an Execution wait resumes its row in the
 //!   tick the wait settled, as a frozen `await` would; a row that ends
@@ -81,7 +83,10 @@
 //!   continue next tick. A row whose callback superseded it stops at once.
 //!   A callback ended by termination (join's or the watchdog's) is never
 //!   shown to the family: the row is aborted `terminated` and no further
-//!   callback runs in that pass or kick. A hook in [`Family::SYNC_HOOKS`]
+//!   callback runs in that pass or kick. Termination inside a pending
+//!   callback promise's continuation (it runs in the caller's or the
+//!   pump's microtasks) does not abort the row; the promise stays pending
+//!   until Stop or Reset. A hook in [`Family::SYNC_HOOKS`]
 //!   keeps frozen synchronous-call semantics instead: a returned promise is
 //!   not awaited, and its reply is the promise as a value (`{}`: an object
 //!   with no own properties).
