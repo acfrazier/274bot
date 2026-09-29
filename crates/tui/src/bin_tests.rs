@@ -877,6 +877,51 @@ fn create_profile_upsert_error_returns_err() {
     );
 }
 
+/// M-311: a fresh vault starts empty — interactive boot must not seed a
+/// `test`/`test` profile. `--user` still creates the first profile, and an
+/// existing vault keeps its profiles.
+#[test]
+fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
+    let iso = IsolatedEnv::enter("tui-fresh-vault-empty");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session
+        .start_play(Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap())
+        .unwrap();
+    // No `--user`: an honest error, and no `test` profile left behind.
+    let err = session.bootstrap_interactive_profiles(&[]).unwrap_err();
+    assert_eq!(
+        err,
+        "vault has no profiles (create one with host-play --user)"
+    );
+    assert!(session.names.is_empty(), "names: {:?}", session.names);
+    assert!(
+        session.core.vault().is_none_or(|v| v.get("test").is_none()),
+        "fresh vault must not seed `test`"
+    );
+    // `--user` creates the first profile (and focuses it).
+    assert_eq!(
+        session
+            .bootstrap_interactive_profiles(&["alice".to_string()])
+            .unwrap(),
+        "alice"
+    );
+    assert_eq!(session.names, vec!["alice".to_string()]);
+    assert!(
+        session
+            .core
+            .vault()
+            .is_some_and(|v| v.get("test").is_none() && v.get("alice").is_some()),
+        "only `--user` profiles exist"
+    );
+    // An existing vault keeps its profiles: no seeding, no wipe.
+    assert_eq!(
+        session.bootstrap_interactive_profiles(&[]).unwrap(),
+        "alice"
+    );
+    assert_eq!(session.names, vec!["alice".to_string()]);
+}
+
 /// A 0.1.9.x home keeps its v10 pack at the default path. The TUI's play and
 /// its WalkTo/scenario world are the packaged v11 bundle's one shared world,
 /// and the old file is left alone; an explicit override to the old file still
