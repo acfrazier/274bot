@@ -1,5 +1,8 @@
 //! Borrowed native observations with readiness attached to their evidence stamp.
-use super::{GameSnapshot, ItemView, QuestStatusView};
+use super::{
+    ActorTargetView, ChatLineView, ChatOptionView, GameSnapshot, GroundItemView, ItemView, LocView,
+    NpcView, QuestStatusView, StatView, VarpView,
+};
 use crate::quest_progress::EvidenceStamp;
 
 #[derive(Debug, Clone, Copy)]
@@ -157,6 +160,180 @@ impl<'a> SnapshotView<'a> {
             stamp: self.stamp,
         })
     }
+
+    fn ingame(&self) -> Option<&'a GameSnapshot> {
+        let snapshot = self.snapshot?;
+        snapshot.ingame().then_some(snapshot)
+    }
+
+    fn scene_ready(&self) -> Option<&'a GameSnapshot> {
+        let snapshot = self.ingame()?;
+        (snapshot.scene_state() == 2).then_some(snapshot)
+    }
+
+    /// Nearby NPCs once the scene is built. Disconnect or a rebuild is not
+    /// an empty crowd.
+    pub fn npcs(&self) -> Option<Observed<&'a [NpcView]>> {
+        let snapshot = self.scene_ready()?;
+        Some(Observed {
+            value: snapshot.npcs(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Placed locs once the scene is built.
+    pub fn locs(&self) -> Option<Observed<&'a [LocView]>> {
+        let snapshot = self.scene_ready()?;
+        Some(Observed {
+            value: snapshot.locs(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Ground-item stacks once the scene is built.
+    pub fn ground_items(&self) -> Option<Observed<&'a [GroundItemView]>> {
+        let snapshot = self.scene_ready()?;
+        Some(Observed {
+            value: snapshot.ground_items(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Worn items. An in-game frame posts the worn table; disconnect is not
+    /// an empty worn set.
+    pub fn equipment(&self) -> Option<Observed<&'a [ItemView]>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.equipment(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// All 25 skill slots from the last stat rebuild.
+    pub fn stats(&self) -> Option<Observed<&'a [StatView]>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.stats(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Chat history newer than `since` (the last observed `sequence`).
+    /// Newest-first ring order is preserved; no allocation.
+    pub fn chat_lines(&self, since: i32) -> Option<Observed<ChatLines<'a>>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: ChatLines {
+                lines: snapshot.chat_lines(),
+                since,
+            },
+            stamp: self.stamp,
+        })
+    }
+
+    /// Chat modal root, body texts, BUTTON_OK options, and continue id.
+    /// `root == -1` is an observed closed chat, not unreadiness.
+    pub fn chat_modal(&self) -> Option<Observed<ChatModalView<'a>>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: ChatModalView {
+                root: snapshot.modals().chat,
+                texts: snapshot.chat_modal_texts(),
+                options: snapshot.chat_options(),
+                continue_component_id: snapshot.chat_continue_component_id(),
+            },
+            stamp: self.stamp,
+        })
+    }
+
+    /// BUTTON_OK choices of the open chat modal.
+    pub fn chat_options(&self) -> Option<Observed<&'a [ChatOptionView]>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.chat_options(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Continue-button component; `-1` while latched or closed.
+    pub fn chat_continue(&self) -> Option<Observed<i32>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.chat_continue_component_id(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Main-modal TYPE_TEXT lines. Distinct from [`Self::main_modal`], which
+    /// also carries the root id.
+    pub fn main_modal_texts(&self) -> Option<Observed<&'a [String]>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.main_modal_texts(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Client varp table, one view per definition. Presence of a row is the
+    /// live table; callers decide transmission from selected configs.
+    pub fn varps(&self) -> Option<Observed<&'a [VarpView]>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.varps(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Last rebuilt run energy. `0` is a real posted value once in-game.
+    pub fn run_energy(&self) -> Option<Observed<i32>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.runenergy(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Local combat flag and current target. Unready without a local player.
+    pub fn in_combat(&self) -> Option<Observed<CombatView>> {
+        let snapshot = self.ingame()?;
+        let player = snapshot.local_player()?;
+        Some(Observed {
+            value: CombatView {
+                in_combat: player.player.actor.in_combat,
+                target: player.player.actor.target,
+            },
+            stamp: self.stamp,
+        })
+    }
+}
+
+/// Newest-first chat lines with sequence strictly after `since`.
+#[derive(Debug, Clone, Copy)]
+pub struct ChatLines<'a> {
+    lines: &'a [ChatLineView],
+    since: i32,
+}
+
+impl<'a> ChatLines<'a> {
+    pub fn iter(&self) -> impl Iterator<Item = &'a ChatLineView> + '_ {
+        self.lines.iter().filter(|line| line.sequence > self.since)
+    }
+}
+
+/// Chat-modal observation: closed is `root == -1`, not a missing field.
+#[derive(Debug, Clone, Copy)]
+pub struct ChatModalView<'a> {
+    pub root: i32,
+    pub texts: &'a [String],
+    pub options: &'a [ChatOptionView],
+    pub continue_component_id: i32,
+}
+
+/// Local combat observation from the player actor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CombatView {
+    pub in_combat: bool,
+    pub target: Option<ActorTargetView>,
 }
 
 #[cfg(test)]
@@ -184,6 +361,19 @@ mod tests {
             assert!(view.bank().is_none());
             assert!(view.quest_statuses().is_none());
             assert!(view.main_modal().is_none());
+            assert!(view.npcs().is_none());
+            assert!(view.locs().is_none());
+            assert!(view.ground_items().is_none());
+            assert!(view.equipment().is_none());
+            assert!(view.stats().is_none());
+            assert!(view.chat_lines(0).is_none());
+            assert!(view.chat_modal().is_none());
+            assert!(view.chat_options().is_none());
+            assert!(view.chat_continue().is_none());
+            assert!(view.main_modal_texts().is_none());
+            assert!(view.varps().is_none());
+            assert!(view.run_energy().is_none());
+            assert!(view.in_combat().is_none());
         }
         snapshot.ingame = true;
         let view = SnapshotView::new(Some(&snapshot), stamp);
@@ -191,14 +381,33 @@ mod tests {
         assert!(view.bank().is_none());
         assert!(view.quest_statuses().is_none());
         assert_eq!(view.main_modal().unwrap().value.root, -1);
+        assert!(view.npcs().is_none());
+        assert!(view.locs().is_none());
+        assert!(view.ground_items().is_none());
+        assert!(view.equipment().unwrap().value.is_empty());
+        assert!(view.stats().unwrap().value.is_empty());
+        assert_eq!(view.chat_lines(0).unwrap().value.iter().count(), 0);
+        assert_eq!(view.chat_modal().unwrap().value.root, -1);
+        assert!(view.chat_options().unwrap().value.is_empty());
+        assert_eq!(view.chat_continue().unwrap().value, -1);
+        assert!(view.main_modal_texts().unwrap().value.is_empty());
+        assert!(view.varps().unwrap().value.is_empty());
+        assert_eq!(view.run_energy().unwrap().value, 0);
+        assert!(view.in_combat().is_none());
         snapshot.inventory_size = 28;
         snapshot.bank_loaded = true;
         snapshot.quest_statuses_available = true;
+        snapshot.scene_state = 2;
+        snapshot.runenergy = 100;
         let view = SnapshotView::new(Some(&snapshot), stamp);
         assert!(view.inventory().unwrap().value.is_empty());
         assert!(view.bank().unwrap().value.is_empty());
         assert!(view.quest_statuses().unwrap().value.is_empty());
         assert_eq!(view.inventory().unwrap().stamp, stamp);
+        assert!(view.npcs().unwrap().value.is_empty());
+        assert!(view.locs().unwrap().value.is_empty());
+        assert!(view.ground_items().unwrap().value.is_empty());
+        assert_eq!(view.run_energy().unwrap().value, 100);
         // A disconnected frame cannot lend stale cached observations.
         snapshot.ingame = false;
         let view = SnapshotView::new(Some(&snapshot), stamp);
@@ -206,6 +415,50 @@ mod tests {
         assert!(view.bank().is_none());
         assert!(view.quest_statuses().is_none());
         assert!(view.main_modal().is_none());
+        assert!(view.npcs().is_none());
+        assert!(view.equipment().is_none());
+        assert!(view.chat_lines(0).is_none());
+        assert!(view.varps().is_none());
+        assert!(view.run_energy().is_none());
+    }
+
+    #[test]
+    fn chat_lines_since_skips_old_sequences_without_copying() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let mut snapshot = GameSnapshot::default();
+        snapshot.ingame = true;
+        snapshot.chat_lines = vec![
+            super::super::ChatLineView {
+                type_: 0,
+                username: None,
+                text: "new".into(),
+                sequence: 4,
+            },
+            super::super::ChatLineView {
+                type_: 0,
+                username: None,
+                text: "old".into(),
+                sequence: 2,
+            },
+        ];
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        let newer: Vec<_> = view
+            .chat_lines(2)
+            .unwrap()
+            .value
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(newer, ["new"]);
+        assert_eq!(view.chat_lines(4).unwrap().value.iter().count(), 0);
     }
 
     #[test]
