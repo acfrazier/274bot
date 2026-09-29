@@ -282,8 +282,9 @@ async function verifyRevision(revision: number) {
         ['death', 'Death Plateau', 'death', 'death_equiproom', 314, 80, 1],
         ['zanaris', 'Lost City', 'zanaris', 'zanaris', 147, 6, 3],
     ];
-    assertEqual(questIdentity.rows.length, 6, `${revision} quest rows`);
-    assertEqual(JSON.stringify(questIdentity.rows.map((row: any) => [row.id, row.display, row.component, row.varp, row.varp_id, row.complete, row.quest_points])), JSON.stringify(expectedQuest), `${revision} quest identity rows`);
+    if (revision === 289) assertEqual(questIdentity.rows.length, 69, `${revision} quest rows`);
+    const byId = Object.fromEntries(questIdentity.rows.map((row: any) => [row.id, row]));
+    assertEqual(JSON.stringify(expectedQuest.map((row) => [byId[row[0]].id, byId[row[0]].display, byId[row[0]].component, byId[row[0]].varp, byId[row[0]].varp_id, byId[row[0]].complete, byId[row[0]].quest_points])), JSON.stringify(expectedQuest), `${revision} quest identity seed rows`);
     if (questIdentity.rows.some((row: any) => row.requirements.qualification !== 'partial' || row.requirements.unknown_as_satisfied !== false || row.unknown_sides.length !== 0 || row.enum_index !== undefined || row.engine_id !== undefined || typeof row.complete !== 'number')) throw new Error(`${revision}: quest row promoted, ranged, or aliased`);
     const cookQuest = questIdentity.rows[0];
     assertEqual(JSON.stringify(cookQuest.requirements.items), JSON.stringify([{ alias: 'egg', quantity: 1, kind: 'inv' }, { alias: 'bucket_milk', quantity: 1, kind: 'inv' }, { alias: 'pot_flour', quantity: 1, kind: 'inv' }]), `${revision} cook aliases`);
@@ -292,23 +293,37 @@ async function verifyRevision(revision: number) {
         const row = questIdentity.rows.find((entry: any) => entry.id === id);
         if (!row.requirements.empty_must_have || row.requirements.items.length !== 0 || row.requirements.skills.length !== 0) throw new Error(`${revision}: ${id} empty mustHave`);
     }
+    if (revision === 289) {
+        if (!payload.npc_names || !Array.isArray(payload.npc_names.rows) || payload.npc_names.rows.length === 0) {
+            throw new Error(`${revision}: npc_names family missing`);
+        }
+        if (!payload.npc_names.rows.some((row: { config: string; id: number }) => row.config === 'khazard_warlord' && row.id === 477)) {
+            throw new Error(`${revision}: npc_names missing khazard_warlord`);
+        }
+        if (!payload.loc_names || !Array.isArray(payload.loc_names.rows) || !payload.loc_names.rows.some((row: { config: string; id: number }) => row.config === 'hopper_lumbridge' && row.id === 2714)) {
+            throw new Error(`${revision}: loc_names missing hopper_lumbridge`);
+        }
+        if (!payload.npc_placements || !Array.isArray(payload.npc_placements.rows) || payload.npc_placements.rows.length === 0) {
+            throw new Error(`${revision}: npc_placements family missing`);
+        }
+    }
     const waterfallQuest = questIdentity.rows.find((row: any) => row.id === 'waterfall');
     assertEqual(JSON.stringify(waterfallQuest.requirements.items), JSON.stringify([{ alias: 'rope', quantity: null, kind: 'use-site' }]), `${revision} waterfall rope`);
     const zanarisQuest = questIdentity.rows.find((row: any) => row.id === 'zanaris');
     assertEqual(JSON.stringify(zanarisQuest.requirements.skills), JSON.stringify([{ skill: 'woodcutting', level: 36 }, { skill: 'crafting', level: 31 }]), `${revision} zanaris gates`);
     if (zanarisQuest.requirements.items.length !== 0) throw new Error(`${revision}: zanaris must not add axe, knife, branch, or spirit`);
     const questBlob = JSON.stringify(questIdentity);
-    for (const banned of ['family-unavailable', 'enum_index', 'Lost City Of Zanaris', 'In Search of the Myreque', 'death_climbingboots', 'death_secretwaymap', 'death_spikedboots', 'Egg', 'Pot of flour', 'Bucket of milk']) {
+    for (const banned of ['family-unavailable', 'enum_index', 'Lost City Of Zanaris', 'death_climbingboots', 'death_secretwaymap', 'death_spikedboots', 'Egg', 'Pot of flour', 'Bucket of milk']) {
         if (questBlob.includes(banned)) throw new Error(`${revision}: quest identity published ${banned}`);
     }
-    if (questIdentity.rows.some((row: any) => row.varp_id === 101 || row.varp_id === 219 || row.varp === 'death' || row.id === 'routequest' || row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm' || row.id === 'regicide' || row.id === 'legends')) throw new Error(`${revision}: quest identity published a rejected binding`);
+    if (questIdentity.rows.some((row: { varp_id: number; varp: string }) => row.varp_id === 101 || row.varp_id === 219 || row.varp === 'death')) throw new Error(`${revision}: quest identity published a rejected binding`);
     if (revision === 274) {
         assertEqual(questIdentity.coverage.length, 1, '274 quest coverage');
         assertEqual(JSON.stringify(questIdentity.coverage[0]), JSON.stringify({ class: 'revision-absent', alias: 'routequest', on_revision: 274, other_pin_id: 387, copied: false, reason: '289-only quest, not copied onto 274' }), '274 routequest coverage');
         if (questIdentity.coverage[0].display !== undefined || questIdentity.coverage[0].complete !== undefined || questIdentity.coverage[0].quest_points !== undefined) throw new Error('274 copied routequest facts');
     } else {
         if (questIdentity.coverage.length !== 0) throw new Error('289 quest coverage must be empty');
-        if (questIdentity.rows.length !== 6) throw new Error('289 must not gain a seventh quest row');
+        assertEqual(questIdentity.rows.length, 69, '289 identity roster');
     }
     const trails = payload.trails;
     if (!trails || Array.isArray(trails) || !Array.isArray(trails.rows)) throw new Error(`${revision}: trails must be one family object, not a bare list`);

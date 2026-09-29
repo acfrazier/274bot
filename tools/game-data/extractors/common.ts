@@ -77,6 +77,74 @@ export function parseJm2LocPlacements(text: string, locIds: ReadonlySet<number>)
     return placements;
 }
 
+/**
+ * NPC placements only — the `==== NPC ====` section of one jm2. Rows are
+ * `plane lx lz: npc_id` with exactly one data token.
+ */
+export function parseJm2NpcPlacements(text: string) {
+    const placements: { plane: number; lx: number; lz: number; npc_id: number }[] = [];
+    let inNpc = false;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        const section = jm2SectionName(line);
+        if (section !== null) {
+            inNpc = section === 'NPC';
+            continue;
+        }
+        if (!inNpc) continue;
+        const colon = line.indexOf(':');
+        if (colon <= 0) throw new Error(`jm2 NPC: malformed row ${line}`);
+        const coordTokens = line.slice(0, colon).trim().split(/\s+/);
+        if (coordTokens.length !== 3) throw new Error(`jm2 NPC: bad coords ${line}`);
+        const plane = integer(coordTokens[0], line);
+        const lx = integer(coordTokens[1], line);
+        const lz = integer(coordTokens[2], line);
+        if (plane < 0 || plane > 3) throw new Error(`jm2 NPC: plane out of range ${line}`);
+        if (lx < 0 || lx > 63 || lz < 0 || lz > 63) throw new Error(`jm2 NPC: local coords out of range ${line}`);
+        const dataTokens = line.slice(colon + 1).trim().split(/\s+/).filter((token) => token.length > 0);
+        if (dataTokens.length === 0) throw new Error(`jm2 NPC: missing npc id ${line}`);
+        if (dataTokens.length > 1) throw new Error(`jm2 NPC: extra tokens ${line}`);
+        placements.push({ plane, lx, lz, npc_id: integer(dataTokens[0], line) });
+    }
+    return placements;
+}
+
+export function walkContentFiles(root: string, ext: string): string[] {
+    const out: string[] = [];
+    const visit = (dir: string) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) visit(full);
+            else if (entry.isFile() && entry.name.endsWith(ext)) out.push(full);
+        }
+    };
+    visit(root);
+    out.sort();
+    return out;
+}
+
+export function parseConfigBlocks(text: string): { name: string; values: Record<string, string> }[] {
+    const rows: { name: string; values: Record<string, string> }[] = [];
+    let current: { name: string; values: Record<string, string> } | null = null;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('//')) continue;
+        if (line.startsWith('[') && line.endsWith(']')) {
+            current = { name: line.slice(1, -1), values: {} };
+            rows.push(current);
+            continue;
+        }
+        if (!current) continue;
+        const eq = line.indexOf('=');
+        if (eq <= 0) continue;
+        const key = line.slice(0, eq);
+        const value = line.slice(eq + 1);
+        current.values[key] = value;
+    }
+    return rows;
+}
+
 export function worldFromMapsquare(mx: number, mz: number, lx: number, lz: number, plane: number) {
     return { x: mx * 64 + lx, z: mz * 64 + lz, plane };
 }

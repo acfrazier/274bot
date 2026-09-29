@@ -654,6 +654,66 @@ pub struct QuestIdentityRow {
     pub quest_points: i32,
     pub unknown_sides: Vec<String>,
     pub requirements: QuestRequirements,
+    #[serde(default)]
+    pub members: bool,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub journal_title: Option<String>,
+    #[serde(default)]
+    pub journal_script: Option<String>,
+}
+
+/// Pack-joined NPC identity for Path compile (`npc:cook`).
+#[derive(Debug, Deserialize, Clone)]
+pub struct NpcNameRow {
+    pub id: i32,
+    pub config: String,
+    pub display: Option<String>,
+    pub ops: Vec<String>,
+    pub size: i32,
+    pub wanderrange: i32,
+    pub maxrange: i32,
+    pub attackrange: i32,
+    pub huntrange: i32,
+    pub vislevel: i32,
+    pub hitpoints: i32,
+    pub damagetype: Option<String>,
+    pub dragonfire: bool,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct NpcNameFacts {
+    pub rows: Vec<NpcNameRow>,
+}
+
+/// Pack-joined loc identity for Path compile (`loc:hopper_lumbridge`).
+#[derive(Debug, Deserialize, Clone)]
+pub struct LocNameRow {
+    pub id: i32,
+    pub config: String,
+    pub display: Option<String>,
+    pub ops: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LocNameFacts {
+    pub rows: Vec<LocNameRow>,
+}
+
+/// Salvaged jm2 NPC placements.
+#[derive(Debug, Deserialize, Clone)]
+pub struct NpcPlacementRow {
+    pub npc_id: i32,
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+    pub mapsquare: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct NpcPlacementFacts {
+    pub rows: Vec<NpcPlacementRow>,
 }
 
 /// Revision coverage. Not an identity row and not a copied id.
@@ -667,7 +727,7 @@ pub struct QuestCoverageRecord {
     pub reason: String,
 }
 
-/// Six-seed quest identity. Absence is `None`, not an empty list.
+/// Roster identity. Absence is `None`, not an empty list.
 /// A coverage record is a sibling, not a row.
 #[derive(Debug, Deserialize, Clone)]
 pub struct QuestIdentityFacts {
@@ -905,6 +965,12 @@ pub struct SelectedGameData {
     #[serde(default)]
     quest_identity: Option<QuestIdentityFacts>,
     #[serde(default)]
+    npc_names: Option<NpcNameFacts>,
+    #[serde(default)]
+    loc_names: Option<LocNameFacts>,
+    #[serde(default)]
+    npc_placements: Option<NpcPlacementFacts>,
+    #[serde(default)]
     trails: Option<TrailFacts>,
     #[serde(default)]
     talk_key: Option<TalkKeyFacts>,
@@ -1085,6 +1151,21 @@ impl SelectedGameData {
                 return Err(
                     "quest_identity empty mustHave cannot carry items or skills".to_string()
                 );
+            }
+        }
+        if let Some(facts) = &data.npc_names {
+            if facts.rows.is_empty() {
+                return Err("npc_names present with no rows".to_string());
+            }
+        }
+        if let Some(facts) = &data.loc_names {
+            if facts.rows.is_empty() {
+                return Err("loc_names present with no rows".to_string());
+            }
+        }
+        if let Some(facts) = &data.npc_placements {
+            if facts.rows.is_empty() {
+                return Err("npc_placements present with no rows".to_string());
             }
         }
         if let Some(facts) = &data.trails {
@@ -1390,9 +1471,37 @@ impl SelectedGameData {
         self.equipment_names.as_ref()
     }
 
-    /// Six-seed quest identity. `None` is family absence, not an empty extract.
+    /// Roster identity. `None` is family absence, not an empty extract.
     pub fn quest_identity(&self) -> Option<&QuestIdentityFacts> {
         self.quest_identity.as_ref()
+    }
+
+    pub fn npc_names(&self) -> Option<&NpcNameFacts> {
+        self.npc_names.as_ref()
+    }
+
+    pub fn loc_names(&self) -> Option<&LocNameFacts> {
+        self.loc_names.as_ref()
+    }
+
+    pub fn npc_placements(&self) -> Option<&NpcPlacementFacts> {
+        self.npc_placements.as_ref()
+    }
+
+    pub fn npc_by_config(&self, config: &str) -> Option<&NpcNameRow> {
+        self.npc_names
+            .as_ref()?
+            .rows
+            .iter()
+            .find(|row| row.config == config)
+    }
+
+    pub fn loc_by_config(&self, config: &str) -> Option<&LocNameRow> {
+        self.loc_names
+            .as_ref()?
+            .rows
+            .iter()
+            .find(|row| row.config == config)
     }
 
     /// Trail inventory and challenge answers. `None` is family absence, not an empty extract.

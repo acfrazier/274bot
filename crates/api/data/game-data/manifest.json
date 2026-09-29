@@ -742,7 +742,7 @@
       },
       "teleports": 7,
       "quest_identity": {
-        "rows": 6,
+        "rows": 69,
         "coverage": 0
       },
       "trails": {
@@ -772,8 +772,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 1908692,
-      "sha256": "c47aa99c9dce5cf0935e06ea3c87a49f89eab09019e5a50ee878d66605d49f6f",
+      "bytes": 4292114,
+      "sha256": "b17d1ef8a674e4f6f27f899365ce7092a147fbc3fb6c837643d3418ffbc0b7bf",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [

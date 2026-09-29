@@ -305,6 +305,29 @@ impl<'a> SnapshotView<'a> {
             stamp: self.stamp,
         })
     }
+
+    /// Overlay prayer bits from varps 83–97. Missing rows stay off; disconnect
+    /// is unreadiness, not an all-off overlay.
+    pub fn prayers_active(&self) -> Option<Observed<[bool; 15]>> {
+        let snapshot = self.ingame()?;
+        let mut bits = [false; 15];
+        for varp in snapshot.varps() {
+            let Some(slot) = varp
+                .index
+                .checked_sub(83)
+                .and_then(|delta| usize::try_from(delta).ok())
+            else {
+                continue;
+            };
+            if slot < 15 {
+                bits[slot] = varp.value == 1;
+            }
+        }
+        Some(Observed {
+            value: bits,
+            stamp: self.stamp,
+        })
+    }
 }
 
 /// Newest-first chat lines with sequence strictly after `since`.
@@ -374,6 +397,7 @@ mod tests {
             assert!(view.varps().is_none());
             assert!(view.run_energy().is_none());
             assert!(view.in_combat().is_none());
+            assert!(view.prayers_active().is_none());
         }
         snapshot.ingame = true;
         let view = SnapshotView::new(Some(&snapshot), stamp);
@@ -394,6 +418,7 @@ mod tests {
         assert!(view.varps().unwrap().value.is_empty());
         assert_eq!(view.run_energy().unwrap().value, 0);
         assert!(view.in_combat().is_none());
+        assert_eq!(view.prayers_active().unwrap().value, [false; 15]);
         snapshot.inventory_size = 28;
         snapshot.bank_loaded = true;
         snapshot.quest_statuses_available = true;
@@ -420,6 +445,7 @@ mod tests {
         assert!(view.chat_lines(0).is_none());
         assert!(view.varps().is_none());
         assert!(view.run_energy().is_none());
+        assert!(view.prayers_active().is_none());
     }
 
     #[test]
@@ -433,22 +459,24 @@ mod tests {
             tick: 1,
             sequence: 1,
         };
-        let mut snapshot = GameSnapshot::default();
-        snapshot.ingame = true;
-        snapshot.chat_lines = vec![
-            super::super::ChatLineView {
-                type_: 0,
-                username: None,
-                text: "new".into(),
-                sequence: 4,
-            },
-            super::super::ChatLineView {
-                type_: 0,
-                username: None,
-                text: "old".into(),
-                sequence: 2,
-            },
-        ];
+        let snapshot = GameSnapshot {
+            ingame: true,
+            chat_lines: vec![
+                super::super::ChatLineView {
+                    type_: 0,
+                    username: None,
+                    text: "new".into(),
+                    sequence: 4,
+                },
+                super::super::ChatLineView {
+                    type_: 0,
+                    username: None,
+                    text: "old".into(),
+                    sequence: 2,
+                },
+            ],
+            ..GameSnapshot::default()
+        };
         let view = SnapshotView::new(Some(&snapshot), stamp);
         let newer: Vec<_> = view
             .chat_lines(2)

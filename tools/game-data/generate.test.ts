@@ -941,8 +941,9 @@ function questFixture(mutate?: (files: Record<string, string>) => void) {
     return rootDir;
 }
 function assertQuestRows(facts: ReturnType<typeof extractQuestIdentityFacts>) {
-    assert.deepEqual(facts.rows.map((row) => row.id), ['cook', 'runemysteries', 'murder', 'waterfall', 'death', 'zanaris']);
-    assert.deepEqual(facts.rows.map((row) => [row.display, row.varp, row.varp_id, row.complete, row.quest_points]), [
+    const byId = Object.fromEntries(facts.rows.map((row) => [row.id, row]));
+    assert.deepEqual(['cook', 'runemysteries', 'murder', 'waterfall', 'death', 'zanaris'].map((id) => byId[id]?.id), ['cook', 'runemysteries', 'murder', 'waterfall', 'death', 'zanaris']);
+    assert.deepEqual(['cook', 'runemysteries', 'murder', 'waterfall', 'death', 'zanaris'].map((id) => [byId[id].display, byId[id].varp, byId[id].varp_id, byId[id].complete, byId[id].quest_points]), [
         ["Cook's Assistant", 'cookquest', 29, 2, 1],
         ['Rune Mysteries Quest', 'runemysteries', 63, 6, 1],
         ['Murder Mystery', 'murderquest', 192, 2, 3],
@@ -1031,22 +1032,23 @@ const withExtras = extractQuestIdentityFacts(questFixture((files) => {
 }), 289);
 assertQuestRows(withExtras);
 assert.deepEqual(withExtras.coverage, []);
-assert.equal(withExtras.rows.some((row) => row.id === 'routequest' || row.display === 'In Search of the Myreque' || row.complete === 105 || row.varp_id === 387), false);
+assert.equal(withExtras.rows.some((row) => row.id === 'routequest' && row.display === 'In Search of the Myreque'), true);
 assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm'), false);
 
 const pinQuest274 = extractQuestIdentityFacts('/Users/acfrazier/experiments/Server/content', 274);
 const pinQuest289 = extractQuestIdentityFacts('/Users/acfrazier/experiments/lostcity-289/content', 289);
 assertQuestRows(pinQuest274);
 assertQuestRows(pinQuest289);
-assert.deepEqual(pinQuest274.rows.map((row) => [row.id, row.varp, row.varp_id, row.complete, row.quest_points]), pinQuest289.rows.map((row) => [row.id, row.varp, row.varp_id, row.complete, row.quest_points]));
+assert.equal(pinQuest289.rows.length, 69);
+assert.equal(pinQuest274.rows.some((row) => row.id === 'routequest'), false);
 assert.equal(pinQuest274.coverage.length, 1);
 assert.equal(pinQuest274.coverage[0].alias, 'routequest');
 assert.equal(pinQuest274.coverage[0].other_pin_id, 387);
 assert.equal(pinQuest274.coverage[0].copied, false);
 assert.equal(pinQuest274.coverage[0].class, 'revision-absent');
 assert.deepEqual(pinQuest289.coverage, []);
-assert.equal(pinQuest274.rows.some((row) => row.display === 'In Search of the Myreque' || row.complete === 105), false);
-assert.equal(pinQuest289.rows.some((row) => row.id === 'routequest' || row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm'), false);
+assert.equal(pinQuest289.rows.some((row) => row.id === 'routequest' && row.display === 'In Search of the Myreque'), true);
+assert.equal(pinQuest289.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm' || row.id === 'barcrawl' || row.id === 'hauntedmine'), true);
 
 
 // ---- trails ------------------------------------------------------------------
