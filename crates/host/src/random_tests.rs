@@ -1380,6 +1380,167 @@ fn lamp_auto_redeems_and_drains_the_award_dialogue() {
 }
 
 #[test]
+fn lamp_skill_if_timeout_rerubs_bounded_then_stalls() {
+    // A Rub built from a snapshot that a resolving script burial
+    // invalidates hits a stale slot and the server opens no skill IF.
+    // The guardian re-resolves and re-Rubs from a fresh snapshot
+    // ([`MAX_LAMP_RUBS`] attempts), then stalls instead of holding
+    // forever. Confirm is never sent here.
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_lamp(&mut c);
+    plant_stat(&mut c, 2, 1_000, 7);
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default(); // lamp_auto on, skill strength
+    let mut snap = GameSnapshot::new();
+
+    // Tick 1: first Rub.
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(status.hold, "the redemption holds while it is in flight");
+    let rub = drv.menus.clone();
+    assert_eq!(rub.len(), 1, "one Rub goes out");
+    assert_eq!(rub[0].1, MiniMenuAction::OP_HELD1);
+
+    // Ticks 2..=10: the IF never opens; the 9th wait tick re-arms the
+    // Rub without sending.
+    for _ in 2..=MAX_LAMP_WAIT + 2 {
+        drv.menus.clear();
+        drv.actions.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.hold);
+        assert!(drv.menus.is_empty(), "pending IF: no send while waiting");
+    }
+    // Tick 11: second Rub, re-resolved from the fresh snapshot.
+    drv.menus.clear();
+    drv.actions.clear();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(status.hold);
+    assert_eq!(drv.menus, rub, "the retry re-Rubs the same lamp");
+
+    // Ticks 12..=20: still no IF; the 9th wait tick re-arms again.
+    for _ in 12..=2 * (MAX_LAMP_WAIT + 2) {
+        drv.menus.clear();
+        drv.actions.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.hold);
+        assert!(drv.menus.is_empty(), "pending IF: no send while waiting");
+    }
+    // Tick 21: third and final Rub.
+    drv.menus.clear();
+    drv.actions.clear();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(status.hold);
+    assert_eq!(drv.menus, rub, "the final retry re-Rubs the same lamp");
+
+    // Ticks 22..=29: still no IF; tick 30 exhausts the attempts and
+    // stalls instead of holding forever.
+    for _ in 22..=3 * (MAX_LAMP_WAIT + 2) - 1 {
+        drv.menus.clear();
+        drv.actions.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.hold);
+        assert!(drv.menus.is_empty(), "pending IF: no send while waiting");
+    }
+    drv.menus.clear();
+    drv.actions.clear();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(!status.hold, "exhausted Rubs release the slot");
+    assert!(drv.menus.is_empty(), "a stalled redemption replays nothing");
+
+    // The stall latch holds: no fourth Rub ever goes out.
+    drv.menus.clear();
+    drv.actions.clear();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(!status.hold);
+    assert!(drv.menus.is_empty(), "the stall latch stops fresh Rubs");
+}
+
+#[test]
+fn lamp_rerub_rejoins_redemption_when_the_if_opens_late() {
+    // The retry rejoins the normal flow: a late skill IF is answered,
+    // confirmed, and its award dialogue drained to a real release.
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_lamp(&mut c);
+    plant_stat(&mut c, 2, 1_000, 7);
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    // Tick 1: first Rub; ticks 2..=11: the IF never opens, so tick 11
+    // carries the second Rub.
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(status.hold);
+    for _ in 2..=MAX_LAMP_WAIT + 2 {
+        drv.menus.clear();
+        drv.actions.clear();
+        tick_at(&mut c, &mut snap);
+        assert!(g.tick(&mut drv, &snap, &settings, 0, None).hold);
+    }
+    drv.menus.clear();
+    drv.actions.clear();
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 0, None).hold);
+    assert_eq!(drv.menus.len(), 1, "the retry re-Rubs");
+    assert_eq!(drv.menus[0].1, MiniMenuAction::OP_HELD1);
+
+    // The late skill IF opens: strength, then confirm.
+    drv.menus.clear();
+    drv.actions.clear();
+    open_lamp(&mut c);
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 0, None).hold);
+    assert_eq!(drv.menus.len(), 1, "one skill button press");
+    assert_eq!(drv.menus[0].1, MiniMenuAction::IF_BUTTON);
+    assert_eq!(drv.menus[0].4, 2813, "strength is xplamp button 2813");
+    drv.menus.clear();
+    drv.actions.clear();
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 0, None).hold);
+    assert_eq!(
+        drv.menus,
+        vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 2831)],
+        "next tick presses confirm"
+    );
+
+    // The award mesbox opens: drain it, then release on close+reward.
+    drv.menus.clear();
+    drv.actions.clear();
+    close_main_modal(&mut c);
+    clear_inv(&mut c);
+    open_chat(&mut c);
+    plant_stat(&mut c, 2, 1_070, 7);
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(status.hold, "the award dialogue still holds the slot");
+    assert_eq!(
+        drv.menus,
+        vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, CHAT_CONTINUE)],
+        "the award page is clicked through, not left open"
+    );
+    drv.menus.clear();
+    drv.actions.clear();
+    close_chat(&mut c);
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(!status.hold, "a redeemed lamp releases the slot");
+    assert!(drv.menus.is_empty(), "no replay after completion");
+}
+
+#[test]
 fn lamp_redeem_without_the_reward_gives_up_bounded() {
     // The lamp is consumed and the IF closed, but the reward never
     // lands and no award dialogue is up: the hold must not sit on a

@@ -108,6 +108,9 @@ pub struct Guardian {
     box_answer_count: Option<i32>,
     /// Lamp: Rub went out — do not Rub again until the skill IF closes.
     lamp_rubbed: bool,
+    /// Lamp: Rub attempts sent this redemption (first plus bounded
+    /// re-Rubs, [`MAX_LAMP_RUBS`] cap).
+    lamp_rubs: u32,
     /// Lamp: the skill button went out — the next tick on the IF presses
     /// confirm (2831).
     lamp_skill_sent: bool,
@@ -167,6 +170,7 @@ impl Guardian {
             mime_answered: false,
             box_answer_count: None,
             lamp_rubbed: false,
+            lamp_rubs: 0,
             lamp_skill_sent: false,
             lamp_confirmed: false,
             lamp_reward: None,
@@ -1051,8 +1055,11 @@ impl Guardian {
     /// `lamp_skill` button, then Confirm (2831) — after which the server
     /// runs `xplamp_confirm`: it closes the IF, consumes the lamp,
     /// `stat_advance`s the chosen skill and opens the award `mesbox`. Only
-    /// the observed reward with that dialogue drained releases the hold;
-    /// a refused or stalled redemption gives up instead of replaying.
+    /// the observed reward with that dialogue drained releases the hold; a
+    /// Rub whose skill IF never opens re-resolves and re-Rubs from a fresh
+    /// snapshot ([`MAX_LAMP_RUBS`] attempts — a resolving script burial can
+    /// shift the lamp out from under the first Rub), while a refused
+    /// Confirm or an unknown skill still gives up instead of replaying.
     /// `lamp_auto` off keeps the 0.1.2 behavior (detect, no op, no hold).
     fn step_lamp<D: Driver>(
         &mut self,
@@ -1114,12 +1121,32 @@ impl Guardian {
             // Waiting for the skill IF to open after the Rub.
             self.lamp_wait += 1;
             if self.lamp_wait > MAX_LAMP_WAIT {
-                api::host_log!(
-                    Category::RandomEvent,
-                    Level::Warn,
-                    "lamp: the skill interface never opened; giving up"
-                );
-                self.stall_lamp();
+                if self.lamp_rubs < MAX_LAMP_RUBS {
+                    // The Rub may have hit a stale slot (a script burial
+                    // resolving after the snapshot it was built from
+                    // compacts the pack and shifts the lamp, so the server
+                    // ignores the op and no IF opens): re-resolve and
+                    // re-Rub from the next fresh snapshot instead of giving
+                    // up. The pack has settled by then (the hold froze the
+                    // script), so retries are progressively safer. Confirm
+                    // is never replayed.
+                    api::host_log!(
+                        Category::RandomEvent,
+                        Level::Info,
+                        "lamp: the skill interface never opened; re-rubbing (rub {} of {})",
+                        self.lamp_rubs + 1,
+                        MAX_LAMP_RUBS,
+                    );
+                    self.lamp_rubbed = false;
+                    self.lamp_wait = 0;
+                } else {
+                    api::host_log!(
+                        Category::RandomEvent,
+                        Level::Warn,
+                        "lamp: the skill interface never opened; giving up"
+                    );
+                    self.stall_lamp();
+                }
             }
             return;
         }
@@ -1132,6 +1159,7 @@ impl Guardian {
             SendResult::Sent { .. } => {
                 self.lamp_rubbed = true;
                 self.lamp_wait = 0;
+                self.lamp_rubs += 1;
             }
             SendResult::Refused { .. } => self.acting = false,
         }
@@ -1187,6 +1215,7 @@ impl Guardian {
     /// Drop the lamp flow state (a resolved, consumed or abandoned lamp).
     fn clear_lamp(&mut self) {
         self.lamp_rubbed = false;
+        self.lamp_rubs = 0;
         self.lamp_skill_sent = false;
         self.lamp_confirmed = false;
         self.lamp_reward = None;
