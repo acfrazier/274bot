@@ -350,6 +350,8 @@ pub struct SlotDetail {
     pub random: Option<String>,
     /// The profile's last successful script assignment (display name).
     pub card: Option<String>,
+    /// Only focused detail retains the richer native output; fleet rows stay scalar.
+    pub native_status: Option<Arc<script::native::ScriptStatus>>,
 }
 
 impl Clone for SlotDetail {
@@ -365,6 +367,7 @@ impl Clone for SlotDetail {
             welcome: self.welcome.clone(),
             random: self.random.clone(),
             card: self.card.clone(),
+            native_status: self.native_status.clone(),
         }
     }
 
@@ -379,6 +382,7 @@ impl Clone for SlotDetail {
         self.welcome.clone_from(&source.welcome);
         self.random.clone_from(&source.random);
         self.card.clone_from(&source.card);
+        self.native_status.clone_from(&source.native_status);
     }
 }
 
@@ -604,6 +608,13 @@ impl Views {
         }
         let status = find_status(input.statuses, selected, &mut detail_state.hint);
         changed |= update_detail(detail, status, input.card, scratch);
+        let native = input
+            .play
+            .and_then(|play| play.script_native_status(selected));
+        if detail.native_status != native {
+            detail.native_status = native;
+            changed = true;
+        }
         changed
     }
 }

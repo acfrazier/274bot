@@ -8,7 +8,7 @@ JS ↔ Rust isolate wire is **FlatBuffers** — there is no extra JSON host wire
 and no foreign JS policy runtime in-tree.
 
 WalkTo is **host nav** (panel picker / TUI map), not a script card.
-`ctx::Script::on_random` is a rising-edge knock (`RandomClaim::Host` default).
+`native::Script::on_random` is a rising-edge knock (`RandomClaim::Host` default).
 Catalog cards come from an external `$RS2B0T` / `--catalog` checkout
 (upstream `rs2b2t/rs2b0t` layout: `src/bot/scripts`), not a copy in this
 tree. `$RS2B0T` wins over the persisted root (`~/.274bot/rs2b0t-path`,
@@ -21,16 +21,31 @@ inventory count as “all catalog scripts / all options qualified.”
 
 ## Native contract boundary
 
-New compiled-card consumers use `script::native::Script`. The currently
-installed registry and slot use `script::ctx::Script` until their lifecycle
-cutover; there is no ambiguous crate-root `Script` re-export.
+Compiled cards and the slot use `script::native::Script` exclusively. Each
+`CompiledCard` descriptor owns its static metadata, versioned `SettingDef`
+schema, per-account bulk-copy exclusions, typed preparer and Rust factory.
+Browse, scenario Starts and Start handles all use that registry; there is no
+second parameter-default table or crate-root `Script` trait.
 
-`native::ActionContext` exposes borrowed frame/evidence/pin/recovery views,
-and `quest_journal::{JournalRequest, JournalMachine}` and `clue::ClueRecovery`
-are available without `load`. These declarations do not install a native
-action facility: begins/polls refuse with `ActionError::Unavailable`, and no
-public constructor can mint a frame, handle or quiet lease. Isolate lifecycle
-hooks remain crate-private and behind `load`.
+Start prepares settings and selected resources on a `FamilyPreparation`
+worker, then installs only if the captured slot/control generation is current.
+Assignment changes after Ready, never on enqueue. Stop, replacement and
+profile removal invalidate late replies. Invalid settings or factory failure
+retain the previous assignment and report a structured rejection.
+
+`NativeTick` borrows the frame/evidence/pin/recovery views and the shared
+status/paint/log output. Native instances allocate no isolate. Status and paint
+are shared on change; focused detail retains rich status while fleet rows remain
+scalar. An unused slot allocates no native instance, preparation or retained
+cell.
+
+The typed action-machine facility is a separate cutover: begins/polls still
+refuse with `ActionError::Unavailable`; this registration implementation does
+not qualify quiet leases, native walk/journal operations or watchdog clocks.
+Sherlock retains its existing clue queue/dispatch behavior through one
+crate-private borrowed host frame (no raw driver). It remains `load`-gated for
+the existing clue implementation, but never creates a V8 isolate. Clue
+transport/recovery extraction replaces that bridge, not the registration API.
 
 Selected fact strings can be shared with a decode-local `api::selected::FactStrings`;
 drop the interner after preparation and let the family-held Arcs own their
@@ -47,7 +62,7 @@ value applies; omission is not proof of no requirement.
 | --- | --- | --- |
 | When V8 exists | Never | Start of a **JS/TS** picker card only |
 | Wake | `host::should_emit_tick` (PLAYER_INFO) | same, posted to the isolate thread |
-| House API | Rust `tick(&mut ScriptCtx)` | `export function tick` **or** `defineBot`; explicit `export const apiVersion = 2` is JS API v2 ([js-api-v2.md](js-api-v2.md)) |
+| House API | Rust `tick(&mut NativeTick) -> Result<ScriptFlow, ScriptFailure>` | `export function tick` **or** `defineBot`; explicit `export const apiVersion = 2` is JS API v2 ([js-api-v2.md](js-api-v2.md)) |
 
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
@@ -73,8 +88,9 @@ scripts end their live step at either boundary.
   path (`~/.274bot/js-scripts.json` remembers `{name, path}`). Same path
   overwrites; different paths stay distinct even when stems match.
 - Compiled registry cards (currently Sherlock in `load` builds) are also in
-  Browse, grouped under **Treasure Trails** and tagged **Compiled**. They use
-  no parameter schema. Compiled names remain reserved.
+  Browse, grouped under **Treasure Trails** and tagged **Compiled**. Sherlock
+  has a known-empty schema version 1, distinct from unavailable metadata or an
+  unsupported saved schema. Compiled names remain reserved.
 - Catalog cards are **Catalog** source: static parse of
   `src/bot/scripts/index.ts` (no V8 at registration). Browse fills both
   panel and TUI pickers.
@@ -148,6 +164,28 @@ vault bag.
 Missing catalog/file sources stay visible with `unavailable` rather than
 silently dropping the assignment.
 
+Native settings use the same per-account map, under `compiled_identity_key`,
+with envelopes `{"schema_version":1,"values":{...}}`; JS bags are unchanged.
+Missing entries use current defaults; legacy empty native entries mean schema
+1. Malformed or unknown versions remain unavailable and are never overwritten
+with defaults. Merge precedence remains defaults → account overrides → explicit
+inject, plus profile-global settings unless explicitly injected.
+
+Native edits decode to a card-owned type off-pump **before** staging a durable
+write. A failed validation/save changes neither the effective run nor durable
+settings. Delivery after persistence is fenced to the exact account
+incarnation/run/session, and reports Applied, PendingBoundary, RestartRequired,
+Unchanged, Stale or rejection separately from the save. Pending-boundary
+acknowledgements must name the latest revision; restart-required drafts never
+become effective just because they were saved.
+
+Native Apply to all uses the same coordinator as loaded cards. Its confirmation
+and result identify excluded per-account fields for each target. Full copy
+preserves target-specific pairing fields, including absent and explicitly empty
+values; a single-field request for an excluded field is refused before a write.
+Sherlock validates the profile-global clue partner but does not add a duel
+family to its existing solver.
+
 ## Operator controls
 
 Browse / Start / Pause / Stop / Load are wired in both operator panels
@@ -179,30 +217,23 @@ External raw-TypeScript smoke for the suite runner is a separate
 `external_watch` / `--external-ts` path ([../e2e-suite.md](../e2e-suite.md));
 ordinary operator Load is the File/catalog flow above.
 
-## ScriptCtx read surface
+## Host input versus native observations
 
-```rust
-pub struct ScriptCtx<'a> {
-    pub driver: &'a mut dyn Driver,
-    pub tick: u64,
-    pub here: Option<(i32, i32, i32)>,           // local player world tile
-    pub walk: Option<&'a mut dyn FnMut(i32, i32, i32) -> bool>, // arm find + follow
-    pub inv: Option<&'a [(i32, i32)]>,            // (real obj id, count)
-    pub obj_names: Option<&'a ObjNames>,          // id -> name table
-}
-impl ScriptCtx<'_> { pub fn has_item(&self, name: &str) -> bool; }
-```
-
-`has_item` resolves real obj ids case-insensitively. Inventory ids are real
-(`stored - 1`), matching `ItemDefView.id` and `ObjNames`.
+`ScriptCtx` is the host pump's input to `SlotScript`, not a compiled card's
+authoring context. Cards receive `NativeTick` and its borrowed `SnapshotView`.
+Inventory, bank and quest observations carry readiness and an `EvidenceStamp`;
+unavailable is not an observed empty list. A closed main modal is an observed
+root of `-1` only on an ingame frame. Snapshot views do not clone the world or
+grant a send-side driver.
 
 ## Nav vs scripts
 
-WalkTo stays the panel **WalkTo** button + traveller. `ctx.walk(x, z, level)`
-arms `nav::router::find` on the shared whole-world `NavWorld` and the slot
-pump drives `nav::traveller::Traveller::follow`; `SlotStatus.walk_{x,z,level}`
-mirrors the armed dest and clears on arrival. The nav `find` runs off-pump
-(a short-lived worker); `follow` steps on the slot pump, one send per tick.
+WalkTo stays the panel **WalkTo** button + traveller. Script walk requests use
+the host's shared `nav::router::find` and the slot pump's
+`nav::traveller::Traveller::follow`; `SlotStatus.walk_{x,z,level}` mirrors the
+armed destination and clears on arrival. Find runs off-pump; follow steps on
+the slot pump under the existing admission fence. Typed native walk operations
+are not installed by the registration cutover.
 
 ## Catalog walking and recovery (compat v1)
 

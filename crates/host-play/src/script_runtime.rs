@@ -73,7 +73,20 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
     wall.lock()
         .unwrap()
         .entry(name.to_string())
-        .or_insert_with(|| Arc::new(Mutex::new(SlotScript::new())))
+        .or_insert_with(|| {
+            static NEXT_INCARNATION: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(1);
+            let incarnation = NEXT_INCARNATION
+                .fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |next| next.checked_add(1),
+                )
+                .expect("slot incarnation exhausted");
+            let mut slot = SlotScript::new();
+            slot.bind_incarnation(incarnation);
+            Arc::new(Mutex::new(slot))
+        })
         .clone()
 }
 
@@ -117,6 +130,9 @@ fn settle_start(slot: &mut SlotScript) -> Result<(), String> {
         match slot.poll_start() {
             script::StartPoll::Settled(script::StartOutcome::Ready) => return Ok(()),
             script::StartPoll::Settled(script::StartOutcome::Failed(e)) => return Err(e),
+            script::StartPoll::Settled(script::StartOutcome::Rejected(e)) => {
+                return Err(e.to_string())
+            }
             script::StartPoll::Settled(script::StartOutcome::Cancelled) => {
                 return Err("start cancelled".into())
             }

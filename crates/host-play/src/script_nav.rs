@@ -141,11 +141,8 @@ pub(crate) struct CarriedWalk {
     request: script::shim::InteractReq,
 }
 
-/// The shared script walk arm: both `ctx.walk` (default options) and
-/// `ctx.walk_with` (explicit options) route through
-/// [`ScriptWalkArm::route`]. Each observe clones the arm once per hook
-/// (all fields are `Clone`), so the two `&mut` hooks never share a
-/// mutable borrow.
+/// The shared arm for queued script walks and host bank-stand walks.
+/// Routing stays off-pump; the slot pump owns follow and dispatch.
 #[derive(Clone)]
 pub(crate) struct ScriptWalkArm {
     pub(crate) here: Option<(i32, i32, i32)>,
@@ -195,20 +192,9 @@ pub(super) fn log_walk_arm_bot(build: impl FnOnce() -> String) {
 }
 
 impl ScriptWalkArm {
-    /// Queue one walk toward `(x, z, level)` with `opts`, routing off-pump
-    /// on a short-lived worker (`find_with` over the shared [`NavWorld`]).
-    /// When `allow_bank_fetch` is on and the strict find fails only on
-    /// missing item/worn reqs, latches a [`PendingBankFetch`] session and
-    /// the post-session route. Refuses synchronously only when there is
-    /// no player tile, no nav world, or a route/session already queued;
-    /// the worker stores the outcome on the uid's nav bot. Returns whether
-    /// the worker was spawned — not whether a path exists.
-    pub(crate) fn route(&self, x: i32, z: i32, level: i32, opts: FindOptions) -> bool {
-        self.queue_route(x, z, level, opts, 0, false, 0)
-    }
-    /// Explicit WalkNear, including radius 0. Unlike [`Self::route`], an
-    /// armed or in-flight route is replaced through the existing generation /
-    /// pending-route coalescing path. A latched bank-fetch session still refuses.
+    /// Explicit WalkNear, including radius 0: an armed or in-flight route is
+    /// replaced through the existing generation / pending-route coalescing path.
+    /// A latched bank-fetch session still refuses.
     #[cfg(test)]
     pub(crate) fn route_with_radius(
         &self,
@@ -239,6 +225,7 @@ impl ScriptWalkArm {
         );
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)] // route queue packs dest/options/request id fields
     pub(crate) fn queue_route(
         &self,
@@ -264,6 +251,14 @@ impl ScriptWalkArm {
         )
     }
 
+    /// Queue one walk toward `(x, z, level)` with `opts`, routing off-pump
+    /// on a short-lived worker (`find_with` over the shared [`NavWorld`]).
+    /// When `allow_bank_fetch` is on and the strict find fails only on
+    /// missing item/worn reqs, latches a [`PendingBankFetch`] session and
+    /// the post-session route. Refuses synchronously only when there is
+    /// no player tile, no nav world, or a route/session already queued;
+    /// the worker stores the outcome on the uid's nav bot. Returns whether
+    /// the worker was spawned — not whether a path exists.
     #[allow(clippy::too_many_arguments)] // plus the borrowed arm-time scene
     pub(crate) fn queue_route_in_snapshot(
         &self,
@@ -290,8 +285,7 @@ impl ScriptWalkArm {
         )
     }
 
-    /// [`Self::queue_route`] for a walk that keeps out of `avoid`
-    /// (frozen `WalkOptions.avoidZones`).
+    /// Queue a walk that keeps out of `avoid` (frozen `WalkOptions.avoidZones`).
     #[allow(clippy::too_many_arguments)] // route queue plus the walk's avoid rects
     pub(crate) fn queue_route_avoiding(
         &self,

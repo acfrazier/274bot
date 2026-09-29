@@ -5,7 +5,7 @@
 
 use api::interact::Driver;
 use api::prot::Out;
-use script::ctx::Script;
+use script::native::Script;
 use script::{RunState, ScriptCtx, SlotScript};
 
 /// Outbound writes a driver receives, as recorded by the stub.
@@ -86,15 +86,15 @@ impl Driver for Rec {
 /// A compiled script whose `tick` never sends; `n` counts dispatched ticks.
 struct Counter {
     n: u32,
-    name: String,
 }
 
 impl Script for Counter {
-    fn name(&self) -> &str {
-        &self.name
-    }
-    fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {
+    fn tick(
+        &mut self,
+        _ctx: &mut script::native::NativeTick<'_>,
+    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
         self.n += 1;
+        Ok(script::native::ScriptFlow::Continue)
     }
 }
 
@@ -123,14 +123,8 @@ fn idle_has_no_script_and_tick_is_noop() {
 #[test]
 fn start_pause_resume_stop() {
     let mut s = SlotScript::new();
-    s.start_compiled(
-        Box::new(Counter {
-            n: 0,
-            name: "c".into(),
-        }),
-        None,
-    )
-    .unwrap();
+    s.start_test_script(Box::new(Counter { n: 0 }), None)
+        .unwrap();
     assert_eq!(s.state(), RunState::Running);
     assert!(s.want_run);
     s.pause();
@@ -146,22 +140,10 @@ fn start_pause_resume_stop() {
 #[test]
 fn start_while_active_refuses() {
     let mut s = SlotScript::new();
-    s.start_compiled(
-        Box::new(Counter {
-            n: 0,
-            name: "a".into(),
-        }),
-        None,
-    )
-    .unwrap();
+    s.start_test_script(Box::new(Counter { n: 0 }), None)
+        .unwrap();
     let err = s
-        .start_compiled(
-            Box::new(Counter {
-                n: 0,
-                name: "b".into(),
-            }),
-            None,
-        )
+        .start_test_script(Box::new(Counter { n: 0 }), None)
         .unwrap_err();
     assert!(err.contains("active") || err.contains("Stop"));
 }
@@ -169,14 +151,8 @@ fn start_while_active_refuses() {
 #[test]
 fn not_is_up_skips_tick_keeps_instance_auto_resumes() {
     let mut s = SlotScript::new();
-    s.start_compiled(
-        Box::new(Counter {
-            n: 0,
-            name: "c".into(),
-        }),
-        None,
-    )
-    .unwrap();
+    s.start_test_script(Box::new(Counter { n: 0 }), None)
+        .unwrap();
     s.on_is_up(false);
     assert_eq!(s.state(), RunState::Paused);
     assert!(
@@ -203,14 +179,8 @@ fn not_is_up_skips_tick_keeps_instance_auto_resumes() {
 #[test]
 fn operator_pause_survives_login() {
     let mut s = SlotScript::new();
-    s.start_compiled(
-        Box::new(Counter {
-            n: 0,
-            name: "c".into(),
-        }),
-        None,
-    )
-    .unwrap();
+    s.start_test_script(Box::new(Counter { n: 0 }), None)
+        .unwrap();
     s.pause();
     s.on_is_up(false);
     s.on_is_up(true);
@@ -227,17 +197,18 @@ fn game_tick_dispatches_only_while_running() {
         ticks: std::sync::Arc<std::sync::atomic::AtomicU32>,
     }
     impl Script for Probe {
-        fn name(&self) -> &str {
-            "probe"
-        }
-        fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {
+        fn tick(
+            &mut self,
+            _ctx: &mut script::native::NativeTick<'_>,
+        ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
             self.ticks
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(script::native::ScriptFlow::Continue)
         }
     }
 
     let mut s = SlotScript::new();
-    s.start_compiled(
+    s.start_test_script(
         Box::new(Probe {
             ticks: ticks.clone(),
         }),
@@ -315,16 +286,16 @@ fn game_tick_dispatches_only_while_running() {
 fn panicking_tick_sets_error_and_drops_instance() {
     struct Panic;
     impl Script for Panic {
-        fn name(&self) -> &str {
-            "panic"
-        }
-        fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {
-            panic!("boom");
+        fn tick(
+            &mut self,
+            _ctx: &mut script::native::NativeTick<'_>,
+        ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+            panic!("boom")
         }
     }
 
     let mut s = SlotScript::new();
-    s.start_compiled(Box::new(Panic), None).unwrap();
+    s.start_test_script(Box::new(Panic), None).unwrap();
     let mut d = Rec::default();
     let mut ctx = ScriptCtx {
         driver: &mut d,
@@ -362,13 +333,7 @@ fn panicking_tick_sets_error_and_drops_instance() {
 
     // Start from Error is allowed and clears the error.
     assert!(s
-        .start_compiled(
-            Box::new(Counter {
-                n: 0,
-                name: "c".into()
-            }),
-            None
-        )
+        .start_test_script(Box::new(Counter { n: 0 }), None)
         .is_ok());
     assert_eq!(s.state(), RunState::Running);
     assert!(s.last_error().is_none());
@@ -383,18 +348,20 @@ fn stop_runs_on_stop_hook() {
         calls: std::sync::Arc<std::sync::atomic::AtomicU32>,
     }
     impl Script for Teardown {
-        fn name(&self) -> &str {
-            "teardown"
+        fn tick(
+            &mut self,
+            _ctx: &mut script::native::NativeTick<'_>,
+        ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+            Ok(script::native::ScriptFlow::Continue)
         }
-        fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
-        fn on_stop(&mut self) {
+        fn on_stop(&mut self, _reason: script::native::StopReason) {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
     let mut s = SlotScript::new();
-    s.start_compiled(
+    s.start_test_script(
         Box::new(Teardown {
             calls: calls.clone(),
         }),

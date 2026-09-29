@@ -218,8 +218,6 @@ required-features = ["load"]
 name = "reach_distance"
 required-features = ["load"]
 [[test]]
-name = "registry"
-[[test]]
 name = "resource_tool_facts"
 required-features = ["load"]
 [[test]]

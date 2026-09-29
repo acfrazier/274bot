@@ -1,13 +1,16 @@
 use super::*;
 use crate::ctx::test_support::NullDriver;
+use crate::native::Script;
 
 struct Noop;
 
 impl Script for Noop {
-    fn name(&self) -> &str {
-        "noop"
+    fn tick(
+        &mut self,
+        _ctx: &mut crate::native::NativeTick<'_>,
+    ) -> Result<crate::native::ScriptFlow, crate::native::ScriptFailure> {
+        Ok(crate::native::ScriptFlow::Continue)
     }
-    fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
 }
 
 #[cfg(feature = "load")]
@@ -581,7 +584,7 @@ export default class T extends LoopingBot {{
 #[test]
 fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
     let mut slot = SlotScript::new();
-    slot.start_compiled(Box::new(Noop), None).unwrap();
+    slot.start_test_script(Box::new(Noop), None).unwrap();
     let text = "x".repeat(1024 * 1024);
     let mut input = crate::isolate_fb::tests::empty_input(1);
     input.chat_text = Some(&text);
@@ -609,7 +612,7 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
         ["retained log"],
         "Stop preserves diagnostic history for the panel"
     );
-    slot.start_compiled(Box::new(Noop), None).unwrap();
+    slot.start_test_script(Box::new(Noop), None).unwrap();
     assert_eq!(slot.encode_snapshot_delta(&input, false), first);
     // The earlier owned packet remains intact after reuse and Stop.
     assert!(crate::isolate_fb::Snapshot::from_bytes(&first).is_ok());
@@ -659,10 +662,12 @@ fn on_random_defaults_to_host_and_override_claims_handle() {
 
     struct ClaimHandle;
     impl Script for ClaimHandle {
-        fn name(&self) -> &str {
-            "claim-handle"
+        fn tick(
+            &mut self,
+            _ctx: &mut crate::native::NativeTick<'_>,
+        ) -> Result<crate::native::ScriptFlow, crate::native::ScriptFailure> {
+            Ok(crate::native::ScriptFlow::Continue)
         }
-        fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
         fn on_random(&mut self, _ev: &DetectedRandom) -> RandomClaim {
             RandomClaim::Handle
         }
@@ -677,12 +682,12 @@ fn on_random_defaults_to_host_and_override_claims_handle() {
 
     // Default: Host.
     let mut s = SlotScript::new();
-    s.start_compiled(Box::new(Noop), None).unwrap();
+    s.start_test_script(Box::new(Noop), None).unwrap();
     assert_eq!(s.on_random(&ev), RandomClaim::Host);
 
     // Override: Handle.
     s.stop();
-    s.start_compiled(Box::new(ClaimHandle), None).unwrap();
+    s.start_test_script(Box::new(ClaimHandle), None).unwrap();
     assert_eq!(s.on_random(&ev), RandomClaim::Handle);
 
     // Paused: Host — the knock only fires while Running.
@@ -697,7 +702,7 @@ fn on_random_defaults_to_host_and_override_claims_handle() {
 #[test]
 fn ticks_counts_dispatched_ticks_since_start() {
     let mut s = SlotScript::new();
-    s.start_compiled(Box::new(Noop), None).unwrap();
+    s.start_test_script(Box::new(Noop), None).unwrap();
     let mut d = NullDriver::default();
     s.on_game_tick(&mut ScriptCtx {
         driver: &mut d,
@@ -740,7 +745,7 @@ fn ticks_counts_dispatched_ticks_since_start() {
 
     // A fresh Start resets the counter.
     s.stop();
-    s.start_compiled(Box::new(Noop), None).unwrap();
+    s.start_test_script(Box::new(Noop), None).unwrap();
     s.on_game_tick(&mut ScriptCtx {
         driver: &mut d,
         tick: 4,
@@ -758,7 +763,7 @@ fn ticks_counts_dispatched_ticks_since_start() {
 #[test]
 fn pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort() {
     let mut slot = SlotScript::new();
-    slot.start_compiled(Box::new(Noop), None).unwrap();
+    slot.start_test_script(Box::new(Noop), None).unwrap();
     slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
     assert_eq!(
         slot.pending_withdraw_x().unwrap().remaining,
@@ -782,7 +787,7 @@ fn pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort() {
         "Stop aborts pending work"
     );
 
-    slot.start_compiled(Box::new(Noop), None).unwrap();
+    slot.start_test_script(Box::new(Noop), None).unwrap();
     slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
     let before_reset = slot.withdraw_x_result();
     slot.reset_session_work();
@@ -818,7 +823,7 @@ fn pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort() {
 #[test]
 fn pending_bank_op_pause_freezes_while_stop_and_reconnect_abort() {
     let mut slot = SlotScript::new();
-    slot.start_compiled(Box::new(Noop), None).unwrap();
+    slot.start_test_script(Box::new(Noop), None).unwrap();
     slot.set_pending_bank_op(Some(PendingBankOp::new(
         PendingBankOpKind::Deposit,
         1,
@@ -842,7 +847,7 @@ fn pending_bank_op_pause_freezes_while_stop_and_reconnect_abort() {
     slot.stop();
     assert!(slot.pending_bank_op().is_none(), "Stop drops old-slot work");
 
-    slot.start_compiled(Box::new(Noop), None).unwrap();
+    slot.start_test_script(Box::new(Noop), None).unwrap();
     slot.set_pending_bank_op(Some(PendingBankOp::new(
         PendingBankOpKind::Withdraw,
         1,
@@ -864,7 +869,13 @@ fn pending_bank_op_pause_freezes_while_stop_and_reconnect_abort() {
 #[test]
 fn fenced_settings_reject_stale_identity_generation_and_unchanged_bag() {
     let mut slot = SlotScript::new();
-    slot.start_compiled(Box::new(Noop), None).unwrap();
+    slot.start_load_with_loadouts(
+        "export function tick() {}".into(),
+        LoadShape::NativeTick,
+        vec![],
+        &[],
+    )
+    .unwrap();
     slot.attach_source_identity("catalog:ChickenKiller");
     let gen = slot.runtime_generation();
     let mut bag = serde_json::Map::new();
@@ -907,7 +918,7 @@ fn settings_update_reaches_start_queued_behind_reap() {
 #[test]
 fn stop_clears_identity_and_bumps_runtime_generation() {
     let mut slot = SlotScript::new();
-    slot.start_compiled(Box::new(Noop), None).unwrap();
+    slot.start_test_script(Box::new(Noop), None).unwrap();
     slot.attach_source_identity("file:shared.ts");
     let gen = slot.runtime_generation();
     slot.stop();
@@ -1217,12 +1228,11 @@ struct Walker;
 
 #[cfg(feature = "load")]
 impl Script for Walker {
-    fn name(&self) -> &str {
-        "Walker"
-    }
-
-    fn tick(&mut self, ctx: &mut ScriptCtx<'_>) {
-        if let Some(sink) = ctx.compiled.interacts.as_mut() {
+    fn tick(
+        &mut self,
+        ctx: &mut crate::native::NativeTick<'_>,
+    ) -> Result<crate::native::ScriptFlow, crate::native::ScriptFailure> {
+        if let Some(sink) = ctx.frame.compiled.interacts.as_mut() {
             sink.push(crate::shim::InteractReq::Walk {
                 x: 3,
                 z: 4,
@@ -1234,6 +1244,7 @@ impl Script for Walker {
                 avoid: Vec::new(),
             });
         }
+        Ok(crate::native::ScriptFlow::Continue)
     }
 }
 
@@ -1281,17 +1292,16 @@ fn compiled_ctx<'a>(
 fn compiled_panic_moves_from_active_error_to_preserved_stop_history() {
     struct Panics;
     impl Script for Panics {
-        fn name(&self) -> &str {
-            "panics"
-        }
-
-        fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {
-            panic!("compiled boom");
+        fn tick(
+            &mut self,
+            _ctx: &mut crate::native::NativeTick<'_>,
+        ) -> Result<crate::native::ScriptFlow, crate::native::ScriptFailure> {
+            panic!("compiled boom")
         }
     }
 
     let mut slot = SlotScript::new();
-    slot.start_compiled(Box::new(Panics), None).unwrap();
+    slot.start_test_script(Box::new(Panics), None).unwrap();
     let mut driver = NullDriver::default();
     slot.on_game_tick(&mut compiled_ctx(&mut driver, None));
     assert_eq!(slot.state(), RunState::Error);
@@ -1312,7 +1322,7 @@ fn compiled_panic_moves_from_active_error_to_preserved_stop_history() {
 #[test]
 fn a_compiled_tick_queues_onto_the_slot_and_one_drain_takes_it() {
     let mut slot = SlotScript::new();
-    slot.start_compiled(Box::new(Walker), None).unwrap();
+    slot.start_test_script(Box::new(Walker), None).unwrap();
     let mut d = NullDriver::default();
     slot.on_game_tick(&mut compiled_ctx(&mut d, None));
     assert_eq!(
@@ -1342,31 +1352,6 @@ fn a_compiled_tick_queues_onto_the_slot_and_one_drain_takes_it() {
 
 #[cfg(feature = "load")]
 #[test]
-fn a_compiled_start_pins_the_selected_facts_and_stop_clears_them() {
-    let data =
-        api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
-    let mut slot = SlotScript::new();
-    assert!(slot.compiled_game_data().is_none());
-    slot.start_compiled(Box::new(Noop), Some(Arc::clone(&data)))
-        .unwrap();
-    assert!(
-        slot.compiled_game_data().is_some(),
-        "the Start pin rides out to the ctx"
-    );
-    slot.stop();
-    assert!(
-        slot.compiled_game_data().is_none(),
-        "a stopped card keeps no pin"
-    );
-    slot.start_compiled(Box::new(Noop), None).unwrap();
-    assert!(
-        slot.compiled_game_data().is_none(),
-        "a Start with no pin is what a compiled identify fails closed on"
-    );
-}
-
-#[cfg(feature = "load")]
-#[test]
 fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
     let data =
         api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
@@ -1381,7 +1366,7 @@ fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
         .expect("a selected clue row")
         .id;
     let mut slot = SlotScript::new();
-    slot.start_compiled(
+    slot.start_test_script(
         Box::new(crate::sherlock::Sherlock::default()),
         Some(Arc::clone(&data)),
     )
@@ -1458,7 +1443,7 @@ fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
     const ENTRANA: i32 = 3579;
     const HELM: i32 = 1163;
     let mut slot = SlotScript::new();
-    slot.start_compiled(
+    slot.start_test_script(
         Box::new(crate::sherlock::Sherlock::default()),
         Some(Arc::clone(&data)),
     )

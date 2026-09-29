@@ -873,3 +873,366 @@ fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
         .iter()
         .any(|skip| skip.reason.contains("stopping")));
 }
+
+fn native_fixture(test: &str, members: &[&str]) -> Fixture {
+    let mut fixture = fixture(test, members);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    fixture.core.play_mut().unwrap().bind_script_test_data(data);
+    fixture
+}
+
+fn start_sherlock(f: &mut Fixture, name: &str) {
+    f.scripts
+        .start_sel(
+            &mut f.core,
+            name,
+            script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
+            None,
+            super::StartKind::Start,
+        )
+        .unwrap();
+    f.settle();
+    f.core.flush_writes();
+    assert_eq!(f.state(name), script::RunState::Running);
+}
+
+fn save_native_partner(f: &mut Fixture, name: &str, partner: &str) {
+    let mut row = f.core.profile_for_edit(name).unwrap().clone();
+    row.settings.clue_duel_partner = partner.into();
+    let live = f
+        .scripts
+        .profile_save_live(&f.core, name, &row.settings)
+        .unwrap();
+    f.core
+        .save_profile(row, crate::ArmMirror::Remember(Some(live)), "partner")
+        .unwrap();
+}
+
+#[test]
+fn compiled_restore_distinguishes_known_empty_from_unknown_or_malformed_schema() {
+    let mut f = fixture("native-restore", &["alice"]);
+    let id = script::CompiledId("Sherlock");
+    let key = script::compiled_identity_key(id);
+    for entry in [
+        None,
+        Some(json!({})),
+        Some(json!({"schema_version": 1, "values": {}})),
+    ] {
+        let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+        row.settings.script_settings.remove(&key);
+        if let Some(entry) = entry {
+            row.settings
+                .script_settings
+                .insert(key.clone(), entry.as_object().unwrap().clone());
+        }
+        f.core
+            .save_profile(row, crate::ArmMirror::None, "restore")
+            .unwrap();
+        f.core.flush_writes();
+        assert!(matches!(
+            f.scripts.compiled_schema(&f.core, Some("alice"), id),
+            super::SchemaView::Ready { fields: [], .. }
+        ));
+    }
+    for entry in [
+        json!({"schema_version": 2, "values": {"future": 9}}),
+        json!({"schema_version": 1, "values": null}),
+    ] {
+        let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+        row.settings
+            .script_settings
+            .insert(key.clone(), entry.as_object().unwrap().clone());
+        f.core
+            .save_profile(row, crate::ArmMirror::None, "restore")
+            .unwrap();
+        f.core.flush_writes();
+        assert!(matches!(
+            f.scripts.compiled_schema(&f.core, Some("alice"), id),
+            super::SchemaView::Unavailable(_)
+        ));
+        assert!(f.scripts.compiled_bag(&f.core, "alice", id).is_err());
+        assert!(f
+            .scripts
+            .set_compiled_overrides(&mut f.core, "alice", id, Map::new())
+            .is_err());
+        assert_eq!(
+            f.saved_bag("alice", &key),
+            Some(entry.as_object().unwrap().clone())
+        );
+    }
+    assert!(matches!(
+        f.scripts
+            .compiled_schema(&f.core, None, script::CompiledId("missing")),
+        super::SchemaView::Unavailable(_)
+    ));
+}
+
+#[test]
+fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
+    let mut f = native_fixture("native-invalid", &["alice"]);
+    let previous = f.card("previous.ts", LOOPING);
+    f.assign("alice", &previous);
+    let id = script::CompiledId("Sherlock");
+    f.scripts
+        .set_compiled_overrides(&mut f.core, "alice", id, bag(&[("unknown", json!(1))]))
+        .unwrap();
+    f.core.flush_writes();
+    assert!(matches!(
+        f.core.take_settings_writes().as_slice(),
+        [super::SettingsWrite {
+            result: super::SettingsResult::Failed(_),
+            ..
+        }]
+    ));
+    assert_eq!(
+        f.saved_bag("alice", &script::compiled_identity_key(id)),
+        None
+    );
+    f.scripts.inject = Some(bag(&[("unknown", json!(1))]));
+    f.scripts
+        .start_sel(
+            &mut f.core,
+            "alice",
+            script::ScriptSel::Compiled(id),
+            None,
+            super::StartKind::Start,
+        )
+        .unwrap();
+    f.settle();
+    f.core.flush_writes();
+    assert_eq!(f.state("alice"), script::RunState::Idle);
+    assert_eq!(
+        Scripts::assignment(&f.core, "alice"),
+        Some(previous.assignment())
+    );
+    assert!(f.core.play().unwrap().script_last_error("alice").is_some());
+}
+
+#[test]
+fn native_settings_wait_for_durability_and_remain_per_account() {
+    let mut f = native_fixture("native-durable", &["alice", "bob"]);
+    start_sherlock(&mut f, "alice");
+    start_sherlock(&mut f, "bob");
+    let revision = |f: &Fixture, name| {
+        f.core
+            .play()
+            .unwrap()
+            .script_native_settings_revision(name)
+            .unwrap()
+    };
+    let original = revision(&f, "alice");
+    let blocker = f.dir.join("vault").with_extension("tmp");
+    std::fs::create_dir_all(&blocker).unwrap();
+    save_native_partner(&mut f, "alice", "Uncommitted");
+    assert_eq!(
+        f.core
+            .durable_profile("alice")
+            .unwrap()
+            .settings
+            .clue_duel_partner,
+        ""
+    );
+    f.core.flush_writes();
+    std::fs::remove_dir_all(&blocker).unwrap();
+    assert_eq!(revision(&f, "alice"), original);
+    assert_eq!(
+        f.core
+            .durable_profile("alice")
+            .unwrap()
+            .settings
+            .clue_duel_partner,
+        ""
+    );
+    assert!(!f.core.take_write_failures().is_empty());
+
+    save_native_partner(&mut f, "alice", "Bob");
+    save_native_partner(&mut f, "bob", "Alice");
+    f.core.flush_writes();
+    let alice_revision = revision(&f, "alice");
+    let bob_revision = revision(&f, "bob");
+    assert!(alice_revision > original);
+    assert!(bob_revision > original);
+    assert_eq!(
+        f.scripts
+            .compiled_bag(&f.core, "alice", script::CompiledId("Sherlock"))
+            .unwrap()[script::CLUE_DUEL_PARTNER],
+        "Bob"
+    );
+    assert_eq!(
+        f.scripts
+            .compiled_bag(&f.core, "bob", script::CompiledId("Sherlock"))
+            .unwrap()[script::CLUE_DUEL_PARTNER],
+        "Alice"
+    );
+    save_native_partner(&mut f, "alice", "Carol");
+    f.core.flush_writes();
+    assert!(revision(&f, "alice") > alice_revision);
+    assert_eq!(revision(&f, "bob"), bob_revision);
+}
+
+#[test]
+fn native_settings_reply_loses_to_stop_and_to_profile_recreation() {
+    let mut f = native_fixture("native-stale-preparation", &["alice"]);
+    start_sherlock(&mut f, "alice");
+    save_native_partner(&mut f, "alice", "Stale");
+    f.core.stop_script("alice");
+    f.core.flush_writes();
+    assert_eq!(
+        f.core
+            .durable_profile("alice")
+            .unwrap()
+            .settings
+            .clue_duel_partner,
+        ""
+    );
+
+    let mut replacement = f.core.vault().unwrap().get("alice").unwrap().clone();
+    replacement.settings = ProfileSettings::default();
+    f.scripts
+        .set_compiled_overrides(
+            &mut f.core,
+            "alice",
+            script::CompiledId("Sherlock"),
+            Map::new(),
+        )
+        .unwrap();
+    f.core.vault_remove("alice").unwrap();
+    f.core
+        .create_profile(replacement, crate::ArmMirror::None, "recreate")
+        .unwrap();
+    f.core.flush_writes();
+    assert!(matches!(
+        f.core.take_settings_writes().as_slice(),
+        [super::SettingsWrite {
+            result: super::SettingsResult::Superseded,
+            ..
+        }]
+    ));
+    assert_eq!(
+        f.core.durable_profile("alice").unwrap().settings,
+        ProfileSettings::default()
+    );
+}
+
+#[test]
+fn durable_native_reply_never_configures_a_replacement_run() {
+    let mut f = native_fixture("native-stale-durable", &["alice"]);
+    start_sherlock(&mut f, "alice");
+    let old = f.core.play().unwrap().script_native_run("alice").unwrap();
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    f.scripts
+        .set_compiled_overrides(
+            &mut f.core,
+            "alice",
+            script::CompiledId("Sherlock"),
+            bag(&[(script::CLUE_DUEL_PARTNER, json!("Changed"))]),
+        )
+        .unwrap();
+    let key = script::compiled_identity_key(script::CompiledId("Sherlock"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while f
+        .core
+        .vault()
+        .unwrap()
+        .get("alice")
+        .unwrap()
+        .settings
+        .script_settings[&key]["values"]
+        .get(script::CLUE_DUEL_PARTNER)
+        .is_none()
+    {
+        assert!(Instant::now() < deadline, "validated edit was never staged");
+        f.core.poll();
+        std::thread::yield_now();
+    }
+    assert_eq!(f.saved_bag("alice", &key).unwrap()["values"], json!({}));
+    f.core.stop_script("alice");
+    f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
+    f.settle();
+    assert_ne!(f.core.play().unwrap().script_native_run("alice"), Some(old));
+    drop(held);
+    f.core.flush_writes();
+    assert!(matches!(
+        f.core.take_settings_writes().as_slice(),
+        [super::SettingsWrite {
+            result: super::SettingsResult::Saved(super::LiveDelivery::Stale),
+            ..
+        }]
+    ));
+    assert_eq!(
+        f.core
+            .play()
+            .unwrap()
+            .script_native_settings_revision("alice"),
+        Some(1)
+    );
+}
+
+#[test]
+fn deleting_a_profile_cancels_its_unsettled_native_start() {
+    let mut f = native_fixture("native-start-removal", &["alice"]);
+    f.scripts
+        .start_sel(
+            &mut f.core,
+            "alice",
+            script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
+            None,
+            super::StartKind::Start,
+        )
+        .unwrap();
+    f.core.vault_remove("alice").unwrap();
+    f.settle();
+    f.core.flush_writes();
+    assert_eq!(f.state("alice"), script::RunState::Idle);
+    assert!(f.core.durable_profile("alice").is_none());
+}
+
+#[test]
+fn native_bulk_reports_and_preserves_each_account_partner() {
+    let mut f = native_fixture("native-bulk", &["alice", "bob"]);
+    start_sherlock(&mut f, "alice");
+    start_sherlock(&mut f, "bob");
+    save_native_partner(&mut f, "alice", "Carol");
+    save_native_partner(&mut f, "bob", "");
+    f.core.flush_writes();
+    let id = script::CompiledId("Sherlock");
+    assert!(f
+        .scripts
+        .prepare_compiled_settings_sync(&f.core, "alice", id, Some(script::CLUE_DUEL_PARTNER))
+        .is_err());
+    let scope = f
+        .scripts
+        .prepare_compiled_settings_sync(&f.core, "alice", id, None)
+        .unwrap();
+    assert_eq!(
+        scope.excluded,
+        vec![(
+            "bob".to_string(),
+            vec![script::CLUE_DUEL_PARTNER.to_string()]
+        )]
+    );
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    let report = f.scripts.last_settings_sync().unwrap();
+    assert!(report.is_settled());
+    assert_eq!(report.saved, 1);
+    assert!(report.failed.is_empty());
+    assert_eq!(
+        f.core
+            .durable_profile("alice")
+            .unwrap()
+            .settings
+            .clue_duel_partner,
+        "Carol"
+    );
+    assert_eq!(
+        f.core
+            .durable_profile("bob")
+            .unwrap()
+            .settings
+            .clue_duel_partner,
+        ""
+    );
+}

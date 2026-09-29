@@ -6246,22 +6246,6 @@ fn script_pause_resume_stop_enable_rules() {
 }
 
 #[test]
-fn script_start_selected_unported_id_reports_not_ported() {
-    let mut s = Session::new();
-    let mut play = empty_play();
-    play.attach_arm("alice", SlotArm::new(42, false));
-    s.core.set_play(Some(play));
-    s.set_focus_for_test("alice");
-    s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId(
-        "BoneBurier",
-    )));
-    s.script_start_selected();
-    let err = s.error.clone().expect("not-ported message");
-    assert!(err.contains("not ported"), "{err}");
-    assert_eq!(s.focused_script_state(), script::RunState::Idle);
-}
-
-#[test]
 fn load_js_registers_card_selects_and_persists_to_the_session_store() {
     let dir = TestDir::new("session-load");
     let store = dir.join("js-scripts.json");

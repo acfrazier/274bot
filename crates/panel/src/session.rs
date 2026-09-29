@@ -194,14 +194,6 @@ fn partner_screen_name(username: &str) -> String {
     client::util::JString::to_screen_name(username)
 }
 
-fn stash_compiled_start(
-    pending: &Mutex<Vec<PendingCatalogStart>>,
-    names: &[String],
-    id: script::CompiledId,
-) {
-    *pending.lock().unwrap() = vec![PendingCatalogStart::compiled(names[0].clone(), id)];
-}
-
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
 /// reconnect (that would tele the re-handshaked slot on every DC).
 fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
@@ -2503,7 +2495,9 @@ impl Session {
         } else if let Some(card_name) = view.start_script {
             if let Some(id) = script::compiled_id(card_name) {
                 self.script_sel = Some(script::ScriptSel::Compiled(id));
-                stash_compiled_start(&self.pending_script, &names, id);
+                let bag = self.scripts.compiled_bag(&self.core, &names[0], id)?;
+                *self.pending_script.lock().unwrap() =
+                    vec![PendingCatalogStart::compiled(names[0].clone(), id, bag)];
             } else if let Some(fixture) = script::live_file_fixture_path(card_name) {
                 let stem = script::live_file_fixture_stem(card_name)
                     .ok_or_else(|| format!("no file stem for live fixture {card_name}"))?;

@@ -432,6 +432,8 @@ pub struct TuiApp {
     pub script_load_last_dir: Option<std::path::PathBuf>,
     /// Selected card's settings schema (refreshed each pump from the library).
     pub params_schema: Vec<script::SettingDef>,
+    /// Missing metadata or an unsupported saved native schema is not empty.
+    pub params_unavailable: Option<&'static str>,
     /// Working bag while the params popup is open.
     pub params_bag: serde_json::Map<String, serde_json::Value>,
     pub params_state: ParamsState,
@@ -523,6 +525,7 @@ impl TuiApp {
             script_load_sel: 0,
             script_load_last_dir: None,
             params_schema: Vec::new(),
+            params_unavailable: None,
             params_bag: serde_json::Map::new(),
             params_state: ParamsState::default(),
             quit: false,
@@ -1133,18 +1136,18 @@ impl TuiApp {
         }
     }
 
-    /// The loaded card the params popup edits: `(source, lookup)`.
-    pub fn params_card(&self) -> Option<(script::ScriptSource, String)> {
-        match self.script_sel.as_ref()? {
-            script::ScriptSel::Loaded(source, name) => Some((*source, name.clone())),
-            _ => None,
-        }
+    /// The selected card whose shared schema the params popup edits.
+    pub fn params_card(&self) -> Option<script::ScriptSel> {
+        self.script_sel.clone()
     }
 
     /// Open the params popup over `bag`, the focused profile's merged bag
     /// for the selected card.
     pub fn open_script_params(&mut self, bag: serde_json::Map<String, serde_json::Value>) {
-        if self.params_card().is_none() || self.params_schema.is_empty() {
+        if self.params_card().is_none()
+            || self.params_unavailable.is_some()
+            || self.params_schema.is_empty()
+        {
             return;
         }
         self.params_bag = bag;

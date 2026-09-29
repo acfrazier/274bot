@@ -3043,7 +3043,7 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
         "explicit WalkNear radius 0 must retarget while a nearby route is active"
     );
     assert!(
-        !arm.route(4, 4, 0, FindOptions::default()),
+        !arm.queue_route(4, 4, 0, FindOptions::default(), 0, false, 0),
         "ordinary Walk stays non-retargeting while a route or worker is busy"
     );
 
@@ -5454,7 +5454,11 @@ fn script_start_unknown_compiled_id_errors_without_v8() {
     );
     play.attach_arm("alice", SlotArm::new(7, false));
     let err = play
-        .script_start("alice", script::CompiledId("BoneBurier"))
+        .script_start(
+            "alice",
+            script::CompiledId("BoneBurier"),
+            serde_json::Map::new(),
+        )
         .unwrap_err();
     assert!(err.contains("not ported"), "err was {err}");
 }
@@ -5758,7 +5762,11 @@ fn script_start_unknown_slot_errors_without_phantom_entry() {
         |_, _, _| {},
     );
     let err = play
-        .script_start("ghost", script::CompiledId("WalkTo"))
+        .script_start(
+            "ghost",
+            script::CompiledId("WalkTo"),
+            serde_json::Map::new(),
+        )
         .unwrap_err();
     assert!(err.contains("no slot"), "err was {err}");
     assert_eq!(play.script_state("ghost"), script::RunState::Idle);
@@ -5849,7 +5857,11 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
 
     let settings = serde_json::Map::new();
     assert!(play
-        .script_start("alice", script::CompiledId("Sherlock"))
+        .script_start(
+            "alice",
+            script::CompiledId("Sherlock"),
+            serde_json::Map::new()
+        )
         .is_err());
     assert!(play
         .script_start_load(
@@ -5890,7 +5902,11 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
         )
         .is_err());
     assert!(start
-        .start_compiled("alice", script::CompiledId("Sherlock"))
+        .start_compiled(
+            "alice",
+            script::CompiledId("Sherlock"),
+            serde_json::Map::new()
+        )
         .is_err());
 
     play.script_pause("alice");
@@ -9000,7 +9016,7 @@ fn withdraw_x_expired_dialog_posts_failure_without_answer() {
     snap.rebuild(&c);
     {
         let mut slot = slot.lock().unwrap();
-        slot.start_compiled(Box::new(TickCounter(Arc::new(Mutex::new(0)))), None)
+        slot.start_test_script(Box::new(TickCounter(Arc::new(Mutex::new(0)))), None)
             .unwrap();
         let mut pending = script::slot::PendingWithdrawX::waiting_dialog(
             2,
@@ -11272,7 +11288,7 @@ fn allow_bank_fetch_on_script_walk_arm_drives_deposit_withdraw() {
         bank: bank_rows,
     };
     assert!(
-        arm.route(
+        arm.queue_route(
             4,
             4,
             0,
@@ -11280,6 +11296,9 @@ fn allow_bank_fetch_on_script_walk_arm_drives_deposit_withdraw() {
                 allow_bank_fetch: true,
                 ..FindOptions::default()
             },
+            0,
+            false,
+            0,
         ),
         "the walk arm must accept the bank-fetch route"
     );
@@ -11360,7 +11379,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         bank: bank_rows,
     };
     assert!(
-        arm.route(
+        arm.queue_route(
             4,
             4,
             0,
@@ -11368,6 +11387,9 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
                 allow_bank_fetch: true,
                 ..FindOptions::default()
             },
+            0,
+            false,
+            0,
         ),
         "the walk arm must accept the bank-fetch route"
     );
@@ -11428,12 +11450,13 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
 #[derive(Default)]
 struct TickCounter(Arc<Mutex<u32>>);
 
-impl script::ctx::Script for TickCounter {
-    fn name(&self) -> &str {
-        "TickCounter"
-    }
-    fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {
+impl script::native::Script for TickCounter {
+    fn tick(
+        &mut self,
+        _ctx: &mut script::native::NativeTick<'_>,
+    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
         *self.0.lock().unwrap() += 1;
+        Ok(script::native::ScriptFlow::Continue)
     }
 }
 
@@ -11453,7 +11476,7 @@ fn script_wiring() -> ScriptWiring {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(TickCounter(Arc::clone(&count))), None)
+        .start_test_script(Box::new(TickCounter(Arc::clone(&count))), None)
         .unwrap();
     cheats
         .lock()
@@ -11977,7 +12000,7 @@ fn script_observe_idle_slot_publishes_nothing_on_tick_edge() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(TickCounter(Arc::clone(&count))), None)
+        .start_test_script(Box::new(TickCounter(Arc::clone(&count))), None)
         .unwrap();
     script_slot(&scripts, "alice")
         .unwrap()
@@ -12258,159 +12281,6 @@ fn script_observe_drains_queued_cheat_onto_driver() {
         *count.lock().unwrap(),
         0,
         "no tick edge → the script must not run"
-    );
-}
-
-/// Records what a dispatched tick's ctx exposed: whether the inventory
-/// view and the shared name table reached the script, and the resolved
-/// `has_item` answer for "Bones".
-#[derive(Default)]
-struct InvProbe(Arc<Mutex<Option<(bool, bool, bool)>>>);
-
-impl script::ctx::Script for InvProbe {
-    fn name(&self) -> &str {
-        "InvProbe"
-    }
-    fn tick(&mut self, ctx: &mut ScriptCtx<'_>) {
-        *self.0.lock().unwrap() = Some((
-            ctx.inv.is_some(),
-            ctx.obj_names.is_some(),
-            ctx.has_item("Bones"),
-        ));
-    }
-}
-
-#[test]
-fn script_observe_passes_inventory_when_running() {
-    let mut objs = vec![client::config::ObjType::default(); 2];
-    objs[1].id = 1;
-    objs[1].name = "Bones".into();
-    let names = api::obj_names::ObjNames::from_objs(&objs);
-    let seen = Arc::new(Mutex::new(None));
-    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let (navs, world) = empty_nav();
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_compiled(Box::new(InvProbe(Arc::clone(&seen))), None)
-        .unwrap();
-    let inv: Vec<(i32, i32)> = vec![(1, 3), (0, 0)];
-    let mut c = prepare_client(
-        ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 1,
-            cache_dir: String::new(),
-            members: true,
-            lowmem: true,
-        },
-        1,
-        Arc::new(Cache::default()),
-        Arc::new(vec![]),
-        Vec::new(),
-    );
-    script_observe(
-        &mut c,
-        "alice",
-        true,
-        true,
-        1,
-        None,
-        Some(&inv),
-        None,
-        None,
-        Some(&names),
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
-    );
-    assert_eq!(
-        *seen.lock().unwrap(),
-        Some((true, true, true)),
-        "a Running script sees the inventory view and resolves names"
-    );
-}
-
-/// Records whether the per-tick snapshot reached the script ctx and
-/// what the `varp` getter read through it.
-type SnapProbeSeen = Option<(bool, Option<i32>)>;
-
-#[derive(Default)]
-struct SnapProbe(Arc<Mutex<SnapProbeSeen>>);
-
-impl script::ctx::Script for SnapProbe {
-    fn name(&self) -> &str {
-        "SnapProbe"
-    }
-    fn tick(&mut self, ctx: &mut ScriptCtx<'_>) {
-        *self.0.lock().unwrap() = Some((ctx.snapshot.is_some(), ctx.varp(101)));
-    }
-}
-
-#[test]
-fn script_observe_passes_the_tick_snapshot_to_the_ctx() {
-    let seen = Arc::new(Mutex::new(None));
-    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let (navs, world) = empty_nav();
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_compiled(Box::new(SnapProbe(Arc::clone(&seen))), None)
-        .unwrap();
-    // A transmitted varp table so the probe's `varp(101)` has a value
-    // to read (the snapshot only lists transmitted definitions).
-    let cache = Cache {
-        varps: (0..102)
-            .map(|_| client::config::VarpType::default())
-            .collect(),
-        ..Default::default()
-    };
-    let mut c = prepare_client(
-        ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 1,
-            cache_dir: String::new(),
-            members: true,
-            lowmem: true,
-        },
-        1,
-        Arc::new(cache),
-        Arc::new(vec![]),
-        Vec::new(),
-    );
-    c.var = vec![0; 102];
-    c.var[101] = 5;
-    c.bump_gens(ServerProt::VARP_SYNC);
-    let mut snap = GameSnapshot::new();
-    snap.rebuild(&c);
-    script_observe(
-        &mut c,
-        "alice",
-        true,
-        true,
-        1,
-        None,
-        None,
-        None,
-        Some(&snap),
-        None,
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
-    );
-    assert_eq!(
-        *seen.lock().unwrap(),
-        Some((true, Some(5))),
-        "the observe snapshot reaches the ctx and the varp getter reads it"
     );
 }
 
@@ -17081,6 +16951,8 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
     } = nav_rig();
     let mut d = NavRec::default();
     let mut c = nav_client();
+    let mut snap = GameSnapshot::new();
+    nav_snapshot_at(&mut c, &mut snap, 0, 0);
     assert!(script_observe(
         &mut d,
         "alice",
@@ -17090,7 +16962,7 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
         Some((0, 0, 0)),
         None,
         None,
-        None,
+        Some(&snap),
         None,
         &scripts,
         &cheats,
@@ -17105,8 +16977,6 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
     );
 
     // Held: no follow step, and the armed route is not consumed.
-    let mut snap = GameSnapshot::new();
-    nav_snapshot_at(&mut c, &mut snap, 0, 0);
     step_nav_bot(
         &mut d,
         "alice",
@@ -17145,12 +17015,13 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
 /// itself (the Task 5 `Handle` override).
 struct ClaimHandle(Arc<Mutex<u32>>);
 
-impl script::ctx::Script for ClaimHandle {
-    fn name(&self) -> &str {
-        "ClaimHandle"
-    }
-    fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {
+impl script::native::Script for ClaimHandle {
+    fn tick(
+        &mut self,
+        _ctx: &mut script::native::NativeTick<'_>,
+    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
         *self.0.lock().unwrap() += 1;
+        Ok(script::native::ScriptFlow::Continue)
     }
     fn on_random(&mut self, _ev: &DetectedRandom) -> RandomClaim {
         RandomClaim::Handle
@@ -17164,7 +17035,7 @@ fn handle_claim_keeps_ticks_and_blocks_host_talk() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(ClaimHandle(Arc::clone(&count))), None)
+        .start_test_script(Box::new(ClaimHandle(Arc::clone(&count))), None)
         .unwrap();
     // The production knock arm: ask the running slot script.
     let knock_scripts = Arc::clone(&scripts);
@@ -17210,11 +17081,13 @@ fn knock_reaches_peer_slot_while_other_slot_lock_held() {
     use api::random::{DetectedRandom, RandomKind};
 
     struct ClaimHandle;
-    impl script::ctx::Script for ClaimHandle {
-        fn name(&self) -> &str {
-            "claim-handle"
+    impl script::native::Script for ClaimHandle {
+        fn tick(
+            &mut self,
+            _ctx: &mut script::native::NativeTick<'_>,
+        ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+            Ok(script::native::ScriptFlow::Continue)
         }
-        fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
         fn on_random(&mut self, _ev: &DetectedRandom) -> RandomClaim {
             RandomClaim::Handle
         }
@@ -17224,12 +17097,12 @@ fn knock_reaches_peer_slot_while_other_slot_lock_held() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(TickCounter(Arc::new(Mutex::new(0)))), None)
+        .start_test_script(Box::new(TickCounter(Arc::new(Mutex::new(0)))), None)
         .unwrap();
     script_slot_or_insert(&scripts, "bob")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(ClaimHandle), None)
+        .start_test_script(Box::new(ClaimHandle), None)
         .unwrap();
 
     let alice = script_slot(&scripts, "alice").unwrap();
@@ -17403,21 +17276,27 @@ fn after_genie_gone_lamp_auto_off_in_inv_detects_without_hold() {
     assert!(drv.menus.is_empty(), "a lamp is never talked to");
 }
 
-/// Test script that queues one walk to a (mutable) target each tick and
-/// records what `ctx.walk` returned.
-struct WalkProbe(Arc<Mutex<Option<bool>>>, Arc<Mutex<(i32, i32, i32)>>);
+/// Queues a walk through the same legacy adapter as Sherlock; the host still
+/// owns admission, asynchronous route selection and execution.
+struct WalkProbe(Arc<Mutex<(i32, i32, i32)>>);
 
-impl script::ctx::Script for WalkProbe {
-    fn name(&self) -> &str {
-        "WalkProbe"
-    }
-    fn tick(&mut self, ctx: &mut ScriptCtx<'_>) {
-        let (x, z, level) = *self.1.lock().unwrap();
-        let ok = match ctx.walk.as_mut() {
-            Some(w) => w(x, z, level),
-            None => false,
-        };
-        *self.0.lock().unwrap() = Some(ok);
+impl script::native::Script for WalkProbe {
+    fn tick(
+        &mut self,
+        ctx: &mut script::native::NativeTick<'_>,
+    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+        let (x, z, level) = *self.0.lock().expect("walk target");
+        ctx.queue_test_interaction(script::shim::InteractReq::Walk {
+            x,
+            z,
+            level,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+            avoid: Vec::new(),
+        });
+        Ok(script::native::ScriptFlow::Continue)
     }
 }
 
@@ -17505,7 +17384,6 @@ struct NavRig {
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
     world: Option<Arc<NavWorld>>,
     statuses: Arc<Mutex<Vec<SlotStatus>>>,
-    walk_ret: Arc<Mutex<Option<bool>>>,
     walk_target: Arc<Mutex<(i32, i32, i32)>>,
 }
 
@@ -17539,15 +17417,11 @@ fn nav_rig_with(world: Option<Arc<NavWorld>>) -> NavRig {
         Arc::new(Mutex::new(HashMap::new()));
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(Vec::new()));
-    let walk_ret = Arc::new(Mutex::new(None));
     let walk_target = Arc::new(Mutex::new((4, 0, 0)));
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(
-            Box::new(WalkProbe(Arc::clone(&walk_ret), Arc::clone(&walk_target))),
-            None,
-        )
+        .start_test_script(Box::new(WalkProbe(Arc::clone(&walk_target))), None)
         .unwrap();
     statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
@@ -17559,7 +17433,6 @@ fn nav_rig_with(world: Option<Arc<NavWorld>>) -> NavRig {
         navs,
         world,
         statuses,
-        walk_ret,
         walk_target,
     }
 }
@@ -17611,6 +17484,12 @@ fn nav_snapshot_at(c: &mut Client, snap: &mut GameSnapshot, x: i32, z: i32) {
     c.bump_gens(client::io::ServerProt::PLAYER_INFO);
     c.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
     snap.rebuild(c);
+}
+
+fn nav_frame_at(x: i32, z: i32) -> GameSnapshot {
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut nav_client(), &mut snapshot, x, z);
+    snapshot
 }
 
 #[test]
@@ -18155,15 +18034,15 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         navs,
         world,
         statuses,
-        walk_ret,
         ..
     } = nav_rig();
     let mut d = NavRec::default();
     let mut c = nav_client();
+    let mut snap = GameSnapshot::new();
+    nav_snapshot_at(&mut c, &mut snap, 0, 0);
 
-    // The observe dispatches the script tick with the walk hook; the
-    // hook queues the request from the observed `here` and the worker
-    // arms the uid's nav bot off-pump.
+    // Native cards queue a walk against an observed frame. The host admits it
+    // after the tick and arms the uid's route off-pump.
     assert!(script_observe(
         &mut d,
         "alice",
@@ -18173,7 +18052,7 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         Some((0, 0, 0)),
         None,
         None,
-        None,
+        Some(&snap),
         None,
         &scripts,
         &cheats,
@@ -18182,11 +18061,6 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         false,
         false,
     ));
-    assert_eq!(
-        *walk_ret.lock().unwrap(),
-        Some(true),
-        "ctx.walk queued the route request"
-    );
     assert!(
         wait_until(5_000, || queued(&navs)
             == Some(WorldTile {
@@ -18199,8 +18073,6 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
 
     // The pump's per-uid nav step polls follow once, sending one hop
     // toward the dest and mirroring the armed dest into the status row.
-    let mut snap = GameSnapshot::new();
-    nav_snapshot_at(&mut c, &mut snap, 0, 0);
     step_nav_bot(
         &mut d,
         "alice",
@@ -19882,7 +19754,7 @@ fn toll_nav_world() -> NavWorld {
 }
 
 /// The script walk arm's facts gate the route: with 10 coins in the
-/// slot's state, `ctx.walk` crosses the toll; the armed route carries
+/// slot's state, a queued native walk crosses the toll; the armed route carries
 /// the toll Transport leg.
 #[test]
 fn script_observe_walk_uses_slot_state_across_a_toll() {
@@ -19891,12 +19763,12 @@ fn script_observe_walk_uses_slot_state_across_a_toll() {
         cheats,
         navs,
         world,
-        walk_ret,
         walk_target,
         ..
     } = nav_rig_with(Some(Arc::new(toll_nav_world())));
     *walk_target.lock().unwrap() = (4, 4, 0);
     let mut d = NavRec::default();
+    let snapshot = nav_frame_at(0, 0);
     let state = Some(WorldState {
         inv: std::collections::HashMap::from([(995, 10)]),
         ..WorldState::default()
@@ -19910,7 +19782,7 @@ fn script_observe_walk_uses_slot_state_across_a_toll() {
         Some((0, 0, 0)),
         None,
         state,
-        None,
+        Some(&snapshot),
         None,
         &scripts,
         &cheats,
@@ -19919,7 +19791,6 @@ fn script_observe_walk_uses_slot_state_across_a_toll() {
         false,
         false,
     ));
-    assert_eq!(*walk_ret.lock().unwrap(), Some(true));
     assert!(
         wait_until(100, || queued(&navs)
             == Some(WorldTile {
@@ -19978,7 +19849,6 @@ fn script_observe_walk_uses_the_latched_essence_session() {
         cheats,
         navs,
         world,
-        walk_ret,
         walk_target,
         ..
     } = nav_rig_with(Some(Arc::new(mine_nav_world())));
@@ -20001,6 +19871,7 @@ fn script_observe_walk_uses_the_latched_essence_session() {
     // The walk target is Aubury's anchor; the origin is the mine pad.
     *walk_target.lock().unwrap() = (3253, 3401, 0);
     let mut d = NavRec::default();
+    let snapshot = nav_frame_at(2912, 4833);
     assert!(script_observe(
         &mut d,
         "alice",
@@ -20010,7 +19881,7 @@ fn script_observe_walk_uses_the_latched_essence_session() {
         Some((2912, 4833, 0)),
         None,
         None,
-        None,
+        Some(&snapshot),
         None,
         &scripts,
         &cheats,
@@ -20019,7 +19890,6 @@ fn script_observe_walk_uses_the_latched_essence_session() {
         false,
         false,
     ));
-    assert_eq!(*walk_ret.lock().unwrap(), Some(true));
     assert!(
         wait_until(100, || queued(&navs)
             == Some(WorldTile {
@@ -20032,7 +19902,7 @@ fn script_observe_walk_uses_the_latched_essence_session() {
 }
 
 /// No latch: the session return hop is never relaxed — the sealed
-/// mine stays NoPath for `ctx.walk` (fail-closed remains correct).
+/// mine stays NoPath for a native walk (fail-closed remains correct).
 #[test]
 fn script_observe_walk_without_a_latch_keeps_the_mine_sealed() {
     let NavRig {
@@ -20040,12 +19910,12 @@ fn script_observe_walk_without_a_latch_keeps_the_mine_sealed() {
         cheats,
         navs,
         world,
-        walk_ret,
         walk_target,
         ..
     } = nav_rig_with(Some(Arc::new(mine_nav_world())));
     *walk_target.lock().unwrap() = (3253, 3401, 0);
     let mut d = NavRec::default();
+    let snapshot = nav_frame_at(2912, 4833);
     assert!(script_observe(
         &mut d,
         "alice",
@@ -20055,7 +19925,7 @@ fn script_observe_walk_without_a_latch_keeps_the_mine_sealed() {
         Some((2912, 4833, 0)),
         None,
         None,
-        None,
+        Some(&snapshot),
         None,
         &scripts,
         &cheats,
@@ -20064,11 +19934,6 @@ fn script_observe_walk_without_a_latch_keeps_the_mine_sealed() {
         false,
         false,
     ));
-    assert_eq!(
-        *walk_ret.lock().unwrap(),
-        Some(true),
-        "a no-path request is queued, not found synchronously"
-    );
     thread::sleep(Duration::from_millis(50));
     assert_eq!(
         queued(&navs),
@@ -20086,12 +19951,12 @@ fn script_observe_walk_falls_back_to_empty_when_slot_has_no_state() {
         cheats,
         navs,
         world,
-        walk_ret,
         walk_target,
         ..
     } = nav_rig_with(Some(Arc::new(toll_nav_world())));
     *walk_target.lock().unwrap() = (4, 4, 0);
     let mut d = NavRec::default();
+    let snapshot = nav_frame_at(0, 0);
     assert!(script_observe(
         &mut d,
         "alice",
@@ -20101,7 +19966,7 @@ fn script_observe_walk_falls_back_to_empty_when_slot_has_no_state() {
         Some((0, 0, 0)),
         None,
         None,
-        None,
+        Some(&snapshot),
         None,
         &scripts,
         &cheats,
@@ -20110,7 +19975,6 @@ fn script_observe_walk_falls_back_to_empty_when_slot_has_no_state() {
         false,
         false,
     ));
-    assert_eq!(*walk_ret.lock().unwrap(), Some(true), "request queued");
     thread::sleep(Duration::from_millis(20));
     assert_eq!(
         queued(&navs),
@@ -20126,21 +19990,21 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         cheats,
         navs,
         world,
-        walk_ret,
         walk_target,
         ..
     } = nav_rig();
     let no_world: Option<Arc<NavWorld>> = None;
     let mut d = NavRec::default();
+    let snapshot = nav_frame_at(0, 0);
 
-    // No observed tile: synchronous refusal before any world lookup.
+    // No observed tile: refusal before any world lookup.
     script_observe(
         &mut d, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
         &world, false, false,
     );
-    assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no here → refuse");
+    assert_eq!(queued(&navs), None, "no observed origin");
 
-    // No nav world: synchronous refusal, no worker.
+    // No nav world: no route can be armed.
     script_observe(
         &mut d,
         "alice",
@@ -20150,7 +20014,7 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         Some((0, 0, 0)),
         None,
         None,
-        None,
+        Some(&snapshot),
         None,
         &scripts,
         &cheats,
@@ -20159,11 +20023,9 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         false,
         false,
     );
-    assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no world → refuse");
+    assert_eq!(queued(&navs), None, "no navigation world");
 
-    // A request the world cannot satisfy is still queued (true) but
-    // never arms: the worker's find fails and it exits without
-    // touching the map.
+    // An unreachable request never arms a route.
     *walk_target.lock().unwrap() = (5, 5, 0);
     script_observe(
         &mut d,
@@ -20174,7 +20036,7 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         Some((0, 0, 0)),
         None,
         None,
-        None,
+        Some(&snapshot),
         None,
         &scripts,
         &cheats,
@@ -20182,11 +20044,6 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         &world,
         false,
         false,
-    );
-    assert_eq!(
-        *walk_ret.lock().unwrap(),
-        Some(true),
-        "a no-path request is queued, not found synchronously"
     );
     thread::sleep(Duration::from_millis(20));
     assert_eq!(queued(&navs), None, "NoPath never arms a route");
@@ -20202,7 +20059,7 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         Some((0, 0, 0)),
         None,
         None,
-        None,
+        Some(&snapshot),
         None,
         &scripts,
         &cheats,
@@ -20211,7 +20068,6 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         false,
         false,
     );
-    assert_eq!(*walk_ret.lock().unwrap(), Some(true));
     assert!(
         wait_until(100, || queued(&navs)
             == Some(WorldTile {
@@ -20222,8 +20078,7 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         "the worker armed the queued route"
     );
 
-    // A second walk while a route is queued refuses synchronously, so
-    // a script spamming walk every tick spawns no worker per tick.
+    // A second walk cannot replace a route already owned by this run.
     *walk_target.lock().unwrap() = (1, 0, 0);
     script_observe(
         &mut d,
@@ -20234,7 +20089,7 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         Some((0, 0, 0)),
         None,
         None,
-        None,
+        Some(&snapshot),
         None,
         &scripts,
         &cheats,
@@ -20242,11 +20097,6 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         &world,
         false,
         false,
-    );
-    assert_eq!(
-        *walk_ret.lock().unwrap(),
-        Some(false),
-        "already-queued → refuse, no worker spawn"
     );
     assert_eq!(
         queued(&navs),

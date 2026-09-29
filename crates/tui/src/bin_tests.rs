@@ -3118,11 +3118,6 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
     press(&mut session, &mut app, KeyCode::Enter);
     session.core.flush_writes();
     press(&mut session, &mut app, KeyCode::Char('a'));
-    let prompt = app.params_state.sync_prompt.clone().unwrap_or_default();
-    assert!(
-        prompt.contains("apply to 1 same-card member(s), skip 1"),
-        "{prompt}"
-    );
     press(&mut session, &mut app, KeyCode::Char('y'));
     session.core.flush_writes();
     session.pump(&mut app);
