@@ -117,6 +117,6 @@ pub(crate) use shop::{
 pub(crate) use walk_spot::walk_spot_v2_scenario;
 
 pub use navigation::nav_full_scenario;
-pub use pair::duel_arena_completed_duel_step;
+pub use pair::{duel_arena_completed_duel_step, duel_arena_completed_duel_step_on_pen};
 pub use production::thiever_sustained_scenario;
 pub(crate) use script_basics::script_live_seed_steps;

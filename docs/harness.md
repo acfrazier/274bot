@@ -168,12 +168,14 @@ scenario's final Strength-XP-since-Start proof remains mandatory.
 
 `duel_arena` is the pair-script cell: every slot runs the frozen Duel Arena
 Combat Trainer, so N=10 is five duels and N=50 is twenty-five, and an odd N is
-refused at start. The fixture puts each slot in the arena lobby with a bronze
-scimitar (the existing `duel_arena` pair seed), the slots challenge and accept
-one another, and each slot qualifies only after its own snapshots show a fight
-pen visit followed by a return to the lobby, the transition the card counts as a
-finished duel. A duel only moves its two fighters (no stakes, HP restored, no
-spawned or dropped world state), so a cell leaves nothing for the next one.
+refused at start. The fixture seeds a bronze scimitar (the existing
+`duel_arena` pair seed) and stages mint-order pairs so that at Start the only
+free challenge-area candidate is the partner: unstarted and already-fought
+slots wait outside the lobby. Each slot qualifies only after its own snapshots
+show a fight pen visit followed by a return to the lobby, the transition the
+card counts as a finished duel. A duel only moves its two fighters (no stakes,
+HP restored, no spawned or dropped world state), so a cell leaves nothing for
+the next one.
 
 Seed/proof or script failures fail the run and return a nonzero exit, and so does
 a fleet that has not qualified after 30 minutes (`blocked: ready=… seeded=…
