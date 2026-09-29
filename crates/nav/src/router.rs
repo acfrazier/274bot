@@ -1841,6 +1841,21 @@ fn search_kernel(
     let mut heap: BinaryHeap<HeapNode> = BinaryHeap::new();
     let mut done: HashSet<WorldTile> = HashSet::new();
 
+    // A teleport leaves from every settled tile, but its state requirements
+    // are immutable for the life of this search. Resolve them once instead
+    // of re-reading the edge's requirement vectors and quest evidence on
+    // every relaxation. Keep the original indexes for route reconstruction.
+    let allowed_teleports: Vec<usize> = if use_teleports {
+        graph
+            .teleports
+            .iter()
+            .enumerate()
+            .filter_map(|(index, edge)| edge_allowed(state, edge, relax).then_some(index))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     dist.insert(from, 0.0);
     heap.push(HeapNode {
         cost: 0.0,
@@ -2009,12 +2024,10 @@ fn search_kernel(
         // current node, wherever it is. The landing is trusted like every
         // other transport `to` (no walkability filter — the content
         // declares it).
-        if use_teleports {
+        if !allowed_teleports.is_empty() {
             let wildy_level = graph.wilderness.level(cur);
-            for (ti, edge) in graph.teleports.iter().enumerate() {
-                if !edge_allowed(state, edge, relax) {
-                    continue;
-                }
+            for &ti in &allowed_teleports {
+                let edge = &graph.teleports[ti];
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
                     continue;
                 }
