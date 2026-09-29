@@ -480,9 +480,16 @@ fn qualify_contentious_moss_fleet(
     Ok(())
 }
 
-/// Step budget for a fleet's first completed duel: the runner's own 30-minute
-/// deadline is the real bound, so the budget must not end the wait first.
-const DUEL_COMPLETED_DUEL_BUDGET_TICKS: u32 = 3_000;
+/// Step budget for a fleet's completed-duel watch, admit wait, and park
+/// Repeat. Staging admits one pair at a time, so the first pair's park-Repeat
+/// waits until every later pair has entered a pen. A 3000-tick budget ended
+/// that wait at ~21 min with 12 of 25 pairs parked; dirty snapshots run faster
+/// than one per engine tick. The runner deadline is the real bound.
+const DUEL_COMPLETED_DUEL_BUDGET_TICKS: u32 = 30_000;
+
+/// Wall deadline for a serialized Duel Arena fleet. N=50 at ~90 s per staged
+/// pair is longer than the ordinary 30-minute seed bound.
+const DUEL_FLEET_DEADLINE: Duration = Duration::from_secs(3600);
 
 /// Al Kharid bank: outside the frozen `DUEL_ZONE` (3328..=3393, 3203..=3325),
 /// so an unstarted or already-fought slot is not a `inDuelChallengeArea`
@@ -744,9 +751,14 @@ fn seed_runner(
     world: Option<Arc<nav::world::NavWorld>>,
 ) -> Seed {
     let step_names = scenario.steps.iter().map(|step| step.name).collect();
+    let deadline = if scenario.name == "duel_arena" {
+        DUEL_FLEET_DEADLINE
+    } else {
+        Duration::from_secs(1800)
+    };
     let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
     runner.set_live_names(&[name.to_owned()]);
-    runner.set_deadline(Duration::from_secs(1800));
+    runner.set_deadline(deadline);
     Seed {
         runner,
         started: false,
@@ -1259,9 +1271,12 @@ impl Run {
                 ));
             }
         }
-        if self.qualification_complete.is_none()
-            && self.started.elapsed() > Duration::from_secs(1800)
-        {
+        let qualify_bound = if self.scenario_name.as_deref() == Some("duel_arena") {
+            DUEL_FLEET_DEADLINE
+        } else {
+            Duration::from_secs(1800)
+        };
+        if self.qualification_complete.is_none() && self.started.elapsed() > qualify_bound {
             return Err(format!(
                 "blocked: ready={ready} seeded={seeded} proved={proved} wanted={} ever_ready={}",
                 self.config.n,
