@@ -47,7 +47,6 @@ pub mod rs2b0t_registry;
 pub mod settings_store;
 pub mod shim;
 pub mod slot;
-#[cfg(feature = "load")]
 pub mod watchdog;
 
 pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, ScriptCtx};
@@ -97,7 +96,6 @@ pub use slot::{
     CompiledDelivery, RunState, ScriptLifecycleReceipt, ScriptTerminalState, SlotScript,
     StartOutcome, StartPoll,
 };
-#[cfg(feature = "load")]
 pub use watchdog::{
     ProgressWatchdog, RestartReason, Tile as WatchdogTile, WatchdogAction, WatchdogState,
 };

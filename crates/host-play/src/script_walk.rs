@@ -17,19 +17,24 @@ use super::{
 
 pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(bot) = navs.lock().unwrap().get_mut(name) {
-        bot.route_generation = bot.route_generation.wrapping_add(1);
-        bot.route = None;
-        bot.route_worker = None;
-        bot.pending_route = None;
-        bot.requested_route = None;
-        bot.walk_request_id = 0;
-        bot.clear_walk_outcome();
-        // A BankBudget session is part of the walk: its deposits, withdrawals
-        // and the route it restores stop with it.
-        bot.bank_fetch = None;
-        // Cancelled for good: nothing carries it to a Resume or a relog.
-        bot.carried_walk = None;
+        abort_walk_on_bot(bot);
     }
+}
+
+fn abort_walk_on_bot(bot: &mut NavBot) {
+    bot.route_generation = bot.route_generation.wrapping_add(1);
+    bot.route = None;
+    bot.route_worker = None;
+    bot.pending_route = None;
+    bot.requested_route = None;
+    bot.native_walk = None;
+    bot.route_quest_evidence = None;
+    bot.walk_request_id = 0;
+    bot.clear_walk_outcome();
+    bot.traveller.clear();
+    // Bank work and carried routes share the revoked walk's ownership.
+    bot.bank_fetch = None;
+    bot.carried_walk = None;
 }
 
 /// Operator Pause of the slot's script. Frozen stops clicking at the paused
@@ -298,6 +303,9 @@ pub(crate) fn step_nav_bot<D: Driver>(
     {
         let mut all = navs.lock().unwrap();
         if let Some(bot) = all.get_mut(name) {
+            if bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
+                abort_walk_on_bot(bot);
+            }
             if bot.bank_fetch.is_some() {
                 step_bank_fetch_on_bot(driver, snapshot, bot, world, here, map_members);
                 // Freeze follow for Open / Deposit / Withdraw / Wear /
@@ -339,19 +347,14 @@ pub(crate) fn step_nav_bot<D: Driver>(
         .is_some_and(|((x, z, level), (to, radius, ..))| {
             api::query::is_arrived(WorldTile { x, z, level }, to, radius, reach)
         });
-    let mut options = TravelOptions {
-        // Exact arrival: the armed dest must be stood on before the route
-        // clears (the v1 traveller arrived the same way).
-        close_enough: 0,
-        teleports: world.map(|w| w.graph.teleports.as_slice()),
-        edges: world.map(|w| w.graph.edges.as_slice()),
-        ..TravelOptions::default()
-    };
     let queued = {
         let mut all = navs.lock().unwrap();
         let Some(bot) = all.get_mut(name) else {
             return;
         };
+        if bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
+            abort_walk_on_bot(bot);
+        }
         if bot.route.is_none() {
             return;
         }
@@ -372,7 +375,17 @@ pub(crate) fn step_nav_bot<D: Driver>(
                         if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
                 )
             });
-            let follow_outcome = bot.traveller.follow(driver, snapshot, route, &mut options);
+            let follow_outcome = {
+                let mut options = TravelOptions {
+                    // Exact arrival matches the armed walk's destination.
+                    close_enough: 0,
+                    teleports: world.map(|w| w.graph.teleports.as_slice()),
+                    edges: world.map(|w| w.graph.edges.as_slice()),
+                    quest_evidence: bot.route_quest_evidence.as_ref(),
+                    ..TravelOptions::default()
+                };
+                bot.traveller.follow(driver, snapshot, route, &mut options)
+            };
             apply_nav_follow_outcome(bot, follow_outcome, walking_stand);
         }
         bot.route.as_ref().map(|r| r.dest)

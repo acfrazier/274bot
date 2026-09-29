@@ -300,7 +300,7 @@ impl ProgressWatchdog {
             self.stamp_gameplay(now);
         }
         if let WatchdogState::Recovering { anchor, .. } = self.state {
-            if chebyshev_xz(tile.xz(), anchor.xz()) <= WALK_RADIUS {
+            if tile.level == anchor.level && chebyshev_xz(tile.xz(), anchor.xz()) <= WALK_RADIUS {
                 return self.on_walk_arrived(now);
             }
         }
@@ -327,7 +327,7 @@ impl ProgressWatchdog {
     pub fn on_anchor(
         &mut self,
         now: Instant,
-        player: Option<(i32, i32)>,
+        player: Option<Tile>,
         anchor: Option<Tile>,
     ) -> WatchdogAction {
         if self.state != WatchdogState::SamplingAnchor || self.frozen {
@@ -337,7 +337,7 @@ impl ProgressWatchdog {
             return self.enter_restart(now, RestartReason::Wedge);
         };
         let far = player
-            .map(|p| chebyshev_xz(p, anchor.xz()) > ANCHOR_NEAR)
+            .map(|p| p.level != anchor.level || chebyshev_xz(p.xz(), anchor.xz()) > ANCHOR_NEAR)
             .unwrap_or(true);
         if far {
             self.rearm_walk = false;
@@ -701,7 +701,15 @@ mod tests {
         w.arm_fresh(t);
         w.observe(t + WEDGE, true);
         assert_eq!(
-            w.on_anchor(t + WEDGE, Some((100, 100)), None),
+            w.on_anchor(
+                t + WEDGE,
+                Some(Tile {
+                    x: 100,
+                    z: 100,
+                    level: 0
+                }),
+                None
+            ),
             WatchdogAction::Restart {
                 reason: RestartReason::Wedge
             }
@@ -720,11 +728,41 @@ mod tests {
             level: 0,
         };
         assert_eq!(
-            w.on_anchor(t + WEDGE, Some((105, 100)), Some(anchor)),
+            w.on_anchor(
+                t + WEDGE,
+                Some(Tile {
+                    x: 105,
+                    z: 100,
+                    level: 0
+                }),
+                Some(anchor)
+            ),
             WatchdogAction::Restart {
                 reason: RestartReason::Wedge
             }
         );
+    }
+
+    #[test]
+    fn anchor_directly_above_player_requires_recovery_walk() {
+        let mut watchdog = ProgressWatchdog::new();
+        let now = t0();
+        watchdog.arm_fresh(now);
+        watchdog.observe(now + WEDGE, true);
+        let anchor = Tile {
+            x: 100,
+            z: 100,
+            level: 1,
+        };
+        assert_eq!(
+            watchdog.on_anchor(now + WEDGE, Some(Tile { level: 0, ..anchor }), Some(anchor),),
+            WatchdogAction::ArmWalk {
+                x: 100,
+                z: 100,
+                level: 1
+            },
+        );
+        assert!(watchdog.last_recovery().is_none());
     }
 
     #[test]
@@ -739,7 +777,15 @@ mod tests {
             level: 1,
         };
         assert_eq!(
-            w.on_anchor(t + WEDGE, Some((100, 100)), Some(anchor)),
+            w.on_anchor(
+                t + WEDGE,
+                Some(Tile {
+                    x: 100,
+                    z: 100,
+                    level: 0
+                }),
+                Some(anchor)
+            ),
             WatchdogAction::ArmWalk {
                 x: 200,
                 z: 200,
@@ -762,6 +808,37 @@ mod tests {
     }
 
     #[test]
+    fn recovery_on_another_plane_does_not_arrive_or_consume_cooldown() {
+        let mut watchdog = ProgressWatchdog::new();
+        let now = t0();
+        watchdog.arm_fresh(now);
+        watchdog.observe(now + WEDGE, true);
+        let anchor = Tile {
+            x: 200,
+            z: 200,
+            level: 1,
+        };
+        watchdog.on_anchor(
+            now + WEDGE,
+            Some(Tile {
+                x: 100,
+                z: 100,
+                level: 0,
+            }),
+            Some(anchor),
+        );
+        watchdog.on_tile(
+            now + WEDGE + Duration::from_secs(1),
+            Tile { level: 0, ..anchor },
+        );
+        assert_eq!(watchdog.recovering_anchor(), Some(anchor));
+        assert!(watchdog.last_recovery().is_none());
+        watchdog.on_tile(now + WEDGE + Duration::from_secs(2), anchor);
+        assert_eq!(watchdog.state(), WatchdogState::Armed);
+        assert!(watchdog.last_recovery().is_some());
+    }
+
+    #[test]
     fn walk_failure_consumes_cooldown_and_restarts() {
         let mut w = ProgressWatchdog::new();
         let t = t0();
@@ -769,7 +846,11 @@ mod tests {
         w.observe(t + WEDGE, true);
         w.on_anchor(
             t + WEDGE,
-            Some((0, 0)),
+            Some(Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            }),
             Some(Tile {
                 x: 50,
                 z: 50,
@@ -795,7 +876,11 @@ mod tests {
         w.observe(t + WEDGE, true);
         w.on_anchor(
             t + WEDGE,
-            Some((0, 0)),
+            Some(Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            }),
             Some(Tile {
                 x: 50,
                 z: 50,
@@ -837,7 +922,11 @@ mod tests {
         assert_eq!(
             w.on_anchor(
                 t,
-                Some((0, 0)),
+                Some(Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0
+                }),
                 Some(Tile {
                     x: 9,
                     z: 9,
@@ -856,7 +945,11 @@ mod tests {
         w.observe(t + WEDGE, true);
         w.on_anchor(
             t + WEDGE,
-            Some((0, 0)),
+            Some(Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            }),
             Some(Tile {
                 x: 50,
                 z: 50,
@@ -884,7 +977,15 @@ mod tests {
             z: 50,
             level: 0,
         };
-        w.on_anchor(t + WEDGE, Some((0, 0)), Some(anchor));
+        w.on_anchor(
+            t + WEDGE,
+            Some(Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            }),
+            Some(anchor),
+        );
         let paused = t + WEDGE + Duration::from_secs(1);
         assert_eq!(w.defer_recovery(), WatchdogAction::AbortWalk);
         assert_eq!(w.set_frozen(true, paused), WatchdogAction::None);
@@ -906,7 +1007,15 @@ mod tests {
         let mut w = ProgressWatchdog::new();
         w.arm_fresh(t);
         w.observe(t + WEDGE, true);
-        w.on_anchor(t + WEDGE, Some((0, 0)), Some(anchor));
+        w.on_anchor(
+            t + WEDGE,
+            Some(Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            }),
+            Some(anchor),
+        );
         w.defer_recovery();
         w.set_frozen(true, paused);
         w.on_session_reset(paused);
@@ -928,7 +1037,15 @@ mod tests {
             z: 50,
             level: 0,
         };
-        w.on_anchor(t + WEDGE, Some((0, 0)), Some(anchor));
+        w.on_anchor(
+            t + WEDGE,
+            Some(Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            }),
+            Some(anchor),
+        );
         let paused = t + WEDGE + Duration::from_secs(1);
         w.defer_recovery();
         w.set_frozen(true, paused);
@@ -941,7 +1058,15 @@ mod tests {
         let wedged = resumed + WEDGE;
         assert_eq!(w.observe(wedged, true), WatchdogAction::RequestAnchor);
         assert_eq!(
-            w.on_anchor(wedged, Some((0, 0)), Some(anchor)),
+            w.on_anchor(
+                wedged,
+                Some(Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0
+                }),
+                Some(anchor)
+            ),
             WatchdogAction::ArmWalk {
                 x: 50,
                 z: 50,
@@ -966,7 +1091,11 @@ mod tests {
         assert_eq!(
             w.on_anchor(
                 t + WEDGE,
-                Some((0, 0)),
+                Some(Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0
+                }),
                 Some(Tile {
                     x: 50,
                     z: 50,

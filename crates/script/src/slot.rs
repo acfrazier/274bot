@@ -23,7 +23,6 @@ use crate::ctx::ScriptCtx;
 use crate::isolate_fb::{IsolateBuf, SnapshotFingerprint};
 #[cfg(feature = "load")]
 use crate::load::{LoadIsolate, LoadShape, Ready};
-#[cfg(feature = "load")]
 use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
 use api::random::{DetectedRandom, RandomClaim};
@@ -145,6 +144,7 @@ pub struct SlotScript {
     compiled: Option<Box<CompiledRun>>,
     preparing: Option<Box<Preparation>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
+    native_runtime: crate::native::ledger::Runtime,
     incarnation: u64,
     control_generation: u64,
     /// The compiled card's own interact queue: what its tick enqueued, drained
@@ -224,7 +224,6 @@ pub struct SlotScript {
     /// operator Stop / new manual Start.
     #[cfg(feature = "load")]
     load_identity: Option<SlotLoadIdentity>,
-    #[cfg(feature = "load")]
     watchdog: ProgressWatchdog,
     /// Fixed-size rolling window for terminate-driven runtime recreates.
     /// The third cut inside [`CUT_RESTART_WINDOW`] stops the script.
@@ -257,6 +256,7 @@ impl SlotScript {
             compiled: None,
             preparing: None,
             retained: None,
+            native_runtime: Default::default(),
             incarnation: 0,
             control_generation: 0,
             #[cfg(feature = "load")]
@@ -302,7 +302,6 @@ impl SlotScript {
             work_epoch: 0,
             #[cfg(feature = "load")]
             load_identity: None,
-            #[cfg(feature = "load")]
             watchdog: ProgressWatchdog::new(),
             #[cfg(feature = "load")]
             cut_restart_times: [None; CUT_RESTART_LIMIT],
@@ -569,8 +568,8 @@ impl SlotScript {
             self.after_stop = AfterStop::Idle;
             self.setup_generation_base = None;
             self.load_identity = None;
-            self.watchdog.cancel_clear();
         }
+        self.watchdog.cancel_clear();
         self.want_run = false;
         self.pending_withdraw_x = None;
         self.pending_bank_op = None;
@@ -744,6 +743,7 @@ impl SlotScript {
     /// ([`ProgressWatchdog::defer_recovery`]).
     pub fn pause(&mut self) {
         self.want_run = false;
+        self.native_runtime.clock.observe(Instant::now(), false);
         self.revoke_native_input();
         self.interrupt_compiled(Interrupt::Pause);
         if let Some(pending) = &mut self.pending_withdraw_x {
@@ -757,7 +757,6 @@ impl SlotScript {
             if let Some(isolate) = &self.load {
                 isolate.pause();
             }
-            #[cfg(feature = "load")]
             {
                 // A recovery walk is resumed with the script, not dropped.
                 let _ = self.watchdog.defer_recovery();
@@ -790,7 +789,6 @@ impl SlotScript {
             if let Some(isolate) = &self.load {
                 isolate.resume();
             }
-            #[cfg(feature = "load")]
             {
                 let _ = self.watchdog.set_frozen(false, Instant::now());
             }
@@ -836,6 +834,7 @@ impl SlotScript {
         }
         self.control_generation = self.control_generation.saturating_add(1);
         self.preparing = None;
+        self.native_runtime.revoke();
         self.retained = None;
         self.revoke_native_input();
         // The compiled clue machine's abort belongs to the pump thread (its
@@ -939,6 +938,8 @@ impl SlotScript {
     }
 
     fn session_boundary(&mut self, reconnect: bool) -> bool {
+        self.native_runtime.revoke();
+        self.native_runtime.clock.observe(Instant::now(), false);
         self.on_is_up(false);
         #[cfg(feature = "load")]
         if !self.load_active() {
@@ -1097,6 +1098,18 @@ impl SlotScript {
     /// runtime is thread-local, so the instance this reaches is exactly the
     /// one this slot's compiled card calls.
     pub fn sync_compiled_clue(&mut self, held: bool) {
+        let now = std::time::Instant::now();
+        // The safety lease uses wall time even when no script tick is eligible.
+        let _ = self.native_quiet_read(now);
+        let blocked = self
+            .compiled
+            .as_ref()
+            .and_then(|run| run.output.status.as_deref())
+            .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked);
+        self.native_runtime.clock.observe(
+            now,
+            self.state == RunState::Running && self.want_run && !held && !blocked,
+        );
         #[cfg(feature = "load")]
         {
             if self.load_active() {
@@ -1150,20 +1163,18 @@ impl SlotScript {
     }
 
     pub fn sync_native_input_gate(&self) {
-        let watchdog_hold = {
-            #[cfg(feature = "load")]
-            {
-                self.watchdog.holds_script_actions()
-            }
-            #[cfg(not(feature = "load"))]
-            {
-                false
-            }
-        };
+        let watchdog_hold = self.watchdog.holds_script_actions();
+        let blocked = self.compiled.as_ref().is_some_and(|run| {
+            run.output
+                .status
+                .as_ref()
+                .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked)
+        });
         let live = self.state == RunState::Running
             && self.want_run
             && self.has_instance()
-            && !watchdog_hold;
+            && !watchdog_hold
+            && !blocked;
         self.native_input.sync_live(live);
         if !live {
             #[cfg(feature = "load")]
@@ -1321,6 +1332,64 @@ impl SlotScript {
         &mut self.reach_cache
     }
 
+    pub fn native_quiet_read(
+        &mut self,
+        now: std::time::Instant,
+    ) -> Option<crate::native::QuietReadOwner> {
+        self.native_runtime.ledger.as_mut()?.quiet_read(now)
+    }
+
+    pub fn has_native_actions(&self) -> bool {
+        self.native_runtime
+            .ledger
+            .as_ref()
+            .is_some_and(|ledger| ledger.outbox.iter().any(|action| action.live()))
+    }
+
+    /// The host calls this only while holding the slot's final dispatch fence.
+    /// Keep the bounded outbox's allocation for the next observed tick.
+    pub fn take_native_action(&mut self) -> Option<crate::native::HostAction> {
+        let ledger = self.native_runtime.ledger.as_mut()?;
+        while !ledger.outbox.is_empty() {
+            let action = ledger.outbox.remove(0);
+            if action.live() {
+                return Some(action);
+            }
+        }
+        None
+    }
+
+    pub fn complete_native_walk(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        receipt: crate::native::WalkReceipt,
+    ) {
+        if !authority.live()
+            || authority.request_id().get() != receipt.request_id
+            || authority.run() != receipt.evidence.run
+        {
+            return;
+        }
+        let Some(ledger) = self.native_runtime.ledger.as_mut() else {
+            return;
+        };
+        if ledger.owner.as_ref().is_some_and(|owner| {
+            owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
+        }) {
+            ledger.walk = Some(receipt);
+        }
+    }
+
+    pub fn complete_native_interaction(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        receipt: crate::native::InteractionReceipt,
+    ) {
+        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+            ledger.complete_interaction(authority, receipt);
+        }
+    }
+
     /// Drain the interact requests this slot's script queued, in tick order:
     /// the Load isolate's forwarded queue (the shim Bank/Banking queue), or
     /// the compiled card's own queue. The two are exclusive by construction —
@@ -1410,13 +1479,11 @@ impl SlotScript {
         self.load_identity.as_ref()
     }
 
-    #[cfg(feature = "load")]
     pub fn watchdog(&self) -> &ProgressWatchdog {
         &self.watchdog
     }
 
     /// Apply isolate lifecycle facts and host tile/XP, then decide.
-    #[cfg(feature = "load")]
     pub fn feed_watchdog(
         &mut self,
         now: Instant,
@@ -1426,9 +1493,16 @@ impl SlotScript {
         running: bool,
         lifecycle: &[crate::shim::InteractReq],
     ) -> WatchdogAction {
-        if self.load.is_none() {
+        if !self.load_active() && self.compiled.is_none() {
             return WatchdogAction::None;
         }
+        let frozen = frozen
+            || self.compiled.as_ref().is_some_and(|run| {
+                run.output
+                    .status
+                    .as_ref()
+                    .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked)
+            });
         let freeze_action = self.watchdog.set_frozen(frozen, now);
         if matches!(freeze_action, WatchdogAction::AbortWalk) {
             return freeze_action;
@@ -1453,7 +1527,7 @@ impl SlotScript {
             }
         }
         if let Some(reply) = anchor_reply {
-            let player = here.map(|(x, z, _)| (x, z));
+            let player = here.map(|(x, z, level)| WatchdogTile { x, z, level });
             return self.watchdog.on_anchor(now, player, reply);
         }
         if let Some((x, z, level)) = here {
@@ -1464,6 +1538,30 @@ impl SlotScript {
         }
         self.watchdog.on_xp(now, xp);
         let action = self.watchdog.observe(now, running && self.want_run);
+        if action == WatchdogAction::RequestAnchor {
+            if let Some(run) = &self.compiled {
+                let anchor = match catch_unwind(AssertUnwindSafe(|| run.script.recovery_anchor())) {
+                    Ok(anchor) => anchor.map(|tile| WatchdogTile {
+                        x: tile.x,
+                        z: tile.z,
+                        level: tile.level,
+                    }),
+                    Err(payload) => {
+                        self.fail_compiled(ScriptFailure {
+                            code: "recovery-anchor-panic".into(),
+                            message: panic_message(&payload).into(),
+                            retryable: false,
+                        });
+                        return WatchdogAction::None;
+                    }
+                };
+                return self.watchdog.on_anchor(
+                    now,
+                    here.map(|(x, z, level)| WatchdogTile { x, z, level }),
+                    anchor,
+                );
+            }
+        }
         if matches!(action, WatchdogAction::WarnHungLoop) {
             self.pending_logs
                 .push("watchdog: hung loop (10s, no scheduler progress)".into());
@@ -1471,25 +1569,40 @@ impl SlotScript {
         action
     }
 
-    /// Recreate the Load isolate from retained identity. Consumes cooldown.
-    #[cfg(feature = "load")]
-    pub fn restart_load_from_identity(&mut self, now: Instant) -> Result<(), String> {
+    /// Recreate the active execution kind from its effective identity.
+    pub fn restart_from_identity(&mut self, now: Instant) -> Result<(), String> {
         if !self.want_run || self.state == RunState::Paused {
             return Err("watchdog restart cancelled: operator is not running".into());
         }
         if self.watchdog.frozen() {
             return Err("watchdog restart cancelled: frozen".into());
         }
-        if self.state == RunState::Stopping {
-            // A respawn is already queued behind this reap.
-            return match self.after_stop {
-                AfterStop::Restart | AfterStop::Start => Ok(()),
-                AfterStop::Idle | AfterStop::Fail(_) | AfterStop::CutLimit(_) => {
-                    Err("watchdog restart cancelled: stopping".into())
-                }
-            };
+        if self.compiled.as_ref().is_some_and(|run| {
+            run.output
+                .status
+                .as_ref()
+                .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked)
+        }) {
+            return Err("watchdog restart cancelled: blocked".into());
         }
-        self.apply_load_restart(now)
+        if self.compiled.is_some() {
+            return self.restart_compiled(now);
+        }
+        #[cfg(feature = "load")]
+        {
+            if self.state == RunState::Stopping {
+                // A respawn is already queued behind this reap.
+                return match self.after_stop {
+                    AfterStop::Restart | AfterStop::Start => Ok(()),
+                    AfterStop::Idle | AfterStop::Fail(_) | AfterStop::CutLimit(_) => {
+                        Err("watchdog restart cancelled: stopping".into())
+                    }
+                };
+            }
+            self.apply_load_restart(now)
+        }
+        #[cfg(not(feature = "load"))]
+        Err("watchdog restart: no retained identity".into())
     }
 
     /// Common retained-identity recreate used by the stall watchdog and by a
@@ -1515,17 +1628,14 @@ impl SlotScript {
         Ok(())
     }
 
-    #[cfg(feature = "load")]
     pub fn notify_walk_failed(&mut self, now: Instant) -> WatchdogAction {
         self.watchdog.on_walk_failed(now)
     }
 
-    #[cfg(feature = "load")]
     pub fn notify_hold_during_walk(&mut self) -> WatchdogAction {
         self.watchdog.on_hold_during_walk()
     }
 
-    #[cfg(feature = "load")]
     pub fn abort_owned_recovery(&mut self) -> WatchdogAction {
         self.watchdog.abort_owned_recovery()
     }
@@ -1667,8 +1777,11 @@ impl SlotScript {
                 .expect("compiled retention")
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            run.tick(ctx, &mut retained)
+            run.tick(ctx, &mut retained, &mut self.native_runtime)
         };
+        if result.is_ok() {
+            self.watchdog.stamp_scheduler(Instant::now());
+        }
         #[cfg(feature = "load")]
         {
             self.compiled_interacts = ctx.compiled.interacts.take().unwrap_or_default();
@@ -1700,6 +1813,7 @@ impl SlotScript {
                 #[cfg(feature = "load")]
                 self.compiled_interacts.clear();
                 self.teardown_compiled(StopReason::Completed);
+                self.watchdog.cancel_clear();
                 self.state = RunState::Idle;
                 self.want_run = false;
                 self.lifecycle_receipt = Some(ScriptLifecycleReceipt {

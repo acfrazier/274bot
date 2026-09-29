@@ -1,8 +1,7 @@
 //! Compiled-card registration, validated configuration and shared output.
 //! The action-machine facility is installed separately from card registration.
 use std::any::Any;
-use std::convert::Infallible;
-use std::marker::PhantomData;
+use std::cell::RefCell;
 use std::num::NonZeroU64;
 use std::sync::{Arc, LazyLock};
 use std::task::Poll;
@@ -16,6 +15,13 @@ use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestProgress};
 use api::selected::{FactError, FamilyPreparation, QuestGate, RunKey, SelectedPin, Truth};
 use api::snapshot::SnapshotView;
 use api::{DetectedRandom, RandomClaim, WorldTile};
+
+mod actions;
+pub(crate) mod ledger;
+mod owner;
+pub mod walk;
+pub mod walk_wait;
+pub use ledger::{HostAction, HostAuthority, HostEffect, QuietReadOwner};
 
 pub type SettingsBag = serde_json::Map<String, serde_json::Value>;
 
@@ -310,8 +316,7 @@ pub trait NativeOutput {
     fn settings_applied(&mut self, revision: u64);
 }
 
-/// The typed machine facility has no issued handles until its action cutover.
-/// Sherlock uses only the existing host-frame bridge, not these action methods.
+/// Typed machine admission into the slot's foreground action ledger.
 pub struct NativeActions {
     pub(crate) _private: (),
 }
@@ -324,12 +329,14 @@ pub struct ActionContext<'a> {
     pub(crate) action_id: u64,
     pub(crate) active_now: Duration,
     pub(crate) wall_now: Instant,
+    pub(crate) ledger: &'a mut Option<Box<ledger::Ledger>>,
+    pub(crate) budget: &'a mut ledger::TickBudget,
+    pub(crate) eligible: bool,
 }
 /// Revocable owner identity; no caller can mint a lease.
 pub struct QuietReadLease {
-    _run: RunKey,
-    _request_id: NonZeroU64,
-    unavailable: Infallible,
+    owner: Arc<owner::Owner>,
+    lease_id: NonZeroU64,
 }
 
 pub struct WalkRequest {
@@ -354,6 +361,15 @@ pub struct WalkReceipt {
     pub request_id: u64,
     pub evidence: EvidenceStamp,
     pub end: WalkEnd,
+}
+
+/// Result of the host's dispatch attempt, not proof of a server-side change.
+/// Machines must still observe the corresponding world/interface transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InteractionReceipt {
+    pub request_id: u64,
+    pub evidence: EvidenceStamp,
+    pub accepted: bool,
 }
 
 impl ActionContext<'_> {
@@ -381,42 +397,13 @@ impl ActionContext<'_> {
     pub fn action_id(&self) -> u64 {
         self.action_id
     }
-    /// No lease can be issued before M-297 installs the admission ledger.
-    pub fn end_quiet_read(&mut self, lease: QuietReadLease) {
-        match lease.unavailable {}
-    }
-    /// No typed request IDs are issued before the action-facility cutover.
-    /// Cancelling an unknown request does not dispatch an effect.
-    pub fn cancel_request(&mut self, _request_id: u64) {}
-    /// body owned by M-297
-    pub fn begin_quiet_read(&mut self, _request_id: u64) -> Result<QuietReadLease, ActionError> {
-        Err(unavailable())
-    }
-    /// body owned by M-297
-    pub fn charge_transition(&mut self) -> bool {
-        false
-    }
-    /// body owned by M-297
-    pub fn emit(&mut self, _request: InteractReq) -> Result<(), ActionError> {
-        Err(unavailable())
-    }
-    /// body owned by M-297
-    pub fn walk(&mut self, _request: WalkRequest) -> Result<u64, ActionError> {
-        Err(unavailable())
-    }
-    /// body owned by M-297
-    pub fn walk_receipt(&self, _request_id: u64) -> Option<&WalkReceipt> {
-        None
-    }
 }
 
-/// Non-Clone owner guard. M-297 adds the ledger/revocation body before construction.
+/// Non-Clone guard. Dropping it revokes host work before local cleanup.
 #[must_use]
 pub struct ActionHandle<M: NativeMachine> {
-    _run: RunKey,
-    _id: NonZeroU64,
-    _machine: PhantomData<M>,
-    unavailable: Infallible,
+    owner: Arc<owner::Owner>,
+    machine: RefCell<Option<M>>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionError {
@@ -437,29 +424,6 @@ pub trait NativeMachine: Send + 'static {
         Self: Sized;
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>>;
     fn cancel(&mut self);
-}
-
-impl NativeActions {
-    /// body owned by M-297
-    pub fn begin<M: NativeMachine>(
-        &mut self,
-        _args: M::Args,
-        _cx: &mut ActionContext<'_>,
-    ) -> Result<ActionHandle<M>, ActionError> {
-        Err(unavailable())
-    }
-    /// body owned by M-297
-    pub fn poll<M: NativeMachine>(
-        &mut self,
-        _handle: &ActionHandle<M>,
-        _cx: &mut ActionContext<'_>,
-    ) -> Poll<Result<M::Output, ActionError>> {
-        Poll::Ready(Err(unavailable()))
-    }
-    /// No typed handle can be issued before the owner-revocation cutover.
-    pub fn cancel<M: NativeMachine>(&mut self, handle: ActionHandle<M>) {
-        match handle.unavailable {}
-    }
 }
 
 pub(crate) fn unavailable() -> ActionError {

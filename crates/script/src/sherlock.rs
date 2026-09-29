@@ -936,6 +936,7 @@ mod tests {
                 obj_names: self.names.as_ref(),
                 compiled: crate::CompiledTick {
                     selected,
+                    reach: None,
                     hold: self.hold,
                     interacts: Some(Vec::new()),
                 },
