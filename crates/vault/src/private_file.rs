@@ -37,11 +37,15 @@ const TEMP_NAME_ATTEMPTS: usize = 16;
 /// removes only the temp it created, and only while the name still refers to
 /// that same file; before publishing it checks that it does, and returns an
 /// error instead of acknowledging bytes that are not its own. The target
-/// directory is created `0o700` when missing and, on Unix, must be owned by
-/// this user or root and not writable by group or others (a sticky directory
-/// such as `/tmp` is accepted: others cannot remove or rename this user's
-/// entries in it). That check is what keeps the temp bound to this writer
-/// between the check and the rename; a failing one is `PermissionDenied`.
+/// directory is created `0o700` when missing. On Unix it must be owned by this
+/// user or root and not writable by group or others: a directory this user
+/// owns that is group/other-writable (an older or `umask 002` install) is
+/// tightened to `mode & !0o022` on first publication, then re-checked; one
+/// owned by anyone else that is writable by others is refused, and a sticky
+/// directory such as `/tmp` is accepted as it is (others cannot remove or
+/// rename this user's entries in it). That check is what keeps the temp bound
+/// to this writer between the check and the rename; a failing one is
+/// `PermissionDenied`.
 ///
 /// Writers to the same target inside one process are serialized, so the file
 /// left behind is the one whose call returned last. Processes are not
@@ -277,6 +281,10 @@ fn serialized<T>(key: PathBuf, work: impl FnOnce() -> T) -> T {
     result
 }
 
+/// Creates `dir` `0o700` when missing and makes it fit for staging: on Unix a
+/// directory this user owns that group or others can write to (not sticky) is
+/// tightened once to `mode & !0o022`, on the opened directory itself, then
+/// re-checked; anything still unfit is refused.
 #[cfg(unix)]
 fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     // `recursive` accepts a directory that already exists, so there is no
@@ -285,21 +293,57 @@ fn ensure_private_dir(dir: &Path) -> io::Result<()> {
         .recursive(true)
         .mode(0o700)
         .create(dir)?;
-    let meta = fs::metadata(dir)?;
-    match dir_verdict(
-        &DirFacts {
-            is_dir: meta.is_dir(),
-            mode: meta.mode(),
-            owner: meta.uid(),
-        },
-        // SAFETY: geteuid has no preconditions and cannot fail.
-        unsafe { libc::geteuid() },
-    ) {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    let handle = File::open(dir).ok();
+    let mut meta = match &handle {
+        Some(handle) => handle.metadata()?,
+        None => fs::metadata(dir)?,
+    };
+    if let Some(handle) = &handle {
+        if let Some(mode) = tightened_dir_mode(&facts_of(&meta), euid) {
+            // A failure leaves the mode as it was, and the verdict below
+            // refuses it with the reason.
+            if handle
+                .set_permissions(fs::Permissions::from_mode(mode))
+                .is_ok()
+            {
+                meta = handle.metadata()?;
+            }
+        }
+    }
+    match dir_verdict(&facts_of(&meta), euid) {
         Ok(()) => Ok(()),
         Err(reason) => Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!("{}: {reason}", dir.display()),
         )),
+    }
+}
+
+#[cfg(unix)]
+fn facts_of(meta: &fs::Metadata) -> DirFacts {
+    DirFacts {
+        is_dir: meta.is_dir(),
+        mode: meta.mode(),
+        owner: meta.uid(),
+    }
+}
+
+/// Creates `dir` (and any missing parents) owner-only where the platform has
+/// modes, without judging an existing directory. For the application's own
+/// root, so a first creation by the host is never wider than the vault's.
+pub fn create_private_dir(dir: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(dir)
     }
 }
 
@@ -313,6 +357,17 @@ struct DirFacts {
     is_dir: bool,
     mode: u32,
     owner: u32,
+}
+
+/// The mode to tighten a directory to before staging in it, if it needs it:
+/// this user owns it, group or others can write it and it is not sticky.
+/// Foreign-owned directories and root-owned ones (when this user is not root)
+/// are never touched; the verdict refuses them.
+#[cfg(unix)]
+fn tightened_dir_mode(facts: &DirFacts, euid: u32) -> Option<u32> {
+    let sticky = facts.mode & 0o1000 != 0;
+    (facts.is_dir && facts.owner == euid && facts.mode & 0o022 != 0 && !sticky)
+        .then_some(facts.mode & 0o7777 & !0o022)
 }
 
 /// Whether private state may be staged and published in a directory: owned by
@@ -661,28 +716,78 @@ mod tests {
     }
 
     #[test]
-    fn a_directory_others_can_write_is_refused_and_named() {
+    fn a_wide_directory_this_user_owns_is_tightened_on_first_publication() {
         let dir = scratch("wide-dir");
         let target = dir.join("state.json");
-        for mode in [0o777, 0o775, 0o757] {
-            fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).unwrap();
+        for (wide, tightened) in [
+            (0o777, 0o755),
+            (0o775, 0o755),
+            (0o757, 0o755),
+            (0o770, 0o750),
+            (0o772, 0o750),
+        ] {
+            fs::set_permissions(&dir, fs::Permissions::from_mode(wide)).unwrap();
 
-            let error = write_private_file(&target, b"data").unwrap_err();
+            write_private_file(&target, b"data").unwrap();
 
-            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{mode:o}");
-            assert!(error.to_string().contains("chmod go-w"), "{error}");
-            assert!(!target.exists(), "{mode:o}: nothing was written");
-            assert!(names(&dir).is_empty(), "{mode:o}: no temp was staged");
+            assert_eq!(mode_of(&dir), tightened, "{wide:o}");
+            assert_eq!(fs::read(&target).unwrap(), b"data", "{wide:o}");
+            assert_eq!(names(&dir), ["state.json"], "{wide:o}: no temp left");
         }
+    }
+
+    #[test]
+    fn a_sticky_directory_and_a_tight_one_are_left_as_they_are() {
+        let dir = scratch("sticky-dir");
+        let target = dir.join("state.json");
         // A sticky directory (like /tmp) only lets others touch their own entries.
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o1777)).unwrap();
         write_private_file(&target, b"data").unwrap();
-        // Owner-only and world-readable are fine.
-        fs::remove_file(&target).unwrap();
+        assert_eq!(mode_of(&dir), 0o1777);
         for mode in [0o700, 0o755] {
             fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).unwrap();
             write_private_file(&target, b"data").unwrap();
+            assert_eq!(mode_of(&dir), mode);
         }
+    }
+
+    #[test]
+    fn only_a_wide_non_sticky_directory_of_the_current_user_is_tightened() {
+        let facts = |mode, owner| DirFacts {
+            is_dir: true,
+            mode,
+            owner,
+        };
+        assert_eq!(tightened_dir_mode(&facts(0o40775, 501), 501), Some(0o755));
+        assert_eq!(tightened_dir_mode(&facts(0o40777, 501), 501), Some(0o755));
+        assert_eq!(tightened_dir_mode(&facts(0o41777, 501), 501), None);
+        assert_eq!(tightened_dir_mode(&facts(0o40755, 501), 501), None);
+        // Somebody else's directory is never chmodded, and is refused.
+        for owner in [0, 502] {
+            assert_eq!(tightened_dir_mode(&facts(0o40775, owner), 501), None);
+            let refusal = dir_verdict(&facts(0o40775, owner), 501).unwrap_err();
+            assert!(
+                refusal.contains("another user") || refusal.contains("chmod go-w"),
+                "{refusal}"
+            );
+        }
+        assert!(dir_verdict(&facts(0o41777, 502), 501)
+            .unwrap_err()
+            .contains("another user"));
+    }
+
+    #[test]
+    fn creating_the_private_dir_is_owner_only_and_leaves_an_existing_one_alone() {
+        let base = scratch("private-dir");
+        let fresh = base.join("a").join("b");
+
+        create_private_dir(&fresh).unwrap();
+
+        assert_eq!(mode_of(&fresh), 0o700);
+        assert_eq!(mode_of(&base.join("a")), 0o700);
+        fs::set_permissions(&fresh, fs::Permissions::from_mode(0o775)).unwrap();
+        create_private_dir(&fresh).unwrap();
+        assert_eq!(mode_of(&fresh), 0o775);
     }
 
     #[test]

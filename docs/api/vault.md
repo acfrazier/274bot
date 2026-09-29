@@ -156,11 +156,16 @@ group or by others; state that others can only read (written before the
 [script.md](script.md#persistence) for what restore does with a refusal.
 
 **Directory trust.** On Unix the immediate parent directory must be owned by
-this user or root and must not be writable by group or others (a sticky
-directory such as `/tmp` is accepted); otherwise the write is refused with
-`chmod go-w` guidance. A vault kept in a group-writable directory (for
-example one created under a `umask` of `002`) therefore needs that one
-`chmod`. Only the immediate parent is checked, not its ancestors.
+this user or root and must not be writable by group or others. A directory
+this user owns that group or others can write to (an install made under a
+`umask` of `002`, or by an older release) is tightened once, automatically,
+on the first save (`mode & !0o022`, for example `0775` becomes `0755`) and the
+result is re-checked, so an existing vault keeps saving without a manual
+`chmod`. A directory owned by another user, or by root when this user is not
+root, that others can write to is never modified and the write is refused with
+`chmod go-w` guidance. A sticky directory such as `/tmp` is accepted as it is.
+Only the immediate parent is checked, not its ancestors. The instance lock and
+first-run vault creation create a missing `~/.274bot` owner-only (`0700`).
 
 **Windows.** There are no mode bits to check and this crate reads and sets no
 ACLs: the file and its directory get whatever ACL the parent directory

@@ -162,7 +162,7 @@ pub fn resolve_instance_permit(
 pub fn try_acquire_instance_lock(kind: InstanceKind) -> io::Result<InstanceLockResult> {
     let path = instance_lock_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        vault::create_private_dir(parent)?;
     }
     let file = OpenOptions::new()
         .read(true)
