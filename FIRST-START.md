@@ -29,6 +29,13 @@ libx11-6 libx11-xcb1 libxcursor1 libxi6 libxkbcommon0 libxkbcommon-x11-0
 libwayland-client0 libwayland-cursor0 libvulkan1 mesa-vulkan-drivers`.
 `tui-play` needs only glibc and OpenSSL 3 (`libssl3t64`).
 
+On Windows, `panel-play` uses Vulkan and falls back to Direct3D 12 when
+Vulkan has no working GPU. It prefers the power-saving GPU, which on a laptop
+with two GPUs is the integrated one driving the screen. To choose otherwise,
+set `WGPU_BACKEND=dx12` (or `vulkan`) and `WGPU_POWER_PREF=high` before
+starting it. On some laptops `WGPU_POWER_PREF=high` makes the window stall
+for minutes at startup while the dedicated GPU's Direct3D driver loads.
+
 No Rust toolchain or local engine is needed for the public package. Game assets
 are fetched from the configured public server, and catalog scripts still come
 from your chosen rs2b0t checkout. Public login requires your own account.
