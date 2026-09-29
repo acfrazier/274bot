@@ -15,6 +15,9 @@ use host_play::{
     parse_profile_args, BundledNavIdentity, NavOrigin, ProfileOptions, SharedClientTemplate,
 };
 
+#[path = "support/upgrade_home.rs"]
+mod upgrade_home;
+
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 static CLIENTS: Mutex<()> = Mutex::new(());
 const ARCHIVES: [&str; 8] = [
@@ -1243,17 +1246,15 @@ fn missing_289_sidecar_and_missing_pack_keep_existing_refusals() {
     assert_eq!(missing.nav_load_counters().pack_reads, 0);
 }
 
-fn assert_external_old_pack_degrades_without_deleting_user_file(version: u8) {
+fn assert_external_old_pack_degrades_without_deleting_user_file(bytes: &[u8]) {
     let fixture = Fixture::new();
-    let pack = fixture.0.join(format!("old-v{version}.navpack"));
-    let mut bytes = tiny_v8_pack();
-    bytes[4] = version;
-    std::fs::write(&pack, &bytes).unwrap();
+    let pack = fixture.0.join(format!("old-v{}.navpack", bytes[4]));
+    std::fs::write(&pack, bytes).unwrap();
     write_nav_sidecar(
         &pack,
         289,
         CacheManifest::capture(289, &fixture.0).unwrap().identity(),
-        &bytes,
+        bytes,
     );
     let mut options = fixture.options(289);
     options.nav_pack = Some(pack.clone());
@@ -1274,14 +1275,72 @@ fn assert_external_old_pack_degrades_without_deleting_user_file(version: u8) {
     assert_eq!(std::fs::read(pack).unwrap(), bytes);
 }
 
+fn version_patched_pack(version: u8) -> Vec<u8> {
+    let mut bytes = tiny_v8_pack();
+    bytes[4] = version;
+    bytes
+}
+
 #[test]
 fn external_v8_pack_degrades_to_unavailable_without_deleting_user_file() {
-    assert_external_old_pack_degrades_without_deleting_user_file(8);
+    assert_external_old_pack_degrades_without_deleting_user_file(&version_patched_pack(8));
 }
 
 #[test]
 fn external_v9_pack_degrades_to_unavailable_without_deleting_user_file() {
-    assert_external_old_pack_degrades_without_deleting_user_file(9);
+    assert_external_old_pack_degrades_without_deleting_user_file(&version_patched_pack(9));
+}
+
+/// The pack 0.1.9.x wrote, byte for byte (`274V10` encoder output).
+#[test]
+fn external_real_v10_pack_degrades_to_unavailable_without_deleting_user_file() {
+    assert!(matches!(
+        nav::pack::decode(upgrade_home::V10_PACK),
+        Err(nav::pack::PackError::BadVersion(10))
+    ));
+    assert_external_old_pack_degrades_without_deleting_user_file(upgrade_home::V10_PACK);
+}
+
+/// Upgrading from 0.1.9.x: the stale v10 pack at the default home path never
+/// shadows the packaged v11 bundle, which binds, decodes once and is the one
+/// world every template shares; the user's file is left exactly as it was.
+/// Pointing `--nav-pack` / `NAV_PACK` at that old file is honoured over the
+/// bundle, and binds with navigation unavailable and a rebake diagnostic.
+#[test]
+fn packaged_v11_bundle_supersedes_a_stale_v10_home_pack() {
+    let home = upgrade_home::UpgradeHome::new();
+    let profile = home.bind(None);
+    assert!(
+        profile.nav_origin().is_bundled(),
+        "{:?}",
+        profile.nav_origin()
+    );
+    assert_eq!(
+        profile.nav_origin().path(),
+        home.resources.join("274bot.navpack")
+    );
+    assert_eq!(profile.nav_availability(), &NavAvailability::Bound);
+    assert_eq!(profile.nav_load_counters().pack_decodes, 1);
+    let world = profile.world().expect("the bundled world decodes");
+    let first = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let second = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    assert!(Arc::ptr_eq(&first.world().unwrap(), &world));
+    assert!(Arc::ptr_eq(&second.world().unwrap(), &world));
+    assert!(home.old_pack_untouched());
+
+    let overridden = home.bind(Some(home.old_pack.clone()));
+    assert!(!overridden.nav_origin().is_bundled());
+    let NavAvailability::Unavailable(message) = overridden.nav_availability() else {
+        panic!("an explicit v10 pack must leave navigation unavailable");
+    };
+    assert!(
+        message.contains("built by an older 274bot; rebuild it with nav-pack"),
+        "{message}"
+    );
+    assert!(overridden.world().is_none());
+    let template = SharedClientTemplate::load(overridden).unwrap();
+    assert!(template.world().is_none());
+    assert!(home.old_pack_untouched());
 }
 
 #[test]

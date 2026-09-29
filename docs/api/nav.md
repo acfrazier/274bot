@@ -200,17 +200,27 @@ and green quest rows never open a stage gate, and nav reads no journal.
 `WorldState::quest_gates(edge)` is three-valued. `True` (every value still
 possible lies inside every window) alone lets `find`/`find_with` take the edge.
 `False` (disjoint) and `Unknown` (no, stale or other-family evidence, or values
-straddling a bound) never do, however much the edge would save; the BankBudget
-diagnosis keeps them strict too. After a strict search fails,
-`router::find_unresolved_quest_gates` searches again crossing only `Unknown`
-gates and returns the ones its route needs, as values — the caller reads those
-journals, refreshes its provider and searches again. It returns `Ok(None)` when
-no evidence could help (for example a disproven window) and
-`Err(QuestFamilyMismatch)` for evidence from another quest family. The
+straddling a bound) never do, however much the edge would save. After a strict
+search fails, `router::find_unresolved_quest_gates` searches again crossing
+only `Unknown` gates and returns the ones its route needs, as values — the
+caller reads those journals, refreshes its provider and searches again. It
+returns `Ok(None)` when no evidence could help (for example a disproven window)
+and `Err(QuestFamilyMismatch)` for evidence from another quest family. The
 routing searches evaluate gates without allocating; only the failure diagnosis
 collects them.
 
-Runtime admission compares the pack with the selected manifest:
+The two diagnoses see across each other. When the BankBudget diagnosis
+(`find_missing_item_reqs`, which ignores only carry/wear gates) finds no route,
+it searches once more also crossing `Unknown` stage gates, and
+`find_unresolved_quest_gates` likewise falls back to also ignoring carry/wear
+gates. Each still reports only its own kind, so a door that needs a carried
+rope and an undecided stage names the rope in one and the stage window in the
+other; neither hides behind the other's gate. A `False` gate closes both.
+
+`QuestFamilyId::new(quest_facts_sha256, NonZeroU16)` is the only way to build
+a family: extractor schema 0 is malformed in a pack and cannot be constructed,
+so `encode` never writes a binding its decoder refuses. Runtime admission
+compares the pack with the selected manifest:
 `TransportGraph::admit_quest_family(&manifest_family)` refuses a pack baked
 against another family digest or extractor schema, or against none. The
 current bake consumes no quest family yet, so it binds none and emits no stage

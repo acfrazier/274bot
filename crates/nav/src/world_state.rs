@@ -142,17 +142,10 @@ impl WorldState {
 
     /// Every requirement except the quest-stage gates.
     pub(crate) fn snapshot_allows(&self, e: &TransportEdge) -> bool {
-        self.members_ok(e)
-            && e.skill_req
-                .iter()
-                .all(|&(skill, level)| self.stats.get(&skill).is_some_and(|&l| l >= level))
+        self.fixed_reqs_allow(e)
             && e.item_req
                 .iter()
                 .all(|&(id, n)| self.inv.get(&id).is_some_and(|&c| c >= n))
-            && e.quest_req.iter().all(|q| self.quests.contains(q))
-            && e.varp_req
-                .iter()
-                .all(|&(varp, min)| self.varps.get(&varp).is_some_and(|&v| v >= min))
             && (e.worn_req.is_empty() || e.worn_req.iter().any(|id| self.worn.contains(id)))
     }
 
@@ -163,6 +156,13 @@ impl WorldState {
     /// feeds it the search's relaxed gate) — [`find`] and [`find_with`]
     /// never skip a carry/wear gate.
     pub fn allows_without_carry_worn(&self, e: &TransportEdge) -> bool {
+        self.fixed_reqs_allow(e) && self.quest_gates(e) == Truth::True
+    }
+
+    /// The requirements neither a bank trip nor a journal read can supply:
+    /// membership, skill levels, completed quests and varp thresholds.
+    /// Everything but `item_req`/`worn_req` and the quest-stage gates.
+    pub(crate) fn fixed_reqs_allow(&self, e: &TransportEdge) -> bool {
         self.members_ok(e)
             && e.skill_req
                 .iter()
@@ -171,7 +171,6 @@ impl WorldState {
             && e.varp_req
                 .iter()
                 .all(|&(varp, min)| self.varps.get(&varp).is_some_and(|&v| v >= min))
-            && self.quest_gates(e) == Truth::True
     }
 
     fn members_ok(&self, e: &TransportEdge) -> bool {

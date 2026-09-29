@@ -61,6 +61,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::io::{self, Cursor, Read};
+use std::num::NonZeroU16;
 use std::path::Path;
 
 use api::selected::{FactKey, FactStrings, InclusiveRange, QuestGate, StageWindow};
@@ -616,14 +617,14 @@ fn write_quest_family(out: &mut Vec<u8>, family: Option<&QuestFamilyId>) {
         None => out.push(0),
         Some(family) => {
             out.push(1);
-            out.extend_from_slice(&family.quest_facts_sha256);
-            out.extend_from_slice(&family.quest_extractor_schema.to_le_bytes());
+            out.extend_from_slice(family.quest_facts_sha256());
+            out.extend_from_slice(&family.quest_extractor_schema().get().to_le_bytes());
         }
     }
 }
 
-/// Read the header's quest-family binding; extractor schema 0 is never
-/// emitted by the generator, so it is malformed rather than "no schema".
+/// Read the header's quest-family binding; no [`QuestFamilyId`] has
+/// extractor schema 0, so it is malformed rather than "no schema".
 fn read_quest_family(r: &mut Cursor<&[u8]>) -> Result<Option<QuestFamilyId>, PackError> {
     match read_u8(r)? {
         0 => Ok(None),
@@ -631,16 +632,12 @@ fn read_quest_family(r: &mut Cursor<&[u8]>) -> Result<Option<QuestFamilyId>, Pac
             let mut quest_facts_sha256 = [0u8; 32];
             r.read_exact(&mut quest_facts_sha256)
                 .map_err(|_| PackError::Truncated)?;
-            let quest_extractor_schema = read_u16(r)?;
-            if quest_extractor_schema == 0 {
-                return Err(PackError::BadLength(
-                    "quest family extractor schema is 0".into(),
-                ));
-            }
-            Ok(Some(QuestFamilyId {
+            let quest_extractor_schema = NonZeroU16::new(read_u16(r)?)
+                .ok_or_else(|| PackError::BadLength("quest family extractor schema is 0".into()))?;
+            Ok(Some(QuestFamilyId::new(
                 quest_facts_sha256,
                 quest_extractor_schema,
-            }))
+            )))
         }
         other => Err(PackError::BadLength(format!(
             "quest family binding tag {other} is not 0 or 1"
