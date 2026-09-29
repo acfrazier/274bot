@@ -4658,9 +4658,13 @@ fn init_panel_running(
     let boot = match host_play::memory::Config::from_env() {
         Ok(Some(config)) => {
             client::profiling::enable();
-            if let Err(error) =
-                host_play::memory::require_live_benchmark(state.session.profile_class())
-            {
+            // The profile is not bound yet (an unbound session reads as
+            // Remote), so check the class of the profile it will bind.
+            let class = state
+                .session
+                .resolve_profile()
+                .map(|profile| profile.profile_class());
+            if let Err(error) = class.and_then(host_play::memory::require_live_benchmark) {
                 eprintln!("FAIL: {error}");
                 std::process::exit(1);
             }
