@@ -2638,31 +2638,9 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             }
             // The passphrase has done its job; do not keep it through the run.
             drop(pass);
-            if !vault_exists {
-                // First run: create the default `test`/`test` profile so
-                // unlock is not a dead end (host-play CLI convention).
-                session.create_profile("test")?;
-            }
-            // `--user` names may not exist: create them like host-play
-            // does (`password = username`, fresh uid).
-            for u in &args.users {
-                if session.core.vault().is_none_or(|v| v.get(u).is_none()) {
-                    session.create_profile(u)?;
-                }
-            }
-            session.names = session
-                .core
-                .vault()
-                .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-                .unwrap_or_default();
-            let focus = args
-                .users
-                .first()
-                .cloned()
-                .or_else(|| session.names.first().cloned());
-            let Some(focus) = focus else {
-                return Err("vault has no profiles (create one with host-play --user)".into());
-            };
+            // A fresh vault starts empty: no seeded `test` profile (M-311).
+            // Pass `--user` (or use host-play) to create the first profile.
+            let focus = session.bootstrap_interactive_profiles(&args.users)?;
             session.load_and_login(&focus);
             session.focus(&focus);
             let mut app = TuiApp::new(format!(
@@ -2678,8 +2656,31 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
 }
 
 impl TuiSession {
-    /// Create a missing profile (host-play CLI convention: password =
-    /// username, uid one past the vault's max, from the 274M base).
+    /// Profiles for an interactive boot: create missing `--user` names,
+    /// then focus the first `--user` (or the vault's first profile). A
+    /// fresh vault stays empty — no seeded `test` profile (M-311) — so
+    /// booting one without `--user` is an honest error, not a dead end.
+    fn bootstrap_interactive_profiles(&mut self, users: &[String]) -> Result<String, String> {
+        // `--user` names may not exist: create them like host-play does.
+        for u in users {
+            if self.core.vault().is_none_or(|v| v.get(u).is_none()) {
+                self.create_profile(u)?;
+            }
+        }
+        self.names = self
+            .core
+            .vault()
+            .map(|v| v.profiles().map(|p| p.username.clone()).collect())
+            .unwrap_or_default();
+        users
+            .first()
+            .cloned()
+            .or_else(|| self.names.first().cloned())
+            .ok_or_else(|| "vault has no profiles (create one with host-play --user)".into())
+    }
+
+    /// Create a missing profile (fresh game secret, uid one past the
+    /// vault's max, from the 274M base).
     fn create_profile(&mut self, username: &str) -> Result<(), String> {
         let uid = self
             .core
