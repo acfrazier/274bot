@@ -577,7 +577,7 @@ impl Scripts {
             PendingStart {
                 card: PendingCard::Loaded(Box::new(card.clone())),
                 kind: StartKind::Reload,
-                batch: None,
+                tallied: false,
             },
         );
         Ok(())

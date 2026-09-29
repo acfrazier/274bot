@@ -314,8 +314,13 @@ are affected. MultiBox rail **Start all / Start selected / Stop all** are
 script bulk controls (not login): Start all and Start on marked bots start
 one bot per frame instead of all at once, waiting rows show `queued k/n`,
 and Start selected with a heading card starts that card on every marked
-row. Stop and Stop all cancel bots that are still waiting; Stop all also
-stops running and paused wall members and live slots.
+row. One running report (banner and fleet report) counts every bot once as
+started, queued, skipped or failed while any bot of it still waits or sets
+up, so a second click joins it instead of hiding the first click's results;
+each skipped or failed bot also gets a line in its log. Stop and Stop all
+cancel bots that are still waiting (Stop on marked rows reports them as
+cancelled); Stop all also stops running and paused wall members and live
+slots.
 Parameters **Edit** is live for a loaded card with a settings schema
 (typed editors honour `showIf` / `group`; File Load parses
 `export const SETTINGS` with no V8) and writes the focused profile’s vault

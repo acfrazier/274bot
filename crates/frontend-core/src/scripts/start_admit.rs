@@ -4,7 +4,6 @@
 
 use std::collections::VecDeque;
 
-use super::{BulkId, StartKind};
 use crate::views::QueuePlace;
 
 /// One Start-all (or marked bulk) Start may be dispatched per operator
@@ -32,7 +31,6 @@ pub(super) enum StartPermit {
 pub(super) struct QueuedStart {
     pub profile: String,
     pub sel: script::ScriptSel,
-    pub kind: StartKind,
     /// When set, a grant is refused if the profile's saved assignment no
     /// longer names this selection (Start all / assignment-backed marked
     /// Start). Explicit-card marked Starts leave this `None` (pinned).
@@ -42,8 +40,6 @@ pub(super) struct QueuedStart {
     pub latched: bool,
     /// Whether the slot had an arm at enqueue. Losing it is a disconnect.
     pub had_arm: bool,
-    /// The click that enqueued this place. Credits go to that tally.
-    pub batch: BulkId,
 }
 
 #[derive(Debug, Default)]

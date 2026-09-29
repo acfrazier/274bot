@@ -1902,6 +1902,56 @@ fn start_all_lists_a_member_whose_setup_fails_after_the_click() {
     play.script_stop("alice");
 }
 
+/// A Start all that lands while marked rows still wait joins their report:
+/// the fleet report keeps following it, and a marked row whose setup fails
+/// afterwards stays listed there and on the banner.
+#[test]
+fn fleet_report_follows_a_start_all_that_lands_while_marked_rows_wait() {
+    let (mut s, dir) = session_with_play(&["alice", "bob", "carol", "dave"]);
+    let good_path = write_bot(&dir, "good.ts", BOT_TS);
+    let bad_path = write_bot(
+        &dir,
+        "bad.ts",
+        "throw new Error('bulk-load-proof');\nexport function tick(api) {}\n",
+    );
+    let good = s.scripts.js.load(&good_path).unwrap();
+    let bad = s.scripts.js.load(&bad_path).unwrap();
+    for name in ["alice", "bob", "dave"] {
+        s.persist_successful_assignment(name, good.assignment());
+    }
+    s.persist_successful_assignment("carol", bad.assignment());
+    for name in ["alice", "bob", "carol"] {
+        let identity = s.core.profile_identity(name).unwrap();
+        s.fleet_selection.set(identity, true);
+    }
+
+    s.fleet_start_selected();
+    assert_eq!(
+        s.fleet_report.as_deref(),
+        Some("Start selected: started 1, queued 2, skipped 0")
+    );
+    s.script_start_all();
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Start all: started 2, queued 2, skipped 0"),
+        "the Start all counts the rows still waiting from the marked Start"
+    );
+    settle(&mut s);
+    let report = s.fleet_report.clone().unwrap_or_default();
+    assert!(
+        report.starts_with("Start all: started 3, skipped 0, failed 1: carol: ")
+            && report.contains("bulk-load-proof"),
+        "{report}"
+    );
+    assert_eq!(s.error.as_deref(), Some(report.as_str()));
+    let play = s.core.play().unwrap();
+    for name in ["alice", "bob", "dave"] {
+        assert_eq!(play.script_state(name), script::RunState::Running, "{name}");
+        play.script_stop(name);
+    }
+    assert_eq!(play.script_state("carol"), script::RunState::Idle);
+}
+
 #[test]
 fn catalog_native_stop_skips_target_and_reloads_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);

@@ -149,11 +149,13 @@ impl Session {
         self.scripts.stop_all(&mut self.core);
         self.apply_script_notice();
     }
-    /// Start the selected card across the marked fleet rows and retain one
-    /// operator-facing report rather than replacing it with per-row banners.
+
+    /// Start the selected card across the marked fleet rows. The fleet
+    /// report then follows the running Start report, which also covers a
+    /// Start all that lands while these rows still wait.
     pub fn fleet_start_selected(&mut self) {
         let root = self.start_catalog_root();
-        let _ = frontend_core::start_marked(
+        frontend_core::start_marked(
             &self.fleet_selection,
             &mut self.core,
             &mut self.scripts,
@@ -161,7 +163,8 @@ impl Session {
             root.as_deref(),
         );
         self.apply_script_notice();
-        self.fleet_report = self.scripts.last_bulk_report().map(str::to_string);
+        self.fleet_report_follows_start = true;
+        self.follow_fleet_report();
     }
 
     /// Stop marked rows through the shared core stop path. The core skips
@@ -170,6 +173,7 @@ impl Session {
         let report =
             frontend_core::stop_marked(&self.fleet_selection, &mut self.core, &mut self.scripts);
         self.apply_script_notice();
+        self.fleet_report_follows_start = false;
         self.fleet_report = Some(report.summary());
     }
 
@@ -185,10 +189,23 @@ impl Session {
             }
         }
         self.apply_script_notice();
-        if let Some(report) = self.scripts.last_bulk_report() {
-            if report.starts_with("Start selected") {
-                self.fleet_report = Some(report.to_string());
+        if self.fleet_report_follows_start {
+            self.follow_fleet_report();
+        }
+    }
+
+    /// Copy the latest bulk report into the fleet report when it changed.
+    fn follow_fleet_report(&mut self) {
+        let Some(report) = self.scripts.last_bulk_report() else {
+            return;
+        };
+        match &mut self.fleet_report {
+            Some(shown) if shown == report => {}
+            Some(shown) => {
+                shown.clear();
+                shown.push_str(report);
             }
+            None => self.fleet_report = Some(report.to_string()),
         }
     }
 

@@ -40,7 +40,7 @@ pub use profile_form::{FormNotice, ProfileFormSave, SavedProfile, NOTHING_SAVED}
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use selection::{
-    start_marked, stop_marked, BulkAction, BulkReport, BulkSkip, MarkedSelection, ProfileIdentity,
+    start_marked, stop_marked, BulkSkip, MarkedSelection, ProfileIdentity, StopReport,
 };
 pub use session::{
     ArmMirror, OperatorSession, Removal, ScriptStart, Selection, SlotTransition, StartSettled,

@@ -6,7 +6,7 @@
 //! removes its identity from the selection, while renaming leaves it marked.
 
 use std::collections::BTreeSet;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::path::Path;
 
 use crate::scripts::Scripts;
@@ -127,22 +127,6 @@ impl MarkedSelection {
     }
 }
 
-/// Which command a marked fleet action issued.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BulkAction {
-    Start,
-    Stop,
-}
-
-impl BulkAction {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Start => "Start selected",
-            Self::Stop => "Stop selected",
-        }
-    }
-}
-
 /// One marked row that could not accept a bulk command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BulkSkip {
@@ -150,78 +134,53 @@ pub struct BulkSkip {
     pub reason: String,
 }
 
-/// One report for a marked command. Every requested row is either counted as
-/// accepted or appears once in `skipped`; no per-row banner replaces this
-/// summary.
+/// The report of Stop on marked rows. Every marked row is counted once:
+/// stopped, cancelled (it was still waiting for its Start) or skipped.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BulkReport {
-    pub action: BulkAction,
-    pub requested: usize,
-    pub affected: usize,
+pub struct StopReport {
+    pub stopped: usize,
+    pub cancelled: usize,
     pub skipped: Vec<BulkSkip>,
 }
 
-impl BulkReport {
+impl StopReport {
     pub fn summary(&self) -> String {
-        let verb = match self.action {
-            BulkAction::Start => "started",
-            BulkAction::Stop => "stopped",
-        };
-        let mut text = format!(
-            "{}: {} {}, skipped {}",
-            self.action.label(),
-            verb,
-            self.affected,
-            self.skipped.len()
-        );
-        if !self.skipped.is_empty() {
-            text.push_str(": ");
-            for (index, skip) in self.skipped.iter().enumerate() {
-                if index > 0 {
-                    text.push_str(", ");
-                }
-                text.push_str(&skip.profile);
-                text.push_str(": ");
-                text.push_str(&skip.reason);
-            }
+        let mut text = format!("Stop selected: stopped {}", self.stopped);
+        if self.cancelled > 0 {
+            let _ = write!(text, ", cancelled {}", self.cancelled);
+        }
+        let _ = write!(text, ", skipped {}", self.skipped.len());
+        let mut sep = ": ";
+        for skip in &self.skipped {
+            let _ = write!(text, "{sep}{}: {}", skip.profile, skip.reason);
+            sep = ", ";
         }
         text
     }
 }
 
-impl fmt::Display for BulkReport {
+impl fmt::Display for StopReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.summary())
     }
 }
 
 /// Start the selected card (or each profile's saved assignment when `card` is
-/// `None`) on marked profiles. The existing per-profile `Scripts` API remains
-/// the command path; this function only freezes the marked scope and folds a
-/// single report.
+/// `None`) on marked profiles. Eligible rows wait for the same paced permit
+/// as Start all; the running Start report ([`Scripts::last_bulk_report`])
+/// names each row as it is started, skipped or failed.
 pub fn start_marked<Io>(
     selection: &MarkedSelection,
     core: &mut OperatorSession<Io>,
     scripts: &mut Scripts,
     card: Option<&script::ScriptSel>,
     catalog_root: Option<&Path>,
-) -> BulkReport {
-    let mut report = BulkReport {
-        action: BulkAction::Start,
-        requested: selection.len(),
-        affected: 0,
-        skipped: Vec::new(),
-    };
-    let batch = scripts.open_bulk("Start selected");
+) {
+    scripts.open_tally("Start selected");
     let profiles = profile_rows(core);
     for identity in selection.iter() {
         let Some((name, _)) = profiles.iter().find(|(_, id)| *id == identity) else {
-            report.skipped.push(BulkSkip {
-                profile: format!("profile#{}", identity.raw()),
-                reason: "profile unavailable".into(),
-            });
-            scripts.bulk_skip(
-                batch,
+            scripts.tally_skip_unavailable(
                 &format!("profile#{}", identity.raw()),
                 "profile unavailable",
             );
@@ -230,64 +189,39 @@ pub fn start_marked<Io>(
         if scripts.start_queue_place(name).is_some() {
             continue;
         }
-        if core.play().is_none() {
-            report.skipped.push(skip(name, "no play"));
-            scripts.bulk_fail(batch, name, "no play");
-            continue;
-        }
         if script_active(core, name) {
-            report.skipped.push(skip(name, "script already active"));
-            scripts.bulk_skip(batch, name, "already active");
+            scripts.tally_skip(name, "already active");
             continue;
         }
         let result = match card {
-            Some(card) => scripts.queue_start(
-                core,
-                name,
-                card.clone(),
-                crate::scripts::StartKind::Start,
-                None,
-                batch,
-            ),
+            Some(card) => scripts.queue_start(core, name, card.clone(), None),
             None => match Scripts::assignment(core, name)
                 .and_then(|a| crate::scripts::sel_from_assignment(&a))
             {
-                Some(sel) => scripts.queue_start(
-                    core,
-                    name,
-                    sel.clone(),
-                    crate::scripts::StartKind::Start,
-                    Some(sel),
-                    batch,
-                ),
+                Some(sel) => scripts.queue_start(core, name, sel.clone(), Some(sel)),
                 None => Err("no assignment".to_string()),
             },
         };
-        match result {
-            Ok(()) => report.affected += 1,
-            Err(reason) => {
-                scripts.bulk_fail(batch, name, reason.as_str());
-                report.skipped.push(skip(name, reason));
-            }
+        if let Err(reason) = result {
+            scripts.tally_fail(name, &reason);
         }
     }
     scripts.admit_starts(core, catalog_root);
     scripts.publish_bulk();
-    report
 }
 
 /// Stop the selected profiles through [`OperatorSession::stop_scripts`]. A
 /// row already stopping is not sent a duplicate command; a repeated command
 /// therefore reports an ineligible row rather than enqueueing another stop.
+/// A row still waiting for its Start is cancelled, not stopped.
 pub fn stop_marked<Io>(
     selection: &MarkedSelection,
     core: &mut OperatorSession<Io>,
     scripts: &mut Scripts,
-) -> BulkReport {
-    let mut report = BulkReport {
-        action: BulkAction::Stop,
-        requested: selection.len(),
-        affected: 0,
+) -> StopReport {
+    let mut report = StopReport {
+        stopped: 0,
+        cancelled: 0,
         skipped: Vec::new(),
     };
     let profiles = profile_rows(core);
@@ -311,7 +245,7 @@ pub fn stop_marked<Io>(
             script::RunState::Stopping => report.skipped.push(skip(name, "already stopping")),
             script::RunState::Idle | script::RunState::Error => {
                 if scripts.cancel_queued(name) {
-                    report.affected += 1;
+                    report.cancelled += 1;
                 } else {
                     report.skipped.push(skip(name, "no script"));
                 }
@@ -320,7 +254,7 @@ pub fn stop_marked<Io>(
     }
     if !candidates.is_empty() {
         let (_, stopped) = core.stop_scripts(&candidates);
-        report.affected += stopped;
+        report.stopped = stopped;
     }
     scripts.publish_start_places(core);
     report
