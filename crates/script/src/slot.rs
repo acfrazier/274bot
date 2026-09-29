@@ -816,13 +816,22 @@ impl SlotScript {
     /// (onStop hook plus the 2 s cap) runs on a reaper; observe completes
     /// it. Compiled teardown still runs on this thread.
     pub fn stop(&mut self) {
+        self.stop_with_reason(StopReason::Operator, "operator stop");
+    }
+
+    /// Retire a removed slot, distinct from the operator's Stop command.
+    pub fn stop_removed(&mut self) {
+        self.stop_with_reason(StopReason::Removed, "removed");
+    }
+
+    fn stop_with_reason(&mut self, reason: StopReason, message: &'static str) {
         let native = self.compiled.is_some() || self.preparing.is_some();
         if native {
             self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
                 runtime_generation: self.control_generation.max(self.runtime_generation),
                 state: ScriptTerminalState::Cancelled,
                 tick: self.ticks,
-                reason: "operator stop".into(),
+                reason: message.into(),
             });
         }
         self.control_generation = self.control_generation.saturating_add(1);
@@ -849,6 +858,7 @@ impl SlotScript {
             return;
         }
         self.last_error = None;
+        self.teardown_compiled(reason);
         #[cfg(feature = "load")]
         {
             self.active_tick_error_generation = None;

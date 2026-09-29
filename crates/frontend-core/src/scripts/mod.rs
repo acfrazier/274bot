@@ -401,10 +401,14 @@ impl Scripts {
         mirror: ArmMirror,
         edit: impl FnOnce(&mut vault::ProfileSettings),
     ) -> Result<OperationId, String> {
-        let result = match core
-            .vault()
-            .map(|_| core.profile_for_edit(profile).cloned())
-        {
+        let result = core.vault().map(|vault| {
+            if matches!(mirror, ArmMirror::NativeSettings { .. }) {
+                core.profile_for_edit(profile).cloned()
+            } else {
+                vault.get(profile).cloned()
+            }
+        });
+        let result = match result {
             None => Err("script: vault locked".to_string()),
             Some(None) => Err(format!("script: no profile {profile}")),
             Some(Some(mut row)) => {
@@ -920,10 +924,18 @@ impl Scripts {
                             |settings| {
                                 settings.script_assignment = Some(script::compiled_assignment(id));
                                 if settings.script_settings.get(&key).is_none_or(Map::is_empty) {
+                                    let schema_version =
+                                        if settings.script_settings.contains_key(&key) {
+                                            1 // Empty legacy envelopes are schema 1.
+                                        } else {
+                                            script::compiled_card(id)
+                                                .expect("registered card")
+                                                .schema_version
+                                        };
                                     settings.script_settings.insert(
                                         key,
                                         vault::CompiledSettingsRecord {
-                                            schema_version: 1,
+                                            schema_version,
                                             values: Map::new(),
                                         }
                                         .into_entry(),

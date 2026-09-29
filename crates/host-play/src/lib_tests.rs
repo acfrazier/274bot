@@ -5424,9 +5424,8 @@ fn fenced_script_stop_requires_same_identity_and_generation() {
 
 #[test]
 fn script_start_unknown_compiled_id_errors_without_v8() {
-    // `script::factory` returns `None` for every picker id until the
-    // script is ported (WalkTo is the first port; BoneBurier is not
-    // yet); Start must surface that, never a dummy.
+    // Unported picker ids have no compiled registry card. Start must
+    // surface that absence, never install a dummy.
     let _play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),

@@ -1071,21 +1071,9 @@ fn native_settings_wait_for_durability_and_remain_per_account() {
 }
 
 #[test]
-fn native_settings_reply_loses_to_stop_and_to_profile_recreation() {
+fn native_settings_reply_loses_to_profile_recreation() {
     let mut f = native_fixture("native-stale-preparation", &["alice"]);
     start_sherlock(&mut f, "alice");
-    save_native_partner(&mut f, "alice", "Stale");
-    f.core.stop_script("alice");
-    f.core.flush_writes();
-    assert_eq!(
-        f.core
-            .durable_profile("alice")
-            .unwrap()
-            .settings
-            .clue_duel_partner,
-        ""
-    );
-
     let mut replacement = f.core.vault().unwrap().get("alice").unwrap().clone();
     replacement.settings = ProfileSettings::default();
     f.scripts
@@ -1112,6 +1100,128 @@ fn native_settings_reply_loses_to_stop_and_to_profile_recreation() {
         f.core.durable_profile("alice").unwrap().settings,
         ProfileSettings::default()
     );
+}
+
+#[test]
+fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
+    for restart in [false, true] {
+        let mut f = native_fixture("native-form-control-race", &["alice"]);
+        start_sherlock(&mut f, "alice");
+        let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+        row.password = "updated-password".into();
+        row.settings.clue_duel_partner = "Bob".into();
+        let live = f
+            .scripts
+            .profile_save_live(&f.core, "alice", &row.settings)
+            .unwrap();
+        let op = f
+            .core
+            .save_profile(row, crate::ArmMirror::Remember(Some(live)), "form")
+            .unwrap();
+        f.core.stop_script("alice");
+        if restart {
+            f.core
+                .start_script(
+                    "alice",
+                    crate::ScriptStart::Compiled {
+                        id: script::CompiledId("Sherlock"),
+                        bag: Map::new(),
+                    },
+                    None,
+                )
+                .unwrap();
+        }
+        f.core.flush_writes();
+        let saved = f.core.durable_profile("alice").unwrap();
+        assert_eq!(saved.password, "updated-password");
+        assert_eq!(saved.settings.clue_duel_partner, "Bob");
+        assert!(
+            matches!(f.core.take_settings_writes().as_slice(), [super::SettingsWrite {
+            op: saved_op, result: super::SettingsResult::Saved(super::LiveDelivery::Stale), ..
+        }] if *saved_op == op)
+        );
+    }
+}
+
+#[test]
+fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
+    for writer in ["assignment", "ready", "loaded"] {
+        let mut f = native_fixture("native-draft-isolation", &["alice"]);
+        let id = script::CompiledId("Sherlock");
+        if writer == "ready" {
+            f.scripts
+                .start_sel(
+                    &mut f.core,
+                    "alice",
+                    script::ScriptSel::Compiled(id),
+                    None,
+                    super::StartKind::Start,
+                )
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while f.state("alice") != script::RunState::Running {
+                assert!(Instant::now() < deadline);
+                f.core.poll();
+                std::thread::yield_now();
+            }
+        }
+        f.scripts
+            .set_compiled_overrides(&mut f.core, "alice", id, bag(&[("unknown", json!(1))]))
+            .unwrap();
+        if writer == "ready" {
+            f.scripts.poll(&mut f.core);
+        } else if writer == "loaded" {
+            let card = f.card("other.ts", LOOPING);
+            f.set("alice", &card, "target", json!("Guard"));
+        } else {
+            assert!(f.scripts.persist_assignment(
+                &mut f.core,
+                "alice",
+                script::compiled_assignment(id)
+            ));
+        }
+        f.core.flush_writes();
+        let entry = f.saved_bag("alice", &script::compiled_identity_key(id));
+        assert!(entry
+            .as_ref()
+            .is_none_or(|entry| entry["values"].get("unknown").is_none()));
+        assert!(f
+            .core
+            .take_write_failures()
+            .iter()
+            .any(|error| error.contains("unknown")));
+        f.core.stop_script("alice");
+        start_sherlock(&mut f, "alice");
+    }
+}
+
+#[test]
+fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
+    let mut f = native_fixture("native-form-preparation-failure", &["alice"]);
+    start_sherlock(&mut f, "alice");
+    let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+    row.password = "new-password".into();
+    row.settings.clue_duel_partner = "Bob".into();
+    let mut live = f
+        .scripts
+        .profile_save_live(&f.core, "alice", &row.settings)
+        .unwrap();
+    live.bag = std::sync::Arc::new(bag(&[("unknown", json!(1))]));
+    f.core
+        .save_profile(row, crate::ArmMirror::Remember(Some(live)), "form")
+        .unwrap();
+    f.core.flush_writes();
+    let disk = Vault::unlock(&f.dir.join("vault"), "bot").unwrap();
+    let saved = disk.get("alice").unwrap();
+    assert_eq!(saved.password, "new-password");
+    assert_eq!(saved.settings.clue_duel_partner, "Bob");
+    assert!(matches!(
+        f.core.take_settings_writes().as_slice(),
+        [super::SettingsWrite {
+            result: super::SettingsResult::Saved(super::LiveDelivery::Rejected(_)),
+            ..
+        }]
+    ));
 }
 
 #[test]

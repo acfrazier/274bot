@@ -36,8 +36,8 @@ retain the previous assignment and report a structured rejection.
 `NativeTick` borrows the frame/evidence/pin/recovery views and the shared
 status/paint/log output. Native instances allocate no isolate. Status and paint
 are shared on change; focused detail retains rich status while fleet rows remain
-scalar. An unused slot allocates no native instance, preparation or retained
-cell.
+scalar. A slot that has never attempted a native Start allocates no native
+instance, preparation or retained cell; a rejected Start may retain its cell.
 
 The typed action-machine facility is a separate cutover: begins/polls still
 refuse with `ActionError::Unavailable`; this registration implementation does
@@ -178,6 +178,12 @@ incarnation/run/session, and reports Applied, PendingBoundary, RestartRequired,
 Unchanged, Stale or rejection separately from the save. Pending-boundary
 acknowledgements must name the latest revision; restart-required drafts never
 become effective just because they were saved.
+
+Only native parameter edits compose over an unvalidated draft; assignments,
+Start-Ready commits and Loaded-card edits use the durable-staged profile.
+Profile-form credentials and partner fields persist independently of native
+preparation. Their live bag prepares only after a successful save; Stop or a
+replacement Start makes delivery Stale without cancelling that save.
 
 Native Apply to all uses the same coordinator as loaded cards. Its confirmation
 and result identify excluded per-account fields for each target. Full copy
