@@ -732,13 +732,20 @@ impl DuelAdmission {
     }
 
     /// Slots outside the head request's pair that have not reported clear
-    /// since it was made.
+    /// since it was made. For the summary record only; the grant uses
+    /// [`Self::has_unreported`], which allocates nothing under the lock.
     fn unreported_for(&self, request: &DuelStartRequest) -> Vec<usize> {
         (0..self.slots.len())
-            .filter(|&other| {
-                other / 2 != request.slot / 2 && !self.clear_since(other, request.epoch)
-            })
+            .filter(|&other| self.unreported(other, request))
             .collect()
+    }
+
+    fn has_unreported(&self, request: &DuelStartRequest) -> bool {
+        (0..self.slots.len()).any(|other| self.unreported(other, request))
+    }
+
+    fn unreported(&self, other: usize, request: &DuelStartRequest) -> bool {
+        other / 2 != request.slot / 2 && !self.clear_since(other, request.epoch)
     }
 }
 
@@ -834,7 +841,7 @@ impl DuelPairGate {
             state.starts.push_back(DuelStartRequest { slot, epoch });
         }
         let head = state.starts.front().expect("a request was just queued");
-        if head.slot != slot || !state.unreported_for(head).is_empty() {
+        if head.slot != slot || state.has_unreported(head) {
             return StartPermit::Wait;
         }
         state.starts.pop_front();
