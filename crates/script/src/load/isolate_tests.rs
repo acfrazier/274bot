@@ -1495,3 +1495,39 @@ fn a_callback_may_start_another_machine_mid_step() {
     );
     iso.join();
 }
+
+// M-187: a top-level synchronous runMachine kick must not drain
+// microtasks the caller queued before the call. Frozen order is B,A.
+#[test]
+fn a_synchronous_kick_does_not_run_unrelated_microtasks() {
+    let iso = LoadIsolate::spawn(
+        "import { runMachine } from '../../shim/_kernel.js';
+             globalThis.runMachine = runMachine;
+             export default class T extends LoopingBot {
+             loop() {}
+             }"
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    wait_ready(&iso);
+    iso.probe(
+        "(() => {
+             globalThis.__order = [];
+             Promise.resolve().then(() => globalThis.__order.push('A'));
+             globalThis.runMachine('kicked', { done: true }, { each() { return 0; } });
+             globalThis.__order.push('B');
+             return globalThis.__order;
+         })()",
+    )
+    .expect("kick probe");
+    // The caller's turn has finished; drain whatever the kick left queued.
+    machine_tick(&iso, 1);
+    assert_eq!(
+        iso.probe("globalThis.__order").unwrap(),
+        serde_json::json!(["B", "A"]),
+        "unrelated microtasks must run after the caller continues, not inside the kick"
+    );
+    iso.join();
+}

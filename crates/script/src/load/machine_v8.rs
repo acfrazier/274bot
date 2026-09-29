@@ -7,8 +7,9 @@
 //!   (`undefined` while the machine runs).
 //! - [`step`] is the isolate thread's per-tick step, with script callbacks
 //!   invoked through the one callback path (`callback_v8`), each followed
-//!   by a microtask checkpoint; a promise still pending is held and its
-//!   state polled.
+//!   by a microtask checkpoint; a kick polls the callback promise without
+//!   draining unrelated queued microtasks. A promise still pending is
+//!   held and its state polled.
 //! - [`resume_callbacks`] runs after the tick's pump; [`settle_waits`]
 //!   then resolves awaits for rows that ended in the same tick
 //!   (`__rs2b0t_settle_machines`).
@@ -189,7 +190,9 @@ impl machine::Js for ScopeJs<'_, '_> {
     }
 
     fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called {
-        call_hook(self.scope, hook, args)
+        // Nested in the caller's JS: draining the isolate queue here would
+        // run unrelated microtasks before the caller continues (M-187).
+        call_hook(self.scope, hook, args, false)
     }
 
     fn poll(&mut self, pending: &Pending) -> Option<Reply> {
@@ -219,7 +222,7 @@ impl machine::Js for RuntimeJs<'_> {
     fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called {
         let called = {
             let scope = &mut self.runtime.deno_runtime().handle_scope();
-            call_hook(scope, hook, args)
+            call_hook(scope, hook, args, true)
         };
         // `drive` found the pass unhalted just before this call. A
         // terminate armed since then hit this call's own JS: its
@@ -241,7 +244,12 @@ impl machine::Js for RuntimeJs<'_> {
     }
 }
 
-fn call_hook(scope: &mut v8::HandleScope, hook: Option<&HeldCallback>, args: &[Value]) -> Called {
+fn call_hook(
+    scope: &mut v8::HandleScope,
+    hook: Option<&HeldCallback>,
+    args: &[Value],
+    drain_microtasks: bool,
+) -> Called {
     let Some(hook) = hook else {
         return Called::Settled(Reply::Threw(Thrown::new("undeclared machine callback")));
     };
@@ -259,7 +267,7 @@ fn call_hook(scope: &mut v8::HandleScope, hook: Option<&HeldCallback>, args: &[V
     let value = match callback.call(scope, &argv) {
         Ok(value) => value,
         Err(Throw::Value(exception)) => {
-            if checkpoint_terminated(scope) {
+            if checkpoint_terminated(scope, drain_microtasks) {
                 return Called::Terminated;
             }
             return Called::Settled(Reply::Threw(thrown(scope, exception)));
@@ -268,7 +276,7 @@ fn call_hook(scope: &mut v8::HandleScope, hook: Option<&HeldCallback>, args: &[V
         Err(Throw::Terminated) => return Called::Terminated,
     };
     let Ok(promise) = v8::Local::<v8::Promise>::try_from(value) else {
-        if checkpoint_terminated(scope) {
+        if checkpoint_terminated(scope, drain_microtasks) {
             return Called::Terminated;
         }
         return Called::Settled(settled_value(scope, value));
@@ -281,19 +289,29 @@ fn call_hook(scope: &mut v8::HandleScope, hook: Option<&HeldCallback>, args: &[V
         promise.catch(scope, noop);
     }
     // An `await` on something already settled resumes here, as it
-    // would in the frozen driver's own microtask flush.
-    if checkpoint_terminated(scope) {
+    // would in the frozen driver's own microtask flush. A kick skips
+    // the isolate drain and polls this promise instead (M-187).
+    if checkpoint_terminated(scope, drain_microtasks) {
         return Called::Terminated;
     }
     Called::Pending(v8::Global::new(scope, promise))
 }
 
-/// Run the callback's microtasks. Inside a kick the caller's JS is still on
-/// the stack, so a continuation's termination stays pending and ends the
-/// call like a terminated callback. At the outermost level V8 consumes it;
+/// Optionally run the callback's microtasks, then report termination.
+///
+/// A tick step is the outermost JS, so it drains: an already-settled
+/// `await` answers in this call (N1(a)), and a continuation's terminate
+/// is visible. A kick is nested in the caller's turn; draining would run
+/// unrelated queued microtasks before the caller continues (M-187). The
+/// host still polls this callback's promise, so an already-fulfilled
+/// return settles without touching the rest of the queue. Inside a kick
+/// a continuation's termination stays pending and ends the call like a
+/// terminated callback. At the outermost level V8 consumes it;
 /// [`RuntimeJs`] reports that case from the host's halt flag.
-fn checkpoint_terminated(scope: &mut v8::HandleScope) -> bool {
-    scope.perform_microtask_checkpoint();
+fn checkpoint_terminated(scope: &mut v8::HandleScope, drain_microtasks: bool) -> bool {
+    if drain_microtasks {
+        scope.perform_microtask_checkpoint();
+    }
     scope.is_execution_terminating()
 }
 
