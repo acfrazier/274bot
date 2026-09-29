@@ -28,7 +28,7 @@ use crate::profiles::{ProfileWriter, Written};
 use crate::resources::{ResourceView, Resources};
 use crate::scripts::{LiveDelivery, LiveSettings, SettingsResult, SettingsWrite};
 use crate::surface::SlotSurface;
-use crate::views::{FleetView, Inputs, Views};
+use crate::views::{FleetView, Inputs, QueuePlace, Views};
 
 /// Clean-logout window a connected member gets on removal before its worker
 /// is stopped regardless.
@@ -943,6 +943,12 @@ impl<Io> OperatorSession<Io> {
             let (source, level) = crate::views::log_class(change);
             log.slot_line(&change.slot, source, level, &self.op_line);
         }
+    }
+
+    /// Overlay Start-all k-of-n places. No row walk when `Scripts` skips
+    /// the call (admit overlay not stale).
+    pub fn publish_start_queue(&mut self, place_of: impl Fn(&str) -> Option<QueuePlace>) {
+        self.views.apply_start_queue(place_of);
     }
 
     fn refresh_views(&mut self) {

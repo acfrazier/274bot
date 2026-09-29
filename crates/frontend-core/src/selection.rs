@@ -225,26 +225,48 @@ pub fn start_marked<Io>(
             report.skipped.push(skip(name, "no play"));
             continue;
         }
-        if script_active(core, name) {
+        if script_active(core, name) || scripts.start_queue_place(name).is_some() {
             report.skipped.push(skip(name, "script already active"));
             continue;
         }
         let result = match card {
-            Some(card) => scripts.start_selected(core, name, Some(card), catalog_root),
-            None => scripts.start_profile(core, name, catalog_root),
+            Some(card) => scripts.queue_start(
+                core,
+                name,
+                card.clone(),
+                crate::scripts::StartKind::Start,
+                None,
+            ),
+            None => match Scripts::assignment(core, name)
+                .and_then(|a| crate::scripts::sel_from_assignment(&a))
+            {
+                Some(sel) => scripts.queue_start(
+                    core,
+                    name,
+                    sel.clone(),
+                    crate::scripts::StartKind::Start,
+                    Some(sel),
+                ),
+                None => Err("no assignment".to_string()),
+            },
         };
         match result {
             Ok(()) => report.affected += 1,
             Err(reason) => report.skipped.push(skip(name, reason)),
         }
     }
+    scripts.admit_starts(core, catalog_root);
     report
 }
 
 /// Stop the selected profiles through [`OperatorSession::stop_scripts`]. A
 /// row already stopping is not sent a duplicate command; a repeated command
 /// therefore reports an ineligible row rather than enqueueing another stop.
-pub fn stop_marked<Io>(selection: &MarkedSelection, core: &mut OperatorSession<Io>) -> BulkReport {
+pub fn stop_marked<Io>(
+    selection: &MarkedSelection,
+    core: &mut OperatorSession<Io>,
+    scripts: &mut Scripts,
+) -> BulkReport {
     let mut report = BulkReport {
         action: BulkAction::Stop,
         requested: selection.len(),
@@ -271,14 +293,19 @@ pub fn stop_marked<Io>(selection: &MarkedSelection, core: &mut OperatorSession<I
             }
             script::RunState::Stopping => report.skipped.push(skip(name, "already stopping")),
             script::RunState::Idle | script::RunState::Error => {
-                report.skipped.push(skip(name, "no script"));
+                if scripts.cancel_queued(name) {
+                    report.affected += 1;
+                } else {
+                    report.skipped.push(skip(name, "no script"));
+                }
             }
         }
     }
     if !candidates.is_empty() {
         let (_, stopped) = core.stop_scripts(&candidates);
-        report.affected = stopped;
+        report.affected += stopped;
     }
+    scripts.publish_start_places(core);
     report
 }
 

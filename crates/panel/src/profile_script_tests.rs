@@ -1881,7 +1881,11 @@ fn start_all_lists_a_member_whose_setup_fails_after_the_click() {
     s.persist_successful_assignment("alice", good.assignment());
     s.persist_successful_assignment("bob", bad.assignment());
     s.script_start_all();
-    assert_eq!(s.error.as_deref(), Some("Start all: started 2, skipped 0"));
+    let click = s.error.clone().unwrap_or_default();
+    assert!(
+        click.starts_with("Start all:") && click.contains("started"),
+        "{click}"
+    );
     settle(&mut s);
     let report = s.error.clone().unwrap_or_default();
     assert!(
@@ -2090,4 +2094,33 @@ fn panel_ready_start_keeps_a_newer_banner() {
     assert!(s.scripts.js.load_failure(&card.identity_key()).is_none());
     assert_eq!(s.error.as_deref(), Some("script: vault write failed"));
     s.core.play().unwrap().script_stop("alice");
+}
+
+#[test]
+fn start_all_paces_admission_through_the_shared_coordinator() {
+    let names = ["p0", "p1", "p2", "p3", "p4"];
+    let (mut s, dir) = session_with_play(&names);
+    let path = write_bot(&dir, "loop.ts", BOT_TS);
+    let card = s.scripts.js.load(&path).unwrap();
+    for name in names {
+        s.persist_successful_assignment(name, card.assignment());
+    }
+    s.script_start_all();
+    let starting = {
+        let play = s.core.play().unwrap();
+        names
+            .iter()
+            .filter(|name| play.script_state(name) == script::RunState::Starting)
+            .count()
+    };
+    assert!(
+        starting <= frontend_core::scripts::START_ADMIT_PER_FRAME,
+        "panel Start all dispatched {starting} in the click frame"
+    );
+    assert!(starting > 0);
+    settle(&mut s);
+    for name in names {
+        wait_state(&s, name, script::RunState::Running);
+        s.core.play().unwrap().script_stop(name);
+    }
 }

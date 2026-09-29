@@ -1714,7 +1714,8 @@ impl TuiSession {
 
     fn script_stop_all(&mut self, app: &mut TuiApp) {
         if !app.table.selection.is_empty() {
-            let report = frontend_core::stop_marked(&app.table.selection, &mut self.core);
+            let report =
+                frontend_core::stop_marked(&app.table.selection, &mut self.core, &mut self.scripts);
             app.reload_confirm = self.scripts.reload_awaiting_confirm();
             self.apply_script_notice(app);
             app.error = Some(report.summary());
@@ -1875,6 +1876,8 @@ impl TuiSession {
     /// Stop the focused slot's script.
     fn script_stop(&mut self, app: &mut TuiApp) {
         if let Some(name) = app.focused_name() {
+            self.scripts.cancel_queued(&name);
+            self.scripts.publish_start_places(&mut self.core);
             self.core.stop_script(&name);
         }
     }
@@ -2218,8 +2221,12 @@ impl TuiSession {
             if let Some(play) = self.core.play() {
                 app.script_state = play.script_state(name);
             }
-        } else if app.map_active {
-            app.map_observed.clear();
+            app.script_queued = self.scripts.start_queue_place(name).is_some();
+        } else {
+            app.script_queued = false;
+            if app.map_active {
+                app.map_observed.clear();
+            }
         }
         if app.settings_dirty {
             self.persist_settings(app);

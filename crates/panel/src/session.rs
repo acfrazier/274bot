@@ -4642,6 +4642,8 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
+        self.scripts.cancel_queued(&name);
+        self.scripts.publish_start_places(&mut self.core);
         if self.core.play().is_some() {
             self.core.stop_script(&name);
         }
