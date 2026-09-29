@@ -241,6 +241,7 @@ impl Servers {
             return Err("expected schema_version 1 and a nonempty servers list".into());
         }
         let mut names = HashSet::new();
+        let mut vaults = HashSet::new();
         for profile in &self.servers {
             let name = profile.name.to_ascii_lowercase();
             if name == "public-289" {
@@ -252,8 +253,13 @@ impl Servers {
                     profile.name
                 ));
             }
-            if !valid_component(&profile.vault) {
-                return Err(format!("invalid vault component {:?}", profile.vault));
+            if !valid_component(&profile.vault)
+                || !vaults.insert(profile.vault.to_ascii_lowercase())
+            {
+                return Err(format!(
+                    "invalid or duplicate vault component {:?}",
+                    profile.vault
+                ));
             }
             if !matches!(profile.revision, 274 | 289) || profile.worlds.is_empty() {
                 return Err(format!(

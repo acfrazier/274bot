@@ -40,11 +40,12 @@ player must reach the exact destination. Pack format is version **11**
 existing override packs** after updating. A new executable does not rewrite
 an existing override pack on its own.
 
-The `nav_door` integration test uses the local-274 engine and the fixed
-`$HOME/experiments/Server/engine/data/pack/client` cache path:
+The `nav_door` integration test uses hard-coded Direct local-274 options and
+the fixed `$HOME/experiments/Server/engine/data/pack/client` cache path.
+`BOT_SERVER_PROFILE` does not select that test's endpoint:
 
 ```sh
-BOT_SERVER_PROFILE=local-274 BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
+BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
 ```
 
 Some existing integration-test helpers use the default

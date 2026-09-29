@@ -1762,11 +1762,21 @@ impl Session {
     /// Install production launch inputs while the locked panel still exposes
     /// its saved revision selector. Resolution is deferred until unlock/live boot.
     pub fn configure_profile(&mut self, options: ProfileOptions) -> Result<(), String> {
+        self.configure_profile_with_env(options, ProfileEnvironment::capture())
+    }
+
+    /// Install launch inputs with an explicit environment. Tests and embedders
+    /// use this path so profile resolution never consults an ambient home.
+    pub fn configure_profile_with_env(
+        &mut self,
+        options: ProfileOptions,
+        environment: ProfileEnvironment,
+    ) -> Result<(), String> {
         if self.server_profile.is_some() {
             return Err("server profile is already bound; restart to change revision".into());
         }
         self.profile_options = Some(options);
-        self.profile_environment = Some(ProfileEnvironment::capture());
+        self.profile_environment = Some(environment);
         self.profile_generation = self.profile_generation.wrapping_add(1);
         Ok(())
     }
@@ -1783,7 +1793,7 @@ impl Session {
         let environment = self
             .profile_environment
             .clone()
-            .unwrap_or_else(ProfileEnvironment::capture);
+            .ok_or_else(|| "no profile environment was configured".to_string())?;
         Ok((
             self.profile_generation,
             ProfilePreparation {
@@ -1903,9 +1913,8 @@ impl Session {
         let env = self
             .profile_environment
             .as_ref()
-            .cloned()
-            .unwrap_or_else(ProfileEnvironment::capture);
-        options.resolve_with_env(Some(self.ui.server_revision), &env)
+            .ok_or_else(|| "no profile environment was configured".to_string())?;
+        options.resolve_with_env(Some(self.ui.server_revision), env)
     }
 
     /// Resolve and freeze the panel's process profile before vault mutation.
@@ -1913,7 +1922,7 @@ impl Session {
         let env = self
             .profile_environment
             .clone()
-            .unwrap_or_else(ProfileEnvironment::capture);
+            .ok_or_else(|| "no profile environment was configured".to_string())?;
         self.bind_profile_with_env(&env)
     }
 
@@ -1998,15 +2007,13 @@ impl Session {
     }
 
     pub(crate) fn profile_class(&self) -> host_play::ProfileClass {
-        self.server_profile.as_ref().map_or_else(
-            || {
-                host_play::profile::profile_class(
-                    self.options.transport,
-                    [self.options.host.as_str()],
-                )
-            },
-            |profile| profile.profile_class(),
-        )
+        if let Some(profile) = &self.server_profile {
+            profile.profile_class()
+        } else if self.core.play().is_some() {
+            host_play::profile::profile_class(self.options.transport, [self.options.host.as_str()])
+        } else {
+            host_play::ProfileClass::Remote
+        }
     }
 
     fn vault_path(&self) -> Result<PathBuf, String> {

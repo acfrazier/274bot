@@ -272,28 +272,43 @@ fn preparation_only_session() -> Session {
     session
 }
 
+fn isolated_profile_environment(home: &Path) -> ProfileEnvironment {
+    ProfileEnvironment {
+        home: Some(home.to_path_buf()),
+        working_dir: Some(home.to_path_buf()),
+        rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+        rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+        ..ProfileEnvironment::default()
+    }
+}
+
+fn configure_isolated_profile(
+    session: &mut Session,
+    options: ProfileOptions,
+    home: &Path,
+) -> Result<(), String> {
+    session.configure_profile_with_env(options, isolated_profile_environment(home))
+}
+
 #[test]
 fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
     let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let mut session = Session::new();
     session.ui.server_revision = 289;
-    session
-        .configure_profile(ProfileOptions {
+    configure_isolated_profile(
+        &mut session,
+        ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache),
             cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(port),
             ..ProfileOptions::default()
-        })
-        .unwrap();
-    let env = ProfileEnvironment {
-        home: Some(root.to_path_buf()),
-        working_dir: Some(root.to_path_buf()),
-        rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
-        rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
-        ..ProfileEnvironment::default()
-    };
+        },
+        &root,
+    )
+    .unwrap();
+    let env = isolated_profile_environment(&root);
     session.bind_profile_with_env(&env).unwrap();
     assert!(session.server_label().starts_with("local-274"));
     assert_eq!(session.catalog_root().unwrap(), None);
@@ -305,32 +320,31 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
 fn stale_profile_preparation_is_dropped_without_partial_session_state() {
     let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let mut session = Session::new();
-    session
-        .configure_profile(ProfileOptions {
+    configure_isolated_profile(
+        &mut session,
+        ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache),
             cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(port),
             ..ProfileOptions::default()
-        })
-        .unwrap();
-    session.profile_environment = Some(ProfileEnvironment {
-        home: Some(root.to_path_buf()),
-        working_dir: Some(root.to_path_buf()),
-        rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
-        rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
-        ..ProfileEnvironment::default()
-    });
+        },
+        &root,
+    )
+    .unwrap();
     let (generation, preparation) = session.profile_preparation().unwrap();
     let template = preparation.run().unwrap();
 
-    session
-        .configure_profile(ProfileOptions {
+    configure_isolated_profile(
+        &mut session,
+        ProfileOptions {
             profile: Some("local-289".into()),
             ..ProfileOptions::default()
-        })
-        .unwrap();
+        },
+        &root,
+    )
+    .unwrap();
     assert_eq!(
         session.finish_profile_preparation(generation, Ok(template)),
         ProfilePreparationCompletion::Stale
@@ -344,10 +358,9 @@ fn stale_profile_preparation_is_dropped_without_partial_session_state() {
 
 #[test]
 fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
+    let home = TestDir::new("profile-preparation-failure");
     let mut session = Session::new();
-    session
-        .configure_profile(ProfileOptions::default())
-        .unwrap();
+    configure_isolated_profile(&mut session, ProfileOptions::default(), &home).unwrap();
     let generation = session.profile_generation();
 
     assert_eq!(
@@ -366,8 +379,9 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
 fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let mut session = Session::new();
-    session
-        .configure_profile(ProfileOptions {
+    configure_isolated_profile(
+        &mut session,
+        ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache.clone()),
             cache_manifest: Some(manifest),
@@ -375,15 +389,10 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
             http_port: Some(port),
             vault_path: Some(root.join("prepared.vault")),
             ..ProfileOptions::default()
-        })
-        .unwrap();
-    session.profile_environment = Some(ProfileEnvironment {
-        home: Some(root.to_path_buf()),
-        working_dir: Some(root.to_path_buf()),
-        rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
-        rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
-        ..ProfileEnvironment::default()
-    });
+        },
+        &root,
+    )
+    .unwrap();
     let (generation, preparation) = session.profile_preparation().unwrap();
     let template = preparation.run().unwrap();
     assert_eq!(
@@ -405,10 +414,14 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
 /// Install a template bound against the upgraded home and unlock a first-run
 /// vault inside it, as panel startup does.
 fn unlock_upgrade_home(template: &Arc<map_host::SharedClientTemplate>) -> Session {
+    let home = template
+        .profile()
+        .vault_path()
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
     let mut session = preparation_only_session();
-    session
-        .configure_profile(ProfileOptions::default())
-        .unwrap();
+    configure_isolated_profile(&mut session, ProfileOptions::default(), &home).unwrap();
     let generation = session.profile_generation();
     assert_eq!(
         session.finish_profile_preparation(generation, Ok(Arc::clone(template))),
@@ -454,19 +467,18 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
 
 #[test]
 fn rs2b2t_ignores_the_saved_local_revision() {
+    let home = TestDir::new("public-profile");
     let mut session = Session::new();
     session.ui.server_revision = 274;
-    session
-        .configure_profile(ProfileOptions {
+    configure_isolated_profile(
+        &mut session,
+        ProfileOptions {
             rs2b2t: true,
             ..ProfileOptions::default()
-        })
-        .unwrap();
-    let home = TestDir::new("public-profile");
-    session.profile_environment = Some(ProfileEnvironment {
-        home: Some(home.to_path_buf()),
-        ..ProfileEnvironment::default()
-    });
+        },
+        &home,
+    )
+    .unwrap();
     let selection = session.resolve_profile().unwrap();
     assert_eq!(selection.revision(), client::io::ClientRevision::R289);
     assert_eq!(selection.profile_class(), host_play::ProfileClass::Remote);
@@ -480,11 +492,18 @@ fn invalid_profile_refuses_vault_reset_without_deleting_explicit_path() {
 
     let mut session = Session::new();
     session
-        .configure_profile(ProfileOptions {
-            revision: Some("275".into()),
-            vault_path: Some(intended.clone()),
-            ..ProfileOptions::default()
-        })
+        .configure_profile_with_env(
+            ProfileOptions {
+                revision: Some("275".into()),
+                vault_path: Some(intended.clone()),
+                ..ProfileOptions::default()
+            },
+            ProfileEnvironment {
+                home: Some(root.to_path_buf()),
+                working_dir: Some(root.to_path_buf()),
+                ..ProfileEnvironment::default()
+            },
+        )
         .unwrap();
     assert!(!session.reset_vault());
     assert!(intended.is_file());
@@ -492,6 +511,66 @@ fn invalid_profile_refuses_vault_reset_without_deleting_explicit_path() {
         .error
         .as_deref()
         .is_some_and(|error| error.contains("unsupported revision")));
+}
+
+#[test]
+fn configured_profile_resolution_uses_only_the_injected_environment() {
+    let ambient = TestDir::new("profile-ambient-guard");
+    let injected = TestDir::new("profile-injected-home");
+    let mut session = Session::new();
+    session
+        .configure_profile_with_env(
+            ProfileOptions {
+                profile: Some("local-274".into()),
+                ..ProfileOptions::default()
+            },
+            ProfileEnvironment {
+                home: Some(injected.to_path_buf()),
+                working_dir: Some(injected.to_path_buf()),
+                ..ProfileEnvironment::default()
+            },
+        )
+        .unwrap();
+
+    let selection = session.resolve_profile().unwrap();
+    assert_eq!(selection.profile_class(), host_play::ProfileClass::Local);
+    assert!(injected.join(".274bot/servers.json").is_file());
+    assert!(
+        !ambient.join(".274bot").exists(),
+        "profile resolution must not inspect or create an uninjected home"
+    );
+}
+
+#[test]
+fn unbound_and_failed_profile_bind_hide_local_debug_capabilities() {
+    let home = TestDir::new("unbound-remote-profile");
+    let mut session = Session::new();
+    session
+        .configure_profile_with_env(
+            ProfileOptions {
+                rs2b2t: true,
+                ..ProfileOptions::default()
+            },
+            ProfileEnvironment {
+                home: Some(home.to_path_buf()),
+                ..ProfileEnvironment::default()
+            },
+        )
+        .unwrap();
+
+    assert_eq!(session.profile_class(), host_play::ProfileClass::Remote);
+    assert!(!session.debug_ui());
+    assert!(!session.map_teleport_authorized());
+
+    let generation = session.profile_generation();
+    assert_eq!(
+        session.finish_profile_preparation(generation, Err("bind refused".into())),
+        ProfilePreparationCompletion::Failed
+    );
+    assert!(!session.profile_bound());
+    assert_eq!(session.profile_class(), host_play::ProfileClass::Remote);
+    assert!(!session.debug_ui());
+    assert!(!session.map_teleport_authorized());
 }
 
 /// `register_name` is the ScriptRegistry name; `folder` is the class
@@ -526,11 +605,18 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     let mut session = Session::new();
     session.persist_ui = false;
     session
-        .configure_profile(ProfileOptions {
-            profile: Some("local-274".into()),
-            catalog_root: Some(explicit.clone()),
-            ..ProfileOptions::default()
-        })
+        .configure_profile_with_env(
+            ProfileOptions {
+                profile: Some("local-274".into()),
+                catalog_root: Some(explicit.clone()),
+                ..ProfileOptions::default()
+            },
+            ProfileEnvironment {
+                home: Some(iso.dir.clone()),
+                working_dir: Some(iso.dir.clone()),
+                ..ProfileEnvironment::default()
+            },
+        )
         .unwrap();
     assert_eq!(session.catalog_root().unwrap(), Some(explicit.clone()));
     session.fill_rs2b0t_cards_once();
@@ -570,18 +656,28 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
     let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
+    let env = ProfileEnvironment {
+        home: Some(root.to_path_buf()),
+        working_dir: Some(root.to_path_buf()),
+        rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+        rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+        ..ProfileEnvironment::default()
+    };
     let mut session = Session::new();
     session.persist_ui = false;
     session
-        .configure_profile(ProfileOptions {
-            revision: None,
-            cache_dir: Some(cache),
-            cache_manifest: Some(manifest),
-            unpack_dir: Some(unpack),
-            http_port: Some(port),
-            catalog_root: Some(catalog),
-            ..ProfileOptions::default()
-        })
+        .configure_profile_with_env(
+            ProfileOptions {
+                revision: None,
+                cache_dir: Some(cache),
+                cache_manifest: Some(manifest),
+                unpack_dir: Some(unpack),
+                http_port: Some(port),
+                catalog_root: Some(catalog),
+                ..ProfileOptions::default()
+            },
+            env.clone(),
+        )
         .unwrap();
     session.fill_rs2b0t_cards_once();
     session
@@ -594,13 +690,6 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         "export default class Chosen extends LoopingBot { override loop() { this.walk(); } }",
     )
     .unwrap();
-    let env = ProfileEnvironment {
-        home: Some(root.to_path_buf()),
-        working_dir: Some(root.to_path_buf()),
-        rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
-        rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
-        ..ProfileEnvironment::default()
-    };
     session.set_server_revision(289).unwrap();
     assert!(session
         .scripts

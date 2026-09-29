@@ -24,10 +24,13 @@ pub trait Driver {
     /// `Client::send_cheat`, the sole native encoder.
     fn send_cheat(&mut self, _cmd: &str) -> client::CheatSend {
         match self.cheat_admission() {
+            client::CheatAdmission::Denied => {
+                client::CheatSend::Refused(client::CheatRefusal::NotAuthorized)
+            }
             client::CheatAdmission::Remote(transport) => {
                 client::CheatSend::Refused(client::CheatRefusal::RemoteProfile { transport })
             }
-            client::CheatAdmission::Denied | client::CheatAdmission::Granted => {
+            client::CheatAdmission::Granted => {
                 client::CheatSend::Refused(client::CheatRefusal::Offline)
             }
         }
