@@ -20,12 +20,8 @@
 //!   `true` while this card is started (a compiled card ticks only while the
 //!   slot runs it, and there is no settings `enabled` flag); `resume` then
 //!   rides exactly the one following call.
-//! * `callback.log` and `callback.setStatus` are the machine's status lines —
-//!   the finished collect's own `clue solved` line among them. This slice has
-//!   no compiled log or status channel (paint/status is W10), so those kinds
-//!   are answered and their message is not forwarded: nothing here rewrites
-//!   them into a verb, and the completion string is the machine's to emit —
-//!   this module never invents one and never posts it on.
+//! * `callback.log` and `callback.setStatus` are forwarded to the shared
+//!   native output owner without changing the machine's callback ordering.
 //! * `grind-ready` continues this tick's iterate: the live-token handback is
 //!   not a verb and not a delay, so the collect's own completion — the
 //!   pack-full warning, `clue solved`, `grind-ready`, `done` — is reached
@@ -39,8 +35,8 @@
 //!   abort and not a finished clue, and it counts nothing.
 //!
 //! Every page is read fail-closed from the observed frame
-//! ([`ScriptCtx::snapshot`], [`ScriptCtx::here`], [`ScriptCtx::obj_names`] and
-//! the ctx's [`crate::CompiledTick`]): an absent slot is omitted rather than
+//! (snapshot, tile and object names through the crate-private host-frame
+//! bridge): an absent slot is omitted rather than
 //! defaulted, so the machine never reads an invented `-1`, `28` or slot `0`.
 //! The `next` page set is the adapter's: required keys always, optional
 //! chat / bank / shop / overlay slots only when this frame carried them.
@@ -55,8 +51,102 @@ use api::game_data::SelectedGameData;
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot};
 use serde_json::{json, Map, Value};
 
-use crate::ctx::{Script, ScriptCtx};
-use crate::shim::InteractReq;
+use std::sync::Arc;
+
+use crate::native::{
+    CompiledCard, ConfigError, HostFrame, NativeOutput, NativePhase, NativeTick, PrepareContext,
+    PreparedConfig, RetainedMemory, Script, ScriptFailure, ScriptFlow, ScriptStatus, SettingsApply,
+    SettingsBag, StartError, StatusField, StatusValue,
+};
+use crate::shim::{InteractReq, ScriptPaint};
+use crate::CompiledId;
+use api::selected::RunKey;
+
+pub(crate) const CARD: CompiledCard = CompiledCard {
+    id: CompiledId("Sherlock"),
+    name: "Sherlock",
+    description: "Rust-native clue trail solver — waits for a clue and solves it.",
+    category: "Treasure Trails",
+    schema_version: 1,
+    schema: || &[],
+    per_account_settings: &[],
+    prepare,
+    create,
+};
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SherlockSettings {
+    // A profile-global value, not a card control. The existing clue adapter
+    // does not implement the duel family; its action extraction owns that.
+    #[serde(default, rename = "clueDuelPartner")]
+    _clue_duel_partner: String,
+}
+
+fn prepare(
+    cx: &mut PrepareContext<'_>,
+    revision: u64,
+    bag: Arc<SettingsBag>,
+) -> Result<Arc<PreparedConfig>, StartError> {
+    if cx
+        .selected
+        .selected_pin()
+        .map_err(StartError::Facts)?
+        .as_ref()
+        != cx.pin.as_ref()
+    {
+        return Err(StartError::Facts(api::selected::FactError::PinMismatch));
+    }
+    if cx.selected.trails().is_none()
+        || cx.selected.talk_key().is_none()
+        || cx.selected.trio_givers().is_none()
+    {
+        return Err(StartError::Unavailable(
+            "Sherlock clue facts unavailable".into(),
+        ));
+    }
+    let settings = <SherlockSettings as serde::Deserialize>::deserialize(
+        serde::de::value::MapDeserializer::new(
+            bag.iter().map(|(key, value)| (key.as_str(), value)),
+        ),
+    )
+    .map_err(|e| StartError::Config(ConfigError::new("", "invalid-settings", e.to_string())))?;
+    Ok(PreparedConfig::new(
+        CARD.id,
+        CARD.schema_version,
+        revision,
+        bag,
+        settings,
+    ))
+}
+
+fn validate_config(config: &PreparedConfig) -> Result<(), ConfigError> {
+    if config.card() != CARD.id
+        || config.schema_version() != CARD.schema_version
+        || config.get::<SherlockSettings>().is_none()
+    {
+        return Err(ConfigError::new(
+            "",
+            "config-identity",
+            "configuration does not belong to Sherlock",
+        ));
+    }
+    Ok(())
+}
+
+fn create(
+    run: RunKey,
+    config: Arc<PreparedConfig>,
+    _retained: &mut RetainedMemory,
+) -> Result<Box<dyn Script>, StartError> {
+    validate_config(&config).map_err(StartError::Config)?;
+    Ok(Box::new(Sherlock {
+        run: Some(run),
+        revision: config.revision(),
+        dirty: true,
+        ..Default::default()
+    }))
+}
 
 /// The `generation` every call posts. The machine captures it at `begin` and
 /// requires the same value back on every `next`; the compiled session is
@@ -83,34 +173,89 @@ const CALLBACK_HANDOFFS: usize = 4;
 pub struct Sherlock {
     /// The live session token; `None` while there is no session to continue.
     token: Option<u64>,
-    /// Clue steps this card finished: the local count only, advanced by the
-    /// machine's own terminal `done` and reported nowhere yet (its status
-    /// lines are not a completion signal).
+    /// Clue steps this card finished, advanced by the machine's terminal
+    /// `done` and published through the shared status/paint projection.
     solved: u32,
+    run: Option<RunKey>,
+    revision: u64,
+    status: Option<Arc<str>>,
+    dirty: bool,
 }
 
 impl Script for Sherlock {
-    fn name(&self) -> &str {
-        "Sherlock"
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        self.tick_frame(&mut tick.frame, tick.output);
+        self.publish(tick.output);
+        Ok(ScriptFlow::Continue)
     }
 
-    fn tick(&mut self, ctx: &mut ScriptCtx<'_>) {
-        // A verb needs somewhere to go: without this slot's queue the machine
-        // is not asked at all, so a step it dispatched cannot be lost behind a
-        // session that advanced anyway. The queue comes back whatever the
-        // tick does.
-        let Some(mut sink) = ctx.compiled.interacts.take() else {
-            return;
-        };
-        self.pump(ctx, &mut sink);
-        ctx.compiled.interacts = Some(sink);
+    fn configure(&mut self, next: Arc<PreparedConfig>) -> Result<SettingsApply, ConfigError> {
+        validate_config(&next)?;
+        self.revision = next.revision();
+        self.dirty = true;
+        Ok(SettingsApply::Applied)
     }
 }
 
 impl Sherlock {
+    fn tick_frame(&mut self, ctx: &mut HostFrame<'_>, output: &mut dyn NativeOutput) {
+        let Some(mut sink) = ctx.compiled.interacts.take() else {
+            return;
+        };
+        let previous = (self.token, self.solved);
+        self.pump(ctx, &mut sink, output);
+        self.dirty |= previous != (self.token, self.solved);
+        ctx.compiled.interacts = Some(sink);
+    }
+
+    fn publish(&mut self, output: &mut dyn NativeOutput) {
+        let Some(run) = self.run else { return };
+        if !std::mem::take(&mut self.dirty) {
+            return;
+        }
+        let text = self
+            .status
+            .clone()
+            .unwrap_or_else(|| Arc::from("Waiting for a clue"));
+        output.status(ScriptStatus {
+            run,
+            card: CARD.id,
+            phase: if self.token.is_some() {
+                NativePhase::Working
+            } else {
+                NativePhase::Waiting
+            },
+            active_settings: self.revision,
+            pending_settings: None,
+            fields: Arc::from([
+                StatusField {
+                    key: "status",
+                    label: "Status",
+                    value: StatusValue::Text(text.clone()),
+                },
+                StatusField {
+                    key: "solved",
+                    label: "Clues solved",
+                    value: StatusValue::Integer(i64::from(self.solved)),
+                },
+            ]),
+            failure: None,
+        });
+        output.paint(Arc::new(ScriptPaint {
+            title: Some(CARD.name.into()),
+            lines: vec![text.to_string(), format!("Clues solved: {}", self.solved)],
+            generation: run.run,
+            ..Default::default()
+        }));
+    }
     /// One pump iteration: the `begin` call while there is no live session,
     /// then one `execute()` iteration over it.
-    fn pump(&mut self, ctx: &ScriptCtx<'_>, sink: &mut Vec<InteractReq>) {
+    fn pump(
+        &mut self,
+        ctx: &HostFrame<'_>,
+        sink: &mut Vec<InteractReq>,
+        output: &mut dyn NativeOutput,
+    ) {
         let selected = ctx.compiled.selected;
         let token = match self.token {
             Some(token) => token,
@@ -126,7 +271,7 @@ impl Sherlock {
             }
         };
         let page = next_payload(ctx, token);
-        self.iterate(selected, page, sink);
+        self.iterate(selected, page, sink, output);
     }
 
     /// One `execute()` iteration over the live token: the machine is called
@@ -141,6 +286,7 @@ impl Sherlock {
         selected: Option<&SelectedGameData>,
         mut page: Value,
         sink: &mut Vec<InteractReq>,
+        output: &mut dyn NativeOutput,
     ) {
         let mut resume = false;
         for _ in 0..CALLBACK_HANDOFFS {
@@ -159,10 +305,19 @@ impl Sherlock {
                 // The gate question: true while this card is started, and the
                 // answer rides the very next call only.
                 "callback.enabled" => resume = true,
-                // The machine's own progress and status lines — the finished
-                // collect's `clue solved` line among them: answered, not a
-                // verb, and this slice has no channel for their message.
-                "callback.log" | "callback.setStatus" => {}
+                "callback.log" => {
+                    if let Some(message) = answer.get("message").and_then(Value::as_str) {
+                        output.log(api::hostlog::Level::Info, message);
+                    }
+                }
+                "callback.setStatus" => {
+                    if let Some(message) = answer.get("message").and_then(Value::as_str) {
+                        if self.status.as_deref() != Some(message) {
+                            self.status = Some(Arc::from(message));
+                            self.dirty = true;
+                        }
+                    }
+                }
                 // Frozen, the cooperative interrupt, or the named
                 // `supplies-needed` wait-class: the token lives, nothing is
                 // fetched, and the session resumes on a later tick.
@@ -209,7 +364,7 @@ impl Sherlock {
 }
 
 /// The `begin` call's payload: the required page, and nothing else.
-fn begin_payload(ctx: &ScriptCtx<'_>) -> Value {
+fn begin_payload(ctx: &HostFrame<'_>) -> Value {
     json!({
         "op": "begin",
         "generation": GENERATION,
@@ -225,7 +380,7 @@ fn begin_payload(ctx: &ScriptCtx<'_>) -> Value {
 /// board and its generation — are posted only when this frame carried the
 /// fact, so the machine reads an unposted slot as unobserved rather than as
 /// a default it was never handed.
-fn next_payload(ctx: &ScriptCtx<'_>, token: u64) -> Value {
+fn next_payload(ctx: &HostFrame<'_>, token: u64) -> Value {
     let mut page = Map::new();
     page.insert("op".into(), json!("next"));
     page.insert("token".into(), json!(token));
@@ -306,7 +461,7 @@ fn next_payload(ctx: &ScriptCtx<'_>, token: u64) -> Value {
 
 /// The posted pack page the identify reads: `(obj id, count)` pairs in slot
 /// order, and nothing else. An absent frame is an empty page, never an error.
-fn held_page(ctx: &ScriptCtx<'_>) -> Value {
+fn held_page(ctx: &HostFrame<'_>) -> Value {
     let rows: &[api::snapshot::ItemView] = ctx.snapshot.map_or(&[], GameSnapshot::inventory);
     Value::Array(
         rows.iter()
@@ -317,7 +472,7 @@ fn held_page(ctx: &ScriptCtx<'_>) -> Value {
 
 /// The posted scene page: every placed loc on the observed frame with its
 /// native ops.
-fn loc_page(ctx: &ScriptCtx<'_>) -> Value {
+fn loc_page(ctx: &HostFrame<'_>) -> Value {
     let rows: &[api::snapshot::LocView] = ctx.snapshot.map_or(&[], GameSnapshot::locs);
     Value::Array(
         rows.iter()
@@ -337,7 +492,7 @@ fn loc_page(ctx: &ScriptCtx<'_>) -> Value {
 /// The posted ground page the collect arm Takes from: the scene shape plus the
 /// display name the host resolves. A row whose id resolves to no name posts
 /// `null`, exactly like the posted page it is marshalled from.
-fn ground_page(ctx: &ScriptCtx<'_>) -> Value {
+fn ground_page(ctx: &HostFrame<'_>) -> Value {
     let rows: &[api::snapshot::GroundItemView] =
         ctx.snapshot.map_or(&[], GameSnapshot::ground_items);
     let names = ctx.obj_names;
@@ -360,7 +515,7 @@ fn ground_page(ctx: &ScriptCtx<'_>) -> Value {
 /// The posted pack page the collect arm reads: the display name the Drop
 /// resolves and the positive count that occupies a slot. This is not a second
 /// inventory read — the identify page above is the same observed frame.
-fn inv_page(ctx: &ScriptCtx<'_>) -> Value {
+fn inv_page(ctx: &HostFrame<'_>) -> Value {
     let rows: &[api::snapshot::ItemView] = ctx.snapshot.map_or(&[], GameSnapshot::inventory);
     let names = ctx.obj_names;
     Value::Array(
@@ -381,7 +536,7 @@ fn inv_page(ctx: &ScriptCtx<'_>) -> Value {
 /// The posted npc page the guarded encounter observes: the slot index the
 /// Attack rides, the type id, the posted name and tile, the health pair the
 /// kill is read through, and the target pair `targets_me` compares.
-fn npc_page(ctx: &ScriptCtx<'_>) -> Value {
+fn npc_page(ctx: &HostFrame<'_>) -> Value {
     let rows: &[api::snapshot::NpcView] = ctx.snapshot.map_or(&[], GameSnapshot::npcs);
     Value::Array(
         rows.iter()
@@ -410,7 +565,7 @@ fn npc_page(ctx: &ScriptCtx<'_>) -> Value {
 /// The posted worn page the Entrana strip reads: raw rows with their own
 /// `slot`, omit-if-absent the way the adapter's `clueEquipmentPage` is. A
 /// page that posted nothing is an empty list, never a second equipment read.
-fn equipment_page(ctx: &ScriptCtx<'_>) -> Value {
+fn equipment_page(ctx: &HostFrame<'_>) -> Value {
     let rows: &[api::snapshot::ItemView] = ctx.snapshot.map_or(&[], GameSnapshot::equipment);
     let names = ctx.obj_names;
     Value::Array(
@@ -772,16 +927,11 @@ mod tests {
 
         fn ctx<'a>(
             &'a mut self,
-            driver: &'a mut dyn api::interact::Driver,
+            _driver: &'a mut dyn api::interact::Driver,
             selected: Option<&'a SelectedGameData>,
-        ) -> ScriptCtx<'a> {
-            ScriptCtx {
-                driver,
-                tick: 1,
+        ) -> HostFrame<'a> {
+            HostFrame {
                 here: self.here,
-                walk: None,
-                walk_with: None,
-                inv: None,
                 snapshot: Some(&self.snapshot),
                 obj_names: self.names.as_ref(),
                 compiled: crate::CompiledTick {
@@ -914,7 +1064,7 @@ mod tests {
     ) -> Vec<InteractReq> {
         let mut driver = crate::ctx::test_support::NullDriver::default();
         let mut ctx = frame.ctx(&mut driver, selected);
-        script.tick(&mut ctx);
+        script.tick_frame(&mut ctx, &mut crate::slot::compiled::TestOutput::default());
         ctx.compiled.interacts.take().unwrap_or_default()
     }
 
@@ -1569,7 +1719,7 @@ mod tests {
         {
             let mut ctx = frame.ctx(&mut driver, Some(&data));
             ctx.compiled.interacts = None;
-            script.tick(&mut ctx);
+            script.tick_frame(&mut ctx, &mut crate::slot::compiled::TestOutput::default());
         }
         assert!(
             script.token.is_none(),

@@ -31,22 +31,44 @@ pub use reload::{PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning}
 pub use sync::{SyncReport, SyncScope};
 
 /// A card's parameters bound to the run they were edited for.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct LiveSettings {
     /// Card identity and run generation the push is fenced to.
     pub identity: String,
     pub generation: u64,
+    /// Native controls also bind the worker incarnation and session.
+    pub run: Option<api::selected::RunKey>,
     /// The run's whole bag: the card's merged parameters and its profile's
     /// global settings.
     pub bag: Arc<Map<String, Value>>,
+    /// Present only after the native preparer has validated the complete bag.
+    pub prepared: Option<Arc<script::native::PreparedConfig>>,
+}
+
+impl PartialEq for LiveSettings {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity
+            && self.generation == other.generation
+            && self.run == other.run
+            && self.bag == other.bag
+            && match (&self.prepared, &other.prepared) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            }
+    }
 }
 
 /// What a durable parameter write did to the run captured at edit time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiveDelivery {
     /// No run of that card was captured, or it has ended.
     NotRunning,
     Delivered,
+    Applied,
+    PendingBoundary,
+    RestartRequired,
+    Rejected(String),
     /// The run already had this bag.
     Unchanged,
     /// The captured run was replaced (identity or generation changed)
@@ -111,12 +133,16 @@ enum StartKind {
     Reload,
 }
 
-/// A Load Start whose isolate setup has not settled. Start returns before
-/// V8 setup, so the card's assignment is persisted and its load diagnostic
-/// cleared only on Ready; a failure records the diagnostic instead.
+/// A Start whose worker has not settled. Assignment changes only on Ready.
+#[derive(Debug, Clone)]
+enum PendingCard {
+    Compiled(script::CompiledId),
+    Loaded(Box<script::JsCard>),
+}
+
 #[derive(Debug, Clone)]
 struct PendingStart {
-    card: script::JsCard,
+    card: PendingCard,
     kind: StartKind,
 }
 
@@ -128,42 +154,13 @@ struct BulkStart {
     skipped: usize,
     failures: Vec<String>,
 }
-/// Metadata for one compiled picker card. The compiled registry owns the
-/// executable identity; this shared projection owns only operator-facing
-/// Browse text so both front ends render the same card.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CompiledCard {
-    pub id: script::CompiledId,
-    pub name: &'static str,
-    pub description: &'static str,
-    pub category: &'static str,
-}
-
-impl CompiledCard {
-    fn from_id(id: script::CompiledId) -> Self {
-        match id.0 {
-            "Sherlock" => Self {
-                id,
-                name: "Sherlock",
-                description: "Rust-native clue trail solver — waits for a clue and solves it.",
-                category: "Treasure Trails",
-            },
-            _ => Self {
-                id,
-                name: id.0,
-                description: "",
-                category: "Uncategorized",
-            },
-        }
-    }
-}
 
 /// One shared Browse card: a compiled registry card or a loaded JS card.
 /// Loaded cards remain borrowed from the library, so a Browse render does not
 /// clone source bytes or the whole card.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub enum BrowseCard<'a> {
-    Compiled(CompiledCard),
+    Compiled(&'static script::native::CompiledCard),
     Loaded(&'a script::JsCard),
 }
 
@@ -348,10 +345,8 @@ impl Scripts {
     /// The shared Browse card sequence: compiled registry cards first, then
     /// loaded JS/catalog cards in library order.
     pub fn browse_cards(&self) -> impl Iterator<Item = BrowseCard<'_>> {
-        script::compiled_ids()
+        script::compiled_cards()
             .iter()
-            .copied()
-            .map(CompiledCard::from_id)
             .map(BrowseCard::Compiled)
             .chain(self.js.cards().iter().map(BrowseCard::Loaded))
     }
@@ -406,7 +401,10 @@ impl Scripts {
         mirror: ArmMirror,
         edit: impl FnOnce(&mut vault::ProfileSettings),
     ) -> Result<OperationId, String> {
-        let result = match core.vault().map(|v| v.get(profile).cloned()) {
+        let result = match core
+            .vault()
+            .map(|_| core.profile_for_edit(profile).cloned())
+        {
             None => Err("script: vault locked".to_string()),
             Some(None) => Err(format!("script: no profile {profile}")),
             Some(Some(mut row)) => {
@@ -523,9 +521,8 @@ impl Scripts {
         overrides: &Map<String, Value>,
     ) -> Map<String, Value> {
         let partner = core
-            .vault()
-            .and_then(|vault| vault.get(profile))
-            .map_or("", |profile| profile.settings.clue_duel_partner.as_str());
+            .settings_for_edit(profile)
+            .map_or("", |settings| settings.clue_duel_partner.as_str());
         self.run_bag_with(schema, overrides, partner)
     }
 
@@ -564,23 +561,39 @@ impl Scripts {
         let assignment = settings.script_assignment.as_ref()?;
         let key = assignment.key();
         let (identity, generation) = live_fence(core, profile, &key)?;
-        let script::ScriptSel::Loaded(source, lookup) = sel_from_assignment(assignment)? else {
-            return None;
+        let (schema, overrides) = match sel_from_assignment(assignment)? {
+            script::ScriptSel::Loaded(source, lookup) => (
+                self.js
+                    .get(source, &lookup)
+                    .map(|card| card.settings_schema.as_slice())
+                    .unwrap_or_default(),
+                settings
+                    .script_settings
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            script::ScriptSel::Compiled(id) => {
+                let card = script::compiled_card(id)?;
+                let values = match settings.script_settings.get(&key) {
+                    Some(entry) => {
+                        let (version, values) = vault::CompiledSettingsRecord::view(entry).ok()?;
+                        if version != card.schema_version {
+                            return None;
+                        }
+                        values.clone()
+                    }
+                    None => Map::new(),
+                };
+                ((card.schema)(), values)
+            }
         };
-        let schema = self
-            .js
-            .get(source, &lookup)
-            .map(|card| card.settings_schema.as_slice())
-            .unwrap_or_default();
-        let overrides = settings
-            .script_settings
-            .get(&key)
-            .cloned()
-            .unwrap_or_default();
         Some(LiveSettings {
             identity,
             generation,
+            run: core.play().and_then(|play| play.script_native_run(profile)),
             bag: Arc::new(self.run_bag_with(schema, &overrides, &settings.clue_duel_partner)),
+            prepared: None,
         })
     }
 
@@ -662,7 +675,9 @@ impl Scripts {
         Some(LiveSettings {
             identity,
             generation,
+            run: None,
             bag: Arc::new(bag),
+            prepared: None,
         })
     }
 
@@ -726,14 +741,16 @@ impl Scripts {
         }
         match sel {
             script::ScriptSel::Compiled(id) => {
-                core.start_script(
-                    profile,
-                    ScriptStart::Compiled(id),
-                    Some(script::compiled_identity_key(id)),
-                )
-                .map_err(|e| e.to_string())?;
-                // A compiled Start is Ready when it returns.
-                self.persist_assignment(core, profile, script::compiled_assignment(id));
+                let bag = self.compiled_bag(core, profile, id)?;
+                core.start_script(profile, ScriptStart::Compiled { id, bag }, None)
+                    .map_err(|e| e.to_string())?;
+                self.starts.insert(
+                    profile.to_string(),
+                    PendingStart {
+                        card: PendingCard::Compiled(id),
+                        kind,
+                    },
+                );
                 Ok(())
             }
             script::ScriptSel::Loaded(source, lookup) => {
@@ -784,8 +801,13 @@ impl Scripts {
                 if let Err(e) = core.start_script(profile, start, Some(card.identity_key())) {
                     return self.js.record_start_result(&card, Err(e));
                 }
-                self.starts
-                    .insert(profile.to_string(), PendingStart { card, kind });
+                self.starts.insert(
+                    profile.to_string(),
+                    PendingStart {
+                        card: PendingCard::Loaded(Box::new(card)),
+                        kind,
+                    },
+                );
                 Ok(())
             }
         }
@@ -888,35 +910,60 @@ impl Scripts {
                 continue;
             };
             match outcome {
-                Some(script::StartOutcome::Ready) => {
-                    let key = pending.card.identity_key();
-                    let had_failure = self.js.load_failure(&key).is_some();
-                    // Only a banner still listing load failures is refreshed;
-                    // anything shown since (a Start all report, a front-end
-                    // error) stays: the front end checks what it displays.
-                    let listing = self
-                        .shown
-                        .take_if(|shown| had_failure && *shown == self.js.named_failure_output());
-                    let _ = self.js.record_start_result(&pending.card, Ok(()));
-                    if let Some(shown) = listing {
-                        let with = (!self.js.load_failures().is_empty())
-                            .then(|| self.js.named_failure_output());
-                        self.shown.clone_from(&with);
-                        self.notice = Some(Notice::Retract { shown, with });
+                Some(script::StartOutcome::Ready) => match pending.card {
+                    PendingCard::Compiled(id) => {
+                        let key = script::compiled_identity_key(id);
+                        let _ = self.upsert_profile_settings(
+                            core,
+                            &name,
+                            ArmMirror::None,
+                            |settings| {
+                                settings.script_assignment = Some(script::compiled_assignment(id));
+                                if settings.script_settings.get(&key).is_none_or(Map::is_empty) {
+                                    settings.script_settings.insert(
+                                        key,
+                                        vault::CompiledSettingsRecord {
+                                            schema_version: 1,
+                                            values: Map::new(),
+                                        }
+                                        .into_entry(),
+                                    );
+                                }
+                            },
+                        );
                     }
-                    // Persisting is bookkeeping: only its failure is shown.
-                    self.persist_assignment(core, &name, pending.card.assignment());
-                }
-                Some(script::StartOutcome::Failed(e)) => {
-                    let diagnostic = self
-                        .js
-                        .record_start_result(
-                            &pending.card,
-                            Err(script::StartLoadError::RuntimeLoad(e.clone())),
-                        )
-                        .err()
-                        .unwrap_or(e);
+                    PendingCard::Loaded(card) => {
+                        let key = card.identity_key();
+                        let had_failure = self.js.load_failure(&key).is_some();
+                        let listing = self.shown.take_if(|shown| {
+                            had_failure && *shown == self.js.named_failure_output()
+                        });
+                        let _ = self.js.record_start_result(&card, Ok(()));
+                        if let Some(shown) = listing {
+                            let with = (!self.js.load_failures().is_empty())
+                                .then(|| self.js.named_failure_output());
+                            self.shown.clone_from(&with);
+                            self.notice = Some(Notice::Retract { shown, with });
+                        }
+                        self.persist_assignment(core, &name, card.assignment());
+                    }
+                },
+                Some(script::StartOutcome::Failed(error)) => {
+                    let diagnostic = match pending.card {
+                        PendingCard::Loaded(card) => self
+                            .js
+                            .record_start_result(
+                                &card,
+                                Err(script::StartLoadError::RuntimeLoad(error.clone())),
+                            )
+                            .err()
+                            .unwrap_or(error),
+                        PendingCard::Compiled(_) => error,
+                    };
                     self.report_start_failure(&name, pending.kind, diagnostic);
+                }
+                Some(script::StartOutcome::Rejected(error)) => {
+                    self.report_start_failure(&name, pending.kind, error.to_string());
                 }
                 Some(script::StartOutcome::Cancelled) | None => {}
             }
@@ -979,11 +1026,7 @@ fn script_active<Io>(core: &OperatorSession<Io>, name: &str) -> bool {
 /// The Browse selection a saved assignment names.
 pub fn sel_from_assignment(asg: &ScriptAssignment) -> Option<script::ScriptSel> {
     if asg.source_kind == "compiled" {
-        return script::compiled_ids()
-            .iter()
-            .copied()
-            .find(|id| id.0 == asg.identity)
-            .map(script::ScriptSel::Compiled);
+        return script::compiled_id(&asg.identity).map(script::ScriptSel::Compiled);
     }
     let source = script::parse_source_kind(&asg.source_kind)?;
     Some(script::ScriptSel::Loaded(source, asg.identity.clone()))

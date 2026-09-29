@@ -11,7 +11,6 @@ use api::snapshot::GameSnapshot;
 use client::client::Client;
 use client::config::Cache;
 use host::{ScriptRunPolicy, SlotInput};
-use nav::router::FindOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
 use script::{ScriptCtx, SlotScript};
@@ -20,7 +19,7 @@ use super::{
     abort_script_walk, action_slot, apply_watchdog_nav_action, dispatch_observed_bank_op,
     dispatch_script_interact_cached, fill_withdraw_action, pack_cached_reach, recovery_walk_idle,
     resumed_walk, route_inspect, script_slot, take_carried_walk, with_script_snapshot_input_shorts,
-    NavBot, PostedWalkOutcome, ScriptWalkArm, ScriptWall,
+    NavBot, PostedWalkOutcome, ScriptWall,
 };
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
@@ -178,16 +177,11 @@ fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
 /// time (built from its live snapshot); `None` when no player is decoded
 /// — the walk arm then routes with the fail-closed empty [`WorldState`],
 /// so an edge whose requirements the state cannot prove is never relaxed.
-/// `snapshot` is the same per-tick [`GameSnapshot`] the ctx getters read
-/// (`varp`, `stat_level`, `chat`, `bank`, …); it stays `None` only when
-/// no snapshot was built, and the getters fail closed on it.
-/// `navs`/`world` back the `ctx.walk` and `ctx.walk_with` closures — one
-/// shared arm ([`ScriptWalkArm`]) takes the [`FindOptions`] (`walk` passes the
-/// defaults): the arm refuses synchronously only when there is no tile,
-/// no nav world, or a route already queued; `find_with` runs off-pump on
-/// a short-lived worker per request, storing the route in the uid's nav
-/// bot when one exists (a walk that would panic on the first follow step
-/// must not succeed when no route can arm). `hold` is the guardian's
+/// `snapshot` is the same per-tick [`GameSnapshot`] the native borrowed view and
+/// isolate post read. Queued effects require that observed frame and pass the
+/// single shared host dispatch fence. Walk find runs off-pump and follow stays
+/// on the slot pump; compiled cards no longer receive direct route closures.
+/// `hold` is the guardian's
 /// random-event freeze: while true the tick is not dispatched (follow is
 /// frozen by the pump too), so a script cannot walk through an in-flight
 /// dialog or a trapped maze/mime/box — the snapshot blob still posts on
@@ -754,51 +748,13 @@ pub(crate) fn script_observe_cached_with_channels(
                     wrote = true;
                 }
             } else {
-                // One shared arm for both hooks: `walk_with` carries the
-                // script's options through to `find_with`; `walk` is the
-                // default-options adapter (rs2b0t `walk` semantics stay
-                // default-off for teleports and wilderness). Each closure
-                // owns its own clone of the arm.
-                let bank_rows: Vec<(i32, i32)> = snapshot
-                    .map(|s| s.bank().iter().map(|it| (it.def.id, it.count)).collect())
-                    .unwrap_or_default();
-                let arm = ScriptWalkArm {
-                    here,
-                    world: world.clone(),
-                    navs: Arc::clone(navs),
-                    name: name.to_string(),
-                    state: state.clone(),
-                    bank: bank_rows,
-                };
-                let mut walk_with = {
-                    let arm = arm.clone();
-                    move |x: i32, z: i32, level: i32, o: script::FindOptions| -> bool {
-                        arm.route(
-                            x,
-                            z,
-                            level,
-                            FindOptions {
-                                allow_teleports: o.allow_teleports,
-                                allow_wilderness: o.allow_wilderness,
-                                allow_bank_fetch: o.allow_bank_fetch,
-                                ..FindOptions::default()
-                            },
-                        )
-                    }
-                };
-                let mut walk = {
-                    let arm = arm.clone();
-                    move |x: i32, z: i32, level: i32| -> bool {
-                        arm.route(x, z, level, FindOptions::default())
-                    }
-                };
                 let selected = slot.compiled_game_data();
                 slot.on_game_tick(&mut ScriptCtx {
                     driver,
                     tick,
                     here,
-                    walk: Some(&mut walk),
-                    walk_with: Some(&mut walk_with),
+                    walk: None,
+                    walk_with: None,
                     inv,
                     snapshot,
                     obj_names,

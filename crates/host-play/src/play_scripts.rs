@@ -132,30 +132,35 @@ impl ScriptStartHandle {
         result
     }
 
-    /// Start a compiled registry card on `name`'s slot. Same constructor as
-    /// [`Play::script_start`], without the control-thread wake (the slot
-    /// thread is already pumping).
-    pub fn start_compiled(&self, name: &str, id: script::CompiledId) -> Result<(), String> {
-        host_log!(
-            Category::ScriptLifecycle,
-            Level::Info,
-            slot = name,
-            "start compiled {}",
-            id.0
-        );
-        let make = script::factory(id).ok_or_else(|| format!("not ported: {}", id.0))?;
-        let slot = script_slot_or_insert(&self.scripts, name);
+    /// Prepare a compiled card off-pump. Ready/failure settles through
+    /// `poll_start`; Stop or removal can revoke the captured slot meanwhile.
+    pub fn start_compiled(
+        &self,
+        name: &str,
+        id: script::CompiledId,
+        bag: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), String> {
+        let slot = script_slot(&self.scripts, name).ok_or_else(|| format!("no slot: {name}"))?;
+        if script::compiled_card(id).is_none() {
+            return Err(format!("not ported: {}", id.0));
+        }
+        let selected = self
+            .game_data
+            .clone()
+            .ok_or("selected game data unavailable")?;
         let mut slot = slot
             .lock()
             .map_err(|_| format!("script slot retiring: {name}"))?;
-        let result = slot.start_compiled(make(), self.game_data.clone());
-        if result.is_ok() {
-            invalidate_bank_pick(&self.navs, name);
-        }
-        if let Err(e) = &result {
-            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {e}");
-        }
-        result
+        slot.start_compiled(
+            name,
+            id,
+            Arc::new(bag),
+            selected,
+            Arc::clone(&self.named_banks),
+        )
+        .map_err(|error| error.to_string())?;
+        invalidate_bank_pick(&self.navs, name);
+        Ok(())
     }
 
     /// `name`'s latest Start, read atomically (see [`Play::script_poll_start`]).
@@ -167,6 +172,16 @@ impl ScriptStartHandle {
     /// publishes), for the live pump's File-card receipt watches.
     pub fn paint(&self, name: &str) -> Option<Arc<script::shim::ScriptPaint>> {
         script_runtime::script_paint_of(&self.scripts, name)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Play {
+    /// Offline configuration fixtures use real generated facts without loading
+    /// a client cache. Production only receives facts through ServerProfile.
+    pub fn bind_script_test_data(&mut self, data: Arc<api::game_data::SelectedGameData>) {
+        assert!(self.scripts.lock().unwrap().is_empty());
+        self.game_data = Some(data);
     }
 }
 impl Play {
@@ -186,16 +201,18 @@ impl Play {
     #[cfg(test)]
     pub(crate) fn mark_script_running_for_walk(&self, name: &str) {
         struct Dummy;
-        impl script::ctx::Script for Dummy {
-            fn name(&self) -> &str {
-                "walk-exclude"
+        impl script::native::Script for Dummy {
+            fn tick(
+                &mut self,
+                _ctx: &mut script::native::NativeTick<'_>,
+            ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+                Ok(script::native::ScriptFlow::Continue)
             }
-            fn tick(&mut self, _ctx: &mut script::ScriptCtx<'_>) {}
         }
         let slot = crate::script_runtime::script_slot_or_insert(&self.scripts, name);
         slot.lock()
             .unwrap()
-            .start_compiled(Box::new(Dummy), None)
+            .start_test_script(Box::new(Dummy), None)
             .unwrap();
     }
 
@@ -212,24 +229,143 @@ impl Play {
         }
     }
 
-    /// Start a compiled script on `name`'s slot. `Err("no slot: {name}")`
-    /// when no running slot owns that name, `Err("not ported: {id}")` when
-    /// the picker id has no ported script yet, or `Err` when the slot
-    /// already runs one. The slot thread gates it on `is_up`.
-    ///
-    /// The compiled card is started with this Play's own selected-revision
-    /// pin — the same facts a Load isolate is spawned with.
-    pub fn script_start(&self, name: &str, id: script::CompiledId) -> Result<(), String> {
+    /// Start the same off-pump compiled preparation transaction as live/scenario
+    /// handles. Assignment owners commit only after `script_poll_start` is Ready.
+    pub fn script_start(
+        &self,
+        name: &str,
+        id: script::CompiledId,
+        bag: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), String> {
         if !self.slot_active(name) {
             return Err(format!("no slot: {name}"));
         }
-        let make = script::factory(id).ok_or_else(|| format!("not ported: {}", id.0))?;
-        let slot = script_slot_or_insert(&self.scripts, name);
-        let mut slot = slot
-            .lock()
-            .map_err(|_| format!("script slot retiring: {name}"))?;
-        slot.start_compiled(make(), self.game_data.clone())?;
+        script_slot_or_insert(&self.scripts, name);
+        self.script_start_handle().start_compiled(name, id, bag)?;
+        self.wake(name);
+        Ok(())
+    }
+
+    /// A settings preparer has only shared pinned resources, no slot or game
+    /// action handle. Frontend persistence follows successful typed preparation.
+    pub fn script_prepare_config(
+        &self,
+        id: script::CompiledId,
+        revision: u64,
+        bag: Arc<script::native::SettingsBag>,
+    ) -> Result<
+        std::thread::JoinHandle<
+            Result<Arc<script::native::PreparedConfig>, script::native::StartError>,
+        >,
+        String,
+    > {
+        let selected = self
+            .game_data
+            .clone()
+            .ok_or("selected game data unavailable")?;
+        let banks = Arc::clone(&self.named_banks);
+        api::selected::FamilyPreparation::run(move |worker| {
+            script::slot::prepare_config(worker, id, revision, bag, selected, banks)
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    pub fn script_configure_compiled(
+        &self,
+        name: &str,
+        config: Arc<script::native::PreparedConfig>,
+        target: api::selected::RunKey,
+    ) -> script::CompiledDelivery {
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return script::CompiledDelivery::Stale;
+        };
+        let Ok(mut slot) = slot.lock() else {
+            return script::CompiledDelivery::Stale;
+        };
+        slot.configure_compiled(config, target)
+    }
+
+    pub fn script_native_run(&self, name: &str) -> Option<api::selected::RunKey> {
+        script_slot(&self.scripts, name)
+            .and_then(|slot| slot.lock().ok().and_then(|slot| slot.native_run()))
+    }
+
+    pub fn script_native_status(&self, name: &str) -> Option<Arc<script::native::ScriptStatus>> {
+        script_slot(&self.scripts, name)
+            .and_then(|slot| slot.lock().ok().and_then(|slot| slot.native_status()))
+    }
+
+    pub fn script_native_settings_revision(&self, name: &str) -> Option<u64> {
+        script_slot(&self.scripts, name).and_then(|slot| {
+            slot.lock()
+                .ok()
+                .and_then(|slot| slot.native_settings_revision())
+        })
+    }
+
+    pub fn script_paint(&self, name: &str) -> Option<Arc<script::shim::ScriptPaint>> {
+        script_runtime::script_paint_of(&self.scripts, name)
+    }
+
+    pub fn script_control_key(&self, name: &str) -> Option<(u64, u64)> {
+        script_slot(&self.scripts, name)
+            .and_then(|slot| slot.lock().ok().map(|slot| slot.control_key()))
+    }
+
+    /// Native controls validate the worker/run/session under the mutation lock.
+    pub fn script_native_pause(
+        &self,
+        name: &str,
+        target: api::selected::RunKey,
+        paused: bool,
+    ) -> bool {
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return false;
+        };
+        let Ok(mut slot) = slot.lock() else {
+            return false;
+        };
+        if slot.native_run() != Some(target) {
+            return false;
+        }
+        if paused {
+            pause_script(&mut slot, &self.navs, name);
+        } else {
+            slot.resume();
+        }
+        drop(slot);
+        self.wake(name);
+        true
+    }
+
+    pub fn script_native_stop(&self, name: &str, target: api::selected::RunKey) -> bool {
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return false;
+        };
+        let Ok(mut slot) = slot.lock() else {
+            return false;
+        };
+        if slot.native_run() != Some(target) {
+            return false;
+        }
+        slot.stop();
+        abort_script_walk(&self.navs, name);
         invalidate_bank_pick(&self.navs, name);
+        drop(slot);
+        self.clear_script_paint_status(name);
+        self.wake(name);
+        true
+    }
+
+    pub fn script_native_retry(
+        &self,
+        name: &str,
+        target: api::selected::RunKey,
+    ) -> Result<(), String> {
+        let slot = script_slot(&self.scripts, name).ok_or("stale native run")?;
+        let mut slot = slot.lock().map_err(|_| "script slot retiring")?;
+        slot.retry_compiled(target)
+            .map_err(|failure| failure.message.to_string())?;
         drop(slot);
         self.wake(name);
         Ok(())

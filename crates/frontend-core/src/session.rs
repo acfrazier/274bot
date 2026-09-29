@@ -91,10 +91,13 @@ pub struct Removal {
     pub selection_cleared: bool,
 }
 
-/// A prepared script Start. Preparation (card, parameters, sibling modules)
-/// stays with the caller; the host still owns the isolate.
+/// A script Start request. Native configuration/factory preparation and Load
+/// isolate setup both settle asynchronously through the host.
 pub enum ScriptStart {
-    Compiled(script::CompiledId),
+    Compiled {
+        id: script::CompiledId,
+        bag: serde_json::Map<String, serde_json::Value>,
+    },
     Load {
         js: String,
         shape: script::LoadShape,
@@ -138,6 +141,12 @@ pub enum ArmMirror {
         card: String,
         live: Option<LiveSettings>,
     },
+    /// Native drafts are prepared off-pump before staging or writing the row.
+    NativeSettings {
+        id: script::CompiledId,
+        bag: Arc<serde_json::Map<String, serde_json::Value>>,
+        live: Option<LiveSettings>,
+    },
 }
 
 impl ArmMirror {
@@ -164,6 +173,9 @@ struct PendingWrite {
     mirror: ArmMirror,
     member: String,
 }
+
+mod native_settings;
+use native_settings::PendingPreparation;
 
 pub struct OperatorSession<Io> {
     vault: Option<Vault>,
@@ -194,6 +206,9 @@ pub struct OperatorSession<Io> {
     /// The newest write per profile: only its failure restores the durable
     /// value, so an older failure cannot undo a newer staged edit.
     latest_write: HashMap<String, OperationId>,
+    /// Tombstones retained across removal/recreation fence preparation replies.
+    profile_edits: HashMap<String, OperationId>,
+    preparations: HashMap<OperationId, PendingPreparation>,
     write_failures: Vec<String>,
     /// Settled script-parameter writes, drained by the script coordinator.
     settings_writes: Vec<SettingsWrite>,
@@ -240,6 +255,8 @@ impl<Io> OperatorSession<Io> {
             #[cfg(any(test, feature = "test-support"))]
             write_gate: Arc::default(),
             latest_write: HashMap::new(),
+            profile_edits: HashMap::new(),
+            preparations: HashMap::new(),
             write_failures: Vec::new(),
             settings_writes: Vec::new(),
             starts: HashMap::new(),
@@ -881,6 +898,7 @@ impl<Io> OperatorSession<Io> {
     fn poll_host_at(&mut self, now: Instant) {
         self.transitions.clear();
         self.op_changes.clear();
+        self.take_preparations(false);
         self.take_writes();
         // Commands dispatched since the last poll come before the status
         // changes they caused; settlements follow them.
@@ -1111,6 +1129,7 @@ impl<Io> OperatorSession<Io> {
             let result = match &outcome {
                 Some(script::StartOutcome::Ready) => Outcome::Completed,
                 Some(script::StartOutcome::Failed(error)) => Outcome::Failed(error.clone()),
+                Some(script::StartOutcome::Rejected(error)) => Outcome::Failed(error.to_string()),
                 Some(script::StartOutcome::Cancelled) | None => Outcome::Cancelled,
             };
             self.operations.set(op, &slot, result);
@@ -1195,10 +1214,9 @@ impl<Io> OperatorSession<Io> {
         });
     }
 
-    /// Start a prepared script on `name`. A compiled card starts
-    /// synchronously; a Load Start returns before isolate setup and settles
-    /// through [`Self::poll`] even while the slot is offline or queued.
-    /// `identity` is the canonical card identity reloads fence on.
+    /// Start a script on `name`. Both execution kinds settle through
+    /// [`Self::poll`], even while the slot is offline or queued.
+    /// `identity` is the Load identity; native installation owns its identity.
     pub fn start_script(
         &mut self,
         name: &str,
@@ -1209,10 +1227,10 @@ impl<Io> OperatorSession<Io> {
             .play
             .as_ref()
             .ok_or_else(|| script::StartLoadError::Refused("no play".into()))?;
-        let compiled = matches!(start, ScriptStart::Compiled(_));
+        let compiled = matches!(start, ScriptStart::Compiled { .. });
         match start {
-            ScriptStart::Compiled(id) => play
-                .script_start(name, id)
+            ScriptStart::Compiled { id, bag } => play
+                .script_start(name, id, bag)
                 .map_err(script::StartLoadError::Refused)?,
             ScriptStart::Load {
                 js,
@@ -1221,16 +1239,14 @@ impl<Io> OperatorSession<Io> {
                 siblings,
             } => play.script_start_load_typed(name, js, shape, bag, siblings)?,
         }
-        if let Some(identity) = identity {
-            play.script_attach_identity(name, identity);
+        if !compiled {
+            if let Some(identity) = identity {
+                play.script_attach_identity(name, identity);
+            }
         }
         let op = self.operations.open(ActionKind::ScriptStart);
-        if compiled {
-            self.operations.set(op, name, Outcome::Completed);
-        } else {
-            self.operations.set(op, name, Outcome::Pending);
-            self.starts.insert(name.to_string(), op);
-        }
+        self.operations.set(op, name, Outcome::Pending);
+        self.starts.insert(name.to_string(), op);
         Ok(op)
     }
 
@@ -1316,6 +1332,9 @@ impl<Io> OperatorSession<Io> {
         mirror: ArmMirror,
         label: &'static str,
     ) -> Result<OperationId, String> {
+        if let Some((id, bag)) = mirror.native_draft() {
+            return self.queue_native_settings(profile, mirror, label, id, bag, None);
+        }
         self.ensure_writer();
         self.hold_durable(&profile.username)
             .ok_or_else(|| format!("{label}: vault locked"))?;
@@ -1355,13 +1374,18 @@ impl<Io> OperatorSession<Io> {
         mirror: ArmMirror,
         label: &'static str,
     ) -> Result<OperationId, String> {
-        if old != profile.username {
-            self.refuse_existing(&profile.username, label)?;
+        if old == profile.username {
+            return self.save_profile(profile, mirror, label);
+        }
+        self.refuse_existing(&profile.username, label)?;
+        if let Some((id, bag)) = mirror.native_draft() {
+            return self.queue_native_settings(profile, mirror, label, id, bag, Some(old));
         }
         self.ensure_writer();
         self.hold_durable(&profile.username)
             .ok_or_else(|| format!("{label}: vault locked"))?;
         self.hold_durable(old);
+        self.cancel_profile_start(old);
         api::hostlog::register_secret(&profile.password);
         if let Some(vault) = self.vault.as_mut() {
             vault.stage_upsert(profile.clone());
@@ -1447,6 +1471,7 @@ impl<Io> OperatorSession<Io> {
             return Ok(None);
         }
         self.hold_durable(name);
+        self.cancel_profile_start(name);
         if let Some(vault) = self.vault.as_mut() {
             vault.stage_remove(name);
         }
@@ -1456,6 +1481,18 @@ impl<Io> OperatorSession<Io> {
             ArmMirror::None,
             "chooser",
         )))
+    }
+
+    /// Removing an assignment owner wins against an unsettled Start, without
+    /// stopping an independently running member during vault-only deletion.
+    fn cancel_profile_start(&self, name: &str) {
+        if let Some(play) = self.play.as_ref() {
+            if self.starts.contains_key(name)
+                || play.script_state(name) == script::RunState::Starting
+            {
+                play.script_stop(name);
+            }
+        }
     }
 
     /// The writer snapshots the durable vault, so it must exist before the
@@ -1480,12 +1517,24 @@ impl<Io> OperatorSession<Io> {
         label: &'static str,
     ) -> OperationId {
         let op = self.operations.open(action);
+        self.submit_write_at(op, changes, mirror, label);
+        op
+    }
+
+    fn submit_write_at(
+        &mut self,
+        op: OperationId,
+        changes: Vec<VaultChange>,
+        mirror: ArmMirror,
+        label: &'static str,
+    ) {
         // The operation's member is the profile the edit is about (a
         // rename's new name).
         let member = changes[0].username().to_string();
         self.operations.set(op, &member, Outcome::Pending);
         for change in &changes {
             self.latest_write.insert(change.username().to_string(), op);
+            self.profile_edits.insert(change.username().to_string(), op);
         }
         self.writes.insert(
             op,
@@ -1498,7 +1547,6 @@ impl<Io> OperatorSession<Io> {
         if let Some(writer) = self.writer.as_mut() {
             writer.submit(op, changes);
         }
-        op
     }
 
     /// Persist a profile's auto-login; a running slot's arm follows once the
@@ -1582,6 +1630,7 @@ impl<Io> OperatorSession<Io> {
     /// harness boundaries only: it blocks on disk I/O, so frame paths use
     /// [`Self::poll`] instead.
     pub fn flush_writes(&mut self) {
+        self.take_preparations(true);
         while let Some(written) = self.writer.as_mut().and_then(ProfileWriter::wait_take) {
             self.settle_write(written);
         }
@@ -1707,6 +1756,9 @@ impl<Io> OperatorSession<Io> {
                 return deliver_settings(play, name, live);
             }
             ArmMirror::ScriptSettings { live, .. } => return deliver_settings(play, name, live),
+            ArmMirror::NativeSettings { .. } => {
+                return LiveDelivery::Rejected("native settings were not prepared".into())
+            }
         }
         LiveDelivery::NotRunning
     }
@@ -1723,6 +1775,23 @@ fn deliver_settings(play: &Play, name: &str, live: Option<LiveSettings>) -> Live
         && play.script_runtime_generation(name) == Some(live.generation);
     if !same_run {
         return LiveDelivery::Stale;
+    }
+    if let Some(target) = live.run {
+        let Some(config) = live.prepared else {
+            return LiveDelivery::Rejected("native settings were not prepared".into());
+        };
+        return match play.script_configure_compiled(name, config, target) {
+            script::CompiledDelivery::Applied => LiveDelivery::Applied,
+            script::CompiledDelivery::PendingBoundary => LiveDelivery::PendingBoundary,
+            script::CompiledDelivery::RestartRequired => LiveDelivery::RestartRequired,
+            script::CompiledDelivery::Unchanged => LiveDelivery::Unchanged,
+            script::CompiledDelivery::Stale => LiveDelivery::Stale,
+            script::CompiledDelivery::NotRunning => LiveDelivery::NotRunning,
+            script::CompiledDelivery::Rejected(error) => LiveDelivery::Rejected(format!(
+                "{}: {} ({})",
+                error.field, error.message, error.code
+            )),
+        };
     }
     if play.script_post_settings_fenced(name, &live.bag, &live.identity, live.generation) {
         return LiveDelivery::Delivered;

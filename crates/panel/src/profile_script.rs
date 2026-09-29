@@ -241,8 +241,17 @@ impl Session {
             self.error = Some("Apply to all: no focused profile".into());
             return;
         };
+        if let Some(script::ScriptSel::Compiled(id)) = self.script_sel {
+            if let Err(error) = self
+                .scripts
+                .prepare_compiled_settings_sync(&self.core, &profile, id, None)
+            {
+                self.error = Some(error);
+            }
+            return;
+        }
         let Some(script::ScriptSel::Loaded(source, lookup)) = self.script_sel.clone() else {
-            self.error = Some("Apply to all: select a loaded script".into());
+            self.error = Some("Apply to all: select a script".into());
             return;
         };
         let Some((name, path)) = self

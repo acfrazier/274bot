@@ -2182,20 +2182,22 @@ fn slot_start_load_refuses_while_active() {
 #[test]
 fn slot_load_and_compiled_are_xor() {
     struct Noop;
-    impl script::ctx::Script for Noop {
-        fn name(&self) -> &str {
-            "noop"
+    impl script::native::Script for Noop {
+        fn tick(
+            &mut self,
+            _ctx: &mut script::native::NativeTick<'_>,
+        ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+            Ok(script::native::ScriptFlow::Continue)
         }
-        fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
     }
     let mut slot = SlotScript::new();
     slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .unwrap();
-    assert!(slot.start_compiled(Box::new(Noop), None).is_err());
+    assert!(slot.start_test_script(Box::new(Noop), None).is_err());
     slot.stop();
     wait_slot_state(&mut slot, script::RunState::Idle);
 
-    slot.start_compiled(Box::new(Noop), None).unwrap();
+    slot.start_test_script(Box::new(Noop), None).unwrap();
     assert!(slot
         .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .is_err());

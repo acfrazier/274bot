@@ -3,7 +3,11 @@
 //! (`on_is_up`). `tick` runs on the caller's pump at a game-tick edge and
 //! must return; panics are caught, never abort the process.
 
+pub(crate) mod compiled;
 mod pending;
+use crate::native::{Interrupt, RetainedMemory, ScriptFailure, ScriptFlow, StopReason};
+pub use compiled::{prepare_config, CompiledDelivery};
+use compiled::{CompiledRun, Preparation};
 
 pub use pending::{
     PendingBankOp, PendingBankOpKind, PendingFillBaseline, PendingWithdrawResult, PendingWithdrawX,
@@ -14,7 +18,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::ctx::{Script, ScriptCtx};
+use crate::ctx::ScriptCtx;
 #[cfg(feature = "load")]
 use crate::isolate_fb::{IsolateBuf, SnapshotFingerprint};
 #[cfg(feature = "load")]
@@ -67,6 +71,9 @@ pub enum RunState {
 #[serde(rename_all = "snake_case")]
 pub enum ScriptTerminalState {
     Stopped,
+    Completed,
+    Failed,
+    Cancelled,
 }
 
 /// One bounded, non-consuming terminal receipt for the latest Start.
@@ -105,7 +112,6 @@ enum AfterStop {
 /// How the latest operator Load Start settled. Start returns before V8
 /// setup, so the caller that owns the assignment and the load diagnostic
 /// commits them from this, never from Start's `Ok`.
-#[cfg(feature = "load")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartOutcome {
     /// Setup finished; the runtime is live (Running, or Paused by the
@@ -116,10 +122,11 @@ pub enum StartOutcome {
     Failed(String),
     /// Stopped before setup finished; nothing ran.
     Cancelled,
+    /// Compiled preparation/factory validation failed; assignment is unchanged.
+    Rejected(crate::native::StartError),
 }
 
 /// One atomic read of a pending operator Load Start ([`SlotScript::poll_start`]).
-#[cfg(feature = "load")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartPoll {
     /// Setup (or the reap a queued Start waits for) is still running.
@@ -135,16 +142,16 @@ pub enum StartPoll {
 pub struct SlotScript {
     pub want_run: bool,
     state: RunState,
-    compiled: Option<Box<dyn Script>>,
+    compiled: Option<Box<CompiledRun>>,
+    preparing: Option<Box<Preparation>>,
+    retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
+    incarnation: u64,
+    control_generation: u64,
     /// The compiled card's own interact queue: what its tick enqueued, drained
     /// by the host on the same frames the isolate's queue is. Never both — a
     /// slot runs a compiled script XOR a Load isolate.
     #[cfg(feature = "load")]
     compiled_interacts: Vec<crate::shim::InteractReq>,
-    /// The selected-revision facts the owning `Play` pinned at this compiled
-    /// Start, read by the ctx the host builds around each tick. Cleared with
-    /// the instance.
-    compiled_selected: Option<Arc<api::game_data::SelectedGameData>>,
     /// A compiled clue-machine session abort is owed to the pump thread.
     /// `reset_session_work` may run on the control thread and must not touch
     /// the slot thread's TLS machine, so it marks here and
@@ -173,9 +180,7 @@ pub struct SlotScript {
     #[cfg(feature = "load")]
     after_stop: AfterStop,
     /// An operator Load Start has not settled yet (see [`StartOutcome`]).
-    #[cfg(feature = "load")]
     start_pending: bool,
-    #[cfg(feature = "load")]
     start_outcome: Option<StartOutcome>,
     /// `runtime_generation` before the unsettled setup's bump. A setup
     /// that fails restores it: a failed Start never counted as a Start.
@@ -250,9 +255,12 @@ impl SlotScript {
             want_run: false,
             state: RunState::Idle,
             compiled: None,
+            preparing: None,
+            retained: None,
+            incarnation: 0,
+            control_generation: 0,
             #[cfg(feature = "load")]
             compiled_interacts: Vec::new(),
-            compiled_selected: None,
             #[cfg(feature = "load")]
             clue_abort_owed: false,
             #[cfg(feature = "load")]
@@ -265,9 +273,7 @@ impl SlotScript {
             stop_rx: None,
             #[cfg(feature = "load")]
             after_stop: AfterStop::Idle,
-            #[cfg(feature = "load")]
             start_pending: false,
-            #[cfg(feature = "load")]
             start_outcome: None,
             #[cfg(feature = "load")]
             setup_generation_base: None,
@@ -314,56 +320,6 @@ impl SlotScript {
     /// True when either a compiled script or a JS isolate is installed.
     fn has_instance(&self) -> bool {
         self.compiled.is_some() || self.load_active()
-    }
-
-    /// Install a compiled script and start it. Refuses (no silent replace)
-    /// while Starting, Running, Paused, or Stopping; allowed from Idle and
-    /// Error (a fresh Start clears the previous error).
-    ///
-    /// `selected` is the owning `Play`'s selected-revision pin — the same
-    /// facts a Load isolate is spawned with. The host hands it to the card on
-    /// every tick (`ScriptCtx::compiled`); a `None` pin is what a compiled
-    /// identify fails closed on.
-    pub fn start_compiled(
-        &mut self,
-        script: Box<dyn Script>,
-        selected: Option<Arc<api::game_data::SelectedGameData>>,
-    ) -> Result<(), String> {
-        match self.state {
-            RunState::Running | RunState::Paused | RunState::Stopping | RunState::Starting => {
-                Err("script already active: stop it first".to_string())
-            }
-            RunState::Idle | RunState::Error => {
-                if self.load_active() {
-                    return Err("loaded script active: stop it first".to_string());
-                }
-                self.compiled = Some(script);
-                self.compiled_selected = selected;
-                #[cfg(feature = "load")]
-                self.compiled_interacts.clear();
-                self.want_run = true;
-                self.last_error = None;
-                #[cfg(feature = "load")]
-                {
-                    self.active_tick_error_generation = None;
-                }
-                self.lifecycle_receipt = None;
-                self.ticks = 0;
-                self.pending_withdraw_x = None;
-                self.withdraw_x_result_seq = 0;
-                self.withdraw_x_result = false;
-                self.withdraw_load_result_seq = 0;
-                self.withdraw_load_result = false;
-                self.pending_bank_op = None;
-                self.bank_op_result_seq = 0;
-                self.bank_op_result = false;
-                self.state = RunState::Running;
-                self.runtime_generation = self.runtime_generation.wrapping_add(1);
-                self.last_settings_fp = None;
-                self.native_input.publish_live();
-                Ok(())
-            }
-        }
     }
 
     /// Start a JS Load isolate (the isolate is spawned here, on Start, not
@@ -523,7 +479,6 @@ impl SlotScript {
         self.start_outcome = None;
     }
 
-    #[cfg(feature = "load")]
     fn settle_start(&mut self, outcome: StartOutcome) {
         if std::mem::take(&mut self.start_pending) {
             self.start_outcome = Some(outcome);
@@ -533,7 +488,6 @@ impl SlotScript {
     /// Resolve the lifecycle and read the latest operator Load Start in one
     /// step, so no observe can settle it between the outcome read and the
     /// in-flight check (the slot thread observes every frame).
-    #[cfg(feature = "load")]
     pub fn poll_start(&mut self) -> StartPoll {
         self.observe_lifecycle();
         match self.start_outcome.take() {
@@ -602,10 +556,7 @@ impl SlotScript {
     }
 
     fn finish_idle_stop(&mut self) {
-        if let Some(mut script) = self.compiled.take() {
-            script.on_stop();
-        }
-        self.compiled_selected = None;
+        self.teardown_compiled(StopReason::Operator);
         #[cfg(feature = "load")]
         self.compiled_interacts.clear();
         #[cfg(feature = "load")]
@@ -633,7 +584,7 @@ impl SlotScript {
     /// Resolve Start/Stop without blocking. The slot thread and UI pump
     /// call this once per frame.
     #[cfg(feature = "load")]
-    pub fn observe_lifecycle(&mut self) {
+    fn observe_load_lifecycle(&mut self) {
         if let Some(isolate) = self.load.as_ref() {
             if !self.load_ready {
                 match isolate.poll_ready() {
@@ -739,10 +690,7 @@ impl SlotScript {
         self.work_epoch = self.work_epoch.wrapping_add(1);
         match std::mem::replace(&mut self.after_stop, AfterStop::Idle) {
             AfterStop::Idle => {
-                if let Some(mut script) = self.compiled.take() {
-                    script.on_stop();
-                }
-                self.compiled_selected = None;
+                self.teardown_compiled(StopReason::Operator);
                 self.compiled_interacts.clear();
                 self.watchdog.cancel_clear();
                 self.want_run = false;
@@ -797,6 +745,7 @@ impl SlotScript {
     pub fn pause(&mut self) {
         self.want_run = false;
         self.revoke_native_input();
+        self.interrupt_compiled(Interrupt::Pause);
         if let Some(pending) = &mut self.pending_withdraw_x {
             pending.freeze();
         }
@@ -822,6 +771,13 @@ impl SlotScript {
     /// next `on_is_up(false)` re-gates if it is not. No-op when there is
     /// no instance or the slot errored.
     pub fn resume(&mut self) {
+        if self.state == RunState::Error {
+            return;
+        }
+        self.interrupt_compiled(Interrupt::Resume);
+        if self.state == RunState::Error {
+            return;
+        }
         self.want_run = true;
         if let Some(pending) = &mut self.pending_withdraw_x {
             pending.resume();
@@ -860,7 +816,18 @@ impl SlotScript {
     /// (onStop hook plus the 2 s cap) runs on a reaper; observe completes
     /// it. Compiled teardown still runs on this thread.
     pub fn stop(&mut self) {
-        self.lifecycle_receipt = None;
+        let native = self.compiled.is_some() || self.preparing.is_some();
+        if native {
+            self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
+                runtime_generation: self.control_generation.max(self.runtime_generation),
+                state: ScriptTerminalState::Cancelled,
+                tick: self.ticks,
+                reason: "operator stop".into(),
+            });
+        }
+        self.control_generation = self.control_generation.saturating_add(1);
+        self.preparing = None;
+        self.retained = None;
         self.revoke_native_input();
         // The compiled clue machine's abort belongs to the pump thread (its
         // runtime is thread-local, and Stop may arrive on the control thread):
@@ -887,7 +854,6 @@ impl SlotScript {
             self.active_tick_error_generation = None;
         }
         // A Start that has not reached Ready never ran: nothing to commit.
-        #[cfg(feature = "load")]
         self.settle_start(StartOutcome::Cancelled);
         #[cfg(feature = "load")]
         if self.state == RunState::Stopping {
@@ -1031,6 +997,9 @@ impl SlotScript {
     /// Post the merged operator settings bag into a Load isolate.
     #[cfg(feature = "load")]
     pub fn post_settings_bag(&mut self, bag: &serde_json::Map<String, serde_json::Value>) {
+        if self.load.is_none() {
+            return;
+        }
         let fp = settings_fp(bag);
         if self.last_settings_fp.as_deref() == Some(fp.as_str()) {
             return;
@@ -1078,6 +1047,9 @@ impl SlotScript {
             RunState::Running | RunState::Paused | RunState::Starting => {}
             _ => return false,
         }
+        if self.load.is_none() {
+            return false;
+        }
         self.post_settings_bag(bag);
         true
     }
@@ -1102,7 +1074,7 @@ impl SlotScript {
     /// copies into the ctx as `ScriptCtx::compiled.selected`. `None` for a
     /// Load slot, an idle slot, or a `Play` with no generated facts.
     pub fn compiled_game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
-        self.compiled_selected.clone()
+        self.compiled.as_ref().map(|run| Arc::clone(&run.selected))
     }
 
     /// Pump-thread sync of the compiled clue machine: the owed abort or
@@ -1529,14 +1501,19 @@ impl SlotScript {
         self.watchdog.abort_owned_recovery()
     }
 
-    /// The slot script's latest recorded paint frame (a Load isolate's
-    /// host handle forwards it after every tick that painted); `None` for
-    /// a compiled script or a slot that has not painted. The host shares
-    /// the frame with the status row so the TUI/panel views can show it in
-    /// the chat pane in place of the game chat.
-    #[cfg(feature = "load")]
-    pub fn paint(&self) -> Option<std::sync::Arc<crate::shim::ScriptPaint>> {
-        self.load.as_ref().and_then(|iso| iso.paint())
+    /// Latest shared output frame, from the single active execution kind.
+    pub fn paint(&self) -> Option<Arc<crate::shim::ScriptPaint>> {
+        if let Some(run) = &self.compiled {
+            return run.output.paint.clone();
+        }
+        #[cfg(feature = "load")]
+        {
+            self.load.as_ref().and_then(|iso| iso.paint())
+        }
+        #[cfg(not(feature = "load"))]
+        {
+            None
+        }
     }
 
     /// Forward a one-shot paint-button id to the Load isolate. No-op for a
@@ -1612,7 +1589,6 @@ impl SlotScript {
     /// back whatever the tick does. A panic also marks the clue machine's
     /// abort, which the slot's next observed frame applies.
     pub fn on_game_tick(&mut self, ctx: &mut ScriptCtx<'_>) {
-        #[cfg(feature = "load")]
         self.observe_lifecycle();
         if self.state != RunState::Running || !self.want_run {
             return;
@@ -1622,9 +1598,17 @@ impl SlotScript {
             isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
             return;
         }
-        let Some(script) = self.compiled.as_mut() else {
+        let Some(run) = self.compiled.as_mut() else {
             return;
         };
+        if run
+            .output
+            .status
+            .as_ref()
+            .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked)
+        {
+            return;
+        }
         // Park this slot's interact queue in the ctx for the tick: the verbs
         // the card dispatches then land on the same drain the isolate's
         // forwarded requests ride.
@@ -1633,32 +1617,56 @@ impl SlotScript {
             ctx.compiled.interacts = Some(std::mem::take(&mut self.compiled_interacts));
         }
         self.ticks += 1;
-        let result = catch_unwind(AssertUnwindSafe(|| script.tick(ctx)));
+        let result = {
+            let mut retained = self
+                .retained
+                .as_ref()
+                .expect("compiled retention")
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            run.tick(ctx, &mut retained)
+        };
         #[cfg(feature = "load")]
         {
             self.compiled_interacts = ctx.compiled.interacts.take().unwrap_or_default();
         }
-        if let Err(payload) = result {
-            let message = format!("script panic: {}", panic_message(&payload));
-            self.pending_logs.push(message.clone());
-            self.last_error = Some(message);
-            self.state = RunState::Error;
-            self.want_run = false;
-            self.compiled = None;
-            self.compiled_selected = None;
-            // The card is gone: its machine session must not outlive it, and
-            // the verbs a half-finished tick queued are not this session's to
-            // send. The pump applies the abort on this same thread, next
-            // observed frame. It is the session abort and not
-            // `clue_stop_owed`: a dead card is not a fresh task instance, and
-            // the strip list it may still owe a reclaim for outlives it —
-            // Stop is what clears that.
-            #[cfg(feature = "load")]
-            {
+        match result {
+            Ok(ScriptFlow::Continue) => {}
+            Ok(ScriptFlow::Blocked(failure)) => {
+                self.revoke_native_input();
+                #[cfg(feature = "load")]
                 self.compiled_interacts.clear();
-                self.clue_abort_owed = true;
+                if let Some(run) = &mut self.compiled {
+                    run.output.status = Some(Arc::new(crate::native::ScriptStatus {
+                        run: run.run,
+                        card: run.config.card(),
+                        phase: crate::native::NativePhase::Blocked,
+                        active_settings: run.config.revision(),
+                        pending_settings: run.pending.as_ref().map(|next| next.revision()),
+                        fields: run
+                            .output
+                            .status
+                            .as_ref()
+                            .map_or_else(|| Arc::from([]), |status| Arc::clone(&status.fields)),
+                        failure: Some(failure),
+                    }));
+                }
             }
-            self.revoke_native_input();
+            Ok(ScriptFlow::Complete) => {
+                self.revoke_native_input();
+                #[cfg(feature = "load")]
+                self.compiled_interacts.clear();
+                self.teardown_compiled(StopReason::Completed);
+                self.state = RunState::Idle;
+                self.want_run = false;
+                self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
+                    runtime_generation: self.runtime_generation,
+                    state: ScriptTerminalState::Completed,
+                    tick: ctx.tick,
+                    reason: "completed".into(),
+                });
+            }
+            Err(failure) => self.fail_compiled(failure),
         }
     }
 
@@ -1675,10 +1683,19 @@ impl SlotScript {
         if self.state != RunState::Running || !self.want_run {
             return RandomClaim::Host;
         }
-        match &mut self.compiled {
-            Some(script) => script.on_random(ev),
-            // JS Load isolate: the knock has no JS arm this tag.
-            None => RandomClaim::Host,
+        let Some(run) = &mut self.compiled else {
+            return RandomClaim::Host;
+        };
+        match catch_unwind(AssertUnwindSafe(|| run.script.on_random(ev))) {
+            Ok(claim) => claim,
+            Err(payload) => {
+                self.fail_compiled(ScriptFailure {
+                    code: "random-panic".into(),
+                    message: panic_message(&payload).into(),
+                    retryable: false,
+                });
+                RandomClaim::Host
+            }
         }
     }
 
@@ -1811,6 +1828,8 @@ impl SlotScript {
 
 impl Drop for SlotScript {
     fn drop(&mut self) {
+        self.preparing = None;
+        self.teardown_compiled(StopReason::Removed);
         #[cfg(feature = "load")]
         if let Some(isolate) = self.load.take() {
             let (tx, _rx) = std::sync::mpsc::channel();

@@ -1,0 +1,636 @@
+//! Compiled registration transaction and shared presentation, owned by SlotScript.
+use super::*;
+#[cfg(feature = "load")]
+use crate::native::HostFrame;
+use crate::native::{
+    ActionContext, ConfigError, Interrupt, NativeActions, NativeOutput, NativePhase, NativeTick,
+    PrepareContext, PreparedConfig, RetainedMemory, Script, ScriptFailure, ScriptFlow,
+    ScriptStatus, SettingsApply, SettingsBag, StartError, StopReason,
+};
+use api::quest_progress::EvidenceStamp;
+use api::selected::{FamilyPreparation, RunKey, SelectedPin};
+use std::sync::Mutex;
+
+pub(super) struct CompiledRun {
+    pub script: ScriptOwner,
+    pub config: Arc<PreparedConfig>,
+    pub pending: Option<PendingConfig>,
+    pub run: RunKey,
+    pub selected: Arc<api::game_data::SelectedGameData>,
+    pub pin: Arc<SelectedPin>,
+    pub output: Output,
+    pub actions: NativeActions,
+}
+
+pub(super) struct PendingConfig {
+    config: Arc<PreparedConfig>,
+    boundary: bool,
+}
+
+impl PendingConfig {
+    pub(super) fn revision(&self) -> u64 {
+        self.config.revision()
+    }
+}
+
+/// Also guards a factory result discarded on its worker after Stop/removal.
+/// No callback or destructor may unwind into the host or a reaper.
+pub(super) struct ScriptOwner(Option<Box<dyn Script>>);
+
+impl std::ops::Deref for ScriptOwner {
+    type Target = dyn Script;
+    fn deref(&self) -> &Self::Target {
+        self.0.as_deref().expect("live script owner")
+    }
+}
+impl std::ops::DerefMut for ScriptOwner {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_deref_mut().expect("live script owner")
+    }
+}
+impl ScriptOwner {
+    fn stop(&mut self, reason: StopReason) -> Option<String> {
+        let mut script = self.0.take()?;
+        let stopped = catch_unwind(AssertUnwindSafe(|| script.on_stop(reason)));
+        let dropped = catch_unwind(AssertUnwindSafe(|| drop(script)));
+        stopped
+            .err()
+            .or_else(|| dropped.err())
+            .map(|payload| format!("script teardown panic: {}", panic_message(&payload)))
+    }
+}
+impl Drop for ScriptOwner {
+    fn drop(&mut self) {
+        let _ = self.stop(StopReason::Replaced);
+    }
+}
+
+pub(super) struct Preparation {
+    generation: u64,
+    worker: std::thread::JoinHandle<Result<CompiledRun, StartError>>,
+}
+
+/// Settings admission is distinct from persistence and from Load delivery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompiledDelivery {
+    Applied,
+    PendingBoundary,
+    RestartRequired,
+    Unchanged,
+    Stale,
+    NotRunning,
+    Rejected(ConfigError),
+}
+
+#[derive(Default)]
+pub(super) struct Output {
+    pub status: Option<Arc<ScriptStatus>>,
+    pub paint: Option<Arc<crate::shim::ScriptPaint>>,
+    pub applied: Option<u64>,
+    pub account: String,
+}
+
+impl NativeOutput for Output {
+    fn status(&mut self, status: ScriptStatus) {
+        if self.status.as_deref() != Some(&status) {
+            self.status = Some(Arc::new(status));
+        }
+    }
+    fn paint(&mut self, frame: Arc<crate::shim::ScriptPaint>) {
+        if self.paint.as_deref() != Some(frame.as_ref()) {
+            self.paint = Some(frame);
+        }
+    }
+    fn log(&mut self, level: api::hostlog::Level, message: &str) {
+        api::hostlog::record(&api::hostlog::Record {
+            slot: Some(&self.account),
+            tick: api::hostlog::slot_tick(&self.account),
+            source: api::hostlog::Source::Script,
+            level,
+            message,
+        });
+    }
+    fn settings_applied(&mut self, revision: u64) {
+        self.applied = Some(revision);
+    }
+}
+
+impl CompiledRun {
+    fn latest_config(&self) -> &PreparedConfig {
+        self.pending
+            .as_ref()
+            .map_or(&self.config, |pending| &pending.config)
+    }
+
+    fn sync_settings_status(&mut self) {
+        let Some(status) = self.output.status.as_mut() else {
+            return;
+        };
+        let pending = self.pending.as_ref().map(PendingConfig::revision);
+        if status.active_settings != self.config.revision() || status.pending_settings != pending {
+            let status = Arc::make_mut(status);
+            status.active_settings = self.config.revision();
+            status.pending_settings = pending;
+        }
+    }
+
+    pub(super) fn tick(
+        &mut self,
+        ctx: &mut ScriptCtx<'_>,
+        retained: &mut RetainedMemory,
+    ) -> Result<ScriptFlow, ScriptFailure> {
+        let evidence = EvidenceStamp {
+            run: self.run,
+            tick: ctx.tick,
+            sequence: ctx.tick,
+        };
+        let result = {
+            let mut tick = NativeTick {
+                actions: &mut self.actions,
+                cx: ActionContext {
+                    evidence,
+                    pin: &self.pin,
+                    snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence),
+                    retained,
+                    action_id: 0,
+                    active_now: Duration::ZERO,
+                    wall_now: Instant::now(),
+                },
+                output: &mut self.output,
+                pairs: None,
+                #[cfg(feature = "load")]
+                frame: HostFrame {
+                    here: ctx.here,
+                    snapshot: ctx.snapshot,
+                    obj_names: ctx.obj_names,
+                    compiled: crate::CompiledTick {
+                        selected: Some(&self.selected),
+                        hold: ctx.compiled.hold,
+                        #[cfg(feature = "load")]
+                        interacts: ctx.compiled.interacts.take(),
+                    },
+                },
+            };
+            // Take the queue back even after a card panic, then let SlotScript
+            // revoke/discard it before the host can drain any partial effects.
+            let result = catch_unwind(AssertUnwindSafe(|| self.script.tick(&mut tick)));
+            #[cfg(feature = "load")]
+            {
+                ctx.compiled.interacts = tick.frame.compiled.interacts.take();
+            }
+            result
+        };
+        if let Some(revision) = self.output.applied.take() {
+            if self
+                .pending
+                .as_ref()
+                .is_some_and(|next| next.boundary && next.revision() == revision)
+            {
+                self.config = self
+                    .pending
+                    .take()
+                    .expect("matching pending revision")
+                    .config;
+            }
+        }
+        self.sync_settings_status();
+        match result {
+            Ok(flow) => flow,
+            Err(payload) => Err(ScriptFailure {
+                code: "panic".into(),
+                message: format!("script panic: {}", panic_message(&payload)).into(),
+                retryable: false,
+            }),
+        }
+    }
+}
+
+/// Prepare only; callers invoke this on a FamilyPreparation worker and never
+/// persist/apply a draft before this returns a validated card-owned payload.
+pub fn prepare_config(
+    worker: &mut FamilyPreparation,
+    id: crate::CompiledId,
+    revision: u64,
+    bag: Arc<SettingsBag>,
+    selected: Arc<api::game_data::SelectedGameData>,
+    banks: Arc<api::named_banks::NamedBankFacts>,
+) -> Result<Arc<PreparedConfig>, StartError> {
+    let card = crate::compiled_card(id)
+        .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
+    let pin = selected.selected_pin().map_err(StartError::Facts)?;
+    let mut cx = PrepareContext {
+        selected,
+        pin,
+        banks,
+        families: worker,
+    };
+    let config = catch_unwind(AssertUnwindSafe(|| (card.prepare)(&mut cx, revision, bag)))
+        .map_err(|payload| {
+            StartError::Unavailable(
+                format!("preparation panic: {}", panic_message(&payload)).into(),
+            )
+        })??;
+    if config.card() != card.id
+        || config.schema_version() != card.schema_version
+        || config.revision() != revision
+        || revision == 0
+    {
+        return Err(StartError::Config(ConfigError::new(
+            "",
+            "prepared-identity",
+            "preparer returned a different card/schema/revision",
+        )));
+    }
+    Ok(config)
+}
+
+impl SlotScript {
+    /// Bind once to the owning host worker lifetime. A replaced profile gets a
+    /// different incarnation even when its visible name is reused.
+    pub fn bind_incarnation(&mut self, incarnation: u64) {
+        assert!(incarnation != 0 && self.incarnation == 0 && !self.has_instance());
+        self.incarnation = incarnation;
+    }
+
+    pub fn start_compiled(
+        &mut self,
+        account: &str,
+        id: crate::CompiledId,
+        bag: Arc<SettingsBag>,
+        selected: Arc<api::game_data::SelectedGameData>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+    ) -> Result<(), StartError> {
+        if !matches!(self.state, RunState::Idle | RunState::Error) || self.load_active() {
+            return Err(StartError::Busy);
+        }
+        if self.incarnation == 0 {
+            return Err(StartError::Unavailable("slot worker is not bound".into()));
+        }
+        let card = crate::compiled_card(id)
+            .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
+        let generation = self
+            .control_generation
+            .max(self.runtime_generation)
+            .checked_add(1)
+            .ok_or_else(|| StartError::Unavailable("run generation exhausted".into()))?;
+        let run = RunKey {
+            slot: self.incarnation,
+            run: generation,
+            session: self.work_epoch,
+        };
+        let retained = Arc::clone(
+            self.retained
+                .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default()))),
+        );
+        let account = account.to_owned();
+        let worker = FamilyPreparation::run(move |worker| {
+            let config = prepare_config(worker, id, 1, bag, Arc::clone(&selected), banks)?;
+            let pin = selected.selected_pin().map_err(StartError::Facts)?;
+            let mut retained = retained
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let script = catch_unwind(AssertUnwindSafe(|| {
+                (card.create)(run, Arc::clone(&config), &mut retained)
+            }))
+            .map_err(|payload| {
+                StartError::Unavailable(
+                    format!("factory panic: {}", panic_message(&payload)).into(),
+                )
+            })??;
+            Ok(CompiledRun {
+                script: ScriptOwner(Some(script)),
+                config,
+                pending: None,
+                run,
+                selected,
+                pin,
+                output: Output {
+                    account,
+                    ..Default::default()
+                },
+                actions: NativeActions { _private: () },
+            })
+        })
+        .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+        self.control_generation = generation;
+        self.preparing = Some(Box::new(Preparation { generation, worker }));
+        self.want_run = true;
+        self.start_pending = true;
+        self.start_outcome = None;
+        self.state = RunState::Starting;
+        Ok(())
+    }
+
+    fn poll_compiled(&mut self) {
+        if !self
+            .preparing
+            .as_ref()
+            .is_some_and(|job| job.worker.is_finished())
+        {
+            return;
+        }
+        let job = self.preparing.take().expect("finished preparation");
+        if job.generation != self.control_generation {
+            return;
+        }
+        match job.worker.join() {
+            Ok(Ok(run)) => {
+                self.install_compiled(run);
+                self.settle_start(StartOutcome::Ready);
+            }
+            outcome => {
+                let error = match outcome {
+                    Ok(Err(error)) => error,
+                    Err(payload) => StartError::Unavailable(
+                        format!("preparation worker panic: {}", panic_message(&payload)).into(),
+                    ),
+                    Ok(Ok(_)) => unreachable!(),
+                };
+                self.last_error = Some(error.to_string());
+                self.want_run = false;
+                self.state = RunState::Idle;
+                self.settle_start(StartOutcome::Rejected(error));
+            }
+        }
+    }
+
+    fn install_compiled(&mut self, run: CompiledRun) {
+        self.source_identity = Some(crate::compiled_identity_key(run.config.card()));
+        self.runtime_generation = run.run.run;
+        self.compiled = Some(Box::new(run));
+        self.last_error = None;
+        self.lifecycle_receipt = None;
+        self.ticks = 0;
+        self.pending_withdraw_x = None;
+        self.withdraw_x_result_seq = 0;
+        self.withdraw_x_result = false;
+        self.withdraw_load_result_seq = 0;
+        self.withdraw_load_result = false;
+        self.pending_bank_op = None;
+        self.bank_op_result_seq = 0;
+        self.bank_op_result = false;
+        self.last_settings_fp = None;
+        #[cfg(feature = "load")]
+        {
+            self.compiled_interacts.clear();
+            self.active_tick_error_generation = None;
+        }
+        self.state = if self.want_run {
+            RunState::Running
+        } else {
+            RunState::Paused
+        };
+        if self.want_run {
+            self.native_input.publish_live();
+        }
+    }
+
+    pub fn observe_lifecycle(&mut self) {
+        self.poll_compiled();
+        #[cfg(feature = "load")]
+        self.observe_load_lifecycle();
+    }
+
+    pub fn native_run(&self) -> Option<RunKey> {
+        self.compiled.as_ref().map(|run| run.run)
+    }
+    pub fn native_status(&self) -> Option<Arc<ScriptStatus>> {
+        self.compiled
+            .as_ref()
+            .and_then(|run| run.output.status.clone())
+    }
+
+    pub fn native_settings_revision(&self) -> Option<u64> {
+        self.compiled
+            .as_ref()
+            .map(|run| run.latest_config().revision())
+    }
+
+    pub fn control_key(&self) -> (u64, u64) {
+        (
+            self.incarnation,
+            self.control_generation.max(self.runtime_generation),
+        )
+    }
+
+    pub fn configure_compiled(
+        &mut self,
+        config: Arc<PreparedConfig>,
+        target: RunKey,
+    ) -> CompiledDelivery {
+        if self.native_run() != Some(target) {
+            return CompiledDelivery::Stale;
+        }
+        if !matches!(self.state, RunState::Running | RunState::Paused) {
+            return CompiledDelivery::NotRunning;
+        }
+        let Some(run) = self.compiled.as_mut() else {
+            return CompiledDelivery::NotRunning;
+        };
+        if config.card() != run.config.card()
+            || config.schema_version() != run.config.schema_version()
+        {
+            return CompiledDelivery::Rejected(ConfigError::new(
+                "",
+                "config-identity",
+                "configuration belongs to a different card/schema",
+            ));
+        }
+        let latest = run.latest_config();
+        if config.revision() <= latest.revision() {
+            return CompiledDelivery::Stale;
+        }
+        if config.bag() == latest.bag() {
+            return CompiledDelivery::Unchanged;
+        }
+        match catch_unwind(AssertUnwindSafe(|| {
+            run.script.configure(Arc::clone(&config))
+        })) {
+            Ok(Ok(apply)) => {
+                let delivery = match apply {
+                    SettingsApply::Applied => {
+                        run.config = config;
+                        run.pending = None;
+                        CompiledDelivery::Applied
+                    }
+                    SettingsApply::PendingBoundary | SettingsApply::RestartRequired => {
+                        let boundary = apply == SettingsApply::PendingBoundary;
+                        run.pending = Some(PendingConfig { config, boundary });
+                        if boundary {
+                            CompiledDelivery::PendingBoundary
+                        } else {
+                            CompiledDelivery::RestartRequired
+                        }
+                    }
+                };
+                run.sync_settings_status();
+                delivery
+            }
+            Ok(Err(error)) => CompiledDelivery::Rejected(error),
+            Err(payload) => {
+                let error = ConfigError::new("", "configure-panic", panic_message(&payload));
+                self.fail_compiled(ScriptFailure {
+                    code: error.code.clone(),
+                    message: error.message.clone(),
+                    retryable: false,
+                });
+                CompiledDelivery::Rejected(error)
+            }
+        }
+    }
+
+    pub(super) fn interrupt_compiled(&mut self, event: Interrupt) {
+        let Some(run) = self.compiled.as_mut() else {
+            return;
+        };
+        if let Err(payload) = catch_unwind(AssertUnwindSafe(|| run.script.interrupt(event))) {
+            self.fail_compiled(ScriptFailure {
+                code: "interrupt-panic".into(),
+                message: panic_message(&payload).into(),
+                retryable: false,
+            });
+        }
+    }
+
+    pub(super) fn teardown_compiled(&mut self, reason: StopReason) {
+        if let Some(mut run) = self.compiled.take() {
+            if let Some(error) = run.script.stop(reason) {
+                self.last_error = Some(error);
+            }
+            // A destructor is user Rust too. Do not unwind into the host pump.
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| drop(run))) {
+                self.last_error = Some(format!("script drop panic: {}", panic_message(&payload)));
+            }
+        }
+    }
+
+    pub(super) fn fail_compiled(&mut self, failure: ScriptFailure) {
+        self.revoke_native_input();
+        #[cfg(feature = "load")]
+        {
+            self.compiled_interacts.clear();
+            self.clue_abort_owed = true;
+        }
+        self.pending_logs.push(failure.message.to_string());
+        self.last_error = Some(failure.message.to_string());
+        self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
+            runtime_generation: self.runtime_generation,
+            state: ScriptTerminalState::Failed,
+            tick: self.ticks,
+            reason: failure.message.to_string(),
+        });
+        self.state = RunState::Error;
+        self.want_run = false;
+        self.teardown_compiled(StopReason::Error);
+    }
+
+    pub fn retry_compiled(&mut self, target: RunKey) -> Result<(), ScriptFailure> {
+        let refused = || ScriptFailure {
+            code: "retry-refused".into(),
+            message: "stale or non-retryable run".into(),
+            retryable: false,
+        };
+        let run = self
+            .compiled
+            .as_mut()
+            .filter(|run| run.run == target)
+            .ok_or_else(refused)?;
+        if !run.output.status.as_ref().is_some_and(|status| {
+            status.phase == NativePhase::Blocked
+                && status
+                    .failure
+                    .as_ref()
+                    .is_some_and(|failure| failure.retryable)
+        }) {
+            return Err(refused());
+        }
+        match catch_unwind(AssertUnwindSafe(|| run.script.retry())) {
+            Ok(result) => result?,
+            Err(payload) => {
+                let failure = ScriptFailure {
+                    code: "retry-panic".into(),
+                    message: panic_message(&payload).into(),
+                    retryable: false,
+                };
+                self.fail_compiled(failure.clone());
+                return Err(failure);
+            }
+        }
+        let status = Arc::make_mut(run.output.status.as_mut().expect("blocked status"));
+        status.phase = NativePhase::Waiting;
+        status.failure = None;
+        Ok(())
+    }
+
+    /// Behavioral fixtures use the same compiled instance/tick path, without
+    /// adding test cards or constructors to the production registry.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn start_test_script(
+        &mut self,
+        script: Box<dyn Script>,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) -> Result<(), String> {
+        if !matches!(self.state, RunState::Idle | RunState::Error) || self.load_active() {
+            return Err(StartError::Busy.to_string());
+        }
+        let selected = match selected {
+            Some(selected) => selected,
+            None => api::game_data::for_revision(api::selected::ClientRevision::R289)?,
+        };
+        let pin = selected.selected_pin().map_err(|e| format!("{e:?}"))?;
+        self.control_generation = self
+            .control_generation
+            .max(self.runtime_generation)
+            .checked_add(1)
+            .ok_or("generation exhausted")?;
+        self.retained
+            .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default())));
+        self.want_run = true;
+        self.install_compiled(CompiledRun {
+            script: ScriptOwner(Some(script)),
+            config: PreparedConfig::new(
+                crate::CompiledId("test"),
+                1,
+                1,
+                Arc::new(SettingsBag::new()),
+                (),
+            ),
+            pending: None,
+            run: RunKey {
+                slot: self.incarnation,
+                run: self.control_generation,
+                session: self.work_epoch,
+            },
+            selected,
+            pin,
+            output: Output::default(),
+            actions: NativeActions { _private: () },
+        });
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestOutput {
+    pub statuses: Vec<ScriptStatus>,
+    pub paints: Vec<Arc<crate::shim::ScriptPaint>>,
+    pub logs: Vec<String>,
+}
+#[cfg(test)]
+impl NativeOutput for TestOutput {
+    fn status(&mut self, status: ScriptStatus) {
+        self.statuses.push(status);
+    }
+    fn paint(&mut self, paint: Arc<crate::shim::ScriptPaint>) {
+        self.paints.push(paint);
+    }
+    fn log(&mut self, _level: api::hostlog::Level, message: &str) {
+        self.logs.push(message.into());
+    }
+    fn settings_applied(&mut self, _revision: u64) {}
+}
+
+#[cfg(all(test, feature = "load"))]
+#[path = "compiled_tests.rs"]
+mod tests;

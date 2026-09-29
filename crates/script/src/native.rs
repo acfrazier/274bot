@@ -1,7 +1,6 @@
-//! Common compiled-card contract. M-297 owns installation, lifecycle and action bodies.
-//! These types do not install a second runtime or alter the existing card registry.
-//! New compiled consumers use [`Script`] here. The current registry/slot still
-//! use `crate::ctx::Script` until M-297's atomic lifecycle cutover.
+//! Compiled-card registration, validated configuration and shared output.
+//! The action-machine facility is installed separately from card registration.
+use std::any::Any;
 use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
@@ -20,9 +19,58 @@ use api::{DetectedRandom, RandomClaim, WorldTile};
 
 pub type SettingsBag = serde_json::Map<String, serde_json::Value>;
 
-/// Validated registry-owned payload; construction and accessors belong to M-297.
+/// A registry-prepared card-owned value. Only card preparers can construct it.
 pub struct PreparedConfig {
-    _private: (),
+    card: CompiledId,
+    schema: u16,
+    revision: u64,
+    bag: Arc<SettingsBag>,
+    value: Box<dyn Any + Send + Sync>,
+}
+
+impl PreparedConfig {
+    #[cfg(any(feature = "load", feature = "test-hooks", test))]
+    pub(crate) fn new<T: Send + Sync + 'static>(
+        card: CompiledId,
+        schema: u16,
+        revision: u64,
+        bag: Arc<SettingsBag>,
+        value: T,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            card,
+            schema,
+            revision,
+            bag,
+            value: Box::new(value),
+        })
+    }
+
+    pub fn card(&self) -> CompiledId {
+        self.card
+    }
+    pub fn schema_version(&self) -> u16 {
+        self.schema
+    }
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+    pub fn bag(&self) -> &SettingsBag {
+        &self.bag
+    }
+    pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
+        self.value.downcast_ref()
+    }
+}
+
+impl std::fmt::Debug for PreparedConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedConfig")
+            .field("card", &self.card)
+            .field("schema", &self.schema)
+            .field("revision", &self.revision)
+            .finish_non_exhaustive()
+    }
 }
 
 pub struct PrepareContext<'a> {
@@ -37,6 +85,7 @@ pub type PrepareCard =
 pub type CreateScript =
     fn(RunKey, Arc<PreparedConfig>, &mut RetainedMemory) -> Result<Box<dyn Script>, StartError>;
 
+#[derive(Debug)]
 pub struct CompiledCard {
     pub id: CompiledId,
     pub name: &'static str,
@@ -49,7 +98,7 @@ pub struct CompiledCard {
     pub create: CreateScript,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartError {
     Busy,
     Unavailable(Arc<str>),
@@ -63,7 +112,31 @@ pub struct ConfigError {
     pub message: Arc<str>,
 }
 
+impl ConfigError {
+    pub fn new(field: &str, code: &str, message: impl Into<Arc<str>>) -> Self {
+        Self {
+            field: field.into(),
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for StartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Busy => f.write_str("script already active: stop it first"),
+            Self::Unavailable(reason) => f.write_str(reason),
+            Self::Facts(error) => write!(f, "selected facts: {error:?}"),
+            Self::Config(error) => write!(f, "{}: {} ({})", error.field, error.message, error.code),
+        }
+    }
+}
+
+impl std::error::Error for StartError {}
+
 /// Slot-owned lazy recovery cells. M-297 installs clue retention outside action/card drops.
+#[derive(Default)]
 pub struct RetainedMemory {
     clue: crate::clue::ClueRecovery,
 }
@@ -111,12 +184,28 @@ pub struct ScriptFailure {
 
 pub trait Script: Send {
     fn tick(&mut self, cx: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure>;
-    fn configure(&mut self, next: Arc<PreparedConfig>) -> Result<SettingsApply, ConfigError>;
-    fn retry(&mut self) -> Result<(), ScriptFailure>;
-    fn interrupt(&mut self, event: Interrupt);
-    fn on_stop(&mut self, reason: StopReason);
-    fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim;
-    fn recovery_anchor(&self) -> Option<WorldTile>;
+    fn configure(&mut self, _next: Arc<PreparedConfig>) -> Result<SettingsApply, ConfigError> {
+        Err(ConfigError::new(
+            "",
+            "configuration-unsupported",
+            "this instance has no configuration receiver",
+        ))
+    }
+    fn retry(&mut self) -> Result<(), ScriptFailure> {
+        Err(ScriptFailure {
+            code: "retry-unsupported".into(),
+            message: "this instance cannot retry".into(),
+            retryable: false,
+        })
+    }
+    fn interrupt(&mut self, _event: Interrupt) {}
+    fn on_stop(&mut self, _reason: StopReason) {}
+    fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
+        RandomClaim::Host
+    }
+    fn recovery_anchor(&self) -> Option<WorldTile> {
+        None
+    }
 }
 
 pub struct NativeTick<'a> {
@@ -124,6 +213,33 @@ pub struct NativeTick<'a> {
     pub cx: ActionContext<'a>,
     pub output: &'a mut dyn NativeOutput,
     pub pairs: Option<&'a dyn QuestPairPort>,
+    #[cfg(feature = "load")]
+    pub(crate) frame: HostFrame<'a>,
+}
+
+#[cfg(all(feature = "load", feature = "test-hooks"))]
+impl NativeTick<'_> {
+    /// Admission-race fixtures use Sherlock's existing queue, never a second
+    /// test dispatch path. Not present in production builds.
+    pub fn queue_test_interaction(&mut self, request: InteractReq) {
+        self.frame
+            .compiled
+            .interacts
+            .as_mut()
+            .expect("compiled test queue")
+            .push(request);
+    }
+}
+
+/// The existing Sherlock adapter's single borrowed host bridge. No driver or
+/// action facility escapes here. The host/Load clue extraction replaces this
+/// bridge; effects still use the slot's existing compiled queue in the meantime.
+#[cfg(feature = "load")]
+pub(crate) struct HostFrame<'a> {
+    pub here: Option<(i32, i32, i32)>,
+    pub snapshot: Option<&'a api::snapshot::GameSnapshot>,
+    pub obj_names: Option<&'a api::obj_names::ObjNames>,
+    pub compiled: crate::CompiledTick<'a>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,13 +258,27 @@ pub enum StatusValue {
     Truth(Truth),
     Quest(Arc<QuestProgress>),
 }
-#[derive(Debug, Clone)]
+
+impl PartialEq for StatusValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Text(a), Self::Text(b)) => a == b,
+            (Self::Integer(a), Self::Integer(b)) => a == b,
+            (Self::Tile(a), Self::Tile(b)) => a == b,
+            (Self::Truth(a), Self::Truth(b)) => a == b,
+            // Progress publications are immutable and shared on change.
+            (Self::Quest(a), Self::Quest(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
 pub struct StatusField {
     pub key: &'static str,
     pub label: &'static str,
     pub value: StatusValue,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScriptStatus {
     pub run: RunKey,
     pub card: CompiledId,
@@ -166,21 +296,20 @@ pub trait NativeOutput {
     fn settings_applied(&mut self, revision: u64);
 }
 
-/// M-297 constructs the lazy slot facility, borrowing the single admission budget.
+/// The typed machine facility has no issued handles until its action cutover.
+/// Sherlock uses only the existing host-frame bridge, not these action methods.
 pub struct NativeActions {
-    unavailable: Infallible,
+    pub(crate) _private: (),
 }
 /// Host-only frame context; deliberately no public constructor or family preparation.
 pub struct ActionContext<'a> {
-    evidence: EvidenceStamp,
-    pin: &'a SelectedPin,
-    snapshot: SnapshotView<'a>,
-    retained: &'a mut RetainedMemory,
-    action_id: u64,
-    active_now: Duration,
-    wall_now: Instant,
-    // Removed when the host admission owner installs a real frame constructor.
-    unavailable: Infallible,
+    pub(crate) evidence: EvidenceStamp,
+    pub(crate) pin: &'a SelectedPin,
+    pub(crate) snapshot: SnapshotView<'a>,
+    pub(crate) retained: &'a mut RetainedMemory,
+    pub(crate) action_id: u64,
+    pub(crate) active_now: Duration,
+    pub(crate) wall_now: Instant,
 }
 /// Revocable owner identity; no caller can mint a lease.
 pub struct QuietReadLease {
@@ -242,10 +371,9 @@ impl ActionContext<'_> {
     pub fn end_quiet_read(&mut self, lease: QuietReadLease) {
         match lease.unavailable {}
     }
-    /// No frame/request can exist before M-297 installs the admission ledger.
-    pub fn cancel_request(&mut self, _request_id: u64) {
-        match self.unavailable {}
-    }
+    /// No typed request IDs are issued before the action-facility cutover.
+    /// Cancelling an unknown request does not dispatch an effect.
+    pub fn cancel_request(&mut self, _request_id: u64) {}
     /// body owned by M-297
     pub fn begin_quiet_read(&mut self, _request_id: u64) -> Result<QuietReadLease, ActionError> {
         Err(unavailable())
@@ -274,6 +402,7 @@ pub struct ActionHandle<M: NativeMachine> {
     _run: RunKey,
     _id: NonZeroU64,
     _machine: PhantomData<M>,
+    unavailable: Infallible,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionError {
@@ -313,9 +442,9 @@ impl NativeActions {
     ) -> Poll<Result<M::Output, ActionError>> {
         Poll::Ready(Err(unavailable()))
     }
-    /// No facility/handle can exist before M-297 installs owner revocation.
-    pub fn cancel<M: NativeMachine>(&mut self, _handle: ActionHandle<M>) {
-        match self.unavailable {}
+    /// No typed handle can be issued before the owner-revocation cutover.
+    pub fn cancel<M: NativeMachine>(&mut self, handle: ActionHandle<M>) {
+        match handle.unavailable {}
     }
 }
 

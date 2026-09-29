@@ -1026,8 +1026,9 @@ impl TuiSession {
         } else if let Some(card_name) = start_script {
             if let Some(id) = script::compiled_id(card_name) {
                 self.script_sel = Some(script::ScriptSel::Compiled(id));
+                let bag = self.scripts.compiled_bag(&self.core, &names[0], id)?;
                 *self.pending_script.lock().unwrap() =
-                    vec![PendingCatalogStart::compiled(names[0].clone(), id)];
+                    vec![PendingCatalogStart::compiled(names[0].clone(), id, bag)];
             } else {
                 self.fill_rs2b0t_cards_once();
                 self.scripts
@@ -1732,11 +1733,35 @@ impl TuiSession {
         self.apply_script_notice(app);
     }
 
-    /// The card the params popup edits: its source, name and path.
-    fn params_card(&self, app: &TuiApp) -> Option<(script::ScriptSource, String, PathBuf)> {
-        let (source, lookup) = app.params_card()?;
+    fn loaded_params_card(&self, app: &TuiApp) -> Option<(script::ScriptSource, String, PathBuf)> {
+        let script::ScriptSel::Loaded(source, lookup) = app.params_card()? else {
+            return None;
+        };
         let card = self.scripts.js.get(source, &lookup)?;
         Some((source, card.name.clone(), card.path.clone()))
+    }
+
+    fn params_bag(
+        &mut self,
+        app: &TuiApp,
+        profile: &str,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+        if let Some(script::ScriptSel::Compiled(id)) = app.params_card() {
+            return self
+                .scripts
+                .compiled_edit_bag(&self.core, Some(profile), id);
+        }
+        let (source, name, path) = self
+            .loaded_params_card(app)
+            .ok_or("parameters unavailable")?;
+        Ok(self.scripts.merged_profile_bag(
+            &mut self.core,
+            profile,
+            source,
+            &name,
+            &path,
+            &app.params_schema,
+        ))
     }
 
     /// Open the params popup over the focused profile's bag for the card.
@@ -1745,37 +1770,37 @@ impl TuiSession {
             app.error = Some("parameters: no focused profile".into());
             return;
         };
-        let Some((source, name, path)) = self.params_card(app) else {
-            return;
-        };
-        let bag = self.scripts.merged_profile_bag(
-            &mut self.core,
-            &profile,
-            source,
-            &name,
-            &path,
-            &app.params_schema,
-        );
+        match self.params_bag(app, &profile) {
+            Ok(bag) => app.open_script_params(bag),
+            Err(error) => app.error = Some(error),
+        }
         self.apply_script_notice(app);
-        app.open_script_params(bag);
     }
 
     /// One key into the open params popup: each edit is a typed parameter
     /// write on the focused profile through the coordinator.
     fn params_key(&mut self, app: &mut TuiApp, key: crossterm::event::KeyEvent) -> AppAction {
-        let (Some(profile), Some((source, name, path))) =
-            (app.focused_name(), self.params_card(app))
-        else {
+        let (Some(profile), Some(selection)) = (app.focused_name(), app.params_card()) else {
             app.params_state.open = false;
             return AppAction::None;
         };
         let data = self.template.as_ref().and_then(|t| t.game_data());
         let scripts = &mut self.scripts;
         let core = &mut self.core;
-        let mut commit = |id: &str, value: serde_json::Value| {
-            scripts
-                .set_profile_setting(core, &profile, source, &name, &path, id, value)
-                .map(|_| ())
+        let mut commit = |field: &str, value: serde_json::Value| match &selection {
+            script::ScriptSel::Compiled(id) => scripts
+                .set_compiled_setting(core, &profile, *id, field, value)
+                .map(|_| ()),
+            script::ScriptSel::Loaded(source, lookup) => {
+                let (name, path) = scripts
+                    .js
+                    .get(*source, lookup)
+                    .map(|card| (card.name.clone(), card.path.clone()))
+                    .ok_or("parameters unavailable")?;
+                scripts
+                    .set_profile_setting(core, &profile, *source, &name, &path, field, value)
+                    .map(|_| ())
+            }
         };
         let action = app.params_on_key(&mut commit, &self.loadouts, data.as_deref(), key);
         self.apply_script_notice(app);
@@ -1784,37 +1809,37 @@ impl TuiSession {
 
     /// Re-read the params popup's bag from the focused profile.
     fn refresh_params_bag(&mut self, app: &mut TuiApp) {
-        let (Some(profile), Some((source, name, path))) =
-            (app.focused_name(), self.params_card(app))
-        else {
+        let Some(profile) = app.focused_name() else {
             return;
         };
-        app.params_bag = self.scripts.merged_profile_bag(
-            &mut self.core,
-            &profile,
-            source,
-            &name,
-            &path,
-            &app.params_schema,
-        );
+        match self.params_bag(app, &profile) {
+            Ok(bag) => app.params_bag = bag,
+            Err(error) => app.error = Some(error),
+        }
     }
 
     /// Freeze Apply to all for the params popup's card and ask to confirm.
     fn prepare_settings_sync(&mut self, app: &mut TuiApp) {
-        let (Some(profile), Some((source, name, path))) =
-            (app.focused_name(), self.params_card(app))
-        else {
+        let Some(profile) = app.focused_name() else {
             return;
         };
-        let scope =
+        let result = if let Some(script::ScriptSel::Compiled(id)) = app.params_card() {
             self.scripts
-                .prepare_settings_sync(&mut self.core, &profile, source, &name, &path);
-        // One popup line: the frozen scope and the keys.
-        app.params_state.sync_prompt = Some(format!(
-            "apply to {} same-card member(s), skip {} · y apply · n cancel",
-            scope.targets.len(),
-            scope.skipped.len()
-        ));
+                .prepare_compiled_settings_sync(&self.core, &profile, id, None)
+        } else if let Some((source, name, path)) = self.loaded_params_card(app) {
+            Ok(self
+                .scripts
+                .prepare_settings_sync(&mut self.core, &profile, source, &name, &path))
+        } else {
+            Err("parameters unavailable".into())
+        };
+        match result {
+            Ok(scope) => {
+                app.params_state.sync_prompt =
+                    Some(format!("{} y apply · n cancel", scope.prompt()))
+            }
+            Err(error) => app.error = Some(error),
+        }
         self.apply_script_notice(app);
     }
 
@@ -2044,15 +2069,35 @@ impl TuiSession {
             self.script_category_order = order.clone();
         }
         app.script_category_order = self.script_category_order.clone();
-        app.params_schema = match &app.script_sel {
-            Some(script::ScriptSel::Loaded(source, name)) => self
-                .scripts
-                .js
-                .get(*source, name)
-                .map(|c| c.settings_schema.clone())
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        };
+        app.params_unavailable = None;
+        match &app.script_sel {
+            Some(script::ScriptSel::Loaded(source, name)) => {
+                if let Some(card) = self.scripts.js.get(*source, name) {
+                    app.params_schema.clone_from(&card.settings_schema);
+                } else {
+                    app.params_schema.clear();
+                    app.params_unavailable = Some("script parameters unavailable");
+                }
+            }
+            Some(script::ScriptSel::Compiled(id)) => {
+                match self
+                    .scripts
+                    .compiled_schema(&self.core, app.focused_name().as_deref(), *id)
+                {
+                    frontend_core::scripts::SchemaView::Ready { fields, .. } => {
+                        if app.params_schema.as_slice() != fields {
+                            app.params_schema.clear();
+                            app.params_schema.extend_from_slice(fields);
+                        }
+                    }
+                    frontend_core::scripts::SchemaView::Unavailable(reason) => {
+                        app.params_schema.clear();
+                        app.params_unavailable = Some(reason);
+                    }
+                }
+            }
+            None => app.params_schema.clear(),
+        }
         if app.params_state.open && app.params_schema.is_empty() {
             app.params_state.open = false;
         }

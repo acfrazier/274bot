@@ -306,22 +306,18 @@ const PIECE_INDEX_FIVE: i32 = 2751;
 const PIECE_NO_OPS: i32 = 2752;
 struct QueueMove;
 
-impl script::ctx::Script for QueueMove {
-    fn name(&self) -> &str {
-        "queue-move"
-    }
-
-    fn tick(&mut self, ctx: &mut script::ScriptCtx<'_>) {
-        ctx.compiled
-            .interacts
-            .as_mut()
-            .expect("compiled tick queue")
-            .push(script::shim::InteractReq::PuzzleMove {
-                id: PIECE_MOVE,
-                slot: 0,
-                component: MOVE_BOARD as i32,
-                generation: 1,
-            });
+impl script::native::Script for QueueMove {
+    fn tick(
+        &mut self,
+        ctx: &mut script::native::NativeTick<'_>,
+    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+        ctx.queue_test_interaction(script::shim::InteractReq::PuzzleMove {
+            id: PIECE_MOVE,
+            slot: 0,
+            component: MOVE_BOARD as i32,
+            generation: 1,
+        });
+        Ok(script::native::ScriptFlow::Continue)
     }
 }
 
@@ -741,7 +737,7 @@ fn observe_dispatch_refuses_requests_after_stop_race() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(QueueMove), None)
+        .start_test_script(Box::new(QueueMove), None)
         .expect("the compiled script starts");
     let client = puzzle_move_client();
     let cache = Arc::clone(&client.cache);
@@ -800,7 +796,7 @@ fn observe_dispatch_refuses_requests_after_slot_replacement() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(QueueMove), None)
+        .start_test_script(Box::new(QueueMove), None)
         .expect("the original compiled script starts");
     let client = puzzle_move_client();
     let cache = Arc::clone(&client.cache);
@@ -838,7 +834,7 @@ fn observe_dispatch_refuses_requests_after_slot_replacement() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(QueueMove), None)
+        .start_test_script(Box::new(QueueMove), None)
         .expect("the replacement compiled script starts");
     barrier.release();
     let rec = thread.join().expect("observe thread completes");
@@ -856,7 +852,7 @@ fn observe_treats_a_poisoned_script_slot_as_retiring() {
     let slot = script_slot_or_insert(&scripts, "alice");
     slot.lock()
         .unwrap()
-        .start_compiled(Box::new(QueueMove), None)
+        .start_test_script(Box::new(QueueMove), None)
         .expect("the compiled script starts");
     let poisoner = {
         let slot = Arc::clone(&slot);
@@ -903,7 +899,7 @@ fn observe_dispatch_restores_requests_after_pause_race() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(QueueMove), None)
+        .start_test_script(Box::new(QueueMove), None)
         .expect("the compiled script starts");
     let client = puzzle_move_client();
     let cache = Arc::clone(&client.cache);

@@ -67,12 +67,16 @@ impl PendingCatalogStart {
     }
 
     /// A compiled registry card not yet started.
-    pub fn compiled(slot: impl Into<String>, id: script::CompiledId) -> Self {
+    pub fn compiled(
+        slot: impl Into<String>,
+        id: script::CompiledId,
+        bag: Map<String, Value>,
+    ) -> Self {
         Self {
             slot: slot.into(),
             js: String::new(),
             shape: script::LoadShape::Reject,
-            bag: None,
+            bag: Some(bag),
             siblings: Vec::new(),
             loadouts: Vec::new(),
             compiled: Some(id),
@@ -199,7 +203,7 @@ fn start_stashed_catalog_card(
     card: &PendingCatalogStart,
 ) -> Result<(), String> {
     if let Some(id) = card.compiled {
-        return handle.start_compiled(&card.slot, id);
+        return handle.start_compiled(&card.slot, id, card.bag.clone().unwrap_or_default());
     }
     let result = if card.loadouts.is_empty() {
         handle.start_load(
@@ -328,6 +332,10 @@ fn settle_started_catalog_cards(
             script::StartPoll::Pending => true,
             script::StartPoll::Settled(script::StartOutcome::Failed(error)) => {
                 failed.push((card.slot.clone(), error));
+                false
+            }
+            script::StartPoll::Settled(script::StartOutcome::Rejected(error)) => {
+                failed.push((card.slot.clone(), error.to_string()));
                 false
             }
             script::StartPoll::Settled(

@@ -1,6 +1,5 @@
-//! The compiled `Script` trait and its per-tick context. The driver is the
-//! same send-side `api::interact::Driver` the kernel uses; scripts never
-//! touch `client` or the world.
+//! Host-owned input to the slot pump. Compiled cards receive `native::NativeTick`,
+//! never this raw driver. Walk options are shared with Load and host navigation.
 
 use api::interact::Driver;
 pub use api::random::{DetectedRandom, RandomClaim};
@@ -16,23 +15,6 @@ pub struct FindOptions {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
-}
-
-/// House compiled script. `tick` must return; no delayUntil.
-pub trait Script: Send {
-    fn name(&self) -> &str;
-    fn tick(&mut self, ctx: &mut ScriptCtx<'_>);
-    /// Teardown hook, run once by the slot on `stop`, before the instance
-    /// is dropped.
-    fn on_stop(&mut self) {}
-    /// Random-event knock: whether this script claims a detected random
-    /// event for itself. Called at most once per rising edge of a detected
-    /// event, only while the slot is Running. Default `Host` — the host
-    /// guardian talks it through and holds the slot. `Handle` means ticks
-    /// and follow keep running and the host does not act.
-    fn on_random(&mut self, _ev: &DetectedRandom) -> RandomClaim {
-        RandomClaim::Host
-    }
 }
 
 /// The facts a compiled script reads and only the host can supply: the

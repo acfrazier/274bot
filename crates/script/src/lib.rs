@@ -37,9 +37,8 @@ pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
 mod module_imports;
-/// Typed compiled-card contract; the existing slot's legacy trait is `ctx::Script`.
+/// Typed compiled cards, preparation, execution and output.
 pub mod native;
-pub mod params;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
 pub mod ranged;
@@ -79,8 +78,7 @@ pub use loadouts_store::{
     resolve_setting_options_with_labels, unique_loadout_name, worn_slot_label, CarryEntry, Loadout,
     LoadoutsStore, ResolvedSettingOptions, WORN_SLOTS, WORN_SLOT_LAYOUT,
 };
-pub use params::defaults;
-pub use registry::{compiled_id, compiled_ids, factory, is_whale, CompiledId};
+pub use registry::{compiled_card, compiled_cards, compiled_id, is_whale, CompiledId};
 pub use rs2b0t_registry::{
     clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file, parse_registry,
     parse_registry_with_sources, persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path,
@@ -93,9 +91,12 @@ pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
     parameter_rows, setting_visible, ScriptSettingsStore, CLUE_DUEL_PARTNER,
 };
-pub use slot::{RunState, ScriptLifecycleReceipt, ScriptTerminalState, SlotScript};
 #[cfg(feature = "load")]
-pub use slot::{StartLoadError, StartOutcome, StartPoll};
+pub use slot::StartLoadError;
+pub use slot::{
+    CompiledDelivery, RunState, ScriptLifecycleReceipt, ScriptTerminalState, SlotScript,
+    StartOutcome, StartPoll,
+};
 #[cfg(feature = "load")]
 pub use watchdog::{
     ProgressWatchdog, RestartReason, Tile as WatchdogTile, WatchdogAction, WatchdogState,

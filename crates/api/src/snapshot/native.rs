@@ -1,4 +1,4 @@
-//! Borrowed native field views. M-297 supplies session readiness and construction.
+//! Borrowed native observations with readiness attached to their evidence stamp.
 use super::{GameSnapshot, ItemView, QuestStatusView};
 use crate::quest_progress::EvidenceStamp;
 
@@ -14,27 +14,102 @@ pub struct JournalModalView<'a> {
     pub texts: &'a [String],
 }
 
-/// A host-created frame borrow; no public constructor can invent readiness.
+/// A host frame borrow; readiness comes from the snapshot, never caller flags.
 #[derive(Clone, Copy)]
 pub struct SnapshotView<'a> {
-    _snapshot: &'a GameSnapshot,
+    snapshot: Option<&'a GameSnapshot>,
+    stamp: EvidenceStamp,
 }
 
-impl SnapshotView<'_> {
-    /// Body owned by M-297; no native session observation has been attached.
+impl<'a> SnapshotView<'a> {
+    /// Attach the host's run/session stamp to its current observation. `None`
+    /// represents a frame without a snapshot, not an observed empty world.
+    pub fn new(snapshot: Option<&'a GameSnapshot>, stamp: EvidenceStamp) -> Self {
+        Self { snapshot, stamp }
+    }
+
     pub fn inventory(&self) -> Option<Observed<&[ItemView]>> {
-        None
+        let snapshot = self.snapshot?;
+        (snapshot.ingame() && snapshot.inventory_size() > 0).then(|| Observed {
+            value: snapshot.inventory(),
+            stamp: self.stamp,
+        })
     }
-    /// Body owned by M-297; open is not loaded in this session.
+
     pub fn bank(&self) -> Option<Observed<&[ItemView]>> {
-        None
+        let snapshot = self.snapshot?;
+        (snapshot.ingame() && snapshot.bank_loaded()).then(|| Observed {
+            value: snapshot.bank(),
+            stamp: self.stamp,
+        })
     }
-    /// Body owned by M-297; no native session observation has been attached.
+
     pub fn quest_statuses(&self) -> Option<Observed<&[QuestStatusView]>> {
-        None
+        let snapshot = self.snapshot?;
+        (snapshot.ingame() && snapshot.quest_statuses_available()).then(|| Observed {
+            value: snapshot.quest_statuses(),
+            stamp: self.stamp,
+        })
     }
-    /// Body owned by M-297; absence is not an observed closed modal.
+
     pub fn main_modal(&self) -> Option<Observed<JournalModalView<'_>>> {
-        None
+        let snapshot = self.snapshot?;
+        snapshot.ingame().then(|| Observed {
+            value: JournalModalView {
+                root: snapshot.modals().main,
+                texts: snapshot.main_modal_texts(),
+            },
+            stamp: self.stamp,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::selected::RunKey;
+
+    #[test]
+    fn unavailable_fields_never_look_like_observed_empty_fields() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
+            tick: 7,
+            sequence: 8,
+        };
+        let mut snapshot = GameSnapshot::default();
+        for view in [
+            SnapshotView::new(None, stamp),
+            SnapshotView::new(Some(&snapshot), stamp),
+        ] {
+            assert!(view.inventory().is_none());
+            assert!(view.bank().is_none());
+            assert!(view.quest_statuses().is_none());
+            assert!(view.main_modal().is_none());
+        }
+        snapshot.ingame = true;
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert!(view.inventory().is_none());
+        assert!(view.bank().is_none());
+        assert!(view.quest_statuses().is_none());
+        assert_eq!(view.main_modal().unwrap().value.root, -1);
+        snapshot.inventory_size = 28;
+        snapshot.bank_loaded = true;
+        snapshot.quest_statuses_available = true;
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert!(view.inventory().unwrap().value.is_empty());
+        assert!(view.bank().unwrap().value.is_empty());
+        assert!(view.quest_statuses().unwrap().value.is_empty());
+        assert_eq!(view.inventory().unwrap().stamp, stamp);
+        // A disconnected frame cannot lend stale cached observations.
+        snapshot.ingame = false;
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert!(view.inventory().is_none());
+        assert!(view.bank().is_none());
+        assert!(view.quest_statuses().is_none());
+        assert!(view.main_modal().is_none());
     }
 }

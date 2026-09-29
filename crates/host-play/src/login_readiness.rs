@@ -484,7 +484,7 @@ mod tests {
     fn pause_and_stop_are_not_resumed_by_settlement() {
         let mut paused = SlotScript::new();
         paused
-            .start_compiled(Box::new(NoopScript), None)
+            .start_test_script(Box::new(NoopScript), None)
             .expect("start");
         assert_eq!(paused.state(), RunState::Running);
         paused.pause();
@@ -492,7 +492,7 @@ mod tests {
 
         let mut stopped = SlotScript::new();
         stopped
-            .start_compiled(Box::new(NoopScript), None)
+            .start_test_script(Box::new(NoopScript), None)
             .expect("start");
         stopped.stop();
         assert_eq!(stopped.state(), RunState::Idle);
@@ -758,10 +758,12 @@ mod tests {
 
     struct NoopScript;
 
-    impl script::ctx::Script for NoopScript {
-        fn name(&self) -> &str {
-            "Noop"
+    impl script::native::Script for NoopScript {
+        fn tick(
+            &mut self,
+            _ctx: &mut script::native::NativeTick<'_>,
+        ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+            Ok(script::native::ScriptFlow::Continue)
         }
-        fn tick(&mut self, _ctx: &mut script::ScriptCtx<'_>) {}
     }
 }

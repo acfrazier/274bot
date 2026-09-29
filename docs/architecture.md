@@ -289,9 +289,11 @@ tiles already verified).
 
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
-| `lib.rs` | crate facade: `Script`, `ScriptCtx`, `SlotScript` | `load` feature gates the isolate |
-| `ctx.rs` | compiled `Script` trait and per-tick context | driver send-side, no `client` or world |
+| `lib.rs` | crate facade: `ScriptCtx`, `SlotScript`, registry descriptors | `load` feature gates the isolate |
+| `ctx.rs` | host-owned per-tick input and shared walk options | compiled cards receive `native::NativeTick`, not this driver |
+| `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata/preparer/factory, no duplicate defaults |
 | `slot.rs` | per-uid runner lifecycle | intent and presence gates, tick edge |
+| `slot/compiled.rs` | off-pump compiled preparation, fenced install/configure and shared output | lazy per-active-card state; compiled XOR Load |
 | `slot/pending.rs` | bank settlement records | host-owned pending accessors |
 | `machine.rs` | step-machine host | one multi-tick behavior in Rust |
 | `observed.rs` | per-isolate decoded scene | delta-merge, owned rows |

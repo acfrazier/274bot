@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{PendingStart, Scripts, StartKind};
+use super::{PendingCard, PendingStart, Scripts, StartKind};
 use crate::session::{OperatorSession, ScriptStart};
 
 #[derive(Debug, Clone)]
@@ -574,7 +574,7 @@ impl Scripts {
         self.starts.insert(
             profile.to_string(),
             PendingStart {
-                card: card.clone(),
+                card: PendingCard::Loaded(Box::new(card.clone())),
                 kind: StartKind::Reload,
             },
         );

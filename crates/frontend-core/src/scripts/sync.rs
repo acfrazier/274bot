@@ -32,8 +32,10 @@ pub struct SyncScope {
     pub skipped: Vec<(String, String)>,
     /// The source's overrides bag copied to every target.
     pub overrides: Map<String, Value>,
-    card_source: script::ScriptSource,
-    lookup: String,
+    selection: script::ScriptSel,
+    /// Per-target fields kept locally, published before any preparation/save.
+    pub excluded: Vec<(String, Vec<String>)>,
+    field: Option<String>,
     prompt: String,
 }
 
@@ -61,6 +63,11 @@ pub struct SyncReport {
     pub unchanged: usize,
     pub stale: usize,
     pub not_running: usize,
+    pub applied: usize,
+    pub pending_boundary: usize,
+    pub restart_required: usize,
+    pub live_rejected: Vec<(String, String)>,
+    pub excluded: Vec<(String, Vec<String>)>,
     /// Member writes not yet settled: (write operation, member).
     pending: Vec<(OperationId, String)>,
     text: String,
@@ -117,6 +124,10 @@ impl SyncReport {
             (self.unchanged, "unchanged"),
             (self.stale, "stale (restarted)"),
             (self.not_running, "not running"),
+            (self.applied, "applied"),
+            (self.pending_boundary, "pending boundary"),
+            (self.restart_required, "restart required"),
+            (self.live_rejected.len(), "rejected"),
         ];
         let mut first = true;
         for (n, label) in live {
@@ -128,6 +139,12 @@ impl SyncReport {
         }
         for (member, error) in self.failed.iter().take(4) {
             text.push_str(&format!("; {member}: {error} (not pushed)"));
+        }
+        for (member, fields) in &self.excluded {
+            text.push_str(&format!("; {member}: preserved {}", fields.join(", ")));
+        }
+        for (member, error) in &self.live_rejected {
+            text.push_str(&format!("; {member}: saved, live rejected: {error}"));
         }
         self.text = text;
     }
@@ -220,6 +237,15 @@ fn fold(report: &mut SyncReport, write: &SettingsWrite) -> Outcome {
                 LiveDelivery::Unchanged => report.unchanged += 1,
                 LiveDelivery::Stale => report.stale += 1,
                 LiveDelivery::NotRunning => report.not_running += 1,
+                LiveDelivery::Applied => report.applied += 1,
+                LiveDelivery::PendingBoundary => report.pending_boundary += 1,
+                LiveDelivery::RestartRequired => report.restart_required += 1,
+                LiveDelivery::Rejected(error) => {
+                    report
+                        .live_rejected
+                        .push((write.profile.clone(), error.clone()));
+                    return Outcome::Failed(format!("saved, live rejected: {error}"));
+                }
             }
             Outcome::Completed
         }
@@ -269,10 +295,80 @@ impl Scripts {
             targets,
             skipped,
             overrides,
-            card_source,
-            lookup: super::lookup_name(card_source, card_name, card_path),
+            selection: script::ScriptSel::Loaded(
+                card_source,
+                super::lookup_name(card_source, card_name, card_path),
+            ),
+            excluded: Vec::new(),
+            field: None,
             prompt,
         })
+    }
+
+    pub fn prepare_compiled_settings_sync<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        source: &str,
+        id: script::CompiledId,
+        field: Option<&str>,
+    ) -> Result<&SyncScope, String> {
+        self.sync.prepared = None;
+        let descriptor = script::compiled_card(id).ok_or("compiled card unavailable")?;
+        let mut excluded_fields: Vec<String> = descriptor
+            .per_account_settings
+            .iter()
+            .map(|field| (*field).into())
+            .collect();
+        if !excluded_fields
+            .iter()
+            .any(|field| field == script::CLUE_DUEL_PARTNER)
+        {
+            excluded_fields.push(script::CLUE_DUEL_PARTNER.into());
+        }
+        if let Some(field) = field {
+            if excluded_fields.iter().any(|excluded| excluded == field) {
+                return Err(format!(
+                    "Apply to all: {field} is per-account and cannot be copied"
+                ));
+            }
+            if !(descriptor.schema)()
+                .iter()
+                .any(|setting| setting.id == field)
+            {
+                return Err(format!("Apply to all: unknown setting {field}"));
+            }
+        }
+        let card = script::compiled_identity_key(id);
+        let overrides = self.compiled_overrides(core, source, id)?;
+        let mut targets = Vec::new();
+        let mut skipped = Vec::new();
+        for member in core.members().iter().filter(|member| *member != source) {
+            match Self::assignment(core, member) {
+                Some(assignment) if assignment.key() == card => targets.push(member.clone()),
+                Some(_) => skipped.push((member.clone(), OTHER_CARD.into())),
+                None => skipped.push((member.clone(), UNASSIGNED.into())),
+            }
+        }
+        let excluded: Vec<_> = targets
+            .iter()
+            .map(|target| (target.clone(), excluded_fields.clone()))
+            .collect();
+        let mut prompt = format!("Copy {} parameters from {source} to {} same-card member(s); {} other member(s) skipped.", descriptor.name, targets.len(), skipped.len());
+        for (target, fields) in &excluded {
+            prompt.push_str(&format!(" {target}: preserve {}.", fields.join(", ")));
+        }
+        Ok(self.sync.prepared.insert(SyncScope {
+            source: source.into(),
+            card,
+            card_name: descriptor.name.into(),
+            targets,
+            skipped,
+            overrides,
+            selection: script::ScriptSel::Compiled(id),
+            excluded,
+            field: field.map(str::to_owned),
+            prompt,
+        }))
     }
 
     pub fn prepared_settings_sync(&self) -> Option<&SyncScope> {
@@ -307,15 +403,11 @@ impl Scripts {
             targets,
             mut skipped,
             overrides,
-            card_source,
-            lookup,
+            selection,
+            excluded,
+            field,
             ..
         } = scope;
-        let schema = self
-            .js
-            .get(card_source, &lookup)
-            .map(|c| c.settings_schema.as_slice())
-            .unwrap_or_default();
         let op = core.open_operation(ActionKind::SyncSettings);
         let mut failed = Vec::new();
         let mut pending = Vec::new();
@@ -334,23 +426,50 @@ impl Scripts {
                 skipped.push((target, OTHER_CARD.to_string()));
                 continue;
             }
-            row.settings
-                .script_settings
-                .insert(card.clone(), overrides.clone());
-            // A live target gets the card bag with its own profile-global
-            // settings, as a single parameter edit does.
-            let live = super::live_fence(core, &target, &card).map(|(identity, generation)| {
-                LiveSettings {
-                    identity,
-                    generation,
-                    bag: Arc::new(self.run_bag(core, &target, schema, &overrides)),
+            let result = match &selection {
+                script::ScriptSel::Compiled(id) => {
+                    let fields = excluded
+                        .iter()
+                        .find(|(member, _)| member == &target)
+                        .map_or(&[][..], |(_, fields)| fields.as_slice());
+                    match self.compiled_overrides(core, &target, *id) {
+                        Ok(current) => {
+                            let values =
+                                bulk_values(&overrides, &current, fields, field.as_deref());
+                            self.set_compiled_overrides(core, &target, *id, values)
+                        }
+                        Err(error) => Err(error),
+                    }
                 }
-            });
-            let mirror = ArmMirror::ScriptSettings {
-                card: card.clone(),
-                live,
+                script::ScriptSel::Loaded(source, lookup) => {
+                    let schema = self
+                        .js
+                        .get(*source, lookup)
+                        .map_or(&[][..], |card| card.settings_schema.as_slice());
+                    row.settings
+                        .script_settings
+                        .insert(card.clone(), overrides.clone());
+                    let live =
+                        super::live_fence(core, &target, &card).map(|(identity, generation)| {
+                            LiveSettings {
+                                identity,
+                                generation,
+                                run: None,
+                                prepared: None,
+                                bag: Arc::new(self.run_bag(core, &target, schema, &overrides)),
+                            }
+                        });
+                    core.save_profile(
+                        row,
+                        ArmMirror::ScriptSettings {
+                            card: card.clone(),
+                            live,
+                        },
+                        "apply to all",
+                    )
+                }
             };
-            match core.save_profile(row, mirror, "apply to all") {
+            match result {
                 Ok(write) => pending.push((write, target)),
                 Err(error) => failed.push((target, error)),
             }
@@ -377,6 +496,11 @@ impl Scripts {
             unchanged: 0,
             stale: 0,
             not_running: 0,
+            applied: 0,
+            pending_boundary: 0,
+            restart_required: 0,
+            live_rejected: Vec::new(),
+            excluded,
             pending,
             text: String::new(),
         };
@@ -386,5 +510,76 @@ impl Scripts {
         self.show(report.text.clone());
         self.sync.push(report);
         Ok(op)
+    }
+}
+
+fn bulk_values(
+    source: &Map<String, Value>,
+    target: &Map<String, Value>,
+    excluded: &[String],
+    field: Option<&str>,
+) -> Map<String, Value> {
+    let mut values = if let Some(field) = field {
+        let mut values = target.clone();
+        if let Some(value) = source.get(field) {
+            values.insert(field.into(), value.clone());
+        } else {
+            values.remove(field);
+        }
+        values
+    } else {
+        source.clone()
+    };
+    for key in excluded {
+        if let Some(value) = target.get(key) {
+            values.insert(key.clone(), value.clone());
+        } else {
+            values.remove(key);
+        }
+    }
+    values
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn bulk_copy_preserves_absent_and_explicit_empty_pairing_fields() {
+        let source =
+            json!({"path": "arrav", "declared_gang": "phoenix", "partner_account": "alice"});
+        let target = json!({"path": "heroes", "partner_account": "", "local": 7});
+        let excluded = vec!["declared_gang".into(), "partner_account".into()];
+        let all = bulk_values(
+            source.as_object().unwrap(),
+            target.as_object().unwrap(),
+            &excluded,
+            None,
+        );
+        assert_eq!(
+            Value::Object(all),
+            json!({"path": "arrav", "partner_account": ""})
+        );
+        let single = bulk_values(
+            source.as_object().unwrap(),
+            target.as_object().unwrap(),
+            &excluded,
+            Some("path"),
+        );
+        assert_eq!(
+            Value::Object(single),
+            json!({"path": "arrav", "partner_account": "", "local": 7})
+        );
+        let cleared = bulk_values(
+            &Map::new(),
+            target.as_object().unwrap(),
+            &excluded,
+            Some("path"),
+        );
+        assert_eq!(
+            Value::Object(cleared),
+            json!({"partner_account": "", "local": 7})
+        );
     }
 }

@@ -450,7 +450,9 @@ impl Command {
             }
             Command::ScriptParams => {
                 if app.params_card().is_none() {
-                    Err("pick a loaded script first")
+                    Err("pick a script first")
+                } else if app.params_unavailable.is_some() {
+                    Err("the selected script parameters are unavailable")
                 } else if app.params_schema.is_empty() {
                     Err("the selected script has no parameters")
                 } else {
