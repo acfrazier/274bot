@@ -57,10 +57,13 @@ pub struct BankFetch {
 /// diagnosis is `missing` ([`crate::router::find_missing_item_reqs`], or
 /// [`crate::router::missing_item_reqs`] of a route found under
 /// [`fetchable_state`]).
-/// `state` is the search's gating facts; `bank` is the open bank's rows
-/// (obj id, count) from the live snapshot; `stands` is the packed bank
-/// stand table ([`crate::world::NavWorld::banks`]); `from` is the
-/// player's tile, which picks the nearest stand.
+/// `state` is the search's gating facts; `bank` is the **open** bank's
+/// rows (obj id, count) from the live snapshot — empty when the bank is
+/// closed (BankBudget has no closed-bank inventory, so a needed item
+/// that is only banked cannot be proved and this returns `None`);
+/// `stands` is the packed bank stand table
+/// ([`crate::world::NavWorld::banks`]), booths and NPC tellers; `from`
+/// is the player's tile, which picks the nearest stand.
 ///
 /// A `worn_req` alternative already carried plans only [`BankStep::Wear`]
 /// — no bank walk. Otherwise the plan walks to the nearest stand, opens

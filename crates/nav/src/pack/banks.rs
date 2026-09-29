@@ -124,40 +124,174 @@ pub(super) fn read_name(r: &mut Cursor<&[u8]>) -> Result<String, PackError> {
 /// Bake the bank stand table from the Server content tree (the maps
 /// dir's parent): the same jm2 LOC pass the collision bake uses
 /// ([`crate::transport`]'s placement reader). Every `bankbooth` loc
-/// placement becomes a [`BankStand::Booth`] stand — named from the
+/// placement becomes a [`BankAccess::Booth`] stand — named from the
 /// `[bankbooth]` block of `scripts/interface_bank/configs/bank_booth.loc`
 /// and accessed with the Use-quickly op (2, `[oploc2,bankbooth]`). The
 /// closed-booth (`bankboothclosed`) and tutorial (`newbiebankbooth`) loc
-/// ids are never looked up, so they cannot enter the table; NPC teller
-/// stands (`category=bank_teller`) join when a bake parses the jm2 NPC
-/// placements — booth-only for now. Stands sort by tile for a
-/// deterministic wire.
+/// ids are never looked up, so they cannot enter the table. NPC teller
+/// stands (`category=bank_teller` in `*.npc` configs) join from the jm2
+/// `==== NPC ====` placements: the packed op is the config's `Bank` slot
+/// when present, else 3 (`[opnpc3,_bank_teller]`). Stands sort by tile
+/// for a deterministic wire. A tree with tellers and no booths still
+/// emits the NPC stands.
 pub fn derive_banks(content_root: &Path) -> Vec<BankStand> {
-    let ids = crate::transport::loc_ids_by_name(content_root);
-    let Some(&booth_id) = ids.get("bankbooth") else {
-        return Vec::new();
-    };
-    let name = bank_booth_name(content_root);
-    let positions = crate::transport::loc_positions(content_root);
-    let mut banks: Vec<BankStand> = positions
-        .get(&booth_id)
-        .map(|placements| {
-            placements
-                .iter()
-                .map(|p| BankStand {
-                    name: name.clone(),
-                    tile: WorldTile {
-                        x: p.x,
-                        z: p.z,
-                        level: p.level,
-                    },
-                    access: BankAccess::Booth { op: 2 },
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut banks = Vec::new();
+    let loc_ids = crate::transport::loc_ids_by_name(content_root);
+    if let Some(&booth_id) = loc_ids.get("bankbooth") {
+        let name = bank_booth_name(content_root);
+        let positions = crate::transport::loc_positions(content_root);
+        if let Some(placements) = positions.get(&booth_id) {
+            banks.extend(placements.iter().map(|p| BankStand {
+                name: name.clone(),
+                tile: WorldTile {
+                    x: p.x,
+                    z: p.z,
+                    level: p.level,
+                },
+                access: BankAccess::Booth { op: 2 },
+            }));
+        }
+    }
+    let npc_hits = crate::transport::npc_positions(content_root);
+    for teller in bank_tellers(content_root) {
+        let Some(hits) = npc_hits.get(&teller.id) else {
+            continue;
+        };
+        banks.extend(hits.iter().map(|p| BankStand {
+            name: teller.name.clone(),
+            tile: WorldTile {
+                x: p.x,
+                z: p.z,
+                level: p.level,
+            },
+            access: BankAccess::Npc {
+                name: teller.name.clone(),
+                op: teller.op,
+                choose: None,
+            },
+        }));
+    }
     banks.sort_by_key(|b| (b.tile.level, b.tile.x, b.tile.z));
     banks
+}
+
+struct BankTeller {
+    id: i32,
+    name: String,
+    op: i32,
+}
+
+/// NPC configs whose `category=bank_teller`, keyed by pack id. First
+/// definition for an id wins.
+fn bank_tellers(content_root: &Path) -> Vec<BankTeller> {
+    let ids = crate::transport::npc_ids_by_name(content_root);
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let mut by_id: HashMap<i32, BankTeller> = HashMap::new();
+    let mut pending = vec![content_root.join("scripts")];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for ent in entries.flatten() {
+            let path = ent.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("npc") {
+                if let Ok(text) = fs::read_to_string(&path) {
+                    ingest_teller_blocks(&text, &ids, &mut by_id);
+                }
+            }
+        }
+    }
+    let mut out: Vec<BankTeller> = by_id.into_values().collect();
+    out.sort_by_key(|t| t.id);
+    out
+}
+
+fn ingest_teller_blocks(
+    text: &str,
+    ids: &HashMap<String, i32>,
+    out: &mut HashMap<i32, BankTeller>,
+) {
+    let mut header = None;
+    let mut display = None;
+    let mut ops: [Option<String>; 5] = Default::default();
+    let mut teller = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
+            continue;
+        }
+        if let Some(name) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            flush_teller(header.take(), display.take(), &ops, teller, ids, out);
+            ops = Default::default();
+            teller = false;
+            header = Some(name.to_string());
+            continue;
+        }
+        if header.is_none() {
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("name=") {
+            let v = v.trim();
+            if !v.is_empty() {
+                display = Some(v.to_string());
+            }
+        } else if let Some(v) = line.strip_prefix("category=") {
+            teller = v.trim() == "bank_teller";
+        } else if let Some(rest) = line.strip_prefix("op") {
+            if let Some((slot, value)) = rest.split_once('=') {
+                if let Ok(n) = slot.parse::<usize>() {
+                    if (1..=5).contains(&n) {
+                        let value = value.trim();
+                        ops[n - 1] = (!value.is_empty()).then(|| value.to_string());
+                    }
+                }
+            }
+        }
+    }
+    flush_teller(header, display, &ops, teller, ids, out);
+}
+
+fn flush_teller(
+    header: Option<String>,
+    display: Option<String>,
+    ops: &[Option<String>; 5],
+    teller: bool,
+    ids: &HashMap<String, i32>,
+    out: &mut HashMap<i32, BankTeller>,
+) {
+    if !teller {
+        return;
+    }
+    let Some(name) = header else {
+        return;
+    };
+    let Some(&id) = ids.get(&name) else {
+        return;
+    };
+    out.entry(id).or_insert_with(|| {
+        let op = ops
+            .iter()
+            .enumerate()
+            .find_map(|(i, label)| {
+                label
+                    .as_deref()
+                    .filter(|s| s.eq_ignore_ascii_case("bank"))
+                    .map(|_| i as i32 + 1)
+            })
+            .unwrap_or(3);
+        let shown = display
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| name.clone());
+        BankTeller {
+            id,
+            name: shown,
+            op,
+        }
+    });
 }
 
 /// The `name=` of the `[bankbooth]` block (the booth loc config's display

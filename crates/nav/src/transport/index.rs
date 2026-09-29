@@ -20,6 +20,11 @@ pub(crate) fn loc_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
     pack_ids_by_name(content_root, "loc.pack")
 }
 
+/// `pack/npc.pack` id→name lines → name → id (bank-teller bake).
+pub(crate) fn npc_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
+    pack_ids_by_name(content_root, "npc.pack")
+}
+
 /// `pack/obj.pack` id→name lines → name → id (the spell-rune and jewellery
 /// item id map).
 pub(super) fn obj_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
@@ -47,6 +52,15 @@ pub(super) fn pack_ids_by_name(content_root: &Path, file: &str) -> HashMap<Strin
     out
 }
 
+/// One jm2 `==== NPC ====` placement. Coordinates are already the engine
+/// game plane (no loc LINK_BELOW shift).
+pub(crate) struct NpcPlacement {
+    pub(crate) id: i32,
+    pub(crate) level: i32,
+    pub(crate) x: i32,
+    pub(crate) z: i32,
+}
+
 /// All jm2 loc placements grouped by id (m8aq `locPositions`).
 pub(crate) fn loc_positions(content_root: &Path) -> HashMap<i32, Vec<Placement>> {
     let mut out: HashMap<i32, Vec<Placement>> = HashMap::new();
@@ -65,6 +79,31 @@ pub(crate) fn loc_positions(content_root: &Path) -> HashMap<i32, Vec<Placement>>
             continue;
         };
         for p in parse_jm2_locs(&text, mx, mz) {
+            out.entry(p.id).or_default().push(p);
+        }
+    }
+    out
+}
+
+/// All jm2 NPC placements grouped by id. NPC rows are already on the
+/// engine game plane (see [`crate::map::services`] scan).
+pub(crate) fn npc_positions(content_root: &Path) -> HashMap<i32, Vec<NpcPlacement>> {
+    let mut out: HashMap<i32, Vec<NpcPlacement>> = HashMap::new();
+    let Ok(entries) = fs::read_dir(content_root.join("maps")) else {
+        return out;
+    };
+    for ent in entries.flatten() {
+        let path = ent.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Some((mx, mz)) = mapsquare_coords(name) else {
+            continue;
+        };
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for p in parse_jm2_npcs(&text, mx, mz) {
             out.entry(p.id).or_default().push(p);
         }
     }
@@ -158,6 +197,58 @@ pub(super) fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
             None => false,
         }
     });
+    out
+}
+
+/// Every `NPC` placement in a jm2 text. Unlike locs, NPC rows are already
+/// the engine game plane and carry only `id` after the colon.
+pub(super) fn parse_jm2_npcs(text: &str, mx: i32, mz: i32) -> Vec<NpcPlacement> {
+    let mut out = Vec::new();
+    let mut section: Option<&str> = None;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(name) = crate::pack::section(line) {
+            section = Some(name);
+            continue;
+        }
+        if section != Some("NPC") {
+            continue;
+        }
+        let Some((coords, data)) = line.split_once(':') else {
+            continue;
+        };
+        let mut c = coords.split_whitespace();
+        let (Some(level), Some(x), Some(z)) = (
+            c.next().and_then(|t| t.parse::<i32>().ok()),
+            c.next().and_then(|t| t.parse::<i32>().ok()),
+            c.next().and_then(|t| t.parse::<i32>().ok()),
+        ) else {
+            continue;
+        };
+        if c.next().is_some()
+            || !(0..=3).contains(&level)
+            || !(0..=63).contains(&x)
+            || !(0..=63).contains(&z)
+        {
+            continue;
+        }
+        let mut d = data.split_whitespace();
+        let Some(id) = d.next().and_then(|t| t.parse::<i32>().ok()) else {
+            continue;
+        };
+        if d.next().is_some() || id < 0 {
+            continue;
+        }
+        out.push(NpcPlacement {
+            id,
+            level,
+            x: mx * 64 + x,
+            z: mz * 64 + z,
+        });
+    }
     out
 }
 

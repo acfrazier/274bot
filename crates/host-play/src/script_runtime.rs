@@ -4,10 +4,8 @@ use super::*;
 #[path = "script_bank.rs"]
 mod bank;
 pub(super) use bank::fill_withdraw_action;
-use bank::{
-    action_slot, all_slot, deposit_all_backpack, dispatch_observed_bank_op, open_bank_at_here,
-    withdraw_id,
-};
+pub(crate) use bank::open_bank_at_here;
+use bank::{action_slot, all_slot, deposit_all_backpack, dispatch_observed_bank_op, withdraw_id};
 #[path = "script_nav.rs"]
 mod script_nav;
 #[cfg(test)]

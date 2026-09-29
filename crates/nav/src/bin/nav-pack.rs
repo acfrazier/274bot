@@ -32,7 +32,8 @@
 //! parent): door/ladder/stairs/agility edges, with boats and teleport
 //! spells counted and skipped on stderr. The bank stand table
 //! ([`nav::pack::derive_banks`]) bakes from the same content tree: every
-//! `bankbooth` loc placement with the Use-quickly op. Rebake whenever the
+//! `bankbooth` loc placement with the Use-quickly op, plus NPC tellers
+//! (`category=bank_teller`) from jm2 NPC placements. Rebake whenever the
 //! Server content changes — a stale v10 or older pack decodes as `BadVersion`.
 //! The derivation itself lives in [`nav::bake`], shared with the ordinary
 //! application build (`host-play`'s build script), which bakes and stages the

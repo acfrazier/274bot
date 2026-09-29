@@ -320,7 +320,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     }
 
     // The bank stand table from the same content tree (every `bankbooth`
-    // placement, Use-quickly op).
+    // placement with Use-quickly, plus `category=bank_teller` NPC stands).
     let banks = derive_banks(content_root);
 
     let bank_zones_path = content_root.join(BANK_ZONES_REL);

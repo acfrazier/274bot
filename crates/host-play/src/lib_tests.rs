@@ -11609,6 +11609,258 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
     );
 }
 
+fn dummy_fetch_route() -> nav::router::Route {
+    use nav::router::{Leg, Route};
+    Route {
+        legs: vec![Leg::Walk {
+            tiles: vec![WorldTile {
+                x: 99,
+                z: 99,
+                level: 0,
+            }],
+        }],
+        dest: WorldTile {
+            x: 99,
+            z: 99,
+            level: 0,
+        },
+        ticks: 1.0,
+    }
+}
+
+fn packed_npc_world(tile: WorldTile) -> NavWorld {
+    let flags = vec![0u32; 25];
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: tile.x - 2,
+                z: tile.z - 2,
+                level: 0,
+            },
+            width: 5,
+            height: 5,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        vec![nav::pack::BankStand {
+            name: "Banker".into(),
+            tile,
+            access: nav::pack::BankAccess::Npc {
+                name: "Banker".into(),
+                op: 3,
+                choose: None,
+            },
+        }],
+    )
+}
+
+fn closed_banker_client() -> Client {
+    use client::config::NpcType;
+    use client::dash3d::ClientNpc;
+    let mut c = bank_client();
+    c.main_modal_id = -1;
+    c.side_modal_id = -1;
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        while cache.npcs.len() <= 9 {
+            cache.npcs.push(NpcType::default());
+        }
+        cache.npcs[9] = NpcType {
+            id: 9,
+            name: "Banker".into(),
+            op: vec![
+                Some("Talk-to".into()),
+                None,
+                Some("Bank".into()),
+                None,
+                None,
+            ],
+            ..Default::default()
+        };
+    }
+    let mut npc = ClientNpc::at(6, 5);
+    npc.r#type = Some(9);
+    c.npc[7] = Some(Box::new(npc));
+    c.npc_ids = vec![7];
+    c.npc_count = 1;
+    c.bump_gens(ServerProt::NPC_INFO);
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    c
+}
+
+/// Packed NPC access must click the teller, not fall through to a
+/// scene booth's Use-quickly (the BankBudget Open defect).
+#[test]
+fn open_bank_at_here_sends_npc_op_for_packed_teller_not_scene_booth() {
+    use client::client::MiniMenuAction;
+    let c = closed_banker_client();
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(
+        !snap.bank_loaded() && snap.bank_component_id() < 0,
+        "open must run against a closed bank"
+    );
+    assert!(
+        snap.npcs()
+            .iter()
+            .any(|n| n.name.as_deref() == Some("Banker")),
+        "seeded teller must appear in the snapshot"
+    );
+    assert!(
+        snap.locs().iter().any(|l| l
+            .actions
+            .iter()
+            .any(|a| a.as_deref() == Some("Use-quickly"))),
+        "the fixture still has a booth so a Use-quickly fallback would fire on the old code"
+    );
+    let world = packed_npc_world(WorldTile {
+        x: 3206,
+        z: 3205,
+        level: 0,
+    });
+    let mut rec = GuardRec::default();
+    assert!(
+        open_bank_at_here(&mut rec, &snap, Some((3205, 3205, 0)), Some(&world)),
+        "packed NPC access must send"
+    );
+    assert!(
+        rec.menus
+            .iter()
+            .any(|(_, action, a, _, _)| *action == MiniMenuAction::OP_NPC3 && *a == 7),
+        "must use the packed Bank op on the teller, got {:?}",
+        rec.menus
+    );
+    assert!(
+        rec.menus
+            .iter()
+            .all(|(_, action, _, _, _)| *action != MiniMenuAction::OP_LOC2),
+        "must not fall back to booth Use-quickly, got {:?}",
+        rec.menus
+    );
+}
+
+/// DepositAll / Wear / Close used to pop after one send even when it
+/// failed or the snapshot had not changed.
+#[test]
+fn bank_fetch_deposit_wear_close_wait_for_snapshot() {
+    use nav::bank_fetch::BankStep;
+    use std::collections::VecDeque;
+
+    let mut c = bank_fetch_client();
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(!snap.inv().is_empty(), "fixture backpack has junk");
+    let route = dummy_fetch_route();
+    let mut bot = NavBot {
+        bank_fetch: Some(PendingBankFetch {
+            steps: VecDeque::from([BankStep::DepositAll, BankStep::Close]),
+            dest: route.dest,
+            opts: FindOptions::default(),
+            final_route: route.clone(),
+            avoid: Vec::new(),
+        }),
+        ..Default::default()
+    };
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
+    assert!(
+        matches!(
+            bot.bank_fetch.as_ref().and_then(|p| p.steps.front()),
+            Some(BankStep::DepositAll)
+        ),
+        "DepositAll must wait for an empty backpack, not pop after the send"
+    );
+
+    let mut closed = bank_client();
+    closed.main_modal_id = -1;
+    closed.side_modal_id = -1;
+    closed.bump_gens(ServerProt::IF_OPENMAIN);
+    let mut closed_snap = GameSnapshot::new();
+    closed_snap.rebuild(&closed);
+    bot.bank_fetch = Some(PendingBankFetch {
+        steps: VecDeque::from([BankStep::Close]),
+        dest: route.dest,
+        opts: FindOptions::default(),
+        final_route: route.clone(),
+        avoid: Vec::new(),
+    });
+    step_bank_fetch_on_bot(
+        &mut closed,
+        &closed_snap,
+        &mut bot,
+        None,
+        Some((3205, 3205, 0)),
+        false,
+    );
+    assert!(
+        bot.bank_fetch.is_none(),
+        "Close pops once the snapshot already shows a closed bank"
+    );
+
+    bot.bank_fetch = Some(PendingBankFetch {
+        steps: VecDeque::from([BankStep::Wear { id: 2 }]),
+        dest: route.dest,
+        opts: FindOptions::default(),
+        final_route: route,
+        avoid: Vec::new(),
+    });
+    // Frozen snapshot has no knife in the pack (only Bones) and none worn.
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
+    assert!(
+        bot.bank_fetch.is_none(),
+        "Wear without the item in the pack aborts rather than skipping"
+    );
+}
+
+#[test]
+fn bank_fetch_open_uses_packed_npc_access() {
+    use nav::bank_fetch::BankStep;
+    use std::collections::VecDeque;
+
+    let mut c = closed_banker_client();
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let world = packed_npc_world(WorldTile {
+        x: 3206,
+        z: 3205,
+        level: 0,
+    });
+    let route = dummy_fetch_route();
+    let mut bot = NavBot {
+        bank_fetch: Some(PendingBankFetch {
+            steps: VecDeque::from([BankStep::Open, BankStep::DepositAll]),
+            dest: route.dest,
+            opts: FindOptions::default(),
+            final_route: route,
+            avoid: Vec::new(),
+        }),
+        ..Default::default()
+    };
+    let out_before = c.out.pos;
+    step_bank_fetch_on_bot(
+        &mut c,
+        &snap,
+        &mut bot,
+        Some(&world),
+        Some((3205, 3205, 0)),
+        false,
+    );
+    assert!(
+        matches!(
+            bot.bank_fetch.as_ref().and_then(|p| p.steps.front()),
+            Some(BankStep::Open)
+        ),
+        "Open waits for bank_loaded"
+    );
+    assert!(
+        c.out.pos > out_before,
+        "Open must send the packed NPC access"
+    );
+}
+
 /// Test script that counts ticks into a shared cell (the panel cannot
 /// read a running script's internals, so the wiring tests observe the
 /// side effect instead).

@@ -702,42 +702,55 @@ fn norm_action(s: &str) -> String {
         .collect()
 }
 
-pub(super) fn open_bank_at_here<D: Driver>(
+pub(crate) fn open_bank_at_here<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
     here: Option<(i32, i32, i32)>,
     world: Option<&NavWorld>,
 ) -> bool {
     use api::interact::{ActionSpec, OpTarget, SendResult};
-    let mut ix = api::interact::Interactions::new(snapshot, driver);
-    // Prefer a packed booth stand's tile; else any Use-quickly loc.
-    let target_tile = world.and_then(|w| {
+    use nav::pack::BankAccess;
+    let stand = world.and_then(|w| {
         here.and_then(|(hx, hz, hl)| {
-            w.banks()
-                .iter()
-                .min_by_key(|s| {
-                    (
-                        s.tile.level != hl,
-                        (s.tile.x - hx).abs().max((s.tile.z - hz).abs()),
-                    )
-                })
-                .map(|s| (s.tile.x, s.tile.z, s.tile.level))
+            w.banks().iter().min_by_key(|s| {
+                (
+                    s.tile.level != hl,
+                    (s.tile.x - hx).abs().max((s.tile.z - hz).abs()),
+                )
+            })
         })
     });
-    if let Some((x, z, level)) = target_tile {
-        if let Some(loc) = snapshot
-            .locs()
-            .iter()
-            .find(|l| l.tile.x == x && l.tile.z == z && l.tile.level == level)
-        {
-            if let Some(op) = action_slot(&loc.actions, "Use-quickly") {
-                return matches!(
-                    ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(op)),
-                    SendResult::Sent { .. }
+    if let Some(stand) = stand {
+        match &stand.access {
+            BankAccess::Npc { name, op, choose } => {
+                return open_npc_bank_at_here(
+                    driver,
+                    snapshot,
+                    here,
+                    stand.tile,
+                    name,
+                    *op,
+                    choose.as_deref(),
                 );
+            }
+            BankAccess::Booth { .. } => {
+                let mut ix = api::interact::Interactions::new(snapshot, driver);
+                if let Some(loc) = snapshot.locs().iter().find(|l| {
+                    l.tile.x == stand.tile.x
+                        && l.tile.z == stand.tile.z
+                        && l.tile.level == stand.tile.level
+                }) {
+                    if let Some(slot) = action_slot(&loc.actions, "Use-quickly") {
+                        return matches!(
+                            ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(slot)),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
             }
         }
     }
+    let mut ix = api::interact::Interactions::new(snapshot, driver);
     for loc in snapshot.locs() {
         if let Some(op) = action_slot(&loc.actions, "Use-quickly") {
             return matches!(
@@ -747,6 +760,74 @@ pub(super) fn open_bank_at_here<D: Driver>(
         }
     }
     false
+}
+
+fn open_npc_bank_at_here<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    here: Option<(i32, i32, i32)>,
+    stand: WorldTile,
+    name: &str,
+    op: i32,
+    choose: Option<&str>,
+) -> bool {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    let mut ix = api::interact::Interactions::new(snapshot, driver);
+    if let Some(want) = choose.map(str::trim).filter(|s| !s.is_empty()) {
+        let want = want.to_lowercase();
+        if let Some(option) = snapshot
+            .chat_options()
+            .iter()
+            .position(|row| !row.text.is_empty() && row.text.to_lowercase().contains(&want))
+        {
+            return matches!(
+                ix.answer_choice(i32::try_from(option + 1).unwrap_or(i32::MAX)),
+                SendResult::Sent { .. }
+            );
+        }
+        if snapshot.chat_continue_component_id() >= 0 {
+            return matches!(ix.continue_dialog(), SendResult::Sent { .. });
+        }
+    }
+    let wanted = name.trim();
+    let Some(npc) = snapshot
+        .npcs()
+        .iter()
+        .filter(|npc| {
+            npc.name
+                .as_deref()
+                .is_some_and(|got| got.trim().eq_ignore_ascii_case(wanted))
+        })
+        .min_by_key(|npc| {
+            let d_stand = (npc.tile.x - stand.x)
+                .abs()
+                .max((npc.tile.z - stand.z).abs())
+                + i32::from(npc.tile.level != stand.level) * 10_000;
+            let d_here = here
+                .map(|(hx, hz, hl)| {
+                    (npc.tile.x - hx).abs().max((npc.tile.z - hz).abs())
+                        + i32::from(npc.tile.level != hl) * 10_000
+                })
+                .unwrap_or(i32::MAX);
+            (d_stand, d_here, npc.distance, npc.index)
+        })
+    else {
+        return false;
+    };
+    let packed = (op >= 1).then_some(op).filter(|&slot| {
+        npc.actions
+            .get((slot as usize).saturating_sub(1))
+            .and_then(|a| a.as_deref())
+            .is_some_and(|label| !label.is_empty())
+    });
+    let slot = packed.or_else(|| action_slot(&npc.actions, "Bank"));
+    let Some(slot) = slot else {
+        return false;
+    };
+    matches!(
+        ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(slot)),
+        SendResult::Sent { .. }
+    )
 }
 
 pub(super) fn deposit_all_backpack<D: Driver>(driver: &mut D, snapshot: &GameSnapshot) -> bool {
