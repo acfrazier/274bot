@@ -2676,7 +2676,9 @@ impl TuiSession {
             .first()
             .cloned()
             .or_else(|| self.names.first().cloned())
-            .ok_or_else(|| "vault has no profiles (create one with host-play --user)".into())
+            .ok_or_else(|| {
+                "vault has no profiles (start tui-play with --user <name> to create one)".into()
+            })
     }
 
     /// Create a missing profile (fresh game secret, uid one past the
