@@ -556,7 +556,7 @@ pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
             vault::check_new_passphrase(passphrase)?;
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent)?;
+                    vault::create_private_dir(parent)?;
                 }
             }
             Vault::create(path, passphrase)

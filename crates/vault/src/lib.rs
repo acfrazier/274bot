@@ -26,7 +26,8 @@ mod private_file;
 mod secret;
 
 pub use private_file::{
-    create_private_file, read_private_file, read_regular_file, write_private_file,
+    create_private_dir, create_private_file, read_private_file, read_regular_file,
+    write_private_file,
 };
 pub use secret::Secret;
 
@@ -950,6 +951,35 @@ mod tests {
             "failed upsert must not change in-memory state"
         );
         assert_eq!(v.get("alice").unwrap().password, "pw1");
+    }
+
+    /// An install made under `umask 002` (or by an older release) leaves the
+    /// bot root group-writable. The first save tightens it and goes through,
+    /// instead of refusing until the user runs chmod by hand.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_vault_in_a_group_writable_directory_saves_after_tightening_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir()
+            .join(format!("274bot-vault-test-{}", std::process::id()))
+            .join("umask-002");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("vault");
+        let mut v = Vault::create(&file, PASS).unwrap();
+        v.upsert(profile("alice", "pw1")).unwrap();
+        drop(v);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o775)).unwrap();
+
+        let mut v = Vault::unlock(&file, PASS).unwrap();
+        v.upsert(profile("bob", "pw2")).unwrap();
+
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o755, "the first save removes group/other write");
+        let reopened = Vault::unlock(&file, PASS).unwrap();
+        assert_eq!(reopened.get("alice").unwrap().password, "pw1");
+        assert_eq!(reopened.get("bob").unwrap().password, "pw2");
     }
 
     /// A header for `rounds` without deriving a key for it: only the header's
