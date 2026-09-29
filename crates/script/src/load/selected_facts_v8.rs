@@ -367,20 +367,125 @@ fn required_thieving<'s>(
     Ok(v8::Integer::new(scope, level).into())
 }
 
-/// Frozen `GAS_ROCK_IDS` as a fresh `Set`, sourced from the selected gathering catalog's hazard rocks. Only
-/// reached when a script touches the set (the shim proxy defers the call), so an isolate that never does
-/// never acquires the family. `undefined` without selected data: the shim throws its fail-closed error.
+/// Frozen `GAS_ROCK_IDS`: this isolate's one ordinary, mutable `Set`, returned empty at module evaluation with
+/// a lazy own accessor over every `Set.prototype` member. The first script read of any member fills it once
+/// from the selected gathering catalog's hazard rocks, drops the catalog reference this thread did not already
+/// hold and deletes the accessors, so the value is a plain `Set` for good: later operations run the native
+/// prototype methods on that same object, nothing rebuilds per call and script mutations never reach the
+/// shared catalog. An isolate that only imports the export never acquires the family. Without selected data a
+/// touch throws the shim's fail-closed `not impl` and the set stays lazy.
 fn gas_rock_ids<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
-    let Ok(ids) = api::gather_methods::gas_rock_ids(supply_v2::gathering().as_deref()) else {
-        return Ok(v8::undefined(scope).into());
-    };
     let set = v8::Set::new(scope);
-    for id in ids {
-        let id = v8::Integer::new(scope, id);
-        set.add(scope, id.into())
-            .ok_or_else(|| "selected facts gas rock set".to_string())?;
+    let prototype = set
+        .get_prototype(scope)
+        .and_then(|value| v8::Local::<v8::Object>::try_from(value).ok())
+        .ok_or_else(|| "selected facts set prototype".to_string())?;
+    let names = prototype
+        .get_own_property_names(
+            scope,
+            v8::GetPropertyNamesArgsBuilder::new()
+                .mode(v8::KeyCollectionMode::OwnOnly)
+                .property_filter(v8::PropertyFilter::ALL_PROPERTIES)
+                .index_filter(v8::IndexFilter::SkipIndices)
+                .key_conversion(v8::KeyConversionMode::KeepNumbers)
+                .build(),
+        )
+        .ok_or_else(|| "selected facts set members".to_string())?;
+    let tag: v8::Local<v8::Value> = v8::Symbol::get_to_string_tag(scope).into();
+    let mut keys = Vec::new();
+    for index in 0..names.length() {
+        let key = names
+            .get_index(scope, index)
+            .ok_or_else(|| "selected facts set member".to_string())?;
+        // `constructor` and the string tag need no facts; every other member does.
+        let constructor = key.is_string() && js_to_string(scope, key)? == "constructor";
+        if !constructor && !key.strict_equals(tag) {
+            keys.push(key);
+        }
+    }
+    let keys = v8::Array::new_with_elements(scope, &keys);
+    for index in 0..keys.length() {
+        let key = keys
+            .get_index(scope, index)
+            .ok_or_else(|| "selected facts set member".to_string())?;
+        let name = v8::Local::<v8::Name>::try_from(key)
+            .map_err(|_| "selected facts set member name".to_string())?;
+        let data = v8::Array::new_with_elements(scope, &[set.into(), keys.into(), key]);
+        let getter = v8::Function::builder(gas_rock_member)
+            .data(data.into())
+            .build(scope)
+            .ok_or_else(|| "selected facts gas rock member".to_string())?;
+        let undefined = v8::undefined(scope).into();
+        let mut descriptor = v8::PropertyDescriptor::new_from_get_set(getter.into(), undefined);
+        descriptor.set_enumerable(false);
+        descriptor.set_configurable(true);
+        set.define_property(scope, name, &descriptor)
+            .ok_or_else(|| "selected facts gas rock accessor".to_string())?;
     }
     Ok(set.into())
+}
+
+/// The lazy accessor behind one `GAS_ROCK_IDS` member: fills the set once, removes every accessor, then answers
+/// with the ordinary member.
+fn gas_rock_member(
+    scope: &mut v8::HandleScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+) {
+    match materialize_gas_rock_ids(scope, &args) {
+        Ok(value) => rv.set(value),
+        Err(error) if error == PENDING => {}
+        Err(error) => throw_error(scope, &error),
+    }
+}
+
+fn materialize_gas_rock_ids<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: &v8::FunctionCallbackArguments,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let data = v8::Local::<v8::Array>::try_from(args.data())
+        .map_err(|_| "selected facts gas rock data".to_string())?;
+    let mut slot = |index| {
+        data.get_index(scope, index)
+            .ok_or_else(|| "selected facts gas rock data".to_string())
+    };
+    let (set, keys, key) = (slot(0)?, slot(1)?, slot(2)?);
+    let set = v8::Local::<v8::Set>::try_from(set)
+        .map_err(|_| "selected facts gas rock set".to_string())?;
+    let keys = v8::Local::<v8::Array>::try_from(keys)
+        .map_err(|_| "selected facts gas rock keys".to_string())?;
+    let name = v8::Local::<v8::Name>::try_from(key)
+        .map_err(|_| "selected facts gas rock name".to_string())?;
+    // A getter a script kept past materialization must not refill a set it has since mutated.
+    let object: v8::Local<v8::Object> = set.into();
+    if object.has_own_property(scope, name).unwrap_or(false) {
+        let catalog = supply_v2::gathering_unretained();
+        let ids = api::gather_methods::gas_rock_ids(catalog.as_deref());
+        drop(catalog);
+        let Ok(ids) = ids else {
+            let member = if key.is_string() {
+                format!("GAS_ROCK_IDS.{}", js_to_string(scope, key)?)
+            } else {
+                "GAS_ROCK_IDS".to_string()
+            };
+            return Err(format!("not impl: {member}"));
+        };
+        for id in ids {
+            let id = v8::Integer::new(scope, id);
+            set.add(scope, id.into())
+                .ok_or_else(|| "selected facts gas rock set".to_string())?;
+        }
+        for index in 0..keys.length() {
+            let lazy = keys
+                .get_index(scope, index)
+                .ok_or_else(|| "selected facts gas rock keys".to_string())?;
+            // The accessor is an own property: `Object::delete`, not the `Set` element delete.
+            object.delete(scope, lazy);
+        }
+    }
+    object
+        .get(scope, key)
+        .ok_or_else(|| "selected facts gas rock member".to_string())
 }
 
 fn string_array<'s>(
