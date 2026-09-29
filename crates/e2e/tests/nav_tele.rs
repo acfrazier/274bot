@@ -79,28 +79,19 @@ fn nav_tele() {
 
     let world = NavWorld::load_pack(&default_pack_path())
         .unwrap_or_else(|e| fail(&format!("nav_tele: nav pack must load: {e:?}")));
-    let ring: Vec<_> = world
+    // The dueling ring rubs to more than one destination (Duel Arena and
+    // Castle Wars); this twin needs the arena edge.
+    let Some(e) = world
         .graph
         .teleports
         .iter()
-        .filter(|e| e.kind == TransportKind::Teleport && e.loc_id == RING)
-        .cloned()
-        .collect();
-    if ring.len() != 1 {
+        .find(|e| e.kind == TransportKind::Teleport && e.loc_id == RING && e.to == DUEL_ARENA)
+    else {
         fail(&format!(
-            "nav_tele: pack carries {} dueling-ring rub edges, need 1 \
-             (rebake with `cargo run -p nav --bin nav-pack`)",
-            ring.len()
+            "nav_tele: pack carries no dueling-ring rub edge to the Duel Arena {DUEL_ARENA:?} \
+             (rebake with `cargo run -p nav --bin nav-pack`)"
         ));
-    }
-    let e = &ring[0];
-    if e.to != DUEL_ARENA {
-        fail(&format!(
-            "nav_tele: ring rub edge lands at {:?}, not the Duel Arena {DUEL_ARENA:?} \
-             (rebake with `cargo run -p nav --bin nav-pack`)",
-            e.to
-        ));
-    }
+    };
     if e.option != 4 {
         fail(&format!("nav_tele: ring rub edge is not Rub (op 4): {e:?}"));
     }
