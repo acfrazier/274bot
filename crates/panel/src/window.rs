@@ -34,6 +34,8 @@ use winit::window::{Window, WindowId};
 #[path = "work_area.rs"]
 mod work_area;
 pub(crate) use work_area::fit_window_to_work_area;
+#[cfg(test)]
+pub(crate) use work_area::{fit_window_in, FitTarget, WorkArea};
 
 /// What the panel window needs from the graphics stack, appended to the
 /// startup errors a missing driver produces. `BOT_CPU=1` selects the game

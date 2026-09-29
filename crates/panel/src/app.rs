@@ -153,7 +153,12 @@ struct PanelState {
     dock_size: Option<[f32; 2]>,
     /// winit window so MultiBox can grow and re-shrink the OS inner size
     /// when the rail covers or leaves the 765×503 blit.
-    os_window: Option<std::sync::Arc<winit::window::Window>>,
+    os_window: Option<Arc<dyn OsWindow>>,
+    /// The rail need [`ensure_window_fits`] last fitted and the window has
+    /// not met yet (a work-area clamp keeps it short). The fit runs again
+    /// only when the need changes, so a clamped window is not re-fitted
+    /// (and pinned) every frame.
+    last_fit_need: Option<(f32, f32)>,
     /// Whole-window shot coordination: the scenario sink (slot thread)
     /// → the render readback (`window::ShotState`) → the shot files.
     shot_state: Arc<Mutex<crate::window::ShotState>>,
@@ -549,6 +554,7 @@ impl PanelState {
             live: None,
             dock_size: None,
             os_window: None,
+            last_fit_need: None,
             shot_state,
             shot_dir: None,
             walk_map: WalkMapRenderer::new(),
@@ -1055,6 +1061,28 @@ fn dock_panel_tabs(ui: &Ui, panel: Id) {
     }
 }
 
+/// The OS window as the panel frame drives it. `winit::Window` in
+/// production; tests stand in a recording frame for the rail fit.
+trait OsWindow {
+    fn set_title(&self, title: &str);
+    fn request_redraw(&self);
+    /// Fit the OS frame to a logical inner-size need, clamped into the
+    /// monitor work area (M-003).
+    fn fit_to_work_area(&self, need_logical: (f64, f64));
+}
+
+impl OsWindow for winit::window::Window {
+    fn set_title(&self, title: &str) {
+        winit::window::Window::set_title(self, title);
+    }
+    fn request_redraw(&self) {
+        winit::window::Window::request_redraw(self);
+    }
+    fn fit_to_work_area(&self, need_logical: (f64, f64)) {
+        window::fit_window_to_work_area(self, need_logical);
+    }
+}
+
 /// Grow the OS window when the rail would cover the native blit. Shrink
 /// it back when the strip leaves — MultiBox off, Grid, or the rail tab
 /// X (`set_multibox(false)`). Falling edge of [`DockLayout::Rail`].
@@ -1065,20 +1093,36 @@ fn dock_panel_tabs(ui: &Ui, panel: Id) {
 /// is already gone.
 /// The need is clamped into the current monitor work area (M-003), so
 /// opening the rail on a small screen shrinks and repositions instead of
-/// pushing the frame off the right edge.
+/// pushing the frame off the right edge. The fit (and its OS queries)
+/// runs once per change of the need; see [`take_fit_need`].
 fn ensure_window_fits(state: &mut PanelState, rail_open: bool, current: [f32; 2]) {
     let Some(window) = state.os_window.as_ref() else {
         return;
     };
     let rail_was_open = state.dock_layout == Some(DockLayout::Rail);
-    let (need_w, need_h) = next_os_window_size((current[0], current[1]), rail_was_open, rail_open);
-    let w = need_w as f64;
-    let h = need_h as f64;
-    let (cur_w, cur_h) = (f64::from(current[0]), f64::from(current[1]));
-    if (w - cur_w).abs() <= 1.0 && (h - cur_h).abs() <= 1.0 {
-        return;
+    let need = next_os_window_size((current[0], current[1]), rail_was_open, rail_open);
+    if take_fit_need(&mut state.last_fit_need, need, (current[0], current[1])) {
+        window.fit_to_work_area((f64::from(need.0), f64::from(need.1)));
     }
-    window::fit_window_to_work_area(window, (w, h));
+}
+
+/// Whether [`ensure_window_fits`] fits for `need` this frame. A window
+/// that already meets the need clears `last`. Otherwise the fit runs only
+/// when the need differs from the one last fitted: a work-area clamp (or a
+/// platform that applies the size without a `Resized`, as Wayland does)
+/// leaves the window short of the need for good, and fitting again every
+/// frame would snap back a window the operator drags.
+fn take_fit_need(last: &mut Option<(f32, f32)>, need: (f32, f32), current: (f32, f32)) -> bool {
+    let close = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() <= 1.0 && (a.1 - b.1).abs() <= 1.0;
+    if close(need, current) {
+        *last = None;
+        return false;
+    }
+    if last.is_some_and(|fitted| close(fitted, need)) {
+        return false;
+    }
+    *last = Some(need);
+    true
 }
 
 /// Fullscreen dock host: game left, 330px panel right, optional 264px rail.
@@ -4818,7 +4862,10 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             }
             presented = true;
             if state.os_window.is_none() {
-                state.os_window = os_window.lock().unwrap().clone();
+                if let Some(window) = os_window.lock().unwrap().clone() {
+                    state.os_window = Some(window);
+                    state.last_fit_need = None;
+                }
             }
             let title = state.session.app_title();
             if title != window_title {
