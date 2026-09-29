@@ -768,3 +768,128 @@ fn glyph_font_merges_status_and_remove_codepoints() {
         "FA Free Solid PUA (home/desktop/docs/downloads/folder/file/chevron) must resolve"
     );
 }
+
+/// M-003: a saved geometry larger than the work area clamps to the area.
+/// A 1920x1080 geometry restored after moving to a 1366x768 display must
+/// come back as the work area, not the saved size.
+#[test]
+fn saved_geometry_larger_than_work_area_clamps_to_fit() {
+    assert_eq!(
+        clamp_inner_size((1920.0, 1080.0), (1366.0, 768.0)),
+        (1366.0, 768.0),
+        "restored geometry bigger than the display must shrink to fit it"
+    );
+}
+
+/// M-003: a fitting launch size passes through untouched. The default
+/// 1120x580 panel on a 1366x768 work area must not move a pixel.
+#[test]
+fn fitting_launch_geometry_is_untouched_by_the_clamp() {
+    assert_eq!(
+        clamp_inner_size((1120.0, 580.0), (1366.0, 768.0)),
+        (1120.0, 580.0),
+        "a window that already fits must keep its exact size"
+    );
+}
+
+/// M-003: the rail-open need (1120 + 264 = 1384 wide) on a 1366-wide
+/// screen clamps the width to the screen while the height survives, so
+/// opening MultiBox fits the frame on-screen instead of pushing it off.
+#[test]
+fn rail_open_overflow_clamps_width_but_keeps_height() {
+    assert_eq!(
+        clamp_inner_size((1384.0, 580.0), (1366.0, 768.0)),
+        (1366.0, 580.0),
+        "only the overflowing dimension may shrink"
+    );
+}
+
+/// M-003: an off-screen position pulls back inside the work area, and a
+/// frame larger than the area pins to the origin so the title bar and
+/// close box stay reachable.
+#[test]
+fn off_screen_position_pulls_back_inside_the_work_area() {
+    // Off the right/bottom (second monitor unplugged): 1366-1120=246,
+    // 768-580=188 is the furthest on-screen top-left.
+    assert_eq!(
+        clamp_outer_position(
+            (3000.0, 500.0),
+            (1120.0, 580.0),
+            (0.0, 0.0),
+            (1366.0, 768.0)
+        ),
+        (246.0, 188.0),
+        "a stranded frame must land fully on-screen"
+    );
+    // Off the top-left.
+    assert_eq!(
+        clamp_outer_position(
+            (-100.0, -50.0),
+            (1120.0, 580.0),
+            (0.0, 0.0),
+            (1366.0, 768.0)
+        ),
+        (0.0, 0.0),
+        "a negative position must settle at the origin"
+    );
+    // Already on-screen: untouched.
+    assert_eq!(
+        clamp_outer_position((100.0, 100.0), (1120.0, 580.0), (0.0, 0.0), (1366.0, 768.0)),
+        (100.0, 100.0),
+        "an on-screen position must not move"
+    );
+    // Oversized frame pins to the origin, not to a negative offset.
+    assert_eq!(
+        clamp_outer_position(
+            (100.0, 100.0),
+            (2000.0, 1000.0),
+            (0.0, 0.0),
+            (1366.0, 768.0)
+        ),
+        (0.0, 0.0),
+        "a frame bigger than the area must pin its top-left to the origin"
+    );
+    // Secondary monitor offset origin is honored.
+    assert_eq!(
+        clamp_outer_position(
+            (1400.0, 100.0),
+            (800.0, 600.0),
+            (1366.0, 0.0),
+            (1920.0, 1080.0)
+        ),
+        (1400.0, 100.0),
+        "an on-screen position on a secondary monitor must not move"
+    );
+}
+
+/// M-003: degenerate inputs never collapse the window or panic. Zero and
+/// negative sizes floor at 1 px, a bogus (non-positive) work area keeps
+/// the request, and NaN degrades to a finite bound.
+#[test]
+fn clamp_never_collapses_or_panics_on_degenerate_input() {
+    assert_eq!(
+        clamp_inner_size((0.0, -4.0), (1366.0, 768.0)),
+        (1.0, 1.0),
+        "non-positive requests must floor, never vanish"
+    );
+    assert_eq!(
+        clamp_inner_size((1120.0, 580.0), (0.0, 0.0)),
+        (1120.0, 580.0),
+        "a bogus work area must keep the request, never zero it"
+    );
+    assert_eq!(
+        clamp_inner_size((f64::NAN, 580.0), (1366.0, 768.0)),
+        (1366.0, 580.0),
+        "NaN width must degrade to the bound, never panic"
+    );
+    let (x, y) = clamp_outer_position(
+        (f64::NAN, f64::NAN),
+        (100.0, 100.0),
+        (0.0, 0.0),
+        (1366.0, 768.0),
+    );
+    assert!(
+        (0.0..=1266.0).contains(&x) && (0.0..=668.0).contains(&y),
+        "NaN position must settle inside the area, got ({x}, {y})"
+    );
+}

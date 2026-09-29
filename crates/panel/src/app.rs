@@ -1063,6 +1063,9 @@ fn dock_panel_tabs(ui: &Ui, panel: Id) {
 /// Do not call `Window::inner_size()` here: that is a per-frame X11
 /// `GetGeometry` round trip and panics with BadDrawable if the drawable
 /// is already gone.
+/// The need is clamped into the current monitor (M-003), so opening the
+/// rail on a small screen fits the screen instead of pushing the frame
+/// off it.
 fn ensure_window_fits(state: &mut PanelState, rail_open: bool, current: [f32; 2]) {
     let Some(window) = state.os_window.as_ref() else {
         return;
@@ -1071,8 +1074,13 @@ fn ensure_window_fits(state: &mut PanelState, rail_open: bool, current: [f32; 2]
     let (need_w, need_h) = next_os_window_size((current[0], current[1]), rail_was_open, rail_open);
     let w = need_w as f64;
     let h = need_h as f64;
-    if (w - current[0] as f64).abs() > 1.0 || (h - current[1] as f64).abs() > 1.0 {
-        let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w, h));
+    let (cur_w, cur_h) = (f64::from(current[0]), f64::from(current[1]));
+    if (w - cur_w).abs() <= 1.0 && (h - cur_h).abs() <= 1.0 {
+        return;
+    }
+    let (fit_w, fit_h) = window::clamp_to_window_monitor(window, (w, h));
+    if (fit_w - cur_w).abs() > 1.0 || (fit_h - cur_h).abs() > 1.0 {
+        let _ = window.request_inner_size(winit::dpi::LogicalSize::new(fit_w, fit_h));
     }
 }
 
