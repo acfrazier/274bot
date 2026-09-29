@@ -729,7 +729,16 @@ pub(crate) fn script_observe_cached_with_channels(
                     packed.stamp,
                     |input, mut native| {
                         native.bank_selection = bank_selection;
-                        slot.encode_snapshot_delta_with_native(input, native, force_banks)
+                        if wake_waits {
+                            slot.encode_snapshot_wake_with_native(
+                                input,
+                                native,
+                                force_banks,
+                                inv.is_none() && input.inv_size == 0,
+                            )
+                        } else {
+                            slot.encode_snapshot_delta_with_native(input, native, force_banks)
+                        }
                     },
                 );
                 post_script_snapshot(&mut slot, navs, name, walk_seq, bytes);

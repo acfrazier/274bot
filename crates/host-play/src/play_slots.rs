@@ -1040,9 +1040,9 @@ fn spawn_slot_thread(
                         let mut nav_snapshot = GameSnapshot::new();
                         let mut session_epoch = 0u64;
                         let mut welcome = login_readiness::LoginReadiness::default();
-                        // The random status `client_frame` published last
-                        // frame: copied onto the slot status row, and its
-                        // hold freezes script tick and the nav follow.
+                        // This frame's random status is published by
+                        // `client_frame` before observe; its hold freezes
+                        // script tick and nav follow.
                         move |c, _ignored, run_sends, status: &RandomStatus, run_policy| {
                             let name = &obs_name;
                             let drain = pump.drain_client(c);
@@ -1085,9 +1085,8 @@ fn spawn_slot_thread(
                             // frame attaches that bounded value here before
                             // status publication; pending panel logs are never
                             // consumed by this read.
-                            // `status` is last frame's client_frame publication.
-                            // Snapshot observe runs before this frame copies it
-                            // onto the slot row.
+                            // `status` is this frame's client_frame publication,
+                            // copied onto the slot row below.
                             // The hunt cards also read the slot's own record
                             // of the requests host-play dispatched for it.
                             let copies_inspect = obs_catalog_core.copies_route_inspect();

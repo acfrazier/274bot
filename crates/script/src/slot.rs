@@ -1282,6 +1282,25 @@ impl SlotScript {
         bytes
     }
 
+    #[cfg(feature = "load")]
+    pub fn encode_snapshot_wake_with_native(
+        &mut self,
+        input: &crate::isolate_fb::SnapshotInput<'_>,
+        native: crate::isolate_fb::NativeFactsInput<'_>,
+        force_banks: bool,
+        preserve_inv: bool,
+    ) -> Vec<u8> {
+        let (bytes, fp) = self.ipc.encode_snapshot_wake_with_native(
+            self.last_snapshot.as_mut(),
+            input,
+            native,
+            force_banks,
+            preserve_inv,
+        );
+        self.last_snapshot = Some(fp);
+        bytes
+    }
+
     /// The `NavWorld` identity the packed banks were posted against
     /// (`None` before the first post / after a Start). A world rebuild
     /// changes the identity, forcing the banks table onto the next post.
