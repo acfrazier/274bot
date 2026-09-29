@@ -254,6 +254,7 @@ pub(crate) fn script_observe_cached(
         name,
         up,
         tick_edge,
+        false,
         tick,
         here,
         inv,
@@ -312,6 +313,7 @@ pub(crate) fn script_observe_cached_with_channels(
     name: &str,
     up: bool,
     tick_edge: bool,
+    wait_families_dirty: bool,
     tick: u64,
     here: Option<(i32, i32, i32)>,
     inv: Option<&[(i32, i32)]>,
@@ -577,7 +579,16 @@ pub(crate) fn script_observe_cached_with_channels(
         // `onPaint` runs (loop/pump stay frozen inside the isolate);
         // compiled scripts stay fully frozen (0.1.2). The blob still
         // posts while held so EventSignal reads the freeze.
-        if tick_edge && slot.state() == script::RunState::Running {
+        // Do not gate this on the watchdog's last forwarded wait facts:
+        // the tick that parked may still be completing when a packet arrives.
+        // Queueing behind it lets the wait see the change without losing the
+        // dirty edge. Clean frames do no extra work.
+        let wake_waits = !tick_edge
+            && wait_families_dirty
+            && slot.load_active()
+            && !hold
+            && !slot.watchdog().holds_script_actions();
+        if (tick_edge || wake_waits) && slot.state() == script::RunState::Running {
             // Task 9b: post the FlatBuffer snapshot blob on every tick
             // edge — held or not — so the isolate's
             // Game/Inventory/Skills/Bank/Banking/EventSignal read what
@@ -724,7 +735,10 @@ pub(crate) fn script_observe_cached_with_channels(
                 post_script_snapshot(&mut slot, navs, name, walk_seq, bytes);
                 slot.store_last_world_id(world_id);
             }
-            if isolate_hold {
+            if wake_waits {
+                slot.on_snapshot_change(tick);
+                wrote = true;
+            } else if isolate_hold {
                 // Isolate: tick for onPaint only (hold gate inside V8 via
                 // snapshot.hold). Recovery hold is distinct from guardian
                 // hold: nav follow of the owned recovery route continues,

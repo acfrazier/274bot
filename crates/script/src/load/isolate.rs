@@ -107,6 +107,7 @@ enum IsolateCmd {
         tick: u64,
         generation: u64,
         input_identity: u64,
+        wait_only: bool,
     },
     /// A session boundary. `keep_work`: hold the script's work for the next
     /// logged-in session instead of ending it.
@@ -617,6 +618,16 @@ impl LoadIsolate {
     /// Dispatch one observed game tick, tagging produced mouse rows with
     /// the native permit identity that was live at production.
     pub fn on_game_tick_at(&self, snap_tick: u64, input_identity: u64) {
+        self.dispatch_tick(snap_tick, input_identity, false);
+    }
+
+    /// Recheck parked waits against a changed snapshot without advancing
+    /// game-tick listeners, machines, or the script's loop.
+    pub fn on_snapshot_change_at(&self, snap_tick: u64, input_identity: u64) {
+        self.dispatch_tick(snap_tick, input_identity, true);
+    }
+
+    fn dispatch_tick(&self, snap_tick: u64, input_identity: u64, wait_only: bool) {
         // Before Ready no tick has started, so none can be over budget.
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
@@ -650,6 +661,7 @@ impl LoadIsolate {
             tick: snap_tick,
             generation,
             input_identity,
+            wait_only,
         });
     }
 
@@ -670,6 +682,7 @@ impl LoadIsolate {
             tick: snap_tick,
             generation,
             input_identity: 0,
+            wait_only: false,
         });
     }
 

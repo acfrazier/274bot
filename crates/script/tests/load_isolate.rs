@@ -2849,6 +2849,63 @@ export default class T extends TaskBot {
     iso.join();
 }
 
+#[test]
+fn snapshot_wake_settles_bank_wait_without_advancing_tick_or_loop() {
+    let iso = spawn_ready(
+        r#"
+import { Execution } from '../../api/execution/Execution.js';
+import { Game } from '../../api/game/Game.js';
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        if (globalThis.__loops !== 1) return;
+        Execution.delayTicks(1).then(() => { globalThis.__delayed = Game.tick(); });
+        await Execution.delayUntil(() => Bank.isOpen(), 60000);
+        globalThis.__opened = Game.tick();
+    }
+    onPaint() { globalThis.__paints = (globalThis.__paints || 0) + 1; }
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    );
+    let mut snap = common::ingame_snapshot();
+    common::post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("globalThis.__loops").unwrap(), 1);
+    let paints = iso.probe("globalThis.__paints").unwrap();
+    assert_eq!(
+        iso.probe("globalThis.__opened ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+
+    snap.bank_open = true;
+    common::post_snapshot_input(&iso, &snap);
+    iso.pause();
+    iso.on_snapshot_change_at(1, 0);
+    assert_eq!(
+        iso.probe("globalThis.__opened ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+    iso.resume();
+    iso.on_snapshot_change_at(1, 0);
+    assert_eq!(iso.probe("globalThis.__opened").unwrap(), 1);
+    assert_eq!(
+        iso.probe("globalThis.__delayed ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+    assert_eq!(iso.probe("globalThis.__loops").unwrap(), 1);
+    assert_eq!(iso.probe("globalThis.__paints").unwrap(), paints);
+    iso.on_snapshot_change_at(1, 0);
+    assert_eq!(iso.probe("globalThis.__loops").unwrap(), 1);
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("globalThis.__delayed").unwrap(), 2);
+    assert_eq!(iso.probe("globalThis.__loops").unwrap(), 2);
+    iso.join();
+}
+
 // Task 4 — Execution.delayUntil parks the loop: `loop()` awaits a cond on
 // `Game.tick()`; posted ticks pump the wait (the isolate does NOT call
 // `loop()` again while parked); the third `loop` runs only after the cond

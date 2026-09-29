@@ -15655,6 +15655,59 @@ fn session_reset_clears_live_recovery_walk() {
         .stop();
 }
 
+#[test]
+fn dirty_bank_snapshot_wakes_wait_before_watchdog_facts_are_folded() {
+    let mut rig = ReconnectRig::with_source(
+        r#"
+import { Execution } from '../../api/execution/Execution.js';
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        await Execution.delayUntil(() => Bank.isOpen(), 60000);
+        globalThis.__opened = true;
+    }
+}
+"#
+        .into(),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    rig.client.main_modal_id = -1;
+    rig.snap.rebuild(&rig.client);
+    rig.frame(1, true);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__opened ?? false")
+            .unwrap(),
+        false
+    );
+    // No intervening frame folds the newly parked wait into the watchdog.
+    rig.client.main_modal_id = 600;
+    rig.snap.rebuild(&rig.client);
+    rig.frame_dirty(1, false, true);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__opened")
+            .unwrap(),
+        true
+    );
+    rig.frame(1, false);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__loops")
+            .unwrap(),
+        1
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
 /// A Load script walking on a 64×64 open world, driven through
 /// `script_observe` frame by frame, for the reconnect lifecycle.
 struct ReconnectRig {
@@ -15725,11 +15778,16 @@ impl ReconnectRig {
     /// One observed frame (the slot pump's observe, with alice's channel
     /// handle in a local world), then wait for the isolate to finish.
     fn frame(&mut self, tick: u64, tick_edge: bool) {
+        self.frame_dirty(tick, tick_edge, false);
+    }
+
+    fn frame_dirty(&mut self, tick: u64, tick_edge: bool, dirty: bool) {
         script_observe_cached_with_channels(
             &mut self.client,
             "alice",
             true,
             tick_edge,
+            dirty,
             tick,
             Some(self.here),
             None,

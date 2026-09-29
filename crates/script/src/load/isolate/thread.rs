@@ -499,7 +499,7 @@ fn finish_tick(
     generation: u64,
     run_paint: bool,
     script_paint: bool,
-    claimed: bool,
+    suppress_user_callbacks: bool,
     teardown: &Mutex<TeardownState>,
     last_paint: &mut Option<std::sync::Arc<crate::shim::ScriptPaint>>,
     paint_generation: &std::sync::atomic::AtomicU64,
@@ -516,7 +516,7 @@ fn finish_tick(
             runtime.call_function_immediate(
                 None,
                 "__rs2b0t_after_tick",
-                json_args!(script_paint, !claimed),
+                json_args!(script_paint, !suppress_user_callbacks),
             )
         });
     let mut paint = None;
@@ -567,7 +567,7 @@ fn finish_tick(
     if let Some(frame) = frame {
         forward_paint_if_changed(out, n, generation, last_paint, paint_generation, frame);
     }
-    if !claimed {
+    if !suppress_user_callbacks {
         pump_event_loop(runtime, out, n, generation, teardown);
     }
     requested_stop(runtime)
@@ -1256,8 +1256,10 @@ fn tick_loop(
                 tick: n,
                 generation,
                 input_identity,
+                wait_only,
             } => {
-                if session_held
+                if !wait_only
+                    && session_held
                     && generation == work_generation.load(std::sync::atomic::Ordering::Acquire)
                 {
                     // The relogged session's first tick: frozen AutoRelogin
@@ -1269,6 +1271,7 @@ fn tick_loop(
                     sync_work_freeze(&mut work_frozen, paused);
                 }
                 if paused
+                    || (wait_only && (session_held || host_hold))
                     || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
                 {
                     let _ = out.send(ThreadMsg::InFlightDone {
@@ -1292,37 +1295,42 @@ fn tick_loop(
                 let start = Instant::now();
                 // Every shape records the tick first, so machine callbacks,
                 // listeners and waits all see this tick's number.
-                record_tick(&mut runtime, n);
+                if !wait_only {
+                    record_tick(&mut runtime, n);
+                }
                 // Broker deliveries held since the last tick run inside this
                 // bounded tick execution, one call each, before gameplay
                 // reads peers.
-                for event in channel_events.drain(..) {
-                    let _ = call_interruptible(&mut runtime, &teardown, |runtime| match &event {
-                        ChannelEvent::Message {
-                            channel_id,
-                            data,
-                            sender,
-                        } => runtime.call_function_immediate::<()>(
-                            None,
-                            "__rs2b0t_channel_deliver",
-                            json_args!(channel_id, data, sender),
-                        ),
-                        ChannelEvent::Refused {
-                            channel_id,
-                            message,
-                        } => {
-                            let _ = out.send(ThreadMsg::Log(format!(
-                                "[rs2b0t] BroadcastChannel refused: {message}"
-                            )));
-                            runtime.call_function_immediate::<()>(
-                                None,
-                                "__rs2b0t_channel_refused",
-                                json_args!(channel_id, message),
-                            )
-                        }
-                    });
+                if !wait_only {
+                    for event in channel_events.drain(..) {
+                        let _ =
+                            call_interruptible(&mut runtime, &teardown, |runtime| match &event {
+                                ChannelEvent::Message {
+                                    channel_id,
+                                    data,
+                                    sender,
+                                } => runtime.call_function_immediate::<()>(
+                                    None,
+                                    "__rs2b0t_channel_deliver",
+                                    json_args!(channel_id, data, sender),
+                                ),
+                                ChannelEvent::Refused {
+                                    channel_id,
+                                    message,
+                                } => {
+                                    let _ = out.send(ThreadMsg::Log(format!(
+                                        "[rs2b0t] BroadcastChannel refused: {message}"
+                                    )));
+                                    runtime.call_function_immediate::<()>(
+                                        None,
+                                        "__rs2b0t_channel_refused",
+                                        json_args!(channel_id, message),
+                                    )
+                                }
+                            });
+                    }
                 }
-                if !machines_halted(&teardown) {
+                if !wait_only && !machines_halted(&teardown) {
                     // Frozen producers emit `tick` with `{ tick }`
                     // (`producers.ts:58`).
                     let events = serde_json::json!([{ "type": "tick", "payload": { "tick": n } }]);
@@ -1352,10 +1360,12 @@ fn tick_loop(
                 // applied; they run before the tick's other JS, and a
                 // completion settles in this tick's pump. Join's claim is
                 // re-checked between callbacks: one may absorb its terminate.
-                let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
-                    super::machine_v8::step(runtime, &|| machines_halted(&teardown));
-                    Ok::<(), rustyscript::Error>(())
-                });
+                if !wait_only {
+                    let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
+                        super::machine_v8::step(runtime, &|| machines_halted(&teardown));
+                        Ok::<(), rustyscript::Error>(())
+                    });
+                }
                 // A machine callback may absorb an interrupt. Finish and
                 // cancel under the execution lock before returning to the
                 // command loop, so it cannot leak into Resume or onStop.
@@ -1370,7 +1380,7 @@ fn tick_loop(
                     });
                     continue;
                 }
-                if events_consumed {
+                if !wait_only && events_consumed {
                     let observed = event_producer.take_eligible();
                     if let Some(diag) = observed.diagnostic {
                         let _ = out.send(ThreadMsg::Log(diag));
@@ -1505,6 +1515,10 @@ fn tick_loop(
                     // A callback or operator action claimed this execution:
                     // no later user phase may start through that boundary.
                     Ok(())
+                } else if wait_only {
+                    call_interruptible(&mut runtime, &teardown, |runtime| {
+                        runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))
+                    })
                 } else if v2_native {
                     let pumped = call_interruptible(&mut runtime, &teardown, |runtime| {
                         runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))
@@ -1644,9 +1658,9 @@ fn tick_loop(
                     &out,
                     n,
                     generation,
-                    !v2_native && script_paint && !halted,
+                    !wait_only && !v2_native && script_paint && !halted,
                     script_paint,
-                    halted,
+                    halted || wait_only,
                     &teardown,
                     &mut last_forwarded_paint,
                     &paint_generation,

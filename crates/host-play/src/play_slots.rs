@@ -1244,6 +1244,7 @@ fn spawn_slot_thread(
                                 name,
                                 up,
                                 tick_edge,
+                                drain.dirty.iface || drain.dirty.inv,
                                 *script_tick,
                                 here,
                                 inv,
