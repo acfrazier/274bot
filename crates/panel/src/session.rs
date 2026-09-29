@@ -2104,7 +2104,7 @@ impl Session {
             self.error = Some(msg);
             return false;
         }
-        match open_vault(path, pass) {
+        match Self::open_vault_typed(path, pass) {
             Ok(vault) => {
                 self.error = None;
                 match self.start_play(vault) {
@@ -2122,6 +2122,19 @@ impl Session {
                 self.error = Some(msg);
                 false
             }
+        }
+    }
+
+    /// `open_vault` with the passphrase as typed. The 0.1.9.1 panel trimmed
+    /// the passphrase before creating a vault, so a vault it made from input
+    /// with surrounding spaces only opens with the trimmed text; retry that
+    /// once.
+    pub(crate) fn open_vault_typed(path: &Path, typed: &str) -> Result<Vault, vault::VaultError> {
+        match open_vault(path, typed) {
+            Err(vault::VaultError::WrongPassphrase) if typed.trim() != typed => {
+                open_vault(path, typed.trim())
+            }
+            other => other,
         }
     }
 

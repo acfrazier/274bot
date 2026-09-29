@@ -1699,11 +1699,7 @@ fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
         "Create vault"
     };
     if ui.button_with_size(label, [w, 0.0]) {
-        let pass = vault::Secret::from(session.pass_scratch.trim());
-        if !pass.is_empty() {
-            session.request_unlock(pass);
-            session.pass_scratch.clear();
-        }
+        submit_vault_pass(session, exists);
     }
     if exists {
         if ui.button_with_size("Reset vault", [w, 0.0]) {
@@ -1722,6 +1718,23 @@ fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
         &mut session.vault_reset_understood,
     ) {
         session.reset_vault();
+    }
+}
+
+/// Unlock with the passphrase exactly as typed: a vault made in the terminal
+/// may begin or end with spaces. Create keeps the vault rule (non-empty once
+/// trimmed) and stores the typed text too, so both front ends agree.
+fn submit_vault_pass(session: &mut Session, exists: bool) {
+    let typed = session.pass_scratch.as_str();
+    let usable = if exists {
+        !typed.is_empty()
+    } else {
+        !typed.trim().is_empty()
+    };
+    if usable {
+        let pass = vault::Secret::from(typed);
+        session.request_unlock(pass);
+        session.pass_scratch.clear();
     }
 }
 
