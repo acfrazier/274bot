@@ -49,7 +49,10 @@
 //!   [`Family::KICK_ON_START`] row is then driven once ([`kick`]) inside
 //!   the same call, so its first
 //!   callbacks and ops run in the caller's own synchronous turn, as the
-//!   frozen driver's first stretch did. The kick ignores pause and
+//!   frozen driver's first stretch did. The kick does not drain the
+//!   isolate microtask queue: unrelated tasks queued before the call run
+//!   after the caller continues, and an already-settled callback promise
+//!   is observed by polling it. The kick ignores pause and
 //!   guardian hold on purpose: the frozen driver ran whenever the caller
 //!   ran (a held tick still runs paint, native events and the event-loop
 //!   drain), and ops emitted on a held tick are dropped with the JS queue
@@ -458,9 +461,11 @@ pub(crate) struct Hook {
 pub(crate) trait Js {
     /// `__rs2b0t_host.interact.length` now.
     fn queue_len(&mut self) -> usize;
-    /// Call `hook` (`None`: the family asked for an undeclared hook), then
-    /// run a microtask checkpoint, so a promise that settles through
-    /// microtasks alone comes back settled.
+    /// Call `hook` (`None`: the family asked for an undeclared hook). A
+    /// tick step then drains microtasks so a promise that settles through
+    /// them alone comes back settled. A kick is nested in the caller's JS
+    /// and must not drain that queue; it polls the callback promise
+    /// instead.
     fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called;
     /// Poll a promise a callback returned; `None` while pending.
     fn poll(&mut self, pending: &Pending) -> Option<Reply>;
