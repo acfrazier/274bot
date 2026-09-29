@@ -183,6 +183,12 @@ pub struct GameSnapshot {
     /// no bank is open or the buttons are absent.
     bank_note_controls: Option<ToggleControlsView>,
     modals: ModalView,
+    /// Whether the 289 tutorial pending-text box is showing
+    /// (`Client.tut_com_message.is_some()`). Copied on every modals
+    /// rebuild: the left-click ack that clears it bumps no packet family,
+    /// so like `taking_damage` it refreshes on every read rather than
+    /// behind a gen gate.
+    tutorial_pending: bool,
     menu_entries: Vec<String>,
     main_modal_texts: Vec<String>,
     chat_modal_texts: Vec<String>,
@@ -313,6 +319,7 @@ impl Default for GameSnapshot {
                 chat: -1,
                 tutorial: -1,
             },
+            tutorial_pending: false,
             menu_entries: Vec::new(),
             main_modal_texts: Vec::new(),
             chat_modal_texts: Vec::new(),
@@ -858,6 +865,14 @@ impl GameSnapshot {
     /// The four open modal roots from the last modals rebuild.
     pub fn modals(&self) -> &ModalView {
         &self.modals
+    }
+
+    /// Whether the 289 tutorial pending-text box is showing on this
+    /// client's chat (`tut_com_message.is_some()`). True only while a
+    /// left click would be consumed to ack it — the panel's getvar drain
+    /// clicks exactly then, so the click can never reach the chat menu.
+    pub fn tutorial_pending(&self) -> bool {
+        self.tutorial_pending
     }
 
     /// The minimenu entries from the last menu rebuild.

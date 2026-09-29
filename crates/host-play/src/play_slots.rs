@@ -1193,6 +1193,10 @@ fn spawn_slot_thread(
                                         }
                                         copy_stream_bytes(c, s);
                                         s.chat_head = if ready { c.chat_text[0].clone() } else { String::new() };
+                                        // The snapshot fact, not the chat head: the box
+                                        // survives chat-ring turnover and clears on a
+                                        // click that bumps no family. Bool copy.
+                                        s.tutorial_pending = nav_snapshot.tutorial_pending();
                                         s.random = if session_boundary { RandomStatus::default() } else { status.clone() };
                                         publish_script_paint(s, paint.clone());
                                         here = nav_snapshot.tile();
