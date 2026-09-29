@@ -4,11 +4,45 @@
 //! the menu bar / Dock / taskbar; Linux falls back to the full monitor
 //! rectangle (documented on [`work_area_for`]).
 
-use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize, Size};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
 use super::{clamp_inner_size, clamp_outer_position};
+
+/// The OS-window reads and writes the fit glue makes. `winit::Window` in
+/// production; a recording frame in tests, so the glue runs without an OS
+/// window.
+pub(crate) trait FitTarget {
+    fn scale_factor(&self) -> f64;
+    fn inner_size(&self) -> PhysicalSize<u32>;
+    fn outer_size(&self) -> PhysicalSize<u32>;
+    /// `None` where the platform cannot report it (Wayland).
+    fn outer_position(&self) -> Option<PhysicalPosition<i32>>;
+    fn request_inner_size(&self, size: Size);
+    fn set_outer_position(&self, pos: PhysicalPosition<i32>);
+}
+
+impl FitTarget for Window {
+    fn scale_factor(&self) -> f64 {
+        Window::scale_factor(self)
+    }
+    fn inner_size(&self) -> PhysicalSize<u32> {
+        Window::inner_size(self)
+    }
+    fn outer_size(&self) -> PhysicalSize<u32> {
+        Window::outer_size(self)
+    }
+    fn outer_position(&self) -> Option<PhysicalPosition<i32>> {
+        Window::outer_position(self).ok()
+    }
+    fn request_inner_size(&self, size: Size) {
+        let _ = Window::request_inner_size(self, size);
+    }
+    fn set_outer_position(&self, pos: PhysicalPosition<i32>) {
+        Window::set_outer_position(self, pos);
+    }
+}
 
 /// Physical-pixel work area in winit's top-left coordinate space.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -147,14 +181,9 @@ fn macos_visible_frame(window: &Window) -> Option<WorkArea> {
     let visible = screen.visibleFrame();
     let scale = screen.backingScaleFactor();
     let screens = NSScreen::screens(mtm);
-    if screens.count() == 0 {
-        return None;
-    }
-    // SAFETY: `count() > 0`, so index 0 is in range. AppKit's `screens[0]`
-    // is the menu-bar display, the same origin winit uses for the y-flip
-    // (`CGMainDisplayID`).
-    let main = unsafe { screens.objectAtIndex(0) };
-    let main_height = main.frame().size.height;
+    // AppKit's `screens[0]` is the menu-bar display, the same origin winit
+    // uses for the y-flip (`CGMainDisplayID`).
+    let main_height = screens.first()?.frame().size.height;
     Some(cocoa_visible_frame_to_physical(
         (visible.origin.x, visible.origin.y),
         (visible.size.width, visible.size.height),
@@ -205,27 +234,43 @@ fn windows_rc_work(window: &Window) -> Option<WorkArea> {
 }
 
 /// Clamp `window` so its outer frame sits in the work area: shrink the inner
-/// size and move the origin. Best-effort: an unknown work area or scale
-/// leaves the window as-is.
+/// size and move the origin. An unknown work area (or scale) falls back to
+/// the unclamped logical request, so a rail grow still happens where no
+/// work area can be read.
 pub(super) fn fit_window(
     window: &Window,
     requested_logical_inner: (f64, f64),
     event_loop: Option<&ActiveEventLoop>,
 ) {
-    let Some(work) = work_area_for(window, event_loop) else {
+    fit_window_in(
+        window,
+        work_area_for(window, event_loop),
+        requested_logical_inner,
+    );
+}
+
+/// Rail-grow entry: same provider and glue as launch, without an event loop.
+pub(crate) fn fit_window_to_work_area(window: &Window, requested_logical_inner: (f64, f64)) {
+    fit_window(window, requested_logical_inner, None);
+}
+
+/// [`fit_window`] with the work area already resolved.
+pub(crate) fn fit_window_in<W: FitTarget + ?Sized>(
+    window: &W,
+    work: Option<WorkArea>,
+    requested_logical_inner: (f64, f64),
+) {
+    let scale = window.scale_factor();
+    let inner = window.inner_size();
+    let inner_phys = (f64::from(inner.width), f64::from(inner.height));
+    let (Some(work), true) = (work, scale.is_finite() && scale > 0.0) else {
+        request_unclamped(window, inner_phys, scale, requested_logical_inner);
         return;
     };
-    let scale = window.scale_factor();
-    if !scale.is_finite() || scale <= 0.0 {
-        return;
-    }
-    let inner = window.inner_size();
     let outer = window.outer_size();
-    let inner_phys = (f64::from(inner.width), f64::from(inner.height));
     let outer_phys = (f64::from(outer.width), f64::from(outer.height));
     let pos = window
         .outer_position()
-        .ok()
         .map(|p| (f64::from(p.x), f64::from(p.y)));
     let requested_phys = (
         requested_logical_inner.0 * scale,
@@ -241,17 +286,41 @@ pub(super) fn fit_window(
     apply_fit(window, fit, inner_phys, pos);
 }
 
-/// Rail-grow entry: same provider and glue as launch, without an event loop.
-pub(crate) fn fit_window_to_work_area(window: &Window, requested_logical_inner: (f64, f64)) {
-    fit_window(window, requested_logical_inner, None);
+/// No work area to clamp against: ask for the logical size as-is (what the
+/// panel did before M-003), unless the window already has it.
+fn request_unclamped<W: FitTarget + ?Sized>(
+    window: &W,
+    inner_phys: (f64, f64),
+    scale: f64,
+    requested_logical_inner: (f64, f64),
+) {
+    if scale.is_finite() && scale > 0.0 {
+        let current = (inner_phys.0 / scale, inner_phys.1 / scale);
+        if (requested_logical_inner.0 - current.0).abs() <= 1.0
+            && (requested_logical_inner.1 - current.1).abs() <= 1.0
+        {
+            return;
+        }
+    }
+    window.request_inner_size(
+        LogicalSize::new(requested_logical_inner.0, requested_logical_inner.1).into(),
+    );
 }
 
-fn apply_fit(window: &Window, fit: FrameFit, inner: (f64, f64), pos: Option<(f64, f64)>) {
+fn apply_fit<W: FitTarget + ?Sized>(
+    window: &W,
+    fit: FrameFit,
+    inner: (f64, f64),
+    pos: Option<(f64, f64)>,
+) {
     if (fit.inner_size.0 - inner.0).abs() > 1.0 || (fit.inner_size.1 - inner.1).abs() > 1.0 {
-        let _ = window.request_inner_size(PhysicalSize::new(
-            fit.inner_size.0.round().max(1.0),
-            fit.inner_size.1.round().max(1.0),
-        ));
+        window.request_inner_size(
+            PhysicalSize::new(
+                fit.inner_size.0.round().max(1.0),
+                fit.inner_size.1.round().max(1.0),
+            )
+            .into(),
+        );
     }
     let Some(at) = pos else {
         return;

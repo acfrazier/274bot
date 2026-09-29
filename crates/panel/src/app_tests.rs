@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -734,6 +735,119 @@ fn runner_config_docks_without_viewports() {
     assert!(!flags.contains(ConfigFlags::VIEWPORTS_ENABLE));
     assert!(matches!(c.redraw, RedrawMode::WaitUntil { fps } if (fps - 50.0).abs() < 0.01));
     assert_eq!(c.window_size, (BASE_WINDOW_W as f64, BASE_WINDOW_H as f64));
+}
+
+/// The panel's OS window for the M-003 rail-fit tests: a
+/// [`FakeFrame`](crate::test_support::FakeFrame) on a fixed work area,
+/// fitted through the production glue.
+struct FittedFrame {
+    frame: crate::test_support::FakeFrame,
+    work: crate::window::WorkArea,
+    fits: std::sync::atomic::AtomicU32,
+}
+
+impl FittedFrame {
+    fn fits(&self) -> u32 {
+        self.fits.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl super::OsWindow for FittedFrame {
+    fn set_title(&self, _title: &str) {}
+    fn request_redraw(&self) {}
+    fn fit_to_work_area(&self, need_logical: (f64, f64)) {
+        self.fits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::window::fit_window_in(&self.frame, Some(self.work), need_logical);
+    }
+}
+
+fn fitted_frame(work: (f64, f64), inner: (u32, u32), pos: (i32, i32)) -> Arc<FittedFrame> {
+    Arc::new(FittedFrame {
+        frame: crate::test_support::FakeFrame::new(1.0, (16, 39), inner, pos),
+        work: crate::window::WorkArea {
+            origin: (0.0, 0.0),
+            size: work,
+        },
+        fits: std::sync::atomic::AtomicU32::new(0),
+    })
+}
+
+/// One headless panel frame through `dock_host`, with ImGui's display size
+/// taken from the window as winit's `Resized` would set it.
+fn dock_host_frame(ctx: &mut dear_imgui_rs::Context, state: &mut PanelState, os: &FittedFrame) {
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new(os.frame.display_size(), 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    super::dock_host(ctx.frame(), state, "274bot");
+    ctx.render();
+}
+
+fn dock_host_context() -> dear_imgui_rs::Context {
+    let mut ctx = dear_imgui_rs::Context::create();
+    ctx.io_mut().set_config_flags(ConfigFlags::DOCKING_ENABLE);
+    ctx
+}
+
+/// M-003 on the Windows 1366x768 guest (48 px taskbar, 16x39 chrome):
+/// opening MultiBox on a centered 1120 window fits the frame into the work
+/// area once. The width stays short of the 1384 need, and later frames must
+/// not fit again, or the operator could not drag the window (N1).
+#[test]
+fn rail_grow_fits_a_small_screen_once_and_the_window_stays_where_dragged() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    let os = fitted_frame((1366.0, 720.0), (1120, 580), (115, 50));
+    let mut state = PanelState {
+        os_window: Some(os.clone()),
+        ..PanelState::default()
+    };
+    state.session.multibox = true;
+
+    dock_host_frame(&mut ctx, &mut state, &os);
+    assert_eq!(os.fits(), 1, "opening the rail fits the window");
+    assert_eq!(
+        os.frame.outer_rect(),
+        (0, 50, 1366, 669),
+        "clamped to the work width and moved off the right edge"
+    );
+
+    for _ in 0..3 {
+        dock_host_frame(&mut ctx, &mut state, &os);
+    }
+    os.frame.drag_to((300, 40));
+    for _ in 0..3 {
+        dock_host_frame(&mut ctx, &mut state, &os);
+    }
+    assert_eq!(os.fits(), 1, "a clamped need is not re-fitted per frame");
+    assert_eq!(os.frame.outer_rect().0, 300, "the dragged window stays put");
+
+    state.session.multibox = false;
+    dock_host_frame(&mut ctx, &mut state, &os);
+    assert_eq!(os.fits(), 2, "closing the rail is a new need");
+    assert_eq!(os.frame.inner(), (1120, 580));
+}
+
+/// Where the rail need fits the screen, a window the operator shrinks below
+/// it while MultiBox is open grows back, as before M-003.
+#[test]
+fn rail_need_that_fits_regrows_a_window_shrunk_below_it() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    let os = fitted_frame((1920.0, 1040.0), (1120, 580), (400, 200));
+    let mut state = PanelState {
+        os_window: Some(os.clone()),
+        ..PanelState::default()
+    };
+    state.session.multibox = true;
+    dock_host_frame(&mut ctx, &mut state, &os);
+    dock_host_frame(&mut ctx, &mut state, &os);
+    assert_eq!(os.frame.inner(), (1384, 580));
+
+    os.frame.user_resize((1200, 580));
+    dock_host_frame(&mut ctx, &mut state, &os);
+    assert_eq!(os.frame.inner(), (1384, 580));
+    assert_eq!(os.fits(), 2);
 }
 
 #[test]

@@ -1135,3 +1135,33 @@ fn win32_rc_work_keeps_taskbar_insets() {
         "a secondary monitor's rcWork keeps the negative origin"
     );
 }
+
+/// M-003 launch fit on the Windows 1366x768 guest (48 px taskbar):
+/// `CW_USEDEFAULT` put the frame's bottom at 775, under the taskbar. The
+/// launch fit asks for the window's own size, so it only moves the frame up
+/// to the `rcWork` bottom; it must not resize it.
+#[test]
+fn launch_fit_moves_a_frame_off_the_taskbar_without_resizing() {
+    let frame = crate::test_support::FakeFrame::new(1.0, (16, 39), (1120, 580), (156, 156));
+    let work = win32_work_rect_to_physical(0, 0, 1366, 720);
+    fit_window_in(&frame, Some(work), (1120.0, 580.0));
+    assert_eq!(frame.outer_rect(), (156, 101, 1292, 720));
+    assert_eq!(
+        frame.resizes(),
+        0,
+        "a fitting launch size is not re-requested"
+    );
+}
+
+/// M-003 N3: with no work area (Wayland before the surface enters an output,
+/// or a window AppKit has not placed on a screen), the rail grow still asks
+/// for the unclamped need, as the panel did before M-003, instead of
+/// dropping the resize.
+#[test]
+fn unknown_work_area_still_requests_the_unclamped_rail_need() {
+    let frame = crate::test_support::FakeFrame::new(2.0, (0, 56), (2240, 1160), (100, 100));
+    fit_window_in(&frame, None, (1384.0, 580.0));
+    assert_eq!(frame.inner(), (2768, 1160), "logical 1384x580 at scale 2");
+    assert_eq!(frame.resizes(), 1);
+    assert_eq!(frame.moves(), 0, "no work area to move into");
+}
