@@ -828,14 +828,17 @@ const DUEL_ARENA: WorldTile = WorldTile {
 /// The `nav_tele` scenario: the packed Teleport execute twin. Log in
 /// `test`/`test`, mainland-hop into the Lumbridge courtyard, clear the
 /// persistent slot's backpack (`~clearinv`) and cheat-give a charged
-/// dueling ring (the packed jewellery rub edge's `item_req`),
-/// then `Follow` with `allow_teleports` on to the Al Kharid Duel Arena —
+/// dueling ring (the packed jewellery rub edge's `item_req`), then
+/// `Follow` with `allow_teleports` on to the Al Kharid Duel Arena —
 /// a destination the 2-tick rub edge always beats (the walk is toll-
 /// gated and over a hundred ticks, so the packed leg only ever routes
 /// when the layer is on and the item is held). The traveller rubs the
 /// held ring (`OpTarget::Item` + option 4 — never the WalkTo `::tele`
 /// cheat), answers the destination choice the rub opens, and PASSes on
 /// `TravelOutcome::Arrived` within the packed landing's scatter radius.
+/// Relog after the mainland hop is required: `mainland_hop` does not
+/// refresh tutorial-locked side icons, and the jewellery arm waits on
+/// `inventory()` (the bound inv tab), not the `inv()` fallback.
 pub(crate) fn nav_tele_scenario() -> Scenario {
     let dest = DUEL_ARENA;
     Scenario {
@@ -845,6 +848,17 @@ pub(crate) fn nav_tele_scenario() -> Scenario {
             mainland: true,
         },
         steps: vec![
+            Step {
+                name: "relog so the inventory tab binds",
+                kind: StepKind::Relog,
+                wait: Wait {
+                    // mainlandAccount tele+setvar does not relog; side icons
+                    // stay tutorial-locked. The jewellery hop reads
+                    // snapshot.inventory(), which needs side tab 3.
+                    arm: Proof::SideTabAvailable { index: 3 },
+                    budget_ticks: 600,
+                },
+            },
             Step {
                 name: "clear the backpack and give the charged dueling ring",
                 kind: StepKind::Perform {
