@@ -113,13 +113,17 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
     edited.password = "new-pass".into();
 
     // A failed save leaves the worker's credential alone.
-    let blocker = path.with_extension("tmp");
-    std::fs::create_dir_all(&blocker).unwrap();
+    // The publish cannot replace a directory: keep the vault aside and put one
+    // at its name.
+    let aside = path.with_extension("aside");
+    std::fs::rename(&path, &aside).unwrap();
+    std::fs::create_dir(&path).unwrap();
     let op = s
         .save_profile(edited.clone(), ArmMirror::Remember(None), "credentials")
         .unwrap();
     s.flush_writes();
-    std::fs::remove_dir_all(&blocker).unwrap();
+    std::fs::remove_dir(&path).unwrap();
+    std::fs::rename(&aside, &path).unwrap();
     assert!(matches!(
         s.operation(op).unwrap().outcome("alice"),
         Some(Outcome::Failed(_))

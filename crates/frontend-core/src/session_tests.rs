@@ -75,6 +75,29 @@ fn vault_path(test: &str) -> std::path::PathBuf {
         .join("vault")
 }
 
+/// A vault file kept aside while a directory sits at its name: the next write
+/// cannot publish over a directory (on any platform), and the durable copy is
+/// intact for [`unblock_writes`].
+struct BlockedWrites {
+    path: std::path::PathBuf,
+    aside: std::path::PathBuf,
+}
+
+fn block_writes(path: &std::path::Path) -> BlockedWrites {
+    let aside = path.with_extension("aside");
+    std::fs::rename(path, &aside).unwrap();
+    std::fs::create_dir(path).unwrap();
+    BlockedWrites {
+        path: path.to_path_buf(),
+        aside,
+    }
+}
+
+fn unblock_writes(blocked: BlockedWrites) {
+    std::fs::remove_dir(&blocked.path).unwrap();
+    std::fs::rename(&blocked.aside, &blocked.path).unwrap();
+}
+
 fn vault_with(test: &str, profiles: &[(&str, i32, bool)]) -> Vault {
     let path = vault_path(test);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -870,15 +893,13 @@ fn a_failed_write_is_reported_restores_the_durable_value_and_leaves_the_arm() {
     s.load("alice", &mut surface);
     let alice = arm(&s, "alice");
     let before = alice.random_events.load(Ordering::Relaxed);
-    // The writer's temp file cannot be created where a directory sits.
-    let blocker = vault_path("write-fail").with_extension("tmp");
-    std::fs::create_dir_all(&blocker).unwrap();
+    let blocked = block_writes(&vault_path("write-fail"));
 
     let op = s
         .set_random_settings("alice", !before, "Magic", false)
         .unwrap();
     s.flush_writes();
-    std::fs::remove_dir_all(&blocker).unwrap();
+    unblock_writes(blocked);
 
     assert!(matches!(
         s.operation(op).unwrap().outcome("alice"),
@@ -1028,15 +1049,14 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
     let mut s = session("rename-fail", &[("alice", 1, false)]);
     let mut renamed = s.vault().unwrap().get("alice").unwrap().clone();
     renamed.username = "alicia".into();
-    let blocker = vault_path("rename-fail").with_extension("tmp");
-    std::fs::create_dir_all(&blocker).unwrap();
+    let blocked = block_writes(&vault_path("rename-fail"));
 
     let op = s
         .rename_profile("alice", renamed.clone(), ArmMirror::None, "credentials")
         .unwrap();
     assert!(s.vault().unwrap().get("alice").is_none(), "staged at once");
     s.flush_writes();
-    std::fs::remove_dir_all(&blocker).unwrap();
+    unblock_writes(blocked);
 
     assert!(matches!(
         s.operation(op).unwrap().outcome("alicia"),
@@ -1272,8 +1292,7 @@ fn profile_form_dirty_projects_only_what_save_writes() {
 #[test]
 fn on_a_failed_commit_a_superseded_write_is_cancelled_and_only_the_final_one_fails() {
     let mut s = session("write-coalesce-fail", &[("alice", 1, false)]);
-    let blocker = vault_path("write-coalesce-fail").with_extension("tmp");
-    std::fs::create_dir_all(&blocker).unwrap();
+    let blocked = block_writes(&vault_path("write-coalesce-fail"));
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
     let on = s.set_auto_login("alice", true).unwrap();
@@ -1282,7 +1301,7 @@ fn on_a_failed_commit_a_superseded_write_is_cancelled_and_only_the_final_one_fai
         .unwrap();
     drop(held);
     s.flush_writes();
-    std::fs::remove_dir_all(&blocker).unwrap();
+    unblock_writes(blocked);
 
     assert_eq!(
         s.operation(on).unwrap().outcome("alice"),
@@ -1337,11 +1356,10 @@ fn a_parked_profile_spawns_from_its_durable_row_while_an_edit_is_saving() {
     );
 
     // The write fails: nothing live changes and the staged edit rolls back.
-    let blocker = vault_path("durable-spawn").with_extension("tmp");
-    std::fs::create_dir_all(&blocker).unwrap();
+    let blocked = block_writes(&vault_path("durable-spawn"));
     drop(held);
     s.flush_writes();
-    std::fs::remove_dir_all(&blocker).unwrap();
+    unblock_writes(blocked);
     assert_eq!(s.vault().unwrap().get("alice").unwrap().password, "pw");
     assert_eq!(alice.uid.load(Ordering::Relaxed), old_uid);
     assert!(Arc::ptr_eq(&arm(&s, "alice"), &alice));

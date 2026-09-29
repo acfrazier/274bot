@@ -220,23 +220,18 @@ enum StoredSource {
 }
 
 /// Reads a script source the store names. Symlinks are followed and the checks
-/// apply to what they resolve to: a regular file within [`MAX_SOURCE_BYTES`]
-/// (a FIFO or device would hang the read or never end). There is no permission
-/// check on purpose: sources live wherever the operator keeps them, including
-/// filesystems that report every file world-writable.
+/// apply to what they resolve to, on one open file ([`vault::read_regular_file`]):
+/// a regular file within [`MAX_SOURCE_BYTES`] (a FIFO or device would hang the
+/// read or never end). There is no permission check on purpose: sources live
+/// wherever the operator keeps them, including filesystems that report every
+/// file world-writable.
 #[cfg(feature = "load")]
 fn read_stored_source(path: &Path) -> StoredSource {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return StoredSource::Gone;
-    };
-    if !meta.is_file() {
-        return StoredSource::Refused("not a regular file".into());
-    }
-    if meta.len() > MAX_SOURCE_BYTES {
-        return StoredSource::Refused(format!("larger than {MAX_SOURCE_BYTES} bytes"));
-    }
-    match std::fs::read_to_string(path) {
+    match vault::read_regular_file(path, MAX_SOURCE_BYTES) {
         Ok(text) => StoredSource::Text(text),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            StoredSource::Refused(e.to_string())
+        }
         Err(_) => StoredSource::Gone,
     }
 }

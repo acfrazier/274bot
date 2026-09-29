@@ -410,15 +410,19 @@ fn a_failed_write_is_reported_and_never_reaches_the_run() {
     f.set("alice", &thiever, "target", json!("Guard"));
     f.core.flush_writes();
     f.prepare("alice", &thiever);
-    // The writer's temp file cannot be created where a directory sits.
-    let blocker = f.dir.join("vault").with_extension("tmp");
-    std::fs::create_dir_all(&blocker).unwrap();
+    // The publish cannot replace a directory: keep the vault aside and put one
+    // at its name.
+    let vault_file = f.dir.join("vault");
+    let aside = vault_file.with_extension("aside");
+    std::fs::rename(&vault_file, &aside).unwrap();
+    std::fs::create_dir(&vault_file).unwrap();
 
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     f.set("bob", &thiever, "food", json!("Lobster"));
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
-    std::fs::remove_dir_all(&blocker).unwrap();
+    std::fs::remove_dir(&vault_file).unwrap();
+    std::fs::rename(&aside, &vault_file).unwrap();
 
     let report = f.scripts.last_settings_sync().unwrap();
     assert_eq!(report.saved, 0);

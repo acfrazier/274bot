@@ -131,6 +131,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // The passphrase has done its job; do not keep it through the long run.
+    drop(pass);
 
     let mut profiles = Vec::new();
     for (i, username) in args.users.iter().enumerate() {
@@ -151,6 +153,9 @@ fn main() -> ExitCode {
             }
         }
     }
+    // The vault is only needed to seed the profiles: release its derived key
+    // before the long run.
+    drop(vault);
 
     if !args.lowmem {
         for account in profiles.iter_mut() {

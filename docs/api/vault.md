@@ -18,11 +18,19 @@ re-seal, which is out of scope for 0.2.0.
 "274VAULT" | version(1) | pbkdf2_rounds(le u32) | salt(16) | nonce(12) | ciphertext ‖ gcm_tag(16)
 ```
 
-Writes are atomic: a same-directory temp file created exclusively with mode
-`0o600` (a planted symlink or a leftover file at the temp name is never
-followed), flushed, then renamed over the target. A crash cannot leave a
-truncated vault at the target path, and a failed write removes its temp file
-and leaves the target unchanged.
+Writes are atomic and each write is its own: the bytes are staged in a
+unique, exclusively created same-directory temp file (`.<name>.<random>.tmp`,
+mode `0o600`, so a planted symlink, directory or leftover file can never be
+its name), flushed, checked to still be that same file, and only then renamed
+over the target. This call never removes a temp it did not create. A crash
+cannot leave a truncated vault at the target path; a failed write removes its
+own temp and leaves the target unchanged, except that two writers to one
+target in the same process take turns and, across processes, the last
+published write wins (each writer's `Ok` means its own bytes were published;
+a read-modify-write across processes needs its own lock). A writer that
+crashes leaves its temp file behind. `Vault::create` publishes with a
+no-replace link, so of any number of concurrent creators exactly one succeeds
+and none replaces an existing vault.
 
 ## API
 
@@ -121,19 +129,41 @@ credential edit buffers): its buffer is overwritten with zeros when it is
 dropped or cleared, `Debug` prints `<redacted>`, and it serializes as the
 plain string, so the vault JSON is unchanged. The derived key, the AES key
 schedule (`aes` built with its `zeroize` feature) and the serialized profiles
-built to write the file are zeroed after use. This is best effort: it does
-not reach copies already moved elsewhere (a login block handed to the network
-layer, the `Arc<str>` a slot keeps for reconnects, the log-redaction list of
-registered secrets that lives for the process) or the PBKDF2/HMAC working
-state inside those crates.
+built to write the file are zeroed after use. The passphrase buffers of
+`host-play` and `tui-play` are reserved at the 4096-byte limit up front (a
+longer entry is refused at a pipe and ignored at the prompt) so none grows and
+leaves a freed copy, and both front ends drop the passphrase as soon as the
+vault is open, before the long run.
+
+This is best effort, not a promise that every copy is wiped. It does not
+reach the standard library's buffered `stdin` reader (which keeps its own copy
+of what it read from a pipe), the terminal driver's queue, copies already
+moved elsewhere (a login block handed to the network layer, the `Arc<str>` a
+slot keeps for reconnects, the log-redaction list of registered secrets that
+lives for the process), compiler moves and registers, or the PBKDF2/HMAC
+working state inside those crates.
 
 ## State files beside the vault
 
 `write_private_file` (also used for the script library store, settings and
-logs) is the atomic writer above. `read_private_file` is its reader for state
+logs) is the atomic writer above and `create_private_file` its no-replace
+form (used by `Vault::create`). `read_private_file` is the reader for state
 that decides what the host later loads or runs (`js-scripts.json`,
 `rs2b0t-path`): it refuses anything that is not a regular file, is larger than
 its bound, is owned by another user (root is accepted) or is writable by its
 group or by others; state that others can only read (written before the
 `0o600` writer) is tightened to `0o600` and read. See
 [script.md](script.md#persistence) for what restore does with a refusal.
+
+**Directory trust.** On Unix the immediate parent directory must be owned by
+this user or root and must not be writable by group or others (a sticky
+directory such as `/tmp` is accepted); otherwise the write is refused with
+`chmod go-w` guidance. A vault kept in a group-writable directory (for
+example one created under a `umask` of `002`) therefore needs that one
+`chmod`. Only the immediate parent is checked, not its ancestors.
+
+**Windows.** There are no mode bits to check and this crate reads and sets no
+ACLs: the file and its directory get whatever ACL the parent directory
+inherits (normally the per-user profile), and a shared or permissive location
+is not detected. The staging file is created exclusively and opened with
+sharing denied while it is written.

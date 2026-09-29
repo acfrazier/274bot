@@ -2591,6 +2591,8 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             if let Err(e) = session.unlock_at(&vault_path, &pass) {
                 return Err(format!("vault {}: {e}", vault_path.display()));
             }
+            // The passphrase has done its job; do not keep it through the run.
+            drop(pass);
             if !vault_exists {
                 // First run: create the default `test`/`test` profile so
                 // unlock is not a dead end (host-play CLI convention).

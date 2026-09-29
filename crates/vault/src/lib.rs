@@ -25,7 +25,9 @@
 mod private_file;
 mod secret;
 
-pub use private_file::{read_private_file, write_private_file};
+pub use private_file::{
+    create_private_file, read_private_file, read_regular_file, write_private_file,
+};
 pub use secret::Secret;
 
 use std::collections::BTreeMap;
@@ -241,7 +243,10 @@ impl Vault {
         let empty: BTreeMap<String, Profile> = BTreeMap::new();
         let data = serialize_profiles(&empty)?;
         let blob = build_blob(&salt, &key, &data, PBKDF2_ROUNDS)?;
-        atomic_write(path, &blob)?;
+        create_private_file(path, &blob).map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => VaultError::AlreadyExists(path.to_path_buf()),
+            _ => VaultError::Io(e),
+        })?;
         Ok(Self {
             path: path.to_path_buf(),
             salt,
@@ -873,6 +878,32 @@ mod tests {
         ));
     }
 
+    /// Creators that all passed an `exists()` check would each publish a vault
+    /// and each be told it succeeded; exactly one may.
+    #[test]
+    fn of_concurrent_creators_exactly_one_vault_is_made_and_it_opens_with_its_passphrase() {
+        let path = tmp_path("create-race.vault");
+        let start = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let creators: Vec<_> = (0..4)
+            .map(|i| {
+                let (path, start) = (path.clone(), start.clone());
+                std::thread::spawn(move || {
+                    let passphrase = format!("passphrase-number-{i}");
+                    start.wait();
+                    Vault::create(&path, &passphrase).map(|_| passphrase)
+                })
+            })
+            .collect();
+        let outcomes: Vec<_> = creators.into_iter().map(|c| c.join().unwrap()).collect();
+
+        let winners: Vec<&String> = outcomes.iter().filter_map(|o| o.as_ref().ok()).collect();
+        assert_eq!(winners.len(), 1, "exactly one creator may succeed");
+        for lost in outcomes.iter().filter_map(|o| o.as_ref().err()) {
+            assert!(matches!(lost, VaultError::AlreadyExists(_)), "{lost:?}");
+        }
+        Vault::unlock(&path, winners[0]).unwrap();
+    }
+
     #[test]
     fn unlock_directory_is_io_not_not_found() {
         let dir = tmp_path("vault-as-dir");
@@ -908,10 +939,11 @@ mod tests {
         let mut v = Vault::create(&file, PASS).unwrap();
         v.upsert(profile("alice", "pw1")).unwrap();
 
-        // Block the atomic write's `.tmp` path with a directory so the next
-        // write fails on every platform (Windows cannot delete the open
-        // vault's directory, and permission bits do not stop it writing).
-        std::fs::create_dir(file.with_extension("tmp")).unwrap();
+        // Make the target a directory so the next publish fails on every
+        // platform (Windows cannot delete the open vault's directory, and
+        // permission bits do not stop it writing).
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
         assert!(v.upsert(profile("bob", "pw2")).is_err());
         assert!(
             v.get("bob").is_none(),
@@ -1104,17 +1136,18 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_store_commit_leaves_the_durable_copy_unchanged() {
+    fn a_failed_store_commit_rolls_back_the_in_memory_copy() {
         let path = tmp_path("store-fail.vault");
         let vault = Vault::create(&path, PASS).unwrap();
         let mut store = vault.store();
-        // The temp file cannot be created where a directory sits.
-        std::fs::create_dir_all(path.with_extension("tmp")).unwrap();
+        // The publish cannot replace a directory (on any platform).
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
         assert!(store
             .commit(&[VaultChange::Upsert(profile("alice", "a"))])
             .is_err());
         assert!(store.get("alice").is_none());
-        std::fs::remove_dir_all(path.with_extension("tmp")).unwrap();
+        std::fs::remove_dir_all(&path).unwrap();
     }
 
     #[test]
