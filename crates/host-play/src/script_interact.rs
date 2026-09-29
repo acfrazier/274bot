@@ -183,7 +183,7 @@ pub(crate) fn dispatch_script_interact(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn dispatch_script_interact_cached(
+pub(crate) fn dispatch_script_interact_cached<R>(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
     obj_names: Option<&api::obj_names::ObjNames>,
@@ -192,16 +192,20 @@ pub(crate) fn dispatch_script_interact_cached(
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
     name: &str,
-    reqs: Vec<script::shim::InteractReq>,
+    reqs: R,
     cache: Option<Arc<Cache>>,
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
-) -> bool {
+) -> bool
+where
+    R: AsRef<[script::shim::InteractReq]> + IntoIterator<Item = script::shim::InteractReq>,
+{
     use api::interact::{ActionSpec, OpTarget, SendResult};
     use script::shim::InteractReq;
     #[cfg(feature = "memory-profile")]
-    memory_diagnostics::requests(name, &reqs);
+    memory_diagnostics::requests(name, reqs.as_ref());
     let mut wrote = false;
     let camera_yaws: Vec<i32> = reqs
+        .as_ref()
         .iter()
         .filter_map(|req| {
             if let InteractReq::SetCameraYaw { yaw } = req {
@@ -215,7 +219,7 @@ pub(crate) fn dispatch_script_interact_cached(
     let revision = driver.revision();
     let mut ix = api::interact::Interactions::new(snapshot, driver);
     if api::hostlog::enabled(Category::InteractTrace) {
-        for req in &reqs {
+        for req in reqs.as_ref() {
             host_log!(
                 Category::InteractTrace,
                 Level::Debug,
@@ -224,7 +228,7 @@ pub(crate) fn dispatch_script_interact_cached(
             );
         }
     }
-    for req in &reqs {
+    for req in reqs.as_ref() {
         if let InteractReq::InspectAck { seq, generation } = req {
             if let Some(bot) = navs.lock().unwrap().get_mut(name) {
                 bot.inspect.apply_ack(*seq, *generation);

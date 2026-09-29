@@ -137,7 +137,7 @@ pub(crate) fn post_script_snapshot(
 
 /// Restart a script the watchdog gave up on and log the outcome.
 fn watchdog_restart(slot: &mut SlotScript, name: &str, now: Instant) {
-    match slot.restart_load_from_identity(now) {
+    match slot.restart_from_identity(now) {
         Ok(()) => host_log!(
             Category::Watchdog,
             Level::Warn,
@@ -344,6 +344,7 @@ pub(crate) fn script_observe_cached_with_channels(
     let mut pending_bank_op_active = false;
     let observed_slot = script_slot(scripts, name);
     let mut slot_work_epoch = None;
+    let mut has_native_actions = false;
     let mut channel_generation = 0;
     let mut channel_active = false;
     let mut policy_runtime_generation = None;
@@ -387,7 +388,45 @@ pub(crate) fn script_observe_cached_with_channels(
         // pause/hold freeze here, on the slot's own thread, whether or not
         // this frame dispatches a tick. A Load slot's isolate thread runs the
         // same hooks for its own instance.
-        slot.sync_compiled_clue(hold || ours);
+        slot.sync_compiled_clue(
+            hold || ours
+                || !up
+                || !snapshot.is_some_and(|snap| snap.ingame() && snap.scene_state() == 2),
+        );
+        // Deliver only the terminal belonging to this still-live native owner.
+        // The slot repeats the run/action fence before accepting the receipt.
+        if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+            if let Some(owner) = bot.native_walk.as_ref() {
+                if owner.live()
+                    && bot.walk_outcome_seq != 0
+                    && bot.native_receipt_seq != bot.walk_outcome_seq
+                    && bot.walk_outcome_request_id == owner.request_id().get()
+                {
+                    slot.complete_native_walk(
+                        owner,
+                        script::native::WalkReceipt {
+                            request_id: owner.request_id().get(),
+                            evidence: api::quest_progress::EvidenceStamp {
+                                run: owner.run(),
+                                tick,
+                                sequence: tick,
+                            },
+                            end: if bot.walk_outcome_blocked {
+                                script::native::WalkEnd::Blocked
+                            } else if bot.walk_outcome_failed {
+                                bot.native_walk_failure
+                                    .as_ref()
+                                    .filter(|(request, _)| *request == owner.request_id().get())
+                                    .map_or(script::native::WalkEnd::Failed, |(_, end)| end.clone())
+                            } else {
+                                script::native::WalkEnd::RouteEnded
+                            },
+                        },
+                    );
+                    bot.native_receipt_seq = bot.walk_outcome_seq;
+                }
+            }
+        }
         slot_work_epoch = Some(slot.work_epoch());
         channel_generation = slot.runtime_generation();
         // Region loads briefly clear `up`; the isolate and its browser-style
@@ -606,7 +645,7 @@ pub(crate) fn script_observe_cached_with_channels(
             // Guardian `hold` freezes clocks/nav and cancels owned recovery.
             // Recovery hold is host-owned and must still reach the isolate so
             // loop/pump freeze, without being treated as that external freeze.
-            let recovery_hold = slot.load_active() && slot.watchdog().holds_script_actions();
+            let recovery_hold = slot.watchdog().holds_script_actions();
             let isolate_hold = hold || recovery_hold;
             if slot.load_active() {
                 let (
@@ -772,6 +811,15 @@ pub(crate) fn script_observe_cached_with_channels(
                 }
             } else {
                 let selected = slot.compiled_game_data();
+                let packed = selected.as_ref().map(|_| {
+                    pack_cached_reach(
+                        slot.reach_pack_cache(),
+                        snapshot,
+                        here,
+                        world.as_deref(),
+                        canlight,
+                    )
+                });
                 slot.on_game_tick(&mut ScriptCtx {
                     driver,
                     tick,
@@ -783,6 +831,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     obj_names,
                     compiled: script::CompiledTick {
                         selected: selected.as_deref(),
+                        reach: packed.as_ref().map(|packed| packed.view.as_ref()),
                         hold: hold || ours,
                         ..Default::default()
                     },
@@ -794,7 +843,7 @@ pub(crate) fn script_observe_cached_with_channels(
         // Fold forwarded shim requests on running frames. Pause leaves the
         // isolate queue untouched so Resume can dispatch it; guardian hold
         // retains the existing drain/drop policy below.
-        if slot.load_active() {
+        if slot.load_active() || slot.native_run().is_some() {
             let mut lifecycle = Vec::new();
             if slot.state() == script::RunState::Running {
                 lifecycle.extend(slot.drain_lifecycle());
@@ -803,9 +852,15 @@ pub(crate) fn script_observe_cached_with_channels(
                 && here.is_some()
                 && snapshot.is_some_and(|snap| snap.ingame() && snap.scene_state() == 2);
             let frozen = hold || !ready || slot.state() == script::RunState::Paused;
-            let xp: Vec<i32> = snapshot
-                .map(|snap| snap.stats().iter().map(|stat| stat.xp).collect())
-                .unwrap_or_default();
+            let mut xp_slots = [0; 25];
+            let xp = if let Some(snapshot) = snapshot {
+                for (xp, stat) in xp_slots.iter_mut().zip(snapshot.stats()) {
+                    *xp = stat.xp;
+                }
+                &xp_slots[..snapshot.stats().len()]
+            } else {
+                &[]
+            };
             let now = Instant::now();
             if frozen {
                 if slot.watchdog().recovering_anchor().is_some() {
@@ -818,10 +873,11 @@ pub(crate) fn script_observe_cached_with_channels(
                 }
             } else if slot.watchdog().recovering_anchor().is_some() {
                 let far = here
-                    .map(|(x, z, _)| {
+                    .map(|(x, z, level)| {
                         slot.watchdog().recovering_anchor().is_some_and(|anchor| {
-                            script::watchdog::chebyshev_xz((x, z), (anchor.x, anchor.z))
-                                > script::watchdog::WALK_RADIUS
+                            level != anchor.level
+                                || script::watchdog::chebyshev_xz((x, z), (anchor.x, anchor.z))
+                                    > script::watchdog::WALK_RADIUS
                         })
                     })
                     .unwrap_or(true);
@@ -847,7 +903,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 }
             }
             let running = slot.state() == script::RunState::Running;
-            let action = slot.feed_watchdog(now, here, &xp, frozen, running, &lifecycle);
+            let action = slot.feed_watchdog(now, here, xp, frozen, running, &lifecycle);
             match action {
                 script::WatchdogAction::Restart { .. } => {
                     interact.clear();
@@ -886,6 +942,8 @@ pub(crate) fn script_observe_cached_with_channels(
                 ),
             }
             slot.sync_native_input_gate();
+        }
+        if slot.load_active() {
             if slot.state() == script::RunState::Running {
                 if slot.watchdog().holds_script_actions() {
                     let (update, _dropped) = drain_observed_host_interacts(&mut slot);
@@ -933,7 +991,9 @@ pub(crate) fn script_observe_cached_with_channels(
                     interact.extend(queued);
                 }
             }
-        } else if slot.state() == script::RunState::Running {
+        } else if slot.state() == script::RunState::Running
+            && !slot.watchdog().holds_script_actions()
+        {
             let (update, reqs) = drain_observed_host_interacts(&mut slot);
             if let Some(update) = update {
                 run_policy_update = Some(update);
@@ -949,6 +1009,7 @@ pub(crate) fn script_observe_cached_with_channels(
             script::RunState::Starting | script::RunState::Running | script::RunState::Paused
         )
         .then_some(slot.runtime_generation());
+        has_native_actions = slot.has_native_actions();
     }
     if let Some(run_policy) = run_policy {
         run_policy.sync_runtime(policy_runtime_generation);
@@ -989,7 +1050,7 @@ pub(crate) fn script_observe_cached_with_channels(
     // with default FindOptions, so wilderness/quest gates fail closed).
     // The guardian's hold drops them: the script's parked wait stays
     // frozen, and a later retry re-queues what still matters.
-    if up && !hold && !interact.is_empty() {
+    if up && !hold && (!interact.is_empty() || has_native_actions) {
         if let Some(snapshot) = snapshot {
             #[cfg(test)]
             wait_dispatch_barrier();
@@ -1004,6 +1065,57 @@ pub(crate) fn script_observe_cached_with_channels(
                     && slot.state() == script::RunState::Running
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
+                    while let Some(action) = slot.take_native_action() {
+                        let authority = action.authority();
+                        if !authority.live() {
+                            continue;
+                        }
+                        match action.effect {
+                            script::native::HostEffect::Interaction(request) => {
+                                let accepted = dispatch_script_interact_cached(
+                                    driver,
+                                    snapshot,
+                                    obj_names,
+                                    here,
+                                    navs,
+                                    world,
+                                    state.clone(),
+                                    name,
+                                    [request],
+                                    cache.clone(),
+                                    obj_names_arc.clone(),
+                                );
+                                wrote |= accepted;
+                                slot.complete_native_interaction(
+                                    &authority,
+                                    script::native::InteractionReceipt {
+                                        request_id: authority.request_id().get(),
+                                        evidence: api::quest_progress::EvidenceStamp {
+                                            run: authority.run(),
+                                            tick,
+                                            sequence: tick,
+                                        },
+                                        accepted,
+                                    },
+                                );
+                            }
+                            script::native::HostEffect::Walk(request) => {
+                                let arm = super::ScriptWalkArm {
+                                    here,
+                                    world: world.clone(),
+                                    navs: Arc::clone(navs),
+                                    name: name.to_owned(),
+                                    state: state.clone(),
+                                    bank: snapshot
+                                        .bank()
+                                        .iter()
+                                        .map(|item| (item.def.id, item.count))
+                                        .collect(),
+                                };
+                                arm.queue_native_route(snapshot, request, authority);
+                            }
+                        }
+                    }
                     let mut dispatchable = Vec::with_capacity(interact.len());
                     let mut armed = None;
                     let mut armed_bank_op = None;

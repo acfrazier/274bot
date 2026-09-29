@@ -11881,7 +11881,7 @@ export default class T extends LoopingBot {
         assert_eq!(slot.state(), script::RunState::Running);
         let old_generation = slot.runtime_generation();
         let (update, _interacts) = drain_observed_host_interacts(&mut slot);
-        slot.restart_load_from_identity(Instant::now())
+        slot.restart_from_identity(Instant::now())
             .expect("watchdog-style runtime replacement starts");
         (
             old_generation,
@@ -16592,7 +16592,7 @@ fn a_restart_during_a_reconnect_hold_drops_the_old_runs_carried_walk() {
         slot.on_is_up(true);
         let now = Instant::now();
         slot.feed_watchdog(now, Some((3, 3, 0)), &[], false, true, &[]);
-        slot.restart_load_from_identity(now).unwrap();
+        slot.restart_from_identity(now).unwrap();
     }
     rig.wait_state(script::RunState::Running);
     rig.frames(2);

@@ -80,6 +80,12 @@ pub(crate) struct NavBot {
     pub(crate) map_route_generation: u64,
     pub(crate) route_worker: Option<Arc<()>>,
     pub(crate) pending_route: Option<ScriptRouteRequest>,
+    /// Native ownership survives worker handoff, but not action revocation.
+    pub(crate) native_walk: Option<script::native::HostAuthority>,
+    pub(crate) native_receipt_seq: u64,
+    pub(crate) native_walk_failure: Option<(u64, script::native::WalkEnd)>,
+    /// Evidence retained with the published route, not a newer pending retarget.
+    pub(crate) route_quest_evidence: Option<nav::quest_gates::QuestEvidence>,
     /// Dest, radius, allow_teleports, allow_wilderness, allow_bank_fetch.
     pub(crate) requested_route: Option<(WorldTile, i32, bool, bool, bool)>,
     /// The avoid rectangles `requested_route` was queued with, so a
@@ -192,6 +198,49 @@ pub(super) fn log_walk_arm_bot(build: impl FnOnce() -> String) {
 }
 
 impl ScriptWalkArm {
+    pub(crate) fn queue_native_route(
+        mut self,
+        snapshot: &GameSnapshot,
+        request: script::native::WalkRequest,
+        authority: script::native::HostAuthority,
+    ) -> bool {
+        if !authority.live() || request.required_after.run != authority.run() {
+            return false;
+        }
+        if let (Some(provider), Some(family)) = (
+            request.evidence,
+            self.world
+                .as_ref()
+                .and_then(|world| world.graph.quest_family),
+        ) {
+            self.state
+                .get_or_insert_with(Default::default)
+                .quest_evidence = Some(nav::quest_gates::QuestEvidence::new(
+                provider,
+                family,
+                request.required_after,
+            ));
+        }
+        self.queue_route_impl(
+            request.target.x,
+            request.target.z,
+            request.target.level,
+            FindOptions {
+                allow_teleports: request.options.allow_teleports,
+                allow_wilderness: request.options.allow_wilderness,
+                allow_bank_fetch: request.options.allow_bank_fetch,
+                ..FindOptions::default()
+            },
+            i32::from(request.radius),
+            true,
+            authority.request_id().get(),
+            Some(snapshot),
+            RouteCompletion::default(),
+            Vec::new(),
+            Some(authority),
+        )
+    }
+
     /// Explicit WalkNear, including radius 0: an armed or in-flight route is
     /// replaced through the existing generation / pending-route coalescing path.
     /// A latched bank-fetch session still refuses.
@@ -248,6 +297,7 @@ impl ScriptWalkArm {
             None,
             RouteCompletion::default(),
             Vec::new(),
+            None,
         )
     }
 
@@ -282,6 +332,7 @@ impl ScriptWalkArm {
             Some(snapshot),
             RouteCompletion::default(),
             Vec::new(),
+            None,
         )
     }
 
@@ -307,6 +358,7 @@ impl ScriptWalkArm {
             None,
             RouteCompletion::default(),
             avoid,
+            None,
         )
     }
 
@@ -334,6 +386,7 @@ impl ScriptWalkArm {
             Some(snapshot),
             RouteCompletion::default(),
             avoid,
+            None,
         )
     }
 
@@ -362,6 +415,7 @@ impl ScriptWalkArm {
             Some(snapshot),
             completion,
             Vec::new(),
+            None,
         )
         .then_some(receiver)
     }
@@ -433,7 +487,11 @@ impl ScriptWalkArm {
         snapshot: Option<&GameSnapshot>,
         completion: RouteCompletion,
         avoid: Vec<AvoidRect>,
+        authority: Option<script::native::HostAuthority>,
     ) -> bool {
+        if authority.as_ref().is_some_and(|owner| !owner.live()) {
+            return false;
+        }
         let to = WorldTile { x, z, level };
         let Some((hx, hz, hl)) = self.here else {
             log_walk_arm(&self.name, || {
@@ -491,6 +549,8 @@ impl ScriptWalkArm {
             }
             bot.route_generation = bot.route_generation.wrapping_add(1);
             bot.walk_request_id = request_id;
+            bot.native_walk = authority;
+            bot.native_walk_failure = None;
             bot.requested_route = Some(key);
             bot.requested_avoid.clone_from(&avoid);
             bot.pending_route = Some(ScriptRouteRequest {
@@ -534,7 +594,7 @@ impl ScriptWalkArm {
         let spawned = thread::Builder::new()
             .name(format!("nav-find-{name}"))
             .spawn(move || loop {
-                let request = {
+                let (request, authority) = {
                     let mut all = navs.lock().unwrap();
                     let Some(bot) = all.get_mut(&name) else {
                         log_walk_arm(&name, || "worker exit bot-gone".to_string());
@@ -555,8 +615,12 @@ impl ScriptWalkArm {
                         log_walk_arm(&name, || "worker exit no-pending-route".to_string());
                         return;
                     };
-                    request
+                    (request, bot.native_walk.clone())
                 };
+                if authority.as_ref().is_some_and(|owner| !owner.live()) {
+                    request.completion.signal();
+                    continue;
+                }
                 let debug = debug_enabled();
                 if debug {
                     log_walk_arm(&name, || {
@@ -584,6 +648,9 @@ impl ScriptWalkArm {
                         )
                     });
                 }
+                let native_failure = authority
+                    .as_ref()
+                    .and_then(|_| request.native_failure(&outcome));
                 let mut all = navs.lock().unwrap();
                 let Some(bot) = all.get_mut(&name) else {
                     log_walk_arm(&name, || "worker exit bot-gone after calculate".to_string());
@@ -603,7 +670,19 @@ impl ScriptWalkArm {
                     });
                     return;
                 }
+                if authority.as_ref().is_some_and(|owner| !owner.live()) {
+                    request.completion.signal();
+                    continue;
+                }
                 let missing = request.missing_carry(&outcome);
+                if bot.route_generation == request.generation
+                    && bot.walk_request_id == request.request_id
+                {
+                    bot.route_quest_evidence = request
+                        .state
+                        .as_ref()
+                        .and_then(|state| state.quest_evidence.clone());
+                }
                 bot.publish_route(
                     request.generation,
                     request.request_id,
@@ -615,6 +694,12 @@ impl ScriptWalkArm {
                 // another failure. A discarded publish (stale generation)
                 // leaves the list it did not name cleared.
                 bot.note_missing_carry(request.generation, request.request_id, missing);
+                if bot.walk_outcome_generation == request.generation
+                    && bot.walk_outcome_request_id == request.request_id
+                {
+                    bot.native_walk_failure =
+                        native_failure.map(|end| (request.request_id, end));
+                }
                 request.completion.signal();
             })
             .is_ok();
@@ -774,6 +859,37 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) completion: RouteCompletion,
 }
 impl ScriptRouteRequest {
+    fn native_failure(&self, outcome: &RouteOutcome) -> Option<script::native::WalkEnd> {
+        if !matches!(outcome, RouteOutcome::NoPath) {
+            return None;
+        }
+        let empty = WorldState::empty();
+        let state = self.state.as_ref().unwrap_or(&empty);
+        let mut targets = if self.radius <= 0 {
+            vec![self.to]
+        } else {
+            approach_tiles(&self.world, self.from, self.to, self.radius)
+        };
+        if let Some(stands) = &self.live_candidates {
+            targets.extend_from_slice(stands.as_slice());
+        }
+        Some(
+            match nav::router::find_unresolved_quest_gates(
+                &self.world.collision,
+                &self.world.graph,
+                self.from,
+                &targets,
+                self.opts,
+                state,
+                &self.avoid,
+            ) {
+                Ok(Some(gates)) => script::native::WalkEnd::NeedsEvidence(gates),
+                Ok(None) => script::native::WalkEnd::Failed,
+                Err(_) => script::native::WalkEnd::Refused,
+            },
+        )
+    }
+
     /// The navigator-named gate shorts of a failed walk: the strict find's own
     /// diagnosis, re-run with only the `item_req`/`worn_req` gates ignored.
     /// A routed outcome names none, and neither does a failure the relaxed

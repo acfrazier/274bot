@@ -25,6 +25,7 @@
 //! pending follow (`None`) keeps the caller timeout.
 
 use crate::isolate_fb::Snapshot;
+use crate::native::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
 use crate::observed::{self, Scene};
 use api::snapshot::WorldTile;
 use serde_json::{json, Value};
@@ -60,43 +61,7 @@ thread_local! {
     static SLOT: RefCell<WalkSlot> = const { RefCell::new(WalkSlot::new()) };
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct WalkKey {
-    tile: WorldTile,
-    radius: i32,
-    allow_teleports: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct HostOutcome {
-    seq: u64,
-    generation: u64,
-    request_id: u64,
-    failed: bool,
-    blocked: bool,
-    key: WalkKey,
-}
-
 impl HostOutcome {
-    const fn empty() -> Self {
-        Self {
-            seq: 0,
-            generation: 0,
-            request_id: 0,
-            failed: false,
-            blocked: false,
-            key: WalkKey {
-                tile: WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                radius: 0,
-                allow_teleports: false,
-            },
-        }
-    }
-
     /// The host's last published outcome, or the empty one before any.
     fn posted(scene: &Scene) -> Self {
         scene
@@ -121,120 +86,25 @@ impl HostOutcome {
     }
 }
 
-struct Wait {
-    token: u64,
-    key: WalkKey,
-    settled: Option<bool>,
-    seq_at_begin: u64,
-    /// The host's terminal outcome for this request: `Some(false)` once a
-    /// failure matched (sticky), `Some(true)` for a route end.
-    matched: Option<bool>,
-    /// The matched route end is frozen `'blocked'` (`Traversal.ts:171–174`).
-    blocked: bool,
+struct IsolateObservation {
+    here: Option<WorldTile>,
 }
 
-/// The one live wait. The player tile and the host outcome are read from
-/// the isolate scene; only the wait itself is this module's state.
-struct WalkSlot {
-    wait: Option<Wait>,
-}
-
-impl WalkSlot {
-    const fn new() -> Self {
-        Self { wait: None }
+impl Observation for IsolateObservation {
+    fn outcome(&self) -> HostOutcome {
+        observed::with(HostOutcome::posted)
     }
 
-    fn reset(&mut self) {
-        *self = Self::new();
+    fn cancelled(&self) -> bool {
+        crate::event_signal::pending()
     }
 
-    /// A post that carried an outcome for the live request is latched now,
-    /// so a later outcome cannot hide it. A failure is never overwritten.
-    fn observe_outcome(&mut self, outcome: HostOutcome) {
-        if let Some(wait) = self.wait.as_mut() {
-            if Self::outcome_matches(outcome, wait) {
-                wait.matched = Some(wait.matched.unwrap_or(true) && !outcome.failed);
-                wait.blocked = wait.matched == Some(true) && outcome.blocked;
-            }
-        }
-    }
-
-    fn begin(&mut self, key: WalkKey, outcome: HostOutcome) -> u64 {
-        let token = alloc_token(outcome.request_id);
-        self.wait = Some(Wait {
-            token,
-            key,
-            settled: None,
-            seq_at_begin: outcome.seq,
-            matched: None,
-            blocked: false,
-        });
-        token
-    }
-
-    /// Frozen `isArrived` over the isolate's cached reach view (the same
-    /// view the V8 reach helpers read; no copy, no flood).
-    fn arrived(here: WorldTile, key: WalkKey) -> bool {
-        crate::load::reach_query::with_view(|view| {
-            api::query::is_arrived(here, key.tile, key.radius, || view)
+    fn arrived(&self, key: WalkKey) -> bool {
+        self.here.is_some_and(|here| {
+            crate::load::reach_query::with_view(|view| {
+                api::query::is_arrived(here, key.tile, key.radius, || view)
+            })
         })
-    }
-
-    fn outcome_matches(outcome: HostOutcome, wait: &Wait) -> bool {
-        outcome.request_id != 0
-            && outcome.request_id == wait.token
-            && outcome.key == wait.key
-            && outcome.seq != 0
-            && outcome.seq != wait.seq_at_begin
-    }
-
-    fn poll(&mut self, token: u64, here: Option<WorldTile>) -> bool {
-        let Some(wait) = self.wait.as_mut() else {
-            return false;
-        };
-        if wait.token != token {
-            return false;
-        }
-        if wait.settled.is_some() {
-            return true;
-        }
-        if crate::event_signal::pending() {
-            wait.settled = Some(false);
-            return true;
-        }
-        if here.is_some_and(|here| Self::arrived(here, wait.key)) {
-            wait.settled = Some(true);
-            return true;
-        }
-        // A delta snapshot may omit the walk-outcome family after the
-        // host published. Re-read the merged scene each poll so a
-        // matching note_failure still settles if on_snapshot missed
-        // the one post that carried the field.
-        if wait.matched.is_none() {
-            let outcome = observed::with(HostOutcome::posted);
-            if Self::outcome_matches(outcome, wait) {
-                wait.matched = Some(!outcome.failed);
-                wait.blocked = !outcome.failed && outcome.blocked;
-            }
-        }
-        if let Some(value) = wait.matched {
-            wait.settled = Some(value);
-            return true;
-        }
-        false
-    }
-
-    fn value(&self, token: u64) -> bool {
-        self.wait
-            .as_ref()
-            .is_some_and(|wait| wait.token == token && wait.settled == Some(true))
-    }
-
-    /// The wait settled on a frozen `'blocked'` route end, not on arrival.
-    fn blocked(&self, token: u64) -> bool {
-        self.wait
-            .as_ref()
-            .is_some_and(|wait| wait.token == token && wait.settled == Some(true) && wait.blocked)
     }
 }
 
@@ -263,12 +133,7 @@ pub(crate) fn on_hold(_held: bool) {}
 /// resilient walk must not send a tokenless scene click after another walk
 /// has replaced its wait.
 pub(crate) fn owns(token: u64) -> bool {
-    SLOT.with(|slot| {
-        slot.borrow()
-            .wait
-            .as_ref()
-            .is_some_and(|wait| wait.token == token)
-    })
+    SLOT.with(|slot| slot.borrow().owns(token))
 }
 
 pub(crate) fn dispatch(input: &Value) -> Value {
@@ -289,13 +154,21 @@ pub(crate) fn dispatch(input: &Value) -> Value {
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
                 };
-                let token = slot.begin(key, observed::with(HostOutcome::posted));
+                let outcome = observed::with(HostOutcome::posted);
+                let token = alloc_token(outcome.request_id);
+                slot.begin(
+                    std::num::NonZeroU64::new(token).expect("nonzero walk token"),
+                    key,
+                    outcome,
+                );
                 json!(token)
             }
             "settled" => {
                 json!(slot.poll(
                     json_u64(input.get("token")),
-                    crate::load::reach_query::posted_here()
+                    &IsolateObservation {
+                        here: crate::load::reach_query::posted_here(),
+                    }
                 ))
             }
             "value" => json!(slot.value(json_u64(input.get("token")))),

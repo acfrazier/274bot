@@ -1020,7 +1020,7 @@ fn watchdog_restart_folds_onstop_logs_into_pending() {
     slot.load.as_ref().unwrap().on_game_tick(1);
     let _ = slot.probe("1");
     allow_onstop_completion(&slot);
-    slot.restart_load_from_identity(Instant::now())
+    slot.restart_from_identity(Instant::now())
         .expect("restart from identity");
     wait_state(&mut slot, RunState::Starting);
     wait_state(&mut slot, RunState::Running);
@@ -1046,7 +1046,7 @@ fn restart_still_refuses_pause() {
         )
         .unwrap();
     slot.pause();
-    let err = slot.restart_load_from_identity(Instant::now()).unwrap_err();
+    let err = slot.restart_from_identity(Instant::now()).unwrap_err();
     assert!(
         err.contains("not running") || err.contains("pause") || err.contains("frozen"),
         "{err}"
@@ -1142,7 +1142,7 @@ fn watchdog_restart_during_stop_reap_never_revives_the_slot() {
     wait_state(&mut slot, RunState::Running);
     slot.stop();
     assert_eq!(slot.state(), RunState::Stopping);
-    assert!(slot.restart_load_from_identity(Instant::now()).is_err());
+    assert!(slot.restart_from_identity(Instant::now()).is_err());
     wait_state(&mut slot, RunState::Idle);
     for _ in 0..20 {
         slot.observe_lifecycle();
@@ -1281,6 +1281,7 @@ fn compiled_ctx<'a>(
         obj_names: None,
         compiled: crate::CompiledTick {
             selected,
+            reach: None,
             hold: false,
             interacts: None,
         },

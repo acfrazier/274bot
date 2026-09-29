@@ -361,3 +361,69 @@ fn removal_notifies_the_native_script_once_with_removed_reason() {
     drop(slot);
     assert!(receive.try_recv().is_err());
 }
+
+#[test]
+fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(40);
+    start(&mut slot, SettingsBag::new());
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    let old_run = slot.native_run().unwrap();
+    let effective = Arc::clone(&slot.compiled.as_ref().unwrap().config);
+    slot.compiled.as_mut().unwrap().pending = Some(PendingConfig {
+        config: PreparedConfig::new(crate::CompiledId("Sherlock"), 1, 2, Arc::default(), ()),
+        boundary: false,
+    });
+    let now = Instant::now();
+    slot.restart_from_identity(now).unwrap();
+    let deadline = now + Duration::from_secs(10);
+    while slot.state() == RunState::Starting {
+        assert!(Instant::now() < deadline, "compiled restart stalled");
+        slot.observe_lifecycle();
+        std::thread::yield_now();
+    }
+    assert_eq!(slot.state(), RunState::Running);
+    assert!(slot.native_run().unwrap().run > old_run.run);
+    let current = slot.compiled.as_ref().unwrap();
+    assert!(Arc::ptr_eq(&current.config, &effective));
+    assert!(current.pending.is_none());
+    assert_eq!(slot.watchdog.last_recovery(), Some(now));
+}
+
+#[test]
+fn blocked_native_work_never_automatically_restarts() {
+    let (mut slot, _) = receiver(41, SettingsApply::Applied);
+    Arc::make_mut(
+        slot.compiled
+            .as_mut()
+            .unwrap()
+            .output
+            .status
+            .as_mut()
+            .unwrap(),
+    )
+    .phase = NativePhase::Blocked;
+    let run = slot.native_run();
+    let now = Instant::now();
+    slot.watchdog.arm_fresh(now);
+    assert_eq!(
+        slot.feed_watchdog(
+            now + crate::watchdog::HARD_STALL,
+            Some((1, 1, 0)),
+            &[],
+            false,
+            true,
+            &[],
+        ),
+        WatchdogAction::None,
+    );
+    assert!(
+        slot.watchdog.frozen(),
+        "blocked time must not spend recovery deadlines"
+    );
+    assert!(slot
+        .restart_from_identity(now + crate::watchdog::HARD_STALL)
+        .is_err());
+    assert_eq!(slot.native_run(), run);
+    assert_eq!(slot.state(), RunState::Running);
+}

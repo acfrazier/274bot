@@ -461,7 +461,7 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
         true,
         &[InteractReq::RecoveryAnchorNone],
     );
-    slot.restart_load_from_identity(t + script::watchdog::WEDGE)
+    slot.restart_from_identity(t + script::watchdog::WEDGE)
         .unwrap();
     let after = slot.load_identity().unwrap();
     assert_eq!(&*after.source, &*before.source);
@@ -513,7 +513,7 @@ export default class T extends LoopingBot { loop() {} }
     slot.probe("(__hints.anchor = { x: 3200, z: 3201, level: 0 }, true)")
         .unwrap();
 
-    slot.restart_load_from_identity(Instant::now()).unwrap();
+    slot.restart_from_identity(Instant::now()).unwrap();
     wait_slot_state(&mut slot, script::RunState::Running);
     assert_eq!(
         slot.probe(take).unwrap(),
@@ -858,7 +858,7 @@ fn restart_load_from_identity_refuses_pause_and_frozen() {
     slot.feed_watchdog(t, Some((0, 0, 0)), &[], false, true, &[]);
     slot.pause();
     let err = slot
-        .restart_load_from_identity(t + script::watchdog::WEDGE)
+        .restart_from_identity(t + script::watchdog::WEDGE)
         .unwrap_err();
     assert!(
         err.contains("not running") || err.contains("pause") || err.contains("frozen"),
@@ -874,7 +874,7 @@ fn restart_load_from_identity_refuses_pause_and_frozen() {
         &[],
     );
     let err = slot
-        .restart_load_from_identity(t + script::watchdog::WEDGE)
+        .restart_from_identity(t + script::watchdog::WEDGE)
         .unwrap_err();
     assert!(
         err.contains("frozen") || err.contains("not running") || err.contains("pause"),

@@ -149,23 +149,30 @@ impl CompiledRun {
         &mut self,
         ctx: &mut ScriptCtx<'_>,
         retained: &mut RetainedMemory,
+        runtime: &mut crate::native::ledger::Runtime,
     ) -> Result<ScriptFlow, ScriptFailure> {
         let evidence = EvidenceStamp {
             run: self.run,
             tick: ctx.tick,
             sequence: ctx.tick,
         };
+        let now = Instant::now();
+        runtime.budget.observe(ctx.tick);
         let result = {
             let mut tick = NativeTick {
                 actions: &mut self.actions,
                 cx: ActionContext {
                     evidence,
                     pin: &self.pin,
-                    snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence),
+                    snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence)
+                        .with_reach(ctx.compiled.reach),
                     retained,
                     action_id: 0,
-                    active_now: Duration::ZERO,
-                    wall_now: Instant::now(),
+                    active_now: runtime.clock.now(now),
+                    wall_now: now,
+                    ledger: &mut runtime.ledger,
+                    budget: &mut runtime.budget,
+                    eligible: !ctx.compiled.hold,
                 },
                 output: &mut self.output,
                 pairs: None,
@@ -176,6 +183,7 @@ impl CompiledRun {
                     obj_names: ctx.obj_names,
                     compiled: crate::CompiledTick {
                         selected: Some(&self.selected),
+                        reach: ctx.compiled.reach,
                         hold: ctx.compiled.hold,
                         #[cfg(feature = "load")]
                         interacts: ctx.compiled.interacts.take(),
@@ -334,6 +342,76 @@ impl SlotScript {
         Ok(())
     }
 
+    pub(super) fn restart_compiled(&mut self, now: Instant) -> Result<(), String> {
+        let current = self.compiled.as_ref().ok_or("no compiled identity")?;
+        let card =
+            crate::compiled_card(current.config.card()).ok_or("compiled card unavailable")?;
+        let generation = self
+            .control_generation
+            .max(self.runtime_generation)
+            .checked_add(1)
+            .ok_or("run generation exhausted")?;
+        let run = RunKey {
+            slot: self.incarnation,
+            run: generation,
+            session: self.work_epoch,
+        };
+        // Only the accepted configuration is effective; pending edits must not
+        // become active merely because the watchdog recreates the instance.
+        let config = Arc::clone(&current.config);
+        let selected = Arc::clone(&current.selected);
+        let pin = Arc::clone(&current.pin);
+        let account = current.output.account.clone();
+        let retained = Arc::clone(self.retained.as_ref().ok_or("no retained memory")?);
+        self.revoke_native_input();
+        self.teardown_compiled(StopReason::Replaced);
+        let worker = FamilyPreparation::run(move |_| {
+            PreparationResult(Some((|| {
+                let mut retained = retained
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let script = catch_unwind(AssertUnwindSafe(|| {
+                    (card.create)(run, Arc::clone(&config), &mut retained)
+                }))
+                .map_err(|payload| {
+                    StartError::Unavailable(
+                        format!("factory panic: {}", panic_message(&payload)).into(),
+                    )
+                })??;
+                Ok(CompiledRun {
+                    script: ScriptOwner(Some(script)),
+                    config,
+                    pending: None,
+                    run,
+                    selected,
+                    pin,
+                    output: Output {
+                        account,
+                        ..Default::default()
+                    },
+                    actions: NativeActions { _private: () },
+                })
+            })()))
+        });
+        let worker = match worker {
+            Ok(worker) => worker,
+            Err(error) => {
+                let message = error.to_string();
+                self.fail_compiled(ScriptFailure {
+                    code: "restart-worker".into(),
+                    message: message.clone().into(),
+                    retryable: false,
+                });
+                return Err(message);
+            }
+        };
+        self.control_generation = generation;
+        self.preparing = Some(Box::new(Preparation { generation, worker }));
+        self.state = RunState::Starting;
+        self.watchdog.on_restart_applied(now);
+        Ok(())
+    }
+
     fn poll_compiled(&mut self) {
         if !self
             .preparing
@@ -374,6 +452,9 @@ impl SlotScript {
     }
 
     fn install_compiled(&mut self, run: CompiledRun) {
+        if self.watchdog.state() == crate::WatchdogState::Idle {
+            self.watchdog.arm_fresh(Instant::now());
+        }
         self.source_identity = Some(crate::compiled_identity_key(run.config.card()));
         self.runtime_generation = run.run.run;
         self.compiled = Some(Box::new(run));
@@ -512,6 +593,7 @@ impl SlotScript {
     }
 
     pub(super) fn teardown_compiled(&mut self, reason: StopReason) {
+        self.native_runtime.revoke();
         if let Some(mut run) = self.compiled.take() {
             if let Some(error) = run.script.stop(reason) {
                 self.last_error = Some(error);
@@ -541,6 +623,7 @@ impl SlotScript {
         self.state = RunState::Error;
         self.want_run = false;
         self.teardown_compiled(StopReason::Error);
+        self.watchdog.cancel_clear();
     }
 
     pub fn retry_compiled(&mut self, target: RunKey) -> Result<(), ScriptFailure> {
