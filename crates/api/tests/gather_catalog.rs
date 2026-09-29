@@ -671,13 +671,41 @@ fn mining_products_are_partial_where_a_gem_roll_can_replace_the_ore() {
         .all(|tool| tool.use_gate.is_some() && tool.wield_gate.is_some()));
 }
 
+/// The core's `mining_hazards` slice is exactly the family's mining hazard targets under the same pin, so the
+/// gas-rock ids read from it are the family's own.
 #[test]
 fn gas_rock_ids_are_the_hazard_targets_of_the_ore_ladder_on_both_revisions() {
     let expected: Vec<i32> = (2119..=2139).collect();
     for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).unwrap();
         let catalog = prepare(revision);
+        let from_family: Vec<api::gather_methods::MiningHazard> = catalog
+            .methods()
+            .iter()
+            .filter(|method| method.skill == api::gather_methods::GatherSkill::Mining)
+            .map(|method| api::gather_methods::MiningHazard {
+                resources: method
+                    .resources
+                    .iter()
+                    .map(|key| key.0.to_string())
+                    .collect(),
+                locs: known_rows(&method.targets)
+                    .iter()
+                    .filter_map(|target| match (target.class, target.entity) {
+                        (TargetClass::Hazard, EntityId::Loc(id)) => Some(id),
+                        _ => None,
+                    })
+                    .collect(),
+            })
+            .filter(|row| !row.locs.is_empty())
+            .collect();
         assert_eq!(
-            api::gather_methods::gas_rock_ids(Some(&catalog)).unwrap(),
+            data.mining_hazards(),
+            Some(from_family.as_slice()),
+            "{revision:?}"
+        );
+        assert_eq!(
+            api::gather_methods::gas_rock_ids(data.mining_hazards()).unwrap(),
             expected,
             "{revision:?}: gem rock 2140 is not a frozen gas rock"
         );

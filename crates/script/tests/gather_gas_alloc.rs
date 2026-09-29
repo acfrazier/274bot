@@ -1,5 +1,5 @@
-//! Own test binary (it installs a counting global allocator). After the first touch, `GAS_ROCK_IDS` is a plain
-//! `Set`: a thousand `has` calls cost no Rust allocation, so nothing rebuilds the ids or crosses into Rust per
+//! Own test binary (it installs a counting global allocator). `GAS_ROCK_IDS` is a plain `Set` built at module
+//! evaluation: a thousand `has` calls cost no Rust allocation, so nothing rebuilds the ids or crosses into Rust per
 //! call. The controls and the measured tick differ only in how many `has` calls the tick makes.
 use client::io::ClientRevision;
 use script::{LoadIsolate, LoadShape};
@@ -62,7 +62,7 @@ fn repeated_membership_checks_allocate_nothing_after_the_first_touch() {
         .unwrap();
     assert_eq!(iso.probe("1").unwrap(), serde_json::json!(1));
 
-    // First touch (fills the set), then warm ticks so lazy runtime state is settled.
+    // A first tick, then warm ticks so lazy runtime state is settled.
     let (_, hits) = tick_events(&iso, 1, 1);
     assert_eq!(hits, serde_json::json!(1));
     let mut tick = 2;
@@ -85,7 +85,7 @@ fn repeated_membership_checks_allocate_nothing_after_the_first_touch() {
     }
     iso.join();
     eprintln!("allocation events per tick: 0 checks = {control}, 1000 checks = {measured}");
-    // The rebuilding proxy made four Rust allocation events per `has`; allow only tick-to-tick noise.
+    // A per-call rebuild costs several Rust allocation events per `has`; allow only tick-to-tick noise.
     assert!(
         measured <= control + 32,
         "1000 has calls added {} allocation events over the empty tick ({control})",

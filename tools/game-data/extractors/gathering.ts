@@ -1144,3 +1144,18 @@ export function extractGatheringFamily(content: string): GatheringFamily {
         summary: summarize(methods, mining.model, placements, zoneList),
     };
 }
+
+/** Hazard (gas) rock locs of one mining method, with the resource keys the method mines. */
+export type MiningHazardWire = { resources: string[]; locs: number[] };
+
+/**
+ * The tiny slice of the family the selected core carries so the gas-rock ids never need the family decoded: every
+ * mining method with hazard loc targets, in method order. Partial targets contribute their known rows, unknown ones none.
+ */
+export function miningHazards(facts: GatheringFacts): MiningHazardWire[] {
+    return facts.methods.flatMap((method) => {
+        if (method.skill !== 'mining' || method.targets.state === 'unknown') return [];
+        const locs = method.targets.value.filter((target) => target.class === 'hazard' && target.kind === 'loc').map((target) => target.id);
+        return locs.length === 0 ? [] : [{ resources: method.resources, locs }];
+    });
+}

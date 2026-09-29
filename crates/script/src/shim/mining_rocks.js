@@ -8,12 +8,8 @@ export const ROCK_OPTIONS = [...((host().content && host().content.rock_type_nam
  */
 export const ROCK_TYPES = notImplValue('ROCK_TYPES');
 export const QUEST_ROCK_TYPES = notImplValue('QUEST_ROCK_TYPES');
-/**
- * This isolate's own ordinary `Set`, filled by Rust on the first script touch:
- * nothing is read at module evaluation, so an isolate that only imports it
- * never acquires the selected gathering family (`load/selected_facts_v8.rs`).
- */
-export const GAS_ROCK_IDS = globalThis.__rs2b0t_selected_facts('gas-rock-ids');
+/** This isolate's own ordinary `Set`, built by Rust from the selected core (`load/selected_facts_v8.rs`). */
+export const GAS_ROCK_IDS = globalThis.__rs2b0t_selected_facts('gas-rock-ids') ?? notImplValue('GAS_ROCK_IDS');
 export const GAS_ROCK_TICKS = 60;
 export const BROKEN_PICKAXE = 'Broken pickaxe';
 
