@@ -756,8 +756,9 @@ fn getvar_drain_session() -> (Session, std::sync::mpsc::Receiver<host::InputEv>)
     (s, rx)
 }
 
-/// One ingame scene-2 status row for `alice` with this chat head.
-fn push_alice_row(s: &mut Session, chat_head: &str) {
+/// One ingame scene-2 status row for `alice` with this chat head and
+/// pending-box fact.
+fn push_alice_row(s: &mut Session, chat_head: &str, pending: bool) {
     let mut rows = s.core.play().unwrap().statuses.lock().unwrap();
     rows.clear();
     rows.push(SlotStatus {
@@ -766,6 +767,7 @@ fn push_alice_row(s: &mut Session, chat_head: &str) {
         ingame: true,
         scene_state: 2,
         chat_head: chat_head.into(),
+        tutorial_pending: pending,
         ..SlotStatus::default()
     });
 }
@@ -775,49 +777,172 @@ fn drain_capture(rx: &std::sync::mpsc::Receiver<host::InputEv>) -> Vec<host::Inp
     std::iter::from_fn(|| rx.try_recv().ok()).collect()
 }
 
-/// A click inside the chat text zone: above the y467 mode-button strip,
-/// left of the side panel, below the 3D view — nothing else binds there.
-fn is_chat_zone_click(x: i32, y: i32) -> bool {
-    (8..512).contains(&x) && (350..467).contains(&y)
-}
-
-#[test]
-fn getvar_drain_clicks_own_reply_once() {
-    let iso = script::IsolatedEnv::enter("getvar-drain-once");
-    let (mut s, rx) = getvar_drain_session();
-    // The probe goes out on the first ingame scene-2 pump (TutSkip unknown).
-    push_alice_row(&mut s, "");
-    s.pump_status();
-    assert!(drain_capture(&rx).is_empty());
-    // The engine reply becomes the chat head: exactly one chat click.
-    push_alice_row(&mut s, "get tutorial: 1");
-    s.pump_status();
-    let clicks = drain_capture(&rx);
+/// The drain click is one Move + left-Down/Up at the chat-surface point.
+/// Position is not what makes it safe (any left click is consumed while
+/// the box is present), so this asserts the exact point rather than a
+/// "safe rect": the old rect test wrongly implied the click was harmless
+/// with no box, where it would fall through to the chat minimenu.
+fn assert_drain_click(clicks: &[host::InputEv]) {
     assert_eq!(clicks.len(), 3, "one Move + Down + Up, got {clicks:?}");
-    let (mx, my) = match &clicks[0] {
-        host::InputEv::Move { x, y } => (*x, *y),
+    match &clicks[0] {
+        host::InputEv::Move { x, y } => assert_eq!((*x, *y), (250, 400)),
         other => panic!("first event is a Move, got {other:?}"),
     };
-    assert!(
-        is_chat_zone_click(mx, my),
-        "drain clicks the chat text zone, got ({mx}, {my})"
-    );
     match &clicks[1] {
-        host::InputEv::Down { button: 1, x, y } => assert_eq!((*x, *y), (mx, my)),
+        host::InputEv::Down { button: 1, x, y } => assert_eq!((*x, *y), (250, 400)),
         other => panic!("second event is a left Down at the Move point, got {other:?}"),
-    }
+    };
     assert!(
         matches!(&clicks[2], host::InputEv::Up),
         "third event releases the click, got {:?}",
         clicks[2]
     );
-    // The same head on later pumps never clicks again.
-    push_alice_row(&mut s, "get tutorial: 1");
+}
+
+#[test]
+fn getvar_drain_clicks_pending_box_once() {
+    let iso = script::IsolatedEnv::enter("getvar-drain-once");
+    let (mut s, rx) = getvar_drain_session();
+    // The probe goes out on the first ingame scene-2 pump (TutSkip unknown).
+    push_alice_row(&mut s, "", false);
+    s.pump_status();
+    assert!(drain_capture(&rx).is_empty());
+    // The reply's pending box drains with exactly one chat click, keyed on
+    // the box — not on the head text.
+    push_alice_row(&mut s, "get tutorial: 1", true);
+    s.pump_status();
+    assert_drain_click(&drain_capture(&rx));
+    // The same box on later pumps never clicks again.
+    push_alice_row(&mut s, "get tutorial: 1", true);
+    s.pump_status();
+    assert!(drain_capture(&rx).is_empty(), "the box drains exactly once");
+    // The box going away re-arms the slot, so the next box drains again —
+    // even when the chat head shows unrelated text.
+    push_alice_row(&mut s, "get tutorial: 1", false);
+    s.pump_status();
+    assert!(drain_capture(&rx).is_empty());
+    push_alice_row(&mut s, "Welcome to RuneScape", true);
+    s.pump_status();
+    assert_drain_click(&drain_capture(&rx));
+    let _iso = iso;
+}
+
+#[test]
+fn getvar_drain_needs_the_pending_box() {
+    let iso = script::IsolatedEnv::enter("getvar-drain-no-box");
+    let (mut s, rx) = getvar_drain_session();
+    push_alice_row(&mut s, "", false);
+    s.pump_status();
+    assert!(drain_capture(&rx).is_empty());
+    // The chat head parses as our reply, but the box is absent (tutorial
+    // overlay down: the reply is a plain MESSAGE_GAME). A click at the
+    // drain point would fall through to the chat minimenu — multi4 option
+    // 2 spans applet x 17..496 y 393..410, covering the point — and select
+    // it, so the drain must not click. Fails on the chat-head-keyed drain.
+    push_alice_row(&mut s, "get tutorial: 1000", false);
     s.pump_status();
     assert!(
         drain_capture(&rx).is_empty(),
-        "the reply drains exactly once"
+        "no click without the pending box, even for our own reply text"
     );
+    let _iso = iso;
+}
+
+#[test]
+fn getvar_drain_survives_chat_head_turnover() {
+    let iso = script::IsolatedEnv::enter("getvar-drain-turnover");
+    let (mut s, rx) = getvar_drain_session();
+    push_alice_row(&mut s, "", false);
+    s.pump_status();
+    assert!(drain_capture(&rx).is_empty());
+    // Another line arrives before the drain runs: the head no longer shows
+    // our reply, but the box is still present and must still drain. Fails
+    // on the chat-head-keyed drain, which never sees the reply.
+    push_alice_row(&mut s, "Welcome to RuneScape", true);
+    s.pump_status();
+    assert_drain_click(&drain_capture(&rx));
+    let _iso = iso;
+}
+
+#[test]
+fn getvar_drain_retries_when_capture_returns() {
+    let iso = script::IsolatedEnv::enter("getvar-drain-recapture");
+    let (mut s, rx) = getvar_drain_session();
+    push_alice_row(&mut s, "", false);
+    s.pump_status();
+    assert!(drain_capture(&rx).is_empty());
+    // Capture off (pane closed / capture toggle): the box persists until a
+    // left click or login, so the drain waits instead of losing the box.
+    s.capture_tx = None;
+    push_alice_row(&mut s, "get tutorial: 1", true);
+    s.pump_status();
+    push_alice_row(&mut s, "get tutorial: 1", true);
+    s.pump_status();
+    // Capture back on: the still-present box drains, exactly once.
+    let (tx, rx2) = std::sync::mpsc::channel();
+    s.capture_tx = Some(tx);
+    s.pump_status();
+    assert_drain_click(&drain_capture(&rx2));
+    push_alice_row(&mut s, "get tutorial: 1", true);
+    s.pump_status();
+    assert!(
+        drain_capture(&rx2).is_empty(),
+        "the deferred box still drains exactly once"
+    );
+    let _iso = iso;
+}
+
+#[test]
+fn getvar_drain_waits_for_its_slot_to_focus() {
+    let iso = script::IsolatedEnv::enter("getvar-drain-focus");
+    let (mut s, rx) = getvar_drain_session();
+    s.core.insert_slot_io(
+        "bob",
+        SlotIo {
+            input: SlotInput::new(),
+            pixels: FrameBuf::new(),
+        },
+    );
+    push_alice_row(&mut s, "", false);
+    s.pump_status();
+    assert!(drain_capture(&rx).is_empty());
+    // Focus moves to bob before alice's reply box drains. The capture
+    // channel feeds the focused slot's client only, so clicking now would
+    // ack bob's client (whose box is absent) and hit his chat menu:
+    // alice's box waits until she is focused with capture on. Capture is
+    // deliberately left live: no click may go out for another slot's box.
+    s.set_focus_for_test("bob");
+    {
+        let mut rows = s.core.play().unwrap().statuses.lock().unwrap();
+        rows.clear();
+        rows.push(SlotStatus {
+            username: "alice".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            chat_head: "get tutorial: 1".into(),
+            tutorial_pending: true,
+            ..SlotStatus::default()
+        });
+        rows.push(SlotStatus {
+            username: "bob".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            ..SlotStatus::default()
+        });
+    }
+    s.pump_status();
+    assert!(
+        drain_capture(&rx).is_empty(),
+        "no click for another slot's box while bob is focused"
+    );
+    // Focusing alice again with capture on drains her still-present box.
+    s.set_focus_for_test("alice");
+    let (tx, rx2) = std::sync::mpsc::channel();
+    s.capture_tx = Some(tx);
+    s.pump_status();
+    assert_drain_click(&drain_capture(&rx2));
     let _iso = iso;
 }
 
@@ -825,16 +950,16 @@ fn getvar_drain_clicks_own_reply_once() {
 fn getvar_drain_leaves_unrelated_dialogue_text_alone() {
     let iso = script::IsolatedEnv::enter("getvar-drain-unrelated");
     let (mut s, rx) = getvar_drain_session();
-    push_alice_row(&mut s, "");
+    push_alice_row(&mut s, "", false);
     s.pump_status();
-    // Same pending-text box shape, but none of these is our probe reply:
-    // a chat line, the setvar reply, and a getvar reply for another var.
+    // No pending box: none of these drains, whatever the head says — a
+    // chat line, the setvar reply, or a getvar reply for another var.
     for head in [
         "Welcome to RuneScape",
         "set tutorial: to 1000",
         "get coins: 25",
     ] {
-        push_alice_row(&mut s, head);
+        push_alice_row(&mut s, head, false);
         s.pump_status();
         assert!(
             drain_capture(&rx).is_empty(),
@@ -849,14 +974,14 @@ fn getvar_drain_ignores_matching_text_without_probe() {
     let iso = script::IsolatedEnv::enter("getvar-drain-unprobed");
     let path = tmp_vault("getvar-drain-unprobed.vault");
     let (mut s, rx) = getvar_drain_session();
-    // TutSkip already known: the probe never goes out, so a matching line
-    // is another actor's and must not drain.
+    // TutSkip already known: the probe never goes out, so even a present
+    // box with matching head text is another actor's and must not drain.
     s.core
         .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     let mut alice = profile("alice", "pw", 42);
     alice.settings.tutorial_skipped = Some(true);
     s.core.vault_mut().unwrap().upsert(alice).unwrap();
-    push_alice_row(&mut s, "get tutorial: 1");
+    push_alice_row(&mut s, "get tutorial: 1", true);
     s.pump_status();
     assert!(
         drain_capture(&rx).is_empty(),
@@ -871,9 +996,9 @@ fn getvar_drain_stays_local_only() {
     let (mut s, rx) = getvar_drain_session();
     // Non-loopback session host: no probe goes out and no reply ever drains.
     s.set_map_host("192.168.1.2");
-    push_alice_row(&mut s, "");
+    push_alice_row(&mut s, "", false);
     s.pump_status();
-    push_alice_row(&mut s, "get tutorial: 1");
+    push_alice_row(&mut s, "get tutorial: 1", true);
     s.pump_status();
     assert!(
         drain_capture(&rx).is_empty(),

@@ -20,7 +20,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use api::hostlog::{Level, Source};
+use api::hostlog::{Category, Level, Source};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientGens};
 use client::render::nav_debug::{
@@ -956,10 +956,11 @@ pub struct Session {
     pub global_settings_open: bool,
     /// Usernames we already sent `getvar tutorial` for this session.
     tutorial_getvar_sent: HashSet<String>,
-    /// Subset of `tutorial_getvar_sent` whose reply pending-text we already
+    /// Subset of `tutorial_getvar_sent` whose pending-text box we already
     /// clicked away (see `maybe_drain_getvar_dialogue`). Cleared when the
-    /// reply scrolls off the chat head so a later genuine reply still
-    /// drains exactly once.
+    /// slot's box goes away so the next box still drains exactly once.
+    /// A slot that is unfocused or has no capture channel is never added,
+    /// so its box waits for a later pump instead of being lost.
     tutorial_getvar_drained: HashSet<String>,
     /// Forgotten-password confirm: delete the vault file (locked only).
     pub vault_reset_open: bool,
@@ -3098,15 +3099,16 @@ impl Session {
         }
     }
 
-    /// Applet point for the getvar-reply drain click: the chat text zone
-    /// above the y467 mode-button strip and below the 3D view (the chat
-    /// surface is 479x96 ending where the buttons begin). Nothing else
-    /// binds there, and `handle_chat_if_clicks` clears the pending text on
-    /// any left click, so the ack cannot walk, bank, or flip a mode.
+    /// Applet point for the getvar-reply drain click, inside the chat
+    /// surface. Position carries no safety: the click fires only while the
+    /// clicked slot's own pending box is present, and
+    /// `handle_chat_if_clicks` consumes any left click to ack it (zeroing
+    /// the button before the minimenu pass), so the ack can never select a
+    /// chat option, a trade/duel line, walk, bank, or flip a mode.
     const GETVAR_DRAIN_CLICK: (i32, i32) = (250, 400);
 
     /// Click away our own `getvar tutorial` reply out of the 289 tutorial
-    /// pending-text box, once per reply. The engine answers `getvar` with
+    /// pending-text box, once per box. The engine answers `getvar` with
     /// `messageGame("get tutorial: N")`, and the 289 client captures every
     /// type-0 line into `tut_com_message` while the tutorial overlay is up;
     /// `draw_chat` then paints the reply with "Click to continue" until a
@@ -3114,12 +3116,22 @@ impl Session {
     /// modal — there is no `BUTTON_CONTINUE`, so `Continue` refuses and
     /// cannot drain it. The click reuses the panel's own capture channel
     /// (the exact `Move`/`Down`/`Up` events a user click produces), gated
-    /// to a slot we probed whose chat head still shows the tutorial reply;
-    /// any other text — NPC or quest dialogue with the same box shape —
-    /// never matches and is never touched.
+    /// on the focused slot's own pending-box fact from the snapshot — never
+    /// on the chat-ring head, so chat turnover cannot hide the box and an
+    /// absent box can never be clicked into the chat minimenu. Slots are
+    /// re-armed when their box goes away; a missing capture channel or an
+    /// unfocused slot only defers (never marks), so the drain retries on a
+    /// later pump, still at most once per box.
     fn maybe_drain_getvar_dialogue(&mut self, statuses: &[SlotStatus]) {
         if !self.debug_ui() {
             return;
+        }
+        // Bookkeeping needs no focus or capture: a slot whose box is gone
+        // is ready to drain its next box exactly once.
+        for s in statuses {
+            if !s.tutorial_pending {
+                self.tutorial_getvar_drained.remove(&s.username);
+            }
         }
         let Some(name) = self.focused_name() else {
             return;
@@ -3127,12 +3139,14 @@ impl Session {
         if !self.tutorial_getvar_sent.contains(&name) {
             return;
         }
-        let ours = statuses.iter().any(|s| {
-            s.username == name
-                && parse_getvar_line(&s.chat_head).is_some_and(|(var, _)| var == "tutorial")
-        });
-        if !ours {
-            self.tutorial_getvar_drained.remove(&name);
+        // The capture channel feeds the focused slot's client only, so the
+        // click is gated on that same slot's box: the client consumes it
+        // and it can never reach the chat menu. Another slot's box waits
+        // until that slot is focused with capture on.
+        let pending = statuses
+            .iter()
+            .any(|s| s.username == name && s.tutorial_pending);
+        if !pending {
             return;
         }
         let Some(tx) = self.capture_tx.as_ref() else {
@@ -3145,6 +3159,20 @@ impl Session {
         let _ = tx.send(InputEv::Move { x, y });
         let _ = tx.send(InputEv::Down { button: 1, x, y });
         let _ = tx.send(InputEv::Up);
+        // Rare (once per box) and operator-visible both in the app log and
+        // on stderr, so live runs can pin the drain instant against shots.
+        slot_log(
+            &name,
+            Level::Info,
+            "getvar drain: acked the tutorial reply's pending-text box",
+        );
+        api::host_log!(
+            stderr;
+            Category::Echo,
+            Level::Info,
+            slot = name.as_str(),
+            "getvar drain: acked the tutorial reply's pending-text box",
+        );
     }
 
     /// Frames for the Game pane (the focused slot's mailbox). Every
