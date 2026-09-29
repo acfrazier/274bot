@@ -81,6 +81,12 @@ pub struct SlotStatus {
     /// Newest `MESSAGE_GAME` / chat-ring head (`chat_text[0]`). Used to
     /// parse `getvar` replies (`get tutorial: 1000`).
     pub chat_head: String,
+    /// Whether this slot's 289 tutorial pending-text box is present
+    /// (`tut_com_message.is_some()`), mirrored from the snapshot's modals
+    /// rebuild. A left click is consumed to ack it, so the panel's getvar
+    /// drain clicks only while this is true and can never reach the chat
+    /// minimenu. Bool copy, no allocation.
+    pub tutorial_pending: bool,
     /// The random-event guardian's published status (kind/name/ours/
     /// handling/hold/toggle/claim/cooldown), copied from `Host`'s
     /// `client_frame` return each observe. The chrome contract both the
@@ -129,6 +135,7 @@ impl Clone for SlotStatus {
             bytes_out: self.bytes_out,
             stream_epoch: self.stream_epoch,
             chat_head: self.chat_head.clone(),
+            tutorial_pending: self.tutorial_pending,
             random: self.random.clone(),
             script_paint: self.script_paint.clone(),
         }
@@ -172,6 +179,7 @@ impl Clone for SlotStatus {
         self.bytes_out.clone_from(&source.bytes_out);
         self.stream_epoch = source.stream_epoch;
         self.chat_head.clone_from(&source.chat_head);
+        self.tutorial_pending = source.tutorial_pending;
         self.script_paint.clone_from(&source.script_paint);
         let (random, from) = (&mut self.random, &source.random);
         random.kind.clone_from(&from.kind);
@@ -330,6 +338,7 @@ impl Default for SlotStatus {
             bytes_out: 0,
             stream_epoch: 0,
             chat_head: String::new(),
+            tutorial_pending: false,
             random: RandomStatus::default(),
             script_paint: None,
         }
@@ -530,6 +539,9 @@ pub(super) fn reset_slot_observation(s: &mut SlotStatus) {
     s.tile_level = -1;
     s.player.clear();
     s.chat_head.clear();
+    // A fresh login clears the client's pending box, so the row must not
+    // keep reporting one (else the drain would click a menu).
+    s.tutorial_pending = false;
     s.walk_x = -1;
     s.walk_z = -1;
     s.walk_level = -1;

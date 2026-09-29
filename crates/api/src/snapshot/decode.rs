@@ -896,6 +896,11 @@ impl GameSnapshot {
             chat: client.chat_modal_id,
             tutorial: client.tut_com_id,
         };
+        // The pending box is set by `add_chat` (chat gen) but cleared by a
+        // left click that bumps no family, so copy it every rebuild like
+        // the other scalars: a stale true would double-drain, a stale
+        // false would swallow the next box. Bool copy, no allocation.
+        self.tutorial_pending = client.tut_com_message.is_some();
         self.count_dialog_open = client.dialog_input_open;
         self.active_side_tab = client.active_icon;
         self.main_modal_texts = modal_texts(client, client.main_modal_id);
@@ -2082,5 +2087,57 @@ fn make_quantity(button_text: &str) -> Option<i32> {
         Some(-1)
     } else {
         token.parse::<i32>().ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use client::client::{Client, ClientConfig};
+    use client::config::Cache;
+    use client::io::ClientRevision;
+    use std::sync::Arc;
+
+    fn r289_client() -> Client {
+        Client::from_shared_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: true,
+            },
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+            ClientRevision::R289,
+        )
+    }
+
+    #[test]
+    fn tutorial_pending_follows_the_pending_box() {
+        let mut client = r289_client();
+        let mut snapshot = GameSnapshot::new();
+        // Overlay up, no box yet.
+        client.tut_com_id = 1;
+        snapshot.rebuild_modals(&client);
+        assert!(!snapshot.tutorial_pending());
+        // The probe reply captures into the box.
+        client.add_chat(0, "get tutorial: 1", "");
+        snapshot.rebuild_modals(&client);
+        assert!(snapshot.tutorial_pending());
+        // A later chat line leaves the box in place: key on the box, not
+        // the ring head.
+        client.add_chat(0, "Welcome to RuneScape", "");
+        snapshot.rebuild_modals(&client);
+        assert!(snapshot.tutorial_pending());
+        // The click-ack clears the box with no packet family moving; the
+        // copy is unconditional so the fact still refreshes.
+        client.tut_com_message = None;
+        snapshot.rebuild_modals(&client);
+        assert!(
+            !snapshot.tutorial_pending(),
+            "the clear path bumps no gen — a gated copy would stick true"
+        );
     }
 }
