@@ -1,24 +1,31 @@
 use api::obj_names::LocDefs;
+use api::selected::QuestGate;
 use api::snapshot::WorldTile;
 use client::config::LocType;
 use client::dash3d::CollisionFlag;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::bank_fetch::fetchable_state;
 use crate::collision::{bake_from_maps, WorldCollision};
 use crate::grid::StepGrid;
 use crate::pack::{BankAccess, BankStand};
+use crate::quest_gates::tests::{
+    family as gate_family, range as gate_range, stamp, tbwt_evidence, window as gate_window,
+    Resolved,
+};
+use crate::quest_gates::{QuestEvidence, QuestFamilyMismatch, QuestGates};
 use crate::router::{
     find, find_allow_teleports, find_bounded, find_first_with, find_first_with_fallback,
     find_many_with, find_many_with_avoid_bounded, find_many_with_avoid_bounded_until,
-    find_missing_item_reqs, find_missing_item_reqs_with_avoid, find_on_grid, find_with,
-    find_with_avoid, find_with_avoid_bounded, find_with_model, local_step_component,
-    missing_item_reqs, step_ok, AvoidRect, CostModel, FallbackRoute, FindOptions, GridLeg, Leg,
-    MissingReq, ReverseProof, RouteError, TargetError, BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET,
-    PER_STEP_WALK,
+    find_missing_item_reqs, find_missing_item_reqs_with_avoid, find_on_grid,
+    find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
+    find_with_model, local_step_component, missing_item_reqs, step_ok, AvoidRect, CostModel,
+    FallbackRoute, FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError, TargetError,
+    BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK,
 };
 use crate::tile::Tile;
 use crate::transport::{
@@ -350,6 +357,7 @@ fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let mut graph = TransportGraph::default();
     graph.at.entry(at).or_default().push(0);
@@ -381,6 +389,7 @@ fn teleport(
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     });
     graph
 }
@@ -615,6 +624,7 @@ fn find_transport_changes_level_and_walks_upstairs() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let mut g = TransportGraph::default();
     g.at.entry(ladder.at).or_default().push(0);
@@ -744,6 +754,184 @@ fn find_gates_toll_edge_on_inventory_coins() {
         )),
         "the toll crossing is the transport leg"
     );
+}
+
+// --- Quest-stage gates: typed windows, decided by evidence only ---
+
+/// The walled 5×5 whose one door is gated by `gates` (quest family 1).
+fn stage_door_graph(gates: Vec<QuestGate>) -> TransportGraph {
+    let mut g = door(tile(1, 2, 0), tile(2, 2, 0), 1);
+    g.quest_family = Some(gate_family(1));
+    g.edges[0].quest_gates = Some(QuestGates::new(gate_family(1), gates).unwrap());
+    g
+}
+
+fn evidenced(evidence: QuestEvidence) -> WorldState {
+    WorldState::empty().with_quest_evidence(evidence)
+}
+
+/// An exact stage window `[3,3]` opens its door only while fresh evidence
+/// proves the signal is 3. No, stale or straddling evidence is `Unknown`:
+/// the door is not taken and the diagnosis names the gate for a journal
+/// read. Disjoint evidence is `False`: no read can open it, so nothing is
+/// named — and a bank trip never opens a stage gate either.
+#[test]
+fn exact_stage_window_door_routes_only_on_proven_evidence() {
+    let wc = walled_5x5();
+    let exact = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let g = stage_door_graph(vec![exact.clone()]);
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let opts = FindOptions::default();
+    let route = |state: &WorldState| find_with(&wc, &g, from, to, opts, state);
+    let needs =
+        |state: &WorldState| find_unresolved_quest_gates(&wc, &g, from, &[to], opts, state, &[]);
+    let named: Result<Option<Arc<[QuestGate]>>, QuestFamilyMismatch> =
+        Ok(Some(Arc::from(vec![exact.clone()])));
+
+    let proven = evidenced(tbwt_evidence(gate_range(Some(3), Some(3))));
+    let crossed = route(&proven).expect("a proven window opens the door");
+    assert!(crossed
+        .legs
+        .iter()
+        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.quest_gates.is_some())));
+    assert_eq!(needs(&proven), Ok(None));
+
+    let stale = evidenced(QuestEvidence::new(
+        Arc::new(Resolved {
+            stamp: stamp(10),
+            signals: vec![("tbwt", "tbwt_main", gate_range(Some(3), Some(3)))],
+            complete: vec![],
+        }),
+        gate_family(1),
+        stamp(11),
+    ));
+    let straddling = evidenced(tbwt_evidence(gate_range(Some(3), Some(4))));
+    for (label, state) in [
+        ("no evidence", WorldState::empty()),
+        ("evidence older than the floor", stale),
+        ("3 or 4 still possible", straddling),
+    ] {
+        assert_eq!(route(&state), Err(RouteError::NoPath), "{label}");
+        assert_eq!(needs(&state), named, "{label}");
+        assert_eq!(
+            find_missing_item_reqs(&wc, &g, from, to, opts, &state),
+            None,
+            "{label}: fetching items cannot decide a stage gate"
+        );
+    }
+
+    let past = evidenced(tbwt_evidence(gate_range(Some(4), Some(6))));
+    assert_eq!(route(&past), Err(RouteError::NoPath));
+    assert_eq!(needs(&past), Ok(None), "a disproven window needs no read");
+}
+
+/// An upper-only window `[None,3]` holds for every possible value up to
+/// and including 3, and for nothing that may exceed it.
+#[test]
+fn upper_only_stage_window_door_routes_through_its_bound() {
+    let wc = walled_5x5();
+    let g = stage_door_graph(vec![gate_window("tbwt", "tbwt_main", None, Some(3))]);
+    for (possible, routes) in [
+        (gate_range(Some(0), Some(3)), true),
+        (gate_range(Some(3), Some(3)), true),
+        (gate_range(None, Some(3)), true),
+        (gate_range(Some(3), Some(4)), false),
+        (gate_range(Some(4), None), false),
+    ] {
+        let state = evidenced(tbwt_evidence(possible));
+        let result = find_with(
+            &wc,
+            &g,
+            tile(0, 0, 0),
+            tile(4, 4, 0),
+            FindOptions::default(),
+            &state,
+        );
+        assert_eq!(result.is_ok(), routes, "{possible:?}");
+    }
+}
+
+/// However much an undecided gate would save, the search walks the long way
+/// round (the wall is open at z=4); the same door is the shorter route once
+/// evidence proves it.
+#[test]
+fn undecided_stage_gate_is_never_a_shortcut() {
+    let mut extras = Vec::new();
+    for z in 0..4 {
+        extras.push((1, z, CollisionFlag::W_E as u32));
+        extras.push((2, z, CollisionFlag::W_W as u32));
+    }
+    let wc = bake(5, 5, &extras);
+    let g = stage_door_graph(vec![gate_window("tbwt", "tbwt_main", Some(3), Some(3))]);
+    let (from, to) = (tile(0, 2, 0), tile(4, 2, 0));
+    let opts = FindOptions::default();
+    let undecided = evidenced(tbwt_evidence(gate_range(Some(2), Some(3))));
+    let detour = find_with(&wc, &g, from, to, opts, &undecided).expect("the gap routes");
+    assert!(detour
+        .legs
+        .iter()
+        .all(|leg| matches!(leg, Leg::Walk { .. })));
+    let proven = evidenced(tbwt_evidence(gate_range(Some(3), Some(3))));
+    let direct = find_with(&wc, &g, from, to, opts, &proven).unwrap();
+    assert!(direct.ticks < detour.ticks, "{direct:?} vs {detour:?}");
+    assert!(direct
+        .legs
+        .iter()
+        .any(|leg| matches!(leg, Leg::Transport { .. })));
+}
+
+/// Evidence prepared from another quest family never opens a gate, even
+/// when its provider would prove the window, and the diagnosis refuses
+/// instead of asking for journal reads that could not help.
+#[test]
+fn foreign_quest_family_evidence_is_refused_not_retried() {
+    let wc = walled_5x5();
+    let g = stage_door_graph(vec![gate_window("tbwt", "tbwt_main", Some(3), Some(3))]);
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let opts = FindOptions::default();
+    let foreign = evidenced(QuestEvidence::new(
+        Arc::new(Resolved {
+            stamp: stamp(10),
+            signals: vec![("tbwt", "tbwt_main", gate_range(Some(3), Some(3)))],
+            complete: vec![],
+        }),
+        gate_family(2),
+        stamp(5),
+    ));
+    assert_eq!(
+        find_with(&wc, &g, from, to, opts, &foreign),
+        Err(RouteError::NoPath)
+    );
+    assert_eq!(
+        find_unresolved_quest_gates(&wc, &g, from, &[to], opts, &foreign, &[]),
+        Err(QuestFamilyMismatch {
+            pack: Some(gate_family(1)),
+            expected: gate_family(2),
+        })
+    );
+}
+
+/// Only the gates evidence leaves undecided are named; a proven gate on the
+/// same crossing is not re-read.
+#[test]
+fn stage_gate_diagnosis_names_only_undecided_gates() {
+    let wc = walled_5x5();
+    let heroes = gate_window("heroes", "heroes_main", Some(2), Some(2));
+    let g = stage_door_graph(vec![
+        gate_window("tbwt", "tbwt_main", Some(3), Some(3)),
+        heroes.clone(),
+    ]);
+    let state = evidenced(tbwt_evidence(gate_range(Some(3), Some(3))));
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let opts = FindOptions::default();
+    assert_eq!(
+        find_with(&wc, &g, from, to, opts, &state),
+        Err(RouteError::NoPath)
+    );
+    let named = find_unresolved_quest_gates(&wc, &g, from, &[to], opts, &state, &[])
+        .unwrap()
+        .expect("the heroes window is undecided");
+    assert_eq!(&named[..], &[heroes]);
 }
 
 #[test]
@@ -885,6 +1073,7 @@ fn sealed_room(door: bool) -> (WorldCollision, TransportGraph) {
             worn_req: vec![2],
             members_req: false,
             wildy_cap: None,
+            quest_gates: None,
         });
     }
     (bake(256, 256, &ring), graph)
@@ -924,7 +1113,7 @@ fn first_target_search_proves_sealed_stands_unreachable_without_flooding() {
         &[],
         opts,
         &state,
-        true,
+        super::Relax::CarryWorn,
         &[],
         super::NODE_BUDGET,
         super::NODE_BUDGET,
@@ -1102,7 +1291,7 @@ fn first_target_proof_of_reachability_lifts_the_unproven_budget() {
             &[],
             opts,
             &state,
-            false,
+            super::Relax::Strict,
             &[],
             64,
             reachable_budget,
@@ -1189,7 +1378,7 @@ fn fallback_fails_only_when_its_own_budget_is_spent_with_the_preferred() {
             &fallback,
             opts,
             &state,
-            false,
+            super::Relax::Strict,
             &[],
             64,
             reachable_budget,
@@ -1231,7 +1420,7 @@ fn assert_fallback_matches_alone(
             fallback,
             opts,
             state,
-            false,
+            super::Relax::Strict,
             &[],
             budget,
             reachable_budget,
@@ -1341,6 +1530,7 @@ fn shared_fallback_matches_a_fallback_only_search_on_random_worlds() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     };
     let mut outcomes = HashMap::new();
     for _ in 0..400 {
@@ -3143,6 +3333,7 @@ fn packed_edgeville_bank_return_to_eggs_uses_the_surface_trapdoor() {
         at: world.graph.at.clone(),
         teleports: world.graph.teleports.clone(),
         wilderness: world.graph.wilderness.clone(),
+        quest_family: world.graph.quest_family,
     };
     if !trap_edges
         .iter()
@@ -3170,6 +3361,7 @@ fn packed_edgeville_bank_return_to_eggs_uses_the_surface_trapdoor() {
             worn_req: vec![],
             members_req: false,
             wildy_cap: None,
+            quest_gates: None,
         });
         graph.at.entry(trapdoor_at).or_default().push(idx);
     }

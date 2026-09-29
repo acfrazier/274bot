@@ -104,6 +104,7 @@ pub fn essence_return_edge(at: WorldTile, session: &EssenceSession) -> Transport
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     }
 }
 

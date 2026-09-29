@@ -146,6 +146,7 @@ pub(super) fn push_spell_teleport(
         worn_req: vec![],
         members_req: false,
         wildy_cap,
+        quest_gates: None,
     });
 }
 
@@ -216,6 +217,7 @@ pub(super) fn jewellery_teleports(
                         worn_req: vec![],
                         members_req: false,
                         wildy_cap,
+                        quest_gates: None,
                     });
                 }
             }

@@ -108,6 +108,7 @@ pub(super) fn zanaris_door_edges(
             worn_req: vec![staff_id],
             members_req: false,
             wildy_cap: None,
+            quest_gates: None,
         });
     }
     if graph.edges.len() == edge_start {

@@ -196,6 +196,7 @@ pub(super) fn scripted_door_edges(
                     worn_req: if gated { worn.clone() } else { vec![] },
                     members_req: false,
                     wildy_cap: None,
+                    quest_gates: None,
                 });
             }
         }

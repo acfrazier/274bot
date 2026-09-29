@@ -356,6 +356,7 @@ pub(super) fn ladder_stair_edges(
                         worn_req: vec![],
                         members_req: false,
                         wildy_cap: None,
+                        quest_gates: None,
                     });
                 }
             }
@@ -437,6 +438,7 @@ pub(super) fn trapdoor_edges(
                     worn_req: vec![],
                     members_req: false,
                     wildy_cap: None,
+                    quest_gates: None,
                 });
             }
         }
@@ -476,6 +478,7 @@ pub(super) fn trapdoor_edges(
                 worn_req: vec![],
                 members_req: false,
                 wildy_cap: None,
+                quest_gates: None,
             });
         }
     }

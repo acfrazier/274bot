@@ -37,6 +37,7 @@ use client::dash3d::{CollisionFlag, LocShape};
 
 use crate::collision::WorldCollision;
 use crate::pack::{parse_door_config, parse_door_config_ids, parse_door_open_ids};
+use crate::quest_gates::{QuestFamilyId, QuestGates};
 mod brass_key;
 mod condparse;
 mod door_members;
@@ -178,6 +179,13 @@ pub struct TransportEdge {
     /// (`~wilderness_level(coord) > cap` refuses). `None` = no wilderness cap.
     /// Packed as i32le on the v10 wire after `members_req` (`-1` = None).
     pub wildy_cap: Option<i32>,
+    /// Quest-stage gates ([`QuestGates`]: a completed quest or a closed
+    /// stage window over a selected progress signal), bound to the quest
+    /// family the pack was baked against. `None` = no stage gate. Only
+    /// resolved progress evidence from that family can open a gated edge;
+    /// snapshot varps and the quest list never do. Packed on the v11 wire
+    /// after `wildy_cap`.
+    pub quest_gates: Option<QuestGates>,
 }
 
 /// All transport edges, indexed by interact target (`graph.at[tile]` lists
@@ -195,6 +203,10 @@ pub struct TransportGraph {
     /// `wilderness_levels.rs2` / `wilderness_zones.dbrow`. Empty on graphs
     /// that did not see those sources (fixtures).
     pub wilderness: WildernessRules,
+    /// The selected quest family the bake consumed stage signals from
+    /// (digest + extractor schema). `None` when it consumed none; then no
+    /// edge carries [`TransportEdge::quest_gates`].
+    pub quest_family: Option<QuestFamilyId>,
 }
 
 /// Derive the transport graph from `content_root` (the Server content tree:
@@ -393,6 +405,7 @@ fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
             (e.option, e.ticks, e.dir.map(|d| d as u8), e.open_loc_id),
             (&e.skill_req, &e.item_req, &e.quest_req),
             (&e.varp_req, &e.worn_req, e.members_req, e.wildy_cap),
+            &e.quest_gates,
         )
     }
     let family = (a.kind as u8, a.loc_id, tile(a.at)).cmp(&(b.kind as u8, b.loc_id, tile(b.at)));

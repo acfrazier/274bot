@@ -116,5 +116,6 @@ pub(super) fn push_glider_flight(
         worn_req: vec![],
         members_req,
         wildy_cap: None,
+        quest_gates: None,
     });
 }

@@ -73,6 +73,7 @@ pub(super) fn shortcut_edges(
                     worn_req: vec![],
                     members_req: false,
                     wildy_cap: None,
+                    quest_gates: None,
                 });
             }
         }
@@ -264,6 +265,7 @@ pub(super) fn emit_island_rope_leaf(
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     });
 }
 

@@ -299,6 +299,7 @@ fn load_pack_path_round_trips_a_world() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     });
     graph.at.entry(tile(1, 0, 0)).or_default().push(0);
 
@@ -364,6 +365,7 @@ fn world_round_trips_the_teleport_layer_off_the_default_find() {
         worn_req: vec![],
         members_req: false,
         wildy_cap: None,
+        quest_gates: None,
     });
 
     let dir = std::env::temp_dir().join(format!(

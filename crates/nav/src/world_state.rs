@@ -1,18 +1,22 @@
 //! The gating facts a [`crate::router::find`] search checks transport
 //! edges against, built from a `GameSnapshot` at find time: inventory
 //! stacks, worn items, skill levels, varps, completed quests, and the
-//! bound world's `map_members` fact.
+//! bound world's `map_members` fact — plus, when the caller holds it, the
+//! resolved quest progress evidence stage gates are tested with.
 //!
 //! Missing facts fail closed — [`WorldState::allows`] is false for any
 //! requirement the state cannot prove, so an unpaid toll, an incomplete
-//! quest, a missing level, or an unbound members world never routes.
+//! quest, a missing level, an unbound members world, or a stage gate the
+//! evidence leaves `Unknown` never routes.
 //! There is no "assume yes". `map_members` is WORLD membership
 //! (`Environment.node.members`), never the account or cache flag.
 
 use std::collections::{HashMap, HashSet};
 
+use api::selected::Truth;
 use api::snapshot::GameSnapshot;
 
+use crate::quest_gates::QuestEvidence;
 use crate::transport::TransportEdge;
 
 /// The quest journal's "completed" green as the **client stores it**: the
@@ -44,6 +48,12 @@ pub struct WorldState {
     /// Host-play / panel / tui / scenario or-in the bound profile fact
     /// via [`WorldState::with_map_members`].
     pub map_members: bool,
+    /// Resolved quest progress stage gates are tested with
+    /// ([`TransportEdge::quest_gates`]). `None` — every caller without a
+    /// pinned progress provider — leaves each gated edge `Unknown`, so it is
+    /// never taken. [`WorldState::from_snapshot`] cannot fill it: the
+    /// snapshot's varps and quest list are not stage evidence.
+    pub quest_evidence: Option<QuestEvidence>,
 }
 
 impl WorldState {
@@ -87,6 +97,7 @@ impl WorldState {
             varps,
             quests,
             map_members: false,
+            quest_evidence: None,
         }
     }
 
@@ -98,14 +109,39 @@ impl WorldState {
         self
     }
 
+    /// Attach the caller's resolved quest progress evidence (its immutable
+    /// provider snapshot, source quest family and freshness floor). A
+    /// refreshed provider replaces the previous evidence wholesale.
+    pub fn with_quest_evidence(mut self, evidence: QuestEvidence) -> Self {
+        self.quest_evidence = Some(evidence);
+        self
+    }
+
     /// Whether the edge's requirements are all satisfied: every
     /// `skill_req` level met, every `item_req` count carried, every
     /// `quest_req` completed, every `varp_req` value reached, **any**
     /// `worn_req` obj worn (empty is no worn gate — a Dramen staff is a
-    /// one-id list; a slash-weapon web lists every slash blade), and a
-    /// `members_req` edge only when [`Self::map_members`] is true. Any
+    /// one-id list; a slash-weapon web lists every slash blade), a
+    /// `members_req` edge only when [`Self::map_members`] is true, and every
+    /// quest-stage gate `True` under [`Self::quest_evidence`]. Any
     /// requirement the state cannot prove fails the edge.
     pub fn allows(&self, e: &TransportEdge) -> bool {
+        self.snapshot_allows(e) && self.quest_gates(e) == Truth::True
+    }
+
+    /// The edge's quest-stage gates under [`Self::quest_evidence`]: `True`
+    /// for an ungated edge or proven gates, `False` when evidence disproves
+    /// one, otherwise `Unknown` (no evidence, stale evidence, another quest
+    /// family, possible values straddling a window bound). Only `True`
+    /// authorizes a crossing, here and when it is rechecked.
+    pub fn quest_gates(&self, e: &TransportEdge) -> Truth {
+        e.quest_gates.as_ref().map_or(Truth::True, |gates| {
+            gates.test(self.quest_evidence.as_ref())
+        })
+    }
+
+    /// Every requirement except the quest-stage gates.
+    pub(crate) fn snapshot_allows(&self, e: &TransportEdge) -> bool {
         self.members_ok(e)
             && e.skill_req
                 .iter()
@@ -121,8 +157,9 @@ impl WorldState {
     }
 
     /// Like [`WorldState::allows`] but ignoring the `item_req`/`worn_req`
-    /// gates: every other requirement still fails closed. This is the
-    /// BankBudget diagnosis arm only ([`crate::router::find_missing_item_reqs`]
+    /// gates: every other requirement, quest-stage gates included, still
+    /// fails closed. This is the BankBudget diagnosis arm only
+    /// ([`crate::router::find_missing_item_reqs`]
     /// feeds it the search's relaxed gate) — [`find`] and [`find_with`]
     /// never skip a carry/wear gate.
     pub fn allows_without_carry_worn(&self, e: &TransportEdge) -> bool {
@@ -134,6 +171,7 @@ impl WorldState {
             && e.varp_req
                 .iter()
                 .all(|&(varp, min)| self.varps.get(&varp).is_some_and(|&v| v >= min))
+            && self.quest_gates(e) == Truth::True
     }
 
     fn members_ok(&self, e: &TransportEdge) -> bool {

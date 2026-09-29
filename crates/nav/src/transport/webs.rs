@@ -65,6 +65,7 @@ pub(super) fn web_edges(
                 worn_req: vec![],
                 members_req: false,
                 wildy_cap: None,
+                quest_gates: None,
             });
             if !slash_blades.is_empty() {
                 graph.edges.push(TransportEdge {
@@ -83,6 +84,7 @@ pub(super) fn web_edges(
                     worn_req: slash_blades.clone(),
                     members_req: false,
                     wildy_cap: None,
+                    quest_gates: None,
                 });
             }
         }
