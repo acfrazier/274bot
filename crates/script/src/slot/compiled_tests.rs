@@ -362,19 +362,25 @@ fn removal_notifies_the_native_script_once_with_removed_reason() {
     assert!(receive.try_recv().is_err());
 }
 
-#[test]
-fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
-    let mut slot = SlotScript::new();
-    slot.bind_incarnation(40);
-    start(&mut slot, SettingsBag::new());
-    assert_eq!(settle(&mut slot), StartOutcome::Ready);
-    let old_run = slot.native_run().unwrap();
-    let effective = Arc::clone(&slot.compiled.as_ref().unwrap().config);
-    slot.compiled.as_mut().unwrap().pending = Some(PendingConfig {
-        config: PreparedConfig::new(crate::CompiledId("Sherlock"), 1, 2, Arc::default(), ()),
-        boundary: false,
-    });
-    let now = Instant::now();
+/// A Sherlock revision prepared exactly as a settings edit prepares it.
+fn sherlock_config(revision: u64) -> Arc<PreparedConfig> {
+    FamilyPreparation::run(move |worker| {
+        prepare_config(
+            worker,
+            crate::CompiledId("Sherlock"),
+            revision,
+            Arc::new(SettingsBag::new()),
+            selected(),
+            Arc::default(),
+        )
+    })
+    .unwrap()
+    .join()
+    .unwrap()
+    .unwrap()
+}
+
+fn restart_and_settle(slot: &mut SlotScript, now: Instant) {
     slot.restart_from_identity(now).unwrap();
     let deadline = now + Duration::from_secs(10);
     while slot.state() == RunState::Starting {
@@ -383,11 +389,52 @@ fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
         std::thread::yield_now();
     }
     assert_eq!(slot.state(), RunState::Running);
+}
+
+#[test]
+fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(40);
+    start(&mut slot, SettingsBag::new());
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    let old_run = slot.native_run().unwrap();
+    let effective = Arc::clone(&slot.compiled.as_ref().unwrap().config);
+    let restart_required = sherlock_config(2);
+    slot.compiled.as_mut().unwrap().pending = Some(PendingConfig {
+        config: Arc::clone(&restart_required),
+        boundary: false,
+    });
+    let now = Instant::now();
+    restart_and_settle(&mut slot, now);
     assert!(slot.native_run().unwrap().run > old_run.run);
     let current = slot.compiled.as_ref().unwrap();
     assert!(Arc::ptr_eq(&current.config, &effective));
-    assert!(current.pending.is_none());
+    // Still pending, not dropped: only an operator restart applies it.
+    assert!(current.pending.as_ref().is_some_and(
+        |pending| !pending.boundary && Arc::ptr_eq(&pending.config, &restart_required)
+    ));
     assert_eq!(slot.watchdog.last_recovery(), Some(now));
+}
+
+#[test]
+fn watchdog_restart_reoffers_an_accepted_boundary_revision_to_the_new_instance() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(43);
+    start(&mut slot, SettingsBag::new());
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    let accepted = sherlock_config(2);
+    slot.compiled.as_mut().unwrap().pending = Some(PendingConfig {
+        config: Arc::clone(&accepted),
+        boundary: true,
+    });
+    restart_and_settle(&mut slot, Instant::now());
+    // The replacement is created from the effective revision; the accepted
+    // boundary revision goes through its configure receiver, which Sherlock
+    // applies immediately. It is not silently discarded.
+    let current = slot.compiled.as_ref().unwrap();
+    assert!(Arc::ptr_eq(&current.config, &accepted));
+    assert!(current.pending.is_none());
+    assert_eq!(slot.native_settings_revision(), Some(2));
 }
 
 #[test]
@@ -426,4 +473,143 @@ fn blocked_native_work_never_automatically_restarts() {
         .is_err());
     assert_eq!(slot.native_run(), run);
     assert_eq!(slot.state(), RunState::Running);
+}
+
+#[test]
+fn a_watchdog_recovery_hold_freezes_the_active_clock() {
+    let (mut slot, _) = receiver(44, SettingsApply::Applied);
+    let start = Instant::now();
+    slot.watchdog.arm_fresh(start);
+    assert_eq!(
+        slot.watchdog.observe(start + crate::watchdog::WEDGE, true),
+        WatchdogAction::RequestAnchor
+    );
+    assert!(slot.watchdog.holds_script_actions());
+    slot.sync_compiled_clue(false);
+    let now = Instant::now();
+    assert_eq!(
+        slot.native_runtime.clock.now(now + Duration::from_secs(60)),
+        slot.native_runtime.clock.now(now),
+        "recovery-hold time must not spend family deadlines"
+    );
+}
+
+struct Park;
+impl crate::native::NativeMachine for Park {
+    type Args = ();
+    type Output = ();
+    fn begin(_: (), _: &mut ActionContext<'_>) -> Result<Self, crate::native::ActionError> {
+        Ok(Self)
+    }
+    fn poll(
+        &mut self,
+        _: &mut ActionContext<'_>,
+    ) -> std::task::Poll<Result<(), crate::native::ActionError>> {
+        std::task::Poll::Pending
+    }
+    fn cancel(&mut self) {}
+}
+
+struct RelogFrame {
+    run: RunKey,
+    evidence: EvidenceStamp,
+    old_action: Option<std::task::Poll<Result<(), crate::native::ActionError>>>,
+    stale_walk: Option<Result<(), crate::native::ActionError>>,
+}
+
+/// Parks one native action, then after a relog polls that handle and tries
+/// a walk fenced by the pre-relog evidence.
+struct Relog {
+    frames: std::sync::mpsc::Sender<RelogFrame>,
+    first: Option<EvidenceStamp>,
+    handle: Option<crate::native::ActionHandle<Park>>,
+}
+
+impl Script for Relog {
+    fn tick(&mut self, cx: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        let mut frame = RelogFrame {
+            run: cx.cx.run(),
+            evidence: cx.cx.evidence(),
+            old_action: None,
+            stale_walk: None,
+        };
+        match (&self.handle, self.first) {
+            (None, _) => {
+                self.first = Some(cx.cx.evidence());
+                self.handle = Some(cx.actions.begin::<Park>((), &mut cx.cx).unwrap());
+            }
+            (Some(handle), Some(first)) => {
+                frame.old_action = Some(cx.actions.poll(handle, &mut cx.cx));
+                let request = crate::native::WalkRequest {
+                    target: api::WorldTile {
+                        x: 1,
+                        z: 1,
+                        level: 0,
+                    },
+                    radius: 0,
+                    options: crate::FindOptions::default(),
+                    required_after: first,
+                    evidence: None,
+                };
+                frame.stale_walk = Some(
+                    cx.actions
+                        .begin::<crate::native::walk::Walk>(request, &mut cx.cx)
+                        .map(drop),
+                );
+            }
+            (Some(_), None) => unreachable!("the first frame is recorded with the handle"),
+        }
+        self.frames.send(frame).unwrap();
+        Ok(ScriptFlow::Continue)
+    }
+}
+
+#[test]
+fn a_relog_advances_the_compiled_session_and_fences_pre_relog_evidence() {
+    let (frames, received) = std::sync::mpsc::channel();
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(45);
+    slot.start_test_script(
+        Box::new(Relog {
+            frames,
+            first: None,
+            handle: None,
+        }),
+        Some(selected()),
+    )
+    .unwrap();
+    tick(&mut slot);
+    let before = received.try_recv().unwrap();
+    assert_eq!(slot.native_run(), Some(before.run));
+
+    slot.reconnect_session_work();
+    slot.on_is_up(true);
+    assert_eq!(slot.state(), RunState::Running);
+    tick(&mut slot);
+    let after = received.try_recv().unwrap();
+
+    assert_eq!(
+        (after.run.slot, after.run.run),
+        (before.run.slot, before.run.run)
+    );
+    assert_ne!(
+        after.run.session, before.run.session,
+        "the reconnect is a new session of the same run"
+    );
+    assert_eq!(slot.native_run(), Some(after.run));
+    assert!(
+        !after.evidence.meets(before.evidence),
+        "pre-reconnect evidence cannot satisfy a post-reconnect freshness floor"
+    );
+    assert_eq!(
+        after.old_action,
+        Some(std::task::Poll::Ready(Err(
+            crate::native::ActionError::Stale
+        )))
+    );
+    assert_eq!(
+        after.stale_walk,
+        Some(Err(crate::native::ActionError::Stale)),
+        "a walk fenced by the dropped session's evidence is stale"
+    );
 }

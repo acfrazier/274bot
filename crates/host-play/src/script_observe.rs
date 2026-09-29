@@ -396,36 +396,7 @@ pub(crate) fn script_observe_cached_with_channels(
         // Deliver only the terminal belonging to this still-live native owner.
         // The slot repeats the run/action fence before accepting the receipt.
         if let Some(bot) = navs.lock().unwrap().get_mut(name) {
-            if let Some(owner) = bot.native_walk.as_ref() {
-                if owner.live()
-                    && bot.walk_outcome_seq != 0
-                    && bot.native_receipt_seq != bot.walk_outcome_seq
-                    && bot.walk_outcome_request_id == owner.request_id().get()
-                {
-                    slot.complete_native_walk(
-                        owner,
-                        script::native::WalkReceipt {
-                            request_id: owner.request_id().get(),
-                            evidence: api::quest_progress::EvidenceStamp {
-                                run: owner.run(),
-                                tick,
-                                sequence: tick,
-                            },
-                            end: if bot.walk_outcome_blocked {
-                                script::native::WalkEnd::Blocked
-                            } else if bot.walk_outcome_failed {
-                                bot.native_walk_failure
-                                    .as_ref()
-                                    .filter(|(request, _)| *request == owner.request_id().get())
-                                    .map_or(script::native::WalkEnd::Failed, |(_, end)| end.clone())
-                            } else {
-                                script::native::WalkEnd::RouteEnded
-                            },
-                        },
-                    );
-                    bot.native_receipt_seq = bot.walk_outcome_seq;
-                }
-            }
+            deliver_native_walk_end(&mut slot, bot, tick);
         }
         slot_work_epoch = Some(slot.work_epoch());
         channel_generation = slot.runtime_generation();
@@ -1112,6 +1083,8 @@ pub(crate) fn script_observe_cached_with_channels(
                                         .map(|item| (item.def.id, item.count))
                                         .collect(),
                                 };
+                                // A refusal reaches the owner as a typed
+                                // `Refused` receipt on the next observation.
                                 arm.queue_native_route(snapshot, request, authority);
                             }
                         }
@@ -1446,6 +1419,47 @@ pub(crate) fn script_observe_cached_with_channels(
         wrote = true;
     }
     wrote
+}
+
+/// Hand a native walk's terminal to its owner's ledger. Two sources: a
+/// terminal no walk outcome carries (host refusal, or a Pause, displacement
+/// or abort that ended the follow), and the published outcome of the route
+/// the owner still holds. A revoked owner receives neither.
+fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick: u64) {
+    let receipt = |owner: &script::native::HostAuthority, end| script::native::WalkReceipt {
+        request_id: owner.request_id().get(),
+        evidence: api::quest_progress::EvidenceStamp {
+            run: owner.run(),
+            tick,
+            sequence: tick,
+        },
+        end,
+    };
+    if let Some((owner, end)) = bot.native_end.take() {
+        slot.complete_native_walk(&owner, receipt(&owner, end));
+    }
+    let Some(owner) = bot.native_walk.as_ref() else {
+        return;
+    };
+    if !owner.live()
+        || bot.walk_outcome_seq == 0
+        || bot.native_receipt_seq == bot.walk_outcome_seq
+        || bot.walk_outcome_request_id != owner.request_id().get()
+    {
+        return;
+    }
+    let end = if bot.walk_outcome_blocked {
+        script::native::WalkEnd::Blocked
+    } else if bot.walk_outcome_failed {
+        bot.native_walk_failure
+            .as_ref()
+            .filter(|(request, _)| *request == owner.request_id().get())
+            .map_or(script::native::WalkEnd::Failed, |(_, end)| end.clone())
+    } else {
+        script::native::WalkEnd::RouteEnded
+    };
+    slot.complete_native_walk(owner, receipt(owner, end));
+    bot.native_receipt_seq = bot.walk_outcome_seq;
 }
 
 pub(crate) fn deliver_channel_events(

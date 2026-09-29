@@ -941,6 +941,11 @@ impl SlotScript {
         self.native_runtime.revoke();
         self.native_runtime.clock.observe(Instant::now(), false);
         self.on_is_up(false);
+        // The same run continues in a new session: evidence, owners and
+        // receipts stamped before the boundary cannot meet a fence after it.
+        if let Some(run) = self.compiled.as_mut() {
+            run.rekey_session(self.work_epoch);
+        }
         #[cfg(feature = "load")]
         if !self.load_active() {
             // Same rule as Stop: the compiled machine's abort lands on the
@@ -1101,15 +1106,9 @@ impl SlotScript {
         let now = std::time::Instant::now();
         // The safety lease uses wall time even when no script tick is eligible.
         let _ = self.native_quiet_read(now);
-        let blocked = self
-            .compiled
-            .as_ref()
-            .and_then(|run| run.output.status.as_deref())
-            .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked);
-        self.native_runtime.clock.observe(
-            now,
-            self.state == RunState::Running && self.want_run && !held && !blocked,
-        );
+        // Pause, hold, not-ready, recovery hold and Blocked freeze the clock.
+        let eligible = self.dispatch_open() && !held;
+        self.native_runtime.clock.observe(now, eligible);
         #[cfg(feature = "load")]
         {
             if self.load_active() {
@@ -1162,19 +1161,24 @@ impl SlotScript {
         }
     }
 
-    pub fn sync_native_input_gate(&self) {
-        let watchdog_hold = self.watchdog.holds_script_actions();
-        let blocked = self.compiled.as_ref().is_some_and(|run| {
-            run.output
-                .status
-                .as_ref()
-                .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked)
-        });
-        let live = self.state == RunState::Running
+    /// Whether the script may dispatch at all: Running by operator intent,
+    /// not in a watchdog recovery hold, and not Blocked (which closes
+    /// dispatch until Retry, though the instance is retained).
+    fn dispatch_open(&self) -> bool {
+        let blocked = self
+            .compiled
+            .as_ref()
+            .and_then(|run| run.output.status.as_deref())
+            .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked);
+        self.state == RunState::Running
             && self.want_run
             && self.has_instance()
-            && !watchdog_hold
-            && !blocked;
+            && !self.watchdog.holds_script_actions()
+            && !blocked
+    }
+
+    pub fn sync_native_input_gate(&self) {
+        let live = self.dispatch_open();
         self.native_input.sync_live(live);
         if !live {
             #[cfg(feature = "load")]
@@ -1339,16 +1343,22 @@ impl SlotScript {
         self.native_runtime.ledger.as_mut()?.quiet_read(now)
     }
 
+    /// Queued native work the host may dispatch now. Work queued before a
+    /// watchdog recovery hold waits for it to end; Blocked revoked its work.
     pub fn has_native_actions(&self) -> bool {
         self.native_runtime
             .ledger
             .as_ref()
             .is_some_and(|ledger| ledger.outbox.iter().any(|action| action.live()))
+            && self.dispatch_open()
     }
 
     /// The host calls this only while holding the slot's final dispatch fence.
     /// Keep the bounded outbox's allocation for the next observed tick.
     pub fn take_native_action(&mut self) -> Option<crate::native::HostAction> {
+        if !self.dispatch_open() {
+            return None;
+        }
         let ledger = self.native_runtime.ledger.as_mut()?;
         while !ledger.outbox.is_empty() {
             let action = ledger.outbox.remove(0);
@@ -1789,6 +1799,10 @@ impl SlotScript {
         match result {
             Ok(ScriptFlow::Continue) => {}
             Ok(ScriptFlow::Blocked(failure)) => {
+                // Blocked closes dispatch: this tick's queued effects, the
+                // walk follow and any quiet lease lose their authority
+                // before the host can drain them. Retry begins fresh work.
+                self.native_runtime.revoke();
                 self.revoke_native_input();
                 #[cfg(feature = "load")]
                 self.compiled_interacts.clear();

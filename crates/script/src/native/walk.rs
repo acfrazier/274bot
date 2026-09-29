@@ -5,11 +5,19 @@ use api::quest_progress::EvidenceStamp;
 use api::snapshot::SnapshotView;
 use std::num::NonZeroU64;
 use std::task::Poll;
+use std::time::Duration;
+
+/// Eligible time a native walk may stay unsettled before it ends `Failed`
+/// and revokes its host follow. The host owes every walk a terminal receipt;
+/// this is the machine's backstop, measured on the active clock so pause,
+/// hold, not-ready and Blocked intervals do not spend it.
+pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 
 pub struct Walk {
     key: WalkKey,
     request_id: u64,
     required_after: EvidenceStamp,
+    deadline: Duration,
     wait: WalkSlot,
 }
 
@@ -61,11 +69,20 @@ impl NativeMachine for Walk {
             key,
             request_id,
             required_after,
+            deadline: cx.active_now().saturating_add(WALK_DEADLINE),
             wait,
         })
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        if cx.active_now() >= self.deadline {
+            cx.cancel_request(self.request_id);
+            return Poll::Ready(Ok(WalkReceipt {
+                request_id: self.request_id,
+                evidence: cx.evidence(),
+                end: WalkEnd::Failed,
+            }));
+        }
         if !cx.evidence().meets(self.required_after) {
             return Poll::Pending;
         }

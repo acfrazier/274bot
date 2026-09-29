@@ -129,6 +129,17 @@ pub enum TravelOutcome {
         leg: usize,
         detail: String,
     },
+    /// A gated transport leg whose quest evidence did not prove its gates
+    /// before the transport interaction was sent: nothing was sent for it.
+    /// `verdict` is the gates' combined truth (`False` or `Unknown`);
+    /// `unresolved` names the gates the evidence leaves `Unknown` (every gate
+    /// without evidence, none for evidence from another quest family).
+    EvidenceUnproven {
+        at: WorldTile,
+        leg: usize,
+        verdict: api::selected::Truth,
+        unresolved: std::sync::Arc<[api::selected::QuestGate]>,
+    },
     /// The hop budget (`max_hops`) was exhausted before arrival.
     GaveUp { at: WorldTile, hops: u32 },
 }
@@ -896,18 +907,35 @@ impl FollowRun {
         }
     }
 
+    /// Recheck a gated transport leg's evidence before its interaction is
+    /// sent. Only `True` continues; the terminal names what would open it.
     fn check_transport_gate(
         &self,
         edge: &TransportEdge,
         at: WorldTile,
         evidence: Option<&crate::quest_gates::QuestEvidence>,
     ) -> Option<TravelOutcome> {
-        edge.quest_gates.as_ref().and_then(|gates| {
-            (gates.test(evidence) != api::selected::Truth::True).then(|| TravelOutcome::Blocked {
-                at,
-                leg: self.leg_index,
-                detail: "transport quest gate is not proven by current evidence".to_owned(),
-            })
+        use api::selected::Truth;
+        let gates = edge.quest_gates.as_ref()?;
+        let verdict = gates.test(evidence);
+        if verdict == Truth::True {
+            return None;
+        }
+        let unresolved = match evidence {
+            None => gates.gates().into(),
+            Some(evidence) if evidence.family() != gates.family() => Vec::new().into(),
+            Some(evidence) => gates
+                .gates()
+                .iter()
+                .filter(|gate| evidence.test(gate) == Truth::Unknown)
+                .cloned()
+                .collect(),
+        };
+        Some(TravelOutcome::EvidenceUnproven {
+            at,
+            leg: self.leg_index,
+            verdict,
+            unresolved,
         })
     }
 }

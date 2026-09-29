@@ -1,6 +1,6 @@
-//! Native progress watchdog: dual monotonic clocks, freeze, and fenced
-//! recovery/restart. Load isolates only. Host `Instant` is the only clock;
-//! JS never stamps policy.
+//! Progress watchdog shared by Load isolates and compiled cards: dual
+//! monotonic clocks, freeze, and fenced plane-aware recovery/restart. Host
+//! `Instant` is the only clock; scripts never stamp policy.
 
 use std::time::{Duration, Instant};
 

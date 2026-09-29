@@ -84,6 +84,10 @@ pub(crate) struct NavBot {
     pub(crate) native_walk: Option<script::native::HostAuthority>,
     pub(crate) native_receipt_seq: u64,
     pub(crate) native_walk_failure: Option<(u64, script::native::WalkEnd)>,
+    /// A native walk's terminal that no published walk outcome carries: a
+    /// host refusal, or a Pause / displacement / abort that ended its follow.
+    /// Delivered once to its still-live owner by the next observation.
+    pub(crate) native_end: Option<(script::native::HostAuthority, script::native::WalkEnd)>,
     /// Evidence retained with the published route, not a newer pending retarget.
     pub(crate) route_quest_evidence: Option<nav::quest_gates::QuestEvidence>,
     /// Dest, radius, allow_teleports, allow_wilderness, allow_bank_fetch.
@@ -204,7 +208,11 @@ impl ScriptWalkArm {
         request: script::native::WalkRequest,
         authority: script::native::HostAuthority,
     ) -> bool {
-        if !authority.live() || request.required_after.run != authority.run() {
+        if !authority.live() {
+            return false;
+        }
+        if request.required_after.run != authority.run() {
+            self.refuse_native(authority);
             return false;
         }
         if let (Some(provider), Some(family)) = (
@@ -272,6 +280,30 @@ impl ScriptWalkArm {
             radius,
             allow_teleports,
         );
+    }
+
+    /// A native walk the host will not arm gets its typed `Refused` terminal.
+    /// It never publishes through the Load walk outcome: that refusal guard
+    /// is released only by an isolate snapshot a compiled slot never posts.
+    fn refuse_native(&self, authority: script::native::HostAuthority) {
+        let mut navs = self.navs.lock().unwrap();
+        navs.entry(self.name.clone())
+            .or_default()
+            .refuse_native(authority);
+    }
+
+    fn refuse(
+        &self,
+        to: WorldTile,
+        radius: i32,
+        allow_teleports: bool,
+        request_id: u64,
+        native: Option<&script::native::HostAuthority>,
+    ) {
+        match native {
+            Some(authority) => self.refuse_native(authority.clone()),
+            None => self.publish_refusal(to, radius, allow_teleports, request_id),
+        }
     }
 
     #[cfg(test)]
@@ -429,7 +461,17 @@ impl ScriptWalkArm {
         key: (WorldTile, i32, bool, bool, bool),
         retarget: bool,
         request_id: u64,
+        native: Option<&script::native::HostAuthority>,
     ) -> Option<bool> {
+        if native.is_some() && bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
+            // The owner cancelled or replaced its previous walk: that follow
+            // (and any bank session it latched) is abandoned, not in flight.
+            super::script_walk::abort_walk_on_bot(bot);
+        }
+        let refuse = |bot: &mut NavBot| match native {
+            Some(owner) => bot.refuse_native(owner.clone()),
+            None => bot.note_failure(bot.route_generation, request_id, to, radius, key.2),
+        };
         if bot.bank_fetch.is_some()
             || (!retarget && (bot.route.is_some() || bot.route_worker.is_some()))
         {
@@ -442,7 +484,7 @@ impl ScriptWalkArm {
                     bot.route_worker.is_some()
                 )
             });
-            bot.note_failure(bot.route_generation, request_id, to, radius, key.2);
+            refuse(bot);
             return Some(false);
         }
         if bot.requested_route == Some(key)
@@ -459,7 +501,7 @@ impl ScriptWalkArm {
                         bot.walk_request_id
                     )
                 });
-                bot.note_failure(bot.route_generation, request_id, to, radius, key.2);
+                refuse(bot);
                 return Some(false);
             }
             log_walk_arm(&self.name, || {
@@ -499,7 +541,13 @@ impl ScriptWalkArm {
                     "queue_route refused-no-here dest={to:?} r={radius} request_id={request_id}"
                 )
             });
-            self.publish_refusal(to, radius, opts.allow_teleports, request_id);
+            self.refuse(
+                to,
+                radius,
+                opts.allow_teleports,
+                request_id,
+                authority.as_ref(),
+            );
             return false;
         };
         let Some(world) = self.world.as_ref() else {
@@ -508,7 +556,13 @@ impl ScriptWalkArm {
                     "queue_route refused-no-world dest={to:?} r={radius} request_id={request_id}"
                 )
             });
-            self.publish_refusal(to, radius, opts.allow_teleports, request_id);
+            self.refuse(
+                to,
+                radius,
+                opts.allow_teleports,
+                request_id,
+                authority.as_ref(),
+            );
             return false;
         };
         let from = WorldTile {
@@ -526,7 +580,15 @@ impl ScriptWalkArm {
         {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();
-            if let Some(result) = self.gate_route(bot, to, radius, key, retarget, request_id) {
+            if let Some(result) = self.gate_route(
+                bot,
+                to,
+                radius,
+                key,
+                retarget,
+                request_id,
+                authority.as_ref(),
+            ) {
                 return result;
             }
         }
@@ -541,7 +603,15 @@ impl ScriptWalkArm {
         let token = {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();
-            if let Some(result) = self.gate_route(bot, to, radius, key, retarget, request_id) {
+            if let Some(result) = self.gate_route(
+                bot,
+                to,
+                radius,
+                key,
+                retarget,
+                request_id,
+                authority.as_ref(),
+            ) {
                 return result;
             }
             if let Some(ess) = bot.traveller.essence() {
@@ -549,6 +619,9 @@ impl ScriptWalkArm {
             }
             bot.route_generation = bot.route_generation.wrapping_add(1);
             bot.walk_request_id = request_id;
+            // A host or legacy walk displacing a live native walk ends it
+            // visibly; the same owner's replaced walk is already revoked.
+            bot.end_native_walk(script::native::WalkEnd::Cancelled);
             bot.native_walk = authority;
             bot.native_walk_failure = None;
             bot.requested_route = Some(key);
@@ -675,8 +748,11 @@ impl ScriptWalkArm {
                     continue;
                 }
                 let missing = request.missing_carry(&outcome);
+                // Only a route this publish installs carries its evidence; a
+                // newer request's NoPath leaves the followed route's own.
                 if bot.route_generation == request.generation
                     && bot.walk_request_id == request.request_id
+                    && !matches!(outcome, RouteOutcome::NoPath)
                 {
                     bot.route_quest_evidence = request
                         .state
@@ -1148,6 +1224,45 @@ impl NavBot {
         }
     }
 
+    /// End the native walk this bot follows: its still-live owner gets `end`
+    /// on the next observation; a revoked owner is owed nothing.
+    pub(crate) fn end_native_walk(&mut self, end: script::native::WalkEnd) {
+        if let Some(owner) = self.native_walk.take() {
+            self.native_walk_failure = None;
+            if owner.live() {
+                self.native_end = Some((owner, end));
+            }
+        }
+    }
+
+    /// A native walk the host refused to arm: nothing was routed for it.
+    pub(crate) fn refuse_native(&mut self, owner: script::native::HostAuthority) {
+        if owner.live() {
+            self.native_end = Some((owner, script::native::WalkEnd::Refused));
+        }
+    }
+
+    /// The terminal a follow failure owes a native walk beyond `Failed`: a
+    /// crossing whose quest evidence was unproven at send time names the
+    /// gates to acquire, or blocks honestly when evidence disproves them.
+    pub(crate) fn note_native_follow_failure(&mut self, outcome: &nav::traveller::TravelOutcome) {
+        use api::selected::Truth;
+        let end = match outcome {
+            nav::traveller::TravelOutcome::EvidenceUnproven {
+                verdict: Truth::Unknown,
+                unresolved,
+                ..
+            } if !unresolved.is_empty() => Some(script::native::WalkEnd::NeedsEvidence(
+                Arc::clone(unresolved),
+            )),
+            nav::traveller::TravelOutcome::EvidenceUnproven { .. } => {
+                Some(script::native::WalkEnd::Blocked)
+            }
+            _ => None,
+        };
+        self.native_walk_failure = end.map(|end| (self.walk_request_id, end));
+    }
+
     /// Older armed-route results may publish only after the current wait
     /// refusal has been copied into a snapshot, or when they *are* that wait.
     pub(super) fn armed_outcome_may_publish(&self, request_id: u64) -> bool {
@@ -1408,7 +1523,9 @@ fn carried_avoid(avoid: &[AvoidRect]) -> Vec<script::shim::InspectAvoidWire> {
 /// it. Frozen resumes the paused `WalkExecutor.walkTo` itself
 /// (`AutoRelogin.ts:159-163`), which repaths from wherever the player
 /// stands when its follow sees a deviation or a stall
-/// (`WalkExecutor.ts:916-918`, `1097-1099`).
+/// (`WalkExecutor.ts:916-918`, `1097-1099`). A typed native walk is never
+/// carried as a legacy request: its follow ends `Cancelled` to its owner,
+/// which revalidates and re-walks after Resume or the relog.
 pub(crate) fn hold_script_nav(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
@@ -1428,8 +1545,8 @@ pub(crate) fn hold_script_nav(
                 runtime_generation,
                 request: script::shim::InteractReq::WalkNearestBank,
             });
-        } else if let (Some(runtime_generation), true, Some(requested)) =
-            (carry, armed, nav.requested_route)
+        } else if let (Some(runtime_generation), true, Some(requested), None) =
+            (carry, armed, nav.requested_route, &nav.native_walk)
         {
             let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch) = requested;
             let request_id = nav.walk_request_id;
@@ -1486,4 +1603,6 @@ fn end_route_follow(nav: &mut NavBot) {
     nav.route = None;
     nav.bank_fetch = None;
     nav.walk_request_id = 0;
+    nav.route_quest_evidence = None;
+    nav.end_native_walk(script::native::WalkEnd::Cancelled);
 }

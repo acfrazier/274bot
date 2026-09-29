@@ -21,13 +21,15 @@ pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name
     }
 }
 
-fn abort_walk_on_bot(bot: &mut NavBot) {
+/// End the uid's walk follow and everything that shares its ownership. A
+/// still-live native owner receives `Cancelled`; a revoked one nothing.
+pub(super) fn abort_walk_on_bot(bot: &mut NavBot) {
     bot.route_generation = bot.route_generation.wrapping_add(1);
     bot.route = None;
     bot.route_worker = None;
     bot.pending_route = None;
     bot.requested_route = None;
-    bot.native_walk = None;
+    bot.end_native_walk(script::native::WalkEnd::Cancelled);
     bot.route_quest_evidence = None;
     bot.walk_request_id = 0;
     bot.clear_walk_outcome();
@@ -221,7 +223,7 @@ pub(crate) fn apply_nav_follow_outcome(
             why: nav::traveller::HopFailure::EndBlocked,
             ..
         }) if bot.bank_fetch.is_none() => settle_route_end(bot, true),
-        Some(_) => {
+        Some(failure) => {
             let owned = bot.route_request_id == bot.walk_request_id;
             if !owned {
                 log_walk_arm_bot(|| {
@@ -240,6 +242,7 @@ pub(crate) fn apply_nav_follow_outcome(
                         radius,
                         allow_teleports,
                     );
+                    bot.note_native_follow_failure(&failure);
                 }
             } else if let Some(route) = bot.route.as_ref() {
                 if bot.armed_outcome_may_publish(bot.walk_request_id) {
