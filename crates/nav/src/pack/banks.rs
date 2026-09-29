@@ -1,8 +1,10 @@
 use super::*;
 
 /// One bank stand on the v8 wire: a named interact target — either a
-/// booth loc or a teller NPC — that opens a bank. The router's banking
-/// session walks to `tile` and uses the `access` op on it.
+/// booth loc or a teller NPC — that opens a bank. `tile` is the interact
+/// target (often unstandable: a booth loc, or a teller behind a counter).
+/// BankBudget walks to a standable access neighbour
+/// ([`crate::bank_fetch::bank_access_tiles`]) and uses the `access` op.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BankStand {
     /// The stand's display name ("Bank booth", the teller's NPC name).

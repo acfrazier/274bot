@@ -350,15 +350,17 @@ WalkTo and script `walk_with` can opt in with `FindOptions::allow_bank_fetch`
 (the panel/TUI **bank fetch** checkbox, default off). `find` itself stays
 fail-closed: when the only missing gates are `item_req` / `worn_req`, the
 host plans a fetch-and-wear session from the packed bank stand table
-(`NavWorld::banks()`), walks to the nearest stand, opens it, deposits,
-withdraws, wears, and closes, then re-runs the strict search.
+(`NavWorld::banks()`), walks to a standable access tile of the nearest
+stand (never the booth loc or a teller spawn behind the counter), opens
+it, deposits, withdraws, wears, and closes, then re-runs the strict search.
 
 Packed stands are content-derived booths **and** NPC tellers
 (`category=bank_teller`). Open uses that packed access — a teller stand
-sends the banker op (and a dialog choice when the pack carries one), not a
-nearby booth's `Use-quickly`. Deposit, wear and close wait until the live
-snapshot shows the step landed; a failed send retries instead of skipping
-ahead.
+sends the banker op (and a dialog choice when the pack carries one), and
+falls back to another access of the same bank when that teller is gone.
+Deposit, wear and close wait until the live snapshot shows the step
+landed, with a bounded wait and a truthful abort if it never does. A
+send already in flight is not repeated every pump.
 
 **Closed bank:** the session is planned from the **open** bank's rows
 (`snap.bank()`). A closed bank contributes `[]`, so BankBudget cannot prove

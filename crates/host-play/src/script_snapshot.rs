@@ -15,8 +15,9 @@ use super::{route_inspect, script_slot, PostedWalkOutcome, ScriptWall};
 /// queries never matches); `stats` rows carry the snapshot's stat
 /// index/name/xp; `booths` are the scene locs whose actions include
 /// `Use-quickly` (a name/action a script interacts with never appears
-/// otherwise); `banks` are the packed bank stands (`{name, x, z, level,
-/// kind: booth|npc, op, choose}`) the shim walks to; `bank`/`bank_side`
+/// otherwise); `banks` are packed booth stands (`{name, x, z, level,
+/// kind: booth, op}`) Load walks to — teller rows stay on the shared
+/// pack; `bank`/`bank_side`
 /// are the open bank's withdraw/deposit rows with the obj's resolved
 /// name (`None` when the table has none — a deposit/withdraw by that name
 /// never matches); `hold`/`ours` are the guardian's published status that
@@ -1098,20 +1099,17 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         use nav::pack::BankAccess;
         w.banks()
             .iter()
-            .map(|b| {
-                let (kind, op, choose) = match &b.access {
-                    BankAccess::Booth { op } => ("booth", *op, None),
-                    BankAccess::Npc { op, choose, .. } => ("npc", *op, choose.as_deref()),
-                };
-                BankStandInput {
+            .filter_map(|b| match &b.access {
+                BankAccess::Booth { op } => Some(BankStandInput {
                     name: &b.name,
                     x: b.tile.x,
                     z: b.tile.z,
                     level: b.tile.level,
-                    kind,
-                    op,
-                    choose,
-                }
+                    kind: "booth",
+                    op: *op,
+                    choose: None,
+                }),
+                BankAccess::Npc { .. } => None,
             })
             .collect::<Vec<_>>()
     });

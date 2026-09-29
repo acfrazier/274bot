@@ -702,6 +702,9 @@ fn norm_action(s: &str) -> String {
         .collect()
 }
 
+/// Packed stands within this Chebyshev belong to one bank building.
+const SAME_BANK: i32 = 12;
+
 pub(crate) fn open_bank_at_here<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
@@ -710,44 +713,56 @@ pub(crate) fn open_bank_at_here<D: Driver>(
 ) -> bool {
     use api::interact::{ActionSpec, OpTarget, SendResult};
     use nav::pack::BankAccess;
-    let stand = world.and_then(|w| {
-        here.and_then(|(hx, hz, hl)| {
-            w.banks().iter().min_by_key(|s| {
-                (
-                    s.tile.level != hl,
-                    (s.tile.x - hx).abs().max((s.tile.z - hz).abs()),
-                )
-            })
-        })
-    });
-    if let Some(stand) = stand {
-        match &stand.access {
-            BankAccess::Npc { name, op, choose } => {
-                return open_npc_bank_at_here(
-                    driver,
-                    snapshot,
-                    here,
-                    stand.tile,
-                    name,
-                    *op,
-                    choose.as_deref(),
-                );
+    if let Some(world) = world {
+        if !world.banks().is_empty() {
+            let mut stands: Vec<&nav::pack::BankStand> = world.banks().iter().collect();
+            if let Some((hx, hz, hl)) = here {
+                stands.sort_by_key(|s| {
+                    (
+                        i32::from(s.tile.level != hl),
+                        (s.tile.x - hx).abs().max((s.tile.z - hz).abs()),
+                    )
+                });
             }
-            BankAccess::Booth { .. } => {
-                let mut ix = api::interact::Interactions::new(snapshot, driver);
-                if let Some(loc) = snapshot.locs().iter().find(|l| {
-                    l.tile.x == stand.tile.x
-                        && l.tile.z == stand.tile.z
-                        && l.tile.level == stand.tile.level
-                }) {
-                    if let Some(slot) = action_slot(&loc.actions, "Use-quickly") {
-                        return matches!(
-                            ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(slot)),
-                            SendResult::Sent { .. }
-                        );
+            let nearest = stands[0];
+            let cluster: Vec<&nav::pack::BankStand> = stands
+                .iter()
+                .copied()
+                .filter(|s| {
+                    s.tile.level == nearest.tile.level
+                        && (s.tile.x - nearest.tile.x)
+                            .abs()
+                            .max((s.tile.z - nearest.tile.z).abs())
+                            <= SAME_BANK
+                })
+                .collect();
+            for stand in cluster
+                .iter()
+                .filter(|s| matches!(s.access, BankAccess::Npc { .. }))
+            {
+                if let BankAccess::Npc { name, op, choose } = &stand.access {
+                    if open_npc_bank_at_here(
+                        driver,
+                        snapshot,
+                        here,
+                        stand.tile,
+                        name,
+                        *op,
+                        choose.as_deref(),
+                    ) {
+                        return true;
                     }
                 }
             }
+            for stand in cluster
+                .iter()
+                .filter(|s| matches!(s.access, BankAccess::Booth { .. }))
+            {
+                if open_booth_stand(driver, snapshot, stand) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
     let mut ix = api::interact::Interactions::new(snapshot, driver);
@@ -760,6 +775,32 @@ pub(crate) fn open_bank_at_here<D: Driver>(
         }
     }
     false
+}
+
+fn open_booth_stand<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    stand: &nav::pack::BankStand,
+) -> bool {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    let mut ix = api::interact::Interactions::new(snapshot, driver);
+    snapshot
+        .locs()
+        .iter()
+        .find(|loc| {
+            loc.tile.x == stand.tile.x
+                && loc.tile.z == stand.tile.z
+                && loc.tile.level == stand.tile.level
+        })
+        .and_then(|loc| {
+            action_slot(&loc.actions, "Use-quickly").map(|slot| {
+                matches!(
+                    ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(slot)),
+                    SendResult::Sent { .. }
+                )
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn open_npc_bank_at_here<D: Driver>(
@@ -797,6 +838,19 @@ fn open_npc_bank_at_here<D: Driver>(
             npc.name
                 .as_deref()
                 .is_some_and(|got| got.trim().eq_ignore_ascii_case(wanted))
+        })
+        .filter(|npc| {
+            let d_stand = (npc.tile.x - stand.x)
+                .abs()
+                .max((npc.tile.z - stand.z).abs())
+                + i32::from(npc.tile.level != stand.level) * 10_000;
+            let d_here = here
+                .map(|(hx, hz, hl)| {
+                    (npc.tile.x - hx).abs().max((npc.tile.z - hz).abs())
+                        + i32::from(npc.tile.level != hl) * 10_000
+                })
+                .unwrap_or(i32::MAX);
+            d_stand <= SAME_BANK || d_here <= 10
         })
         .min_by_key(|npc| {
             let d_stand = (npc.tile.x - stand.x)

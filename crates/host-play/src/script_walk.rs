@@ -3,17 +3,22 @@ use std::sync::{Arc, Mutex};
 
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav::bank_fetch::BankStep;
-use nav::router::{find_with_avoid, FindOptions};
+use nav::bank_fetch::{bank_access_tiles, BankStep};
+use nav::router::{find_first_with_avoid, find_with_avoid, FindOptions};
 use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
 
 use super::play_status::lock_statuses;
 use super::{
-    deposit_all_backpack, log_walk_arm_bot, open_bank_at_here, withdraw_id, NavBot, ScriptWalkArm,
-    SlotStatus,
+    deposit_all_backpack, log_walk_arm_bot, open_bank_at_here, withdraw_id, BankFetchFlight,
+    NavBot, ScriptWalkArm, SlotStatus,
 };
+
+/// Pumps a non-Walk BankBudget step may wait before a truthful abort.
+const BANK_STEP_ATTEMPTS: u32 = 32;
+/// Packed stands within this Chebyshev of each other share a bank.
+const SAME_BANK: i32 = 12;
 
 pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(bot) = navs.lock().unwrap().get_mut(name) {
@@ -36,6 +41,8 @@ pub(super) fn abort_walk_on_bot(bot: &mut NavBot) {
     bot.traveller.clear();
     // Bank work and carried routes share the revoked walk's ownership.
     bot.bank_fetch = None;
+    bot.bank_fetch_attempts = 0;
+    bot.bank_fetch_flight = None;
     bot.carried_walk = None;
 }
 
@@ -301,7 +308,21 @@ pub(crate) fn step_nav_bot<D: Driver>(
     // The random-event freeze: the follow is not stepped while the
     // guardian holds the slot, and the armed route stays latched so it
     // resumes when the hold lifts. BankBudget steps freeze the same way.
-    if here.is_none() || hold {
+    if hold {
+        return;
+    }
+    if here.is_none() {
+        let mut all = navs.lock().unwrap();
+        if let Some(bot) = all.get_mut(name) {
+            // A missing player cannot deposit/open/wear; abort the latched
+            // non-Walk step so disconnect does not hang with follow frozen.
+            if bank_fetch_freezes_follow(bot) {
+                bot.bank_fetch = None;
+                bot.bank_fetch_attempts = 0;
+                bot.bank_fetch_flight = None;
+                bot.route = None;
+            }
+        }
         return;
     }
     {
@@ -412,15 +433,16 @@ pub(crate) fn step_nav_bot<D: Driver>(
 }
 
 /// Advance one BankBudget session step on a [`NavBot`]. Walk completes
-/// when the player is already on the stand tile (or a sub-route is
-/// armed for follow); Open is a no-op while the bank is already
-/// open+loaded and honors packed booth or NPC access; DepositAll /
+/// on a standable access tile (never the stand's interact tile) or once
+/// a sub-route to that tile is armed for follow; Open is a no-op while
+/// the bank is already open+loaded and honors packed booth or NPC access
+/// (falling back to another access of the same bank); DepositAll /
 /// Withdraw / Wear / Close dispatch through
 /// [`api::interact::Interactions`] and pop only after the snapshot
-/// shows the step landed (a failed send retries, it does not skip).
-/// Clears the pending session when steps are exhausted, or on
-/// walk/open/withdraw failure (NoPath). Returns whether the driver was
-/// written.
+/// shows the step landed. Each non-Walk step has a pump budget and does
+/// not re-send while the snapshot is unchanged. Clears the pending
+/// session when steps are exhausted, or on a truthful failure. Returns
+/// whether the driver was written.
 pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
@@ -429,31 +451,45 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
     here: Option<(i32, i32, i32)>,
     map_members: bool,
 ) -> bool {
-    let Some(pending) = bot.bank_fetch.as_mut() else {
+    if bot.bank_fetch.is_none() {
+        bot.bank_fetch_attempts = 0;
+        bot.bank_fetch_flight = None;
         return false;
-    };
-    let Some(step) = pending.steps.front().cloned() else {
+    }
+    let Some(step) = bot
+        .bank_fetch
+        .as_ref()
+        .and_then(|pending| pending.steps.front().cloned())
+    else {
         bot.bank_fetch = None;
+        bot.bank_fetch_attempts = 0;
+        bot.bank_fetch_flight = None;
         return false;
     };
     let mut abort = false;
-    let wrote = match step {
+    let mut popped = false;
+    let wrote = match &step {
         BankStep::Walk { x, z, level } => {
-            if here == Some((x, z, level)) {
-                pending.steps.pop_front();
+            let dest = WorldTile {
+                x: *x,
+                z: *z,
+                level: *level,
+            };
+            if walk_arrived(here, dest, world) {
+                if let Some(pending) = bot.bank_fetch.as_mut() {
+                    pending.steps.pop_front();
+                    bot.route = Some(pending.final_route.clone());
+                }
+                popped = true;
                 log_walk_arm_bot(|| {
-                    format!("bank_fetch phase done Walk on-stand ({x},{z},{level})")
+                    format!(
+                        "bank_fetch phase done Walk on-access ({},{},{})",
+                        dest.x, dest.z, dest.level
+                    )
                 });
-                // Restore the post-session route for follow / status.
-                bot.route = Some(pending.final_route.clone());
                 bot.map_route_generation = crate::walk_map::next_map_route_generation();
                 false
-            } else if bot
-                .route
-                .as_ref()
-                .is_some_and(|r| r.dest.x == x && r.dest.z == z && r.dest.level == level)
-            {
-                // Stand sub-route armed; follow polls it outside this step.
+            } else if bot.route.as_ref().is_some_and(|r| r.dest == dest) {
                 false
             } else if let Some(w) = world {
                 let from = match here {
@@ -464,33 +500,47 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
                     },
                     None => return false,
                 };
-                let to = WorldTile { x, z, level };
-                // Live snapshot facts (same fail-closed gates as execute),
-                // not an empty WorldState that would refuse gated walks.
                 let state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
                 let opts = FindOptions {
                     allow_bank_fetch: false,
-                    ..pending.opts
+                    ..bot.bank_fetch.as_ref().map(|p| p.opts).unwrap_or_default()
                 };
-                match find_with_avoid(
-                    &w.collision,
-                    &w.graph,
-                    from,
-                    to,
-                    opts,
-                    &state,
-                    &pending.avoid,
-                ) {
+                let avoid = bot
+                    .bank_fetch
+                    .as_ref()
+                    .map(|p| p.avoid.clone())
+                    .unwrap_or_default();
+                match find_with_avoid(&w.collision, &w.graph, from, dest, opts, &state, &avoid) {
                     Ok(route) => {
-                        log_walk_arm_bot(|| format!("bank_fetch Walk armed sub-route dest={to:?}"));
+                        log_walk_arm_bot(|| {
+                            format!("bank_fetch Walk armed sub-route dest={dest:?}")
+                        });
                         bot.route = Some(route);
                         bot.map_route_generation = crate::walk_map::next_map_route_generation();
                         false
                     }
-                    Err(_) => {
-                        abort = true;
-                        false
-                    }
+                    Err(_) => match arm_access_fallback(w, from, dest, opts, &state, &avoid) {
+                        Some(route) => {
+                            let reached = route.dest;
+                            if let Some(BankStep::Walk { x, z, level }) =
+                                bot.bank_fetch.as_mut().and_then(|p| p.steps.front_mut())
+                            {
+                                *x = reached.x;
+                                *z = reached.z;
+                                *level = reached.level;
+                            }
+                            log_walk_arm_bot(|| {
+                                format!("bank_fetch Walk fallback access dest={reached:?}")
+                            });
+                            bot.route = Some(route);
+                            bot.map_route_generation = crate::walk_map::next_map_route_generation();
+                            false
+                        }
+                        None => {
+                            abort = true;
+                            false
+                        }
+                    },
                 }
             } else {
                 abort = true;
@@ -499,101 +549,181 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
         }
         BankStep::Open => {
             if snapshot.bank_loaded() {
-                pending.steps.pop_front();
+                if let Some(pending) = bot.bank_fetch.as_mut() {
+                    pending.steps.pop_front();
+                }
+                popped = true;
                 log_walk_arm_bot(|| "bank_fetch phase done Open already-loaded".to_string());
                 false
-            } else if snapshot.bank_component_id() != -1 {
-                // Booth/NPC already opened the widget; wait for the list.
+            } else if snapshot.bank_component_id() != -1 || in_flight(bot, snapshot) {
+                if step_wait_expired(bot) {
+                    abort = true;
+                }
                 false
             } else {
                 let sent = open_bank_at_here(driver, snapshot, here, world);
                 if sent {
+                    latch_flight(bot, snapshot);
                     log_walk_arm_bot(|| "bank_fetch Open sent packed access".to_string());
+                }
+                if step_wait_expired(bot) {
+                    abort = true;
                 }
                 sent
             }
         }
         BankStep::DepositAll => {
             if backpack_empty(snapshot) {
-                pending.steps.pop_front();
+                if let Some(pending) = bot.bank_fetch.as_mut() {
+                    pending.steps.pop_front();
+                }
+                popped = true;
                 log_walk_arm_bot(|| "bank_fetch phase done DepositAll observed-empty".to_string());
+                false
+            } else if snapshot.bank_component_id() < 0 {
+                abort = true;
+                false
+            } else if in_flight(bot, snapshot) {
+                if step_wait_expired(bot) {
+                    abort = true;
+                }
                 false
             } else {
                 let wrote = deposit_all_backpack(driver, snapshot);
+                if wrote {
+                    latch_flight(bot, snapshot);
+                }
                 log_walk_arm_bot(|| format!("bank_fetch DepositAll sent={wrote}"));
+                if step_wait_expired(bot) {
+                    abort = true;
+                }
                 wrote
             }
         }
         BankStep::Withdraw { id, count } => {
-            if inventory_at_least(snapshot, id, count) {
-                pending.steps.pop_front();
+            if inventory_at_least(snapshot, *id, *count) {
+                if let Some(pending) = bot.bank_fetch.as_mut() {
+                    pending.steps.pop_front();
+                }
+                popped = true;
                 log_walk_arm_bot(|| {
                     format!("bank_fetch phase done Withdraw id={id} count={count} observed")
                 });
                 false
-            } else if !bank_holds(snapshot, id) {
+            } else if !bank_holds(snapshot, *id) {
                 abort = true;
                 false
+            } else if in_flight(bot, snapshot) {
+                if step_wait_expired(bot) {
+                    abort = true;
+                }
+                false
             } else {
-                let wrote = withdraw_id(driver, snapshot, id, count);
+                let wrote = withdraw_id(driver, snapshot, *id, *count);
+                if wrote {
+                    latch_flight(bot, snapshot);
+                }
                 log_walk_arm_bot(|| {
                     format!("bank_fetch Withdraw id={id} count={count} sent={wrote}")
                 });
+                if step_wait_expired(bot) {
+                    abort = true;
+                }
                 wrote
             }
         }
         BankStep::Wear { id } => {
-            if wearing(snapshot, id) {
-                pending.steps.pop_front();
+            if wearing(snapshot, *id) {
+                if let Some(pending) = bot.bank_fetch.as_mut() {
+                    pending.steps.pop_front();
+                }
+                popped = true;
                 log_walk_arm_bot(|| format!("bank_fetch phase done Wear id={id} observed"));
                 false
-            } else if !inventory_at_least(snapshot, id, 1) {
+            } else if !inventory_at_least(snapshot, *id, 1) {
                 abort = true;
+                false
+            } else if in_flight(bot, snapshot) {
+                if step_wait_expired(bot) {
+                    abort = true;
+                }
                 false
             } else {
                 let mut ix = api::interact::Interactions::new(snapshot, driver);
-                let wrote = matches!(ix.wear(id), api::interact::SendResult::Sent { .. });
+                let wrote = matches!(ix.wear(*id), api::interact::SendResult::Sent { .. });
+                if wrote {
+                    latch_flight(bot, snapshot);
+                }
                 log_walk_arm_bot(|| format!("bank_fetch Wear id={id} sent={wrote}"));
+                if step_wait_expired(bot) {
+                    abort = true;
+                }
                 wrote
             }
         }
         BankStep::Close => {
             if snapshot.bank_component_id() < 0 {
-                pending.steps.pop_front();
+                if let Some(pending) = bot.bank_fetch.as_mut() {
+                    pending.steps.pop_front();
+                }
+                popped = true;
                 log_walk_arm_bot(|| "bank_fetch phase done Close observed".to_string());
+                false
+            } else if in_flight(bot, snapshot) {
+                if step_wait_expired(bot) {
+                    abort = true;
+                }
                 false
             } else {
                 let mut ix = api::interact::Interactions::new(snapshot, driver);
                 let wrote = matches!(ix.close_modal(), api::interact::SendResult::Sent { .. });
+                if wrote {
+                    latch_flight(bot, snapshot);
+                }
                 log_walk_arm_bot(|| format!("bank_fetch Close sent={wrote}"));
+                if step_wait_expired(bot) {
+                    abort = true;
+                }
                 wrote
             }
         }
     };
+    if popped {
+        bot.bank_fetch_attempts = 0;
+        bot.bank_fetch_flight = None;
+    }
     if abort {
-        let session_dest = pending.dest;
-        let remaining = pending.steps.len();
+        let session_dest = bot.bank_fetch.as_ref().map(|p| p.dest);
+        let remaining = bot.bank_fetch.as_ref().map(|p| p.steps.len()).unwrap_or(0);
         log_walk_arm_bot(|| {
             format!(
                 "bank_fetch abort front={step:?} session_dest={session_dest:?} remaining={remaining}"
             )
         });
         bot.bank_fetch = None;
+        bot.bank_fetch_attempts = 0;
+        bot.bank_fetch_flight = None;
         bot.route = None;
         return wrote;
     }
-    if pending.steps.is_empty() {
-        let session_dest = pending.dest;
+    if bot
+        .bank_fetch
+        .as_ref()
+        .is_some_and(|pending| pending.steps.is_empty())
+    {
+        let session_dest = bot.bank_fetch.as_ref().map(|p| p.dest);
         log_walk_arm_bot(|| {
             format!("bank_fetch session cleared complete session_dest={session_dest:?}")
         });
         bot.bank_fetch = None;
+        bot.bank_fetch_attempts = 0;
+        bot.bank_fetch_flight = None;
     }
     wrote
 }
 
 /// Whether a latched BankBudget session must freeze [`Traveller::follow`].
-/// Walk with the stand sub-route armed does **not** freeze; Open /
+/// Walk with the access sub-route armed does **not** freeze; Open /
 /// Deposit / Withdraw / Wear / Close do. Mid-session `final_route` is
 /// never followed.
 pub(crate) fn bank_fetch_freezes_follow(bot: &NavBot) -> bool {
@@ -602,7 +732,7 @@ pub(crate) fn bank_fetch_freezes_follow(bot: &NavBot) -> bool {
     };
     match pending.steps.front() {
         Some(BankStep::Walk { x, z, level }) => {
-            // Freeze only until the stand sub-route is armed; once armed,
+            // Freeze only until the access sub-route is armed; once armed,
             // follow that route. If route still points at final_route,
             // stay frozen this tick (Walk arms next pump / this pump).
             !bot.route
@@ -612,6 +742,103 @@ pub(crate) fn bank_fetch_freezes_follow(bot: &NavBot) -> bool {
         Some(_) => true,
         None => false,
     }
+}
+
+fn walk_arrived(here: Option<(i32, i32, i32)>, dest: WorldTile, world: Option<&NavWorld>) -> bool {
+    let Some((hx, hz, hl)) = here else {
+        return false;
+    };
+    if (hx, hz, hl) == (dest.x, dest.z, dest.level) {
+        return true;
+    }
+    let Some(world) = world else {
+        return false;
+    };
+    let here_tile = WorldTile {
+        x: hx,
+        z: hz,
+        level: hl,
+    };
+    world.banks().iter().any(|stand| {
+        stand.tile.level == dest.level
+            && (stand.tile.x - dest.x)
+                .abs()
+                .max((stand.tile.z - dest.z).abs())
+                <= SAME_BANK
+            && bank_access_tiles(&world.collision, stand).contains(&here_tile)
+    })
+}
+
+fn arm_access_fallback(
+    world: &NavWorld,
+    from: WorldTile,
+    dest: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[nav::router::AvoidRect],
+) -> Option<nav::router::Route> {
+    let mut targets: Vec<WorldTile> = world
+        .banks()
+        .iter()
+        .filter(|stand| {
+            stand.tile.level == dest.level
+                && (stand.tile.x - dest.x)
+                    .abs()
+                    .max((stand.tile.z - dest.z).abs())
+                    <= SAME_BANK * 2
+        })
+        .flat_map(|stand| bank_access_tiles(&world.collision, stand))
+        .collect();
+    if targets.is_empty() {
+        targets = world
+            .banks()
+            .iter()
+            .flat_map(|stand| bank_access_tiles(&world.collision, stand))
+            .collect();
+    }
+    if targets.is_empty() {
+        return None;
+    }
+    find_first_with_avoid(
+        &world.collision,
+        &world.graph,
+        from,
+        &targets,
+        opts,
+        state,
+        avoid,
+    )
+    .into_route()
+    .ok()
+}
+
+fn snapshot_flight(snapshot: &GameSnapshot) -> BankFetchFlight {
+    BankFetchFlight {
+        bank_gen: snapshot.bank_session_generation(),
+        bank_com: snapshot.bank_component_id(),
+        inv: snapshot.inv().to_vec(),
+        worn: snapshot
+            .equipment()
+            .iter()
+            .filter(|item| item.count >= 1)
+            .map(|item| item.def.id)
+            .collect(),
+    }
+}
+
+fn in_flight(bot: &NavBot, snapshot: &GameSnapshot) -> bool {
+    bot.bank_fetch_flight
+        .as_ref()
+        .is_some_and(|flight| *flight == snapshot_flight(snapshot))
+}
+
+fn latch_flight(bot: &mut NavBot, snapshot: &GameSnapshot) {
+    bot.bank_fetch_flight = Some(snapshot_flight(snapshot));
+}
+
+fn step_wait_expired(bot: &mut NavBot) -> bool {
+    bot.bank_fetch_attempts = bot.bank_fetch_attempts.saturating_add(1);
+    bot.bank_fetch_attempts >= BANK_STEP_ATTEMPTS
 }
 
 fn backpack_empty(snapshot: &GameSnapshot) -> bool {
