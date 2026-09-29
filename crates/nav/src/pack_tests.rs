@@ -1436,6 +1436,113 @@ fn bake_emits_bankbooth_use_quickly_only() {
 }
 
 #[test]
+fn bake_emits_bank_teller_npc_stands_and_skips_non_tellers() {
+    // NPC tellers (`category=bank_teller`) join from jm2 NPC placements.
+    // Closed/tutorial booths still stay out; a goblin without the
+    // category does not become a stand.
+    let dir = std::env::temp_dir().join(format!("274bot-nav-banks-npc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for sub in [
+        "",
+        "pack",
+        "scripts/interface_bank/configs",
+        "scripts/areas/area_goblin/configs",
+        "maps",
+    ] {
+        std::fs::create_dir_all(dir.join(sub)).unwrap();
+    }
+    std::fs::write(
+        dir.join("pack/loc.pack"),
+        "2213=bankbooth\n2215=bankboothclosed\n3045=newbiebankbooth\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("pack/npc.pack"), "1036=werewolfbanker\n1=goblin\n").unwrap();
+    std::fs::write(
+        dir.join("scripts/interface_bank/configs/bank_booth.loc"),
+        "[bankbooth]\nname=Bank booth\nop2=Use-quickly\n\n[bankboothclosed]\nname=Closed bank booth\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("scripts/interface_bank/configs/banker.npc"),
+        "[werewolfbanker]\nname=Banker\nop1=Talk-to\nop3=Bank\ncategory=bank_teller\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("scripts/areas/area_goblin/configs/goblin.npc"),
+        "[goblin]\nname=Goblin\nop1=Talk-to\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("maps/m50_50.jm2"),
+        "==== MAP ====\n0 0 0: h1 o6 u48\n==== LOC ====\n0 12 32: 2213 10 1\n0 13 32: 2215 10 1\n0 14 32: 3045 10 1\n==== NPC ====\n0 20 21: 1036\n0 22 22: 1\n",
+    )
+    .unwrap();
+    let banks = derive_banks(&dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(banks.len(), 2, "booth + teller, not closed/tutorial/goblin");
+    assert_eq!(banks[0].name, "Bank booth");
+    assert_eq!(
+        banks[0].tile,
+        WorldTile {
+            x: 50 * 64 + 12,
+            z: 50 * 64 + 32,
+            level: 0,
+        }
+    );
+    assert_eq!(banks[0].access, BankAccess::Booth { op: 2 });
+    assert_eq!(banks[1].name, "Banker");
+    assert_eq!(
+        banks[1].tile,
+        WorldTile {
+            x: 50 * 64 + 20,
+            z: 50 * 64 + 21,
+            level: 0,
+        }
+    );
+    assert_eq!(
+        banks[1].access,
+        BankAccess::Npc {
+            name: "Banker".into(),
+            op: 3,
+            choose: None,
+        }
+    );
+}
+
+#[test]
+fn bake_emits_bank_teller_when_the_tree_has_no_booths() {
+    let dir =
+        std::env::temp_dir().join(format!("274bot-nav-banks-npc-only-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for sub in ["", "pack", "scripts/interface_bank/configs", "maps"] {
+        std::fs::create_dir_all(dir.join(sub)).unwrap();
+    }
+    std::fs::write(dir.join("pack/loc.pack"), "1=crate\n").unwrap();
+    std::fs::write(dir.join("pack/npc.pack"), "1036=werewolfbanker\n").unwrap();
+    std::fs::write(
+        dir.join("scripts/interface_bank/configs/banker.npc"),
+        "[werewolfbanker]\nname=Banker\nop1=Talk-to\nop3=Bank\ncategory=bank_teller\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("maps/m50_50.jm2"),
+        "==== MAP ====\n==== LOC ====\n==== NPC ====\n0 20 21: 1036\n",
+    )
+    .unwrap();
+    let banks = derive_banks(&dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(banks.len(), 1, "tellers still pack without a bankbooth loc");
+    assert_eq!(
+        banks[0].access,
+        BankAccess::Npc {
+            name: "Banker".into(),
+            op: 3,
+            choose: None,
+        }
+    );
+}
+
+#[test]
 fn v10_roundtrips_wilderness_rules_and_wildy_cap() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);

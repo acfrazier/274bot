@@ -431,3 +431,6 @@ mod memory_startup;
 #[cfg(test)]
 #[path = "lib_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod bank_npc_live;

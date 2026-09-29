@@ -414,10 +414,13 @@ pub(crate) fn step_nav_bot<D: Driver>(
 /// Advance one BankBudget session step on a [`NavBot`]. Walk completes
 /// when the player is already on the stand tile (or a sub-route is
 /// armed for follow); Open is a no-op while the bank is already
-/// open+loaded; DepositAll / Withdraw / Wear / Close dispatch through
-/// [`api::interact::Interactions`]. Clears the pending session when
-/// steps are exhausted, or on walk/open/withdraw failure (NoPath).
-/// Returns whether the driver was written.
+/// open+loaded and honors packed booth or NPC access; DepositAll /
+/// Withdraw / Wear / Close dispatch through
+/// [`api::interact::Interactions`] and pop only after the snapshot
+/// shows the step landed (a failed send retries, it does not skip).
+/// Clears the pending session when steps are exhausted, or on
+/// walk/open/withdraw failure (NoPath). Returns whether the driver was
+/// written.
 pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
@@ -499,47 +502,72 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
                 pending.steps.pop_front();
                 log_walk_arm_bot(|| "bank_fetch phase done Open already-loaded".to_string());
                 false
-            } else if snapshot.bank_component_id() == -1 {
+            } else if snapshot.bank_component_id() != -1 {
+                // Booth/NPC already opened the widget; wait for the list.
+                false
+            } else {
                 let sent = open_bank_at_here(driver, snapshot, here, world);
                 if sent {
-                    log_walk_arm_bot(|| "bank_fetch Open sent Use-quickly".to_string());
+                    log_walk_arm_bot(|| "bank_fetch Open sent packed access".to_string());
                 }
                 sent
-            } else {
-                false
             }
         }
         BankStep::DepositAll => {
-            let wrote = deposit_all_backpack(driver, snapshot);
-            pending.steps.pop_front();
-            log_walk_arm_bot(|| format!("bank_fetch phase done DepositAll wrote={wrote}"));
-            wrote
+            if backpack_empty(snapshot) {
+                pending.steps.pop_front();
+                log_walk_arm_bot(|| "bank_fetch phase done DepositAll observed-empty".to_string());
+                false
+            } else {
+                let wrote = deposit_all_backpack(driver, snapshot);
+                log_walk_arm_bot(|| format!("bank_fetch DepositAll sent={wrote}"));
+                wrote
+            }
         }
         BankStep::Withdraw { id, count } => {
-            let wrote = withdraw_id(driver, snapshot, id, count);
-            if wrote {
+            if inventory_at_least(snapshot, id, count) {
                 pending.steps.pop_front();
                 log_walk_arm_bot(|| {
-                    format!("bank_fetch phase done Withdraw id={id} count={count}")
+                    format!("bank_fetch phase done Withdraw id={id} count={count} observed")
                 });
-            } else {
+                false
+            } else if !bank_holds(snapshot, id) {
                 abort = true;
+                false
+            } else {
+                let wrote = withdraw_id(driver, snapshot, id, count);
+                log_walk_arm_bot(|| {
+                    format!("bank_fetch Withdraw id={id} count={count} sent={wrote}")
+                });
+                wrote
             }
-            wrote
         }
         BankStep::Wear { id } => {
-            let mut ix = api::interact::Interactions::new(snapshot, driver);
-            let wrote = matches!(ix.wear(id), api::interact::SendResult::Sent { .. });
-            pending.steps.pop_front();
-            log_walk_arm_bot(|| format!("bank_fetch phase done Wear id={id} wrote={wrote}"));
-            wrote
+            if wearing(snapshot, id) {
+                pending.steps.pop_front();
+                log_walk_arm_bot(|| format!("bank_fetch phase done Wear id={id} observed"));
+                false
+            } else if !inventory_at_least(snapshot, id, 1) {
+                abort = true;
+                false
+            } else {
+                let mut ix = api::interact::Interactions::new(snapshot, driver);
+                let wrote = matches!(ix.wear(id), api::interact::SendResult::Sent { .. });
+                log_walk_arm_bot(|| format!("bank_fetch Wear id={id} sent={wrote}"));
+                wrote
+            }
         }
         BankStep::Close => {
-            let mut ix = api::interact::Interactions::new(snapshot, driver);
-            let wrote = matches!(ix.close_modal(), api::interact::SendResult::Sent { .. });
-            pending.steps.pop_front();
-            log_walk_arm_bot(|| format!("bank_fetch phase done Close wrote={wrote}"));
-            wrote
+            if snapshot.bank_component_id() < 0 {
+                pending.steps.pop_front();
+                log_walk_arm_bot(|| "bank_fetch phase done Close observed".to_string());
+                false
+            } else {
+                let mut ix = api::interact::Interactions::new(snapshot, driver);
+                let wrote = matches!(ix.close_modal(), api::interact::SendResult::Sent { .. });
+                log_walk_arm_bot(|| format!("bank_fetch Close sent={wrote}"));
+                wrote
+            }
         }
     };
     if abort {
@@ -584,4 +612,29 @@ pub(crate) fn bank_fetch_freezes_follow(bot: &NavBot) -> bool {
         Some(_) => true,
         None => false,
     }
+}
+
+fn backpack_empty(snapshot: &GameSnapshot) -> bool {
+    snapshot.inv().iter().all(|&(_, n)| n <= 0)
+}
+
+fn inventory_at_least(snapshot: &GameSnapshot, id: i32, count: i32) -> bool {
+    snapshot
+        .inv()
+        .iter()
+        .any(|&(got, n)| got == id && n >= count)
+}
+
+fn bank_holds(snapshot: &GameSnapshot, id: i32) -> bool {
+    snapshot
+        .bank()
+        .iter()
+        .any(|item| item.def.id == id && item.count >= 1)
+}
+
+fn wearing(snapshot: &GameSnapshot, id: i32) -> bool {
+    snapshot
+        .equipment()
+        .iter()
+        .any(|item| item.def.id == id && item.count >= 1)
 }

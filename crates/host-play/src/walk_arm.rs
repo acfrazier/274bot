@@ -67,7 +67,9 @@ pub struct NoPath;
 /// keeps the mine sealed. `state` gates payable edges: the focused slot's
 /// last published snapshot facts, fail-closed [`WorldState::empty`] when
 /// none. `bank` is the open bank's rows (obj id, count) for the BankBudget
-/// session — empty when the bank is closed (no closed-bank inventory).
+/// session — empty when the bank is closed. There is no closed-bank
+/// inventory: a fetch walk whose only missing items sit in a shut bank
+/// is `NoPath` until that bank is open.
 /// On success the caller's picked dest is stored by the arm's route;
 /// when `allow_bank_fetch` is on and `find` fails only on missing
 /// item/worn reqs, a [`PendingBankFetch`] is latched and the post-session

@@ -344,6 +344,28 @@ never latches a bank session, and never changes ordinary walk policies.
   a PRE-state stand proof (or wear-only). Published hops are the post-state
   from→to transports, never bank steps or Traveller actions.
 
+## BankBudget (`nav::bank_fetch`)
+
+WalkTo and script `walk_with` can opt in with `FindOptions::allow_bank_fetch`
+(the panel/TUI **bank fetch** checkbox, default off). `find` itself stays
+fail-closed: when the only missing gates are `item_req` / `worn_req`, the
+host plans a fetch-and-wear session from the packed bank stand table
+(`NavWorld::banks()`), walks to the nearest stand, opens it, deposits,
+withdraws, wears, and closes, then re-runs the strict search.
+
+Packed stands are content-derived booths **and** NPC tellers
+(`category=bank_teller`). Open uses that packed access — a teller stand
+sends the banker op (and a dialog choice when the pack carries one), not a
+nearby booth's `Use-quickly`. Deposit, wear and close wait until the live
+snapshot shows the step landed; a failed send retries instead of skipping
+ahead.
+
+**Closed bank:** the session is planned from the **open** bank's rows
+(`snap.bank()`). A closed bank contributes `[]`, so BankBudget cannot prove
+that a banked item exists and reports `NoPath`. That is intentional — there
+is no closed-bank inventory cache. Open the bank (or keep it open) before
+confirming a fetch walk if the needed item is only in the bank.
+
 ## WalkTo picker
 
 The panel's main-chrome **WalkTo** button fills the Game pane

@@ -13,7 +13,9 @@ pub struct NavSettings {
     pub allow_wilderness: bool,
     /// BankBudget execute (0.1.5): when set, a fail-closed `find` that
     /// misses only on item/worn reqs starts a deposit-withdraw-wear
-    /// session. Default false.
+    /// session (booth or NPC teller). Planned from the **open** bank;
+    /// a closed bank has no inventory for fetch, so WalkTo reports no
+    /// path rather than guessing banked items. Default false.
     pub allow_bank_fetch: bool,
     pub show_nav_path: bool,
     pub hop_labels: bool,

@@ -2,7 +2,10 @@
 //! (`o` on the Overview, or the palette) with the selected profile's
 //! `random_events`, `lamp_skill`, and `lamp_auto`, plus session nav find
 //! opt-ins (teleports / wilderness / BankBudget) and the remembered WalkTo
-//! terrain-bake choice shared with the panel. The random toggle flips
+//! terrain-bake choice shared with the panel. Bank fetch plans from the
+//! open bank only — a closed bank has no inventory, so a fetch walk that
+//! needs a banked item reports no path until the bank is open. The random
+//! toggle flips
 //! [`ProfileSettings`] in place (the operator vault; `--live` still
 //! ephemeral, no persist). Not crowding the main view — a small centered
 //! box drawn after the panes.
