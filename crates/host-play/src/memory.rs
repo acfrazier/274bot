@@ -10,9 +10,13 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use api::interact::{cheat, tele_args};
+use api::snapshot::WorldTile;
 
 pub use crate::memory_startup::{
     mark_process_start, mark_startup, record_adapter, AdapterRecord, StartupMark,
@@ -480,13 +484,126 @@ fn qualify_contentious_moss_fleet(
 /// deadline is the real bound, so the budget must not end the wait first.
 const DUEL_COMPLETED_DUEL_BUDGET_TICKS: u32 = 3_000;
 
+/// Al Kharid bank: outside the frozen `DUEL_ZONE` (3328..=3393, 3203..=3325),
+/// so an unstarted or already-fought slot is not a `inDuelChallengeArea`
+/// candidate while another pair Starts.
+const DUEL_HOLD: WorldTile = WorldTile {
+    x: 3269,
+    z: 3167,
+    level: 0,
+};
+
+/// Frozen `DUEL_CHALLENGE_ANCHOR` (3368, 3274): the lobby tile a pair Starts on.
+const DUEL_LOBBY: WorldTile = WorldTile {
+    x: 3368,
+    z: 3274,
+    level: 0,
+};
+
+/// Shared pair-admission gate for one duel fleet. Mint order is pairing:
+/// slots `(2i, 2i+1)` are pair `i`. The frozen card challenges every named,
+/// out-of-combat player in the lobby (`DuelArena.ts` `challengeTargets` /
+/// `sortChallengeTargets` / 1.5 s `CHALLENGE_RESULT_WAIT_MS`); starting every
+/// slot at once is an all-to-all race that can drop `opponent` to null inside
+/// a fight pen. This gate keeps each Start's only free lobby candidate the
+/// partner: unstarted slots wait at [`DUEL_HOLD`], a finished pair is parked
+/// there until every slot has entered a pen, then released back to the lobby.
+struct DuelPairGate {
+    n: usize,
+    holding: Vec<AtomicBool>,
+    in_pen: Vec<AtomicBool>,
+    admitted_pair: AtomicUsize,
+}
+
+impl DuelPairGate {
+    fn new(n: usize) -> Arc<Self> {
+        Arc::new(Self {
+            n,
+            holding: (0..n).map(|_| AtomicBool::new(false)).collect(),
+            in_pen: (0..n).map(|_| AtomicBool::new(false)).collect(),
+            admitted_pair: AtomicUsize::new(0),
+        })
+    }
+
+    fn mark_holding(&self, slot: usize) {
+        self.holding[slot].store(true, Ordering::Release);
+    }
+
+    fn all_holding(&self) -> bool {
+        self.holding.iter().all(|flag| flag.load(Ordering::Acquire))
+    }
+
+    fn may_enter_lobby(&self, slot: usize) -> bool {
+        self.all_holding() && self.admitted_pair.load(Ordering::Acquire) >= slot / 2
+    }
+
+    fn mark_in_pen(&self, slot: usize) {
+        if self.in_pen[slot].swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let pair = slot / 2;
+        let a = pair * 2;
+        let b = a + 1;
+        if self.in_pen[a].load(Ordering::Acquire) && self.in_pen[b].load(Ordering::Acquire) {
+            let _ = self.admitted_pair.compare_exchange(
+                pair,
+                pair + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+        }
+    }
+
+    fn all_in_pen(&self) -> bool {
+        self.in_pen.len() == self.n && self.in_pen.iter().all(|flag| flag.load(Ordering::Acquire))
+    }
+}
+
+fn duel_near(snap: &api::snapshot::GameSnapshot, dest: WorldTile, radius: i32) -> bool {
+    snap.tile().is_some_and(|(x, z, level)| {
+        level == dest.level && (x - dest.x).abs().max((z - dest.z).abs()) <= radius
+    })
+}
+
+fn duel_tele_step(name: &'static str, dest: WorldTile, budget_ticks: u32) -> scenario::Step {
+    scenario::Step {
+        name,
+        kind: scenario::StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &tele_args(dest.level, dest.x, dest.z));
+                true
+            }),
+        },
+        wait: scenario::Wait {
+            arm: scenario::Proof::ArrivedNear {
+                x: dest.x,
+                z: dest.z,
+                level: dest.level,
+                radius: 8,
+            },
+            budget_ticks,
+        },
+    }
+}
+
 /// The Duel Arena card duels other players, so a fleet of it pairs among
 /// itself: `n` slots make `n / 2` fights, and an odd fleet would leave one
 /// slot without an opponent to qualify against. Each slot must finish a duel
 /// after Start, seen from its own snapshots as a fight-pen visit followed by a
 /// return to the lobby. A duel changes only the two fighters, so unlike a
 /// spawned target it leaves nothing in the world.
-fn qualify_duel_arena_fleet(scenario: &mut scenario::Scenario, n: usize) -> Result<(), String> {
+///
+/// Staging (same path for every even N): hold every slot outside the lobby,
+/// Start one mint-order pair at a time once that pair is the only free
+/// challenge-area candidate, admit the next pair when both members have
+/// entered a pen, and park a finished pair outside the lobby until the whole
+/// fleet has done so.
+fn qualify_duel_arena_fleet(
+    scenario: &mut scenario::Scenario,
+    n: usize,
+    slot: usize,
+    gate: Option<&Arc<DuelPairGate>>,
+) -> Result<(), String> {
     if scenario.name != "duel_arena" {
         return Ok(());
     }
@@ -495,14 +612,104 @@ fn qualify_duel_arena_fleet(scenario: &mut scenario::Scenario, n: usize) -> Resu
             "the duel_arena benchmark pairs its slots and needs an even fleet, got N={n}"
         ));
     }
+    if slot >= n {
+        return Err(format!(
+            "duel fleet slot {slot} is outside the even fleet N={n}"
+        ));
+    }
+    let Some(gate) = gate else {
+        return Err("duel fleet staging needs a shared pair gate".into());
+    };
+    if gate.n != n {
+        return Err(format!(
+            "duel fleet gate N={} does not match fleet N={n}",
+            gate.n
+        ));
+    }
     let start = scenario
         .steps
         .iter()
         .position(|step| matches!(step.kind, scenario::StepKind::StartScript))
         .ok_or("duel fleet qualification is missing StartScript")?;
+
+    let hold_gate = Arc::clone(gate);
+    let pen_gate = Arc::clone(gate);
+    let park_gate = Arc::clone(gate);
+
+    scenario.steps.insert(
+        start,
+        duel_tele_step(
+            "hold this slot outside the challenge area until its pair is admitted",
+            DUEL_HOLD,
+            200,
+        ),
+    );
     scenario.steps.insert(
         start + 1,
-        scenario::duel_arena_completed_duel_step(DUEL_COMPLETED_DUEL_BUDGET_TICKS),
+        scenario::Step {
+            name: "wait until this pair is the only free challenge-area candidates",
+            kind: scenario::StepKind::Await {
+                evidence: "duel_pair_admitted_to_empty_lobby",
+                ready: Box::new(move |_| {
+                    hold_gate.mark_holding(slot);
+                    hold_gate.may_enter_lobby(slot)
+                }),
+            },
+            wait: scenario::Wait {
+                arm: scenario::Proof::Stat { id: 16, min: 0 },
+                budget_ticks: DUEL_COMPLETED_DUEL_BUDGET_TICKS,
+            },
+        },
+    );
+    scenario.steps.insert(
+        start + 2,
+        duel_tele_step(
+            "tele this pair into the challenge area for Start",
+            DUEL_LOBBY,
+            200,
+        ),
+    );
+    let start = start + 3;
+    debug_assert!(matches!(
+        scenario.steps[start].kind,
+        scenario::StepKind::StartScript
+    ));
+    scenario.steps.insert(
+        start + 1,
+        scenario::duel_arena_completed_duel_step_on_pen(
+            DUEL_COMPLETED_DUEL_BUDGET_TICKS,
+            move || {
+                pen_gate.mark_in_pen(slot);
+            },
+        ),
+    );
+    scenario.steps.insert(
+        start + 2,
+        scenario::Step {
+            name: "keep this slot out of the lobby until every pair has entered a pen",
+            kind: scenario::StepKind::Repeat {
+                send: Box::new(move |c, snap| {
+                    let dest = if park_gate.all_in_pen() {
+                        DUEL_LOBBY
+                    } else {
+                        DUEL_HOLD
+                    };
+                    if !duel_near(snap, dest, 8) {
+                        cheat(c, &tele_args(dest.level, dest.x, dest.z));
+                    }
+                    true
+                }),
+            },
+            wait: scenario::Wait {
+                arm: scenario::Proof::ArrivedNear {
+                    x: DUEL_LOBBY.x,
+                    z: DUEL_LOBBY.z,
+                    level: DUEL_LOBBY.level,
+                    radius: 8,
+                },
+                budget_ticks: DUEL_COMPLETED_DUEL_BUDGET_TICKS,
+            },
+        },
     );
     Ok(())
 }
@@ -838,7 +1045,9 @@ impl Run {
             SeedNav::FromPlay { world, obj_names } => (world, obj_names),
         };
         let mut seeds = HashMap::new();
-        for name in &self.names {
+        let duel_gate = (self.scenario_name.as_deref() == Some("duel_arena"))
+            .then(|| DuelPairGate::new(self.config.n));
+        for (slot, name) in self.names.iter().enumerate() {
             let mut scenario = if self.config.workload == Workload::SeededIdle {
                 seeded_idle_scenario()
             } else if self.scenario_name.as_deref() == Some("thiever")
@@ -855,7 +1064,7 @@ impl Run {
             };
             widen_fleet_post_start_waits(&mut scenario, self.config.n);
             qualify_contentious_moss_fleet(&mut scenario, self.config.n)?;
-            qualify_duel_arena_fleet(&mut scenario, self.config.n)?;
+            qualify_duel_arena_fleet(&mut scenario, self.config.n, slot, duel_gate.as_ref())?;
             scenario.settings.terminal_shot = None;
             let mut seed = seed_runner(scenario, name, seed_world.clone());
             if let Some(names) = &obj_names {
@@ -2016,9 +2225,11 @@ mod tests {
         );
     }
 
-    /// The Duel Arena card pairs its own slots: an even fleet adds exactly one
-    /// post-Start completed-duel watch and keeps the scenario's proof, while a
-    /// fleet that cannot pair (or another scenario) is refused or untouched.
+    /// The Duel Arena card pairs its own slots: an even fleet stages one
+    /// mint-order pair at a time (hold outside the lobby, admit, Start, completed
+    /// duel, park until every pair has entered a pen) and keeps the scenario's
+    /// proof. A fleet that cannot pair, or another scenario, is refused or
+    /// untouched. N=2, N=10 and N=50 share that path.
     #[test]
     fn duel_fleets_pair_up_and_owe_a_completed_duel_after_start() {
         let baseline = scenario::get("duel_arena").expect("duel scenario");
@@ -2030,30 +2241,76 @@ mod tests {
         assert_eq!(start + 1, baseline.steps.len(), "Start is the last step");
 
         for n in [2, 10, 50] {
+            let gate = DuelPairGate::new(n);
             let mut fleet = scenario::get("duel_arena").expect("duel scenario");
-            qualify_duel_arena_fleet(&mut fleet, n).expect("even fleet");
-            assert_eq!(fleet.steps.len(), baseline.steps.len() + 1, "N={n}");
-            assert!(matches!(
-                fleet.steps[start].kind,
-                scenario::StepKind::StartScript
-            ));
-            let watch = &fleet.steps[start + 1];
+            qualify_duel_arena_fleet(&mut fleet, n, 0, Some(&gate)).expect("even fleet");
+            assert_eq!(fleet.steps.len(), baseline.steps.len() + 5, "N={n}");
+            assert_eq!(
+                fleet.steps[start].name,
+                "hold this slot outside the challenge area until its pair is admitted"
+            );
+            assert_eq!(
+                fleet.steps[start + 1].name,
+                "wait until this pair is the only free challenge-area candidates"
+            );
+            assert_eq!(
+                fleet.steps[start + 2].name,
+                "tele this pair into the challenge area for Start"
+            );
+            assert!(
+                matches!(fleet.steps[start + 3].kind, scenario::StepKind::StartScript),
+                "N={n}"
+            );
+            let watch = &fleet.steps[start + 4];
             assert!(matches!(watch.kind, scenario::StepKind::Await { .. }));
             assert_eq!(watch.wait.budget_ticks, DUEL_COMPLETED_DUEL_BUDGET_TICKS);
+            assert!(matches!(
+                fleet.steps[start + 5].kind,
+                scenario::StepKind::Repeat { .. }
+            ));
             assert_eq!(fleet.proof, baseline.proof, "N={n}");
         }
 
         for n in [1, 3, 49] {
             let mut fleet = scenario::get("duel_arena").expect("duel scenario");
-            let error = qualify_duel_arena_fleet(&mut fleet, n).expect_err("unpairable");
+            let error = qualify_duel_arena_fleet(&mut fleet, n, 0, None).expect_err("unpairable");
             assert!(error.contains("even fleet"), "N={n}: {error}");
             assert_eq!(fleet.steps.len(), baseline.steps.len(), "N={n}");
         }
 
         let mut moss = scenario::get("moss_giant_bank_start").expect("moss scenario");
         let steps = moss.steps.len();
-        qualify_duel_arena_fleet(&mut moss, 1).expect("other scenarios pass through");
+        qualify_duel_arena_fleet(&mut moss, 1, 0, None).expect("other scenarios pass through");
         assert_eq!(moss.steps.len(), steps);
+    }
+
+    /// Pair 1 cannot occupy the lobby until both members of pair 0 have entered
+    /// a pen, and nobody Starts until every slot has left the lobby for the hold.
+    #[test]
+    fn duel_pair_gate_admits_one_pair_after_both_enter_a_pen() {
+        let gate = DuelPairGate::new(4);
+        assert!(!gate.may_enter_lobby(0), "hold is empty");
+        assert!(!gate.may_enter_lobby(2), "later pair");
+
+        for slot in 0..4 {
+            gate.mark_holding(slot);
+        }
+        assert!(gate.may_enter_lobby(0));
+        assert!(gate.may_enter_lobby(1));
+        assert!(!gate.may_enter_lobby(2), "pair 1 waits on pair 0's pens");
+
+        gate.mark_in_pen(0);
+        assert!(!gate.may_enter_lobby(2), "one fighter is not a pair");
+        gate.mark_in_pen(0);
+        assert!(!gate.all_in_pen());
+        gate.mark_in_pen(1);
+        assert!(gate.may_enter_lobby(2), "pair 0 is in a pen");
+        assert!(gate.may_enter_lobby(3));
+        assert!(!gate.all_in_pen());
+
+        gate.mark_in_pen(2);
+        gate.mark_in_pen(3);
+        assert!(gate.all_in_pen());
     }
 
     #[test]
