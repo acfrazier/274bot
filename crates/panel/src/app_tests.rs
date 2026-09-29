@@ -812,6 +812,52 @@ fn apply_ui_scale_scales_padding_for_retina() {
 }
 
 #[test]
+fn amber_scrollbars_stay_thin_and_scale_with_ui() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dear_imgui_rs::Context::create();
+    let before = ctx.style().scrollbar_size();
+    crate::theme::apply_amber(ctx.style_mut(), &crate::theme::ChromeColors::default());
+    let thin = ctx.style().scrollbar_size();
+    assert!(
+        before > thin,
+        "amber must thin the imgui default (was {before})"
+    );
+    assert!(
+        (thin - 6.0).abs() < 0.01,
+        "thin globally, about 6px, got {thin}"
+    );
+    assert!(
+        (ctx.style().scrollbar_rounding() - thin * 0.5).abs() < 0.01,
+        "pill grab matches the thin width"
+    );
+    apply_ui_scale(ctx.style_mut(), 2.0);
+    assert!(
+        (ctx.style().scrollbar_size() - thin * 2.0).abs() < 0.01,
+        "thin size scales with the integer UI scale"
+    );
+}
+
+#[test]
+fn game_blit_gaps_equal_at_default_and_wide() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let ctx = dear_imgui_rs::Context::create();
+    // Docked game windows keep default window padding; the dock host is
+    // zero-padded, so the dockspace spans the viewport (see DOCKHOST_PADDING).
+    let pad = ctx.style().window_padding()[0];
+    for viewport_w in [BASE_WINDOW_W, 1400.0] {
+        let (left, right) = crate::theme::game_blit_gaps(viewport_w, pad);
+        assert!(
+            (left - right).abs() <= 1.0,
+            "viewport {viewport_w}: left {left} vs right {right}"
+        );
+        assert!(
+            left > pad,
+            "viewport {viewport_w}: blit must not clamp flush-left (left {left})"
+        );
+    }
+}
+
+#[test]
 fn fit_applet_keeps_aspect_and_does_not_dpi_double() {
     assert_eq!(native_applet(), [765.0, 503.0]);
     assert_eq!(fit_applet([765.0, 503.0]), [765.0, 503.0]);
