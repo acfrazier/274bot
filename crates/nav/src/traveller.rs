@@ -209,6 +209,9 @@ pub struct TravelOptions<'a> {
     /// Packed loc/npc edges (`TransportGraph::edges`): spirit-tree and
     /// glider destination dialogs index `to` among same-`loc_id` siblings.
     pub edges: Option<&'a [TransportEdge]>,
+    /// Pinned evidence used by route selection, rechecked before gated
+    /// transport sends. Missing or undecided evidence fails closed.
+    pub quest_evidence: Option<&'a crate::quest_gates::QuestEvidence>,
     /// Per-leg phase callback; fired during the poll that crosses the
     /// transition. May borrow the caller (like `Evidence<'a>` in settle).
     #[allow(clippy::type_complexity)]
@@ -224,6 +227,7 @@ impl Default for TravelOptions<'_> {
             max_hops: 60,
             teleports: None,
             edges: None,
+            quest_evidence: None,
             on_leg: None,
         }
     }
@@ -582,6 +586,12 @@ impl FollowRun {
                     };
                     fire_leg(options, &leg, LegPhase::Start);
                     let here = here(snapshot);
+                    if let Some(outcome) =
+                        self.check_transport_gate(edge, here, options.quest_evidence)
+                    {
+                        fire_leg(options, &leg, LegPhase::Failed);
+                        return Some(outcome);
+                    }
                     // A packed Teleport hop is any-tile: no approach and no
                     // loc/npc target — the edge names the op itself (the
                     // held-item Rub on the charged jewellery obj, or the
@@ -884,6 +894,21 @@ impl FollowRun {
                 }
             }
         }
+    }
+
+    fn check_transport_gate(
+        &self,
+        edge: &TransportEdge,
+        at: WorldTile,
+        evidence: Option<&crate::quest_gates::QuestEvidence>,
+    ) -> Option<TravelOutcome> {
+        edge.quest_gates.as_ref().and_then(|gates| {
+            (gates.test(evidence) != api::selected::Truth::True).then(|| TravelOutcome::Blocked {
+                at,
+                leg: self.leg_index,
+                detail: "transport quest gate is not proven by current evidence".to_owned(),
+            })
+        })
     }
 }
 

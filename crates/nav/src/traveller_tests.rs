@@ -1596,6 +1596,78 @@ fn follow_transport_leg_interacts_and_arrives() {
     assert_eq!(rec.loc_ops, 1, "one OP_LOC1 interact sent");
 }
 
+#[test]
+fn gated_transport_rechecks_evidence_after_approach_before_send() {
+    use crate::quest_gates::tests::{family, range, tbwt_evidence, window};
+    use crate::quest_gates::QuestGates;
+
+    let proven = tbwt_evidence(range(Some(3), Some(3)));
+    let blocked = tbwt_evidence(range(Some(4), Some(4)));
+    let unknown = tbwt_evidence(range(Some(3), Some(4)));
+    for (current, allowed) in [
+        (Some(&blocked), false),
+        (Some(&unknown), false),
+        (None, false),
+        (Some(&proven), true),
+    ] {
+        let mut c = scene_client();
+        plant_ladder(&mut c, Some("Climb"));
+        let mut snap = snap_at(&mut c, 2, 1);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut edge = ladder_edge();
+        edge.quest_gates = Some(
+            QuestGates::new(family(1), [window("tbwt", "tbwt_main", Some(3), Some(3))]).unwrap(),
+        );
+        assert_eq!(
+            edge.quest_gates.as_ref().unwrap().test(Some(&proven)),
+            api::selected::Truth::True
+        );
+        let route = Route {
+            dest: edge.to,
+            legs: vec![Leg::Transport { edge }],
+            ticks: 2.0,
+        };
+        let mut traveller = Traveller::new();
+        let mut options = TravelOptions {
+            quest_evidence: Some(&proven),
+            ..Default::default()
+        };
+        assert!(traveller
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked, vec![(2, 3)]);
+        assert_eq!(rec.loc_ops, 0);
+
+        plant_player(&mut c, 2, 3);
+        bump_rebuild(&mut c, &mut snap);
+        options.quest_evidence = current;
+        let outcome = traveller.follow(&mut rec, &snap, route.clone(), &mut options);
+        if allowed {
+            assert!(outcome.is_none());
+            assert_eq!(rec.loc_ops, 1);
+            plant_player(&mut c, 2, 5);
+            bump_rebuild(&mut c, &mut snap);
+            assert!(matches!(
+                traveller.follow(&mut rec, &snap, route, &mut options),
+                Some(TravelOutcome::Arrived { .. })
+            ));
+            assert_eq!(rec.loc_ops, 1, "a proven gate sends the interact once");
+        } else {
+            assert_eq!(
+                rec.loc_ops, 0,
+                "gate closure must prevent the pending interact"
+            );
+            assert!(matches!(
+                outcome,
+                Some(TravelOutcome::Blocked { leg: 0, .. })
+            ));
+        }
+    }
+}
+
 /// Closed trapdoor 1568 Open then loc_change to 1570: Climb-down must
 /// target the open leaf. Landing is the player's tile +6400 (offset 1
 /// from the loc-baked dest). Host WalkNear close_enough 0 still arrives.
