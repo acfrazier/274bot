@@ -1,7 +1,8 @@
 //! Panel-owned winit + wgpu + dear-imgui window loop.
 //!
-//! Instance → window → surface → surface-compatible adapter → device/queue
-//! → surface config → imgui context (theme/ini) → platform + renderer,
+//! Instance → window → surface on the UI thread, then the surface-compatible
+//! adapter → device/queue on a worker while the event loop keeps pumping,
+//! then surface config → imgui context (theme/ini) → platform + renderer,
 //! then a per-frame `prepare_frame` → UI body → `prepare_render_with_ui`
 //! → render pass → present cycle driven by an `ApplicationHandler` event
 //! loop. The window/GPU stack is rebuilt on render errors.
@@ -9,6 +10,7 @@
 use std::mem;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -58,6 +60,10 @@ pub enum PanelError {
     AdapterUnavailable(#[source] wgpu::RequestAdapterError),
     #[error("WGPU device request failed: {0}; {help}", help = GRAPHICS_HELP)]
     DeviceRequest(#[source] wgpu::RequestDeviceError),
+    #[error("GPU initialization thread could not start: {0}")]
+    GpuThread(#[source] std::io::Error),
+    #[error("GPU initialization thread ended without an adapter or device")]
+    GpuInitLost,
     #[error("WGPU renderer initialization failed: {0}")]
     RendererInit(#[source] imgui_wgpu::RendererError),
     #[error("WGPU renderer frame preparation failed: {0}")]
@@ -446,17 +452,75 @@ struct AppWindow {
     offscreen: Option<wgpu::Texture>,
 }
 
+/// How often the loop checks a pending GPU bring-up. Only runs until the
+/// device exists.
+const GPU_INIT_POLL: Duration = Duration::from_millis(50);
+
+/// GPU bring-up in flight: the OS window exists and the event loop keeps
+/// pumping while a worker requests the adapter and device. A cold NVIDIA
+/// D3D12 device on a hybrid laptop has taken minutes here; blocking the UI
+/// thread on it made Windows mark the window Not Responding after ~5 s.
+struct PendingGpu {
+    window: Arc<Window>,
+    ready: mpsc::Receiver<Result<GpuParts, PanelError>>,
+}
+
+/// What the worker hands back to the UI thread.
+struct GpuParts {
+    instance: wgpu::Instance,
+    surface: wgpu::Surface<'static>,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+/// Adapter and device for `surface`, off the UI thread. Low power by
+/// default: on a hybrid laptop that is the integrated GPU driving the
+/// display, which skips the discrete GPU's cold start; single-GPU machines
+/// get their only adapter either way. `WGPU_POWER_PREF=high` overrides.
+fn request_gpu(
+    instance: wgpu::Instance,
+    surface: wgpu::Surface<'static>,
+) -> Result<GpuParts, PanelError> {
+    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference:
+            wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower),
+        compatible_surface: Some(&surface),
+        force_fallback_adapter: false,
+    }))
+    .map_err(PanelError::AdapterUnavailable)?;
+
+    let device_desc = wgpu::DeviceDescriptor {
+        label: None,
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::default(),
+        memory_hints: wgpu::MemoryHints::default(),
+        ..Default::default()
+    };
+    let (device, queue) =
+        block_on(adapter.request_device(&device_desc)).map_err(PanelError::DeviceRequest)?;
+    Ok(GpuParts {
+        instance,
+        surface,
+        adapter,
+        device,
+        queue,
+    })
+}
+
 impl AppWindow {
-    fn new(
-        event_loop: &ActiveEventLoop,
-        cfg: &PanelConfig,
-        lifecycle: &mut Lifecycle,
-    ) -> Result<Self, PanelError> {
-        // WGPU instance and window
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+    /// Create the OS window and surface, then hand adapter/device creation
+    /// to a worker. [`AppWindow::finish`] completes the stack on the UI
+    /// thread once the worker answers.
+    fn start(event_loop: &ActiveEventLoop, cfg: &PanelConfig) -> Result<PendingGpu, PanelError> {
+        // `WGPU_BACKEND` and the wgpu debug flags override the defaults.
+        let instance = wgpu::Instance::new(
+            wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::PRIMARY,
+                ..wgpu::InstanceDescriptor::new_without_display_handle()
+            }
+            .with_env(),
+        );
 
         let window = {
             let size = LogicalSize::new(cfg.window_size.0, cfg.window_size.1);
@@ -475,22 +539,30 @@ impl AppWindow {
             .create_surface(window.clone())
             .map_err(PanelError::SurfaceCreation)?;
 
-        let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .map_err(PanelError::AdapterUnavailable)?;
+        let (tx, ready) = mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("panel-gpu-init".into())
+            .spawn(move || {
+                // The receiver is gone only when the loop already exited.
+                let _ = tx.send(request_gpu(instance, surface));
+            })
+            .map_err(PanelError::GpuThread)?;
+        Ok(PendingGpu { window, ready })
+    }
 
-        let device_desc = wgpu::DeviceDescriptor {
-            label: None,
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::default(),
-            ..Default::default()
-        };
-        let (device, queue) =
-            block_on(adapter.request_device(&device_desc)).map_err(PanelError::DeviceRequest)?;
+    fn finish(
+        window: Arc<Window>,
+        parts: GpuParts,
+        cfg: &PanelConfig,
+        lifecycle: &mut Lifecycle,
+    ) -> Result<Self, PanelError> {
+        let GpuParts {
+            instance,
+            surface,
+            adapter,
+            device,
+            queue,
+        } = parts;
 
         if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
             let info = adapter.get_info();
@@ -1246,6 +1318,8 @@ where
 {
     cfg: PanelConfig,
     window: Option<AppWindow>,
+    /// The window exists but its adapter/device are still being requested.
+    pending: Option<PendingGpu>,
     lifecycle: Lifecycle,
     ui_frame: F,
     /// Whole-window shot coordination shared with the UI body (the
@@ -1272,6 +1346,7 @@ where
         Self {
             cfg,
             window: None,
+            pending: None,
             lifecycle: Lifecycle {
                 on_style: Some(Box::new(on_style)),
                 on_gpu_init: Some(Box::new(on_gpu_init)),
@@ -1282,6 +1357,48 @@ where
             failure: None,
         }
     }
+
+    /// Create the window and start its GPU bring-up; the loop keeps pumping
+    /// until [`App::poll_gpu`] completes it.
+    fn start_gpu(&mut self, event_loop: &ActiveEventLoop) {
+        match AppWindow::start(event_loop, &self.cfg) {
+            Ok(pending) => self.pending = Some(pending),
+            Err(e) => {
+                self.failure = Some(e);
+                event_loop.exit();
+            }
+        }
+    }
+
+    /// Finish a pending bring-up once the worker answers. Returns whether
+    /// it is still pending.
+    fn poll_gpu(&mut self, event_loop: &ActiveEventLoop) -> bool {
+        let Some(pending) = self.pending.take() else {
+            return false;
+        };
+        let result = match pending.ready.try_recv() {
+            Ok(Ok(parts)) => {
+                AppWindow::finish(pending.window, parts, &self.cfg, &mut self.lifecycle)
+            }
+            Ok(Err(e)) => Err(e),
+            Err(TryRecvError::Empty) => {
+                self.pending = Some(pending);
+                return true;
+            }
+            Err(TryRecvError::Disconnected) => Err(PanelError::GpuInitLost),
+        };
+        match result {
+            Ok(window) => {
+                window.window.request_redraw();
+                self.window = Some(window);
+            }
+            Err(e) => {
+                self.failure = Some(e);
+                event_loop.exit();
+            }
+        }
+        false
+    }
 }
 
 impl<F> ApplicationHandler for App<F>
@@ -1289,19 +1406,8 @@ where
     F: FnMut(&imgui::Ui, &mut Gpu) + 'static,
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
-            match AppWindow::new(event_loop, &self.cfg, &mut self.lifecycle) {
-                Ok(window) => {
-                    self.window = Some(window);
-                    if let Some(w) = self.window.as_ref() {
-                        w.window.request_redraw();
-                    }
-                }
-                Err(e) => {
-                    self.failure = Some(e);
-                    event_loop.exit();
-                }
-            }
+        if self.window.is_none() && self.pending.is_none() {
+            self.start_gpu(event_loop);
         }
     }
 
@@ -1341,27 +1447,22 @@ where
                 }
 
                 if need_recreate {
-                    // Drop the existing window and try to rebuild the whole stack.
-                    let old_window = self.window.take();
-                    match AppWindow::new(event_loop, &self.cfg, &mut self.lifecycle) {
-                        Ok(window) => {
-                            self.window = Some(window);
-                            if let Some(window) = self.window.as_mut() {
-                                window.window.request_redraw();
-                            }
-                        }
-                        Err(e) => {
-                            let _ = old_window;
-                            self.failure = Some(e);
-                            event_loop.exit();
-                        }
-                    }
+                    // Drop the existing window and rebuild the whole stack
+                    // the same way startup builds it.
+                    self.window = None;
+                    self.start_gpu(event_loop);
                 }
             }
             _ => {
                 let window = match self.window.as_mut() {
                     Some(window) => window,
-                    None => return,
+                    // No device yet: only a close request means anything.
+                    None => {
+                        if matches!(event, WindowEvent::CloseRequested) {
+                            event_loop.exit();
+                        }
+                        return;
+                    }
                 };
 
                 let full_event: winit::event::Event<()> = winit::event::Event::WindowEvent {
@@ -1408,6 +1509,10 @@ where
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.poll_gpu(event_loop) {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + GPU_INIT_POLL));
+            return;
+        }
         match self.cfg.redraw {
             RedrawMode::Poll => {
                 event_loop.set_control_flow(ControlFlow::Poll);
