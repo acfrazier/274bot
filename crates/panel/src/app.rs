@@ -1058,21 +1058,20 @@ fn dock_panel_tabs(ui: &Ui, panel: Id) {
 /// Grow the OS window when the rail would cover the native blit. Shrink
 /// it back when the strip leaves — MultiBox off, Grid, or the rail tab
 /// X (`set_multibox(false)`). Falling edge of [`DockLayout::Rail`].
-fn ensure_window_fits(state: &mut PanelState, rail_open: bool) {
+///
+/// `current` is ImGui `display_size` (logical, updated from `Resized`).
+/// Do not call `Window::inner_size()` here: that is a per-frame X11
+/// `GetGeometry` round trip and panics with BadDrawable if the drawable
+/// is already gone.
+fn ensure_window_fits(state: &mut PanelState, rail_open: bool, current: [f32; 2]) {
     let Some(window) = state.os_window.as_ref() else {
         return;
     };
     let rail_was_open = state.dock_layout == Some(DockLayout::Rail);
-    let scale = window.scale_factor();
-    let logical: winit::dpi::LogicalSize<f64> = window.inner_size().to_logical(scale);
-    let (need_w, need_h) = next_os_window_size(
-        (logical.width as f32, logical.height as f32),
-        rail_was_open,
-        rail_open,
-    );
+    let (need_w, need_h) = next_os_window_size((current[0], current[1]), rail_was_open, rail_open);
     let w = need_w as f64;
     let h = need_h as f64;
-    if (w - logical.width).abs() > 1.0 || (h - logical.height).abs() > 1.0 {
+    if (w - current[0] as f64).abs() > 1.0 || (h - current[1] as f64).abs() > 1.0 {
         let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w, h));
     }
 }
@@ -1082,7 +1081,7 @@ fn ensure_window_fits(state: &mut PanelState, rail_open: bool) {
 /// panel/rail widths stay fixed; they only grow vertically.
 fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
     let rail_open = state.session.multibox && !state.session.wall.grid;
-    ensure_window_fits(state, rail_open);
+    ensure_window_fits(state, rail_open, ui.io().display_size());
     let viewport = ui.main_viewport();
     let pos = viewport.pos();
     let vs = viewport.size();
