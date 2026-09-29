@@ -161,7 +161,11 @@ owners.
 | `clue_pack.rs` | trail pack budgeting and keep predicate | frozen pack-plan arithmetic |
 | `clue_puzzle.rs` | sliding-puzzle plan | frozen grouped search over caller rows |
 | `cake_stall.rs` | Baker-stall pins | posted facts, selection in `script` |
-| `gather_methods.rs` | gather-methods query | over the posted family |
+| `family_asset.rs` | checked selected family assets | one manifest/digest/schema admission, run once when a family is prepared |
+| `gather_methods.rs` | gather JSON query adapters | rows and coverage over the typed catalog; absence is a token |
+| `gather_methods/catalog.rs` | typed gathering catalog and queries | spot regions, pages, nearest, zones, rocks; unknown never empty |
+| `gather_methods/wire.rs` | `gathering.json` decode | fail-closed schema-1 decode into the catalog |
+| `gather_methods/cache.rs` | prepared-catalog lifecycle | embedded family, weak shared cache, off-pump preparation |
 | `gather_tools.rs` | gather-tool identity, use, wield | posted facts |
 | `named_banks.rs` | frozen bank catalog, eligibility and selected-content access rows | stand resolution lives in `nav` |
 | `game_data_tests.rs` | test body | logical `game_data::tests` |

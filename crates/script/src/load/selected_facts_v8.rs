@@ -367,18 +367,15 @@ fn required_thieving<'s>(
     Ok(v8::Integer::new(scope, level).into())
 }
 
-/// Frozen `GAS_ROCK_IDS`, sourced from the selected cache's mining rows.
+/// Frozen `GAS_ROCK_IDS`, sourced from the selected gathering catalog's hazard rocks.
 /// `undefined` keeps imports loadable without selected data while the shim's
 /// fail-closed value still throws if a card tries to use `.has`.
 fn gas_rock_ids<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
-    let Some(data) = supply_v2::selected_data() else {
-        return Ok(v8::undefined(scope).into());
-    };
-    let Ok(ids) = api::gather_methods::gas_rock_ids(data.gather_methods()) else {
+    let Ok(ids) = api::gather_methods::gas_rock_ids(supply_v2::gathering().as_deref()) else {
         return Ok(v8::undefined(scope).into());
     };
     let array = v8::Array::new(scope, 0);
-    for (index, id) in ids.enumerate() {
+    for (index, id) in ids.into_iter().enumerate() {
         let id = v8::Integer::new(scope, id);
         array
             .set_index(scope, index as u32, id.into())

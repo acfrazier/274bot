@@ -4,15 +4,15 @@ import path from 'node:path';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, revisions, requestedRevisions } from './generate.ts';
 import { parsePack } from './extractors/common.ts';
-import { extractGatherMethodsFacts, extractGatherPlacementsFacts, gatherContentFiles } from './extractors/gathering.ts';
+import { extractGatheringFamily } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
-import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces } from './generate.ts';
+import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs } from './generate.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
     engineRoot: spec.engine, contentRoot: spec.content, cache: spec.cacheIdentity,
 }]));
-const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', 'scripts/skill_prayer/configs/prayers.dbrow', 'scripts/skill_prayer/configs/prayers.constant', 'scripts/skill_prayer/interfaces/prayer.if', 'scripts/areas/area_falador/configs/dwarven_mine.inv', 'scripts/areas/area_falador/configs/dwarven_mine.npc', 'scripts/skill_runecraft/configs/runecraft.constant', 'maps/m45_75.jm2', 'pack/npc.pack', 'scripts/quests/quest_murder/configs/quest_murder.loc', 'scripts/general/configs/quest.enum', 'maps/m42_55.jm2', 'pack/loc.pack', 'pack/obj.pack', 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', 'scripts/_unpack/225/all.npc', 'scripts/drop tables/scripts/giant.rs2', 'scripts/drop tables/scripts/moss_giant.rs2', 'scripts/drop tables/scripts/fire_giant.rs2', 'scripts/drop tables/scripts/green_dragon.rs2', 'scripts/drop tables/scripts/shared_droptables.rs2', ...gatherContentFiles, ...questIdentityContentFiles, ...trailContentFiles];
+const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', 'scripts/skill_prayer/configs/prayers.dbrow', 'scripts/skill_prayer/configs/prayers.constant', 'scripts/skill_prayer/interfaces/prayer.if', 'scripts/areas/area_falador/configs/dwarven_mine.inv', 'scripts/areas/area_falador/configs/dwarven_mine.npc', 'scripts/skill_runecraft/configs/runecraft.constant', 'maps/m45_75.jm2', 'pack/npc.pack', 'scripts/quests/quest_murder/configs/quest_murder.loc', 'scripts/general/configs/quest.enum', 'maps/m42_55.jm2', 'pack/loc.pack', 'pack/obj.pack', 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', 'scripts/_unpack/225/all.npc', 'scripts/drop tables/scripts/giant.rs2', 'scripts/drop tables/scripts/moss_giant.rs2', 'scripts/drop tables/scripts/fire_giant.rs2', 'scripts/drop tables/scripts/green_dragon.rs2', 'scripts/drop tables/scripts/shared_droptables.rs2', ...questIdentityContentFiles, ...trailContentFiles];
 const unpackNpcIndex = contentFiles.indexOf('scripts/_unpack/225/all.npc');
 contentFiles.splice(unpackNpcIndex + 1, 0, 'scripts/areas/area_kalphite/configs/kalphite.npc');
 const sharedDropsIndex = contentFiles.indexOf('scripts/drop tables/scripts/shared_droptables.rs2');
@@ -65,7 +65,8 @@ const publishedTrioGivers = new Map<number, PublishedTrioGivers>();
 async function verifyRevision(revision: number) {
     const file = path.join(root, `crates/api/data/game-data/${revision}.json`); const payload = JSON.parse(fs.readFileSync(file, 'utf8')) as any; const pin = expected[revision]; const manifestRow = manifest.revisions.find((entry) => entry.revision === revision); if (!manifestRow) throw new Error(`${revision}: missing manifest row`);
     assertEqual(payload.schema_version, 4, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`); assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`);
-    assertPinned(revisions.find(spec => spec.revision === revision)!);
+    const spec = revisions.find((each) => each.revision === revision)!;
+    const pinnedCommits = assertPinned(spec);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
     assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: any) => input.path)), JSON.stringify(contentFiles), `${revision} complete content provenance`);
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
@@ -232,62 +233,35 @@ async function verifyRevision(revision: number) {
         const packed = objPack.get(row.alias);
         if (packed !== row.id) throw new Error(`${revision}: equipment obj.pack mismatch ${JSON.stringify(row)} pack=${packed}`);
     }
-    const gather = payload.gather_methods;
-    if (!gather || Array.isArray(gather)) throw new Error(`${revision}: gather_methods must be one family object, not a bare list`);
-    const extracted = extractGatherMethodsFacts(pin.contentRoot, revision);
-    assertEqual(JSON.stringify(gather), JSON.stringify(extracted), `${revision} gather_methods matches the writer extract`);
-    assertEqual(gather.mining.length, 17, `${revision} mine tables`);
-    assertEqual(gather.woods.length, 10, `${revision} tree tables`);
-    assertEqual(gather.fishing.length, 9, `${revision} fishing method rows`);
-    if (gather.mining.some((row: any) => row.publication !== undefined || row.published_for_placement !== undefined || row.resource_key === 'Rocks')) throw new Error(`${revision}: mining must not publish placement or use display name Rocks`);
-    if (gather.woods.some((row: any) => row.resource_key === 'Tree')) throw new Error(`${revision}: Tree is not a wood key`);
-    if (gather.fishing.some((row: any) => row.loc_ids || row.fishing_movement_enum || row.category === 'Fishing spot' || row.level !== null || row.output !== null || row.qualification !== 'partial')) throw new Error(`${revision}: fishing rows must be type plus actions, not a spawn tile`);
-    assertEqual(JSON.stringify(gather.woods.filter((row: any) => row.publication === 'published').map((row: any) => row.resource_key)), JSON.stringify(['normal', 'oak', 'willow', 'maple', 'yew', 'magic']), `${revision} published woods`);
-    assertEqual(JSON.stringify(gather.woods.filter((row: any) => row.publication === 'conditional').map((row: any) => row.resource_key)), JSON.stringify(['achey', 'hollow']), `${revision} conditional woods`);
-    assertEqual(JSON.stringify(gather.woods.filter((row: any) => row.publication === 'unpublished').map((row: any) => row.resource_key)), JSON.stringify(['jungle', 'burnt']), `${revision} unpublished woods`);
-    assertEqual(gather.mining.filter((row: any) => row.resource_key === 'limestone').length, 3, `${revision} limestone rows`);
-    const gem = gather.mining.find((row: any) => row.table === 'gem_rock');
-    if (!gem || gem.resource_key !== 'gems' || gem.output !== null || gem.qualification !== 'partial') throw new Error(`${revision}: gem_rock ${JSON.stringify(gem)}`);
-    const essence = gather.mining.find((row: any) => row.table === 'rune_essence_table');
-    if (!essence || essence.output?.alias !== 'blankrune' || essence.output?.id !== 1436) throw new Error(`${revision}: rune essence ${JSON.stringify(essence?.output)}`);
-    const copper = gather.mining.find((row: any) => row.table === 'copper_rock_table');
-    if (!copper || copper.loc_ids.find((loc: any) => loc.alias === 'copperrock1')?.id !== 2090 || copper.loc_ids.length <= 2) throw new Error(`${revision}: copper table ${JSON.stringify(copper?.loc_ids)}`);
-    const ironRock = gather.mining.find((row: any) => row.table === 'iron_rock_table');
-    if (!ironRock || ironRock.loc_ids.find((loc: any) => loc.alias === 'ironrock1')?.id !== 2092 || ironRock.loc_ids.find((loc: any) => loc.alias === 'ironrock2')?.id !== 2093) throw new Error(`${revision}: iron rocks`);
-    const desert = gather.mining.find((row: any) => row.table === 'desertrescue_rock');
-    if (!desert || desert.resource_key !== 'rock' || desert.empty_ids.length !== 0) throw new Error(`${revision}: desertrescue ${JSON.stringify(desert)}`);
-    const lavaEel = gather.fishing.find((row: any) => row.category === 'unknown');
-    if (!lavaEel || lavaEel.primary_op !== 'Bait' || lavaEel.pair_op !== 'hidden') throw new Error(`${revision}: lava eel ${JSON.stringify(lavaEel)}`);
-    if (gather.fishing.filter((row: any) => row.category === 'memberfish').length !== 1) throw new Error(`${revision}: memberfish must dedupe to one signature`);
-    if (JSON.stringify(gather.coverage.filter((row: any) => row.class === 'conditional').map((row: any) => row.resource_key).sort()) !== JSON.stringify(['achey', 'hollow'])) throw new Error(`${revision}: conditional coverage`);
-    const locIds = [...gather.mining, ...gather.woods].flatMap((row: any) => [...row.loc_ids, ...row.empty_ids].map((loc: any) => loc.id));
-    if (revision === 274) {
-        if (locIds.includes(5083) || locIds.includes(5084)) throw new Error('274 copied 289-only locs');
-        assertEqual(gather.coverage.filter((row: any) => row.class === 'revision-absent').map((row: any) => `${row.alias}:${row.other_pin_id}:${row.copied}`).join(','), 'dungeon_tree_closed:5083:false,karam_dungeon_exit:5084:false', '274 revision-absent coverage');
-        if (gather.mining.find((row: any) => row.table === 'coal_rock_table').loc_ids.some((loc: any) => loc.alias === 'misc_dummy_coalrock1')) throw new Error('274 copied 289 coal dummy');
-    } else {
-        if (gather.coverage.some((row: any) => row.class === 'revision-absent')) throw new Error('289 must not record 274 revision-absent rows');
-        if (!gather.mining.find((row: any) => row.table === 'coal_rock_table').loc_ids.some((loc: any) => loc.alias === 'misc_dummy_coalrock1' && loc.id === 4676)) throw new Error('289 coal dummy missing from loc_ids');
-        const normal = gather.woods.find((row: any) => row.resource_key === 'normal');
-        if (!normal.loc_ids.some((loc: any) => loc.alias === 'mm_bush_kharazi_jungle_tree1') || normal.empty_ids.some((loc: any) => String(loc.alias).includes('mm_bush'))) throw new Error('289 jungle bush transform invented');
-    }
-    const placements = payload.gather_placements;
-    if (!placements || Array.isArray(placements) || !Array.isArray(placements.rows)) throw new Error(`${revision}: gather_placements must be one family object, not a bare list`);
-    const extractedPlacements = extractGatherPlacementsFacts(pin.contentRoot, extracted.woods);
-    assertEqual(JSON.stringify(placements), JSON.stringify(extractedPlacements.facts), `${revision} gather_placements matches the writer extract`);
-    assertEqual(JSON.stringify(payload.provenance.placement_inputs), JSON.stringify(extractedPlacements.inputs), `${revision} placement inputs match the maps, pack, and published set`);
-    assertEqual(JSON.stringify(extractedPlacements.woods.map((row) => row.resource_key)), JSON.stringify(['normal', 'oak', 'willow', 'maple', 'yew', 'magic']), `${revision} published wood order`);
-    if (extractedPlacements.woods.some((row) => row.placements === 0)) throw new Error(`${revision}: every published wood needs placements`);
-    assertEqual(placements.rows.length, extractedPlacements.woods.reduce((sum, row) => sum + row.placements, 0), `${revision} placement row total`);
-    assertEqual(JSON.stringify(placements.coverage), JSON.stringify([{ class: 'unknown', family: 'mining', reason: 'no selected published-ore set' }]), `${revision} mining unknown coverage`);
-    const placementIds = new Set(gather.woods.filter((row: any) => row.publication === 'published').flatMap((row: any) => row.loc_ids.map((loc: any) => loc.id)));
-    if (placements.rows.some((row: any) => Object.keys(row).join(',') !== 'loc_id,x,z,plane')) throw new Error(`${revision}: placement rows are world loc_id/x/z/plane only`);
-    if (placements.rows.some((row: any) => !placementIds.has(row.loc_id))) throw new Error(`${revision}: placement rows must be published wood ids`);
-    if (placements.rows.some((row: any) => row.plane < 0 || row.plane > 3 || row.x < 0 || row.z < 0)) throw new Error(`${revision}: placement world range`);
-    if (placements.rows.some((row: any) => row.loc_id === 2662 || row.loc_id === 2492)) throw new Error(`${revision}: flour and essence stay one-off, not this family`);
-    if (placements.rows.some((row: any) => 'publication' in row || 'published_for_placement' in row)) throw new Error(`${revision}: placement rows must not carry a publication field`);
+    if (payload.gather_methods !== undefined || payload.gather_placements !== undefined || payload.provenance.placement_inputs !== undefined) throw new Error(`${revision}: gathering facts live in the gathering family, not the core asset`);
+    const gathering = extractGatheringFamily(pin.contentRoot);
+    const familyFile = path.join(root, `crates/api/data/game-data/${revision}/gathering.json`);
+    if (!fs.readFileSync(familyFile).equals(Buffer.from(familyBytes(familyInputs(spec, pinnedCommits), gathering, 'gathering')))) throw new Error(`${revision}: gathering family differs from the writer extract`);
+    assertEqual(JSON.stringify(manifestRow.families?.gathering), JSON.stringify({ path: `${revision}/gathering.json`, schema: gathering.schema, ...digest(familyFile) }), `${revision} manifest gathering descriptor`);
+    assertEqual(JSON.stringify(manifestRow.gathering), JSON.stringify(gathering.summary), `${revision} manifest gathering summary`);
+    // Content pins: the family and the writer could agree and both be wrong, so anchor a few facts to the pinned content.
+    const gatherFacts = gathering.payload;
+    const aliases = new Map(gatherFacts.entities.map((row) => { const [kind, id, alias] = row.split(' '); return [`${kind}:${id}`, alias]; }));
+    const gatherMethod = (id: string) => { const found = gatherFacts.methods.find((each) => each.id === id); if (!found) throw new Error(`${revision}: missing gather method ${id}`); return found; };
+    const gatherKnown = <T>(cell: { state: string; value?: T }, label: string): T => { if (cell.state === 'unknown' || cell.value === undefined) throw new Error(`${revision}: ${label} is unknown`); return cell.value; };
+    assertEqual(JSON.stringify(gathering.summary.methods), JSON.stringify({ woodcutting: 10, mining: 15, fishing: 15 }), `${revision} gather method counts`);
+    const rocks = gathering.summary.rocks;
+    assertEqual(rocks.population, rocks.resource + rocks.depleted + rocks.hazard + rocks.unclassified, `${revision} every rock accounted`);
+    assertEqual(rocks.resource, 27, `${revision} resource rocks`);
+    assertEqual(rocks.hazard, 22, `${revision} gas rocks`);
+    const limestone = gatherKnown(gatherMethod('mining.limestone').targets, 'limestone targets').filter((target) => target.class === 'resource');
+    assertEqual(JSON.stringify(limestone.map((target) => gatherKnown(target.respawn, 'limestone respawn')?.raw)), JSON.stringify([10, 20, 40]), `${revision} limestone distinct respawn rates`);
+    const essence = gatherKnown(gatherMethod('mining.rune stones').targets, 'essence targets')[0];
+    assertEqual(JSON.stringify(gatherKnown(essence.respawn, 'essence respawn')), 'null', `${revision} rune essence never respawns`);
+    const fly = gatherMethod('fishing.freshfish.op1');
+    assertEqual(JSON.stringify(gatherKnown(fly.tools, 'fly tools').map((tool) => aliases.get(`obj:${tool.item}`))), JSON.stringify(['fly_fishing_rod']), `${revision} lure tool`);
+    assertEqual(JSON.stringify(gatherKnown(fly.consumes, 'lure bait').map((amount) => [aliases.get(`obj:${amount.item}`), amount.count])), JSON.stringify([['feather', 1]]), `${revision} lure bait`);
+    assertEqual(JSON.stringify(gatherKnown(fly.products, 'lure products').map((each) => [aliases.get(`obj:${each.item}`), each.level])), JSON.stringify([['raw_trout', 20], ['raw_salmon', 30]]), `${revision} lure products`);
+    const oak = gatherMethod('woodcutting.oak');
+    assertEqual(JSON.stringify(gatherKnown(oak.products, 'oak products').map((each) => [aliases.get(`obj:${each.item}`), each.level])), JSON.stringify([['oak_logs', 15]]), `${revision} oak product`);
+    if (gathering.summary.placements.rows === 0 || gatherFacts.placements.some((file) => !/^maps\/m\d+_\d+\.jm2$/.test(file.file))) throw new Error(`${revision}: gathering placements are map rows`);
     for (const banned of ['curated', 'frozen', 'operator_placement', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS', 'invented']) {
-        if (JSON.stringify(placements).includes(banned)) throw new Error(`${revision}: placements published ${banned}`);
+        if (JSON.stringify(gatherFacts).includes(banned)) throw new Error(`${revision}: gathering family published ${banned}`);
     }
     const questIdentity = payload.quest_identity;
     if (!questIdentity || Array.isArray(questIdentity) || !Array.isArray(questIdentity.rows)) throw new Error(`${revision}: quest_identity must be one family object, not a bare list`);
@@ -456,7 +430,7 @@ async function verifyRevision(revision: number) {
     }), `${revision} cook catalog and surface inputs`);
     assertEqual(fs.readFileSync(path.join(root, 'crates/api/data/game-data/cook-catalog.rs'), 'utf8'), cookCatalogRust(cookCatalog), `${revision} compiled cook camps match frozen AST`);
     publishedTrioGivers.set(revision, trioGivers);
-    results.push({ revision, records: payload.items.length, consumption: payload.consumption.length, pickpocket: payload.pickpocket.length, drop_tables: drops.length, spells: spells.length, staves: staves.length, herbs: herbs.length, prayers: prayers.length, pickaxes: nurmof.pickaxes.length, flour_six: 6, gather_methods: { mining: gather.mining.length, woods: gather.woods.length, fishing: gather.fishing.length }, gather_placements: { rows: placements.rows.length, maps: payload.provenance.placement_inputs.maps.files, published_loc_ids: payload.provenance.placement_inputs.published_loc_ids.count, coverage: placements.coverage.length, woods: extractedPlacements.woods }, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trailRows.length, clues: trailRows.filter((row: any) => row.role === 'clue').length, caskets: trailRows.filter((row: any) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: constrained.length }, talk_key: { talk: talkRows.length, talk_with_spawn: talkRows.filter((row) => row.spawn !== undefined).length, keys: keyRows.length, keys_with_spawn: keyRows.filter((row) => row.spawn !== undefined).length, coverage: talkKey.coverage.length, scripts: extractedTalkKey.inputs.scripts.files, npc_configs: extractedTalkKey.inputs.npc_configs.files }, trio_givers: { rows: giverRows.length, with_spawn: giverRows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.coverage.length, maps: extractedTrioGivers.inputs.maps.files, handlers: extractedTrioGivers.inputs.handlers.length, npc_configs: extractedTrioGivers.inputs.npc_configs.length, aliases: giverRows.map((row) => row.alias) }, equipment_names: { resolved: resolved.length, absent: absent.length, family_counts: familyCounts }, fire_staff_providers: fireProviders, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, fixed_food_heals: Object.fromEntries(fixed), output_sha256: output.sha256, input_hashes: true, content_hashes: true, source_pins: true, dirty_gate: true, cache_identity: pin.cache });
+    results.push({ revision, records: payload.items.length, consumption: payload.consumption.length, pickpocket: payload.pickpocket.length, drop_tables: drops.length, spells: spells.length, staves: staves.length, herbs: herbs.length, prayers: prayers.length, pickaxes: nurmof.pickaxes.length, flour_six: 6, gathering: gathering.summary, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trailRows.length, clues: trailRows.filter((row: any) => row.role === 'clue').length, caskets: trailRows.filter((row: any) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: constrained.length }, talk_key: { talk: talkRows.length, talk_with_spawn: talkRows.filter((row) => row.spawn !== undefined).length, keys: keyRows.length, keys_with_spawn: keyRows.filter((row) => row.spawn !== undefined).length, coverage: talkKey.coverage.length, scripts: extractedTalkKey.inputs.scripts.files, npc_configs: extractedTalkKey.inputs.npc_configs.files }, trio_givers: { rows: giverRows.length, with_spawn: giverRows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.coverage.length, maps: extractedTrioGivers.inputs.maps.files, handlers: extractedTrioGivers.inputs.handlers.length, npc_configs: extractedTrioGivers.inputs.npc_configs.length, aliases: giverRows.map((row) => row.alias) }, equipment_names: { resolved: resolved.length, absent: absent.length, family_counts: familyCounts }, fire_staff_providers: fireProviders, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, fixed_food_heals: Object.fromEntries(fixed), output_sha256: output.sha256, input_hashes: true, content_hashes: true, source_pins: true, dirty_gate: true, cache_identity: pin.cache });
 }
 const requested = requestedRevisions(process.argv.slice(2));
 const refused: { revision: number; reason: string }[] = [];

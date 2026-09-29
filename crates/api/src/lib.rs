@@ -12,6 +12,7 @@ pub mod clue_puzzle;
 pub mod content;
 pub mod cook_locations;
 pub mod ent;
+mod family_asset;
 pub mod game_data;
 pub mod gather_methods;
 pub mod gather_tools;

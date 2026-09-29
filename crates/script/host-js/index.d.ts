@@ -505,61 +505,108 @@ export interface GatherId {
   id: number;
 }
 
-/** Loc-resource method row. publication is null when the landed row has none. */
-export interface GatherLocResourceRow {
-  skill: string;
-  table: string;
-  resource_key: string;
-  loc_ids: GatherId[];
-  empty_ids: GatherId[];
-  output: GatherId | null;
+/** Why a gathering fact is not complete: a machine code and the content spans (`file:first-last`) behind it. */
+export interface GatherGap {
+  code: string;
+  sources: string[];
+}
+
+/** A gathering fact beside its completeness. `known` is a complete set, `partial` keeps the rows found and says what is missing, `unknown` has no rows and no claim of emptiness. */
+export type GatherCell<T> =
+  | { state: 'known'; value: T }
+  | { state: 'partial'; value: T; gaps: GatherGap[] }
+  | { state: 'unknown'; gaps: GatherGap[] };
+
+export interface GatherGate {
+  skill: number;
   level: number;
-  qualification: string;
-  partial_sides: string[];
-  missing_transform: string[];
-  publication: string | null;
 }
 
-/** Fishing method row. No loc ids and no spawn tile. */
-export interface GatherFishingRow {
-  skill: string;
-  category: string;
-  primary_op: string;
-  pair_op: string | null;
-  level: null;
-  output: null;
-  qualification: string;
-  partial_sides: string[];
+/** Source-derived respawn scaling: the raw content value and the tick bounds the scale rule gives it. */
+export interface GatherRespawn {
+  raw: number;
+  scale: GatherCell<{ rule: string; min_ticks: number; max_ticks: number; sources: string[] }>;
+  source: string;
 }
 
-export type GatherMethodRow = GatherLocResourceRow | GatherFishingRow;
+/** One interactable entity of a method. Respawn belongs to the target; `null` inside `known` means no respawn applies. */
+export interface GatherTargetRow {
+  kind: 'loc' | 'npc';
+  id: number;
+  alias: string | null;
+  op: number;
+  class: 'resource' | 'depleted' | 'hazard' | 'unclassified';
+  respawn: GatherCell<GatherRespawn | null>;
+}
 
-/** Coverage beside method rows. Not a resource hit. */
+export interface GatherRequirementRow {
+  id: string;
+  source: string;
+  kind: string;
+  skill?: number;
+  level?: number;
+}
+
+/** One gathering method: a woodcutting tree kind, a mining rock kind, or one fishing option of one spot type. */
+export interface GatherMethodRow {
+  id: string;
+  skill: 'woodcutting' | 'mining' | 'fishing';
+  resource_key: string | null;
+  resources: string[];
+  op: { slot: number; label: string } | null;
+  loc_ids: GatherId[];
+  npc_ids: GatherId[];
+  empty_ids: GatherId[];
+  hazard_ids: GatherId[];
+  unclassified_ids: GatherId[];
+  targets: GatherCell<GatherTargetRow[]>;
+  products: GatherCell<Array<GatherId & { level: number }>>;
+  tools: GatherCell<Array<GatherId & { use_gate: GatherGate | null; wield_gate: GatherGate | null }>>;
+  consumes: GatherCell<Array<GatherId & { count: number }>>;
+  requirements: GatherCell<GatherRequirementRow[]>;
+  placements: GatherCell<{ count: number }>;
+  qualification: 'complete' | 'partial';
+}
+
+/** One gap in the loaded pin's gathering facts: an incomplete method cell (`partial`/`unknown`) or an entity content could not classify (`unclassified`). */
 export interface GatherCoverageRecord {
-  class: string;
-  table?: string;
-  resource_key?: string;
-  alias?: string;
-  on_revision?: number;
-  other_pin_id?: number;
-  copied?: boolean;
-  reason: string;
+  class: 'partial' | 'unknown' | 'unclassified';
+  code: string;
+  sources: string[];
+  method?: string;
+  cell?: string;
+  skill?: string;
+  kind?: 'loc' | 'npc';
+  id?: number;
+  alias?: string | null;
 }
 
-/** One published-woods world placement. `plane` is the stored level, not the query's `level`. */
+/** One world placement of a method's resource target. `plane` is the placement's level; `spot` is the cursor form of its catalog-local id. */
 export interface GatherPlacementRow {
-  loc_id: number;
+  spot: string;
+  method: string;
+  kind: 'loc' | 'npc';
+  id: number;
+  alias: string | null;
+  loc_id?: number;
+  npc_id?: number;
   x: number;
   z: number;
   plane: number;
+  width: number;
+  length: number;
+  movement: GatherCell<SceneRegionInput | null>;
+  source: string;
 }
 
-/** One level's published-woods placements. `resource_ids` is the methods loc-id set, not the hit list. */
+/** One bounded page of placements in ascending id order. `next` resumes after the last row when `truncated`; `resource_ids` names the resource targets of the matched methods, not the hit list. `qualification: 'unknown'` carries no rows and says why in `gaps`. */
 export interface GatherPlacementResult {
   rows: GatherPlacementRow[];
   truncated: boolean;
+  next: string | null;
   resource_ids: GatherId[];
-  qualification: string;
+  qualification: 'complete' | 'unknown';
+  gaps?: Array<{ method: string; gap: GatherGap }>;
 }
 
 export interface QuestSkillGate {
@@ -707,12 +754,12 @@ export interface NativeApi {
   combatKeepNames(input: { food: string; style?: string; spell?: string; ammo?: string; weapon?: string; extra?: string[] }): HelperResult<string[]>;
   runesPerCast(input: { spellName: string; wielded: string[] }): HelperResult<Array<{ rune: string; count: number }> | null>;
   escapeRunesFor(input: { id: string }): HelperResult<{ runes: Array<{ rune: string; count: number }>; level: number; label: string }>;
-  /** Sync fact read. Omitted input or `{}` omits the skill. Not a Promise and not a request op. */
+  /** Sync fact read. Omitted input or `{}` omits the skill. `coverage` lists every incomplete fact of the loaded pin, whatever the skill filter. Not a Promise and not a request op. */
   gatherMethods(input?: { skill?: string }): HelperResult<{ rows: GatherMethodRow[]; coverage: GatherCoverageRecord[] }>;
-  /** Sync resource-key read. Zero matches is unknown-resource, not an empty rows list. */
-  gatherResource(input: { name: string }): HelperResult<{ rows: GatherLocResourceRow[] }>;
-  /** Sync published-woods world placements inside a required one-level region. Omitted `region` is `missing-region`. A mining `resource` is a marked unknown empty, never `family-unavailable:gather_placements`. Not a Promise and not a request op. */
-  gatherPlacements(input: { resource: string; region: SceneRegionInput; limit: number }): HelperResult<GatherPlacementResult>;
+  /** Sync resource-key read (wood/ore key or fish item alias). Zero matches is unknown-resource, not an empty rows list. */
+  gatherResource(input: { name: string }): HelperResult<{ rows: GatherMethodRow[] }>;
+  /** Sync world placements of a resource key inside a required one-level region, ascending by id. Omitted `region` is `missing-region`. `limit` is 1..=64; `after` is a previous page's `next`. Incomplete placement coverage is `qualification: 'unknown'` with no rows, never an empty complete page. Not a Promise and not a request op. */
+  gatherPlacements(input: { resource: string; region: SceneRegionInput; limit: number; after?: string }): HelperResult<GatherPlacementResult>;
   /** Sync fact read. Exactly one of name or id, and it must be a string. Not a Promise and not a request op. */
   questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>;
   /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */
