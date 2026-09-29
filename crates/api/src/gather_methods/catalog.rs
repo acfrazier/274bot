@@ -14,7 +14,6 @@ use crate::selected::{
 use crate::WorldTile;
 use serde::{Deserialize, Serialize};
 use std::collections::{BinaryHeap, HashMap};
-use std::ops::Range;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -286,15 +285,15 @@ impl GatherCatalog {
     /// wood/ore keys; fishing keys are fish item aliases, so one key can name several methods.
     pub fn methods_for_resource<'a>(
         &'a self,
-        key: &str,
+        key: &'a str,
     ) -> impl Iterator<Item = &'a GatherMethod> + 'a {
-        let wanted = key.trim().to_owned();
+        let wanted = key.trim();
         self.methods.iter().filter(move |method| {
             !wanted.is_empty()
                 && method
                     .resources
                     .iter()
-                    .any(|resource| resource.0.eq_ignore_ascii_case(&wanted))
+                    .any(|resource| resource.0.eq_ignore_ascii_case(wanted))
         })
     }
 
@@ -330,37 +329,28 @@ impl GatherCatalog {
         }
     }
 
-    fn bucket_ranges(&self, index: usize, region: &SceneRegionInput) -> Vec<Range<usize>> {
-        if region.min_x > region.max_x || region.min_z > region.max_z {
-            return Vec::new();
-        }
-        let (min_mx, max_mx) = (region.min_x >> 6, region.max_x >> 6);
-        let (min_mz, max_mz) = (region.min_z >> 6, region.max_z >> 6);
-        self.extras[index]
-            .buckets
-            .iter()
-            .filter(|bucket| {
-                bucket.level == region.level
-                    && (min_mx..=max_mx).contains(&bucket.mx)
-                    && (min_mz..=max_mz).contains(&bucket.mz)
-            })
-            .map(|bucket| bucket.start as usize..bucket.end as usize)
-            .collect()
-    }
-
     /// Placements of `method` inside `region`, ascending by `SpotId`. Uncapped and lazy: the caller decides how
-    /// many to take. Unknown or partial placements are an error, never an empty iterator.
+    /// many to take, and nothing is collected up front (the iterator walks the method's buckets and their spot
+    /// slices in place, capturing only the copied region). Unknown or partial placements are an error, never an
+    /// empty iterator.
     pub fn spots<'a>(
         &'a self,
         method: &'a GatherMethod,
         region: &SceneRegionInput,
     ) -> Result<impl Iterator<Item = &'a GatherSpot>, FactError> {
         let (spots, index) = self.complete_spots(method)?;
-        let ranges = self.bucket_ranges(index, region);
         let region = *region;
-        Ok(ranges
-            .into_iter()
-            .flat_map(move |range| spots[range].iter())
+        let (min_mx, max_mx) = (region.min_x >> 6, region.max_x >> 6);
+        let (min_mz, max_mz) = (region.min_z >> 6, region.max_z >> 6);
+        Ok(self.extras[index]
+            .buckets
+            .iter()
+            .filter(move |bucket| {
+                bucket.level == region.level
+                    && (min_mx..=max_mx).contains(&bucket.mx)
+                    && (min_mz..=max_mz).contains(&bucket.mz)
+            })
+            .flat_map(move |bucket| spots[bucket.start as usize..bucket.end as usize].iter())
             .filter(move |spot| {
                 (region.min_x..=region.max_x).contains(&spot.origin.x)
                     && (region.min_z..=region.max_z).contains(&spot.origin.z)

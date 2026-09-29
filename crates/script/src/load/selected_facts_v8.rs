@@ -367,21 +367,20 @@ fn required_thieving<'s>(
     Ok(v8::Integer::new(scope, level).into())
 }
 
-/// Frozen `GAS_ROCK_IDS`, sourced from the selected gathering catalog's hazard rocks.
-/// `undefined` keeps imports loadable without selected data while the shim's
-/// fail-closed value still throws if a card tries to use `.has`.
+/// Frozen `GAS_ROCK_IDS` as a fresh `Set`, sourced from the selected gathering catalog's hazard rocks. Only
+/// reached when a script touches the set (the shim proxy defers the call), so an isolate that never does
+/// never acquires the family. `undefined` without selected data: the shim throws its fail-closed error.
 fn gas_rock_ids<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
     let Ok(ids) = api::gather_methods::gas_rock_ids(supply_v2::gathering().as_deref()) else {
         return Ok(v8::undefined(scope).into());
     };
-    let array = v8::Array::new(scope, 0);
-    for (index, id) in ids.into_iter().enumerate() {
+    let set = v8::Set::new(scope);
+    for id in ids {
         let id = v8::Integer::new(scope, id);
-        array
-            .set_index(scope, index as u32, id.into())
-            .ok_or_else(|| "selected facts gas rock array".to_string())?;
+        set.add(scope, id.into())
+            .ok_or_else(|| "selected facts gas rock set".to_string())?;
     }
-    Ok(array.into())
+    Ok(set.into())
 }
 
 fn string_array<'s>(
