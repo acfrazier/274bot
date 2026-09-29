@@ -184,7 +184,8 @@ dropped world state), so a cell leaves nothing for the next one.
 
 Seed/proof or script failures fail the run and return a nonzero exit, and so does
 a fleet that has not qualified after 30 minutes (`blocked: ready=… seeded=…
-proved=… wanted=… ever_ready=…`). Every such failure first appends one
+proved=… wanted=… ever_ready=…`). A `duel_arena` fleet stages one pair at a time,
+so that bound is 60 minutes. Every such failure first appends one
 `"phase":"failed"` record to `samples.qualification.jsonl` with the error and,
 for every slot, whether it ever reached `ingame && scene_state == 2` (and when),
 its last observed session state (startup phase and how long it has been in it,
