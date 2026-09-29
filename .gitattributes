@@ -1,4 +1,4 @@
-/crates/api/data/game-data/*.json text eol=lf
+/crates/api/data/game-data/**/*.json text eol=lf
 /crates/host-play/fixtures/ExampleBot.ts text eol=lf
 /crates/script/tests/fixtures/ExampleBot.ts text eol=lf
 /crates/script/host-js/index.d.ts text eol=lf
