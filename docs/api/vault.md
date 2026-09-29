@@ -76,8 +76,8 @@ and first-run **Create vault** in every frontend refuse an empty or
 whitespace-only passphrase and write nothing. `check_new_passphrase` applies
 the same rule for a caller that prompts and wants to ask again.
 
-An **existing** vault is opened with any passphrase that decrypts the file,
-provided it is not empty after trimming surrounding whitespace. A vault created
+An **existing** vault is opened with any non-empty passphrase that decrypts the
+file, including one of only whitespace (allowed before 0.2.0). A vault created
 under an earlier policy keeps opening, saving, and retaining its data. The file
 format, the round count, and every stored profile are unchanged by an upgrade;
 nothing is rewritten until the next ordinary save, and that save keeps the
@@ -103,7 +103,7 @@ that does not repeat the value.
   (raw mode is on before the prompt is shown, so input sent the moment it
   appears is never echoed). Enter, or a newline byte, ends the line;
   Backspace edits, Ctrl-U clears, Esc / Ctrl-C / Ctrl-D cancel. A new vault
-  asks twice, checks the floor first, and offers three attempts.
+  asks twice, rejects an empty or whitespace-only entry, and offers three attempts.
 - **Standard input.** With `--vault-pass-stdin` and a pipe or file on stdin,
   the first line is the passphrase: only the trailing `\n` or `\r\n` is
   removed, at most 4096 bytes, UTF-8. Without the flag a pipe is never read

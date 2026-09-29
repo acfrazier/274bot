@@ -250,11 +250,14 @@ impl Vault {
         })
     }
 
-    /// Opens the vault at `path` with the given passphrase. Any passphrase
-    /// that decrypts the file is accepted, provided it is not empty after
-    /// surrounding whitespace is trimmed.
+    /// Opens the vault at `path` with the given passphrase. Any non-empty
+    /// passphrase that decrypts the file is accepted, including one of only
+    /// whitespace: releases through 0.1.9.1 created vaults under that rule,
+    /// and the new-vault trim check must never lock them out.
     pub fn unlock(path: &Path, passphrase: &str) -> Result<Self, VaultError> {
-        require_passphrase(passphrase)?;
+        if passphrase.is_empty() {
+            return Err(VaultError::EmptyPassphrase);
+        }
         let blob = read_vault_file(path)?;
         let (salt, rounds, payload) = parse_header(&blob)?;
         let key = derive_key(passphrase, &salt, rounds);
@@ -428,12 +431,9 @@ fn persist(
 /// be empty after surrounding whitespace is trimmed. Passphrase strength is
 /// the user's choice. [`Vault::create`] applies it; a caller that prompts can
 /// apply it first and ask again instead of failing late. It is also used when
-/// opening a missing vault through a frontend.
+/// opening a missing vault through a frontend. [`Vault::unlock`] does not
+/// apply it (see there).
 pub fn check_new_passphrase(passphrase: &str) -> Result<(), VaultError> {
-    require_passphrase(passphrase)
-}
-
-fn require_passphrase(passphrase: &str) -> Result<(), VaultError> {
     if passphrase.trim().is_empty() {
         Err(VaultError::EmptyPassphrase)
     } else {
@@ -710,13 +710,38 @@ mod tests {
         }
 
         Vault::create(&path, PASS).unwrap();
-        for passphrase in ["", "   ", "\t\n"] {
+        assert!(matches!(
+            Vault::unlock(&path, ""),
+            Err(VaultError::EmptyPassphrase)
+        ));
+        for passphrase in ["   ", "\t\n"] {
             assert!(matches!(
                 Vault::unlock(&path, passphrase),
-                Err(VaultError::EmptyPassphrase)
+                Err(VaultError::WrongPassphrase)
             ));
         }
     }
+
+    /// Through 0.1.9.1 only an empty passphrase was refused, so a vault may
+    /// be sealed under whitespace alone. It must keep opening.
+    #[test]
+    fn a_vault_sealed_under_whitespace_still_unlocks() {
+        let path = tmp_path("whitespace.vault");
+        let _ = std::fs::remove_file(&path);
+        let passphrase = "   ";
+        let salt = [7u8; SALT_LEN];
+        let key = super::derive_key(passphrase, &salt, super::PBKDF2_ROUNDS);
+        let data = super::serialize_profiles(&std::collections::BTreeMap::new()).unwrap();
+        let blob = super::build_blob(&salt, &key, &data, super::PBKDF2_ROUNDS).unwrap();
+        std::fs::write(&path, blob).unwrap();
+
+        Vault::unlock(&path, passphrase).unwrap();
+        assert!(matches!(
+            Vault::unlock(&path, "x"),
+            Err(VaultError::WrongPassphrase)
+        ));
+    }
+
     #[test]
     fn short_passphrase_creates_and_unlocks() {
         let path = tmp_path("short.vault");
