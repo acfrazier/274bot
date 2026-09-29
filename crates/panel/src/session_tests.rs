@@ -6657,6 +6657,47 @@ fn script_start_selected_refuses_unloadable_import() {
     assert_eq!(s.focused_script_state(), script::RunState::Idle);
 }
 
+/// M-269: after a bad-import Load the panel retains the full failure for
+/// the Browse card (`browse_script_card` paints `failed {stage}` plus the
+/// wrapped `named_line` on the selected card), even though the banner is
+/// cleared. Headless: no headed window.
+#[test]
+fn bad_import_load_retains_the_full_failure_for_browse() {
+    let dir = TestDir::new("unloadable-retained");
+    let path = dir.join("ghost.js");
+    std::fs::write(
+            &path,
+            "import x from '../../event/webwalk/Something.js';\nexport default class T extends LoopingBot { loop() {} }\n",
+        )
+        .unwrap();
+    let mut s = Session::new();
+    s.scripts.js = script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    let mut play = empty_play();
+    play.attach_arm("alice", SlotArm::new(42, false));
+    s.core.set_play(Some(play));
+    s.set_focus_for_test("alice");
+    s.load_js(&path);
+    assert_eq!(s.error, None, "load still registers the card");
+    let failures = s.scripts.js.load_failures();
+    assert_eq!(failures.len(), 1, "one retained failure: {failures:?}");
+    let failure = failures[0].clone();
+    assert_eq!(failure.stage, script::LoadStage::ImportResolution);
+    assert!(
+        failure
+            .diagnostic
+            .contains("../../event/webwalk/Something.js"),
+        "diagnostic names the specifier: {}",
+        failure.diagnostic
+    );
+    assert!(
+        failure
+            .named_line()
+            .contains("../../event/webwalk/Something.js"),
+        "the wrapped Browse line keeps the specifier: {}",
+        failure.named_line()
+    );
+}
+
 #[test]
 fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
     // `$RS2B0T` + HOME point at a fake catalog so the fill never
