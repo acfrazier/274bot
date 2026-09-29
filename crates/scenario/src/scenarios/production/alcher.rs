@@ -649,7 +649,7 @@ fn swarm_macro_event_inject(
     ) {
         return true;
     }
-    if !cheat(c, SWARM_MACRO_EVENT_CHEAT) {
+    if !cheat(c, SWARM_MACRO_EVENT_CHEAT).is_sent() {
         return false;
     }
     ever_sent.store(true, Ordering::Relaxed);

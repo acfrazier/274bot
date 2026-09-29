@@ -9,10 +9,10 @@ helpers fail closed; do not treat a green unit job as full script
 qualification. See [CHANGELOG.md](CHANGELOG.md).
 
 Alpha is not turnkey public-world automation: you run a **local** engine for
-the revision you care about and point `--cache` / `ENGINE_DIR` at a pack.
-The public world is built in as profile `public-289` (`--prod` /
-`BOT_TARGET=prod|live`): WSS/HTTPS on **`w1.rs2b2t.com:443`** with the baked
-public RSA. Local is the tested path; Cargo `TARGET` is the rustc triple,
+the revision you care about and select a profile from `~/.274bot/servers.json`.
+The public built-in is `rs2b2t` (`--rs2b2t` or `--profile rs2b2t`):
+WSS/HTTPS on the configured rs2b2t roster, with served login keys and a baked
+fallback. Local is the tested path; Cargo `TARGET` is the rustc triple,
 not a world switch. This is **not** Jagex and not a hosted wall — there is
 **no public-world CI** and no asset server. PRs that read like unreviewed
 model output will be rejected; the product bar is a host that does not suck.
@@ -85,9 +85,9 @@ lair. The headed twin is the `panel`
 `pair_watch` example.
 
 Shared profile flags (all three binaries):
-`--profile local-274|local-289|public-289`, `--revision 274|289`, `--prod`,
-`--engine`, `--cache`, `--vault`, `--catalog`, and related overrides. See
-[README.md](README.md) and [FIRST-START.md](FIRST-START.md).
+`--profile NAME`, `--rs2b2t`, `--revision 274|289`, `--engine`, `--cache`,
+`--vault`, `--catalog`, and related overrides. `--prod` and `BOT_TARGET` are
+removed. See [README.md](README.md) and [FIRST-START.md](FIRST-START.md).
 
 ## Toolchain
 

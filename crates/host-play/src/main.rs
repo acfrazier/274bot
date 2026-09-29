@@ -6,8 +6,7 @@ use std::process::ExitCode;
 
 use host_play::passphrase::{self, Purpose};
 use host_play::{
-    open_vault, parse_profile_args, profile_password_for, run_with_template, set_debug,
-    ProfileOptions,
+    open_vault, parse_profile_args, profile_password, run_with_template, set_debug, ProfileOptions,
 };
 use vault::{Profile, ProfileSettings, VaultError};
 
@@ -24,8 +23,8 @@ struct Args {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: host-play [--profile local-274|local-289|public-289] \
-         [--revision 274|289] [--prod] [--host HOST] [--port PORT] \
+        "usage: host-play [--profile NAME|--rs2b2t] \
+         [--revision 274|289] [--host HOST] [--port PORT] \
          [--asset-host HOST] [--http-port PORT] [--engine PATH] \
          [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] \
@@ -141,7 +140,7 @@ fn main() -> ExitCode {
             None => {
                 let account = Profile {
                     username: username.clone(),
-                    password: profile_password_for(username, profile.target()).into(),
+                    password: profile_password(username).into(),
                     uid: 274_000_000 + i as i32 + 1,
                     settings: ProfileSettings::default(),
                 };
@@ -204,7 +203,7 @@ mod tests {
         }
         let cache = home.join("host-play-explicit-cache");
         let cache_arg = cache.to_string_lossy().into_owned();
-        let parsed = args(&["--cache", &cache_arg, "--prod", "--user", "alice"]).unwrap();
+        let parsed = args(&["--cache", &cache_arg, "--rs2b2t", "--user", "alice"]).unwrap();
         let selection = parsed
             .profile
             .resolve_with_env(

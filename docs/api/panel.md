@@ -10,8 +10,8 @@ It does **not** reimplement the client UI — there is **no Present**, no client
 window feature. The client rasters into a frame (wgpu GPU 3D by default,
 CpuPix3D if `BOT_CPU=1`); the panel blits that frame and feeds input back.
 
-Bind one immutable **server profile** for the process
-(`--profile local-274|local-289|public-289`; see [README.md](../../README.md)).
+Bind one immutable entry from `~/.274bot/servers.json` for the process
+(`--profile NAME` or `--rs2b2t`; see [README.md](../../README.md)).
 Shared flags match host-play (`--engine`, `--cache`, `--vault`, `--catalog`,
 `--lowmem`/`--highmem`, `--nav-paints on|off`, `--live`, optional
 `--external-ts` for the dedicated loader smoke).

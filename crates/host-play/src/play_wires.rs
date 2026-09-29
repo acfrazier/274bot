@@ -51,13 +51,12 @@ pub(super) fn dispatch_wires(
 }
 
 impl Play {
-    /// Queue `cmd` (the `::` part only) for `user`'s slot: its own thread
-    /// writes `CLIENT_CHEAT` through the slot's Driver. Pending bytes keep
-    /// the slot awake for the next frame's flush. No-op when the user is
-    /// not a running slot, or when the target is Prod.
+    /// Queue `cmd` for a running local-profile slot. The slot's client
+    /// performs the final admission and ingame check at the encoder.
+    /// Pending bytes keep the slot awake for the next frame's flush.
     pub fn cheat(&self, user: &str, cmd: &str) {
         if self.connection.require_bot_operation().is_err()
-            || !api::interact::cheat_allowed(self.connection.target())
+            || self.connection.profile_class() != crate::ProfileClass::Local
         {
             return;
         }

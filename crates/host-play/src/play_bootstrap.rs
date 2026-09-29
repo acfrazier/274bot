@@ -8,7 +8,6 @@ use api::snapshot::WorldTile;
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::io::JagFile;
-use client::BotTarget;
 use host::login_queue::LoginQueue;
 use nav::world::NavWorld;
 use parking_lot::Mutex as QueueMutex;
@@ -19,22 +18,36 @@ use super::{
     catalog_core, paired_core, progress, scatter, FrameBuf, Play, ServerProfile, SlotInput,
 };
 
-/// [`client::bot_target::world_host_for`] from a `BOT_TARGET` string.
-pub fn world_host_for_bot_target(target: Option<&str>) -> String {
-    client::bot_target::world_host_for(client::bot_target::bot_target_from_env(target)).into()
+/// Mint a login password accepted by the game protocol.
+pub fn mint_game_password() -> String {
+    const ALPHABET: &[u8; 36] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut password = String::with_capacity(20);
+    let mut random = [0u8; 32];
+    while password.len() < 20 {
+        OsRng.fill_bytes(&mut random);
+        for byte in random {
+            if byte >= 252 {
+                continue;
+            }
+            password.push(ALPHABET[(byte % 36) as usize] as char);
+            if password.len() == 20 {
+                break;
+            }
+        }
+    }
+    password
 }
 
-/// Host and game port for a target. Prod is WSS `:443`; local is TCP `:43594`.
-pub fn play_endpoint_for(target: BotTarget) -> (String, u16) {
-    (
-        client::world_host_for(target).into(),
-        client::game_port_for(target),
-    )
-}
-
-/// Active world host (`BOT_TARGET` / `--prod`).
-pub fn default_world_host() -> String {
-    client::world_host()
+/// Mint a high-entropy passphrase for an ephemeral vault.
+pub fn mint_vault_passphrase() -> String {
+    let mut bytes = [0u8; 24];
+    OsRng.fill_bytes(&mut bytes);
+    let mut passphrase = String::with_capacity(48);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(passphrase, "{byte:02x}").expect("writing to String");
+    }
+    passphrase
 }
 
 /// Mint `n` per-run usernames for a live boot (`live<token>_<i>`). The
@@ -61,77 +74,22 @@ pub fn mint_live_names(n: usize) -> Vec<String> {
     (0..n).map(|i| format!("live{token}_{i}")).collect()
 }
 
-/// High-entropy secret for prod profile passwords and live temp vaults.
-fn mint_high_entropy_secret() -> String {
-    let mut bytes = [0u8; 24];
-    OsRng.fill_bytes(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+/// Profile login password for a freshly minted account.
+pub fn profile_password(_username: &str) -> String {
+    mint_game_password()
 }
 
-/// Default vault filename for a play target. Prod must not reuse the local
-/// blob (username-as-password accounts).
-pub fn default_vault_rel(target: BotTarget) -> &'static str {
-    match target {
-        BotTarget::Local => "vault",
-        BotTarget::Prod => "vault-prod",
-    }
-}
-
-/// `~/.274bot/vault` or `~/.274bot/vault-prod`.
-pub fn default_vault_path_for(target: BotTarget) -> std::path::PathBuf {
-    script::bot_file(default_vault_rel(target))
-}
-
-/// [`default_vault_path_for`] for the active [`client::bot_target`].
-pub fn default_vault_path() -> std::path::PathBuf {
-    default_vault_path_for(client::bot_target())
-}
-
-/// Profile login password for a freshly minted or missing account.
-/// Local keeps username-as-password (Lost City auto-register); prod refuses it.
-pub fn profile_password_for(username: &str, target: BotTarget) -> String {
-    match target {
-        BotTarget::Local => username.to_string(),
-        BotTarget::Prod => mint_high_entropy_secret(),
-    }
-}
-
-/// [`profile_password_for`] for the active [`client::bot_target`].
-pub fn profile_password(username: &str) -> String {
-    profile_password_for(username, client::bot_target())
-}
-
-/// Passphrase of a throwaway local-engine live vault. Public on purpose: that
-/// vault lives in a temp directory and holds only `username == password`
-/// accounts for a local engine, so it protects nothing. Like any new vault,
-/// it must use a non-empty passphrase.
-const LOCAL_LIVE_VAULT_PASSPHRASE: &str = "local-live-vault";
-
-/// Ephemeral live-vault passphrase: the fixed throwaway one for a local
-/// engine, a fresh high-entropy secret for the public world.
-pub fn live_vault_passphrase_for(target: BotTarget) -> String {
-    match target {
-        BotTarget::Local => LOCAL_LIVE_VAULT_PASSPHRASE.into(),
-        BotTarget::Prod => mint_high_entropy_secret(),
-    }
-}
-
-/// [`live_vault_passphrase_for`] for the active target.
+/// Ephemeral live-vault passphrase, fresh for every run.
 pub fn live_vault_passphrase() -> String {
-    live_vault_passphrase_for(client::bot_target())
+    mint_vault_passphrase()
 }
 
 /// `(username, password)` pairs for a live boot from minted names.
-pub fn mint_live_entries_for_target(names: &[String], target: BotTarget) -> Vec<(String, String)> {
+pub fn mint_live_entries(names: &[String]) -> Vec<(String, String)> {
     names
         .iter()
-        .map(|u| (u.clone(), profile_password_for(u, target)))
+        .map(|username| (username.clone(), mint_game_password()))
         .collect()
-}
-
-/// [`mint_live_entries_for_target`] for the active target.
-pub fn mint_live_entries(names: &[String]) -> Vec<(String, String)> {
-    mint_live_entries_for_target(names, client::bot_target())
 }
 
 /// Whether `host` is loopback (local engine RSA is safe).
@@ -146,9 +104,10 @@ pub fn is_loopback_host(host: &str) -> bool {
 }
 
 /// Refuse a non-loopback play host while local (well-known Java) RSA is active.
-pub fn validate_play_host(host: &str, target: BotTarget) -> Result<(), &'static str> {
-    if target == BotTarget::Local && !is_loopback_host(host) {
-        Err("host-play: non-loopback --host requires --prod (local RSA is loopback-only)")
+/// Refuse plaintext off-loopback unless the selected profile opted in.
+pub fn validate_play_host(host: &str, allow_plaintext_offhost: bool) -> Result<(), &'static str> {
+    if !allow_plaintext_offhost && !is_loopback_host(host) {
+        Err("host-play: non-loopback tcp requires allow_plaintext_offhost")
     } else {
         Ok(())
     }
@@ -158,6 +117,7 @@ pub fn validate_play_host(host: &str, target: BotTarget) -> Result<(), &'static 
 #[derive(Clone)]
 pub struct PlayOptions {
     pub host: String,
+    pub transport: client::Transport,
     pub port: u16,
     pub cache_dir: String,
     pub lowmem: bool,
@@ -277,7 +237,7 @@ impl SharedClientTemplate {
     /// This constructor is usable for protocol qualification before bot action
     /// support is released. It does not start a host loop or any bot policy.
     pub fn prepare_client(&self, uid: i32, lowmem: bool) -> Result<Client, String> {
-        host::prepare_client_with_profile(
+        let mut client = host::prepare_client_with_profile(
             Arc::clone(self.profile.client()),
             uid,
             true,
@@ -285,13 +245,18 @@ impl SharedClientTemplate {
             Arc::clone(&self.cache),
             Arc::clone(&self.ifaces),
             Arc::clone(&self.ifaces_mut),
-        )
+        )?;
+        client.set_cheat_admission(match self.profile.profile_class() {
+            crate::ProfileClass::Local => client::CheatAdmission::Granted,
+            crate::ProfileClass::Remote => client::CheatAdmission::Remote(self.profile.transport()),
+        });
+        Ok(client)
     }
 }
 
 #[derive(Clone)]
 pub(super) enum PlayConnection {
-    Legacy(PlayOptions),
+    Direct(PlayOptions),
     Bound {
         template: Arc<SharedClientTemplate>,
         mainland: bool,
@@ -301,23 +266,29 @@ pub(super) enum PlayConnection {
 impl PlayConnection {
     pub(super) fn profile(&self) -> Option<&Arc<ServerProfile>> {
         match self {
-            Self::Legacy(_) => None,
+            Self::Direct(_) => None,
             Self::Bound { template, .. } => Some(template.profile()),
         }
     }
 
     pub(super) fn require_bot_operation(&self) -> Result<(), String> {
-        self.profile().map_or(Ok(()), |p| p.require_bot_operation())
+        self.profile()
+            .map_or(Ok(()), |profile| profile.require_bot_operation())
     }
 
-    pub(super) fn target(&self) -> BotTarget {
-        self.profile()
-            .map_or_else(client::bot_target, |p| p.target())
+    pub(super) fn profile_class(&self) -> crate::ProfileClass {
+        match self {
+            Self::Direct(options) => crate::profile::profile_class(
+                options.transport,
+                std::iter::once(options.host.as_str()),
+            ),
+            Self::Bound { template, .. } => template.profile().profile_class(),
+        }
     }
 
     pub(super) fn game_host(&self) -> &str {
         match self {
-            Self::Legacy(options) => options.host.as_str(),
+            Self::Direct(options) => options.host.as_str(),
             Self::Bound { template, .. } => template.profile().client().game_host(),
         }
     }
@@ -344,7 +315,7 @@ impl Play {
         let (cache, ifaces, ifaces_mut_template) = load_template(&options.cache_dir);
         let cache = Arc::new(cache);
         Self::assemble(
-            PlayConnection::Legacy(options.clone()),
+            PlayConnection::Direct(options.clone()),
             None,
             cache,
             Arc::new(ifaces),

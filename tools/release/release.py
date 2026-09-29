@@ -1392,7 +1392,7 @@ def parser():
     build.add_argument("--snapshot-version")
     build.add_argument("--revision", choices=("274", "289"), default="289")
     build.add_argument("--jobs", type=int, default=4)
-    build.add_argument("--app-profile", default="public-289")
+    build.add_argument("--app-profile", default="rs2b2t")
     build.add_argument("--sign-identity", default=os.environ.get("RELEASE_SIGN_IDENTITY"))
     build.add_argument("--rusty-v8-archive", default=os.environ.get("RUSTY_V8_ARCHIVE"))
     build.add_argument("--reset-prepared", action="store_true",

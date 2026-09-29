@@ -381,7 +381,9 @@ fn selected_profile(
         ..ProfileOptions::default()
     };
     let profile = options.resolve(None)?.bind()?;
-    if profile.target() != client::BotTarget::Local || profile.client().game_host() != "127.0.0.1" {
+    if profile.profile_class() != host_play::ProfileClass::Local
+        || profile.client().game_host() != "127.0.0.1"
+    {
         return Err("catalog proof requires a loopback-only local profile".into());
     }
     let template = SharedClientTemplate::load(Arc::clone(&profile))?;
@@ -582,7 +584,7 @@ fn run_cell() -> Result<(), String> {
         .first()
         .cloned()
         .ok_or_else(|| "failed to mint live account".to_string())?;
-    let credentials = host_play::mint_live_entries_for_target(&names, profile.target());
+    let credentials = host_play::mint_live_entries(&names);
     let password = credentials
         .first()
         .map(|(_, password)| password.clone())

@@ -52,7 +52,7 @@ fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
         .expect("profile resolve")
         .bind()
         .expect("profile bind");
-    assert_eq!(profile.client().target(), client::BotTarget::Local);
+    assert_eq!(profile.profile_class(), host_play::ProfileClass::Local);
     assert_eq!(profile.client().game_host(), "127.0.0.1");
     let template =
         SharedClientTemplate::load(Arc::clone(&profile)).expect("selected template/world load");
@@ -184,7 +184,7 @@ fn door(snapshot: &GameSnapshot) -> Option<(api::snapshot::WorldTile, i32)> {
 fn prepare_door(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) {
     // Reuse the production nav_door tele fixture, but do not use its closer
     // companion. This puts the single account at the outside stand.
-    assert!(interact::cheat(client, "tele 0,43,53,61,44"));
+    assert!(interact::cheat(client, "tele 0,43,53,61,44").is_sent());
     wait_for(
         client,
         snapshot,
@@ -452,9 +452,9 @@ fn run_bank_return(template: Arc<SharedClientTemplate>, profile: Arc<host_play::
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
-    assert!(interact::cheat(&mut client, "givebank lobster 20"));
-    assert!(interact::cheat(&mut client, "give coins 100"));
-    assert!(interact::cheat(&mut client, "tele 0,43,53,61,44"));
+    assert!(interact::cheat(&mut client, "givebank lobster 20").is_sent());
+    assert!(interact::cheat(&mut client, "give coins 100").is_sent());
+    assert!(interact::cheat(&mut client, "tele 0,43,53,61,44").is_sent());
     wait_for(
         &mut client,
         &mut snapshot,
@@ -576,7 +576,7 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
     let mut pump = Pump::new();
     prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
     assert!(
-        interact::cheat(&mut client, "give macro_genilamp"),
+        interact::cheat(&mut client, "give macro_genilamp").is_sent(),
         "local give command refused"
     );
     wait_for(

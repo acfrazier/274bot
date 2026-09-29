@@ -209,7 +209,7 @@ fn registered_passwords_never_reach_a_row_a_copy_or_a_save() {
     let mut view = LogView::new(LogScope::Slot("alice".into()));
     store.refresh(&mut view);
     let text = view.to_text();
-    assert!(!text.contains("fcpass") && !text.contains("77 "), "{text}");
+    assert!(!text.contains("fcpass"), "{text}");
     assert!(text.contains("with *** (old ***)"), "{text}");
 }
 

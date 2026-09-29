@@ -96,6 +96,7 @@ fn native_seed_client() -> Client {
     });
     client.ingame = true;
     client.scene_state = 2;
+    client.set_cheat_admission(client::CheatAdmission::Granted);
     client.map_build_base_x = 3200;
     client.map_build_base_z = 3200;
     client.local_player = Some(ClientPlayer::at(20, 20));
@@ -3404,6 +3405,7 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     });
     client.ingame = true;
     client.scene_state = 2;
+    client.set_cheat_admission(client::CheatAdmission::Granted);
     client.map_build_base_x = 3200;
     client.map_build_base_z = 3200;
     client.local_player = Some(ClientPlayer::at(20, 20));
@@ -9879,6 +9881,7 @@ fn pair_companion_client() -> client::client::Client {
     });
     client.ingame = true;
     client.scene_state = 2;
+    client.set_cheat_admission(client::CheatAdmission::Granted);
     client.map_build_base_x = 3200;
     client.map_build_base_z = 3200;
     client.local_player = Some(ClientPlayer::at(20, 20));
@@ -10220,6 +10223,7 @@ fn synthetic_client() -> Client {
         lowmem: false,
     });
     client.ingame = true;
+    client.set_cheat_admission(client::CheatAdmission::Granted);
     client.scene_state = 2;
     client.map_build_base_x = 3200;
     client.map_build_base_z = 3200;

@@ -185,6 +185,7 @@ mod tests {
         run_with_io(
             &PlayOptions {
                 host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
                 port: 43594,
                 cache_dir: "/tmp".into(),
                 lowmem: true,

@@ -77,6 +77,7 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
     let play = host_play::run_with_io(
         &PlayOptions {
             host: addr.ip().to_string(),
+            transport: host_play::Transport::Tcp,
             port: addr.port(),
             cache_dir: "/tmp".into(),
             lowmem: true,

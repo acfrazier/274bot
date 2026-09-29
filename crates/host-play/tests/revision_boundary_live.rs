@@ -159,7 +159,7 @@ fn run() -> Result<(), String> {
         ..ProfileOptions::default()
     };
     let profile = options.resolve(None)?.bind()?;
-    if profile.client().target() != client::BotTarget::Local
+    if profile.profile_class() != host_play::ProfileClass::Local
         || profile.client().game_host() != "127.0.0.1"
         || profile.client().asset_host() != "127.0.0.1"
     {

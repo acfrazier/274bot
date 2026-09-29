@@ -1,10 +1,10 @@
 use super::{
-    combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, is_local_engine,
-    live_client_trail, live_or_walk_paint, load_live_example_card, nav_snapshot_for_follow,
-    null_raster_live_entries_for_target, parse_getvar_line, publish_frontend_slot,
-    publish_nav_debug, reset_frontend_slot_lifetime, script_active, script_pause_enabled,
-    script_stop_enabled, seed_on_first_world, stress_live_entries_for_target, temp_live_vault_from,
-    ProfilePreparationCompletion, Session, SlotIo, WalkArm,
+    combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, live_client_trail,
+    live_or_walk_paint, load_live_example_card, nav_snapshot_for_follow, null_raster_live_entries,
+    parse_getvar_line, publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime,
+    script_active, script_pause_enabled, script_stop_enabled, seed_on_first_world,
+    stress_live_entries, temp_live_vault_from, ProfilePreparationCompletion, Session, SlotIo,
+    WalkArm,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -453,12 +453,12 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
 }
 
 #[test]
-fn prod_default_ignores_the_saved_local_revision() {
+fn rs2b2t_ignores_the_saved_local_revision() {
     let mut session = Session::new();
     session.ui.server_revision = 274;
     session
         .configure_profile(ProfileOptions {
-            prod: true,
+            rs2b2t: true,
             ..ProfileOptions::default()
         })
         .unwrap();
@@ -469,7 +469,7 @@ fn prod_default_ignores_the_saved_local_revision() {
     });
     let selection = session.resolve_profile().unwrap();
     assert_eq!(selection.revision(), client::io::ClientRevision::R289);
-    assert_eq!(selection.target(), client::BotTarget::Prod);
+    assert_eq!(selection.profile_class(), host_play::ProfileClass::Remote);
 }
 
 #[test]
@@ -664,15 +664,6 @@ fn live_follow_route_wins_over_empty_walkto_arm() {
         "catalog walk paints when WalkTo is idle"
     );
     assert_eq!(route.unwrap().dest, script_dest);
-}
-
-#[test]
-fn is_local_engine_is_loopback_only() {
-    assert!(is_local_engine("127.0.0.1"));
-    assert!(is_local_engine("localhost"));
-    assert!(is_local_engine("::1"));
-    assert!(!is_local_engine("w1.rs2b2t.com"));
-    assert!(!is_local_engine("192.168.1.5"));
 }
 
 #[test]
@@ -1010,23 +1001,23 @@ fn getvar_drain_stays_local_only() {
 #[test]
 fn tutskip_button_omitted_until_known_open() {
     assert_eq!(
-        debug_main_buttons_for(client::BotTarget::Local, false),
+        debug_main_buttons_for(host_play::ProfileClass::Local, false),
         ["DebugPanel", "Lumbridge", "maxme", "Teles"]
     );
     assert_eq!(
-        debug_main_buttons_for(client::BotTarget::Local, true),
+        debug_main_buttons_for(host_play::ProfileClass::Local, true),
         ["DebugPanel", "TutSkip", "Lumbridge", "maxme", "Teles"]
     );
 }
 
 #[test]
-fn debug_main_buttons_prod_is_debug_panel_only() {
+fn debug_main_buttons_remote_is_debug_panel_only() {
     assert_eq!(
-        debug_main_buttons_for(client::BotTarget::Prod, true),
+        debug_main_buttons_for(host_play::ProfileClass::Remote, true),
         ["DebugPanel"]
     );
     assert_eq!(
-        debug_main_buttons_for(client::BotTarget::Prod, false),
+        debug_main_buttons_for(host_play::ProfileClass::Remote, false),
         ["DebugPanel"]
     );
 }
@@ -1043,6 +1034,7 @@ fn empty_play() -> host_play::Play {
     host_play::run_with_io(
         &host_play::PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -2734,7 +2726,7 @@ fn walkto_panel_state(session: &Session) -> (&'static [&'static str], (bool, boo
 }
 
 #[test]
-fn picker_teleport_follows_session_target_and_host() {
+fn picker_teleport_follows_profile_class() {
     let world = open_world(3, 3);
     let origin = Tile {
         x: 0,
@@ -2755,7 +2747,7 @@ fn picker_teleport_follows_session_target_and_host() {
     local.set_focus_for_test("alice");
     local.core.set_play(Some(play));
     local.select_picker_tile(&world, blocked);
-    assert_eq!(local.target(), client::BotTarget::Local);
+    assert_eq!(local.profile_class(), host_play::ProfileClass::Local);
     assert!(local.map_teleport_authorized());
     let (labels, actions, status) = walkto_panel_state(&local);
     assert_eq!(labels, &["recentre", "Walk", "Send", "Teleport"][..]);
@@ -2767,8 +2759,8 @@ fn picker_teleport_follows_session_target_and_host() {
     prod.server_profile = Some(Arc::clone(prod_fixture.template.profile()));
     prod.set_map_host("127.0.0.1");
     prod.select_picker_tile(&world, blocked);
-    assert_eq!(prod.target(), client::BotTarget::Prod);
-    assert!(prod.debug_ui());
+    assert_eq!(prod.profile_class(), host_play::ProfileClass::Remote);
+    assert!(!prod.debug_ui());
     assert!(!prod.map_teleport_authorized());
     let (labels, actions, status) = walkto_panel_state(&prod);
     assert_eq!(labels, &["recentre", "Walk", "Send"][..]);
@@ -2780,7 +2772,7 @@ fn picker_teleport_follows_session_target_and_host() {
     remote.server_profile = Some(Arc::clone(remote_fixture.template.profile()));
     remote.set_map_host("192.168.1.2");
     remote.select_picker_tile(&world, blocked);
-    assert_eq!(remote.target(), client::BotTarget::Local);
+    assert_eq!(remote.profile_class(), host_play::ProfileClass::Local);
     assert!(!remote.map_teleport_authorized());
     let (labels, actions, status) = walkto_panel_state(&remote);
     assert_eq!(labels, &["recentre", "Walk", "Send"][..]);
@@ -4294,56 +4286,24 @@ fn live_prepare_script_enables_multibox_for_a_fleet_only() {
 }
 
 #[test]
-fn null_raster_live_entries_prod_refuses_username_as_password() {
-    let entries = null_raster_live_entries_for_target(client::BotTarget::Prod);
-    for (user, pass) in &entries {
-        assert_ne!(
-            user, pass,
-            "prod null_raster must not store username-as-password"
-        );
+fn panel_live_credentials_are_fresh_game_secrets() {
+    for entries in [null_raster_live_entries(), stress_live_entries(3)] {
+        for (user, pass) in entries {
+            assert_ne!(user, pass);
+            assert_eq!(pass.len(), 20);
+        }
     }
 }
 
 #[test]
-fn null_raster_live_entries_local_allows_username_as_password() {
-    let entries = null_raster_live_entries_for_target(client::BotTarget::Local);
-    for (user, pass) in &entries {
-        assert_eq!(user, pass, "local null_raster keeps username-as-password");
-    }
-}
-
-#[test]
-fn stress_live_entries_prod_refuses_username_as_password() {
-    let entries = stress_live_entries_for_target(3, client::BotTarget::Prod);
-    for (user, pass) in &entries {
-        assert_ne!(
-            user, pass,
-            "prod stress must not store username-as-password"
-        );
-    }
-}
-
-#[test]
-fn stress_live_entries_local_allows_username_as_password() {
-    let entries = stress_live_entries_for_target(3, client::BotTarget::Local);
-    for (user, pass) in &entries {
-        assert_eq!(user, pass, "local stress keeps username-as-password");
-    }
-}
-
-#[test]
-fn temp_live_vault_prod_mint_does_not_persist_username_as_password() {
+fn temp_live_vault_mint_does_not_persist_username_as_password() {
     let names = host_play::mint_live_names(2);
-    let entries = host_play::mint_live_entries_for_target(&names, client::BotTarget::Prod);
-    let pass = host_play::live_vault_passphrase_for(client::BotTarget::Prod);
+    let entries = host_play::mint_live_entries(&names);
+    let pass = host_play::live_vault_passphrase();
     let path = temp_live_vault_from(&entries, 274_000_001, &pass, true);
     let vault = Vault::unlock(&path, &pass).unwrap();
-    for p in vault.profiles() {
-        assert_ne!(
-            p.username,
-            p.password.as_str(),
-            "prod live temp vault must not store username-as-password"
-        );
+    for profile in vault.profiles() {
+        assert_ne!(profile.username, profile.password.as_str());
     }
 }
 
@@ -4645,6 +4605,7 @@ fn login_after_logout_rearms_handshake_on_fake_arm() {
     let mut play = host_play::run_with_io(
         &host_play::PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -4732,6 +4693,7 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
     session.core.set_play(Some(host_play::run_with_io(
         &host_play::PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -4867,6 +4829,7 @@ fn explicit_login_arms_a_fresh_non_auto_profile() {
     session.core.set_play(Some(host_play::run_with_io(
         &host_play::PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5179,6 +5142,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
     let mut play = host_play::run_with_io(
         &host_play::PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5641,6 +5605,7 @@ fn set_random_settings_mirrors_running_arm() {
     let mut play = host_play::run_with_io(
         &host_play::PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,
@@ -5754,6 +5719,7 @@ fn set_auto_login_mirrors_running_arm() {
     let mut play = host_play::run_with_io(
         &host_play::PlayOptions {
             host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
             port: 43594,
             cache_dir: "/tmp".into(),
             lowmem: true,

@@ -45,11 +45,11 @@ use host_play::walk_map::{
 };
 use host_play::{
     background_bots_ack_error, background_bots_acked, clear_background_bots_ack_error,
-    live_vault_passphrase_for, load_navpois, map_ready_catalogue, mint_live_entries_for_target,
-    mint_live_names, open_vault, parse_profile_args, peek_map_catalogue,
-    persist_background_bots_ack, player_here_tile, profile_password_for, run_with_io,
-    run_with_template, MapDemandHandle, MapJobStatus, MapStage, PlayOptions, ProfileOptions,
-    ReadyCatalogue, ServerProfile, SharedClientTemplate, WalkArm, WireCmd,
+    live_vault_passphrase, load_navpois, map_ready_catalogue, mint_live_entries, mint_live_names,
+    open_vault, parse_profile_args, peek_map_catalogue, persist_background_bots_ack,
+    player_here_tile, profile_password, run_with_io, run_with_template, MapDemandHandle,
+    MapJobStatus, MapStage, PlayOptions, ProfileOptions, ReadyCatalogue, ServerProfile,
+    SharedClientTemplate, WalkArm, WireCmd,
 };
 use nav::map::identity::Digest;
 use nav::tile::Tile;
@@ -102,8 +102,8 @@ pub struct Args {
     pub map_bundle: Option<PathBuf>,
 }
 
-const USAGE: &str = "usage: tui-play [--profile local-274|local-289|public-289] [--revision 274|289] \
-         [--prod] [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] \
+const USAGE: &str = "usage: tui-play [--profile NAME|--rs2b2t] [--revision 274|289] \
+         [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] \
          [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass-stdin] \
          [--world N] [--live script_<name> [--catalog-core | --pair-core]] [--user USER]... \
@@ -157,7 +157,7 @@ pub fn parse_args() -> Args {
     }
 }
 
-/// Testable CLI parse. Does not flip [`client::set_bot_target`].
+/// Testable CLI parse.
 pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Args, String> {
     let (profile, rest) = parse_profile_args(args).map_err(|e| format!("tui-play: {e}"))?;
     let (catalog_core, pair_core) = live_core_from_env(env::var("BOT_LIVE_CORE").ok().as_deref())?;
@@ -216,11 +216,6 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
         );
     }
     Ok(parsed)
-}
-
-/// Refuse a non-loopback `--host` while local RSA is active (same bind as host-play).
-pub fn validate_startup_host(host: &str) -> Result<(), &'static str> {
-    host_play::validate_play_host(host, client::bot_target())
 }
 
 /// The `--live` scenario, `Err` when the name is not a `script_<name>`.
@@ -588,6 +583,7 @@ impl TuiSession {
         let mut session = Self::with_instance(
             PlayOptions {
                 host: profile.client().game_host().to_string(),
+                transport: profile.transport(),
                 port: profile.client().game_port(),
                 cache_dir: profile.client().cache_dir().display().to_string(),
                 lowmem: true,
@@ -600,10 +596,13 @@ impl TuiSession {
         session
     }
 
-    fn target(&self) -> client::BotTarget {
+    #[cfg(feature = "memory-profile")]
+    fn profile_class(&self) -> host_play::ProfileClass {
         self.server_profile
             .as_ref()
-            .map_or_else(client::bot_target, |profile| profile.target())
+            .map_or(host_play::ProfileClass::Remote, |profile| {
+                profile.profile_class()
+            })
     }
 
     fn app_title(&self) -> String {
@@ -938,8 +937,8 @@ impl TuiSession {
         let scenario_deadline = scenario.settings.deadline;
         let fixture_loadouts = scenario_fixture_loadouts(&scenario.settings);
         let names = mint_live_names(scenario.seed.profiles.len());
-        let entries = mint_live_entries_for_target(&names, self.target());
-        let pass = live_vault_passphrase_for(self.target());
+        let entries = mint_live_entries(&names);
+        let pass = live_vault_passphrase();
         let path = temp_live_vault(&entries, &pass);
         self.unlock_at(&path, &pass)?;
         let play = self
@@ -2564,7 +2563,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     if let Some(number) = args.world {
         let worlds = selection
             .public_worlds()
-            .ok_or("--world requires public-289")?;
+            .ok_or("--world requires the rs2b2t profile")?;
         if worlds.by_number(number).is_none() {
             return Err(format!(
                 "world {number} is not in the configured public worlds"
@@ -2582,7 +2581,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
 
     #[cfg(feature = "memory-profile")]
     if let Some(config) = host_play::memory::Config::from_env()? {
-        host_play::memory::require_live_benchmark()?;
+        host_play::memory::require_live_benchmark(session.profile_class())?;
         session.persist_ui = false;
         // Vault/card first; unlock constructs Play once (single load_pack).
         let run = host_play::memory::Run::prepare_unseeded(config, "tui")?;
@@ -2689,7 +2688,7 @@ impl TuiSession {
             .unwrap_or(274_000_001);
         let profile = Profile {
             username: username.into(),
-            password: profile_password_for(username, self.target()).into(),
+            password: profile_password(username).into(),
             uid,
             settings: vault::ProfileSettings::default(),
         };

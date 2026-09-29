@@ -362,15 +362,10 @@ impl Sample {
     }
 }
 
-/// Live bench gate: `LIVE=1` and the local engine target. Frontends call
-/// this when `Config::from_env` returns `Some` — unit `Config` tests stay
-/// free of the live requirement.
-pub fn require_live_benchmark() -> Result<(), String> {
-    if std::env::var("LIVE").as_deref() != Ok("1") {
-        return Err("memory benchmark requires LIVE=1 and the local target".into());
-    }
-    if client::bot_target() != client::BotTarget::Local {
-        return Err("memory benchmark requires LIVE=1 and the local target".into());
+/// Live bench gate: `LIVE=1` and a Local launch profile.
+pub fn require_live_benchmark(class: crate::ProfileClass) -> Result<(), String> {
+    if std::env::var("LIVE").as_deref() != Ok("1") || class != crate::ProfileClass::Local {
+        return Err("memory benchmark requires LIVE=1 and a local profile".into());
     }
     Ok(())
 }
@@ -3105,6 +3100,7 @@ mod tests {
             lowmem: false,
         });
         client.ingame = true;
+        client.set_cheat_admission(client::CheatAdmission::Granted);
         client.scene_state = 2;
         client.map_build_base_x = (tile.x >> 6) << 6;
         client.map_build_base_z = (tile.z >> 6) << 6;
@@ -3452,7 +3448,7 @@ mod tests {
     fn require_live_benchmark_errors_without_live_env() {
         let _lock = ENV_LOCK.lock().unwrap();
         let _g = EnvGuard::clear(&["LIVE"]);
-        let err = require_live_benchmark().expect_err("LIVE unset");
+        let err = require_live_benchmark(crate::ProfileClass::Local).expect_err("LIVE unset");
         assert!(err.contains("LIVE=1"), "got {err}");
     }
 }

@@ -1,8 +1,7 @@
 //! Resolve launch inputs once, before shared assets, vault mutation or sockets.
 //!
-//! The host profile owns world/vault identity and default script paths.
-//! The client receives only its immutable connection and resource binding. Legacy `PlayOptions` remains
-//! available for old callers; the frontends use this checked path.
+//! The host profile owns endpoint, vault, and resource identity.
+//! The client receives only its immutable connection and resource binding.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -10,13 +9,12 @@ use std::sync::Arc;
 use client::client::ClientConfig;
 use client::io::{ClientRevision, Packet};
 use client::session::{ClientSessionConfig, ClientSessionProfile};
-use client::BotTarget;
+use client::Transport;
 use nav::canlight;
 use nav::manifest::hash_bytes_with_progress;
 pub use nav::manifest::{nav_manifest_path, CacheManifest, NavManifest};
 use nav::pack::{decode_canlight_sidecar, decode_reach_sidecar, sha256_hex};
 use nav::world::NavWorld;
-use sha2::{Digest, Sha256};
 
 use crate::cache::CacheAvailability;
 use crate::nav_identity::{
@@ -25,12 +23,13 @@ use crate::nav_identity::{
 };
 use crate::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 use crate::public_worlds::PublicWorlds;
+use crate::servers::{LaunchProfile, LoginKey};
 
 #[path = "profile_options.rs"]
 mod options;
 pub use options::{
-    parse_profile_args, parse_revision, ProfileEnvironment, ProfileOptions, ServerSelection,
-    WorldMembersFact, WorldMembersSource,
+    parse_profile_args, parse_revision, profile_class, ProfileClass, ProfileEnvironment,
+    ProfileOptions, WorldMembersFact, WorldMembersSource,
 };
 #[path = "profile_binding.rs"]
 mod binding;
@@ -41,7 +40,8 @@ mod selection;
 /// paths and captured key inputs, but loads no cache and opens no socket.
 #[derive(Debug, Clone)]
 pub struct ProfileSelection {
-    selection: ServerSelection,
+    profile: LaunchProfile,
+    class: ProfileClass,
     game_host: String,
     game_port: u16,
     asset_host: String,
@@ -281,7 +281,8 @@ impl GameDataStatus {
 /// Frozen session inputs. Getters expose no mutable connection/resource fields.
 #[derive(Debug)]
 pub struct ServerProfile {
-    selection: ServerSelection,
+    profile: LaunchProfile,
+    class: ProfileClass,
     client: Arc<ClientSessionProfile>,
     cache: CacheAvailability,
     cache_manifest: CacheManifest,
@@ -318,14 +319,20 @@ impl std::fmt::Debug for SharedWorld {
 }
 
 impl ServerProfile {
-    pub fn selection(&self) -> ServerSelection {
-        self.selection
+    pub fn selection(&self) -> &LaunchProfile {
+        &self.profile
+    }
+    pub fn name(&self) -> &str {
+        &self.profile.name
     }
     pub fn revision(&self) -> ClientRevision {
-        self.selection.revision()
+        parse_revision(&self.profile.revision.to_string()).expect("validated profile revision")
     }
-    pub fn target(&self) -> BotTarget {
-        self.selection.target()
+    pub fn transport(&self) -> Transport {
+        self.profile.client_transport()
+    }
+    pub fn profile_class(&self) -> ProfileClass {
+        self.class
     }
     pub fn client(&self) -> &Arc<ClientSessionProfile> {
         &self.client
@@ -409,7 +416,7 @@ impl ServerProfile {
     pub fn label(&self) -> String {
         format!(
             "{} · {}:{} · revision {}",
-            self.selection.name(),
+            self.profile.name,
             self.client.game_host(),
             self.client.game_port(),
             self.revision().as_i32()

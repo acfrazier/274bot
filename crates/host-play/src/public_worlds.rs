@@ -100,7 +100,7 @@ impl PublicWorlds {
         Ok(config)
     }
 
-    fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         if self.schema_version != 1 || self.worlds.is_empty() {
             return Err("expected schema_version 1 and a nonempty worlds list".into());
         }

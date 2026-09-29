@@ -86,7 +86,7 @@ prepare removes its partial directory automatically.
   cached below the platform's per-commit workspace, so artifacts from different
   commits cannot mix. Remote roots must stay below the remote home directory.
 - `--jobs` defaults to 4, `--revision` to 289, and the macOS app profile to
-  `public-289`.
+  `rs2b2t`.
 
 No username, key path, cache path, signing identity, or credential is
 hard-coded; the Linux host is only the documented, overridable builder alias.
@@ -213,7 +213,7 @@ Example, after recording the build receipt:
 python3 tools/release/package.py --platform macos \
   --input target/release --output "$WORK/274bot-$VERSION-macos-arm64" \
   --build-receipt "$WORK/macos-build.json" \
-  --app-profile public-289 --sign-identity "$RELEASE_SIGN_IDENTITY" \
+  --app-profile rs2b2t --sign-identity "$RELEASE_SIGN_IDENTITY" \
   --map-cache "$ENGINE/data/pack/client" --map-unpack "$SNAPSHOTS"
 ```
 
@@ -221,7 +221,7 @@ python3 tools/release/package.py --platform macos \
 temporary directory, verifies every staged file against its release manifest,
 prints a JSON summary (file count, bytes, shipped map terrain) and removes it.
 
-The app's Finder launch selects public-289 through its Info.plist environment.
+The app's Finder launch selects `rs2b2t` through its Info.plist environment.
 The standalone executables retain their normal CLI profile selection. The
 bundle has its own navigation and map resources under Contents/Resources;
 standalone binaries use the adjacent nav and map directories. Keep each layout
@@ -240,7 +240,7 @@ checks and smoke results with each candidate. Release notes must disclose the
 remaining catalog limitations; historical scoped script passes do not imply
 all scripts/options passed with a new binary.
 
-Initial distributed packages target public-289. Build their navigation with a
+Initial distributed packages target `rs2b2t`. Build their navigation with a
 separate engine-input directory containing the public endpoint's CRC-verified
 cache under data/pack/client, and BOT_NAV_CONTENT_DIR pointing at canonical
 289 content. Do not overwrite the local engine cache. The public 289 archive

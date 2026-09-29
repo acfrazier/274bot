@@ -890,7 +890,9 @@ fn selected_profile(
         ..ProfileOptions::default()
     };
     let profile = options.resolve(None)?.bind()?;
-    if profile.target() != client::BotTarget::Local || profile.client().game_host() != "127.0.0.1" {
+    if profile.profile_class() != host_play::ProfileClass::Local
+        || profile.client().game_host() != "127.0.0.1"
+    {
         return Err("paired catalog fixtures require a loopback-only local profile".into());
     }
     let template = SharedClientTemplate::load(Arc::clone(&profile))?;
@@ -1012,7 +1014,7 @@ fn run_cell(case: PairCase) -> Result<(), String> {
     if names.len() != 2 || names[0].eq_ignore_ascii_case(&names[1]) {
         return Err("failed to mint two distinct live accounts".into());
     }
-    let credentials = host_play::mint_live_entries_for_target(&names, profile.target());
+    let credentials = host_play::mint_live_entries(&names);
     if credentials.len() != 2 {
         return Err("failed to mint two local credentials".into());
     }

@@ -79,6 +79,7 @@ pub fn options() -> PlayOptions {
     let home = client::operator_home().expect("operator home (HOME or USERPROFILE) set");
     PlayOptions {
         host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
         port: 43594,
         cache_dir: format!("{home}/experiments/Server/engine/data/pack/client"),
         lowmem: true,

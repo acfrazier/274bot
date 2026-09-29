@@ -381,8 +381,40 @@ fn bind_profile_with_env(
         .catalog_root()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| config.catalog.clone());
+    let launch = selection.selection();
+    let login_key = serde_json::to_vec(&launch.login_key)
+        .map_err(|error| format!("serialize launch login key: {error}"))?;
     let resolved = identity::ResolvedInputs {
-        selection: selection.selection().name().to_string(),
+        selection: launch.name.clone(),
+        transport: match launch.transport {
+            host_play::LaunchTransport::Tcp => "tcp",
+            host_play::LaunchTransport::Wss => "wss",
+        }
+        .into(),
+        profile_class: match selection.profile_class() {
+            host_play::ProfileClass::Local => "local",
+            host_play::ProfileClass::Remote => "remote",
+        }
+        .into(),
+        worlds: launch
+            .worlds
+            .iter()
+            .map(|world| identity::LaunchWorldIdentity {
+                number: world.number,
+                host: world.host.clone(),
+                port: world.port,
+                node_id: world.node_id,
+                asset_host: world.asset_host.clone(),
+                asset_port: world.asset_port,
+            })
+            .collect(),
+        login_key_source: match &launch.login_key {
+            host_play::LoginKey::Named(_) => "served",
+            host_play::LoginKey::Inline { .. } => "inline",
+            host_play::LoginKey::EngineDir { .. } => "engine_dir",
+        }
+        .into(),
+        login_key_sha256: identity::sha256(&login_key),
         cache: selection.cache_dir().display().to_string(),
         vault: selection.vault_path().display().to_string(),
         nav_pack: selection.nav_pack().display().to_string(),
@@ -429,10 +461,7 @@ fn bind_profile_with_env(
         },
     };
     Ok(ProfileIdentity {
-        profile: options
-            .profile
-            .clone()
-            .unwrap_or_else(|| config.profile.clone()),
+        profile: resolved.selection.clone(),
         revision: options.revision.clone().or_else(|| config.revision.clone()),
         host: options.host.clone().or_else(|| config.host.clone()),
         port: options.port.or(config.port),

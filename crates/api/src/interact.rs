@@ -5,7 +5,7 @@
 //! driver accepted the send, not that the server applied it.
 
 use client::client::{Client, MiniMenuAction};
-use client::io::{map_client_prot, ClientProt, ClientRevision};
+use client::io::ClientRevision;
 
 use crate::prot::{Out, Send};
 use crate::snapshot::{

@@ -140,7 +140,7 @@ pub(crate) fn lamp_redemption_scenario() -> Scenario {
     steps.push(Step {
         name: "prepare twenty-seven ordinary bones before Start",
         kind: StepKind::Perform {
-            send: Box::new(|c, _| cheat(c, "give bones 27")),
+            send: Box::new(|c, _| cheat(c, "give bones 27").is_sent()),
         },
         wait: Wait {
             arm: Proof::Item {
@@ -162,7 +162,7 @@ pub(crate) fn lamp_redemption_scenario() -> Scenario {
     steps.push(Step {
         name: "inject one authentic selected-289 genie lamp after Start",
         kind: StepKind::Perform {
-            send: Box::new(|c, _| cheat(c, "give macro_genilamp 1")),
+            send: Box::new(|c, _| cheat(c, "give macro_genilamp 1").is_sent()),
         },
         wait: Wait {
             arm: Proof::ItemId {
@@ -428,7 +428,7 @@ pub(crate) fn strange_plant_owned_scenario() -> Scenario {
     steps.push(Step {
         name: "spawn the upstream owned Strange Plant",
         kind: StepKind::Perform {
-            send: Box::new(|c, _| cheat(c, "~macro_event 5")),
+            send: Box::new(|c, _| cheat(c, "~macro_event 5").is_sent()),
         },
         wait: Wait {
             arm: Proof::Chat {
@@ -530,6 +530,7 @@ pub(crate) fn maze_owned_scenario() -> Scenario {
                         MAZE_RETURN_STAND.z,
                     ),
                 )
+                .is_sent()
             }),
         },
         wait: Wait {
