@@ -1021,8 +1021,12 @@ fn native_settings_wait_for_durability_and_remain_per_account() {
             .unwrap()
     };
     let original = revision(&f, "alice");
-    let blocker = f.dir.join("vault").with_extension("tmp");
-    std::fs::create_dir_all(&blocker).unwrap();
+    // Writes stage under unique temp names, so block the publish itself: the
+    // vault file kept aside while a directory sits at its name.
+    let vault_path = f.dir.join("vault");
+    let aside = vault_path.with_extension("aside");
+    std::fs::rename(&vault_path, &aside).unwrap();
+    std::fs::create_dir(&vault_path).unwrap();
     save_native_partner(&mut f, "alice", "Uncommitted");
     assert_eq!(
         f.core
@@ -1033,7 +1037,8 @@ fn native_settings_wait_for_durability_and_remain_per_account() {
         ""
     );
     f.core.flush_writes();
-    std::fs::remove_dir_all(&blocker).unwrap();
+    std::fs::remove_dir(&vault_path).unwrap();
+    std::fs::rename(&aside, &vault_path).unwrap();
     assert_eq!(revision(&f, "alice"), original);
     assert_eq!(
         f.core
@@ -1211,7 +1216,7 @@ fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
         .save_profile(row, crate::ArmMirror::Remember(Some(live)), "form")
         .unwrap();
     f.core.flush_writes();
-    let disk = Vault::unlock(&f.dir.join("vault"), "bot").unwrap();
+    let disk = Vault::unlock(&f.dir.join("vault"), "test-passphrase-01").unwrap();
     let saved = disk.get("alice").unwrap();
     assert_eq!(saved.password, "new-password");
     assert_eq!(saved.settings.clue_duel_partner, "Bob");
