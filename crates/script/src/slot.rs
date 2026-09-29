@@ -1588,6 +1588,20 @@ impl SlotScript {
             .map_or((0, false), LoadIsolate::execution_sequence)
     }
 
+    /// Recheck a Load script's parked waits without generating a game tick.
+    pub fn on_snapshot_change(&mut self, tick: u64) {
+        self.observe_lifecycle();
+        if self.state != RunState::Running || !self.want_run {
+            return;
+        }
+        #[cfg(feature = "load")]
+        if let Some(isolate) = &self.load {
+            isolate.on_snapshot_change_at(tick, self.native_input.lock().identity());
+        }
+        #[cfg(not(feature = "load"))]
+        let _ = tick;
+    }
+
     /// Call only on observed server tick. Dispatches the JS isolate's
     /// `on_game_tick` (compiled path) only while Running && want_run. A
     /// compiled panic is caught: the slot goes Error with the message, the

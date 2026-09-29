@@ -216,16 +216,16 @@ impl Host {
     /// Drive one client's `mainloop` at the slot cadence until `probe`
     /// returns true (checked before every tick, so the slot thread can stop
     /// a rail ✕ or return to its control loop within one frame). Each
-    /// tick [`Host::client_tick`] runs `observe` **before** [`Host::client_frame`]
-    /// so the panel can latch slot state (draw/focus) before the paint
-    /// decision for **this** tick, then drains input, latches the click,
-    /// runs `mainloop`, and renders (via the slot's optional `Renderer`)
-    /// only while `client.draw` is on. Dirty snapshot families
+    /// tick [`Host::client_tick`] drains input, latches the click, applies
+    /// packets in `mainloop`, then runs `observe` before rendering. The panel
+    /// can latch draw/focus for this frame while scripts see fresh packets.
+    /// Rendering uses the slot's optional `Renderer` only while `client.draw`
+    /// is on. Dirty snapshot families
     /// rebuild from [`DrainResult::dirty`] (not `Pump::dirty()` after
     /// drain); think (auto-run) reads energy from the live client field.
     /// The third observe arg is the count of accepted auto-run
     /// `set_run(true)` sends (from the previous tick); the fourth is the
-    /// [`RandomStatus`] the previous frame's guardian published — the observe
+    /// [`RandomStatus`] this frame's guardian published — the observe
     /// copies it onto the slot status row and gates script tick / follow on
     /// its hold. Observe's return is whether the slot has script/cheat/nav
     /// work, which keeps a busy slot on the frame loop. `settings` is the
@@ -278,10 +278,6 @@ impl Host {
             slot.profile = Some(performance_profile::register(username));
         }
         let mut run_sends = 0u32;
-        // The last published random-event status: `client_frame` returns it
-        // and the next observe copies it onto the slot's status row and
-        // gates script tick / follow on its hold.
-        let mut status = RandomStatus::default();
         // Prime busy so the first pass runs one tick: the cadence decision
         // must see the observe hook's draw/capture/busy mirror, which only
         // exists after a tick has run.
@@ -297,7 +293,7 @@ impl Host {
             if frame_cadence(client, input.as_deref()) || busy {
                 socket_stalled = false;
                 let start = std::time::Instant::now();
-                let (new_busy, new_status) = Self::client_tick(
+                let (new_busy, _) = Self::client_tick(
                     client,
                     &mut slot,
                     username,
@@ -306,10 +302,8 @@ impl Host {
                     &mut run_sends,
                     &mut observe,
                     Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
-                    &status,
                 );
                 busy = new_busy;
-                status = new_status;
                 // Java GameShell sleeps the leftover of 20 ms *after* the work.
                 // A fixed sleep *before* the tick made the period 20 ms + Pix3D
                 // (slow picture, extra idle). If the tick overruns, skip sleep.
@@ -331,7 +325,7 @@ impl Host {
                 IDLE_PARK_MS
             };
             let reason = park(client, ctl.as_deref(), !socket_stalled, timeout);
-            let (new_busy, new_status) = Self::client_tick(
+            let (new_busy, _) = Self::client_tick(
                 client,
                 &mut slot,
                 username,
@@ -340,10 +334,8 @@ impl Host {
                 &mut run_sends,
                 &mut observe,
                 Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
-                &status,
             );
             busy = new_busy;
-            status = new_status;
             if stream_bytes(client) != before {
                 socket_stalled = false;
             } else if reason == ParkWake::Socket {
@@ -352,13 +344,9 @@ impl Host {
         }
     }
 
-    /// One host tick: `observe` first (the panel latches slot state), then
-    /// one [`Host::client_frame`]. Unfocused / renderer-off slots skip the
-    /// paint on this tick, not the next. The observe hook sees the random
-    /// status the previous frame's guardian published (`prev_status`) —
-    /// it copies it onto the slot status row and gates script tick /
-    /// follow on its hold. Returns observe's busy flag and the fresh
-    /// [`RandomStatus`] this frame's guardian published.
+    /// Apply packets and refresh the guardian before observing this frame.
+    /// Observation still precedes paint, so draw/focus changes affect this
+    /// frame. Returns the observer's busy flag and the fresh guardian status.
     #[allow(private_interfaces)]
     #[allow(clippy::too_many_arguments)]
     pub fn client_tick<F>(
@@ -370,20 +358,107 @@ impl Host {
         run_sends: &mut u32,
         observe: &mut F,
         knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
-        prev_status: &RandomStatus,
     ) -> (bool, RandomStatus)
     where
         F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
     {
         let _profile_tick = client::profiling::CLIENT_TICK.start();
-        let t_obs = Instant::now();
-        let busy = observe(
+        Self::client_frame_observed(
+            client, slot, username, input, mailbox, run_sends, knock, observe,
+        )
+    }
+
+    /// One 20 ms frame: drain optional input into the shell, latch the
+    /// click, run one `mainloop` pass, drain gens, refresh the guardian,
+    /// then render the frame (the slot's optional `Renderer` —
+    /// `client.draw` gates paint; a drawing slot stores `FrameOutput`
+    /// into the optional mailbox, mirroring `Client::run`). A GPU↔CPU or lowmem
+    /// flip drops the `Renderer` here and reattaches it on the next paint
+    /// — the `Client` and its socket never restart. The panel takes the
+    /// mailbox: `FrameBuf::take` hands the whole `FrameOutput` off (the
+    /// `Texture` binds / reads back at the panel, the `PixMap` packs via
+    /// [`FrameBuf::snapshot`]). `run_sends` is
+    /// overwritten with the slot's running count of accepted auto-run
+    /// sends. Returns the [`RandomStatus`] the guardian published this
+    /// frame. `knock` is
+    /// the script's rising-edge `on_random` arm; `None` (no scripts on
+    /// the slot) keeps the claim Host.
+    /// `SlotLoop` stays module-private (tests live in this module); the
+    /// pub surface exists so `run_client` and the tests share the frame.
+    #[allow(private_interfaces)]
+    pub fn client_frame(
+        client: &mut Client,
+        slot: &mut SlotLoop,
+        username: &str,
+        input: Option<&SlotInput>,
+        mailbox: Option<&FrameBuf>,
+        run_sends: &mut u32,
+        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
+    ) -> RandomStatus {
+        Self::client_frame_observed(
             client,
+            slot,
             username,
-            *run_sends,
-            prev_status,
-            &mut slot.run_policy,
-        );
+            input,
+            mailbox,
+            run_sends,
+            knock,
+            &mut |_, _, _, _, _| false,
+        )
+        .1
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn client_frame_observed<F>(
+        client: &mut Client,
+        slot: &mut SlotLoop,
+        username: &str,
+        input: Option<&SlotInput>,
+        mailbox: Option<&FrameBuf>,
+        run_sends: &mut u32,
+        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
+        observe: &mut F,
+    ) -> (bool, RandomStatus)
+    where
+        F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
+    {
+        client.set_external_reconnect_owner(true);
+        if let Some(inp) = input {
+            inp.consume_native_frame(&mut client.shell);
+        } else {
+            client.shell.latch_click();
+        }
+        let random_events = slot.random_events.load(Ordering::Relaxed);
+        slot.settings.random_events = random_events;
+        let t_loop = std::time::Instant::now();
+        client.mainloop();
+        slot.loop_ns = slot
+            .loop_ns
+            .wrapping_add(t_loop.elapsed().as_nanos() as u64);
+        let result = slot.after_drain(client);
+        // Random-event guardian (spec pump placement): the snapshot is
+        // fresh after the drain. Sync the live toggle from the shared
+        // atomic (panel/TUI may flip it mid-session) onto the cloned
+        // `ProfileSettings` the guardian reads; the returned
+        // `RandomStatus` is passed to this frame's observe.
+        slot.settings.random_events = slot.random_events.load(Ordering::Relaxed);
+        slot.settings.lamp_auto = slot.lamp_auto.load(Ordering::Relaxed);
+        if let Ok(skill) = slot.lamp_skill.lock() {
+            slot.settings.lamp_skill = skill.clone();
+        }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let status = slot
+            .guardian
+            .tick(client, &slot.snapshot, &slot.settings, now_ms, knock);
+        slot.guardian_status = status.clone();
+        if should_emit_tick(result.player_info) {
+            slot.tick_n = slot.tick_n.wrapping_add(1);
+        }
+        let t_obs = Instant::now();
+        let busy = observe(client, username, *run_sends, &status, &mut slot.run_policy);
         let observe_ns = t_obs.elapsed().as_nanos() as u64;
         slot.observe_ns = slot.observe_ns.wrapping_add(observe_ns);
         if observe_ns > slot.observe_max_ns {
@@ -402,50 +477,7 @@ impl Host {
                 );
             }
         }
-        let status = Self::client_frame(client, slot, username, input, mailbox, run_sends, knock);
-        (busy, status)
-    }
-
-    /// One 20 ms frame: drain optional input into the shell, latch the
-    /// click, run one `mainloop` pass, render the frame (the slot's
-    /// optional `Renderer` — `client.draw` gates the paint; a drawing
-    /// slot stores the rendered `FrameOutput` into the optional mailbox,
-    /// mirroring `Client::run`), then drain gens. A GPU↔CPU or lowmem
-    /// flip drops the `Renderer` here and reattaches it on the next paint
-    /// — the `Client` and its socket never restart. The panel takes the
-    /// mailbox: `FrameBuf::take` hands the whole `FrameOutput` off (the
-    /// `Texture` binds / reads back at the panel, the `PixMap` packs via
-    /// [`FrameBuf::snapshot`]). `run_sends` is
-    /// overwritten with the slot's running count of accepted auto-run
-    /// sends. Returns the [`RandomStatus`] the guardian published this
-    /// frame (the pump threads it back into the next observe). `knock` is
-    /// the script's rising-edge `on_random` arm; `None` (no scripts on
-    /// the slot) keeps the claim Host.
-    /// `SlotLoop` stays module-private (tests live in this module); the
-    /// pub surface exists so `run_client` and the tests share the frame.
-    #[allow(private_interfaces)]
-    pub fn client_frame(
-        client: &mut Client,
-        slot: &mut SlotLoop,
-        username: &str,
-        input: Option<&SlotInput>,
-        mailbox: Option<&FrameBuf>,
-        run_sends: &mut u32,
-        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
-    ) -> RandomStatus {
-        client.set_external_reconnect_owner(true);
-        if let Some(inp) = input {
-            inp.consume_native_frame(&mut client.shell);
-        } else {
-            client.shell.latch_click();
-        }
-        let random_events = slot.random_events.load(Ordering::Relaxed);
-        slot.settings.random_events = random_events;
-        let t_loop = std::time::Instant::now();
-        client.mainloop();
-        slot.loop_ns = slot
-            .loop_ns
-            .wrapping_add(t_loop.elapsed().as_nanos() as u64);
+        slot.apply_auto_run(client);
         // Channel-tune / first rebuild: TV static must re-roll every 20 ms,
         // not the 1 fps watch cadence (otherwise the zap is one snow frame
         // a second and looks like a frozen splash).
@@ -545,28 +577,6 @@ impl Host {
         slot.log_n = slot.log_n.wrapping_add(1);
         #[cfg(feature = "performance-profile")]
         slot.publish_profile();
-        let result = slot.after_drain(client);
-        // Random-event guardian (spec pump placement): the snapshot is
-        // fresh after the drain. Sync the live toggle from the shared
-        // atomic (panel/TUI may flip it mid-session) onto the cloned
-        // `ProfileSettings` the guardian reads; the returned
-        // `RandomStatus` rides the pump back into the next observe.
-        slot.settings.random_events = slot.random_events.load(Ordering::Relaxed);
-        slot.settings.lamp_auto = slot.lamp_auto.load(Ordering::Relaxed);
-        if let Ok(skill) = slot.lamp_skill.lock() {
-            slot.settings.lamp_skill = skill.clone();
-        }
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        let status = slot
-            .guardian
-            .tick(client, &slot.snapshot, &slot.settings, now_ms, knock);
-        slot.guardian_status = status.clone();
-        if should_emit_tick(result.player_info) {
-            slot.tick_n = slot.tick_n.wrapping_add(1);
-        }
         if debug_enabled() {
             let frame_us = t_loop.elapsed().as_micros() as u64;
             if let Some(us) = debug_hitch_us(frame_us) {
@@ -615,7 +625,7 @@ impl Host {
             }
         }
         *run_sends = slot.run_sends;
-        status
+        (busy, status)
     }
 }
 
@@ -998,7 +1008,10 @@ impl SlotLoop {
             self.run_on = false;
         }
         publish_snapshot(&mut self.snapshot, client, result);
+        result
+    }
 
+    fn apply_auto_run(&mut self, client: &mut Client) {
         // Live client field: UPDATE_RUNENERGY writes here. Snapshot energy
         // can stay 0 if a stat-family rebuild ran before the energy packet.
         let energy = client.runenergy;
@@ -1018,7 +1031,6 @@ impl SlotLoop {
             self.run_on = true;
             self.run_sends += 1;
         }
-        result
     }
 }
 

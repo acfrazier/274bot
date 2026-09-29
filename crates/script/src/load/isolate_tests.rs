@@ -210,6 +210,7 @@ fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
         tick: 1,
         generation: 0,
         input_identity: 0,
+        wait_only: false,
     }));
     assert_eq!(
         iso.probe("globalThis.n || 0").unwrap(),

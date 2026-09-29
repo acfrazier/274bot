@@ -756,6 +756,7 @@ fn auto_run_does_not_send_on_the_title() {
     client.runenergy = 100;
     client.gens.stat = 1;
     slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
     assert_eq!(
         slot.run_sends, 0,
         "title IF_BUTTON is ignored; sending here sticks run_on"
@@ -764,6 +765,7 @@ fn auto_run_does_not_send_on_the_title() {
 
     ingame_scene2(&mut client);
     slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 1);
     assert!(slot.run_on);
 }
@@ -782,6 +784,7 @@ fn auto_run_20_0_20_sends_twice() {
     client.runenergy = 20;
     client.gens.stat = 1;
     slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 1);
     assert_eq!(client.out.data()[0], ClientProt::IF_BUTTON.id as u8);
     let iface = u16::from_be_bytes([client.out.data()[1], client.out.data()[2]]);
@@ -791,12 +794,14 @@ fn auto_run_20_0_20_sends_twice() {
     client.runenergy = 0;
     client.gens.stat = 2;
     slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
     assert!(!slot.run_on);
     assert_eq!(slot.run_sends, 1);
 
     client.runenergy = 20;
     client.gens.stat = 3;
     slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 2);
     assert!(slot.run_on);
 }
@@ -824,6 +829,7 @@ fn script_run_override_applies_until_host_receives_a_clear() {
         }),
     );
     slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
     assert_eq!(
         slot.run_sends, 0,
         "session threshold overrides host default 20"
@@ -831,6 +837,7 @@ fn script_run_override_applies_until_host_receives_a_clear() {
 
     slot.run_policy.apply_override(7, None);
     slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
     assert_eq!(
         slot.run_sends, 1,
         "clear falls back to unchanged host default 20"
@@ -865,8 +872,10 @@ fn script_run_override_clears_on_runtime_change_and_survives_relog() {
 
     slot.run_policy.apply_override(4, Some(override_policy));
     slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
     client.gens.session = client.gens.session.wrapping_add(1);
     slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
     assert_eq!(
         slot.run_policy.policy_override,
         Some(override_policy),
@@ -900,6 +909,7 @@ fn already_running_echo_does_not_send() {
     ingame_scene2(&mut client);
     let mut slot = SlotLoop::new();
     slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 0, "already on → no extra send");
     assert!(slot.run_on);
 }
@@ -921,6 +931,7 @@ fn unpacked_ifaces_both_visible_still_sends() {
     ingame_scene2(&mut client);
     let mut slot = SlotLoop::new();
     slot.after_drain(&mut client);
+    slot.apply_auto_run(&mut client);
     assert_eq!(slot.run_sends, 1);
 }
 
@@ -1409,6 +1420,53 @@ fn mainredraw_runs_check_minimap_on_a_paint_tick() {
 }
 
 #[test]
+fn observe_sees_packets_applied_in_the_same_frame() {
+    use std::io::Write;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut c = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    c.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    let (mut server, _) = listener.accept().unwrap();
+    c.ingame = true;
+    c.ptype = -1;
+    server.write_all(&[89, 0, 10]).unwrap();
+    let handle = stream_wait_handle(c.stream.as_ref().unwrap());
+    assert!(slot_io::wait_readable(&[handle], Duration::from_secs(2))[0]);
+    let observed = AtomicBool::new(false);
+    let mut reboot = 0;
+    Host::run_client(
+        &mut c,
+        "alice",
+        ProfileSettings::default(),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(Mutex::new("strength".to_string())),
+        None,
+        None,
+        None,
+        ScriptRunPolicy::default(),
+        |client, _, _, _, _| {
+            reboot = client.reboot_timer;
+            observed.store(true, Ordering::Relaxed);
+            false
+        },
+        |_| observed.load(Ordering::Relaxed),
+        |_| RandomClaim::Host,
+    );
+    assert!(
+        reboot > 0,
+        "the first observer must see the arriving packet"
+    );
+}
+
+#[test]
 fn client_tick_observe_runs_before_the_frame_paint() {
     force_cpu_backend();
     let mut c = prepare_client(
@@ -1424,7 +1482,6 @@ fn client_tick_observe_runs_before_the_frame_paint() {
     assert!(!c.draw, "slots start with the renderer off");
     // A drawing slot paints this tick; an observe-after-frame would
     // skip it, so observe-before must run first.
-    c.set_draw(true);
     let observed = AtomicBool::new(false);
     Host::client_tick(
         &mut c,
@@ -1433,12 +1490,12 @@ fn client_tick_observe_runs_before_the_frame_paint() {
         None,
         Some(&buf),
         &mut sends,
-        &mut |_, _, _, _, _| {
+        &mut |c, _, _, _, _| {
+            c.set_draw(true);
             observed.store(true, Ordering::Relaxed);
             false
         },
         None,
-        &RandomStatus::default(),
     );
     assert!(observed.load(Ordering::Relaxed));
     assert_eq!(
@@ -1446,7 +1503,6 @@ fn client_tick_observe_runs_before_the_frame_paint() {
         (client::client::APPLET_W * client::client::APPLET_H) as usize
     );
     let gen = buf.generation();
-    c.set_draw(false);
     Host::client_tick(
         &mut c,
         &mut slot,
@@ -1454,9 +1510,11 @@ fn client_tick_observe_runs_before_the_frame_paint() {
         None,
         Some(&buf),
         &mut sends,
-        &mut |_, _, _, _, _| false,
+        &mut |c, _, _, _, _| {
+            c.set_draw(false);
+            false
+        },
         None,
-        &RandomStatus::default(),
     );
     assert!(!c.draw);
     assert_eq!(
