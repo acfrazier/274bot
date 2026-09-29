@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use frontend_core::views::run_state_label;
-use script::{JsCard, RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
+use script::{JsCard, LoadStage, RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
 
 /// The script button labels, left to right (Pause slot is dynamic — see
 /// [`pause_button_label`]).
@@ -228,7 +228,14 @@ pub fn browse_lines(
     lines
 }
 
-/// Paint rows for one card (name+badges, optional description, category, tags).
+/// Paint rows for one card (name+badges, optional description, category,
+/// tags, and — for an unloadable card — the load failure the panel's
+/// `browse_script_card` retains: `failed {stage}` plus the diagnostic naming
+/// the failing specifier). The pane wraps (`Paragraph` + `Wrap`), so the
+/// specifier stays readable at narrow widths instead of clipping like the
+/// one-row message strip. The rows are selection-independent so click
+/// mapping (`card_index_at_row`) and `browse_section_height` agree with the
+/// paint.
 pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>> {
     let mark = if selected { "> " } else { "  " };
     let style = if card.unloadable.is_some() {
@@ -260,6 +267,19 @@ pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>
     if !card.tags.is_empty() {
         out.push(Line::from(Span::styled(
             format!("    tags: {}", card.tags.join(", ")),
+            style,
+        )));
+    }
+    if let Some(spec) = card.unloadable.as_deref() {
+        // An `unloadable` card always fails import resolution with this
+        // diagnostic (`JsLibrary::note_card_outcome`), the same text the
+        // panel wraps on the selected card.
+        out.push(Line::from(Span::styled(
+            format!("    failed {}", LoadStage::ImportResolution.as_str()),
+            style,
+        )));
+        out.push(Line::from(Span::styled(
+            format!("    unloadable import: {spec}"),
             style,
         )));
     }
@@ -753,6 +773,71 @@ mod tests {
             }),
             "unloadable card rows must paint dim"
         );
+    }
+
+    #[test]
+    fn unloadable_card_detail_lines_name_the_failing_specifier() {
+        let mut card = sample_file_card();
+        card.unloadable = Some("../../event/webwalk/Something.js".into());
+        // Selection must not change the rows: click mapping and section
+        // height both count the unselected shape.
+        for selected in [false, true] {
+            let text = card_detail_lines(&card, selected)
+                .iter()
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                text.contains("failed import"),
+                "stage line (panel parity): {text:?}"
+            );
+            assert!(
+                text.contains("unloadable import: ../../event/webwalk/Something.js"),
+                "diagnostic names the specifier: {text:?}"
+            );
+        }
+    }
+
+    /// The bad-import error must survive the pane's wrap at the PTY sizes
+    /// the operators use (120x40, 80x24) instead of clipping like the
+    /// one-row message strip: the full specifier stays in the cells.
+    #[test]
+    fn unloadable_specifier_stays_visible_when_the_pane_wraps() {
+        let mut ghost = sample_file_card();
+        ghost.name = "K0DiscScriptGhost".into();
+        ghost.description = String::new();
+        ghost.tags = Vec::new();
+        ghost.unloadable = Some("../../event/webwalk/Something.js".into());
+        let cards = vec![ghost];
+        let sel = ScriptSel::Loaded(ScriptSource::File, "K0DiscScriptGhost".into());
+        for (w, h) in [(120, 40), (80, 24), (40, 24)] {
+            let pane = ScriptPane::new(
+                RunState::Idle,
+                Some(&sel),
+                &cards,
+                &[],
+                false,
+                true,
+                false,
+                "",
+                false,
+                None,
+            );
+            let text = render(pane, w, h);
+            assert!(
+                text.contains("failed import"),
+                "{w}x{h}: stage line wraps into view"
+            );
+            assert!(
+                text.contains("../../event/webwalk/Something.js"),
+                "{w}x{h}: full specifier stays readable"
+            );
+        }
     }
 
     #[test]
