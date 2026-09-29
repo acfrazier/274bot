@@ -67,7 +67,18 @@ impl Drop for ScriptOwner {
 
 pub(super) struct Preparation {
     generation: u64,
-    worker: std::thread::JoinHandle<Result<CompiledRun, StartError>>,
+    worker: std::thread::JoinHandle<PreparationResult>,
+}
+
+/// A detached thread packet may be destroyed on either thread. Never let a
+/// card-owned configuration destructor unwind through std's packet destructor.
+struct PreparationResult(Option<Result<CompiledRun, StartError>>);
+
+impl Drop for PreparationResult {
+    fn drop(&mut self) {
+        let result = self.0.take();
+        let _ = catch_unwind(AssertUnwindSafe(|| drop(result)));
+    }
 }
 
 /// Settings admission is distinct from persistence and from Load delivery.
@@ -284,32 +295,34 @@ impl SlotScript {
         );
         let account = account.to_owned();
         let worker = FamilyPreparation::run(move |worker| {
-            let config = prepare_config(worker, id, 1, bag, Arc::clone(&selected), banks)?;
-            let pin = selected.selected_pin().map_err(StartError::Facts)?;
-            let mut retained = retained
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let script = catch_unwind(AssertUnwindSafe(|| {
-                (card.create)(run, Arc::clone(&config), &mut retained)
-            }))
-            .map_err(|payload| {
-                StartError::Unavailable(
-                    format!("factory panic: {}", panic_message(&payload)).into(),
-                )
-            })??;
-            Ok(CompiledRun {
-                script: ScriptOwner(Some(script)),
-                config,
-                pending: None,
-                run,
-                selected,
-                pin,
-                output: Output {
-                    account,
-                    ..Default::default()
-                },
-                actions: NativeActions { _private: () },
-            })
+            PreparationResult(Some((|| {
+                let config = prepare_config(worker, id, 1, bag, Arc::clone(&selected), banks)?;
+                let pin = selected.selected_pin().map_err(StartError::Facts)?;
+                let mut retained = retained
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let script = catch_unwind(AssertUnwindSafe(|| {
+                    (card.create)(run, Arc::clone(&config), &mut retained)
+                }))
+                .map_err(|payload| {
+                    StartError::Unavailable(
+                        format!("factory panic: {}", panic_message(&payload)).into(),
+                    )
+                })??;
+                Ok(CompiledRun {
+                    script: ScriptOwner(Some(script)),
+                    config,
+                    pending: None,
+                    run,
+                    selected,
+                    pin,
+                    output: Output {
+                        account,
+                        ..Default::default()
+                    },
+                    actions: NativeActions { _private: () },
+                })
+            })()))
         })
         .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
         self.control_generation = generation;
@@ -331,9 +344,15 @@ impl SlotScript {
         }
         let job = self.preparing.take().expect("finished preparation");
         if job.generation != self.control_generation {
+            // Joining also avoids leaving a finished packet to JoinHandle::drop.
+            let _ = job.worker.join();
             return;
         }
-        match job.worker.join() {
+        match job
+            .worker
+            .join()
+            .map(|mut result| result.0.take().expect("preparation result"))
+        {
             Ok(Ok(run)) => {
                 self.install_compiled(run);
                 self.settle_start(StartOutcome::Ready);

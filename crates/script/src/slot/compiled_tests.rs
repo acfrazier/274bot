@@ -293,3 +293,71 @@ fn stale_factory_cleanup_contains_panics_and_runs_stop_once() {
     std::thread::spawn(move || drop(owner)).join().unwrap();
     assert_eq!(calls.load(Ordering::Relaxed), 1);
 }
+
+#[test]
+fn discarded_preparation_contains_configuration_destructor_panics() {
+    struct PanickingConfig(std::sync::mpsc::Sender<()>);
+    impl Drop for PanickingConfig {
+        fn drop(&mut self) {
+            self.0.send(()).unwrap();
+            panic!("configuration destructor panic");
+        }
+    }
+    for finished in [false, true] {
+        let (mut slot, _) = receiver(30, SettingsApply::Applied);
+        let mut run = slot.compiled.take().unwrap();
+        let (dropped, observed) = std::sync::mpsc::channel();
+        run.config = PreparedConfig::new(
+            crate::CompiledId("test"),
+            1,
+            1,
+            Arc::default(),
+            PanickingConfig(dropped),
+        );
+        let (release, gate) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            gate.recv().unwrap();
+            PreparationResult(Some(Ok(*run)))
+        });
+        if finished {
+            release.send(()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !worker.is_finished() {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+        }
+        slot.preparing = Some(Box::new(Preparation {
+            generation: 0,
+            worker,
+        }));
+        slot.stop();
+        if !finished {
+            release.send(()).unwrap();
+        }
+        observed.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(slot.state(), RunState::Idle);
+    }
+}
+
+#[test]
+fn removal_notifies_the_native_script_once_with_removed_reason() {
+    struct Removed(std::sync::mpsc::Sender<StopReason>);
+    impl Script for Removed {
+        fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            Ok(ScriptFlow::Continue)
+        }
+        fn on_stop(&mut self, reason: StopReason) {
+            self.0.send(reason).unwrap();
+        }
+    }
+    let (send, receive) = std::sync::mpsc::channel();
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(31);
+    slot.start_test_script(Box::new(Removed(send)), Some(selected()))
+        .unwrap();
+    slot.stop_removed();
+    assert_eq!(receive.recv().unwrap(), StopReason::Removed);
+    drop(slot);
+    assert!(receive.try_recv().is_err());
+}

@@ -8,7 +8,13 @@ pub(super) struct PendingPreparation {
     renamed_from: Option<String>,
     mirror: ArmMirror,
     label: &'static str,
-    control: Option<(u64, u64)>,
+    worker: JoinHandle<Result<Arc<PreparedConfig>, StartError>>,
+}
+
+pub(super) struct PendingDelivery {
+    op: OperationId,
+    name: String,
+    live: LiveSettings,
     worker: JoinHandle<Result<Arc<PreparedConfig>, StartError>>,
 }
 
@@ -16,10 +22,6 @@ impl ArmMirror {
     pub(super) fn native_draft(&self) -> Option<(script::CompiledId, Arc<SettingsBag>)> {
         match self {
             Self::NativeSettings { id, bag, .. } => Some((*id, Arc::clone(bag))),
-            Self::Remember(Some(live)) if live.run.is_some() && live.prepared.is_none() => {
-                let id = script::compiled_id(live.identity.strip_prefix("compiled:")?)?;
-                Some((id, Arc::clone(&live.bag)))
-            }
             _ => None,
         }
     }
@@ -33,16 +35,97 @@ impl ArmMirror {
                     live
                 }),
             },
-            Self::Remember(Some(mut live)) => {
-                live.prepared = Some(config);
-                Self::Remember(Some(live))
-            }
             other => other,
         }
     }
 }
 
 impl<Io> OperatorSession<Io> {
+    pub(super) fn queue_native_delivery(
+        &mut self,
+        op: OperationId,
+        name: String,
+        live: LiveSettings,
+    ) {
+        if self
+            .play
+            .as_ref()
+            .and_then(|play| play.script_native_run(&name))
+            != live.run
+        {
+            self.settings_writes.push(SettingsWrite {
+                op,
+                profile: name,
+                result: SettingsResult::Saved(LiveDelivery::Stale),
+            });
+            return;
+        }
+        let result = self
+            .play
+            .as_ref()
+            .ok_or_else(|| "no play".to_string())
+            .and_then(|play| {
+                let id = script::compiled_id(live.identity.strip_prefix("compiled:").unwrap_or(""))
+                    .ok_or_else(|| "native card unavailable".to_string())?;
+                let revision =
+                    op.0.max(play.script_native_settings_revision(&name).unwrap_or(1))
+                        .checked_add(1)
+                        .ok_or_else(|| "settings revision exhausted".to_string())?;
+                play.script_prepare_config(id, revision, Arc::clone(&live.bag))
+            });
+        match result {
+            Ok(worker) => self.deliveries.push(PendingDelivery {
+                op,
+                name,
+                live,
+                worker,
+            }),
+            Err(error) => self.settings_writes.push(SettingsWrite {
+                op,
+                profile: name,
+                result: SettingsResult::Saved(LiveDelivery::Rejected(error)),
+            }),
+        }
+    }
+
+    pub(super) fn take_native_deliveries(&mut self, wait: bool) {
+        let mut index = 0;
+        while index < self.deliveries.len() {
+            if !wait && !self.deliveries[index].worker.is_finished() {
+                index += 1;
+                continue;
+            }
+            let mut pending = self.deliveries.remove(index);
+            let prepared = pending
+                .worker
+                .join()
+                .map_err(|_| "native settings preparation worker panicked".to_string())
+                .and_then(|result| result.map_err(|error| error.to_string()));
+            let delivery = if self.profile_edits.get(&pending.name) != Some(&pending.op) {
+                LiveDelivery::Stale
+            } else if let Some(play) = &self.play {
+                if play.script_native_run(&pending.name) != pending.live.run {
+                    LiveDelivery::Stale
+                } else {
+                    match prepared {
+                        Ok(config) => {
+                            pending.live.prepared = Some(config);
+                            deliver_settings(play, &pending.name, Some(pending.live))
+                        }
+                        Err(error) => LiveDelivery::Rejected(error),
+                    }
+                }
+            } else {
+                LiveDelivery::Stale
+            };
+            self.settings_writes.push(SettingsWrite {
+                op: pending.op,
+                profile: pending.name,
+                result: SettingsResult::Saved(delivery),
+            });
+        }
+    }
+
     /// A parameter editor can compose a newer edit over its still-preparing
     /// draft. Starts and spawns use the durable profile, not this projection.
     pub fn settings_for_edit(&self, name: &str) -> Option<&ProfileSettings> {
@@ -92,7 +175,6 @@ impl<Io> OperatorSession<Io> {
                 return Err(error);
             }
         };
-        let control = play.script_control_key(source);
         self.operations.set(op, &profile.username, Outcome::Pending);
         self.profile_edits.insert(source.to_owned(), op);
         self.profile_edits.insert(profile.username.clone(), op);
@@ -103,7 +185,6 @@ impl<Io> OperatorSession<Io> {
                 renamed_from: renamed_from.map(str::to_owned),
                 mirror,
                 label,
-                control,
                 worker,
             },
         );
@@ -135,22 +216,9 @@ impl<Io> OperatorSession<Io> {
                 && self.vault.as_ref().is_some_and(|vault| {
                     vault.get(source).is_some()
                         && (pending.renamed_from.is_none() || vault.get(name).is_none())
-                })
-                && self
-                    .play
-                    .as_ref()
-                    .is_some_and(|play| play.script_control_key(source) == pending.control);
-            if !current {
-                self.operations.set(op, name, Outcome::Cancelled);
-                if matches!(pending.mirror, ArmMirror::NativeSettings { .. }) {
-                    self.settings_writes.push(SettingsWrite {
-                        op,
-                        profile: name.clone(),
-                        result: SettingsResult::Superseded,
-                    });
-                }
-                continue;
-            }
+                });
+            // Invalid drafts remain failed even if an unrelated durable write
+            // overtook them. They were never eligible for persistence.
             let config = match result {
                 Ok(config) => config,
                 Err(error) => {
@@ -168,6 +236,17 @@ impl<Io> OperatorSession<Io> {
                     continue;
                 }
             };
+            if !current {
+                self.operations.set(op, name, Outcome::Cancelled);
+                if matches!(pending.mirror, ArmMirror::NativeSettings { .. }) {
+                    self.settings_writes.push(SettingsWrite {
+                        op,
+                        profile: name.clone(),
+                        result: SettingsResult::Superseded,
+                    });
+                }
+                continue;
+            }
             self.ensure_writer();
             self.hold_durable(name);
             api::hostlog::register_secret(&pending.profile.password);

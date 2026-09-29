@@ -67,7 +67,7 @@ fn stop_retired_script(slot: ScriptSlot) {
         let mut script = slot
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        script.stop();
+        script.stop_removed();
     }))
     .is_ok();
     if stopped {

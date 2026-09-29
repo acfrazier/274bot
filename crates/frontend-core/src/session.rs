@@ -175,7 +175,7 @@ struct PendingWrite {
 }
 
 mod native_settings;
-use native_settings::PendingPreparation;
+use native_settings::{PendingDelivery, PendingPreparation};
 
 pub struct OperatorSession<Io> {
     vault: Option<Vault>,
@@ -209,6 +209,7 @@ pub struct OperatorSession<Io> {
     /// Tombstones retained across removal/recreation fence preparation replies.
     profile_edits: HashMap<String, OperationId>,
     preparations: HashMap<OperationId, PendingPreparation>,
+    deliveries: Vec<PendingDelivery>,
     write_failures: Vec<String>,
     /// Settled script-parameter writes, drained by the script coordinator.
     settings_writes: Vec<SettingsWrite>,
@@ -257,6 +258,7 @@ impl<Io> OperatorSession<Io> {
             latest_write: HashMap::new(),
             profile_edits: HashMap::new(),
             preparations: HashMap::new(),
+            deliveries: Vec::new(),
             write_failures: Vec::new(),
             settings_writes: Vec::new(),
             starts: HashMap::new(),
@@ -900,6 +902,7 @@ impl<Io> OperatorSession<Io> {
         self.op_changes.clear();
         self.take_preparations(false);
         self.take_writes();
+        self.take_native_deliveries(false);
         // Commands dispatched since the last poll come before the status
         // changes they caused; settlements follow them.
         self.log_operations();
@@ -1634,6 +1637,7 @@ impl<Io> OperatorSession<Io> {
         while let Some(written) = self.writer.as_mut().and_then(ProfileWriter::wait_take) {
             self.settle_write(written);
         }
+        self.take_native_deliveries(true);
     }
 
     fn take_writes(&mut self) {
@@ -1664,7 +1668,10 @@ impl<Io> OperatorSession<Io> {
             }
         }
         let member = pending.member;
-        let settings = matches!(pending.mirror, ArmMirror::ScriptSettings { .. });
+        let settings = matches!(
+            pending.mirror,
+            ArmMirror::ScriptSettings { .. } | ArmMirror::Remember(Some(_))
+        );
         // A superseded write (later writes in this commit wrote every row it
         // did) is durable only inside their rows. If the commit succeeded, it
         // still settles on its own when it carries a setting (a live effect
@@ -1678,6 +1685,17 @@ impl<Io> OperatorSession<Io> {
         let result = match written.result {
             Ok(()) if !written.superseded || own_setting => {
                 self.operations.set(written.op, &member, Outcome::Completed);
+                if let ArmMirror::Remember(Some(live)) = &pending.mirror {
+                    if live.run.is_some() {
+                        if let Some(play) = self.play.as_mut() {
+                            if let Some(profile) = committed {
+                                play.remember_profile(profile);
+                            }
+                        }
+                        self.queue_native_delivery(written.op, member, live.clone());
+                        return;
+                    }
+                }
                 SettingsResult::Saved(self.apply_mirror(&member, pending.mirror, committed))
             }
             Err(error) if !written.superseded => {
