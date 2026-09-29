@@ -2171,9 +2171,10 @@ impl Session {
                 .clone()
                 .unwrap_or_else(|| "benchmark vault failed".into()));
         }
-        run.bind_seed_nav(host_play::memory::SeedNav::FromPlay(
-            self.core.play().and_then(|p| p.world()),
-        ))?;
+        run.bind_seed_nav(host_play::memory::SeedNav::FromPlay {
+            world: self.core.play().and_then(|p| p.world()),
+            obj_names: self.core.play().map(|p| p.obj_names()),
+        })?;
         self.set_multibox(true);
         for name in &run.names {
             let (core, mut surface) = self.core_and_surface();

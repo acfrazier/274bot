@@ -587,8 +587,13 @@ pub enum SeedNav {
     /// Decode the default pack once for this prepare (no Play yet).
     LoadDefault,
     /// Reuse the Play-owned world as-is — `None` preserves missing-pack
-    /// behavior (no second decode attempt).
-    FromPlay(Option<Arc<nav::world::NavWorld>>),
+    /// behavior (no second decode attempt) — and the Play's item names, which
+    /// every by-name inventory proof (`Proof::Item`, `ItemAtMost`) needs: a
+    /// runner without them fails such a proof closed.
+    FromPlay {
+        world: Option<Arc<nav::world::NavWorld>>,
+        obj_names: Option<Arc<api::obj_names::ObjNames>>,
+    },
 }
 
 fn update_stable_all_ingame(
@@ -823,11 +828,14 @@ impl Run {
             *SEEDS.lock().unwrap() = Some(HashMap::new());
             return Ok(());
         }
-        let seed_world = match seed_nav {
-            SeedNav::LoadDefault => nav::world::NavWorld::load_pack(&scenario::default_pack_path())
-                .ok()
-                .map(Arc::new),
-            SeedNav::FromPlay(world) => world,
+        let (seed_world, obj_names) = match seed_nav {
+            SeedNav::LoadDefault => (
+                nav::world::NavWorld::load_pack(&scenario::default_pack_path())
+                    .ok()
+                    .map(Arc::new),
+                None,
+            ),
+            SeedNav::FromPlay { world, obj_names } => (world, obj_names),
         };
         let mut seeds = HashMap::new();
         for name in &self.names {
@@ -849,7 +857,10 @@ impl Run {
             qualify_contentious_moss_fleet(&mut scenario, self.config.n)?;
             qualify_duel_arena_fleet(&mut scenario, self.config.n)?;
             scenario.settings.terminal_shot = None;
-            let seed = seed_runner(scenario, name, seed_world.clone());
+            let mut seed = seed_runner(scenario, name, seed_world.clone());
+            if let Some(names) = &obj_names {
+                seed.runner.set_obj_names(Arc::clone(names));
+            }
             seeds.insert(name.clone(), Arc::new(Mutex::new(seed)));
         }
         *SEEDS.lock().unwrap() = Some(seeds);
@@ -1883,8 +1894,11 @@ mod tests {
         ));
         let run = Run::prepare_unseeded(unit_config(2, Workload::SeededIdle), "unit")
             .expect("unseeded prepare");
-        run.bind_seed_nav(SeedNav::FromPlay(Some(world.clone())))
-            .expect("bind play world");
+        run.bind_seed_nav(SeedNav::FromPlay {
+            world: Some(world.clone()),
+            obj_names: None,
+        })
+        .expect("bind play world");
         let seeds = SEEDS.lock().unwrap();
         let map = seeds.as_ref().expect("seeds installed");
         assert_eq!(map.len(), 2);
@@ -1910,8 +1924,11 @@ mod tests {
         let run = Run::prepare_unseeded(unit_config(1, Workload::SeededIdle), "unit")
             .expect("unseeded prepare");
         // Play had no pack: FromPlay(None) must not attempt a second decode.
-        run.bind_seed_nav(SeedNav::FromPlay(None))
-            .expect("bind missing pack");
+        run.bind_seed_nav(SeedNav::FromPlay {
+            world: None,
+            obj_names: None,
+        })
+        .expect("bind missing pack");
         let seeds = SEEDS.lock().unwrap();
         let seed = seeds
             .as_ref()
@@ -1949,7 +1966,10 @@ mod tests {
         let run = Run::prepare_with_seed_nav(
             unit_config(1, Workload::SeededIdle),
             "unit",
-            SeedNav::FromPlay(Some(world.clone())),
+            SeedNav::FromPlay {
+                world: Some(world.clone()),
+                obj_names: None,
+            },
         )
         .expect("prepare with play nav");
         let seeds = SEEDS.lock().unwrap();
