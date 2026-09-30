@@ -1,13 +1,8 @@
-//! Rust-native gathering card for the stage-1 woodcutting and mining loop.
+//! Rust-native gathering for woodcutting, mining and fishing.
 //!
-//! The module deliberately keeps the stage boundary visible: fishing, Auto,
-//! banking, combat and recovery are added by later slices rather than being
-//! represented by inert fields here.
-//!
-//! Power mining drops selected ores but keeps valuable incidental uncut gems,
-//! just like other non-selected items. This deliberately favors keeping a rare
-//! valuable roll over discarding it for uninterrupted XP. If kept items fill
-//! the pack, the card stops with `inventory-blocked`; clear space and Retry.
+//! Start, Custom and bounded Auto use observed resource identity and content
+//! placements. Power disposal includes incidental mining gems. Banking,
+//! combat and death recovery remain later-stage capabilities.
 
 mod area;
 mod card;
@@ -18,6 +13,7 @@ mod runner;
 mod select;
 mod settings;
 mod status;
+mod widen;
 
 pub use area::{AreaMode, WorkArea};
 pub use card::CARD;
@@ -132,6 +128,7 @@ pub(crate) fn test_full_pack_fixture(
     };
     let mut snapshot = api::snapshot::GameSnapshot::new();
     snapshot.seed_ingame(2);
+    snapshot.seed_npcs(Vec::new());
     snapshot.seed_world(WorldStateView {
         map_base_x: tree_tile.x.saturating_sub(52),
         map_base_z: tree_tile.z.saturating_sub(52),
@@ -260,7 +257,7 @@ mod tests {
     use std::mem::size_of;
 
     #[test]
-    fn retained_cell_stays_within_the_g1_budget() {
+    fn retained_cell_stays_within_the_eighty_byte_budget() {
         assert!(size_of::<GatherRetained>() <= 80);
     }
 }

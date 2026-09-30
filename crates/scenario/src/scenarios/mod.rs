@@ -29,11 +29,11 @@ pub(crate) use acquire_key::acquire_key_v2_scenario;
 pub(crate) use actor_observation::actor_observation_v2_scenario;
 pub(crate) use bank::bank_v2_scenario;
 pub(crate) use cell::cell_v2_scenario;
-pub(crate) use gatherer::gatherer_scenario;
 pub(crate) use clue::{
     sherlock_coord_scenario, sherlock_dig_scenario, sherlock_search_scenario,
     sherlock_talk_scenario,
 };
+pub(crate) use gatherer::gatherer_scenario;
 
 pub(crate) use boat_fare::{boat_fare_reconnect_v1_scenario, boat_fare_v1_scenario};
 pub(crate) use combat::{

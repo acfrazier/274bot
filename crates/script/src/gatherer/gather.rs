@@ -354,9 +354,7 @@ fn classify_target(
 fn target_class(method: &GatherMethod, entity: EntityId) -> Option<TargetClass> {
     known_rows(&method.targets)
         .iter()
-        .find(|target| {
-            target.entity == entity && matches!(target.respawn, Knowledge::Known(_))
-        })
+        .find(|target| target.entity == entity && matches!(target.respawn, Knowledge::Known(_)))
         .map(|target| target.class)
 }
 
@@ -593,5 +591,4 @@ mod tests {
             "a whirlpool at the selected spot is not treated as a fishing target"
         );
     }
-
 }

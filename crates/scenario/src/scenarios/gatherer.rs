@@ -68,9 +68,7 @@ pub(crate) fn gatherer_scenario() -> Scenario {
             }),
         },
         wait: Wait {
-            arm: Proof::EquipmentId {
-                id: BRONZE_AXE_ID,
-            },
+            arm: Proof::EquipmentId { id: BRONZE_AXE_ID },
             budget_ticks: 120,
         },
     });
@@ -78,11 +76,7 @@ pub(crate) fn gatherer_scenario() -> Scenario {
         name: "stand at the live Draynor normal tree before Start",
         kind: StepKind::Perform {
             send: Box::new(|client, _| {
-                cheat(
-                    client,
-                    &tele_args(0, GATHERER_START.x, GATHERER_START.z),
-                )
-                .is_sent()
+                cheat(client, &tele_args(0, GATHERER_START.x, GATHERER_START.z)).is_sent()
             }),
         },
         wait: Wait {
