@@ -935,10 +935,12 @@ impl TuiSession {
     }
 
     /// Settings-popup `r`: Relog-now for a memory-mode switch. Confirms
-    /// first when a running script would be interrupted, relogs directly
-    /// otherwise (the same shared command the panel's mem picker calls).
+    /// first when running script work would be interrupted or a queued Start
+    /// would be cancelled; otherwise relogs directly.
     fn memory_relog_request(&mut self, app: &mut TuiApp, name: &str) {
-        if self.core.memory_relog_warning(name) {
+        let script_work =
+            self.core.memory_relog_warning(name) || self.scripts.start_queue_place(name).is_some();
+        if script_work {
             app.confirm(ConfirmKind::MemoryRelog(name.to_string()));
         } else {
             self.memory_relog_now(app, name);
@@ -2130,8 +2132,8 @@ impl TuiSession {
             .selected()
             .and_then(|selected| app.names.iter().position(|n| n == selected));
         self.copy_projection(app);
-        // The settings popup and the status pane read the focused slot's
-        // login-time vs current memory mode from here.
+        // The status pane follows the focused slot. The settings popup has
+        // a separate value below because it stays bound across focus changes.
         app.memory = app
             .focused_name()
             .and_then(|name| self.core.memory_status(&name));
@@ -2185,6 +2187,10 @@ impl TuiSession {
                 app.settings_dirty = false;
             }
         }
+        app.settings_memory = app
+            .settings_profile
+            .as_deref()
+            .and_then(|name| self.core.memory_status(name));
 
         let mut write_failed = false;
         for failure in self.core.take_write_failures() {
@@ -2359,6 +2365,7 @@ impl TuiSession {
         // persisted there; a persist still in flight then never shows in a
         // later popup.
         if !app.settings_state.open && app.settings_profile.take().is_some() {
+            app.settings_memory = None;
             app.settings_save.form_changed();
         }
         // `Saved <name>.` or the failure shows only on the popup the persist

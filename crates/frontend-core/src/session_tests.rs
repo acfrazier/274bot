@@ -1606,6 +1606,29 @@ fn a_failed_save_hands_back_the_draft_that_did_not_land() {
     );
 }
 
+fn publish_alice_login(s: &mut OperatorSession<u32>, lowmem: bool) {
+    {
+        let mut rows = s.play().unwrap().statuses.lock().unwrap();
+        if let Some(row) = rows.iter_mut().find(|row| row.username == "alice") {
+            row.connected = true;
+            row.ingame = true;
+            row.scene_state = 2;
+            row.login_latched = false;
+            row.login_lowmem = Some(lowmem);
+        } else {
+            rows.push(SlotStatus {
+                username: "alice".into(),
+                connected: true,
+                ingame: true,
+                scene_state: 2,
+                login_lowmem: Some(lowmem),
+                ..SlotStatus::default()
+            });
+        }
+    }
+    s.poll();
+}
+
 #[test]
 fn memory_toggle_stages_arms_and_settles() {
     let mut s = session("mem-toggle", &[("alice", 1, false)]);
@@ -1613,14 +1636,16 @@ fn memory_toggle_stages_arms_and_settles() {
     s.load("alice", &mut surface);
     assert_eq!(
         s.memory_status("alice"),
-        Some(MemoryNotice {
-            login_lowmem: true,
-            desired_lowmem: true,
-            relog_pending: false,
-        }),
-        "a fresh spawn runs the profile mode: no notice"
+        None,
+        "a spawn is not a successful login handshake"
     );
-    assert_eq!(arm(&s, "alice").lowmem_handshake(), None);
+    assert_eq!(
+        arm(&s, "alice").lowmem_handshake(),
+        Some(true),
+        "the effective spawn mode seeds the arm"
+    );
+    publish_alice_login(&mut s, true);
+    assert!(!s.memory_status("alice").unwrap().differs());
 
     let op = s.set_memory_mode("alice", false).unwrap();
     assert_eq!(
@@ -1766,11 +1791,14 @@ fn memory_toggle_before_load_applies_at_spawn_without_notice() {
     s.set_memory_mode("alice", false).unwrap();
     s.flush_writes();
     s.load("alice", &mut surface);
+    assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(false));
     assert_eq!(
-        s.memory_status("alice").map(|n| n.differs()),
-        Some(false),
-        "the spawn handshakes the toggled mode"
+        s.memory_status("alice"),
+        None,
+        "intent alone is not a successful handshake"
     );
+    publish_alice_login(&mut s, false);
+    assert!(!s.memory_status("alice").unwrap().differs());
 }
 
 #[test]
@@ -1793,6 +1821,7 @@ fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
             connected: true,
             ingame: true,
             scene_state: 2,
+            login_lowmem: Some(true),
             ..row("alice")
         },
     );
@@ -1832,8 +1861,13 @@ fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
         "the sequencing resolves exactly once"
     );
     assert!(
+        s.memory_status("alice").unwrap().differs(),
+        "re-arming cannot claim the login succeeded"
+    );
+    publish_alice_login(&mut s, false);
+    assert!(
         !s.memory_status("alice").unwrap().differs(),
-        "the new handshake carries the toggled mode"
+        "the worker-published successful handshake settles the notice"
     );
     let last = s
         .fleet_view()
@@ -1843,7 +1877,7 @@ fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
         .as_ref()
         .expect("a reported operation");
     assert_eq!(last.action, ActionKind::Login);
-    assert_eq!(last.outcome, Outcome::Pending);
+    assert_eq!(last.outcome, Outcome::Completed);
 }
 
 #[test]
@@ -1852,6 +1886,7 @@ fn manual_login_supersedes_a_pending_relog() {
     let mut surface = Recorder::default();
     s.load("alice", &mut surface);
     s.login("alice", &mut surface);
+    publish_alice_login(&mut s, true);
     s.request_memory_relog("alice", &mut surface);
     assert!(s.memory_status("alice").unwrap().relog_pending);
     s.login("alice", &mut surface);
@@ -1866,6 +1901,7 @@ fn a_failed_memory_write_resets_the_armed_handshake() {
     let mut s = session("mem-write-fail", &[("alice", 1, false)]);
     let mut surface = Recorder::default();
     s.load("alice", &mut surface);
+    publish_alice_login(&mut s, true);
     let blocked = block_writes(&vault_path("mem-write-fail"));
 
     let op = s.set_memory_mode("alice", false).unwrap();
@@ -1941,5 +1977,155 @@ fn memory_relog_warns_while_a_script_runs() {
     assert!(
         !s.memory_relog_warning("alice"),
         "a stopped script needs no warning"
+    );
+}
+
+fn memory_ingame_toggled(test: &str) -> (OperatorSession<u32>, Recorder) {
+    let mut s = session(test, &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    s.login("alice", &mut surface);
+    push_status(
+        &s,
+        SlotStatus {
+            username: "alice".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(true),
+            ..SlotStatus::default()
+        },
+    );
+    s.poll();
+    s.set_memory_mode("alice", false).unwrap();
+    s.flush_writes();
+    assert!(s.memory_status("alice").unwrap().differs());
+    (s, surface)
+}
+
+fn park_alice(s: &OperatorSession<u32>) {
+    let mut rows = s.play().unwrap().statuses.lock().unwrap();
+    let row = rows
+        .iter_mut()
+        .find(|row| row.username == "alice")
+        .expect("alice status");
+    row.connected = false;
+    row.ingame = false;
+    row.scene_state = 0;
+    row.login_latched = true;
+}
+
+#[test]
+fn user_logout_cancels_a_pending_memory_relog() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-user-logout");
+    s.request_memory_relog("alice", &mut surface);
+
+    s.logout("alice");
+    park_alice(&s);
+    s.poll();
+
+    let alice = arm(&s, "alice");
+    assert!(
+        !alice.wants_login(),
+        "Logout must cancel the relog's login half"
+    );
+    assert!(alice.login_latched(), "the user's logout remains latched");
+    assert!(!s.memory_status("alice").unwrap().relog_pending);
+}
+
+#[test]
+fn user_logout_all_cancels_a_pending_memory_relog() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-user-logout-all");
+    s.request_memory_relog("alice", &mut surface);
+
+    s.logout_all();
+    park_alice(&s);
+    s.poll();
+
+    let alice = arm(&s, "alice");
+    assert!(
+        !alice.wants_login(),
+        "Logout all cancels the relog's login half"
+    );
+    assert!(alice.login_latched(), "the fleet logout remains latched");
+}
+
+#[test]
+fn completed_memory_relog_clears_the_fleet_logout_latch() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-fleet-latch");
+    s.request_memory_relog("alice", &mut surface);
+    park_alice(&s);
+
+    s.poll();
+
+    assert!(!s.fleet().latched("alice"));
+    assert!(s.fleet().should_auto_login("alice", true));
+    assert!(!s.arm_for_profile("alice").unwrap().login_latched());
+}
+
+#[test]
+fn login_all_without_a_handshake_keeps_the_memory_notice() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-login-all-ingame");
+
+    s.login_all(&mut surface);
+    s.poll();
+
+    assert!(
+        s.memory_status("alice").unwrap().differs(),
+        "an in-game Login all cannot claim a handshake changed server mode"
+    );
+}
+
+#[test]
+fn login_that_cancels_a_pending_relog_keeps_the_memory_notice() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-login-cancels-relog");
+    s.request_memory_relog("alice", &mut surface);
+
+    s.login("alice", &mut surface);
+    s.poll();
+
+    assert!(!arm(&s, "alice").wants_logout());
+    assert!(
+        s.memory_status("alice").unwrap().differs(),
+        "no completed handshake means the server still uses the old mode"
+    );
+}
+
+struct MemoryOverrideSurface;
+
+impl SlotSurface for MemoryOverrideSurface {
+    type Io = u32;
+
+    fn attach(
+        &mut self,
+        _name: &str,
+        profile: &mut Profile,
+        retained: Option<u32>,
+    ) -> SlotAttach<u32> {
+        profile.settings.lowmem = false;
+        SlotAttach {
+            io: retained.unwrap_or_default(),
+            input: None,
+            mailbox: None,
+        }
+    }
+
+    fn lifetime_reset(&mut self, _name: &str) {}
+
+    fn released(&mut self, _name: &str) {}
+}
+
+#[test]
+fn session_memory_override_is_the_effective_mode_not_a_permanent_notice() {
+    let mut s = session("mem-session-override", &[("alice", 1, false)]);
+    let mut surface = MemoryOverrideSurface;
+    s.load("alice", &mut surface);
+    s.login("alice", &mut surface);
+    publish_alice_login(&mut s, false);
+
+    let notice = s.memory_status("alice").expect("spawn memory mode");
+    assert!(
+        !notice.differs(),
+        "the session override is both the handshake and desired mode"
     );
 }

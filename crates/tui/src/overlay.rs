@@ -71,8 +71,8 @@ pub enum ConfirmKind {
     Remove(String),
     Quit,
     /// Relog this member now so a memory-mode switch reaches the server.
-    /// Only offered when a running script would be interrupted (the
-    /// binary relogs directly otherwise), so the warning always applies.
+    /// Offered when running script work would be interrupted or a queued
+    /// Start would be cancelled.
     MemoryRelog(String),
     /// A fleet-wide command over the membership frozen when it opened.
     Bulk {
@@ -165,7 +165,7 @@ impl Confirm {
                 format!("Relog BOT {name} now?"),
                 "It logs out and back in through the login queue, so the".into(),
                 "memory switch reaches the server tabs and sound.".into(),
-                "Its running script is interrupted.".into(),
+                "Running script work is interrupted; a queued Start is cancelled.".into(),
             ],
             ConfirmKind::Quit => {
                 let counts = app.counts;

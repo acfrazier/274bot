@@ -190,7 +190,7 @@ struct PendingWrite {
 pub struct MemoryNotice {
     /// The slot's detail mode as the login handshake sent it.
     pub login_lowmem: bool,
-    /// The operator's current setting (the staged vault profile).
+    /// The effective setting for the next handshake (profile or session override).
     pub desired_lowmem: bool,
     /// A Relog-now is armed: logout issued, login follows once parked.
     pub relog_pending: bool,
@@ -256,11 +256,6 @@ pub struct OperatorSession<Io> {
     views: Views,
     /// Start-all / marked-Start places fed into the single row derivation.
     start_places: HashMap<String, QueuePlace>,
-    /// Detail mode each slot's login handshake sent (the server's fixed
-    /// mode), by slot. Recorded at every new worker lifetime and every
-    /// explicit login that carries a toggled arm value; the Music/SFX
-    /// notice compares it against the staged profile setting.
-    mem_login: HashMap<String, bool>,
     /// Slots with an operator-requested Relog-now in flight: logout is
     /// issued, the login half fires once the poll sees them parked.
     mem_relog: HashSet<String>,
@@ -313,7 +308,6 @@ impl<Io> OperatorSession<Io> {
             bypass_asset_startup: false,
             views: Views::default(),
             start_places: HashMap::new(),
-            mem_login: HashMap::new(),
             mem_relog: HashSet::new(),
             op_changes: Vec::new(),
             op_line: String::new(),
@@ -553,16 +547,17 @@ impl<Io> OperatorSession<Io> {
         surface.lifetime_reset(name);
         let retained = self.slots.remove(name);
         let attach = surface.attach(name, &mut profile, retained);
+        if let Some(arm) = arm.as_ref() {
+            // The surface may apply a session-only override to the disposable
+            // spawn profile. Keep the arm on that effective mode so both the
+            // live client and every later handshake use the same value.
+            arm.set_lowmem_handshake(profile.settings.lowmem);
+        }
         if !self.spawn_workers {
             self.old_lifetime_retired(name);
             if let (Some(play), Some(arm)) = (self.play.as_mut(), arm.as_ref()) {
                 play.attach_arm(name, Arc::clone(arm));
             }
-            self.note_spawn_lowmem(
-                name,
-                profile.settings.lowmem,
-                arm.as_ref().and_then(|arm| arm.lowmem_handshake()),
-            );
             self.slots.insert(name.to_string(), attach.io);
             return Ok(());
         }
@@ -575,11 +570,6 @@ impl<Io> OperatorSession<Io> {
             .as_ref()
             .is_some_and(|play| play.slot_stopping(name))
         {
-            self.note_spawn_lowmem(
-                name,
-                profile.settings.lowmem,
-                arm.as_ref().and_then(|arm| arm.lowmem_handshake()),
-            );
             self.deferred.insert(
                 name.to_string(),
                 DeferredSpawn {
@@ -596,13 +586,10 @@ impl<Io> OperatorSession<Io> {
             self.old_lifetime_retired(name);
         }
         if let Some(play) = self.play.as_mut() {
-            let spawn_lowmem = profile.settings.lowmem;
-            let arm_lowmem = arm.as_ref().and_then(|arm| arm.lowmem_handshake());
             if let Err(error) = play.try_spawn_slot(profile, attach.input, attach.mailbox, arm) {
                 self.slots.insert(name.to_string(), attach.io);
                 return Err(error);
             }
-            self.note_spawn_lowmem(name, spawn_lowmem, arm_lowmem);
         }
         self.slots.insert(name.to_string(), attach.io);
         Ok(())
@@ -783,14 +770,11 @@ impl<Io> OperatorSession<Io> {
         surface: &mut S,
     ) -> Result<(), String> {
         // A manual login supersedes any Relog-now sequencing for the slot.
+        // The server-mode baseline changes only when the worker publishes a
+        // successful handshake; arming intent here must not hide the notice.
         self.mem_relog.remove(name);
         if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
             arm.arm_explicit_login();
-            // No new worker: the handshake sends a toggled arm value, or
-            // the unchanged live client mode when none is outstanding.
-            if let Some(lowmem) = arm.lowmem_handshake() {
-                self.mem_login.insert(name.to_string(), lowmem);
-            }
             return Ok(());
         }
         let arm = self.arm_for_profile(name);
@@ -798,15 +782,6 @@ impl<Io> OperatorSession<Io> {
             arm.arm_explicit_login();
         }
         self.ensure_slot(name, arm, true, surface)
-    }
-
-    /// Record the detail mode a new worker lifetime of `name` will
-    /// handshake: a toggled arm value wins (the pump applies it before the
-    /// handshake), otherwise the actual spawn profile does (post-attach, so
-    /// session-only spawn overrides are the recorded value).
-    fn note_spawn_lowmem(&mut self, name: &str, spawn_lowmem: bool, arm_lowmem: Option<bool>) {
-        self.mem_login
-            .insert(name.to_string(), arm_lowmem.unwrap_or(spawn_lowmem));
     }
 
     fn record_login(&mut self, op: OperationId, name: &str, result: Result<(), String>) {
@@ -864,6 +839,9 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn logout_member(&mut self, op: OperationId, name: &str) {
+        // An explicit user Logout/Logout-all always outranks a pending
+        // Relog-now; once parked, no automatic login half may fire.
+        self.mem_relog.remove(name);
         self.fleet.latch_logout(name);
         self.operations.cancel_pending(ActionKind::Login, name);
         self.operations.cancel_pending(ActionKind::Logout, name);
@@ -876,16 +854,26 @@ impl<Io> OperatorSession<Io> {
         self.operations.set(op, name, Outcome::Pending);
     }
 
-    /// The Music/SFX (memory-mode) state for `name`: the login-time detail
-    /// mode against the staged setting, plus any Relog-now in flight.
-    /// `None` when the slot has no recorded login and no vault row.
+    /// The Music/SFX (memory-mode) state for `name`: the mode published by
+    /// the last successful login handshake against the effective session
+    /// mode, plus any Relog-now in flight. `None` until a handshake succeeds.
     pub fn memory_status(&self, name: &str) -> Option<MemoryNotice> {
-        let login_lowmem = *self.mem_login.get(name)?;
+        let login_lowmem = self
+            .statuses
+            .iter()
+            .find(|status| status.username == name)?
+            .login_lowmem?;
         let desired_lowmem = self
-            .vault
+            .play
             .as_ref()
-            .and_then(|v| v.get(name))
-            .map(|p| p.settings.lowmem)?;
+            .and_then(|play| play.arm(name))
+            .and_then(|arm| arm.lowmem_handshake())
+            .or_else(|| {
+                self.vault
+                    .as_ref()
+                    .and_then(|vault| vault.get(name))
+                    .map(|profile| profile.settings.lowmem)
+            })?;
         Some(MemoryNotice {
             login_lowmem,
             desired_lowmem,
@@ -953,33 +941,23 @@ impl<Io> OperatorSession<Io> {
         if self.mem_relog.is_empty() || self.play.is_none() {
             return;
         }
-        let ready: Vec<(String, Option<bool>)> = self
+        let ready: Vec<String> = self
             .mem_relog
             .iter()
-            .filter_map(|name| {
-                let parked = self
-                    .statuses
+            .filter(|name| {
+                self.statuses
                     .iter()
-                    .find(|s| &s.username == name)
-                    .is_some_and(|s| s.login_latched && !s.connected);
-                parked.then(|| {
-                    let arm_lowmem = self
-                        .play
-                        .as_ref()
-                        .and_then(|play| play.arm(name))
-                        .and_then(|arm| arm.lowmem_handshake());
-                    (name.clone(), arm_lowmem)
-                })
+                    .find(|s| &s.username == *name)
+                    .is_some_and(|s| s.login_latched && !s.connected)
             })
+            .cloned()
             .collect();
-        for (name, arm_lowmem) in ready {
+        for name in ready {
             let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&name)) else {
                 continue;
             };
             arm.arm_explicit_login();
-            if let Some(lowmem) = arm_lowmem {
-                self.mem_login.insert(name.clone(), lowmem);
-            }
+            self.fleet.clear_latch(&name);
             self.mem_relog.remove(&name);
             self.operations.cancel_pending(ActionKind::Logout, &name);
             self.operations.cancel_pending(ActionKind::Login, &name);
@@ -1032,7 +1010,6 @@ impl<Io> OperatorSession<Io> {
         self.fleet.clear_latch(name);
         self.operations.cancel_pending(ActionKind::Login, name);
         self.deferred.remove(name);
-        self.mem_login.remove(name);
         self.mem_relog.remove(name);
         let connected = self
             .play
@@ -1334,14 +1311,6 @@ impl<Io> OperatorSession<Io> {
             if let Some(arm) = spawn.arm.as_ref() {
                 arm.set_auto_login(profile.settings.auto_login);
             }
-            // A toggle that landed while the spawn waited already armed the
-            // slot: it wins over the deferred attach-time profile, and the
-            // pump applies it before the first handshake.
-            self.note_spawn_lowmem(
-                &name,
-                profile.settings.lowmem,
-                spawn.arm.as_ref().and_then(|arm| arm.lowmem_handshake()),
-            );
             let Some(play) = self.play.as_mut() else {
                 return;
             };

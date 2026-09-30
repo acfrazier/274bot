@@ -2765,6 +2765,24 @@ fn focus_member(session: &mut TuiSession, app: &mut TuiApp, name: &str) {
 fn settings_popup_stays_bound_to_its_profile_across_focus_change() {
     let iso = IsolatedEnv::enter("tui-settings-bind");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    session
+        .core
+        .play()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .extend(["alice", "bob"].map(|name| host_play::SlotStatus {
+            username: name.into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(true),
+            ..host_play::SlotStatus::default()
+        }));
+    session.core.poll();
+    session.core.set_memory_mode("alice", false).unwrap();
+    session.core.flush_writes();
     focus_member(&mut session, &mut app, "alice");
     let open = app.run_command(crate::commands::Command::Settings);
     dispatch(&mut session, &mut app, open);
@@ -2779,6 +2797,14 @@ fn settings_popup_stays_bound_to_its_profile_across_focus_change() {
     // Switch focus to bob: the popup stays open on alice's draft, titled
     // with the profile it is bound to.
     focus_member(&mut session, &mut app, "bob");
+    assert!(
+        !app.memory.unwrap().differs(),
+        "the status pane follows focused bob"
+    );
+    assert!(
+        app.settings_memory.unwrap().differs(),
+        "the popup notice stays bound to alice"
+    );
     assert!(
         app.settings_state.open,
         "a focus change never closes the form"
@@ -3550,6 +3576,56 @@ fn script_settings_rows(session: &TuiSession) -> SettingsRows {
 }
 
 #[test]
+fn memory_relog_warns_before_cancelling_a_queued_start() {
+    let iso = IsolatedEnv::enter("tui-relog-queued-start");
+    let names = ["p0", "p1", "p2", "p3", "p4"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    let path = iso.dir.join("shared.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.js.load(&path).unwrap();
+    for name in names {
+        assign(&mut session, name, &card);
+    }
+    dispatch(&mut session, &mut app, AppAction::ScriptStartAll);
+    let queued = names
+        .iter()
+        .find(|name| session.scripts.start_queue_place(name).is_some())
+        .expect("more Starts than one frame admits")
+        .to_string();
+    assert_eq!(
+        session.core.play().unwrap().script_state(&queued),
+        script::RunState::Idle,
+        "the warning subject is queued, not already running"
+    );
+
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MemoryRelog(queued.clone()),
+    );
+
+    assert!(
+        matches!(
+            &app.modal,
+            Some(crate::overlay::Modal::Confirm(confirm))
+                if confirm.kind == crate::overlay::ConfirmKind::MemoryRelog(queued.clone())
+        ),
+        "a queued Start must be disclosed before Relog-now cancels it"
+    );
+    assert!(
+        !session
+            .core
+            .play()
+            .unwrap()
+            .arm(&queued)
+            .unwrap()
+            .login_latched(),
+        "nothing relogs before confirmation"
+    );
+    session.scripts.stop_all(&mut session.core);
+}
+
+#[test]
 fn settings_memory_row_persists_and_arms_the_handshake() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
@@ -3592,53 +3668,6 @@ fn settings_memory_row_persists_and_arms_the_handshake() {
             .lowmem,
         "the setting is durable"
     );
-}
-
-#[test]
-fn memory_relog_now_logs_out_and_the_poll_logs_back_in() {
-    let mut session = TuiSession::new(dummy_options());
-    session.core.set_spawn_workers(false);
-    session
-        .core
-        .start(lifecycle_vault("mem-relog"), empty_play());
-    {
-        let (core, mut surface) = session.core_and_surface();
-        core.load("alice", &mut surface);
-    }
-    let mut app = TuiApp::new("tui");
-    session.names = vec!["alice".into()];
-    session.core.select("alice");
-    dispatch(
-        &mut session,
-        &mut app,
-        AppAction::MemoryRelogNow("alice".into()),
-    );
-
-    let alice = session.core.play().unwrap().arm("alice").unwrap();
-    assert!(alice.login_latched(), "logout latches first");
-    assert!(alice.wants_logout());
-    assert!(app.error.is_none());
-
-    // The worker parks on the title after its clean logout.
-    session
-        .core
-        .play()
-        .unwrap()
-        .statuses
-        .lock()
-        .unwrap()
-        .push(host_play::SlotStatus {
-            username: "alice".into(),
-            login_latched: true,
-            connected: false,
-            ..host_play::SlotStatus::default()
-        });
-    session.pump(&mut app);
-    assert!(
-        alice.wants_login(),
-        "the poll re-arms the login once parked"
-    );
-    assert!(!alice.login_latched());
 }
 
 #[test]

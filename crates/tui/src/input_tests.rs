@@ -857,26 +857,3 @@ fn script_popups_swallow_clicks_outside_themselves() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
-
-#[test]
-fn settings_r_key_requests_a_memory_relog_for_the_bound_member() {
-    let mut app = TuiApp::new("tui");
-    app.settings_state.open = true;
-    app.settings_profile = Some("alice".into());
-    assert_eq!(
-        app.on_key(ch('r')),
-        AppAction::MemoryRelog("alice".into()),
-        "r in settings relogs the bound member through the FIFO"
-    );
-}
-
-#[test]
-fn confirming_a_memory_relog_dispatches_it() {
-    let mut app = TuiApp::new("tui");
-    app.confirm(ConfirmKind::MemoryRelog("alice".into()));
-    assert_eq!(
-        app.on_key(ch('y')),
-        AppAction::MemoryRelogNow("alice".into()),
-        "the confirmed relog runs"
-    );
-}

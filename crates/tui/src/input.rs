@@ -582,6 +582,7 @@ impl TuiApp {
             &mut self.map_bake,
             &mut self.settings_state,
         );
+        pane.memory = self.settings_memory;
         match pane.on_key(key) {
             SettingsKey::Changed => {
                 self.settings_dirty = true;

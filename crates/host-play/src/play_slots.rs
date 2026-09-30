@@ -30,9 +30,10 @@ use crate::play_login::{
 };
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
-    mark_login_started, publish_session_boundary_status, publish_slot_disconnected,
-    publish_startup_phase, publish_startup_progress, publish_worker_terminal, record_login_error,
-    set_startup_phase, SlotStatus, StartupPhase, WorkerTerminal,
+    mark_login_started, publish_login_lowmem, publish_session_boundary_status,
+    publish_slot_disconnected, publish_startup_phase, publish_startup_progress,
+    publish_worker_terminal, record_login_error, set_startup_phase, SlotStatus, StartupPhase,
+    WorkerTerminal,
 };
 use crate::play_wires::{dispatch_wires, WireCmd};
 use crate::script_runtime::{
@@ -957,6 +958,7 @@ fn spawn_slot_thread(
                     if let Some(lowmem) = arm.lowmem_handshake() {
                         client.set_lowmem(lowmem);
                     }
+                    let handshake_lowmem = client.config.lowmem;
                     let login = login_and_acknowledge_permit(&mut permit, || {
                         client.login(&username, &password, reconnect)
                     });
@@ -967,6 +969,11 @@ fn spawn_slot_thread(
                             if let Some(round) = world_round.as_mut() { round.reset(); }
                             key_refreshed = false;
                             on_login_success(&arm, login_command);
+                            publish_login_lowmem(
+                                &slot_statuses,
+                                &username,
+                                handshake_lowmem,
+                            );
                             set_startup_phase(&slot_statuses, &username, StartupPhase::LoadingScene);
                             host_log!(Category::Login, Level::Info, "handshake ok");
                         }

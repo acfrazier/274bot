@@ -417,10 +417,13 @@ pub struct TuiApp {
     /// The popup's save feedback: an inline refusal, or `Saved <name>.`
     /// once its last persist is durable.
     pub settings_save: frontend_core::ProfileFormSave,
-    /// Login-time vs current memory mode for the focused slot (the
-    /// settings popup and the status pane read it); copied from the core
-    /// each pump, `None` without a recorded login.
+    /// Login-time vs effective mode for the focused slot; the status pane
+    /// reads it. Copied from the core each pump.
     pub memory: Option<frontend_core::MemoryNotice>,
+    /// Login-time vs effective mode for [`Self::settings_profile`]. The
+    /// popup stays bound across focus changes, so this is deliberately
+    /// separate from [`Self::memory`].
+    pub settings_memory: Option<frontend_core::MemoryNotice>,
     /// Remembered WalkTo terrain-bake choice (shared `panel-ui.json` key).
     pub map_bake: MapBakeChoice,
     /// The settings popup changed [`Self::map_bake`]; the binary persists it.
@@ -531,6 +534,7 @@ impl TuiApp {
             settings_title: crate::settings::TITLE.to_string(),
             settings_save: frontend_core::ProfileFormSave::default(),
             memory: None,
+            settings_memory: None,
             map_bake: MapBakeChoice::Ask,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
