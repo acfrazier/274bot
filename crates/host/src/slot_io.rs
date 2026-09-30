@@ -103,6 +103,24 @@ pub(crate) fn wait_readable(handles: &[WaitHandle], timeout: Duration) -> [bool;
     out
 }
 
+/// Policy state attached by the producer to the actual journal-fixture paint.
+#[cfg(feature = "journal-paint-proof")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JournalPaintStamp {
+    pub modal_root: i32,
+    pub journal_paint_hidden: bool,
+}
+
+/// One immutable paint witness. GPU pixels are read back before the producer
+/// can reuse its render texture; the ordinary product mailbox is unchanged.
+#[cfg(feature = "journal-paint-proof")]
+pub struct JournalProofFrame {
+    pub generation: u64,
+    pub pixmap: client::graphics::PixMap,
+    pub stamp: Option<JournalPaintStamp>,
+    pub gpu: bool,
+}
+
 /// Per-slot frame mailbox: the slot thread stores each rendered
 /// [`FrameOutput`] into [`FrameBuf::store`]; the panel hands it to the
 /// frame consumer with [`FrameBuf::take`] (one consumer per mailbox — a
@@ -112,6 +130,8 @@ pub(crate) fn wait_readable(handles: &[WaitHandle], timeout: Duration) -> [bool;
 pub struct FrameBuf {
     inner: Mutex<Mailbox>,
     gen: AtomicU64,
+    #[cfg(feature = "journal-paint-proof")]
+    proof_frames: Option<parking_lot::Mutex<VecDeque<JournalProofFrame>>>,
 }
 
 /// One lock owns the latest frame and, under `render-diagnostics`, the
@@ -136,12 +156,72 @@ impl FrameBuf {
                 taken_roi: None,
             }),
             gen: AtomicU64::new(0),
+            #[cfg(feature = "journal-paint-proof")]
+            proof_frames: None,
         })
     }
+    /// Opt in to lossless capture for one fixture consumer. Unlike `new`,
+    /// this retains every paint and never hands out an aliased GPU texture.
+    #[cfg(feature = "journal-paint-proof")]
+    pub fn new_for_journal_proof() -> std::sync::Arc<Self> {
+        let mut mailbox = Self::new();
+        std::sync::Arc::get_mut(&mut mailbox)
+            .expect("new fixture mailbox has one owner")
+            .proof_frames = Some(parking_lot::Mutex::new(VecDeque::new()));
+        mailbox
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    pub fn take_journal_proof(&self) -> Option<JournalProofFrame> {
+        self.proof_frames.as_ref()?.lock().pop_front()
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    pub fn store_journal_paint(&self, frame: FrameOutput, stamp: JournalPaintStamp) {
+        if let Some(queue) = &self.proof_frames {
+            self.store_proof(queue, frame, Some(stamp));
+        } else {
+            self.store(frame);
+        }
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn store_proof(
+        &self,
+        queue: &parking_lot::Mutex<VecDeque<JournalProofFrame>>,
+        frame: FrameOutput,
+        stamp: Option<JournalPaintStamp>,
+    ) {
+        let mut queue = queue.lock();
+        let (pixmap, gpu) = match frame {
+            FrameOutput::PixMap(pixmap) => (pixmap, false),
+            FrameOutput::Texture(handle) => (
+                client::graphics::PixMap {
+                    width: handle.width as i32,
+                    height: handle.height as i32,
+                    pixels: handle.read_back(),
+                },
+                true,
+            ),
+        };
+        let generation = self.gen.fetch_add(1, Ordering::Relaxed) + 1;
+        queue.push_back(JournalProofFrame {
+            generation,
+            pixmap,
+            stamp,
+            gpu,
+        });
+    }
+
     /// Store the latest frame and bump the generation. The full
     /// [`FrameOutput`] is kept so the panel can bind a
     /// `FrameOutput::Texture` or pack a `PixMap`.
     pub fn store(&self, frame: FrameOutput) {
+        #[cfg(feature = "journal-paint-proof")]
+        if let Some(queue) = &self.proof_frames {
+            self.store_proof(queue, frame, None);
+            return;
+        }
         let mut inner = self.inner.lock().unwrap();
         #[cfg(feature = "render-diagnostics")]
         {
@@ -705,6 +785,52 @@ mod tests {
             height: 503,
             pixels,
         })
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    #[test]
+    fn journal_proof_retains_every_generation_with_its_own_pixels_and_stamp() {
+        use super::JournalPaintStamp;
+        let buf = FrameBuf::new_for_journal_proof();
+        let witnesses = [
+            (
+                0x0011_2233,
+                Some(JournalPaintStamp {
+                    modal_root: 8134,
+                    journal_paint_hidden: true,
+                }),
+            ),
+            (
+                0x0044_5566,
+                Some(JournalPaintStamp {
+                    modal_root: -1,
+                    journal_paint_hidden: false,
+                }),
+            ),
+            (0x0077_8899, None),
+        ];
+        // All paints precede the consumer: the ordinary latest-only mailbox
+        // would discard the owned paint and conflate its state with release.
+        for (pixel, stamp) in witnesses {
+            let frame = FrameOutput::PixMap(PixMap {
+                width: 1,
+                height: 1,
+                pixels: vec![pixel],
+            });
+            if let Some(stamp) = stamp {
+                buf.store_journal_paint(frame, stamp);
+            } else {
+                buf.store(frame);
+            }
+        }
+        for (index, (pixel, stamp)) in witnesses.into_iter().enumerate() {
+            let frame = buf.take_journal_proof().expect("no discarded paint");
+            assert_eq!(frame.generation, index as u64 + 1);
+            assert_eq!(frame.pixmap.pixels, [pixel]);
+            assert_eq!(frame.stamp, stamp);
+        }
+        assert!(buf.take_journal_proof().is_none());
+        assert_eq!(buf.generation(), 3);
     }
 
     #[test]
