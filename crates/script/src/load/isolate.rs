@@ -265,6 +265,9 @@ pub struct LoadIsolate {
     #[cfg(feature = "memory-profile")]
     dispatched: std::sync::atomic::AtomicU64,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Rust-only compat journal quiet lease shared with the isolate thread.
+    /// Native isolates do not allocate this bridge.
+    compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
     /// Host-owned identity of forwarded paint frames. Unique per spawn
     /// and bumped on session reset so a stale overlay generation cannot
     /// match a later isolate that advertises the same button id. Shared
@@ -453,6 +456,12 @@ impl LoadIsolate {
         let thread_counters = counters.clone();
         let work_generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let thread_generation = work_generation.clone();
+        let compat_journal = matches!(
+            shape,
+            LoadShape::CompatDefineBot | LoadShape::CompatClass
+        )
+        .then(|| std::sync::Arc::new(crate::quest_journal::CompatJournalLease::default()));
+        let thread_compat_journal = compat_journal.clone();
         let teardown = std::sync::Arc::new(Mutex::new(TeardownState::new()));
         let thread_teardown = teardown.clone();
         let proof = TeardownProof::new();
@@ -479,6 +488,7 @@ impl LoadIsolate {
                     msg_tx,
                     setup_tx,
                     thread_generation,
+                    thread_compat_journal,
                     thread_paint_generation,
                     thread_teardown,
                     thread_proof,
@@ -495,6 +505,7 @@ impl LoadIsolate {
             #[cfg(feature = "memory-profile")]
             dispatched: std::sync::atomic::AtomicU64::new(0),
             work_generation,
+            compat_journal,
             paint_generation,
             stopped: std::sync::atomic::AtomicBool::new(false),
             script_stop: Mutex::new(None),
@@ -1075,8 +1086,27 @@ impl LoadIsolate {
         self.reset_session(true)
     }
 
+    pub(crate) fn compat_journal_paint_hidden(&self, now: Instant) -> bool {
+        let Some(lease) = self.compat_journal.as_ref() else {
+            return false;
+        };
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        lease.live(generation, now)
+    }
+
+    fn revoke_compat_journal(&self) {
+        if let Some(lease) = &self.compat_journal {
+            lease.revoke();
+        }
+    }
+
     fn reset_session(&self, keep_work: bool) -> u64 {
-        // No game ticks arrive while disconnected, so preserve the active
+        if let Some(lease) = &self.compat_journal {
+            lease.revoke();
+            lease.set_host_generation(u64::MAX);
+        }
         // execution's existing runaway horizon before clearing `in_flight`.
         self.arm_active_execution_deadline(teardown::ExecutionInterrupt::SessionReset);
         // Fold what the tick thread already sent under the ended generation,
@@ -1108,6 +1138,9 @@ impl LoadIsolate {
             self.lifecycle.lock().unwrap().clear();
             generation
         };
+        if let Some(lease) = &self.compat_journal {
+            lease.set_host_generation(generation);
+        }
         self.tick_errors.lock().unwrap().clear();
         *self.tick_outcome_error_generation.lock().unwrap() =
             had_active_error.then_some(generation);
@@ -1302,6 +1335,7 @@ impl LoadIsolate {
     }
 
     fn join_inner(mut self, invoke_hook: bool) -> Vec<String> {
+        self.revoke_compat_journal();
         self.send(IsolateCmd::Stop { invoke_hook });
         {
             let mut st = self.teardown.lock().unwrap();
@@ -1360,6 +1394,7 @@ impl LoadIsolate {
                     generation,
                     message,
                 } => {
+                    self.revoke_compat_journal();
                     self.tick_errors
                         .lock()
                         .unwrap()
@@ -1368,10 +1403,12 @@ impl LoadIsolate {
                         .push(message);
                 }
                 ThreadMsg::ScriptCut => {
+                    self.revoke_compat_journal();
                     self.script_cut
                         .store(true, std::sync::atomic::Ordering::Release);
                 }
                 ThreadMsg::ScriptStopped { tick, reason } => {
+                    self.revoke_compat_journal();
                     *self.script_stop.lock().unwrap() = Some(ScriptStopReceipt { tick, reason });
                 }
                 ThreadMsg::SessionReset { generation } => {
@@ -1381,6 +1418,7 @@ impl LoadIsolate {
                     }
                 }
                 ThreadMsg::Stopped => {
+                    self.revoke_compat_journal();
                     self.stopped
                         .store(true, std::sync::atomic::Ordering::Release);
                     *self.in_flight.lock().unwrap() = None;
@@ -1513,7 +1551,7 @@ impl LoadIsolate {
 
 impl Drop for LoadIsolate {
     fn drop(&mut self) {
-        // Best-effort: unblock a stuck tick and close the channel; the
+        self.revoke_compat_journal();
         // thread exits and drops its Runtime by itself (no join here,
         // and no cancel — the thread clears the terminate once the tick
         // has returned). After a successful join the hook is Done: do

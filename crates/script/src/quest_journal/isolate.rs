@@ -34,6 +34,116 @@ use std::cell::RefCell;
 /// `modals::CLOSE_TIMEOUT_MS` — and the public timeout is `modal-timeout`, not
 /// `timeout`.
 pub(crate) const ACQUIRE_TIMEOUT_MS: u64 = 3_000;
+const COMPAT_PAINT_QUIET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct CompatJournalKey {
+    token: u64,
+    generation: u64,
+}
+
+struct CompatJournalLeaseState {
+    key: CompatJournalKey,
+    since: std::time::Instant,
+}
+
+/// Shared Rust-only quiet state for a compatibility journal machine. The
+/// isolate thread is the producer and the host reads it without a JS/shim
+/// round trip. Both token and work generation fence every transition.
+pub(crate) struct CompatJournalLease {
+    state: parking_lot::Mutex<Option<CompatJournalLeaseState>>,
+    active: std::sync::atomic::AtomicBool,
+    producer_generation: std::sync::atomic::AtomicU64,
+    host_generation: std::sync::atomic::AtomicU64,
+}
+
+impl Default for CompatJournalLease {
+    fn default() -> Self {
+        Self {
+            state: parking_lot::Mutex::new(None),
+            active: std::sync::atomic::AtomicBool::new(false),
+            producer_generation: std::sync::atomic::AtomicU64::new(0),
+            host_generation: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
+impl CompatJournalLease {
+    pub(crate) fn set_generation(&self, generation: u64) {
+        self.producer_generation
+            .store(generation, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn set_host_generation(&self, generation: u64) {
+        self.host_generation
+            .store(generation, std::sync::atomic::Ordering::Release);
+    }
+
+    fn generation(&self) -> u64 {
+        self.producer_generation
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(crate) fn acquire(&self, token: u64, generation: u64, since: std::time::Instant) {
+        if self.generation() != generation
+            || self.host_generation.load(std::sync::atomic::Ordering::Acquire) != generation
+        {
+            return;
+        }
+        let mut state = self.state.lock();
+        if self.generation() != generation
+            || self.host_generation.load(std::sync::atomic::Ordering::Acquire) != generation
+        {
+            return;
+        }
+        *state = Some(CompatJournalLeaseState {
+            key: CompatJournalKey { token, generation },
+            since,
+        });
+        self.active
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn clear(&self, token: u64, generation: u64) {
+        let mut state = self.state.lock();
+        if state.as_ref().is_some_and(|active| {
+            active.key == (CompatJournalKey { token, generation })
+        }) {
+            *state = None;
+            self.active
+                .store(false, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    pub(crate) fn revoke(&self) {
+        *self.state.lock() = None;
+        self.active
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn live(&self, generation: u64, now: std::time::Instant) -> bool {
+        if !self.active.load(std::sync::atomic::Ordering::Acquire) {
+            return false;
+        }
+        let mut state = self.state.lock();
+        let Some(active) = state.as_ref() else {
+            self.active
+                .store(false, std::sync::atomic::Ordering::Release);
+            return false;
+        };
+        if active.key.generation != generation
+            || self.generation() != generation
+            || self.host_generation.load(std::sync::atomic::Ordering::Acquire) != generation
+            || now.saturating_duration_since(active.since) >= COMPAT_PAINT_QUIET_TIMEOUT
+        {
+            *state = None;
+            self.active
+                .store(false, std::sync::atomic::Ordering::Release);
+            return false;
+        }
+        true
+    }
+}
 
 thread_local! {
     static RUNTIME: RefCell<JournalRuntime> = const { RefCell::new(JournalRuntime::new()) };
@@ -64,6 +174,7 @@ struct JournalRuntime {
     root: i32,
     texts: Vec<String>,
     sequence: u64,
+    compat_lease: Option<std::sync::Arc<CompatJournalLease>>,
 }
 
 impl JournalRuntime {
@@ -78,14 +189,52 @@ impl JournalRuntime {
             root: -1,
             texts: Vec::new(),
             sequence: 0,
+            compat_lease: None,
         }
     }
+
+    fn bind_compat(&mut self, lease: std::sync::Arc<CompatJournalLease>) {
+        self.abort();
+        self.compat_lease = Some(lease);
+    }
+
+    fn current_generation(&self, requested: u64) -> u64 {
+        self.compat_lease
+            .as_ref()
+            .map_or(requested, |lease| lease.generation())
+    }
+
+    fn arm_compat(&self) {
+        if let Some(lease) = &self.compat_lease {
+            lease.acquire(self.token, self.generation, std::time::Instant::now());
+        }
+    }
+
+    fn clear_compat(&self) {
+        if let Some(lease) = &self.compat_lease {
+            lease.clear(self.token, self.generation);
+        }
+    }
+
+    fn revoke_compat(&self) {
+        if let Some(lease) = &self.compat_lease {
+            lease.revoke();
+        }
+    }
+
+    fn compat_live(&self) -> bool {
+        self.compat_lease
+            .as_ref()
+            .is_none_or(|lease| lease.live(self.generation, std::time::Instant::now()))
+    }
+
 
     fn frozen(&self) -> bool {
         self.clock.frozen()
     }
 
     fn abort(&mut self) {
+        self.clear_compat();
         self.token = self.token.wrapping_add(1);
         self.phase = Phase::Idle;
         self.name.clear();
@@ -127,7 +276,7 @@ impl JournalRuntime {
 
     fn begin(&mut self, input: &Value) -> Value {
         let name = input.get("name").and_then(Value::as_str).unwrap_or("");
-        let Some(generation) = input.get("generation").and_then(Value::as_u64) else {
+        let Some(requested_generation) = input.get("generation").and_then(Value::as_u64) else {
             // The wrapper refuses a missing generation; a direct call still
             // has to be a refusal, never a click on a guessed target.
             return self.refuse("snapshot-unavailable");
@@ -184,6 +333,7 @@ impl JournalRuntime {
             // A frozen begin does not admit a token or arm the window.
             return self.aborted("frozen");
         }
+        let generation = self.current_generation(requested_generation);
         self.token = self.token.wrapping_add(1);
         self.phase = Phase::Ready;
         self.name = folded;
@@ -193,6 +343,7 @@ impl JournalRuntime {
         self.texts.clear();
         self.sequence = sequence;
         self.clock.deadline = None;
+        self.arm_compat();
         json!({ "kind": "token", "token": self.token })
     }
 
@@ -202,6 +353,9 @@ impl JournalRuntime {
         }
         if generation != self.generation {
             return self.aborted("stale");
+        }
+        if !self.compat_live() {
+            return self.aborted("modal-timeout");
         }
         let Some((root, texts)) = posted_pair() else {
             return if self.phase == Phase::AwaitingAcquire {
@@ -277,6 +431,9 @@ impl JournalRuntime {
         }
         if generation != self.generation {
             return self.aborted("stale");
+        }
+        if !self.compat_live() {
+            return self.aborted("modal-timeout");
         }
         let Some((root, texts)) = posted_pair() else {
             return if self.phase == Phase::Closing {
@@ -394,14 +551,19 @@ impl Family for QuestJournal {
                     let component_id = RUNTIME.with(|rt| {
                         let mut rt = rt.borrow_mut();
                         if rt.frozen() {
-                            return None;
+                            return Ok(None);
+                        }
+                        if !rt.compat_live() {
+                            return Err(rt.aborted("modal-timeout"));
                         }
                         rt.phase = Phase::AwaitingAcquire;
                         rt.clock.arm(ACQUIRE_TIMEOUT_MS);
-                        Some(rt.component_id)
+                        Ok(Some(rt.component_id))
                     });
-                    let Some(component_id) = component_id else {
-                        return Step::Wait;
+                    let component_id = match component_id {
+                        Ok(Some(component_id)) => component_id,
+                        Ok(None) => return Step::Wait,
+                        Err(done) => return Step::Done(done),
                     };
                     cx.emit(InteractReq::IfButton { component_id });
                     return Step::Wait;
@@ -489,8 +651,24 @@ pub(crate) fn on_hold(held: bool) {
     });
 }
 
+pub(crate) fn bind_compat_runtime(lease: std::sync::Arc<CompatJournalLease>) {
+    RUNTIME.with(|rt| rt.borrow_mut().bind_compat(lease));
+}
+
+pub(crate) fn on_stop() {
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        rt.abort();
+        rt.revoke_compat();
+    });
+}
+
 pub(crate) fn on_reset() {
-    RUNTIME.with(|rt| rt.borrow_mut().abort());
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        rt.abort();
+        rt.revoke_compat();
+    });
 }
 
 pub(crate) fn dispatch(input: &Value) -> Value {
@@ -732,5 +910,95 @@ mod tests {
             vec![cook_row(), waterfall_row()],
         );
         assert_eq!(call("next", token, 1)["reason"], "stale");
+    }
+    #[test]
+    fn compat_quiet_lease_is_keyed_and_wall_bounded() {
+        let lease = CompatJournalLease::default();
+        let started = std::time::Instant::now();
+
+        lease.set_generation(9);
+        lease.set_host_generation(9);
+        lease.acquire(4, 9, started);
+        assert!(lease.live(9, started + std::time::Duration::from_secs(9)));
+
+        // A stale producer cannot clear a replacement token in the same
+        // work generation.
+        lease.acquire(5, 9, started);
+        lease.clear(4, 9);
+        assert!(lease.live(9, started + std::time::Duration::from_secs(1)));
+
+        // The generation fence revokes a lease as soon as the host advances
+        // the isolate's work, even if the old producer runs afterward.
+        assert!(!lease.live(10, started + std::time::Duration::from_secs(1)));
+
+        lease.set_generation(10);
+        lease.set_host_generation(10);
+        lease.acquire(6, 10, started);
+        assert!(!lease.live(10, started + std::time::Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn compat_quiet_lease_tracks_close_cancel_reset_and_timeout() {
+        reset_closed();
+        let lease = std::sync::Arc::new(CompatJournalLease::default());
+        lease.set_generation(7);
+        lease.set_host_generation(7);
+        bind_compat_runtime(std::sync::Arc::clone(&lease));
+
+        let first = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
+        assert!(
+            lease.live(7, std::time::Instant::now()),
+            "the lease is armed before the first if-button"
+        );
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        assert_eq!(call("next", first, 7)["kind"], "done");
+        assert_eq!(call("close", first, 7)["kind"], "close-modal");
+        assert!(
+            lease.live(7, std::time::Instant::now()),
+            "the lease remains live until the close is observed"
+        );
+        post_tab(9, -1, &[], vec![cook_row(), waterfall_row()]);
+        assert_eq!(call("close", first, 7)["kind"], "done");
+        assert!(!lease.live(7, std::time::Instant::now()));
+
+        // A replacement begin cancels the old producer and installs a new
+        // key. Its stale cleanup cannot clear that replacement.
+        let old = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
+        let replacement = begin("Waterfall Quest", 0)["token"].as_u64().unwrap();
+        assert_ne!(old, replacement);
+        lease.clear(old, 7);
+        assert!(lease.live(7, std::time::Instant::now()));
+
+        on_reset();
+        assert!(!lease.live(7, std::time::Instant::now()));
+
+        let timed_out = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
+        RUNTIME.with(|rt| {
+            rt.borrow_mut().clock.deadline =
+                Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+        });
+        assert_eq!(call("next", timed_out, 7)["reason"], "modal-timeout");
+        let wall_expired = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
+        let wall_started = std::time::Instant::now();
+        assert!(lease.live(7, wall_started));
+        assert!(!lease.live(
+            7,
+            wall_started + std::time::Duration::from_secs(10),
+        ));
+        assert_eq!(
+            call("next", wall_expired, 7)["reason"],
+            "modal-timeout"
+        );
+
+        let stopped = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
+        assert!(lease.live(7, std::time::Instant::now()));
+        on_stop();
+        assert!(!lease.live(7, std::time::Instant::now()));
+        let _ = stopped;
     }
 }
