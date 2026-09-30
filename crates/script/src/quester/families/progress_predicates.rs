@@ -105,14 +105,14 @@ impl PredicatePlan for Flag {
             return Truth::Unknown;
         };
         if let Some(expected) = self.count {
-            return flag
-                .count
-                .map_or(no_count_evidence(flag.truth), |count| truth(count == expected));
+            return flag.count.map_or(no_count_evidence(flag.truth), |count| {
+                truth(count == expected)
+            });
         }
         if let Some(minimum) = self.at_least {
-            return flag
-                .count
-                .map_or(no_count_evidence(flag.truth), |count| truth(count >= minimum));
+            return flag.count.map_or(no_count_evidence(flag.truth), |count| {
+                truth(count >= minimum)
+            });
         }
         match self.is {
             Some(expected) => {
