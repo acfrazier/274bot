@@ -2,13 +2,17 @@
 //! tile, an optional routed [`Route`], the operator's [`MapView`] and
 //! catalogue POIs; paints the walkable dot field, remaining-walk polyline,
 //! here marker, POI glyphs and selection crosshair. Keyboard: arrows/hjkl
-//! pan, `+`/`-` zoom, `w` toggles the content-defined wilderness overlay,
-//! `/` search, Enter selects/arms through the shared map model, and Esc
-//! clears or closes the map.
+//! pan, `+`/`-` zoom, `/` search, Enter selects/arms through the shared map
+//! model, and Esc clears or closes the map. The optional wilderness layer is
+//! toggled from the command palette.
+
+use std::io;
+use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 use ratatui::widgets::Widget;
 
 use api::snapshot::WorldTile;
@@ -30,17 +34,17 @@ pub const DEFAULT_CENTRE: (i32, i32) = (3220, 3220);
 const NAV_PREF_KEY: &str = "nav";
 const SPECIAL_AREA_PREF_KEY: &str = "show_special_areas";
 
-/// Read the shared panel/TUI nav preference once when a map view is created.
-/// Rendering never consults disk; the selected nav graph remains the only
-/// source of zone geometry.
-fn persisted_wilderness() -> bool {
-    host_play::panel_ui_value(NAV_PREF_KEY)
+/// Read the shared panel/TUI nav preference from an explicitly configured
+/// store. `MapView::new` deliberately does not touch the operator's home so
+/// unit tests cannot observe or mutate real preferences.
+fn persisted_wilderness(path: &Path) -> bool {
+    host_play::panel_ui_value_at(path, NAV_PREF_KEY)
         .and_then(|value| value.get(SPECIAL_AREA_PREF_KEY).and_then(|v| v.as_bool()))
         .unwrap_or(false)
 }
 
-fn persist_wilderness(enabled: bool) {
-    let mut nav = host_play::panel_ui_value(NAV_PREF_KEY)
+fn persist_wilderness(path: &Path, enabled: bool) -> io::Result<()> {
+    let mut nav = host_play::panel_ui_value_at(path, NAV_PREF_KEY)
         .filter(|value| value.is_object())
         .unwrap_or_else(|| serde_json::json!({}));
     if let Some(object) = nav.as_object_mut() {
@@ -48,9 +52,11 @@ fn persist_wilderness(enabled: bool) {
             SPECIAL_AREA_PREF_KEY.into(),
             serde_json::Value::Bool(enabled),
         );
-        let _ = host_play::persist_panel_ui_value(NAV_PREF_KEY, nav);
     }
+    host_play::persist_panel_ui_value_at(path, NAV_PREF_KEY, nav)
 }
+
+const WILDERNESS_BG: Color = Color::Rgb(72, 16, 72);
 
 /// Glyphs for the semantic terminal map. Collision dots are deliberately
 /// simple: terminal cells are navigation diagnostics, not terrain artwork.
@@ -60,7 +66,6 @@ const HERE_GLYPH: &str = "@";
 const PATH_GLYPH: &str = "*";
 const SELECTION_GLYPH: &str = "+";
 const OBSERVED_GLYPH: &str = "N";
-const WILDERNESS_GLYPH: &str = "W";
 
 /// Optional map layers. The dot layer is the useful default; collision and
 /// reach are explicit diagnostics and never trigger a provider load here.
@@ -120,28 +125,38 @@ pub struct MapView {
     /// The operator's selected tile (`+` crosshair); `None` once Esc
     /// clears it.
     pub selection: Option<Tile>,
+    preference_path: Option<PathBuf>,
 }
 
 impl MapView {
     /// A fresh view: centred on the player, finest zoom, no selection.
+    /// Preference I/O is configured explicitly by the binary.
     pub fn new() -> Self {
         Self {
             pan: (0, 0),
             zoom: ZOOMS.len() - 1,
             plane: 0,
-            layers: MapLayers {
-                wilderness: persisted_wilderness(),
-                ..MapLayers::default()
-            },
+            layers: MapLayers::default(),
             selection: None,
+            preference_path: None,
         }
+    }
+
+    /// Attach the shared preference store and restore the wilderness toggle.
+    pub fn restore_persisted_wilderness(&mut self, path: impl Into<PathBuf>) {
+        let path = path.into();
+        self.layers.wilderness = persisted_wilderness(&path);
+        self.preference_path = Some(path);
     }
 }
 
 impl MapView {
-    pub(crate) fn toggle_wilderness(&mut self) {
+    pub(crate) fn toggle_wilderness(&mut self) -> io::Result<()> {
         self.layers.wilderness = !self.layers.wilderness;
-        persist_wilderness(self.layers.wilderness);
+        if let Some(path) = self.preference_path.as_deref() {
+            persist_wilderness(path, self.layers.wilderness)?;
+        }
+        Ok(())
     }
 }
 
@@ -235,9 +250,8 @@ impl<'a, F: FnMut(Tile)> Map<'a, F> {
     }
 
     /// Handle one key event. Pan keys are scoped to Map focus (h/l are not
-    /// global loadout shortcuts), `w` persists the wilderness-layer toggle,
-    /// Enter selects the centre or confirms a walk, Esc clears the selection,
-    /// and +/- changes terminal zoom.
+    /// global loadout shortcuts), Enter selects the centre or confirms a walk,
+    /// Esc clears the selection, and +/- changes terminal zoom.
     pub fn on_key(&mut self, key: KeyEvent) -> MapAction {
         match key.code {
             KeyCode::Left | KeyCode::Char('h') => self.pan_by(-1, 0),
@@ -245,10 +259,6 @@ impl<'a, F: FnMut(Tile)> Map<'a, F> {
             KeyCode::Up | KeyCode::Char('k') => self.pan_by(0, 1),
             KeyCode::Down | KeyCode::Char('j') => self.pan_by(0, -1),
             KeyCode::Enter => self.confirm(),
-            KeyCode::Char('w') => {
-                self.view.toggle_wilderness();
-                MapAction::Moved
-            }
             KeyCode::Esc => {
                 self.view.selection = None;
                 MapAction::Moved
@@ -344,8 +354,8 @@ impl<'a, F: FnMut(Tile)> Widget for Map<'a, F> {
         }
 
         // Paint area membership after the terrain field so one wilderness
-        // tile marks a coarse cell without letting a later non-wilderness tile
-        // erase it. With step=1 this is exactly one glyph per nav tile.
+        // tile receives a background tint without replacing its diagnostic
+        // glyph. With step=1 this is exactly one tint per nav tile.
         if self.view.layers.wilderness {
             for z in z_lo..z_hi {
                 for x in x_lo..x_hi {
@@ -355,7 +365,7 @@ impl<'a, F: FnMut(Tile)> Widget for Map<'a, F> {
                         level: c.level,
                     }) {
                         if let Some((col, row)) = cell_of(x, z, (c.x, c.z), step, area) {
-                            put(buf, area, col, row, WILDERNESS_GLYPH);
+                            tint(buf, area, col, row);
                         }
                     }
                 }
@@ -489,6 +499,14 @@ fn put(buf: &mut Buffer, area: Rect, col: usize, row: usize, glyph: &str) {
         buf[(area.x + col as u16, area.y + row as u16)].set_symbol(glyph);
     }
 }
+/// Tint one wilderness cell without changing its diagnostic glyph.
+fn tint(buf: &mut Buffer, area: Rect, col: usize, row: usize) {
+    if col < area.width as usize && row < area.height as usize {
+        let point = (area.x + col as u16, area.y + row as u16);
+        let style = buf[point].style().bg(WILDERNESS_BG);
+        buf[point].set_style(style);
+    }
+}
 
 fn poi_glyph(kind: PoiKind) -> &'static str {
     match kind {
@@ -591,9 +609,13 @@ mod tests {
         );
         // Centre is z=3519; the selected zone rows z=3520 and z=3521
         // straddle the real surface wilderness edge at z=3520.
-        assert_eq!(&text[2 * 9 + 4..2 * 9 + 5], "W");
-        assert_eq!(&text[3 * 9 + 4..3 * 9 + 5], "W");
+        assert_eq!(&text[2 * 9 + 4..2 * 9 + 5], ".");
+        assert_eq!(&text[3 * 9 + 4..3 * 9 + 5], ".");
         assert_eq!(&text[4 * 9 + 4..4 * 9 + 5], "@");
+        // The south side and the next north row stay outside the zone; an
+        // area marker must not turn every visible cell into a wilderness glyph.
+        assert_eq!(&text[4 * 9 + 3..4 * 9 + 4], ".");
+        assert_eq!(&text[9 + 4..9 + 5], ".");
     }
     #[test]
     fn route_paints_stars_and_advancing_here_drops_the_first() {

@@ -2644,6 +2644,12 @@ fn prompt_instance_conflict(holder: &host_play::InstanceHolder) -> bool {
 }
 
 /// Run the interactive (or `--live`) TUI: unlock, load + log in, event loop.
+fn new_app(title: impl Into<String>) -> TuiApp {
+    let mut app = TuiApp::new(title);
+    app.restore_map_preferences(host_play::panel_ui_path());
+    app
+}
+
 fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let memory = {
         #[cfg(feature = "memory-profile")]
@@ -2708,7 +2714,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         session.names = run.names.clone();
         session.load_and_login_all();
         session.focus(&run.names[0]);
-        let mut app = TuiApp::new(format!(
+        let mut app = new_app(format!(
             "{} memory benchmark · {}",
             session.app_title(),
             session.profile_label()
@@ -2726,7 +2732,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             session.live_catalog_core = args.catalog_core;
             session.live_pair_core = args.pair_core;
             session.live_prepare_script(scenario)?;
-            let mut app = TuiApp::new(format!(
+            let mut app = new_app(format!(
                 "tui-play --live {name} · {}",
                 session.profile_label()
             ));
@@ -2757,7 +2763,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             let focus = session.bootstrap_interactive_profiles(&args.users)?;
             session.load_and_login(&focus);
             session.focus(&focus);
-            let mut app = TuiApp::new(format!(
+            let mut app = new_app(format!(
                 "{} headless · {}",
                 session.app_title(),
                 session.profile_label()

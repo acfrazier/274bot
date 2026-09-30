@@ -557,7 +557,17 @@ impl TuiApp {
             script_area: Rect::default(),
         }
     }
+    /// Restore shared map preferences from the path selected by the binary.
+    /// Tests pass an isolated path; constructing an app never reads `$HOME`.
+    pub fn restore_map_preferences(&mut self, path: impl Into<std::path::PathBuf>) {
+        self.map.restore_persisted_wilderness(path);
+    }
 
+    pub(crate) fn toggle_map_wilderness(&mut self) {
+        if let Err(error) = self.map.toggle_wilderness() {
+            self.error = Some(format!("map wilderness: {error}"));
+        }
+    }
     /// The header title (profile, server and revision).
     pub fn title(&self) -> &str {
         &self.title
@@ -1047,9 +1057,8 @@ impl TuiApp {
     }
 
     /// The Map tab's own keys (after the router tried the `MAP_KEYS`
-    /// commands and Esc-to-leave): plane, layers (`w` toggles the
-    /// content-defined wilderness overlay), the group toggle for the selected
-    /// bot, Enter select/confirm, pan and zoom.
+    /// commands and Esc-to-leave): plane, diagnostic layers, the group
+    /// toggle for the selected bot, Enter select/confirm, pan and zoom.
     pub(crate) fn map_pane_key(&mut self, key: KeyEvent) -> AppAction {
         match key.code {
             KeyCode::PageUp => self.set_map_plane(self.map.plane.saturating_add(1)),
@@ -1059,7 +1068,6 @@ impl TuiApp {
             KeyCode::Char('c') => self.map.layers.collision = !self.map.layers.collision,
             KeyCode::Char('r') => self.map.layers.reach = !self.map.layers.reach,
             KeyCode::Char(' ') => self.toggle_walk_send_focused(),
-            KeyCode::Char('w') => self.map.toggle_wilderness(),
             KeyCode::Enter => return self.map_enter(),
             _ => return self.map_on_key(key),
         }
@@ -1591,11 +1599,10 @@ impl TuiApp {
         }
 
         let title = format!(
-            "Map · plane {} · {:?} · {} · arrows/hjkl pan · +/- zoom · / search · g group · t teleport · w wilderness:{} · Esc back",
+            "Map · plane {} · {:?} · {} · arrows/hjkl pan · +/- zoom · / search",
             self.map.plane,
             self.map_catalogue_status,
-            self.walk_send.walk_label(),
-            if self.map.layers.wilderness { "on" } else { "off" }
+            self.walk_send.walk_label()
         );
         let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(area);
@@ -1670,7 +1677,7 @@ impl TuiApp {
                 )
             }),
             Line::from(format!(
-                "legend: @ * + W B T X N#  POIs:{} obs:{} {} · w wilderness:{}",
+                "legend: @ * + shade B T X N #  POIs:{} obs:{} {} · w wilderness:{}",
                 poi_count,
                 self.map_observed.len(),
                 if self.route.is_some() {

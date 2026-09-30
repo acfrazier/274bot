@@ -32,13 +32,14 @@ pub struct OverlayLayers {
 
 impl OverlayLayers {
     pub fn any(self) -> bool {
-        self.grid
-            || self.collision_fill
-            || self.reach
-            || self.nsew
-            || self.path
-            || self.flood
-            || self.special_areas
+        self.raster_any() || self.special_areas
+    }
+
+    /// Whether the packed per-cell raster has work to do. Content-defined
+    /// areas are drawn as world rectangles so they remain visible below the
+    /// raster's minimum zoom.
+    pub fn raster_any(self) -> bool {
+        self.grid || self.collision_fill || self.reach || self.nsew || self.path || self.flood
     }
 }
 
@@ -93,7 +94,7 @@ impl Default for OverlayColors {
             flood_b: [200, 40, 240, 160],
             unreached: [200, 40, 240, 160],
             nsew: [220, 220, 220, 220],
-            special_areas: [255, 160, 0, 96],
+            special_areas: [220, 40, 180, 88],
         }
     }
 }
@@ -114,7 +115,7 @@ pub fn rasterize(rgba: &mut [u8], w: u32, h: u32, view: View, paint: OverlayPain
         return;
     }
     rgba[..n].fill(0);
-    if !paint.layers.any() {
+    if !paint.layers.raster_any() {
         return;
     }
     let path_at: HashMap<WorldTile, bool> = if paint.layers.path {
@@ -190,13 +191,6 @@ fn cell_color(
     }
     if paint.layers.grid && world.collision.walkable(wt) {
         return paint.colors.grid;
-    }
-    // The wilderness rules are decoded from the selected content and packed
-    // into the same graph used by routing. Checking membership per tile keeps
-    // the rendered boundary on the nav tile edges; the caller does not enter
-    // this loop at all while the layer is hidden.
-    if paint.layers.special_areas && world.graph.wilderness.contains(wt) {
-        return paint.colors.special_areas;
     }
     [0, 0, 0, 0]
 }
@@ -334,37 +328,14 @@ mod rasterize_rules {
     }
 
     #[test]
-    fn special_area_uses_content_zone_tile_edges() {
-        let mut base = bake_world(5, 4, &[]);
-        base.collision.origin = WorldTile {
-            x: 2944,
-            z: 3519,
-            level: 0,
-        };
-        let graph = TransportGraph {
-            wilderness: nav::transport::WildernessRules {
-                zones: vec![nav::transport::WildernessZone {
-                    x1: 2944,
-                    z1: 3520,
-                    x2: 2948,
-                    z2: 3521,
-                    level1: 0,
-                    level2: 0,
-                    origin_z: 3520,
-                }],
-                divisor: 1,
-                offset: 1,
-            },
-            ..Default::default()
-        };
-        let banks = base.banks().to_vec();
-        let world = NavWorld::from_parts(base.collision, graph, banks);
+    fn special_area_is_not_rasterized_per_tile() {
+        let world = bake_world(5, 4, &[]);
         let view = View {
-            west: 2944.0,
-            south: 3519.0,
-            east: 2949.0,
-            north: 3523.0,
-            pixels_per_tile: 16.0,
+            west: 0.0,
+            south: 0.0,
+            east: 5.0,
+            north: 4.0,
+            pixels_per_tile: 2.0,
             plane: 0,
             max_lod: 0,
         };
@@ -372,18 +343,11 @@ mod rasterize_rules {
             special_areas: true,
             ..OverlayLayers::default()
         };
-        let (rgba, w, h) = sample(view, &world, layers, &[], &[], None);
-        let colors = OverlayColors::default();
-        assert_eq!(at_tile(&rgba, w, h, view, 2946, 3520), colors.special_areas);
-        assert_eq!(at_tile(&rgba, w, h, view, 2946, 3521), colors.special_areas);
-        assert_eq!(at_tile(&rgba, w, h, view, 2946, 3519), [0, 0, 0, 0]);
-        assert_eq!(at_tile(&rgba, w, h, view, 2946, 3522), [0, 0, 0, 0]);
-        // The wilderness edge at z=3520 is the shared pixel edge between
-        // nav tiles, not an interpolated world-coordinate stroke.
-        assert_eq!(pixel(&rgba, w, 2, 8), colors.special_areas);
-        assert_eq!(pixel(&rgba, w, 2, 12), [0, 0, 0, 0]);
+        let (rgba, _, _) = sample(view, &world, layers, &[], &[], None);
+        assert!(layers.any());
+        assert!(!layers.raster_any());
+        assert!(rgba.iter().all(|&byte| byte == 0));
     }
-
     fn disconnected_world() -> NavWorld {
         let mut extras = Vec::new();
         for z in 0..7 {
