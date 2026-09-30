@@ -71,8 +71,9 @@ const JOURNAL_ROOT: i32 = 8134;
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 const JOURNAL_TITLE_COMPONENT: i32 = 8144;
 const JOURNAL_BUTTON: i32 = 42;
-const JOURNAL_CLOSE_X: i32 = 496;
-const JOURNAL_CLOSE_Y: i32 = 8;
+// Center of the R289 journal's "Close Window" text button, not the frame corner.
+const JOURNAL_CLOSE_X: i32 = 460;
+const JOURNAL_CLOSE_Y: i32 = 38;
 
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 const MODAL_ROI: (usize, usize, usize, usize) = (4, 516, 4, 338);
