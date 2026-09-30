@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2021"
 publish = false
 
+[features]
+debug-catalog = []
+
 [dependencies]
 client = { workspace = true }
 parking_lot = "0.12"

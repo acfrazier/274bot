@@ -117,48 +117,38 @@ fn minimal_json(tail: &str) -> String {
     )
 }
 
+fn debug_catalog() -> crate::debug_commands::DebugCatalog {
+    crate::debug_commands::DebugCatalog::decode(
+        include_bytes!("../data/game-data/289/debug.json"),
+        ClientRevision::R289,
+        for_revision(ClientRevision::R289).unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn debug_picker_exact_alias_precedes_substrings() {
+    let data = debug_catalog();
+    assert_eq!(data.search_names("npc", "man", 40)[0].alias, "man");
+    assert_eq!(data.search_names("inv", "inv", 40)[0].alias, "inv");
+}
+
 #[test]
 fn debug_catalog_commands_and_name_families_are_searchable() {
-    let data = SelectedGameData::decode(
-        r#"{
-            "schema_version": 4,
-            "revision": 274,
-            "provenance": {"cache_identity": {"cache_id": "x"}, "inputs": [], "content_inputs": [], "decoder_sources": []},
-            "items": [
-                {"alias": "coins", "id": 1, "name": "Coins", "cost": 1, "stackable": true, "members": false, "certificate_link": -1, "certificate_template": -1, "wear_position": -1, "wear_position_2": -1, "wear_position_3": -1, "tradeable": true, "stack_variant": false},
-                {"alias": "cert_coins", "id": 2, "name": "Coins", "cost": 1, "stackable": true, "members": false, "certificate_link": 1, "certificate_template": 799, "wear_position": -1, "wear_position_2": -1, "wear_position_3": -1, "tradeable": true, "stack_variant": false}
-            ],
-            "debug_commands": [{"name": "~demo", "category": "Account", "description": "Demo", "args": [], "destructive": false, "production_only": false}],
-            "debug_names": {
-                "npc": [{"id": 7, "alias": "guard", "name": "Guard"}],
-                "loc": [{"id": 8, "alias": "bank_booth", "name": "Bank booth"}],
-                "varp": [{"id": 9, "alias": "tutorial", "name": "Tutorial"}]
-            },
-            "consumption": [],
-            "pickpocket": []
-        }"#.as_bytes(),
-        ClientRevision::R274,
-    ).unwrap();
-    assert_eq!(data.debug_commands()[0].name, "~demo");
+    let data = debug_catalog();
+    assert!(data
+        .commands()
+        .iter()
+        .any(|command| command.name == "~maxme"));
+    assert_eq!(data.search_names("obj", "coins", 8)[0].alias, "coins");
+    assert_eq!(data.search_names("namedobj", "995", 8)[0].id, 995);
     assert_eq!(
-        data.search_debug_names("obj", "coin", 8)
-            .iter()
-            .map(|row| row.alias.as_str())
-            .collect::<Vec<_>>(),
-        vec!["coins"]
-    );
-    assert_eq!(data.search_debug_names("namedobj", "1", 8)[0].id, 1);
-    assert_eq!(data.search_debug_names("npc", "guard", 8)[0].id, 7);
-    assert_eq!(
-        data.search_debug_names("loc", "bank", 8)[0].name,
-        "Bank booth"
-    );
-    assert_eq!(
-        data.search_debug_names("varbit", "tutorial", 8)[0].alias,
+        data.search_names("varbit", "tutorial", 8)[0].alias,
         "tutorial"
     );
-    assert!(data.search_debug_names("npc", "", 8).is_empty());
-    assert!(data.search_debug_names("future", "guard", 8).is_empty());
+    assert!(data.search_names("npc", "", 8).is_empty());
+    assert!(data.search_names("future", "guard", 8).is_empty());
+    assert!(data.search_names("npc", "man", 0).is_empty());
 }
 
 fn scanned_fixed_food_heal(data: &SelectedGameData, name: &str) -> Option<i32> {

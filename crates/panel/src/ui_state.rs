@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 
 use crate::nav_settings::NavSettings;
 
+use frontend_core::log::{Level, Source};
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PanelUiState {
     pub last_focus: Option<String>,
@@ -194,19 +196,66 @@ pub fn load_at(p: &Path) -> PanelUiState {
     }
 }
 
+fn prefs_log(level: Level, message: String) {
+    eprintln!("panel: {message}");
+    frontend_core::log::global().process_line(Source::Host, level, &message);
+}
+
+fn replacement_path(p: &Path) -> PathBuf {
+    let mut name = p.as_os_str().to_os_string();
+    name.push(".new");
+    PathBuf::from(name)
+}
+
 pub fn save_at(p: &Path, state: &PanelUiState) {
-    // A malformed or incompatible existing prefs file is evidence that the
-    // operator may need to recover it. Never replace it with defaults or a
-    // partial state (M-044); a later explicit repair can still write a new
-    // file.
+    let data = match serde_json::to_vec_pretty(state) {
+        Ok(data) => data,
+        Err(error) => {
+            prefs_log(
+                Level::Error,
+                format!("refused to save panel preferences {}: {error}", p.display()),
+            );
+            return;
+        }
+    };
     match std::fs::read(p) {
-        Ok(existing) if serde_json::from_slice::<PanelUiState>(&existing).is_err() => return,
+        Ok(existing) if serde_json::from_slice::<PanelUiState>(&existing).is_err() => {
+            let sibling = replacement_path(p);
+            match vault::write_private_file(&sibling, &data) {
+                Ok(()) => prefs_log(
+                    Level::Warn,
+                    format!(
+                        "preserved invalid panel preferences {}; wrote current preferences to {}",
+                        p.display(),
+                        sibling.display()
+                    ),
+                ),
+                Err(error) => prefs_log(
+                    Level::Error,
+                    format!(
+                        "preserved invalid panel preferences {} but refused replacement {}: {error}",
+                        p.display(),
+                        sibling.display()
+                    ),
+                ),
+            }
+            return;
+        }
         Ok(_) => {}
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return,
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            prefs_log(
+                Level::Error,
+                format!("refused to save panel preferences {}: {error}", p.display()),
+            );
+            return;
+        }
         Err(_) => {}
     }
-    if let Ok(data) = serde_json::to_vec_pretty(state) {
-        let _ = vault::write_private_file(p, &data);
+    if let Err(error) = vault::write_private_file(p, &data) {
+        prefs_log(
+            Level::Error,
+            format!("refused to save panel preferences {}: {error}", p.display()),
+        );
     }
 }
 
@@ -347,13 +396,19 @@ mod tests {
     }
 
     #[test]
-    fn save_does_not_clobber_corrupt_existing_prefs() {
+    fn save_preserves_corrupt_prefs_and_writes_actual_state_to_new_sibling() {
         let dir = TestDir::new("ui-corrupt");
         let p = dir.join("panel-ui.json");
         let corrupt = b"{ not valid json";
         std::fs::write(&p, corrupt).unwrap();
-        save_at(&p, &PanelUiState::default());
+        let state = PanelUiState {
+            last_focus: Some("alice".into()),
+            ..Default::default()
+        };
+        save_at(&p, &state);
         assert_eq!(std::fs::read(&p).unwrap(), corrupt);
+        let repaired = super::replacement_path(&p);
+        assert_eq!(load_at(&repaired).last_focus.as_deref(), Some("alice"));
     }
 
     #[test]

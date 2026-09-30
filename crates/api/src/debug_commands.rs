@@ -1,5 +1,6 @@
 //! Content-derived debugproc and engine-cheat metadata.
 
+use client::io::ClientRevision;
 use serde::Deserialize;
 
 const MAX_COMMAND_BYTES: usize = 80;
@@ -47,6 +48,149 @@ pub struct DebugName {
     pub id: i32,
     pub alias: String,
     pub name: String,
+}
+
+/// Separately pinned, opt-in catalog. The panel owns its lifetime; normal
+/// selected facts never decode or retain this data.
+#[derive(Debug, Deserialize)]
+pub struct DebugCatalog {
+    schema_version: u16,
+    revision: i32,
+    provenance: DebugProvenance,
+    debug_commands: Vec<DebugCommand>,
+    debug_names: std::collections::HashMap<String, Vec<DebugName>>,
+    #[serde(skip)]
+    items: Option<std::sync::Arc<crate::game_data::SelectedGameData>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DebugProvenance {
+    inputs: Vec<crate::game_data::SourceInput>,
+    content_inputs: Vec<crate::game_data::SourceInput>,
+}
+
+impl DebugCatalog {
+    /// Decode only on explicit Local Debug-tab demand.
+    #[cfg(feature = "debug-catalog")]
+    pub fn load(
+        revision: ClientRevision,
+        items: std::sync::Arc<crate::game_data::SelectedGameData>,
+    ) -> Result<Self, String> {
+        let bytes: &[u8] = match revision {
+            ClientRevision::R274 => include_bytes!("../data/game-data/274/debug.json"),
+            ClientRevision::R289 => include_bytes!("../data/game-data/289/debug.json"),
+        };
+        Self::decode(bytes, revision, items)
+    }
+
+    pub fn decode(
+        bytes: &[u8],
+        revision: ClientRevision,
+        items: std::sync::Arc<crate::game_data::SelectedGameData>,
+    ) -> Result<Self, String> {
+        let mut catalog: Self = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        if catalog.schema_version != 1 || catalog.revision != revision.as_i32() {
+            return Err("Debug catalog schema or revision mismatch".into());
+        }
+        catalog.items = Some(items);
+        Ok(catalog)
+    }
+
+    pub fn commands(&self) -> &[DebugCommand] {
+        &self.debug_commands
+    }
+
+    pub fn source_inputs(&self) -> impl Iterator<Item = (bool, &crate::game_data::SourceInput)> {
+        self.provenance
+            .inputs
+            .iter()
+            .map(|input| (false, input))
+            .chain(
+                self.provenance
+                    .content_inputs
+                    .iter()
+                    .map(|input| (true, input)),
+            )
+    }
+
+    /// Exact identity first, then display names, prefixes and substrings.
+    /// Each pass is bounded; only returned rows are copied.
+    pub fn search_names(&self, kind: &str, query: &str, limit: usize) -> Vec<DebugName> {
+        let kind = kind.trim().to_ascii_lowercase();
+        if kind == "obj" || kind == "namedobj" {
+            return self.items.as_ref().map_or_else(Vec::new, |items| {
+                search_names(
+                    items.items().iter().filter_map(|item| {
+                        let alias = item.alias.as_deref()?;
+                        Some((item.id, alias, item.name.as_deref().unwrap_or(alias)))
+                    }),
+                    query,
+                    limit,
+                )
+            });
+        }
+        let family = if kind == "varbit" { "varp" } else { &kind };
+        let Some(rows) = self.debug_names.get(family) else {
+            return Vec::new();
+        };
+        search_names(
+            rows.iter()
+                .map(|row| (row.id, row.alias.as_str(), row.name.as_str())),
+            query,
+            limit,
+        )
+    }
+}
+
+fn search_names<'a>(
+    rows: impl Iterator<Item = (i32, &'a str, &'a str)> + Clone,
+    query: &str,
+    limit: usize,
+) -> Vec<DebugName> {
+    let wanted = query.trim();
+    if wanted.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let needle = wanted.as_bytes();
+    let numeric = wanted.parse::<i32>().ok();
+    let mut hits = Vec::new();
+    for rank in 0..4 {
+        for (id, alias, name) in rows.clone() {
+            let starts = |text: &[u8]| {
+                text.get(..needle.len())
+                    .is_some_and(|s| s.eq_ignore_ascii_case(needle))
+            };
+            let contains = |text: &[u8]| {
+                text.windows(needle.len())
+                    .any(|s| s.eq_ignore_ascii_case(needle))
+            };
+            let exact = alias.eq_ignore_ascii_case(wanted) || numeric == Some(id);
+            let named = name.eq_ignore_ascii_case(wanted);
+            let matches = match rank {
+                0 => exact,
+                1 => !exact && named,
+                2 => !exact && !named && (starts(alias.as_bytes()) || starts(name.as_bytes())),
+                _ => {
+                    !exact
+                        && !named
+                        && !starts(alias.as_bytes())
+                        && !starts(name.as_bytes())
+                        && (contains(alias.as_bytes()) || contains(name.as_bytes()))
+                }
+            };
+            if matches {
+                hits.push(DebugName {
+                    id,
+                    alias: alias.into(),
+                    name: name.into(),
+                });
+                if hits.len() == limit {
+                    return hits;
+                }
+            }
+        }
+    }
+    hits
 }
 
 impl DebugCommand {

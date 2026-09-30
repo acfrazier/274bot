@@ -6149,7 +6149,10 @@ fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
     play.script_stop("ghost");
     play.script_paint_click("ghost", "gobank", 0);
     assert_eq!(play.script_state("ghost"), script::RunState::Idle);
-    play.cheat("ghost", "tele 0,50,50,20,20");
+    assert_eq!(
+        play.cheat("ghost", "tele 0,50,50,20,20"),
+        Err(CheatRefusal::UnknownBot)
+    );
     assert!(
         play.cheats.lock().unwrap().is_empty(),
         "unknown uid cheat is a no-op"
@@ -6352,14 +6355,17 @@ fn disconnected_slot_rejects_new_wire_and_cheat_work() {
         .unwrap()
         .insert("alice".into(), VecDeque::new());
 
-    play.cheat("alice", "setvar tutorial 1000");
+    assert_eq!(
+        play.cheat("alice", "setvar tutorial 1000"),
+        Err(CheatRefusal::NotInGame)
+    );
     play.queue_wire("alice", WireCmd::Continue);
 
     assert!(play.cheats.lock().unwrap()["alice"].is_empty());
     assert!(play.wires.lock().unwrap()["alice"].is_empty());
 
     play.statuses.lock().unwrap()[0].ingame = true;
-    play.cheat("alice", "setvar tutorial 1000");
+    assert_eq!(play.cheat("alice", "setvar tutorial 1000"), Ok(()));
     play.queue_wire("alice", WireCmd::Continue);
     assert_eq!(play.cheats.lock().unwrap()["alice"].len(), 1);
     assert_eq!(play.wires.lock().unwrap()["alice"].len(), 1);
@@ -6407,13 +6413,18 @@ fn debug_command_admission_rejects_remote_prod_and_invalid_wire_bodies() {
             "~help\ngetcoord".into(),
             "give café".into(),
         ] {
-            play.cheat("alice", &invalid);
+            let expected = if admitted {
+                CheatRefusal::InvalidBody
+            } else {
+                CheatRefusal::Unauthorized
+            };
+            assert_eq!(play.cheat("alice", &invalid), Err(expected));
             assert!(
                 play.cheats.lock().unwrap()["alice"].is_empty(),
                 "{invalid:?} was queued"
             );
         }
-        play.cheat("alice", "getcoord");
+        assert_eq!(play.cheat("alice", "getcoord").is_ok(), admitted);
         let queues = play.cheats.lock().unwrap();
         let expected = if admitted {
             VecDeque::from(["getcoord".to_string()])

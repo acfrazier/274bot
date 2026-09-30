@@ -46,7 +46,7 @@ pub(crate) mod test_log {
 
     impl api::hostlog::Sink for Capture {
         fn record(&self, record: &api::hostlog::Record<'_>) {
-            if record.message.starts_with("WalkTo ") {
+            if record.message.starts_with("WalkTo ") || record.message.starts_with("debug ::") {
                 self.records.lock().push((
                     thread::current().id(),
                     record.slot.map(str::to_owned),
