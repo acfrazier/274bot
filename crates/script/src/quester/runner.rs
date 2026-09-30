@@ -232,6 +232,7 @@ impl Quester {
                 if self.unreadable_reads >= 2 {
                     self.parked = true;
                     self.park_reason = "quest colour unavailable or unknown stage";
+                    self.last_error = None;
                     self.dirty = true;
                 }
             }
@@ -388,6 +389,7 @@ impl Script for Quester {
                 if self.empty_reads >= 2 {
                     self.parked = true;
                     self.park_reason = "no step for stage";
+                    self.last_error = None;
                     self.dirty = true;
                 }
                 self.needs_read = true;
@@ -633,13 +635,19 @@ mod tests {
     fn unavailable_colour_and_unselectable_stage_park_instead_of_spinning() {
         use super::super::families::tests::with_tick;
         let (mut script, s) = fixture();
+        script.record_failure(ActionError::Unavailable("stale walk failure".into()));
         let mut ledger = None;
         for tick in 1..100 {
             with_tick(&s, &mut ledger, tick, |t| script.tick(t).unwrap());
         }
         assert!(script.parked);
+        assert_eq!(
+            script.blocked_failure().message.as_ref(),
+            "quest colour unavailable or unknown stage"
+        );
         assert!(ledger.as_ref().is_none_or(|l| l.outbox.is_empty()));
         let (mut script, mut s) = fixture();
+        script.record_failure(ActionError::Unavailable("stale walk failure".into()));
         let path = Arc::get_mut(&mut script.path).unwrap();
         for step in &mut path.sequences[1].steps {
             struct Yes;
@@ -662,6 +670,10 @@ mod tests {
             with_tick(&s, &mut ledger, tick, |t| script.tick(t).unwrap());
         }
         assert!(script.parked);
+        assert_eq!(
+            script.blocked_failure().message.as_ref(),
+            "no step for stage"
+        );
     }
 
     #[test]

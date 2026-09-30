@@ -539,6 +539,23 @@ mod tests {
     }
 
     #[test]
+    fn compile_cache_reuses_identical_bytes_and_separates_changed_paths() {
+        let data = selected();
+        let quests = quests(&data);
+        let first = compile_path(cook_bytes(), &data, &quests).unwrap();
+        let hit = compile_path(cook_bytes(), &data, &quests).unwrap();
+        assert!(Arc::ptr_eq(&first, &hit));
+        let mut changed: serde_json::Value = serde_json::from_slice(cook_bytes()).unwrap();
+        changed["id"] = serde_json::json!("cook-cache-different");
+        let bytes = serde_json::to_vec(&changed).unwrap();
+        let miss = compile_path(&bytes, &data, &quests).unwrap();
+        assert!(!Arc::ptr_eq(&first, &miss));
+        assert_eq!(first.id.0.as_ref(), "cook");
+        assert_eq!(miss.id.0.as_ref(), "cook-cache-different");
+        assert_ne!(first.digest, miss.digest);
+    }
+
+    #[test]
     fn always_skipped_all_empty_is_rejected() {
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].steps[0].skip_if = PredicateDocument::All(vec![]);

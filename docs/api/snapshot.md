@@ -70,9 +70,9 @@ snap.stats() / snap.varps() / snap.chat() / snap.world() / snap.scene() / snap.c
 
 `SnapshotView` returns borrowed `Observed` values with their evidence stamp,
 or `None` while that family is unavailable. In-game state alone does not prove
-that worn items or skills have been posted. Equipment additionally requires
-the worn-tab inventory component's item-id and count arrays, with matching
-non-zero lengths; a posted all-empty array is a ready empty worn set. Skills
+that the worn tab is bound or skills are ready. Equipment requires the worn
+tab bound and its inventory component's item-id and count arrays with matching
+non-zero lengths; an all-empty array is a ready empty worn set once bound. Skills
 require a non-empty stat view and positive base levels for every used skill
 (unused slots do not block readiness). Native predicates preserve unavailable
 observations as `Unknown`, rather than interpreting login defaults as facts.

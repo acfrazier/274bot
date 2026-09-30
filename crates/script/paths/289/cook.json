@@ -100,6 +100,7 @@
             "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["you put the grain in the hopper", "there is already grain in the hopper"], "clear": ["the grain slides down the chute", "the empty hopper"] } } },
               { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"], "clear": ["you fill a pot with", "flour bin is already empty"] } } }
             ]
           },
@@ -118,6 +119,7 @@
             "Any": [
               { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 2], "radius": 6 } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["you put the grain in the hopper", "there is already grain in the hopper"], "clear": ["the grain slides down the chute", "the empty hopper"] } } },
               { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"], "clear": ["you fill a pot with", "flour bin is already empty"] } } }
             ]
           },
@@ -137,7 +139,7 @@
           "skip_if": {
             "Any": [
               { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } } },
-              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["you put the grain in the hopper", "there is already grain in the hopper"], "clear": ["the grain slides down the chute", "hopper is empty"] } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["you put the grain in the hopper", "there is already grain in the hopper"], "clear": ["the grain slides down the chute", "the empty hopper"] } } },
               { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"], "clear": ["you fill a pot with", "flour bin is already empty"] } } }
             ]
           },
@@ -168,7 +170,7 @@
             "Any": [
               { "All": [
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } },
-                { "Not": { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["you put the grain in the hopper", "there is already grain in the hopper"], "clear": ["the grain slides down the chute", "hopper is empty"] } } } }
+                { "Not": { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["you put the grain in the hopper", "there is already grain in the hopper"], "clear": ["the grain slides down the chute", "the empty hopper"] } } } }
               ] },
               { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"], "clear": ["you fill a pot with", "flour bin is already empty"] } } }
             ]

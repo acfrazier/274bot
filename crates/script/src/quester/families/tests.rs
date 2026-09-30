@@ -808,3 +808,103 @@ fn preloaded_hopper_with_spare_grain_operates_instead_of_refilling() {
     }
     assert!(matches!(emitted(&ledger),InteractReq::Loc {action,..} if action == "Operate"));
 }
+
+#[test]
+fn loaded_hopper_without_spare_grain_reoperates_without_harvesting() {
+    let mut s = ready();
+    s.seed_inventory(
+        vec![ItemView {
+            def: def(1931, "Pot"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        }],
+        28,
+    );
+    s.seed_chat_lines(vec![ChatLineView {
+        sequence: 2,
+        text: "You put the grain in the hopper.".into(),
+        type_: 0,
+        username: None,
+    }]);
+    s.seed_locs(vec![loc(2718, "Hopper controls", "Operate")]);
+    let plan = compile_context_test(|cx| {
+        let document = crate::quester::compile::decode_cook().unwrap();
+        let recipe = &document.quest.as_ref().unwrap().acquire["acquire:flour"];
+        with_tick(&s, &mut None, 1, |t| {
+            let pred = PredicateContext {
+                cx: &t.cx,
+                quests: cx.quests,
+                progress: &[],
+                required_after: t.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+            };
+            for index in [1, 2] {
+                assert_eq!(
+                    compile_predicate(&recipe[index].skip_if, cx)
+                        .unwrap()
+                        .evaluate(&pred),
+                    Truth::True,
+                    "{} must not repeat while the hopper is loaded",
+                    recipe[index].id.0
+                );
+            }
+        });
+        crate::quester::compile::compile_uncached_for_test(&document, cx.selected, cx.quests)
+            .unwrap()
+            .sequences[1]
+            .steps[2]
+            .plan
+            .clone()
+    });
+    let mut ledger = None;
+    let mut run = with_tick(&s, &mut ledger, 1, |t| {
+        with_step(t, |cx| plan.begin(cx).unwrap())
+    });
+    for tick in 2..5 {
+        let _ = with_tick(&s, &mut ledger, tick, |t| with_step(t, |cx| run.poll(cx)));
+    }
+    assert!(matches!(emitted(&ledger), InteractReq::Loc { action, .. } if action == "Operate"));
+}
+
+#[test]
+fn real_empty_hopper_message_clears_the_loaded_hint() {
+    compile_context_test(|cx| {
+        let document = crate::quester::compile::decode_cook().unwrap();
+        let hopper = &document.quest.as_ref().unwrap().acquire["acquire:flour"][3];
+        let PredicateDocument::Any(skips) = &hopper.skip_if else {
+            panic!("hopper skip must accept independent observations");
+        };
+        let loaded = compile_predicate(&skips[1], cx).unwrap();
+        let mut s = ready();
+        s.seed_chat_lines(vec![
+            ChatLineView {
+                sequence: 2,
+                text: "There is already grain in the hopper.".into(),
+                type_: 0,
+                username: None,
+            },
+            ChatLineView {
+                sequence: 3,
+                text: "You operate the empty hopper. Nothing interesting happens.".into(),
+                type_: 0,
+                username: None,
+            },
+        ]);
+        with_tick(&s, &mut None, 1, |t| {
+            let pred = PredicateContext {
+                cx: &t.cx,
+                quests: cx.quests,
+                progress: &[],
+                required_after: t.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+            };
+            assert_eq!(loaded.evaluate(&pred), Truth::False);
+        });
+    });
+}
