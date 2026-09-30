@@ -1,17 +1,20 @@
-//! §3.2 tick loop: colour-only stage, watchdog, death, Stop/resume, no provision.
+//! §3.2 tick loop with colour-first, boundary-triggered journal evidence.
 use super::compile::{CompiledPath, CompiledStep, PredicateContext, StepContext, StepRun};
 use super::death::DeathLatch;
-use super::progress::colour_stage;
+use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::Provisioner;
-use super::select::{select, sequence_for_stage};
+use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::native::{
-    ActionError, Interrupt, NativeOutput, NativePhase, NativeTick, Script, ScriptFailure,
-    ScriptFlow, ScriptStatus, StatusField, StatusValue, StopReason,
+    ActionError, ActionHandle, Interrupt, NativeOutput, NativePhase, NativeTick, Script,
+    ScriptFailure, ScriptFlow, ScriptStatus, StatusField, StatusValue, StopReason,
 };
+use crate::quest_journal::{JournalMachine, JournalRequest};
 use crate::CompiledId;
 use api::quest_facts::QuestCatalog;
-use api::selected::{FactKey, RunKey, Truth};
+use api::quest_progress::{JournalRead, QuestProgress};
+use api::selected::{FactKey, Knowledge, RunKey, Truth};
+use api::snapshot::QuestListStatus;
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -21,6 +24,12 @@ pub struct Quester {
     path: Arc<CompiledPath>,
     quests: Arc<QuestCatalog>,
     stage: Option<FactKey>,
+    progress: Option<Arc<QuestProgress>>,
+    journal: Option<ActionHandle<JournalMachine>>,
+    last_read: Option<Arc<JournalRead>>,
+    journal_text: Option<Arc<str>>,
+    read_requested: bool,
+    selection_since: Option<Duration>,
     seq_index: usize,
     step_index: usize,
     step: Option<Box<dyn StepRun>>,
@@ -54,6 +63,12 @@ impl Quester {
             path,
             quests,
             stage: None,
+            progress: None,
+            journal: None,
+            last_read: None,
+            journal_text: None,
+            read_requested: false,
+            selection_since: None,
             seq_index: 0,
             step_index: 0,
             step: None,
@@ -91,6 +106,21 @@ impl Quester {
 
     pub fn stage(&self) -> Option<&FactKey> {
         self.stage.as_ref()
+    }
+
+    pub fn progress(&self) -> Option<&QuestProgress> {
+        self.progress.as_deref()
+    }
+
+    pub fn last_journal(&self) -> Option<&JournalRead> {
+        self.last_read.as_deref()
+    }
+
+    fn progress_slice(&self) -> &[QuestProgress] {
+        self.progress
+            .as_deref()
+            .map(std::slice::from_ref)
+            .unwrap_or(&[])
     }
 
     fn blocked_failure(&self) -> ScriptFailure {
@@ -135,7 +165,7 @@ impl Quester {
             .as_ref()
             .map(|s| StatusValue::Text(Arc::from(s.0.as_ref())))
             .unwrap_or(StatusValue::Text(Arc::from("unknown")));
-        let fields = [
+        let mut fields = vec![
             StatusField {
                 key: "quest",
                 label: "Quest",
@@ -151,7 +181,52 @@ impl Quester {
                 label: "Deaths",
                 value: StatusValue::Integer(i64::from(self.deaths)),
             },
+            StatusField {
+                key: "needs_read",
+                label: "Reading progress",
+                value: StatusValue::Truth(if self.needs_read || self.read_requested {
+                    Truth::True
+                } else {
+                    Truth::False
+                }),
+            },
         ];
+        if let Some(progress) = &self.progress {
+            fields.push(StatusField {
+                key: "progress",
+                label: "Progress",
+                value: StatusValue::Quest(Arc::clone(progress)),
+            });
+            fields.push(StatusField {
+                key: "rule",
+                label: "Matched rule",
+                value: StatusValue::Text(match &progress.rule {
+                    Knowledge::Known(rule) => Arc::clone(&rule.0),
+                    Knowledge::Unknown(_) | Knowledge::Partial { .. } => Arc::from("unknown"),
+                }),
+            });
+        }
+        if let Some(text) = &self.journal_text {
+            fields.push(StatusField {
+                key: "journal_lines",
+                label: "Journal",
+                value: StatusValue::Text(Arc::clone(text)),
+            });
+        }
+        if let Some(hint) = self.stage.as_ref().and_then(|stage| {
+            self.path
+                .progress
+                .rules
+                .iter()
+                .find(|rule| &rule.stage == stage)
+                .and_then(|rule| rule.varp)
+        }) {
+            fields.push(StatusField {
+                key: "varp_hint",
+                label: "Fixture stage hint",
+                value: StatusValue::Integer(i64::from(hint)),
+            });
+        }
         let detail = self
             .waiting
             .as_ref()
@@ -161,21 +236,13 @@ impl Quester {
                     .as_ref()
                     .map(|reason| ("last_failure", "Last failure", reason))
             });
-        let fields: Arc<[StatusField]> = if let Some((key, label, value)) = detail {
-            let [quest, stage, deaths] = fields;
-            Arc::from([
-                quest,
-                stage,
-                deaths,
-                StatusField {
-                    key,
-                    label,
-                    value: StatusValue::Text(Arc::clone(value)),
-                },
-            ])
-        } else {
-            Arc::from(fields)
-        };
+        if let Some((key, label, value)) = detail {
+            fields.push(StatusField {
+                key,
+                label,
+                value: StatusValue::Text(Arc::clone(value)),
+            });
+        }
         output.status(ScriptStatus {
             run: self.run,
             card: CompiledId("Quester"),
@@ -186,7 +253,7 @@ impl Quester {
             },
             active_settings: 1,
             pending_settings: None,
-            fields,
+            fields: fields.into(),
             failure: self.parked.then(|| self.blocked_failure()),
         });
     }
@@ -195,6 +262,7 @@ impl Quester {
         if let Some(mut step) = self.step.take() {
             step.cancel(tick.actions);
         }
+        self.journal = None;
         self.advances = false;
         self.attempts = 0;
         self.settling = false;
@@ -217,39 +285,121 @@ impl Quester {
         }
     }
 
-    fn read_stage(&mut self, tick: &NativeTick<'_>, retarget: bool) -> bool {
-        let stage = colour_stage(&self.path, &self.quests, tick.cx.snapshot());
-        let sequence = stage
-            .as_ref()
-            .and_then(|stage| sequence_for_stage(&self.path, stage.0.as_ref()));
-        let Some((stage, sequence)) = stage.zip(sequence) else {
-            // Unbound login frames are not a stage. Allow the same bounded
-            // observation window as dialogue opening, twice, without dispatch.
-            let since = self.unreadable_since.get_or_insert(tick.cx.active_now());
-            if tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(8) {
-                self.unreadable_reads += 1;
-                *since = tick.cx.active_now();
-                if self.unreadable_reads >= 2 {
+    fn wait_for_read(&mut self, tick: &NativeTick<'_>, reason: &'static str) -> bool {
+        let since = self.unreadable_since.get_or_insert(tick.cx.active_now());
+        if tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(8) {
+            self.unreadable_reads += 1;
+            *since = tick.cx.active_now();
+            if self.unreadable_reads >= 2 {
+                self.parked = true;
+                self.park_reason = reason;
+                self.last_error = None;
+                self.dirty = true;
+            }
+        }
+        false
+    }
+
+    fn read_stage(&mut self, tick: &mut NativeTick<'_>, retarget: bool) -> bool {
+        let progress = if let Some(handle) = self.journal.as_ref() {
+            match tick.actions.poll(handle, &mut tick.cx) {
+                Poll::Pending => return false,
+                Poll::Ready(Err(error)) => {
+                    self.journal = None;
+                    self.record_failure(error);
                     self.parked = true;
-                    self.park_reason = "quest colour unavailable or unknown stage";
-                    self.last_error = None;
-                    self.dirty = true;
+                    return false;
+                }
+                Poll::Ready(Ok(read)) => {
+                    self.journal = None;
+                    let progress = resolve_journal(&self.path, &read, self.progress.as_deref());
+                    self.journal_text = Some(Arc::from(
+                        read.lines
+                            .iter()
+                            .map(AsRef::as_ref)
+                            .collect::<Vec<&str>>()
+                            .join("\n"),
+                    ));
+                    self.last_read = Some(Arc::new(read));
+                    progress
                 }
             }
-            return false;
+        } else {
+            let Some(colour) = quest_colour(&self.path, &self.quests, tick.cx.snapshot()) else {
+                return self.wait_for_read(tick, "quest colour unavailable or unknown stage");
+            };
+            if colour == QuestListStatus::Unknown {
+                return self.wait_for_read(tick, "quest colour unavailable or unknown stage");
+            }
+            if colour == QuestListStatus::InProgress && !self.path.progress.rules.is_empty() {
+                let args = JournalRequest {
+                    quest: self.path.id.clone(),
+                    facts: Arc::clone(&self.quests),
+                };
+                match tick.actions.begin::<JournalMachine>(args, &mut tick.cx) {
+                    Ok(handle) => {
+                        self.journal = Some(handle);
+                        self.journal_opened = true;
+                        self.dirty = true;
+                    }
+                    Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
+                        return self.wait_for_read(tick, "journal blocked by an occupied modal");
+                    }
+                    Err(error) => {
+                        self.record_failure(error);
+                        self.parked = true;
+                    }
+                }
+                return false;
+            }
+            resolve_colour(
+                &self.path,
+                colour,
+                tick.cx.evidence(),
+                Arc::new(tick.cx.pin().clone()),
+            )
+        };
+        let stage = match &progress.stage {
+            Knowledge::Known(stage) => Some(stage.clone()),
+            Knowledge::Unknown(_) | Knowledge::Partial { .. } => None,
+        };
+        self.progress = Some(Arc::new(progress));
+        self.dirty = true;
+        let sequence = stage
+            .as_ref()
+            .and_then(|stage| sequence_for_stage(&self.path, &stage.0));
+        let Some((stage, sequence)) = stage.zip(sequence) else {
+            self.stage = None;
+            if self.last_read.is_some() {
+                self.parked = true;
+                self.park_reason = "no journal rule matched or stage has no sequence";
+                self.last_error = None;
+                return false;
+            }
+            return self.wait_for_read(tick, "quest colour unavailable or unknown stage");
         };
         self.unreadable_since = None;
         self.unreadable_reads = 0;
+        self.selection_since = None;
         if self.stage.as_ref() != Some(&stage) {
             self.stage = Some(stage);
             self.empty_reads = 0;
-            self.dirty = true;
         }
         if retarget {
             self.seq_index = sequence;
             self.step_index = 0;
+            self.in_prelude = false;
+        } else {
+            // Journal latency does not spend the family's post-read settle
+            // window; its stage predicate only sees the newly acquired proof.
+            self.settle_deadline = tick.cx.active_now()
+                + self
+                    .current_step()
+                    .map(|step| step.plan.settle_timeout())
+                    .unwrap_or_default();
         }
         self.needs_read = false;
+        self.read_requested = false;
         true
     }
 
@@ -299,6 +449,7 @@ impl Script for Quester {
             self.run = tick.cx.run();
             self.cancel_step(tick);
             self.needs_read = true;
+            self.progress = None;
         }
         if !tick.cx.eligible {
             self.publish(tick.output);
@@ -312,15 +463,37 @@ impl Script for Quester {
             self.cancel_step(tick);
             self.deaths = self.deaths.saturating_add(1);
             self.needs_read = true;
+            self.progress = None;
             self.dirty = true;
         }
+        if self.step.is_none() && !self.settling && !self.needs_read {
+            let contradicted = quest_colour(&self.path, &self.quests, tick.cx.snapshot())
+                .is_some_and(|colour| match colour {
+                    QuestListStatus::Complete => {
+                        self.stage.as_ref() != Some(&self.path.colour_complete)
+                    }
+                    QuestListStatus::NotStarted => {
+                        self.stage.as_ref() != Some(&self.path.colour_not_started)
+                    }
+                    QuestListStatus::InProgress => self.stage.as_ref().is_some_and(|stage| {
+                        stage == &self.path.colour_not_started
+                            || stage == &self.path.colour_complete
+                    }),
+                    QuestListStatus::Unknown => false,
+                });
+            if self.read_requested || contradicted {
+                self.needs_read = true;
+                self.dirty = true;
+            }
+        }
         if self.needs_read {
-            if !self.read_stage(tick, !self.settling) {
+            let retarget = !self.settling && self.step.is_none();
+            if !self.read_stage(tick, retarget) {
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Continue);
             }
-            if !self.settling {
-                self.step = None;
+            if let Some(step) = self.step.as_mut() {
+                step.progress_read_completed(tick.cx.active_now());
             }
         }
         if self
@@ -337,7 +510,7 @@ impl Script for Quester {
                 let pred = PredicateContext {
                     cx: &tick.cx,
                     quests: &self.quests,
-                    progress: &[],
+                    progress: self.progress_slice(),
                     required_after: tick.cx.evidence(),
                     chat_since: self.chat_since,
                     outcome: None,
@@ -365,6 +538,11 @@ impl Script for Quester {
                         self.parked = true;
                     }
                     self.on_step_boundary(tick);
+                    if let Some(stage) = self.stage.as_ref() {
+                        self.seq_index =
+                            sequence_for_stage(&self.path, &stage.0).unwrap_or(self.seq_index);
+                        self.step_index = 0;
+                    }
                 }
             }
             self.publish(tick.output);
@@ -376,14 +554,34 @@ impl Script for Quester {
                 let pred = PredicateContext {
                     cx: &tick.cx,
                     quests: &self.quests,
-                    progress: &[],
+                    progress: self.progress_slice(),
                     required_after: tick.cx.evidence(),
                     chat_since: super::families::reach::last_chat_seq(&tick.cx),
                     outcome: None,
                 };
-                select(&self.path, self.seq_index, &pred)
-                    .map(|sel| (sel.index, sel.step.advances, sel.prelude))
+                match select(&self.path, self.seq_index, &pred) {
+                    SelectionDecision::Selected(sel) => {
+                        Ok(Some((sel.index, sel.step.advances, sel.prelude)))
+                    }
+                    SelectionDecision::Exhausted => Ok(None),
+                    SelectionDecision::Unknown => Err(()),
+                }
             };
+            let selected = match selected {
+                Ok(selected) => selected,
+                Err(()) => {
+                    let since = self.selection_since.get_or_insert(tick.cx.active_now());
+                    if tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16) {
+                        self.parked = true;
+                        self.park_reason = "skip predicate evidence unavailable";
+                        self.last_error = None;
+                        self.dirty = true;
+                    }
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+            };
+            self.selection_since = None;
             let Some((index, advances, prelude)) = selected else {
                 self.empty_reads += 1;
                 if self.empty_reads >= 2 {
@@ -410,7 +608,7 @@ impl Script for Quester {
             let mut step_cx = StepContext {
                 tick,
                 quests: &self.quests,
-                progress: &[],
+                progress: self.progress_slice(),
                 required_after,
             };
             match step.plan.begin(&mut step_cx) {
@@ -435,7 +633,11 @@ impl Script for Quester {
             let mut step_cx = StepContext {
                 tick,
                 quests: &self.quests,
-                progress: &[],
+                progress: self
+                    .progress
+                    .as_deref()
+                    .map(std::slice::from_ref)
+                    .unwrap_or(&[]),
                 required_after,
             };
             self.step
@@ -444,7 +646,16 @@ impl Script for Quester {
                 .unwrap_or(Poll::Pending)
         };
         match poll {
-            Poll::Pending => {}
+            Poll::Pending => {
+                if self
+                    .step
+                    .as_ref()
+                    .is_some_and(|step| step.needs_progress_read())
+                {
+                    self.needs_read = true;
+                    self.dirty = true;
+                }
+            }
             Poll::Ready(Ok(_)) => {
                 if self.advances {
                     self.needs_read = true;
@@ -478,11 +689,17 @@ impl Script for Quester {
                 self.needs_read = true;
                 self.step = None;
                 self.settling = false;
+                self.journal = None;
+                self.progress = None;
+                self.unreadable_since = None;
+                self.selection_since = None;
                 self.dirty = true;
                 self.waiting = None;
             }
             Interrupt::SessionEnded => {
                 self.step = None;
+                self.journal = None;
+                self.progress = None;
                 self.settling = false;
                 self.needs_read = true;
                 self.waiting = None;
@@ -493,14 +710,31 @@ impl Script for Quester {
 
     fn on_stop(&mut self, _reason: StopReason) {
         self.step = None;
+        self.journal = None;
         self.settling = false;
         self.dirty = true;
         self.waiting = None;
     }
 
+    fn read_journal(&mut self) -> Result<(), ScriptFailure> {
+        if self.parked {
+            self.parked = false;
+            self.unreadable_since = None;
+            self.unreadable_reads = 0;
+        }
+        self.read_requested = true;
+        self.dirty = true;
+        Ok(())
+    }
+
     fn retry(&mut self) -> Result<(), ScriptFailure> {
         self.parked = false;
         self.needs_read = true;
+        self.step = None;
+        self.journal = None;
+        self.progress = None;
+        self.settling = false;
+        self.selection_since = None;
         self.fail_streak = 0;
         self.attempts = 0;
         self.watchdog = Watchdog::default();
@@ -779,3 +1013,7 @@ mod tests {
         assert!(!script.parked);
     }
 }
+
+#[cfg(test)]
+#[path = "journal_runner_tests.rs"]
+mod journal_tests;

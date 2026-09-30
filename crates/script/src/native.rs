@@ -217,6 +217,14 @@ pub trait Script: Send {
             retryable: false,
         })
     }
+    /// Request one colour-first journal read at the next safe step boundary.
+    fn read_journal(&mut self) -> Result<(), ScriptFailure> {
+        Err(ScriptFailure {
+            code: "read-journal-unsupported".into(),
+            message: "this card does not read quest journals".into(),
+            retryable: false,
+        })
+    }
     fn interrupt(&mut self, _event: Interrupt) {}
     fn on_stop(&mut self, _reason: StopReason) {}
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
@@ -423,13 +431,6 @@ pub trait NativeMachine: Send + 'static {
         Self: Sized;
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>>;
     fn cancel(&mut self);
-}
-
-pub(crate) fn unavailable() -> ActionError {
-    // One process allocation, never a new error string on each poll.
-    static REASON: LazyLock<Arc<str>> =
-        LazyLock::new(|| Arc::from("native action facility unavailable"));
-    ActionError::Unavailable(Arc::clone(&REASON))
 }
 
 #[cfg(test)]

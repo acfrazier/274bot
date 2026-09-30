@@ -406,6 +406,17 @@ impl GameSnapshot {
         self.main_modal_texts = texts;
     }
 
+    /// Seed an observed main-root/widget pair through the native test seam.
+    pub fn seed_main_modal(&mut self, root: i32, widgets: Vec<WidgetView>) {
+        self.modals.main = root;
+        self.main_modal_texts = widgets
+            .iter()
+            .filter(|widget| !widget.hidden && widget.root == WidgetRoot::Main)
+            .filter_map(|widget| widget.text.clone())
+            .collect();
+        self.widgets = widgets;
+    }
+
     pub fn seed_npcs(&mut self, rows: Vec<NpcView>) {
         self.npc = rows;
     }

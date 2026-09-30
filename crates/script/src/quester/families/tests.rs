@@ -431,6 +431,7 @@ fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
     let plan = AcquirePlan {
         recipe: Arc::from("flour"),
         steps: vec![CompiledAcquireStep {
+            advances: false,
             skip_if: Arc::new(AnyPlan { items: vec![] }),
             settle: Arc::new(Message {
                 needles: vec!["grain in the hopper".into()],
@@ -537,6 +538,35 @@ fn flour_acquire_resumes_at_the_bin_after_observed_grinding() {
         );
         s.seed_locs(vec![]);
         s.seed_chat_lines(lines);
+        // Recovery's `near` skip predicates require observed position too.
+        s.seed_local_player(api::snapshot::LocalPlayerView {
+            player: api::snapshot::PlayerView {
+                index: 0,
+                actor: api::snapshot::ActorView {
+                    name: None,
+                    actions: vec![],
+                    tile: tile(3209, 3215),
+                    distance: 0,
+                    animation: -1,
+                    pose_animation: -1,
+                    orientation: 0,
+                    target_orientation: 0,
+                    overhead_text: None,
+                    spot_animation: -1,
+                    health: 10,
+                    total_health: 10,
+                    face_entity: -1,
+                    target: None,
+                    moving: false,
+                    running: false,
+                    in_combat: false,
+                },
+                combat_level: 3,
+                skill_level: 0,
+            },
+            energy: 100,
+            weight: 0,
+        });
         let mut ledger = None;
         let plan = flour_acquire_plan();
         let mut run = with_tick(&s, &mut ledger, 5000, |t| {

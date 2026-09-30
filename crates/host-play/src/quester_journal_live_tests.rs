@@ -167,7 +167,10 @@ fn post_relog(client: &mut client::client::Client, mode: SetupMode) {
     let _ = interact::cheat(client, command);
 }
 
-fn frame_hook(state: Arc<Mutex<SetupState>>, mode: SetupMode) -> impl Fn(&mut client::client::Client, &str, bool) + Send + Sync + 'static {
+fn frame_hook(
+    state: Arc<Mutex<SetupState>>,
+    mode: SetupMode,
+) -> impl Fn(&mut client::client::Client, &str, bool) + Send + Sync + 'static {
     move |client, _name, _hold| {
         let now = Instant::now();
         let mut state = state.lock().expect("quester live setup lock");
@@ -198,7 +201,10 @@ fn frame_hook(state: Arc<Mutex<SetupState>>, mode: SetupMode) -> impl Fn(&mut cl
     }
 }
 
-fn launch_live(mode: SetupMode, label: &str) -> (ThrowawayHome, super::Play, Arc<Mutex<SetupState>>, String) {
+fn launch_live(
+    mode: SetupMode,
+    label: &str,
+) -> (ThrowawayHome, super::Play, Arc<Mutex<SetupState>>, String) {
     let home = ThrowawayHome::enter(label);
     let options = live_options(&home.path);
     let server_profile = options
@@ -228,7 +234,10 @@ fn wait_until(label: &str, timeout: Duration, mut ready: impl FnMut() -> bool) {
         if ready() {
             return;
         }
-        assert!(Instant::now() < deadline, "{label} timed out after {timeout:?}");
+        assert!(
+            Instant::now() < deadline,
+            "{label} timed out after {timeout:?}"
+        );
         thread::sleep(Duration::from_millis(100));
     }
 }
@@ -472,12 +481,16 @@ fn compile_synthetic(
 #[test]
 #[ignore = "requires LIVE=1 and the shared tunnelled local R289 engine"]
 fn live_quester_journal_synthetic_runemysteries() {
-    assert!(live(), "live_quester_journal_synthetic_runemysteries requires LIVE=1");
+    assert!(
+        live(),
+        "live_quester_journal_synthetic_runemysteries requires LIVE=1"
+    );
     let (home, play, setup, name) = launch_live(SetupMode::Synthetic, "journal");
     wait_relogged(&play, &setup);
 
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("R289 game data");
-    let quests = Arc::new(QuestCatalog::from_identity(selected.quest_identity()).expect("quest catalog"));
+    let quests =
+        Arc::new(QuestCatalog::from_identity(selected.quest_identity()).expect("quest catalog"));
     let path = compile_synthetic(&selected, &quests, false);
     let no_match_path = compile_synthetic(&selected, &quests, true);
     let handle = play.script_start_handle();
@@ -496,7 +509,10 @@ fn live_quester_journal_synthetic_runemysteries() {
             Some(Arc::clone(&selected)),
         )
         .expect("install synthetic Quester");
-    assert_eq!(run, play.script_native_run(&name).expect("synthetic run key"));
+    assert_eq!(
+        run,
+        play.script_native_run(&name).expect("synthetic run key")
+    );
     play.wake(&name);
 
     let seeded = wait_status(
@@ -512,10 +528,16 @@ fn live_quester_journal_synthetic_runemysteries() {
                 && truth(status, "needs_read") == Truth::False
         },
     );
-    assert!(matches!(field(&seeded, "varp_hint"), StatusValue::Integer(3)));
+    assert!(matches!(
+        field(&seeded, "varp_hint"),
+        StatusValue::Integer(3)
+    ));
     match field(&seeded, "progress") {
         StatusValue::Quest(progress) => {
-            assert!(progress.signals.is_empty(), "readable journal must not invent signals");
+            assert!(
+                progress.signals.is_empty(),
+                "readable journal must not invent signals"
+            );
         }
         other => panic!("progress status is not Quest: {other:?}"),
     }
@@ -538,7 +560,10 @@ fn live_quester_journal_synthetic_runemysteries() {
                 && truth(status, "needs_read") == Truth::False
         },
     );
-    assert!(matches!(field(&advanced, "varp_hint"), StatusValue::Integer(4)));
+    assert!(matches!(
+        field(&advanced, "varp_hint"),
+        StatusValue::Integer(4)
+    ));
     match field(&advanced, "progress") {
         StatusValue::Quest(progress) => assert!(progress.signals.is_empty()),
         other => panic!("progress status is not Quest: {other:?}"),
@@ -553,7 +578,9 @@ fn live_quester_journal_synthetic_runemysteries() {
     // not match any Rune Mysteries body. The machine must retain the raw read,
     // publish `unknown`, carry no invented signal ranges, and park.
     assert!(play.script_native_stop(&name, run), "stop synthetic run");
-    wait_until("synthetic Quester stop", Duration::from_secs(20), || handle.idle(&name));
+    wait_until("synthetic Quester stop", Duration::from_secs(20), || {
+        handle.idle(&name)
+    });
     let no_match_run = handle
         .start_test_script(
             &name,
@@ -582,7 +609,10 @@ fn live_quester_journal_synthetic_runemysteries() {
         },
     );
     assert_eq!(parked.run, no_match_run);
-    assert!(matches!(field(&parked, "needs_read"), StatusValue::Truth(Truth::True)));
+    assert!(matches!(
+        field(&parked, "needs_read"),
+        StatusValue::Truth(Truth::True)
+    ));
     match field(&parked, "progress") {
         StatusValue::Quest(progress) => assert!(progress.signals.is_empty()),
         other => panic!("no-match progress is not Quest: {other:?}"),

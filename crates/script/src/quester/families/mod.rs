@@ -1747,6 +1747,7 @@ pub struct AcquirePlan {
 
 #[derive(Clone)]
 pub struct CompiledAcquireStep {
+    pub advances: bool,
     pub skip_if: Arc<dyn PredicatePlan>,
     pub settle: Arc<dyn PredicatePlan>,
     pub plan: Arc<dyn StepPlan>,
@@ -1770,6 +1771,8 @@ impl StepPlan for AcquirePlan {
             chat_since: 0,
             settling: false,
             settle_deadline: Duration::ZERO,
+            waiting_for_read: false,
+            selection_since: None,
         }))
     }
 }
@@ -1781,9 +1784,14 @@ struct AcquireRun {
     chat_since: i32,
     settling: bool,
     settle_deadline: Duration,
+    waiting_for_read: bool,
+    selection_since: Option<Duration>,
 }
 impl StepRun for AcquireRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if self.waiting_for_read {
+            return Poll::Pending;
+        }
         loop {
             if self.settling {
                 let truth = self.steps[self.index].settle.evaluate(&PredicateContext {
@@ -1815,6 +1823,17 @@ impl StepRun for AcquireRun {
                         chat_since: reach::last_chat_seq(&cx.tick.cx),
                         outcome: None,
                     });
+                    if skip == Truth::Unknown {
+                        let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
+                        if cx.tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16)
+                        {
+                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                "acquire skip predicate evidence unavailable",
+                            ))));
+                        }
+                        return Poll::Pending;
+                    }
+                    self.selection_since = None;
                     if skip == Truth::True {
                         self.index += 1;
                         continue;
@@ -1840,9 +1859,20 @@ impl StepRun for AcquireRun {
                     self.settling = true;
                     self.settle_deadline =
                         cx.tick.cx.active_now() + self.steps[self.index].plan.settle_timeout();
+                    if self.steps[self.index].advances {
+                        self.waiting_for_read = true;
+                        return Poll::Pending;
+                    }
                 }
             }
         }
+    }
+    fn needs_progress_read(&self) -> bool {
+        self.waiting_for_read
+    }
+    fn progress_read_completed(&mut self, now: Duration) {
+        self.waiting_for_read = false;
+        self.settle_deadline = now + self.steps[self.index].plan.settle_timeout();
     }
     fn cancel(&mut self, actions: &mut NativeActions) {
         if let Some(run) = &mut self.current {
