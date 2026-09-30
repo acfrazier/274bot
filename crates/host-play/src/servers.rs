@@ -155,6 +155,14 @@ impl Servers {
     }
 
     pub fn load(bot_dir: &Path, home: &Path) -> Result<Self, String> {
+        Self::load_with_before_publish(bot_dir, home, || {})
+    }
+
+    fn load_with_before_publish(
+        bot_dir: &Path,
+        home: &Path,
+        before_publish: impl FnOnce(),
+    ) -> Result<Self, String> {
         let path = bot_dir.join("servers.json");
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
@@ -196,20 +204,10 @@ impl Servers {
                 std::fs::create_dir_all(bot_dir)
                     .map_err(|error| format!("servers {}: {error}", path.display()))?;
                 let json = serde_json::to_vec_pretty(&servers).expect("serializable servers");
-                match std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&path)
-                {
-                    Ok(mut file) => {
-                        file.write_all(&json)
-                            .map_err(|error| format!("servers {}: {error}", path.display()))?;
-                        return Ok(servers);
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                        std::fs::read(&path)
-                            .map_err(|error| format!("servers {}: {error}", path.display()))?
-                    }
+                match create_new_server_file(&path, &json, before_publish) {
+                    Ok(true) => return Ok(servers),
+                    Ok(false) => std::fs::read(&path)
+                        .map_err(|error| format!("servers {}: {error}", path.display()))?,
                     Err(error) => return Err(format!("servers {}: {error}", path.display())),
                 }
             }
@@ -297,6 +295,56 @@ impl Servers {
     }
 }
 
+fn create_new_server_file(
+    path: &Path,
+    contents: &[u8],
+    before_publish: impl FnOnce(),
+) -> std::io::Result<bool> {
+    static NEXT_TEMP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path.file_name().expect("servers.json has a file name");
+    let (temp_path, mut temp_file) = loop {
+        let sequence = NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_path = parent.join(format!(
+            ".{}.{}.{}.tmp",
+            file_name.to_string_lossy(),
+            std::process::id(),
+            sequence
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+        {
+            Ok(file) => break (temp_path, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    };
+
+    let write_result = temp_file.write_all(contents);
+    drop(temp_file);
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error);
+    }
+
+    before_publish();
+    // The complete sibling is linked into place atomically; unlike rename,
+    // hard_link fails if another initializer or operator already created path.
+    let publish_result = std::fs::hard_link(&temp_path, path);
+    let _ = std::fs::remove_file(&temp_path);
+    match publish_result {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn valid_component(value: &str) -> bool {
     !value.is_empty()
         && value != "."
@@ -339,4 +387,94 @@ pub fn proposed_vault(name: &str, bot_dir: &Path, existing: &Servers) -> Result<
         ));
     }
     Ok(value)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    static NEXT_ROOT: AtomicUsize = AtomicUsize::new(0);
+
+    struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "274bot-servers-{}-{}",
+                std::process::id(),
+                NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn concurrent_initializers_publish_complete_json_without_replacing_existing_file() {
+        let root = TempRoot::new();
+        let bot_dir = root.0.join(".274bot");
+        let home = root.0.join("home");
+        let path = bot_dir.join("servers.json");
+        let (paused_tx, paused_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        let first_bot_dir = bot_dir.clone();
+        let first_home = home.clone();
+        let first = thread::spawn(move || {
+            Servers::load_with_before_publish(&first_bot_dir, &first_home, || {
+                paused_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+            })
+        });
+
+        paused_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first initializer reached the publication boundary");
+        let observed_before_publish = std::fs::read(&path);
+        let concurrent_reader = Servers::load(&bot_dir, &home);
+        resume_tx.send(()).unwrap();
+
+        let first = first.join().unwrap().expect("first initializer succeeds");
+        assert!(
+            matches!(
+                &observed_before_publish,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound
+            ),
+            "a reader must see no target before atomic publication, got {observed_before_publish:?}"
+        );
+        let concurrent_reader =
+            concurrent_reader.expect("concurrent initializer reads complete JSON");
+        assert_eq!(first, concurrent_reader);
+        assert_eq!(
+            serde_json::from_slice::<Servers>(&std::fs::read(&path).unwrap()).unwrap(),
+            first
+        );
+
+        let mut operator_servers = Servers::builtins(&home);
+        operator_servers.servers[0].name = "operator-entry".into();
+        operator_servers.validate().unwrap();
+        let mut operator_file = vec![b'\n'];
+        operator_file.extend(serde_json::to_vec_pretty(&operator_servers).unwrap());
+        operator_file.push(b'\n');
+        std::fs::write(&path, &operator_file).unwrap();
+        let loaded = Servers::load_with_before_publish(&bot_dir, &home, || {
+            panic!("an existing operator file must not enter initialization")
+        })
+        .unwrap();
+
+        assert_eq!(loaded, operator_servers);
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            operator_file,
+            "initialization must not replace or rewrite an existing file"
+        );
+    }
 }
