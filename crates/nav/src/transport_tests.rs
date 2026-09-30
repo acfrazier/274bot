@@ -478,10 +478,11 @@ fn members_check_edge(kind: TransportKind, loc_id: i32, option: i32) -> Transpor
     }
 }
 
-/// The bake's completeness check: a packed edge whose source handler
-/// reads `map_members` in any form the shared pass does not set (here a
-/// positive `map_members = ^true` arm reached through the loc's category
-/// and a label) fails the bake until the edge carries `members_req`.
+/// The bake's two-way check: a packed edge whose source handler reads
+/// `map_members` in a form the shared pass does not set (here a positive
+/// `map_members = ^true` arm reached through the loc's category and a
+/// label) fails while free, and still fails when marked members-only,
+/// because that arm is not a pinned producer gate.
 #[test]
 fn members_check_fails_an_edge_whose_source_reads_map_members() {
     let fx = Fixture::new();
@@ -508,7 +509,11 @@ if (%bridge_quest >= 3 & map_members = ^true) {
     let err = require_members_guards(fx.path(), &graph).expect_err("ungated read");
     assert!(err.contains("[label,cross_bridge]"), "{err}");
     graph.edges[0].members_req = true;
-    require_members_guards(fx.path(), &graph).expect("gated edge passes");
+    let err = require_members_guards(fx.path(), &graph).expect_err("unpinned members arm");
+    assert!(
+        err.contains("leading path of [oploc1,_rope_bridge] does not refuse F2P"),
+        "{err}"
+    );
 }
 
 /// The shared pass gates an edge whose source opens with the F2P refusal,
@@ -575,6 +580,148 @@ if (map_members = ^false | %ferry < 2) { mes(\"No.\"); return; }
     graph.teleports.push(camelot);
     let err = require_members_guards(fx.path(), &graph).expect_err("free members spell");
     assert!(err.contains("members spell teleport"), "{err}");
+}
+
+/// The engine resolves an op through the type, then the category, then
+/// the global `[<op>,_]` handler (`ScriptProvider.getByTrigger`). An edge
+/// served only by the global handler reads it; a type or category handler
+/// still wins over it; an op with no handler names every key tried.
+#[test]
+fn members_guards_fall_back_to_the_global_handler() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "100=plain_gate\n101=own_gate\n102=cat_gate\n",
+    );
+    fx.write(
+        "scripts/areas/configs/gates.loc",
+        "[plain_gate]\nname=Gate\n\n[own_gate]\nname=Gate\n\n[cat_gate]\nname=Gate\ncategory=free_gate\n",
+    );
+    fx.write(
+        "scripts/areas/scripts/gates.rs2",
+        "\
+[oploc1,_]
+if (map_members = ^false) {
+    mes(^mes_members_gate);
+    return;
+}
+~open_gate;
+
+[oploc1,own_gate]
+~open_gate;
+
+[oploc1,_free_gate]
+~open_gate;
+",
+    );
+    let guards = MembersGuards::from_content(fx.path());
+    let mut graph = TransportGraph::default();
+    graph.edges.extend([
+        members_check_edge(TransportKind::Door, 100, 1),
+        members_check_edge(TransportKind::Door, 101, 1),
+        members_check_edge(TransportKind::Door, 102, 1),
+    ]);
+    apply_members_guards(&guards, &mut graph);
+    let gated: Vec<bool> = graph.edges.iter().map(|e| e.members_req).collect();
+    assert_eq!(
+        gated,
+        [true, false, false],
+        "global handler gates; type and category handlers win over it"
+    );
+    require_members_guards(fx.path(), &graph).expect("every edge matches its engine handler");
+
+    graph
+        .edges
+        .push(members_check_edge(TransportKind::Door, 100, 2));
+    let err = require_members_guards(fx.path(), &graph).expect_err("no op2 handler");
+    assert!(
+        err.contains(
+            "has no source handler (tried [oploc2,plain_gate], [oploc2,loc_100], [oploc2,_])"
+        ),
+        "{err}"
+    );
+}
+
+/// Only the leading path gates: the handler's first statement, through a
+/// chain of unconditional leading `@label` jumps. A refusal behind a
+/// conditional label, a `@multiN` option or a queue does not stop the
+/// free choice beside it, so the edge stays free and the bake fails until
+/// the read is reviewed; marking that edge members-only fails the bake too.
+#[test]
+fn members_guards_gate_only_the_leading_path() {
+    let fx = Fixture::new();
+    fx.write("pack/npc.pack", "500=ferryman\n501=keeper\n");
+    fx.write(
+        "scripts/areas/scripts/ferry.rs2",
+        "\
+[opnpc1,ferryman]
+~chatnpc(\"<p,neutral>Where would you like to go?\");
+if (%ferry_lore = 1) {
+    @ferry_lore;
+}
+weakqueue(ferry_tale, 0);
+@multi2(\"Tell me about the island.\", ferry_lore, \"Sail, please.\", ferry_sail);
+
+[label,ferry_lore]
+if (map_members = ^false) {
+    mes(\"Only members may hear this tale.\");
+    return;
+}
+~chatnpc(\"<p,neutral>The island is old.\");
+
+[queue,ferry_tale]
+if (map_members = ^false) {
+    return;
+}
+~chatnpc(\"<p,neutral>Mind the waves.\");
+
+[label,ferry_sail]
+p_telejump(0_50_50_10_10);
+
+[opnpc1,keeper] @keeper_greet;
+
+[label,keeper_greet] @keeper_check(1);
+
+[label,keeper_check](int $n)
+if (map_members = ^false | $n = 0) {
+    mes(^mes_members_feature);
+    return;
+}
+p_telejump(0_50_50_20_20);
+",
+    );
+    let guards = MembersGuards::from_content(fx.path());
+    let mut graph = TransportGraph::default();
+    graph.edges.extend([
+        members_check_edge(TransportKind::Boat, 500, 1),
+        members_check_edge(TransportKind::Boat, 501, 1),
+    ]);
+    apply_members_guards(&guards, &mut graph);
+    assert!(
+        !graph.edges[0].members_req,
+        "the Sail choice is free on every world"
+    );
+    assert!(
+        graph.edges[1].members_req,
+        "the keeper's leading jump chain refuses F2P"
+    );
+
+    let err = require_members_guards(fx.path(), &graph).expect_err("optional refusal");
+    assert!(err.contains("Boat 500"), "{err}");
+    assert!(err.contains("[label,ferry_lore]"), "{err}");
+    assert!(err.contains("[queue,ferry_tale]"), "{err}");
+    assert!(!err.contains("Boat 501"), "{err}");
+
+    graph.edges[0].members_req = true;
+    let err = require_members_guards(fx.path(), &graph).expect_err("over-gate");
+    assert!(err.contains("Boat 500 op1"), "{err}");
+    assert!(
+        err.contains(
+            "packs members_req=true but the leading path of [opnpc1,ferryman] does not refuse F2P"
+        ),
+        "{err}"
+    );
+    assert!(!err.contains("Boat 501"), "{err}");
 }
 
 fn derive_static_routes_for(fx: &Fixture) -> TransportGraph {

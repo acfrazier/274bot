@@ -175,11 +175,12 @@ pub struct TransportEdge {
     pub varp_req: Vec<(i32, i32)>,
     pub worn_req: Vec<i32>,
     /// WORLD membership required (`MAP_MEMBERS`). Set from the edge's source
-    /// handler (see `members_guard`): an F2P refusal at its top gates every
-    /// edge through it; gliders, Zanaris, stage doors and the spell table
-    /// read their own `map_members` shape. The bake refuses a graph with an
-    /// edge whose source reads `map_members` and packs `false`. Packed as a
-    /// `u8` on the v9 wire.
+    /// handler (see `members_guard`): an F2P refusal on its leading path
+    /// gates every edge through it; gliders, Zanaris, spirit trees, stage
+    /// doors and the spell table read their own `map_members` shape. The
+    /// bake refuses a graph whose free edge's source reads `map_members`,
+    /// or whose members edge has no refusal or pinned members arm. Packed
+    /// as a `u8` on the v9 wire.
     pub members_req: bool,
     /// Content-derived max wilderness level this teleport may be used from
     /// (`~wilderness_level(coord) > cap` refuses). `None` = no wilderness cap.

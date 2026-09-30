@@ -31,11 +31,18 @@ siblings. Pass the three paths if yours lives elsewhere. Output goes to
 `$NAV_PACK` or `~/.274bot/274bot.navpack`. `gates.loc` is derived from the
 maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
 
-Each edge's `members_req` comes from the content handler that edge's op runs
-(`[<op>,<name>]`, else `[<op>,_<category>]`, with the labels and queues it
-jumps to); members spells come from `magic_spells.dbrow` `data=members,true`.
-The bake fails if any packed edge's handler reads `map_members` while the edge
-packs `members_req=false`, unless that exact read is a listed non-gate branch.
+Each edge's `members_req` comes from the content handler that edge's op runs,
+resolved as the engine does: type `[<op>,<name>]`, then category
+`[<op>,_<category>]`, then global `[<op>,_]`. The edge needs a members world
+when that handler's leading path (its first statement, followed through
+unconditional leading `@label` jumps) is the F2P refusal
+`if (map_members = ^false …) { …; return; }`. Members spells come from
+`magic_spells.dbrow` `data=members,true`. The bake fails if a free edge's
+handler, or any label, choice or queue it may continue into, reads
+`map_members`, unless that exact read is a listed non-gate branch. It also
+fails if a members-only edge's leading path does not refuse F2P, unless its
+handler carries a listed members arm (the glider, Zanaris and spirit-tree
+gates).
 Only bundled packs are rebaked automatically: an external v11 pack
 (`--nav-pack`, `NAV_PACK`, `~/.274bot/…`) keeps the membership gates it was
 baked with, so rebake one made by an earlier 274bot.
