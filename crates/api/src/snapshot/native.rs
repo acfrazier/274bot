@@ -203,6 +203,9 @@ impl<'a> SnapshotView<'a> {
     /// an empty worn set.
     pub fn equipment(&self) -> Option<Observed<&'a [ItemView]>> {
         let snapshot = self.ingame()?;
+        if !snapshot.equipment_available {
+            return None;
+        }
         Some(Observed {
             value: snapshot.equipment(),
             stamp: self.stamp,
@@ -212,6 +215,14 @@ impl<'a> SnapshotView<'a> {
     /// All 25 skill slots from the last stat rebuild.
     pub fn stats(&self) -> Option<Observed<&'a [StatView]>> {
         let snapshot = self.ingame()?;
+        if snapshot.stats().is_empty()
+            || snapshot
+                .stats()
+                .iter()
+                .any(|stat| stat.used && stat.base <= 0)
+        {
+            return None;
+        }
         Some(Observed {
             value: snapshot.stats(),
             stamp: self.stamp,
@@ -408,8 +419,14 @@ mod tests {
         assert!(view.npcs().is_none());
         assert!(view.locs().is_none());
         assert!(view.ground_items().is_none());
-        assert!(view.equipment().unwrap().value.is_empty());
-        assert!(view.stats().unwrap().value.is_empty());
+        assert!(
+            view.equipment().is_none(),
+            "unposted worn inventory is not empty"
+        );
+        assert!(
+            view.stats().is_none(),
+            "unposted stats are not zero-level skills"
+        );
         assert_eq!(view.chat_lines(0).unwrap().value.iter().count(), 0);
         assert_eq!(view.chat_modal().unwrap().value.root, -1);
         assert!(view.chat_options().unwrap().value.is_empty());
@@ -424,6 +441,15 @@ mod tests {
         snapshot.quest_statuses_available = true;
         snapshot.scene_state = 2;
         snapshot.runenergy = 100;
+        snapshot.seed_equipment(Vec::new());
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "Hitpoints".into(),
+            effective: 10,
+            base: 10,
+            xp: 1154,
+            used: true,
+        }]);
         let view = SnapshotView::new(Some(&snapshot), stamp);
         assert!(view.inventory().unwrap().value.is_empty());
         assert!(view.bank().unwrap().value.is_empty());
@@ -433,6 +459,11 @@ mod tests {
         assert!(view.locs().unwrap().value.is_empty());
         assert!(view.ground_items().unwrap().value.is_empty());
         assert_eq!(view.run_energy().unwrap().value, 100);
+        assert!(
+            view.equipment().unwrap().value.is_empty(),
+            "posted empty equipment is observed"
+        );
+        assert_eq!(view.stats().unwrap().value[0].base, 10);
         // A disconnected frame cannot lend stale cached observations.
         snapshot.ingame = false;
         let view = SnapshotView::new(Some(&snapshot), stamp);

@@ -21,6 +21,15 @@ pub(crate) fn with_tick<R>(
     tick: u64,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
+    with_tick_output(snapshot, ledger, tick, &mut Output, f)
+}
+pub(crate) fn with_tick_output<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    output: &mut dyn NativeOutput,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let pin = data.selected_pin().unwrap();
     let evidence = api::quest_progress::EvidenceStamp {
@@ -36,7 +45,6 @@ pub(crate) fn with_tick<R>(
     let mut budget = ledger::TickBudget::default();
     budget.observe(tick);
     let mut actions = NativeActions { _private: () };
-    let mut output = Output;
     let mut native = NativeTick {
         actions: &mut actions,
         cx: crate::native::ActionContext {
@@ -51,7 +59,7 @@ pub(crate) fn with_tick<R>(
             budget: &mut budget,
             eligible: true,
         },
-        output: &mut output,
+        output,
         pairs: None,
         #[cfg(feature = "load")]
         frame: crate::native::HostFrame {
@@ -229,21 +237,45 @@ fn reach_picks_the_observed_loc_not_the_anchor() {
         }
     ));
 }
+
+#[test]
+fn vanished_clicked_loc_fails_immediately_without_retargeting_a_replacement() {
+    for kind in [
+        reach::ReachKind::Loc {
+            id: Some(1551),
+            name: Some(Arc::from("Wheat")),
+        },
+        reach::ReachKind::Name {
+            name: Arc::from("Wheat"),
+        },
+    ] {
+        let mut s = ready();
+        let original = loc(1551, "Wheat", "Pick");
+        s.seed_locs(vec![original.clone()]);
+        let mut args = reach_args(kind, false);
+        args.op = Arc::from("Pick");
+        args.radius = 4;
+        let mut ledger = None;
+        let handle = with_tick(&s, &mut ledger, 1, |t| {
+            t.actions.begin::<reach::Reach>(args, &mut t.cx).unwrap()
+        });
+        let mut replacement = original;
+        replacement.tile.x += 1;
+        s.seed_locs(vec![replacement]);
+        assert!(matches!(
+            with_tick(&s, &mut ledger, 2, |t| t.actions.poll(&handle, &mut t.cx)),
+            Poll::Ready(Ok(false))
+        ));
+    }
+}
 fn with_step<R>(t: &mut NativeTick<'_>, f: impl FnOnce(&mut StepContext<'_, '_>) -> R) -> R {
     let quests = api::quest_facts::QuestCatalog::empty();
-    let evidence: Arc<dyn api::quest_progress::EvidenceProvider> =
-        Arc::new(crate::quester::progress::LiveEvidence {
-            colours: vec![],
-            varps: vec![],
-            stamp: t.cx.evidence(),
-        });
     let required_after = t.cx.evidence();
     f(&mut StepContext {
         tick: t,
         quests: &quests,
         progress: &[],
         required_after,
-        walk_evidence: &evidence,
     })
 }
 #[test]
@@ -263,6 +295,8 @@ fn interact_false_is_failure_not_success() {
         radius: 2,
         wait_if_missing: false,
         deadline: None,
+        missing_deadline: None,
+        waiting: None,
         settle_duration: Duration::from_secs(20),
         walk: None,
         reach: Some(handle),
@@ -274,7 +308,7 @@ fn interact_false_is_failure_not_success() {
     ));
 }
 #[test]
-fn interact_spawn_wait_outlives_the_click_deadline() {
+fn interact_spawn_wait_is_bounded_independently_of_the_click_deadline() {
     let s = ready();
     let mut ledger = None;
     let plan = InteractPlan {
@@ -284,6 +318,7 @@ fn interact_spawn_wait_outlives_the_click_deadline() {
         radius: 2,
         wait_if_missing: true,
         settle_ms: Some(20_000),
+        ambiguous: false,
     };
     let mut run = with_tick(&s, &mut ledger, 1, |t| {
         with_step(t, |cx| plan.begin(cx).unwrap())
@@ -291,6 +326,53 @@ fn interact_spawn_wait_outlives_the_click_deadline() {
     assert!(with_tick(&s, &mut ledger, 2, |t| with_step(t, |cx| run.poll(cx))).is_pending());
     assert!(with_tick(&s, &mut ledger, 100, |t| with_step(t, |cx| run.poll(cx))).is_pending());
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    assert!(matches!(
+        with_tick(&s, &mut ledger, 203, |t| with_step(t, |cx| run.poll(cx))),
+        Poll::Ready(Err(ActionError::Unavailable(reason))) if reason.contains("Egg")
+    ));
+}
+
+#[test]
+fn missing_spawn_recovers_when_the_observed_stack_respawns() {
+    let mut s = ready();
+    let mut ledger = None;
+    let plan = InteractPlan {
+        kind: egg(true).kind,
+        op: Arc::from("Take"),
+        tile: None,
+        radius: 2,
+        wait_if_missing: true,
+        settle_ms: Some(20_000),
+        ambiguous: false,
+    };
+    let mut run = with_tick(&s, &mut ledger, 1, |t| {
+        with_step(t, |cx| plan.begin(cx).unwrap())
+    });
+    assert!(with_tick(&s, &mut ledger, 2, |t| with_step(t, |cx| run.poll(cx))).is_pending());
+    assert!(with_tick(&s, &mut ledger, 100, |t| with_step(t, |cx| run.poll(cx))).is_pending());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    s.seed_ground_items(vec![ground()]);
+    assert!(with_tick(&s, &mut ledger, 101, |t| with_step(t, |cx| run.poll(cx))).is_pending());
+    assert!(run.waiting_for().is_none());
+    assert!(
+        matches!(emitted(&ledger), InteractReq::Obj {name: Some(name), action, ..} if name == "Egg" && action == "Take")
+    );
+    s.seed_inventory(
+        vec![ItemView {
+            def: def(1944, "Egg"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![],
+            component_id: 0,
+        }],
+        28,
+    );
+    assert!(matches!(
+        with_tick(&s, &mut ledger, 102, |t| with_step(t, |cx| run.poll(cx))),
+        Poll::Ready(Ok(_))
+    ));
 }
 #[test]
 fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
@@ -352,7 +434,10 @@ fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
             settle: Arc::new(Message {
                 needles: vec!["grain in the hopper".into()],
             }),
-            plan: Arc::new(WaitPlan { max_ticks: 1 }),
+            plan: Arc::new(WaitPlan {
+                until: Arc::new(AllPlan { items: vec![] }),
+                max_ticks: 2,
+            }),
         }],
     };
     let mut ledger = None;
@@ -462,4 +547,264 @@ fn flour_acquire_resumes_at_the_bin_after_observed_grinding() {
             _ => panic!("recovery must return to the bin, not harvest or grind another grain"),
         }
     }
+}
+
+fn compile_context_test<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = api::quest_facts::QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    f(&CompileContext {
+        selected: &data,
+        quests: &quests,
+        gathering: None,
+        areas: &Default::default(),
+        recipes: &Default::default(),
+    })
+}
+
+#[test]
+fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
+    compile_context_test(|cx| {
+        let row = cx.selected.npc_by_config("king_bolren").unwrap();
+        let mut s = ready();
+        s.seed_npcs(vec![api::snapshot::NpcView {
+            index: 42,
+            r#type: Some(row.id as usize),
+            name: row.display.clone(),
+            actions: vec![Some("Talk-to".into())],
+            tile: tile(2542, 3170),
+            distance: 1,
+            animation: -1,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            health: 1,
+            total_health: 1,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 1,
+            size: 1,
+            network: tile(2542, 3170),
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }]);
+        let present = compile_npc_present(&serde_json::json!({"npc":"king_bolren"}), cx).unwrap();
+        let mut ledger = None;
+        with_tick(&s, &mut ledger, 1, |t| {
+            assert_eq!(
+                present.evaluate(&PredicateContext {
+                    cx: &t.cx,
+                    quests: cx.quests,
+                    progress: &[],
+                    required_after: t.cx.evidence(),
+                    chat_since: 0,
+                    outcome: None,
+                }),
+                Truth::True
+            );
+        });
+        for (compile, args) in [
+            (
+                compile_talk as super::super::compile::CompileStep,
+                serde_json::json!({"npc":"king_bolren"}),
+            ),
+            (
+                compile_interact as super::super::compile::CompileStep,
+                serde_json::json!({"target":{"npc":"king_bolren"},"op":"Talk-to"}),
+            ),
+        ] {
+            let plan = compile(&args, cx).unwrap();
+            let mut ledger = None;
+            let mut run = with_tick(&s, &mut ledger, 1, |t| {
+                with_step(t, |cx| plan.begin(cx).unwrap())
+            });
+            let _ = with_tick(&s, &mut ledger, 2, |t| with_step(t, |cx| run.poll(cx)));
+            assert!(
+                matches!(emitted(&ledger), InteractReq::Npc {name, index:Some(42), ..} if name == "King Bolren")
+            );
+        }
+    });
+}
+
+#[test]
+fn wait_observes_until_and_expires_at_the_authored_bound() {
+    compile_context_test(|cx| {
+        let args = serde_json::json!({"until":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"egg"}}},"max_ticks":3});
+        let plan = compile_wait(&args, cx).unwrap();
+        let mut s = ready();
+        let mut ledger = None;
+        let mut run = with_tick(&s, &mut ledger, 1, |t| {
+            with_step(t, |cx| plan.begin(cx).unwrap())
+        });
+        for tick in [2, 3] {
+            assert!(
+                with_tick(&s, &mut ledger, tick, |t| with_step(t, |cx| run.poll(cx))).is_pending()
+            );
+        }
+        assert!(matches!(
+            with_tick(&s, &mut ledger, 4, |t| with_step(t, |cx| run.poll(cx))),
+            Poll::Ready(Err(_))
+        ));
+        let mut run = with_tick(&s, &mut ledger, 5, |t| {
+            with_step(t, |cx| plan.begin(cx).unwrap())
+        });
+        s.seed_inventory(
+            vec![ItemView {
+                def: def(1944, "Egg"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            }],
+            28,
+        );
+        assert!(matches!(
+            with_tick(&s, &mut ledger, 6, |t| with_step(t, |cx| run.poll(cx))),
+            Poll::Ready(Ok(_))
+        ));
+        for args in [
+            serde_json::json!({}),
+            serde_json::json!({"until":{"All":[]},"max_ticks":0}),
+            serde_json::json!({"until":{"All":[]},"max_ticks":"three"}),
+        ] {
+            assert!(compile_wait(&args, cx).is_err());
+        }
+    });
+}
+
+#[test]
+fn wait_message_until_requires_an_event_after_begin() {
+    compile_context_test(|cx| {
+        let plan = compile_wait(&serde_json::json!({"until":{"Fact":{"kind":"message","version":1,"args":{"any":["ready"]}}},"max_ticks":4}),cx).unwrap();
+        let mut s = ready();
+        s.seed_chat_lines(vec![ChatLineView {
+            sequence: 1,
+            text: "ready".into(),
+            type_: 0,
+            username: None,
+        }]);
+        let mut ledger = None;
+        let mut run = with_tick(&s, &mut ledger, 1, |t| {
+            with_step(t, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&s, &mut ledger, 2, |t| with_step(t, |cx| run.poll(cx))).is_pending());
+        s.seed_chat_lines(vec![ChatLineView {
+            sequence: 2,
+            text: "ready".into(),
+            type_: 0,
+            username: None,
+        }]);
+        assert!(matches!(
+            with_tick(&s, &mut ledger, 3, |t| with_step(t, |cx| run.poll(cx))),
+            Poll::Ready(Ok(_))
+        ));
+    });
+}
+
+#[test]
+fn public_chat_cannot_settle_or_set_message_state() {
+    compile_context_test(|cx| {
+        let message =
+            compile_message(&serde_json::json!({"any":["grain in the hopper"]}), cx).unwrap();
+        let state = compile_message_state(
+            &serde_json::json!({"set":["grain in the hopper"],"clear":["hopper is empty"]}),
+            cx,
+        )
+        .unwrap();
+        let mut s = ready();
+        s.seed_chat_lines(vec![ChatLineView {
+            sequence: 10,
+            text: "grain in the hopper".into(),
+            type_: 2,
+            username: Some("mallory".into()),
+        }]);
+        with_tick(&s, &mut None, 1, |t| {
+            let pred = PredicateContext {
+                cx: &t.cx,
+                quests: cx.quests,
+                progress: &[],
+                required_after: t.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+            };
+            assert_eq!(message.evaluate(&pred), Truth::False);
+            assert_eq!(state.evaluate(&pred), Truth::False);
+        });
+        assert!(compile_message(&serde_json::json!({"any":[""]}), cx).is_err());
+    });
+}
+
+#[test]
+fn preloaded_hopper_with_spare_grain_operates_instead_of_refilling() {
+    let mut s = ready();
+    s.seed_inventory(
+        vec![
+            ItemView {
+                def: def(1931, "Pot"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            },
+            ItemView {
+                def: def(1947, "Grain"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 1,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            },
+        ],
+        28,
+    );
+    s.seed_chat_lines(vec![ChatLineView {
+        sequence: 2,
+        text: "There is already grain in the hopper.".into(),
+        type_: 0,
+        username: None,
+    }]);
+    s.seed_locs(vec![
+        loc(2718, "Hopper controls", "Operate"),
+        loc(2714, "Hopper", "Use"),
+    ]);
+    let plan = compile_context_test(|cx| {
+        let mut document = crate::quester::compile::decode_cook().unwrap();
+        // Isolate hopper recovery from the preceding navigation leg.
+        document
+            .quest
+            .as_mut()
+            .unwrap()
+            .acquire
+            .get_mut("acquire:flour")
+            .unwrap()[2]
+            .skip_if = PredicateDocument::Fact {
+            kind: "has_item".into(),
+            version: 1,
+            args: serde_json::json!({"obj":"grain"}),
+        };
+        crate::quester::compile::compile_uncached_for_test(&document, cx.selected, cx.quests)
+            .unwrap()
+            .sequences[1]
+            .steps[2]
+            .plan
+            .clone()
+    });
+    let mut ledger = None;
+    let mut run = with_tick(&s, &mut ledger, 1, |t| {
+        with_step(t, |cx| plan.begin(cx).unwrap())
+    });
+    for tick in 2..5 {
+        let _ = with_tick(&s, &mut ledger, tick, |t| with_step(t, |cx| run.poll(cx)));
+    }
+    assert!(matches!(emitted(&ledger),InteractReq::Loc {action,..} if action == "Operate"));
 }

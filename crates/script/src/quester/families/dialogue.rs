@@ -15,6 +15,7 @@ pub const CHOICE_TICKS: u64 = 2;
 
 #[derive(Clone)]
 pub struct DialogueArgs {
+    pub id: i32,
     pub npc: Arc<str>,
     pub prefer: Arc<[Arc<str>]>,
     pub choose: Option<i32>,
@@ -131,7 +132,7 @@ impl Dialogue {
                 self.phase = Phase::Drive;
                 return Ok(());
             }
-            if let Some((index, action)) = nearest_talk(cx, &self.args.npc) {
+            if let Some((index, action)) = nearest_talk(cx, self.args.id) {
                 self.npc_index = index;
                 self.npc_action = action;
             }
@@ -214,13 +215,11 @@ fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
     })
 }
 
-fn nearest_talk(cx: &ActionContext<'_>, wanted: &str) -> Option<(i32, Arc<str>)> {
+fn nearest_talk(cx: &ActionContext<'_>, wanted: i32) -> Option<(i32, Arc<str>)> {
     let npcs = cx.snapshot().npcs()?.value;
-    let want = wanted.trim();
     npcs.iter()
         .filter_map(|npc| {
-            let name = npc.name.as_deref()?.trim();
-            if !name.eq_ignore_ascii_case(want) {
+            if npc.r#type != Some(wanted as usize) {
                 return None;
             }
             let action = npc

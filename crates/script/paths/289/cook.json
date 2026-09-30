@@ -40,7 +40,8 @@
             "target": { "ground": "bucket_empty" },
             "op": "Take",
             "anchor": { "tile": [3225, 3294, 0], "source": "A defs/cooksassistant.ts:13" },
-            "radius": 2
+            "radius": 2,
+            "wait_if_missing": true
           },
           "skip_if": {
             "Any": [
@@ -74,7 +75,8 @@
             "target": { "ground": "pot_empty" },
             "op": "Take",
             "anchor": { "tile": [3208, 3213, 0], "source": "A defs/cooksassistant.ts:16" },
-            "radius": 2
+            "radius": 2,
+            "wait_if_missing": true
           },
           "skip_if": {
             "Any": [
@@ -130,15 +132,12 @@
             "target": { "loc": "hopper_lumbridge" },
             "anchor": { "tile": [3166, 3306, 2], "source": "A defs/cooksassistant.ts:17,35" },
             "radius": 8,
-            "settle_message": [
-              "you put the grain in the hopper",
-              "there is already grain in the hopper"
-            ],
             "settle_ms": 20000
           },
           "skip_if": {
             "Any": [
               { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["you put the grain in the hopper", "there is already grain in the hopper"], "clear": ["the grain slides down the chute", "hopper is empty"] } } },
               { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"], "clear": ["you fill a pot with", "flour bin is already empty"] } } }
             ]
           },
@@ -167,7 +166,10 @@
           },
           "skip_if": {
             "Any": [
-              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } },
+              { "All": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } },
+                { "Not": { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["you put the grain in the hopper", "there is already grain in the hopper"], "clear": ["the grain slides down the chute", "hopper is empty"] } } } }
+              ] },
               { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"], "clear": ["you fill a pot with", "flour bin is already empty"] } } }
             ]
           },
@@ -223,7 +225,7 @@
       "role": null,
       "progress_binding": "journal:cook",
       "progress": {
-        "colour": { "not_started": "cook:0", "complete": "cook:2" },
+        "colour": { "not_started": "cook:0", "in_progress": "cook:1", "complete": "cook:2" },
         "rules": [],
         "flags": [],
         "monotonic": false

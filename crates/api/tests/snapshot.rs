@@ -1452,6 +1452,44 @@ fn ground_item_view_rebuild_reads_ground_obj() {
     assert!(!snap.rebuild_family(&c, Family::GroundItem));
 }
 
+#[test]
+fn ground_distance_tracks_player_movement_without_scene_packets() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3264;
+    c.local_player = Some(ClientPlayer::at(40, 26));
+    let id = {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let id = cache.objs.len() as i32;
+        cache.objs.push(ObjType {
+            id,
+            name: "Bucket".into(),
+            ..Default::default()
+        });
+        id
+    };
+    let mut list = LinkList::new();
+    list.push(ClientObj::new(id, 1));
+    c.ground_obj[0][25][30] = Some(Box::new(list));
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert_eq!(snap.ground_items()[0].distance, 15);
+    let scene = c.gens.scene;
+
+    c.local_player = Some(ClientPlayer::at(25, 29));
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    assert_eq!(c.gens.scene, scene);
+    snap.rebuild(&c);
+    assert_eq!(snap.ground_items()[0].distance, 1);
+
+    c.local_player = Some(ClientPlayer::at(40, 26));
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    snap.rebuild(&c);
+    assert_eq!(snap.ground_items()[0].distance, 15);
+}
+
 /// Scene-family rebuild reads the collision map's per-tile flags, the
 /// build base and the level into `SceneView`.
 #[test]

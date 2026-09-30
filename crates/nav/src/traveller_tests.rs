@@ -1812,12 +1812,18 @@ fn follow_trapdoor_already_open_climb_arrives_cellar_offset() {
 
 #[test]
 fn follow_vertical_ladder_lands_on_the_adjacent_player_tile() {
-    for (from_level, to_level, id, op) in [(0, 1, 1748, "Climb-up"), (2, 1, 1746, "Climb-down")] {
+    for (from_level, to_level, id, op, width, length, landing_x, landing_z) in [
+        (0, 1, 1748, "Climb-up", 1, 1, 3202, 3203),
+        (2, 1, 1746, "Climb-down", 1, 1, 3202, 3203),
+        (0, 1, 1748, "Climb-up", 2, 2, 3204, 3206),
+    ] {
         let mut c = scene_client();
         plant_loc(&mut c, id, "Ladder", op, 2, 4);
         let mut snap = snap_at(&mut c, 2, 3);
         let mut loc = snap.locs()[0].clone();
         loc.tile.level = from_level;
+        loc.footprint_width = width;
+        loc.footprint_length = length;
         c.minusedlevel = from_level;
         bump_rebuild(&mut c, &mut snap);
         snap.seed_locs(vec![loc]);
@@ -1831,8 +1837,8 @@ fn follow_vertical_ladder_lands_on_the_adjacent_player_tile() {
         edge.loc_id = id;
         edge.open_loc_id = None;
         let landing = WorldTile {
-            x: 3202,
-            z: 3203,
+            x: landing_x,
+            z: landing_z,
             level: to_level,
         };
         let route = Route {
@@ -1865,7 +1871,7 @@ fn follow_vertical_ladder_lands_on_the_adjacent_player_tile() {
         assert!(t
             .follow(&mut rec, &snap, route.clone(), &mut options)
             .is_none());
-        plant_player(&mut c, 2, 3);
+        plant_player(&mut c, landing_x - 3200, landing_z - 3200);
         bump_rebuild(&mut c, &mut snap);
         assert_eq!(
             t.follow(&mut rec, &snap, route, &mut options),
@@ -5244,6 +5250,7 @@ fn troll_open_door_progress_does_not_reverse_to_approach() {
             to: edge.to,
             ticks_waited: 0,
             sent_tile: None,
+            arrival_footprint: None,
             tries: 0,
             troll: true,
             npc_index: None,
@@ -5305,6 +5312,7 @@ fn troll_probes_crossing_after_open_before_snapshot_catches_up() {
         to: edge.to,
         ticks_waited: 0,
         sent_tile: None,
+        arrival_footprint: None,
         tries: 0,
         troll: true,
         npc_index: None,
@@ -5495,6 +5503,7 @@ fn troll_does_not_reopen_a_door_behind_the_walker() {
             to: edge.to,
             ticks_waited: 0,
             sent_tile: None,
+            arrival_footprint: None,
             tries: 0,
             troll: true,
             npc_index: None,
@@ -7008,6 +7017,7 @@ fn level_change_transport_requires_proximity_to_to() {
             z: 3205,
             level: 1,
         },
+        arrival_footprint: None,
         ticks_waited: 0,
         sent_tile: Some(WorldTile {
             x: 3200,

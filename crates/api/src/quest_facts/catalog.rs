@@ -92,7 +92,10 @@ fn facts_from_row(row: &QuestIdentityRow) -> QuestFacts {
         id: FactKey::new(&row.id),
         display: Arc::from(row.display.as_str()),
         kind,
-        component: Knowledge::Known(Some(0)),
+        component: Knowledge::Unknown(crate::selected::Gap {
+            code: Arc::from("identity-only"),
+            sources: Arc::from([]),
+        }),
         component_name: Arc::from(row.component.as_str()),
         members: row.members,
         quest_points: row.quest_points,

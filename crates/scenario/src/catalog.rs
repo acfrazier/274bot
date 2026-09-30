@@ -416,6 +416,7 @@ const REGISTRY: &[Entry] = &[
         "quester_cook_restart",
         scenarios::quester_cook_restart_scenario,
     ),
+    Entry::new("quester_cook_login", scenarios::quester_cook_login_scenario),
     Entry::new("sherlock_talk", scenarios::sherlock_talk_scenario),
     Entry::new("sherlock_search", scenarios::sherlock_search_scenario),
     Entry::new("sherlock_dig", scenarios::sherlock_dig_scenario),

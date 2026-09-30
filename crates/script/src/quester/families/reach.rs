@@ -27,8 +27,8 @@ pub struct ReachArgs {
 #[derive(Clone)]
 pub enum ReachKind {
     Npc {
+        id: i32,
         name: Arc<str>,
-        index: Option<i32>,
     },
     Loc {
         id: Option<i32>,
@@ -57,6 +57,7 @@ pub struct Reach {
     chat_mark: i32,
     deadline_ms: u64,
     before_count: i32,
+    clicked_loc: Option<(i32, WorldTile)>,
 }
 
 impl NativeMachine for Reach {
@@ -71,6 +72,7 @@ impl NativeMachine for Reach {
             chat_mark: last_chat_seq(cx),
             deadline_ms: cx.active_now().as_millis() as u64 + DOOR_WAIT_MS,
             before_count: 0,
+            clicked_loc: None,
         };
         reach.click(cx)?;
         Ok(reach)
@@ -101,6 +103,18 @@ impl NativeMachine for Reach {
                     }
                     return Poll::Ready(Ok(false));
                 }
+                if let Some((id, tile)) = self.clicked_loc {
+                    let Some(locs) = cx.snapshot().locs() else {
+                        return Poll::Pending;
+                    };
+                    if !locs
+                        .value
+                        .iter()
+                        .any(|loc| loc.id == id && loc.tile == tile)
+                    {
+                        return Poll::Ready(Ok(false));
+                    }
+                }
                 if let ReachKind::Ground { id, .. } = self.args.kind {
                     return if held_count(cx, id).is_some_and(|count| count > self.before_count) {
                         Poll::Ready(Ok(true))
@@ -129,15 +143,15 @@ impl NativeMachine for Reach {
 impl Reach {
     fn click(&mut self, cx: &mut ActionContext<'_>) -> Result<bool, ActionError> {
         let request = match &self.args.kind {
-            ReachKind::Npc { name, index } => {
-                if !target_available(cx, &self.args.kind, &self.args.op, self.args.radius) {
+            ReachKind::Npc { id, name } => {
+                let Some(npc) = nearest_npc(cx, *id, &self.args.op, self.args.radius) else {
                     self.phase = Phase::Seek;
                     return Ok(false);
-                }
+                };
                 InteractReq::Npc {
                     name: name.to_string(),
                     action: self.args.op.to_string(),
-                    index: *index,
+                    index: Some(npc.index as i32),
                 }
             }
             ReachKind::Loc { id, name } => {
@@ -189,7 +203,25 @@ impl Reach {
                 }
             }
         };
+        let clicked_loc = match &request {
+            InteractReq::Loc {
+                id: Some(id),
+                x,
+                z,
+                level,
+                ..
+            } => Some((
+                *id,
+                WorldTile {
+                    x: *x,
+                    z: *z,
+                    level: *level,
+                },
+            )),
+            _ => None,
+        };
         cx.emit(request)?;
+        self.clicked_loc = clicked_loc;
         self.phase = Phase::Click;
         self.attempts += 1;
         self.chat_mark = last_chat_seq(cx);
@@ -246,14 +278,30 @@ pub fn target_available(cx: &ActionContext<'_>, kind: &ReachKind, op: &str, radi
             nearest_loc(cx, *id, name.as_deref(), Some(op), PROBE_RADIUS).is_some()
         }
         ReachKind::Name { name } => nearest_loc(cx, None, Some(name), Some(op), radius).is_some(),
-        ReachKind::Npc { name, .. } => cx.snapshot().npcs().is_some_and(|npcs| {
-            npcs.value.iter().any(|npc| {
-                npc.name
-                    .as_deref()
-                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
-            })
-        }),
+        ReachKind::Npc { id, .. } => nearest_npc(cx, *id, op, radius).is_some(),
     }
+}
+
+pub fn nearest_npc<'a>(
+    cx: &'a ActionContext<'_>,
+    id: i32,
+    op: &str,
+    radius: i32,
+) -> Option<&'a api::snapshot::NpcView> {
+    cx.snapshot()
+        .npcs()?
+        .value
+        .iter()
+        .filter(|npc| {
+            npc.r#type == Some(id as usize)
+                && npc.distance <= radius
+                && npc
+                    .actions
+                    .iter()
+                    .flatten()
+                    .any(|action| action.eq_ignore_ascii_case(op))
+        })
+        .min_by_key(|npc| npc.distance)
 }
 
 fn nearest_ground<'a>(
@@ -321,9 +369,12 @@ pub fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {
 fn saw_cant_reach(cx: &ActionContext<'_>, since: i32) -> bool {
     cx.snapshot().chat_lines(since).is_some_and(|lines| {
         lines.value.iter().any(|line| {
-            line.text
-                .get(..CANT_REACH.len())
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(CANT_REACH))
+            line.username.is_none()
+                && line.type_ == 0
+                && line
+                    .text
+                    .get(..CANT_REACH.len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(CANT_REACH))
         })
     })
 }

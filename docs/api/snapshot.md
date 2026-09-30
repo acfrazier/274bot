@@ -46,6 +46,10 @@ snap.stats() / snap.varps() / snap.chat() / snap.world() / snap.scene() / snap.c
 - World-derived families (npc, player, loc, ground item, scene, world) are
   gen-gated; iface-derived families re-read the materialized `client.ifaces`
   on their gate.
+- Cached loc and ground-item distance scalars refresh in place when the
+  local player moves, even without a scene packet. Definitions/actions and
+  scene vectors are retained; nearby ground targets cannot remain falsely
+  out of reach because of their earlier distance.
 - `snap.tile()` is the canonical route-based world tile
   (`base + route_x[0]`, level = `minusedlevel`). Entity-pixel tiles remain
   available on `local_player().actor.tile` for visuals.
@@ -61,6 +65,18 @@ snap.stats() / snap.varps() / snap.chat() / snap.world() / snap.scene() / snap.c
 `MapFlagView`, `TradeView`, `ModalView`, `QuestStatusView`,
 `MakeProductView`, `ToggleControlsView`, plus `WorldTile`/`LocalTile` and
 `ItemDefView`/`LocDefView` (from `api::obj_names`).
+
+## Native observation readiness
+
+`SnapshotView` returns borrowed `Observed` values with their evidence stamp,
+or `None` while that family is unavailable. In-game state alone does not prove
+that worn items or skills have been posted. Equipment additionally requires
+the worn-tab inventory component's item-id and count arrays, with matching
+non-zero lengths; a posted all-empty array is a ready empty worn set. Skills
+require a non-empty stat view and positive base levels for every used skill
+(unused slots do not block readiness). Native predicates preserve unavailable
+observations as `Unknown`, rather than interpreting login defaults as facts.
+
 
 ## ReadContext
 

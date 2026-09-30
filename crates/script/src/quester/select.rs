@@ -106,6 +106,7 @@ mod tests {
             quests: &quests,
             progress: &[],
             required_after: stamp(),
+            chat_since: 0,
             outcome: None,
         };
         let picked = select(&compiled, 0, &pred).expect("never-skip start");

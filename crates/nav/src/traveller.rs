@@ -623,6 +623,7 @@ impl FollowRun {
                                     to,
                                     ticks_waited: 0,
                                     sent_tile: Some(here),
+                                    arrival_footprint: None,
                                     tries: 0,
                                     troll: false,
                                     npc_index: None,
@@ -682,6 +683,7 @@ impl FollowRun {
                                     to,
                                     ticks_waited: 0,
                                     sent_tile: Some(here),
+                                    arrival_footprint: None,
                                     tries: 0,
                                     troll: false,
                                     npc_index: None,
@@ -803,6 +805,7 @@ impl FollowRun {
                                     to,
                                     ticks_waited: 0,
                                     sent_tile: Some(here),
+                                    arrival_footprint: None,
                                     tries: 0,
                                     troll: false,
                                     open_sent_tick: None,
@@ -849,6 +852,7 @@ impl FollowRun {
                         Some(target) => {
                             let to = edge.to;
                             let chat_seq_at_send = chat_seq(snapshot);
+                            let arrival_footprint = target.footprint();
                             let mut ix = Interactions::new(snapshot, d);
                             match interact_transport(snapshot, &mut ix, target, edge, options) {
                                 SendResult::Sent { .. } => {
@@ -881,6 +885,7 @@ impl FollowRun {
                                         to,
                                         ticks_waited: 0,
                                         sent_tile: Some(here),
+                                        arrival_footprint,
                                         tries,
                                         troll: false,
                                         npc_index: selected_npc_index,
@@ -1038,6 +1043,8 @@ struct TransportHop {
     to: WorldTile,
     ticks_waited: u32,
     sent_tile: Option<WorldTile>,
+    /// Live loc footprint captured at click time; survives the plane rebuild.
+    arrival_footprint: Option<(WorldTile, i32, i32)>,
     tries: u32,
     troll: bool,
     /// Current NPC slot, re-picked by reachable stand cost before interactions.

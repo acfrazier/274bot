@@ -67,6 +67,30 @@ fn stat_scenario(min: i32, budget: u32) -> Scenario {
 }
 
 #[test]
+fn stop_script_requires_a_host_observed_idle_slot() {
+    let mut scenario = stat_scenario(0, 100);
+    scenario.steps[0].kind = StepKind::StopScript;
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut c = seeded_client();
+    assert_running_for(
+        &mut runner,
+        &mut c,
+        4,
+        "Stop must not pass on unchanged game stats",
+    );
+    assert!(
+        runner.on_stop_script(),
+        "without a host Stop observation the runner must retain its stop step"
+    );
+    runner.observe_script_idle(false);
+    assert_running_for(&mut runner, &mut c, 2, "a still-running slot is not Stop");
+    runner.observe_script_idle(true);
+    tick_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+#[test]
 fn wait_script_stop_is_none_unless_the_scenario_sets_it() {
     let v1 = ScenarioRunner::new(crate::get("bone_burier").expect("v1"));
     assert_eq!(v1.wait_script_stop(), None);

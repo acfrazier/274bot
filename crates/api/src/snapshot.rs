@@ -107,11 +107,11 @@ pub struct GameSnapshot {
     /// compute the pair themselves; this is never a cross-tick cache.
     #[serde(skip)]
     loc_bits_prelude: Option<(u64, u64)>,
-    /// Local-player tile the cached `LocView.distance` scalars were last
-    /// written for. Player ticks refresh those integers in place when this
-    /// origin moves, without cloning loc names or re-sweeping the world.
+    /// Local-player origin for cached loc and ground-item distance scalars.
+    /// Player ticks refresh them in place without cloning definitions or
+    /// re-sweeping the scene.
     #[serde(skip)]
-    loc_distance_tile: Option<(i32, i32)>,
+    scene_distance_tile: Option<(i32, i32)>,
     #[serde(skip)]
     ground_item_gen: u64,
 
@@ -122,6 +122,8 @@ pub struct GameSnapshot {
     /// gate so a movement rebuilds only that family.
     inventory: Vec<ItemView>,
     equipment: Vec<ItemView>,
+    /// Worn component slot data has been posted, including an observed empty set.
+    equipment_available: bool,
     bank: Vec<ItemView>,
     bank_side: Vec<ItemView>,
     /// The inv tab component's slot count (the m8aq `inventorySize`);
@@ -277,10 +279,11 @@ impl Default for GameSnapshot {
             loc_model_stamp: empty_loc_model_stamp(),
             loc_static_gen: 0,
             loc_bits_prelude: None,
-            loc_distance_tile: None,
+            scene_distance_tile: None,
             ground_item_gen: 0,
             inventory: Vec::new(),
             equipment: Vec::new(),
+            equipment_available: false,
             bank: Vec::new(),
             bank_side: Vec::new(),
             inventory_size: 0,
@@ -378,6 +381,7 @@ impl GameSnapshot {
 
     pub fn seed_equipment(&mut self, rows: Vec<ItemView>) {
         self.equipment = rows;
+        self.equipment_available = true;
     }
 
     pub fn seed_stats(&mut self, rows: Vec<StatView>) {

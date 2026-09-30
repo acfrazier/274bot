@@ -146,11 +146,6 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             version: 1,
             compile: compile_prayer_points,
         },
-        super::compile::PredicateHandler {
-            kind: "item_count_grew",
-            version: 1,
-            compile: compile_item_count_grew,
-        },
     ]
 }
 
@@ -239,6 +234,7 @@ fn resolve_loc(cx: &CompileContext<'_>, alias: &str) -> Result<i32, CompileError
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ObjArg {
     obj: String,
 }
@@ -271,6 +267,7 @@ impl PredicatePlan for HasItem {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct NearArg {
     tile: [i32; 3],
     radius: i32,
@@ -306,6 +303,7 @@ impl PredicatePlan for Near {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MessageArg {
     any: Vec<String>,
 }
@@ -316,6 +314,9 @@ fn compile_message(
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
     let arg: MessageArg =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    if arg.any.iter().any(|needle| needle.trim().is_empty()) {
+        return Err(CompileError::code("invalid-args"));
+    }
     Ok(Arc::new(Message {
         needles: arg
             .any
@@ -331,7 +332,7 @@ struct Message {
 impl PredicatePlan for Message {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
         let snapshot = cx.cx.snapshot();
-        let Some(lines) = snapshot.chat_lines(cx.required_after.sequence as i32) else {
+        let Some(lines) = snapshot.chat_lines(cx.chat_since) else {
             return Truth::Unknown;
         };
         let hit = lines
@@ -343,20 +344,23 @@ impl PredicatePlan for Message {
 }
 
 fn contains_any(line: &ChatLineView, needles: &[String]) -> bool {
-    needles.iter().any(|needle| {
-        needle.is_empty()
-            || line
-                .text
-                .as_bytes()
-                .windows(needle.len().max(1))
-                .any(|part| part.eq_ignore_ascii_case(needle.as_bytes()))
-    })
+    line.username.is_none()
+        && line.type_ == 0
+        && needles.iter().any(|needle| {
+            !needle.is_empty()
+                && line
+                    .text
+                    .as_bytes()
+                    .windows(needle.len())
+                    .any(|part| part.eq_ignore_ascii_case(needle.as_bytes()))
+        })
 }
 
 /// A recoverable observed state, unlike `message`'s post-step settle event.
 /// The newest matching event in the available chat history wins; a clearing
 /// event prevents a previous successful operation from being replayed forever.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MessageStateArg {
     set: Vec<String>,
     clear: Vec<String>,
@@ -367,6 +371,14 @@ fn compile_message_state(
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
     let arg: MessageStateArg =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    if arg
+        .set
+        .iter()
+        .chain(&arg.clear)
+        .any(|needle| needle.trim().is_empty())
+    {
+        return Err(CompileError::code("invalid-args"));
+    }
     Ok(Arc::new(MessageState {
         set: arg
             .set
@@ -403,6 +415,7 @@ impl PredicatePlan for MessageState {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ColourArg {
     quest: String,
     is: String,
@@ -452,9 +465,12 @@ impl PredicatePlan for QuestColour {
 }
 
 fn compile_in_combat(
-    _args: &serde_json::Value,
+    args: &serde_json::Value,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    if !args.as_object().is_some_and(serde_json::Map::is_empty) {
+        return Err(CompileError::code("invalid-args"));
+    }
     Ok(Arc::new(InCombat))
 }
 struct InCombat;
@@ -468,44 +484,47 @@ impl PredicatePlan for InCombat {
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
-struct NameArg {
-    #[serde(default)]
-    npc: Option<String>,
-    #[serde(default)]
-    loc: Option<String>,
-    #[serde(default)]
-    obj: Option<String>,
+#[serde(deny_unknown_fields)]
+struct NpcArg {
+    npc: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LocArg {
+    loc: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroundArg {
+    obj: String,
     #[serde(default)]
     radius: Option<i32>,
-    #[serde(default)]
-    name: Option<String>,
 }
 
 fn compile_npc_present(
     args: &serde_json::Value,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: NameArg =
+    let arg: NpcArg =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    let alias = arg.npc.ok_or_else(|| CompileError::code("invalid-args"))?;
-    let _ = resolve_npc(cx, &alias)?;
     Ok(Arc::new(NpcPresent {
-        name: Arc::from(alias),
+        id: resolve_npc(cx, &arg.npc)?,
     }))
 }
 struct NpcPresent {
-    name: Arc<str>,
+    id: i32,
 }
 impl PredicatePlan for NpcPresent {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
         match cx.cx.snapshot().npcs() {
             None => Truth::Unknown,
-            Some(npcs) => truth(npcs.value.iter().any(|npc| {
-                npc.name
-                    .as_deref()
-                    .is_some_and(|n| n.eq_ignore_ascii_case(&self.name))
-            })),
+            Some(npcs) => truth(
+                npcs.value
+                    .iter()
+                    .any(|npc| npc.r#type == Some(self.id as usize)),
+            ),
         }
     }
 }
@@ -522,10 +541,9 @@ fn compile_loc_present(
     args: &serde_json::Value,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: NameArg =
+    let arg: LocArg =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    let alias = arg.loc.ok_or_else(|| CompileError::code("invalid-args"))?;
-    let id = resolve_loc(cx, &alias)?;
+    let id = resolve_loc(cx, &arg.loc)?;
     Ok(Arc::new(LocPresent { id }))
 }
 struct LocPresent {
@@ -544,11 +562,10 @@ fn compile_ground_item_near(
     args: &serde_json::Value,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: NameArg =
+    let arg: GroundArg =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    let alias = arg.obj.ok_or_else(|| CompileError::code("invalid-args"))?;
     Ok(Arc::new(GroundNear {
-        id: resolve_obj(cx, &alias)?,
+        id: resolve_obj(cx, &arg.obj)?,
         radius: arg.radius.unwrap_or(12),
     }))
 }
@@ -571,9 +588,12 @@ impl PredicatePlan for GroundNear {
 }
 
 fn compile_modal_open(
-    _args: &serde_json::Value,
+    args: &serde_json::Value,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    if !args.as_object().is_some_and(serde_json::Map::is_empty) {
+        return Err(CompileError::code("invalid-args"));
+    }
     Ok(Arc::new(ModalOpen))
 }
 struct ModalOpen;
@@ -587,6 +607,7 @@ impl PredicatePlan for ModalOpen {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CountArg {
     obj: String,
     #[serde(default)]
@@ -625,13 +646,6 @@ impl PredicatePlan for CountAtLeast {
     }
 }
 
-fn compile_item_count_grew(
-    args: &serde_json::Value,
-    cx: &CompileContext<'_>,
-) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    compile_has_item(args, cx)
-}
-
 fn compile_worn(
     args: &serde_json::Value,
     cx: &CompileContext<'_>,
@@ -655,6 +669,7 @@ impl PredicatePlan for Worn {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LevelArg {
     level: i32,
 }
@@ -680,6 +695,7 @@ impl PredicatePlan for OnLevel {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AreaArg {
     area: String,
 }
@@ -714,6 +730,7 @@ impl PredicatePlan for InArea {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SkillArg {
     skill: String,
     level: i32,
@@ -746,6 +763,7 @@ impl PredicatePlan for SkillAtLeast {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FractionArg {
     below: f32,
 }
@@ -763,10 +781,6 @@ struct HpBelow {
 }
 impl PredicatePlan for HpBelow {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
-        let Some(combat) = cx.cx.snapshot().in_combat() else {
-            return Truth::Unknown;
-        };
-        let _ = combat;
         match cx.cx.snapshot().stats() {
             None => Truth::Unknown,
             Some(stats) => {
@@ -806,7 +820,60 @@ fn truth(value: bool) -> Truth {
     }
 }
 
+pub(super) fn validate_tile(tile: [i32; 3], source: &str) -> Result<(), CompileError> {
+    if source.trim().is_empty() {
+        return Err(CompileError::code("tile-source-required"));
+    }
+    if !(0..=16383).contains(&tile[0])
+        || !(0..=16383).contains(&tile[1])
+        || !(0..=3).contains(&tile[2])
+    {
+        return Err(CompileError::code("invalid-tile"));
+    }
+    Ok(())
+}
+
+fn anchor_tile(anchor: Option<&AnchorArg>) -> Result<Option<WorldTile>, CompileError> {
+    anchor
+        .map(|a| {
+            validate_tile(a.tile, &a.source)?;
+            Ok(WorldTile {
+                x: a.tile[0],
+                z: a.tile[1],
+                level: a.tile[2],
+            })
+        })
+        .transpose()
+}
+
+fn offered(ops: &[String], op: &str) -> Result<(), CompileError> {
+    if ops.iter().any(|offered| offered.eq_ignore_ascii_case(op)) {
+        Ok(())
+    } else {
+        Err(CompileError::code("unavailable-op"))
+    }
+}
+
+fn name_matches(cx: &CompileContext<'_>, name: &str, op: &str) -> usize {
+    cx.selected.loc_names().map_or(0, |facts| {
+        facts
+            .rows
+            .iter()
+            .filter(|row| {
+                row.display
+                    .as_deref()
+                    .is_some_and(|display| display.eq_ignore_ascii_case(name))
+                    && row
+                        .ops
+                        .iter()
+                        .any(|offered| offered.eq_ignore_ascii_case(op))
+            })
+            .count()
+    })
+}
+
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WalkArgs {
     tile: [i32; 3],
     #[serde(default)]
@@ -821,9 +888,7 @@ fn compile_walk(
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     let arg: WalkArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    if arg.source.is_empty() {
-        return Err(CompileError::code("tile-source-required"));
-    }
+    validate_tile(arg.tile, &arg.source)?;
     Ok(Arc::new(WalkPlan {
         tile: WorldTile {
             x: arg.tile[0],
@@ -871,16 +936,10 @@ impl StepRun for WalkRun {
             })),
             Poll::Ready(Ok(WalkReceipt {
                 end: WalkEnd::NeedsEvidence(gates),
-                evidence,
                 ..
-            })) => {
-                let _ = gates;
-                Poll::Ready(Ok(StepOutcome {
-                    progress: None,
-                    evidence,
-                    receipt: None,
-                }))
-            }
+            })) => Poll::Ready(Err(ActionError::Failed(Arc::from(format!(
+                "walk needs live quest evidence: {gates:?}"
+            ))))),
             Poll::Ready(Ok(_)) => Poll::Ready(Err(ActionError::Failed(Arc::from("walk failed")))),
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
         }
@@ -889,7 +948,7 @@ impl StepRun for WalkRun {
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
+#[serde(deny_unknown_fields)]
 struct AnchorArg {
     tile: [i32; 3],
     #[serde(default)]
@@ -897,6 +956,7 @@ struct AnchorArg {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TalkArgs {
     npc: String,
     #[serde(default)]
@@ -915,14 +975,17 @@ fn compile_talk(
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     let arg: TalkArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    let _ = resolve_npc(cx, &arg.npc)?;
-    let tile = arg.anchor.as_ref().map(|a| WorldTile {
-        x: a.tile[0],
-        z: a.tile[1],
-        level: a.tile[2],
-    });
+    let id = resolve_npc(cx, &arg.npc)?;
+    let display = cx
+        .selected
+        .npc_by_config(&arg.npc)
+        .and_then(|row| row.display.as_deref())
+        .ok_or_else(|| CompileError::code("unresolved-npc"))?;
+    let tile = anchor_tile(arg.anchor.as_ref())?;
+    offered(&cx.selected.npc_by_config(&arg.npc).unwrap().ops, "Talk-to")?;
     Ok(Arc::new(TalkPlan {
-        npc: Arc::from(arg.npc),
+        id,
+        npc: Arc::from(display),
         tile,
         leash: arg.leash.max(1),
         prefer: arg.prefer.into_iter().map(Arc::from).collect(),
@@ -931,6 +994,7 @@ fn compile_talk(
 }
 
 struct TalkPlan {
+    id: i32,
     npc: Arc<str>,
     tile: Option<WorldTile>,
     leash: u16,
@@ -940,6 +1004,7 @@ struct TalkPlan {
 impl StepPlan for TalkPlan {
     fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(TalkRun {
+            id: self.id,
             npc: Arc::clone(&self.npc),
             tile: self.tile,
             leash: self.leash,
@@ -953,6 +1018,7 @@ impl StepPlan for TalkPlan {
 }
 
 struct TalkRun {
+    id: i32,
     npc: Arc<str>,
     tile: Option<WorldTile>,
     leash: u16,
@@ -986,6 +1052,7 @@ impl StepRun for TalkRun {
             }
             self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
                 dialogue::DialogueArgs {
+                    id: self.id,
                     npc: Arc::clone(&self.npc),
                     prefer: Arc::clone(&self.prefer),
                     choose: self.choose,
@@ -998,7 +1065,10 @@ impl StepRun for TalkRun {
         if let Some(handle) = &self.dialogue {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(Ok(_)) => Poll::Ready(Ok(StepOutcome {
+                Poll::Ready(Ok(false)) => {
+                    Poll::Ready(Err(ActionError::Failed(Arc::from("dialogue failed"))))
+                }
+                Poll::Ready(Ok(true)) => Poll::Ready(Ok(StepOutcome {
                     progress: None,
                     evidence: cx.tick.cx.evidence(),
                     receipt: None,
@@ -1020,6 +1090,7 @@ impl StepRun for TalkRun {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InteractTarget {
     #[serde(default)]
     ground: Option<String>,
@@ -1032,6 +1103,7 @@ struct InteractTarget {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InteractArgs {
     target: InteractTarget,
     op: String,
@@ -1051,6 +1123,26 @@ fn compile_interact(
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     let arg: InteractArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    if [
+        arg.target.ground.is_some(),
+        arg.target.loc.is_some(),
+        arg.target.npc.is_some(),
+        arg.target.name.is_some(),
+    ]
+    .into_iter()
+    .filter(|set| *set)
+    .count()
+        != 1
+        || arg.settle_ms == Some(0)
+    {
+        return Err(CompileError::code("invalid-args"));
+    }
+    let tile = anchor_tile(arg.anchor.as_ref())?;
+    let ambiguous = arg
+        .target
+        .name
+        .as_deref()
+        .is_some_and(|name| name_matches(cx, name, &arg.op) > 1);
     let kind = if let Some(ground) = arg.target.ground {
         let item = cx
             .selected
@@ -1063,28 +1155,33 @@ fn compile_interact(
         }
     } else if let Some(loc) = arg.target.loc {
         let id = Some(resolve_loc(cx, &loc)?);
+        offered(&cx.selected.loc_by_config(&loc).unwrap().ops, &arg.op)?;
         reach::ReachKind::Loc {
             id,
             name: Some(Arc::from(loc)),
         }
     } else if let Some(npc) = arg.target.npc {
-        let _ = resolve_npc(cx, &npc)?;
+        let id = resolve_npc(cx, &npc)?;
+        offered(&cx.selected.npc_by_config(&npc).unwrap().ops, &arg.op)?;
+        let display = cx
+            .selected
+            .npc_by_config(&npc)
+            .and_then(|row| row.display.as_deref())
+            .ok_or_else(|| CompileError::code("unresolved-npc"))?;
         reach::ReachKind::Npc {
-            name: Arc::from(npc),
-            index: None,
+            id,
+            name: Arc::from(display),
         }
     } else if let Some(name) = arg.target.name {
+        if name_matches(cx, &name, &arg.op) == 0 {
+            return Err(CompileError::code("unresolved-name"));
+        }
         reach::ReachKind::Name {
             name: Arc::from(name),
         }
     } else {
         return Err(CompileError::code("invalid-args"));
     };
-    let tile = arg.anchor.map(|a| WorldTile {
-        x: a.tile[0],
-        z: a.tile[1],
-        level: a.tile[2],
-    });
     Ok(Arc::new(InteractPlan {
         kind,
         op: Arc::from(arg.op),
@@ -1092,6 +1189,7 @@ fn compile_interact(
         radius: arg.radius.max(1),
         wait_if_missing: arg.wait_if_missing,
         settle_ms: arg.settle_ms,
+        ambiguous,
     }))
 }
 
@@ -1102,6 +1200,7 @@ struct InteractPlan {
     radius: i32,
     wait_if_missing: bool,
     settle_ms: Option<u64>,
+    ambiguous: bool,
 }
 impl StepPlan for InteractPlan {
     fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
@@ -1112,11 +1211,19 @@ impl StepPlan for InteractPlan {
             radius: self.radius,
             wait_if_missing: self.wait_if_missing,
             deadline: None,
+            missing_deadline: None,
+            waiting: None,
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
             reach: None,
             started: false,
         }))
+    }
+    fn settle_timeout(&self) -> Duration {
+        Duration::from_millis(self.settle_ms.unwrap_or(8_000))
+    }
+    fn compile_warning(&self) -> Option<&'static str> {
+        self.ambiguous.then_some("ambiguous-name")
     }
 }
 
@@ -1127,6 +1234,8 @@ struct InteractRun {
     radius: i32,
     wait_if_missing: bool,
     deadline: Option<Duration>,
+    missing_deadline: Option<Duration>,
+    waiting: Option<&'static str>,
     settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
     reach: Option<ActionHandle<reach::Reach>>,
@@ -1134,10 +1243,9 @@ struct InteractRun {
 }
 impl StepRun for InteractRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        let available = reach::target_available(&cx.tick.cx, &self.kind, &self.op, self.radius);
-        if self.started && self.deadline.is_none() && available {
-            self.deadline = Some(cx.tick.cx.active_now() + self.settle_duration);
-        }
+        let available = reach::target_available(&cx.tick.cx, &self.kind, &self.op, self.radius)
+            && (!matches!(self.kind, reach::ReachKind::Ground { .. })
+                || cx.tick.cx.snapshot().inventory().is_some());
         if self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d) {
             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                 "interact settle timeout",
@@ -1161,9 +1269,45 @@ impl StepRun for InteractRun {
                     return Poll::Pending;
                 }
             }
+        }
+        if self.deadline.is_none() {
             if available || !self.wait_if_missing {
                 self.deadline = Some(cx.tick.cx.active_now() + self.settle_duration);
+                self.missing_deadline = None;
+                self.waiting = None;
+            } else {
+                self.waiting = Some(match &self.kind {
+                    reach::ReachKind::Ground { id, .. } => {
+                        match (
+                            cx.tick.cx.snapshot().ground_items(),
+                            cx.tick.cx.snapshot().inventory(),
+                        ) {
+                            (Some(rows), Some(_))
+                                if !rows.value.iter().any(|row| row.def.id == *id) =>
+                            {
+                                "Waiting for ground spawn"
+                            }
+                            (Some(_), Some(_)) => "Waiting for ground target in reach",
+                            _ => "Waiting for ground observation",
+                        }
+                    }
+                    _ => "Waiting for target",
+                });
+                let deadline = self
+                    .missing_deadline
+                    .get_or_insert(cx.tick.cx.active_now() + Duration::from_secs(120));
+                if cx.tick.cx.active_now() >= *deadline {
+                    let (reason, name) = self
+                        .waiting_for()
+                        .map(|(reason, name)| (reason, name.as_ref()))
+                        .unwrap_or(("Waiting for target", "target"));
+                    return Poll::Ready(Err(ActionError::Unavailable(Arc::from(format!(
+                        "{reason}: {name} (120s limit)"
+                    )))));
+                }
             }
+        }
+        if !self.started {
             self.reach = Some(cx.tick.actions.begin::<reach::Reach>(
                 reach::ReachArgs {
                     kind: self.kind.clone(),
@@ -1202,9 +1346,18 @@ impl StepRun for InteractRun {
         self.walk = None;
         self.reach = None;
     }
+    fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
+        let name = match &self.kind {
+            reach::ReachKind::Ground { obj, .. } => obj,
+            reach::ReachKind::Npc { name, .. } | reach::ReachKind::Name { name } => name,
+            reach::ReachKind::Loc { name, .. } => name.as_ref()?,
+        };
+        Some((self.waiting?, name))
+    }
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UseOnTarget {
     #[serde(default)]
     npc: Option<String>,
@@ -1215,7 +1368,7 @@ struct UseOnTarget {
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
+#[serde(deny_unknown_fields)]
 struct UseOnArgs {
     item: String,
     target: UseOnTarget,
@@ -1226,8 +1379,6 @@ struct UseOnArgs {
     #[serde(default)]
     product: Option<String>,
     #[serde(default)]
-    settle_message: Option<Vec<String>>,
-    #[serde(default)]
     settle_ms: Option<u64>,
 }
 
@@ -1237,6 +1388,19 @@ fn compile_use_on(
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     let arg: UseOnArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    if [
+        arg.target.npc.is_some(),
+        arg.target.loc.is_some(),
+        arg.target.item.is_some(),
+    ]
+    .into_iter()
+    .filter(|set| *set)
+    .count()
+        != 1
+        || arg.settle_ms == Some(0)
+    {
+        return Err(CompileError::code("invalid-args"));
+    }
     let item_id = resolve_obj(cx, &arg.item)?;
     let item_name = cx
         .selected
@@ -1270,11 +1434,7 @@ fn compile_use_on(
     } else {
         return Err(CompileError::code("invalid-args"));
     };
-    let tile = arg.anchor.map(|a| WorldTile {
-        x: a.tile[0],
-        z: a.tile[1],
-        level: a.tile[2],
-    });
+    let tile = anchor_tile(arg.anchor.as_ref())?;
     let product = arg
         .product
         .as_deref()
@@ -1321,6 +1481,9 @@ impl StepPlan for UseOnPlan {
             interaction: None,
             accepted: false,
         }))
+    }
+    fn settle_timeout(&self) -> Duration {
+        Duration::from_millis(self.settle_ms.unwrap_or(20_000))
     }
 }
 
@@ -1499,6 +1662,7 @@ impl crate::native::NativeMachine for UseOnAction {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AcquireArgs {
     recipe: String,
 }
@@ -1545,7 +1709,7 @@ impl StepPlan for AcquirePlan {
             index: 0,
             chat_since: 0,
             settling: false,
-            settle_ticks: 0,
+            settle_deadline: Duration::ZERO,
         }))
     }
 }
@@ -1554,26 +1718,24 @@ struct AcquireRun {
     steps: Vec<CompiledAcquireStep>,
     current: Option<Box<dyn StepRun>>,
     index: usize,
-    chat_since: u64,
+    chat_since: i32,
     settling: bool,
-    settle_ticks: u8,
+    settle_deadline: Duration,
 }
 impl StepRun for AcquireRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         loop {
             if self.settling {
-                let mut stamp = cx.required_after;
-                stamp.sequence = self.chat_since;
                 let truth = self.steps[self.index].settle.evaluate(&PredicateContext {
                     cx: &cx.tick.cx,
                     quests: cx.quests,
                     progress: cx.progress,
-                    required_after: stamp,
+                    required_after: cx.required_after,
+                    chat_since: self.chat_since,
                     outcome: None,
                 });
                 if truth != Truth::True {
-                    self.settle_ticks = self.settle_ticks.saturating_add(1);
-                    if self.settle_ticks >= 40 {
+                    if cx.tick.cx.active_now() >= self.settle_deadline {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
                             "acquire settle timeout",
                         ))));
@@ -1590,13 +1752,14 @@ impl StepRun for AcquireRun {
                         quests: cx.quests,
                         progress: cx.progress,
                         required_after: cx.required_after,
+                        chat_since: reach::last_chat_seq(&cx.tick.cx),
                         outcome: None,
                     });
                     if skip == Truth::True {
                         self.index += 1;
                         continue;
                     }
-                    self.chat_since = reach::last_chat_seq(&cx.tick.cx) as u64;
+                    self.chat_since = reach::last_chat_seq(&cx.tick.cx);
                     let run = self.steps[self.index].plan.begin(cx)?;
                     self.current = Some(run);
                     break;
@@ -1615,7 +1778,8 @@ impl StepRun for AcquireRun {
                 Poll::Ready(Ok(_)) => {
                     self.current = None;
                     self.settling = true;
-                    self.settle_ticks = 0;
+                    self.settle_deadline =
+                        cx.tick.cx.active_now() + self.steps[self.index].plan.settle_timeout();
                 }
             }
         }
@@ -1625,44 +1789,68 @@ impl StepRun for AcquireRun {
             run.cancel(actions);
         }
     }
+    fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
+        self.current.as_ref()?.waiting_for()
+    }
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WaitArgs {
-    #[serde(default)]
+    until: PredicateDocument,
     max_ticks: u64,
 }
 
 fn compile_wait(
     args: &serde_json::Value,
-    _cx: &CompileContext<'_>,
+    cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: WaitArgs = serde_json::from_value(args.clone()).unwrap_or(WaitArgs { max_ticks: 50 });
+    let arg: WaitArgs =
+        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    if arg.max_ticks == 0 {
+        return Err(CompileError::code("invalid-args"));
+    }
     Ok(Arc::new(WaitPlan {
-        max_ticks: arg.max_ticks.max(1),
+        until: compile_predicate(&arg.until, cx)?,
+        max_ticks: arg.max_ticks,
     }))
 }
 
 struct WaitPlan {
+    until: Arc<dyn PredicatePlan>,
     max_ticks: u64,
 }
 impl StepPlan for WaitPlan {
-    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(WaitRun {
-            remaining: self.max_ticks,
+            until: Arc::clone(&self.until),
+            deadline_tick: cx.tick.cx.evidence().tick.saturating_add(self.max_ticks),
+            chat_since: reach::last_chat_seq(&cx.tick.cx),
         }))
     }
 }
 
 struct WaitRun {
-    remaining: u64,
+    until: Arc<dyn PredicatePlan>,
+    deadline_tick: u64,
+    chat_since: i32,
 }
 impl StepRun for WaitRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        if self.remaining == 0 {
+        if cx.tick.cx.evidence().tick >= self.deadline_tick {
             return Poll::Ready(Err(ActionError::Failed(Arc::from("wait exhausted"))));
         }
-        self.remaining -= 1;
+        let pred = PredicateContext {
+            cx: &cx.tick.cx,
+            quests: cx.quests,
+            progress: cx.progress,
+            required_after: cx.required_after,
+            chat_since: self.chat_since,
+            outcome: None,
+        };
+        if self.until.evaluate(&pred) != Truth::True {
+            return Poll::Pending;
+        }
         Poll::Ready(Ok(StepOutcome {
             progress: None,
             evidence: cx.tick.cx.evidence(),

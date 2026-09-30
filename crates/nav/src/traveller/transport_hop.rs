@@ -8,6 +8,19 @@ pub(super) enum TransportTarget<'s> {
     Npc(&'s NpcView),
 }
 
+impl TransportTarget<'_> {
+    pub(super) fn footprint(&self) -> Option<(WorldTile, i32, i32)> {
+        match self {
+            Self::Loc(loc) => Some((
+                loc.tile,
+                loc.footprint_width.max(1),
+                loc.footprint_length.max(1),
+            )),
+            Self::Npc(_) => None,
+        }
+    }
+}
+
 /// The snapshot target for a loc-backed transport edge.
 pub(super) fn find_transport_target<'s>(
     snapshot: &'s GameSnapshot,
@@ -378,12 +391,14 @@ impl FollowRun {
                 {
                     return match find_transport_target_instance(snapshot, edge, hop.npc_index) {
                         Some(target) => {
+                            let arrival_footprint = target.footprint();
                             let mut ix = Interactions::new(snapshot, d);
                             match interact_transport(snapshot, &mut ix, target, edge, options) {
                                 SendResult::Sent { .. } => {
                                     hop.tries = 1;
                                     hop.ticks_waited = 0;
                                     hop.sent_tile = Some(here);
+                                    hop.arrival_footprint = arrival_footprint;
                                     self.loc_wait = 0;
                                     self.transport = Some(hop);
                                     Poll::Watching
@@ -420,12 +435,14 @@ impl FollowRun {
             return match target {
                 Some(target) => {
                     let chat_seq_at_send = npc_backed(&edge).then(|| chat_seq(snapshot));
+                    let arrival_footprint = target.footprint();
                     let mut ix = Interactions::new(snapshot, d);
                     match interact_transport(snapshot, &mut ix, target, &edge, options) {
                         SendResult::Sent { .. } => {
                             self.loc_wait = 0;
                             hop.ticks_waited = 0;
                             hop.sent_tile = Some(here);
+                            hop.arrival_footprint = arrival_footprint;
                             if let Some(seq) = chat_seq_at_send {
                                 hop.chat_seq = seq;
                             }
@@ -663,9 +680,17 @@ impl FollowRun {
             && edge.at.x == edge.to.x
             && edge.at.z == edge.to.z
         {
-            // `movecoord(coord(), 0, ±1, 0)` preserves the player's adjacent
-            // stand. The graph derives its nominal destination from the loc.
-            arrived(edge.to, VERTICAL_ARRIVE_RADIUS.max(close_enough))
+            // Vertical moves preserve the player's stand adjacent to any side
+            // of the live loc, not only adjacent to its south-west origin.
+            let (origin, width, length) = hop.arrival_footprint.unwrap_or((edge.at, 1, 1));
+            let radius = VERTICAL_ARRIVE_RADIUS.max(close_enough);
+            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+                now.world_tile().is_some_and(|here| {
+                    here.level == edge.to.level
+                        && (origin.x - radius..=origin.x + width - 1 + radius).contains(&here.x)
+                        && (origin.z - radius..=origin.z + length - 1 + radius).contains(&here.z)
+                })
+            })
         } else if (edge.to.z - edge.at.z).abs() == CELLAR_SHIFT && edge.to.level == edge.at.level {
             // `movecoord(coord(), 0, 0, ±6400)` lands on the player's tile,
             // one Chebyshev off the loc-baked dest when the hop is taken

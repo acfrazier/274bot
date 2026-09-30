@@ -1,9 +1,8 @@
-//! The live scenario's catalog Start transaction, shared by the headed panel
-//! and headless `tui-play`: the stashed isolate Starts fired once on the
-//! runner's StartScript step, with the configured catalog or pair witness
-//! armed immediately before each actual isolate Start. Start returns before
-//! V8 setup, so a started card stays stashed until its setup settles and a
-//! setup failure still fails the witness that armed it.
+//! Shared catalog Start/Stop transaction for the panel per-frame live pump
+//! and headless `tui-play`. Stashed compiled cards and isolates Start once on
+//! the runner's StartScript step, with catalog/pair witnesses armed first.
+//! Start returns before preparation/setup: retain each card until `poll_start`
+//! settles so failure belongs to the witness that armed that lifetime.
 
 use std::time::{Duration, Instant};
 
@@ -260,9 +259,11 @@ pub enum StartScriptPump {
     CompiledFailed(String),
 }
 
-/// Pump the stashed Starts once per driven-slot frame. When the runner is
-/// on its StartScript step (`on_start_script`), start every stashed isolate
-/// with its witness armed; earlier, only settle already-started setups.
+/// Pump stashed catalog lifetimes once per driven-slot frame. Start all pending
+/// cards on StartScript; otherwise settle already-started preparation/setup.
+/// StopScript revokes each slot and resets its pending Start for the restart.
+/// Hold the runner while Start/Stop cannot advance, including preparation or
+/// witness readiness, and report compiled Running/Failed outcomes explicitly.
 pub fn fire_pending_catalog_start(
     pending: &mut [PendingCatalogStart],
     on_start_script: bool,
