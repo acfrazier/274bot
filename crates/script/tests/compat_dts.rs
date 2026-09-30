@@ -66,7 +66,9 @@ fn drift_gate_accepts_sync_or_async_bot_loop_contract() {
     let shim = script::compat_dts::collect_compat_surface();
     let drifts = drift_against_shim(&authored, &shim);
     assert!(
-        !drifts.iter().any(|drift| drift.contains("LoopingBot.loop async-ness")),
+        !drifts
+            .iter()
+            .any(|drift| drift.contains("LoopingBot.loop async-ness")),
         "LoopingBot.loop legitimately permits synchronous or Promise results: {drifts:?}"
     );
     let loop_decl = authored
@@ -74,7 +76,9 @@ fn drift_gate_accepts_sync_or_async_bot_loop_contract() {
         .iter()
         .flat_map(|module| module.exports.iter())
         .find_map(|export| match export {
-            script::compat_dts::CompatExport::Class { name, members, .. } if name == "LoopingBot" => {
+            script::compat_dts::CompatExport::Class { name, members, .. }
+                if name == "LoopingBot" =>
+            {
                 members.iter().find(|member| member.name == "loop")
             }
             _ => None,
@@ -151,8 +155,8 @@ fn generator_check_matches_frozen_emit_and_overlay() {
 #[test]
 #[ignore = "requires npm, node, and RS2B0T set to the frozen rs2b0t source"]
 fn scratch_barrel_sidecar_extension_passes_freshness_and_drift_gates() {
-    let rs2b0t = std::env::var_os("RS2B0T")
-        .expect("set RS2B0T to the frozen rs2b0t 00d39a17e0 source");
+    let rs2b0t =
+        std::env::var_os("RS2B0T").expect("set RS2B0T to the frozen rs2b0t 00d39a17e0 source");
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let scratch = unique_temp_path("runtime-extension");
     let crate_copy = scratch.join("crate");
@@ -229,11 +233,11 @@ export const Gatherer: {
         .iter()
         .find(|module| module.specifier.ends_with("api/gather/Gatherer.js"))
         .expect("load authored Gatherer sidecar");
-    assert!(gatherer.extension_file, "Gatherer comes from the typed sidecar");
-    let drifts = drift_against_shim(
-        &authored,
-        &script::compat_dts::collect_compat_surface(),
+    assert!(
+        gatherer.extension_file,
+        "Gatherer comes from the typed sidecar"
     );
+    let drifts = drift_against_shim(&authored, &script::compat_dts::collect_compat_surface());
     assert!(
         drifts.is_empty(),
         "rendered runtime barrel plus typed sidecar must satisfy the live drift gate: {drifts:?}"
@@ -251,8 +255,11 @@ export const Gatherer: {
         "git init failed: {}",
         String::from_utf8_lossy(&init.stderr)
     );
-    fs::write(wrong_revision.join("revision.txt"), "not the frozen source\n")
-        .expect("write wrong-revision fixture");
+    fs::write(
+        wrong_revision.join("revision.txt"),
+        "not the frozen source\n",
+    )
+    .expect("write wrong-revision fixture");
     let add = Command::new("git")
         .args(["add", "revision.txt"])
         .current_dir(&wrong_revision)
@@ -304,7 +311,10 @@ export const Gatherer: {
         .output()
         .expect("spawn wrong-revision rejection probe");
     let stderr = String::from_utf8_lossy(&rejected.stderr);
-    assert!(!rejected.status.success(), "wrong revision unexpectedly accepted");
+    assert!(
+        !rejected.status.success(),
+        "wrong revision unexpectedly accepted"
+    );
     assert!(
         stderr.contains(
             "RS2B0T revision check failed: expected 00d39a17e0 (00d39a17e056df6c5e461f3f2cfd3598ff9720b6)"

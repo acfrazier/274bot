@@ -249,9 +249,9 @@
     "id": "cow-native-nearest-miss",
     "module": "data/cowKillerLocations.js",
     "selector": "nearestCowLocation",
-    "reason": "Host native lookup returns undefined when no cow location is selected.",
+    "reason": "Host native lookup returns undefined when no location is selected, or null if the selected name cannot be resolved in the posted rows.",
     "runtime": "crates/script/src/shim/cow_killer_locations.js:33",
-    "declaration": "export function nearestCowLocation(tile: WorldTile): CowLocation | undefined;"
+    "declaration": "export function nearestCowLocation(tile: WorldTile): CowLocation | null | undefined;"
   },
   {
     "id": "navigator-native-default-export",
@@ -306,9 +306,9 @@
     "id": "settings-posted-tile",
     "module": "runtime/Settings.js",
     "selector": "SettingsBag.tile",
-    "reason": "Host defaults fallback to null and validates both posted and fallback coordinates into real Tiles.",
+    "reason": "Host converts posted coordinates to a real Tile, defaults fallback to null, and returns any supplied fallback unchanged without validation.",
     "runtime": "crates/script/src/shim/settings.js:29",
-    "declaration": "tile(key: string, fallback?: import('../adapter/ClientAdapter.js').WorldTile | null): Tile | null;"
+    "declaration": "tile<F extends import('../adapter/ClientAdapter.js').WorldTile | null = null>(key: string, fallback?: F): Tile | F;"
   },
   {
     "id": "bot-host-unsubscribe-result",

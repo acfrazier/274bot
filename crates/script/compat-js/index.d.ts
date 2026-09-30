@@ -337,8 +337,6 @@ interface PostedSceneEntity {
     size: number;
     nx: number;
     nz: number;
-    shape: number;
-    angle: number;
 }
 
 }
@@ -582,7 +580,9 @@ export interface QuestHost {
     /** Why: the engine only reports it's out of work; stopping the run is the script's call. */
     finish(reason: string): void;
 }
-export const QuestEngine: {};
+export const QuestEngine: {
+    readonly [key: string]: never;
+};
 
 }
 
@@ -930,6 +930,44 @@ export function isUnmatched(item?: SortableItem): never;
 
 declare module '*api/bot/Bot.js' {
 import * as ______adapter_ClientAdapter_js from "*adapter/ClientAdapter.js";
+import { ChatLine } from "*adapter/ClientAdapter.js";
+import * as ______geometry_Tile_js from "*geometry/Tile.js";
+interface SkillXpEvent {
+    skill: number;
+    name: string;
+    xp: number;
+    delta: number;
+}
+interface SkillLevelEvent {
+    skill: number;
+    name: string;
+    level: number;
+    previous: number;
+}
+interface InventoryChangedEvent {
+    slot: number;
+    id: number;
+    name: string | null;
+    count: number;
+    previousId: number;
+    previousCount: number;
+}
+interface VarpChangedEvent {
+    index: number;
+    value: number;
+    previous: number;
+}
+interface TickEvent {
+    tick: number;
+}
+interface EventMap {
+    tick: TickEvent;
+    'chat.message': ChatLine;
+    'skill.xp': SkillXpEvent;
+    'skill.level': SkillLevelEvent;
+    'inventory.changed': InventoryChangedEvent;
+    'varp.changed': VarpChangedEvent;
+}
 /** How the runner schedules the next `loop()` after one finishes. */
 export type LoopCadence = {
     kind: 'frame';
@@ -944,8 +982,13 @@ export interface SettingsView {
     str(name: string, fallback?: string): string;
     num(name: string, fallback?: number): number;
     bool(name: string, fallback?: boolean): boolean;
-    tile(name: string, fallback?: ______adapter_ClientAdapter_js.WorldTile | null): ______adapter_ClientAdapter_js.WorldTile | null;
+    tile<F extends ______adapter_ClientAdapter_js.WorldTile | null = null>(name: string, fallback?: F): ______geometry_Tile_js.default | F;
     list(name: string, fallback?: string[]): string[];
+}
+export interface PostedEventMap extends Omit<EventMap, "chat.message"> {
+    "chat.message": Omit<EventMap["chat.message"], "username"> & {
+        username: string | undefined;
+    };
 }
 export class AbstractBot {
     loopDelay: number;
@@ -959,9 +1002,7 @@ export class AbstractBot {
     recoveryAnchor(): ______adapter_ClientAdapter_js.WorldTile | null;
     grindTargets(): string[];
     ignoredRandoms(): string[];
-    on(event: "chat.message", cb: (payload: {
-        text: string;
-    }) => unknown): void;
+    on<K extends keyof PostedEventMap>(event: K, cb: (payload: PostedEventMap[K]) => unknown): void;
     on(event: string, cb: (payload: unknown) => unknown): void;
     log(message: string): void;
     get settings(): SettingsView;
@@ -2552,7 +2593,9 @@ export function liveCatalog(): Catalog;
 }
 
 declare module '*api/market/MarketMaker.js' {
-export const MarketMaker: {};
+export const MarketMaker: {
+    readonly [key: string]: never;
+};
 
 }
 
@@ -3604,13 +3647,13 @@ export const COW_LOCATIONS: CowLocation[];
 export const COW_LOCATION_OPTIONS: string[];
 export const AL_KHARID_BANK: Tile;
 export function resolveCowLocation(setting: string, start?: WorldTile): CowLocation | null;
-export function nearestCowLocation(tile: WorldTile): CowLocation | undefined;
+export function nearestCowLocation(tile: WorldTile): CowLocation | null | undefined;
 
 }
 
 declare module '*data/dropdb.js' {
 /** Monster display name to the item display names its drop table can yield (direct drops, always-drop, and resolved herb/gem/jewel sub-tables). Powers the loot multi-select. */
-export const DROP_DB: {};
+export const DROP_DB: Record<string, string[]>;
 
 }
 
@@ -3678,7 +3721,7 @@ export const ROCK_OPTIONS: string[];
 export const GAS_ROCK_IDS: Set<number>;
 export const GAS_ROCK_TICKS = 60;
 export const BROKEN_PICKAXE = "Broken pickaxe";
-export function resolveRockIds(names: string[]): Set<number>;
+export function resolveRockIds(names?: string[]): never;
 
 }
 
@@ -3710,7 +3753,8 @@ export const DEFAULT_RUNE: string;
 }
 
 declare module '*data/shopdb.js' {
-export const SHOP_DB: {};
+import { ShopRecord } from '*api/shop/types.js';
+export const SHOP_DB: Record<string, ShopRecord>;
 
 }
 
@@ -4352,7 +4396,7 @@ export class SettingsBag {
     num(key: string, fallback?: number): number;
     str(key: string, fallback?: string): string;
     list(key: string, fallback?: string[]): string[];
-    tile(key: string, fallback?: ___adapter_ClientAdapter_js.WorldTile | null): Tile | null;
+    tile<F extends ___adapter_ClientAdapter_js.WorldTile | null = null>(key: string, fallback?: F): Tile | F;
 }
 export const SettingsStore: {
     saved(name: string, key: string): string | undefined;

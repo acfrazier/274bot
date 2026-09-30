@@ -1,5 +1,14 @@
 [
   {
+    "id": "not-impl:data/miningRocks.js:resolveRockIds",
+    "module": "data/miningRocks.js",
+    "selector": "resolveRockIds",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/mining_rocks.js:21",
+    "async": false
+  },
+  {
     "id": "not-impl:adapter/ClientAdapter.js:reader.chatContinueComId",
     "module": "adapter/ClientAdapter.js",
     "selector": "reader.chatContinueComId",
