@@ -3,7 +3,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level};
@@ -13,7 +13,7 @@ use client::config::{Cache, IfType, IfTypeMut};
 use host::login_queue::LoginBackoff;
 use host::{
     prepare_client, should_emit_tick, wake_channel, DetectedRandom, FrameBuf, Host, Pump,
-    ScriptRunPolicy, SlotInput, SlotPark, SlotWake,
+    ScriptRunPolicy, SlotInput, SlotPark, SlotWake, TitleWait,
 };
 use nav::world::NavWorld;
 use vault::Profile;
@@ -782,6 +782,10 @@ fn spawn_slot_thread(
             let mut script_tick: u64 = 0;
             let mut run_policy = ScriptRunPolicy::default();
             let mut last_relog_park = None;
+            // Frames that keep the logged-out title live while a login waits
+            // outside the pump; built by the first wait of a login series and
+            // dropped before the pump takes over.
+            let mut title_wait: Option<TitleWait> = None;
             loop {
                 if arm.stop.load(Ordering::Relaxed) {
                     return;
@@ -825,6 +829,9 @@ fn spawn_slot_thread(
                     // operator Logout.
                     let _ = client.take_title_login_request();
                     last_relog_park = None;
+                    let wait_frames = title_wait.get_or_insert_with(|| {
+                        TitleWait::new(Some(Arc::clone(&slot_input)), slot_mailbox.clone())
+                    });
                     // Leaving title park for handshake: refresh latch from the
                     // arm so an explicit Log in cannot keep a stale TRUE from
                     // the last park publish through queue/connect.
@@ -893,7 +900,15 @@ fn spawn_slot_thread(
                         refresh_key = false;
                     }
                     host_log!(Category::Login, Level::Info, "relog decision wait queue");
-                    let wait = wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm);
+                    show_title_message(&mut client, "", "Waiting to log in...");
+                    let wait = wait_for_permit(
+                        &slot_queue,
+                        &slot_statuses,
+                        &username,
+                        uid,
+                        &arm,
+                        &mut title_frames(wait_frames, &mut client, &username, &slot_frame),
+                    );
                     if wait == PermitWait::Cancelled {
                         if arm.stop.load(Ordering::Relaxed) {
                             return;
@@ -940,6 +955,7 @@ fn spawn_slot_thread(
                     });
                     match login {
                         Ok(()) => {
+                            show_title_message(&mut client, "", "");
                             backoff.reset();
                             if let Some(round) = world_round.as_mut() { round.reset(); }
                             key_refreshed = false;
@@ -948,11 +964,13 @@ fn spawn_slot_thread(
                             host_log!(Category::Login, Level::Info, "handshake ok");
                         }
                         Err(e) => {
+                            show_title_message(&mut client, &e.mes1, &e.mes2);
                             if wait_for_transfer_response(
                                 &e,
                                 &arm,
                                 &slot_statuses,
                                 &username,
+                                &mut title_frames(wait_frames, &mut client, &username, &slot_frame),
                             )
                             .is_some()
                             {
@@ -993,7 +1011,10 @@ fn spawn_slot_thread(
                             if e.code == 16 {
                                 slot_queue.lock().hold_for(Instant::now(), retry);
                             }
-                            arm.wait_for_retry(retry);
+                            arm.wait_for_retry(
+                                retry,
+                                &mut title_frames(wait_frames, &mut client, &username, &slot_frame),
+                            );
                             continue;
                         }
                     }
@@ -1001,6 +1022,16 @@ fn spawn_slot_thread(
                 let title_park_reason = &mut last_relog_park;
                 let title_wake = slot_wake.clone();
                 let pump_had_session = client.ingame;
+                // The pump's own frames take over the title from any wait.
+                let left_pump_to_log_in = title_wait.take().is_some();
+                if left_pump_to_log_in && !client.ingame {
+                    // Back on the title after a login attempt: input made
+                    // while no title frame ran (the handshake, or the moment
+                    // a wait was cancelled) answers no screen the operator
+                    // saw, so a stale Log In must not undo a Logout.
+                    slot_input.discard_user(&mut client.shell);
+                    show_title_message(&mut client, "", "");
+                }
                 let mut mainland_sent = false;
                 let arm_obs = Arc::clone(&arm);
                 let arm_latch_obs = Arc::clone(&arm_obs);
@@ -1458,4 +1489,30 @@ pub(super) fn slot_client_pump_should_exit(
     arm: &SlotArm,
 ) -> bool {
     tick_flags(client, ifaces, arm) || (!client.ingame && should_handshake(arm, client.ingame))
+}
+
+/// One login wait's title frames: the pump's frame on this slot's client,
+/// with the per-frame hook it runs on a logged-out title.
+fn title_frames<'a>(
+    wait: &'a mut TitleWait,
+    client: &'a mut Client,
+    username: &'a str,
+    slot_frame: &'a SlotFrame,
+) -> impl FnMut() -> Duration + 'a {
+    move || wait.frame(client, username, |c| slot_frame(c, username, true))
+}
+
+/// Say on the hosted title why the login waits, in the two Java message
+/// lines its chrome draws; two empty lines restore the welcome text.
+/// Unchanged lines are not rewritten.
+fn show_title_message(client: &mut Client, mes1: &str, mes2: &str) {
+    for (line, text) in [
+        (&mut client.login_mes1, mes1),
+        (&mut client.login_mes2, mes2),
+    ] {
+        if line != text {
+            line.clear();
+            line.push_str(text);
+        }
+    }
 }

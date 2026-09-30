@@ -1955,6 +1955,10 @@ fn capture_draw_copies_every_tick() {
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     c.set_draw(true);
+    // In-game full-rate capture; the title's own cadence is pinned by
+    // `captured_title_paints_only_on_flame_deadline`.
+    c.ingame = true;
+    c.scene_state = 2;
     Host::client_frame(
         &mut c,
         &mut slot,
@@ -1974,6 +1978,96 @@ fn capture_draw_copies_every_tick() {
         None,
     );
     assert_eq!(buf.generation(), 2);
+}
+
+fn title_button_click(tx: &std::sync::mpsc::Sender<InputEv>) {
+    tx.send(InputEv::Down {
+        button: 1,
+        x: client::client::APPLET_W / 2,
+        y: client::client::APPLET_H / 2 + 40,
+    })
+    .unwrap();
+    tx.send(InputEv::Up).unwrap();
+}
+
+#[test]
+fn title_wait_animates_a_captured_title_and_drops_its_log_in() {
+    force_cpu_backend();
+    let mut c = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    c.set_draw(true);
+    let buf = FrameBuf::new();
+    let inp = SlotInput::new();
+    inp.set_enabled(true);
+    let (tx, rx) = std::sync::mpsc::channel();
+    inp.connect_rx(rx);
+    let mut wait = TitleWait::new(Some(Arc::clone(&inp)), Some(Arc::clone(&buf)));
+
+    let next = wait.frame(&mut c, "alice", |_| {});
+    assert_eq!(buf.generation(), 1, "the waiting title paints at once");
+    assert!(next <= FRAME_MS, "a captured title keeps the 20 ms loop");
+    let cycle = c.loop_cycle;
+    wait.frame(&mut c, "alice", |_| {});
+    assert_eq!(c.loop_cycle, cycle, "no frame runs before it is due");
+
+    title_button_click(&tx);
+    thread::sleep(TITLE_FLAME_FRAME_TIME);
+    let mut applied = false;
+    wait.frame(&mut c, "alice", |c| applied = c.take_title_login_request());
+    assert!(applied, "input reaches the waiting title as it arrives");
+    assert_eq!(buf.generation(), 2, "flames advance during the wait");
+
+    title_button_click(&tx);
+    thread::sleep(FRAME_MS);
+    wait.frame(&mut c, "alice", |_| {});
+    assert!(
+        !c.take_title_login_request(),
+        "a Log In made while the login is pending asks for nothing new"
+    );
+}
+
+#[test]
+fn title_wait_keeps_draw_off_and_watch_titles_on_their_parks() {
+    force_cpu_backend();
+    let mut c = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let buf = FrameBuf::new();
+    let mut wait = TitleWait::new(Some(SlotInput::new()), Some(Arc::clone(&buf)));
+
+    let next = wait.frame(&mut c, "alice", |_| {});
+    assert!(
+        next > IDLE_PARK_MS / 2 && next <= IDLE_PARK_MS,
+        "a draw-off wait frames on the idle park"
+    );
+    assert!(
+        wait.slot.renderer.is_none(),
+        "a draw-off wait builds no renderer"
+    );
+    assert_eq!(buf.generation(), 0);
+
+    thread::sleep(next);
+    wait.frame(&mut c, "alice", |c| c.set_draw(true));
+    assert_eq!(
+        buf.generation(),
+        1,
+        "a draw toggle made on the parked frame paints that frame"
+    );
+    let next = wait.frame(&mut c, "alice", |_| {});
+    assert_eq!(buf.generation(), 1);
+    assert!(
+        next > IDLE_PARK_MS && next <= WATCH_PARK_MS,
+        "a visible watch-only title waits on the 1 s bound"
+    );
 }
 
 /// Observe mirror: the shared handle the slot thread's observe hook
