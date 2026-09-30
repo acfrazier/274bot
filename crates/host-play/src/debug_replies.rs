@@ -144,6 +144,10 @@ impl DebugReplies {
         }
         commands
     }
+    #[cfg(test)]
+    pub(crate) fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
 }
 
 fn modal_fingerprint(snapshot: &GameSnapshot) -> u64 {
@@ -300,20 +304,5 @@ mod tests {
 
         assert!(replies.pending.is_empty());
         assert!(replies.sequence.is_none());
-    }
-
-    #[test]
-    fn session_reset_starts_with_no_pending_commands() {
-        let snapshot = synthetic_snapshot(true);
-        let mut replies = DebugReplies::default();
-        replies.sent_at("alice", "getcoord".into(), &snapshot, Instant::now());
-        assert!(!replies.pending.is_empty());
-
-        replies = DebugReplies::default();
-
-        assert!(replies.pending.is_empty());
-        assert!(replies.sequence.is_none());
-        assert_eq!(replies.iface_generation, 0);
-        assert_eq!(replies.modal, 0);
     }
 }

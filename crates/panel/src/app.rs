@@ -2004,11 +2004,19 @@ fn debug_section(ui: &Ui, session: &mut Session) {
             }
             "maxme" => {
                 if ui.button_with_size(caption, [w, 0.0]) {
-                    for cmd in debug_maxme_cheats() {
-                        session.cheat_focused(cmd);
-                    }
+                    session.debug_panel_open = true;
+                    crate::debug_panel::request_destructive_send(
+                        ui,
+                        session,
+                        "maxme".into(),
+                        debug_maxme_cheats()
+                            .iter()
+                            .map(|cmd| (*cmd).to_string())
+                            .collect(),
+                        "maxme (19× setstat 99)".into(),
+                    );
                 }
-                ui.set_item_tooltip("19× setstat 99");
+                ui.set_item_tooltip("19× setstat 99 — confirmation is required");
             }
             "Teles" if ui.button_with_size(caption, [w, 0.0]) => {
                 ui.open_popup("##debug-teles");

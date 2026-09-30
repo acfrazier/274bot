@@ -182,14 +182,51 @@ const CONTENT_EFFECT_WORDS: Record<string, true> = {
     maxme: true,
 };
 
-function withoutSourceComments(text: string) {
-    return text.replace(/\/\/.*$/gm, '');
+function withoutSourceCommentsAndStrings(text: string) {
+    let quote: '"' | "'" | null = null;
+    let escaped = false;
+    let lineComment = false;
+    let clean = '';
+    for (let index = 0; index < text.length; index += 1) {
+        const char = text[index];
+        if (lineComment) {
+            if (char === '\n') {
+                lineComment = false;
+                clean += '\n';
+            } else {
+                clean += ' ';
+            }
+        } else if (quote !== null) {
+            if (escaped) {
+                escaped = false;
+                clean += char === '\n' ? '\n' : ' ';
+            } else if (char === '\\') {
+                escaped = true;
+                clean += ' ';
+            } else if (char === quote) {
+                quote = null;
+                clean += ' ';
+            } else {
+                clean += char === '\n' ? '\n' : ' ';
+            }
+        } else if (char === '/' && text[index + 1] === '/') {
+            lineComment = true;
+            clean += '  ';
+            index += 1;
+        } else if (char === '"' || char === "'") {
+            quote = char;
+            clean += ' ';
+        } else {
+            clean += char;
+        }
+    }
+    return clean;
 }
 
 function sourceFallbackCategory(relative: string, alias: string, body: string) {
     const lower = relative.toLowerCase();
     const lowerAlias = alias.toLowerCase();
-    const effectBody = withoutSourceComments(body);
+    const effectBody = withoutSourceCommentsAndStrings(body);
     if (lowerAlias.startsWith('give') || /\b(?:inv|obj)_(?:add|clear|del|set)\b/i.test(effectBody)) return 'Item';
     if (lower.includes('/quests/') || lower.includes('quest')) return 'Quest';
     if (lower.includes('teles') || lower.includes('teleport')) return 'Teleport';
@@ -209,7 +246,7 @@ const MENU_CALL = /\bp_choice\d+(?:_header)?\s*\(/i;
 function followedSourceBody(body: string, blocks: ReadonlyMap<string, SourceBlock>) {
     const followed = new Set<string>();
     const collect = (fragment: string, root: boolean): string => {
-        const clean = withoutSourceComments(fragment);
+        const clean = withoutSourceCommentsAndStrings(fragment);
         const menu = root ? null : MENU_CALL.exec(clean);
         const visible = menu ? clean.slice(0, menu.index + menu[0].length) : clean;
         const parts = [visible];
@@ -229,7 +266,8 @@ function hasContentEffect(alias: string, body: string) {
     const aliasWords = alias.toLowerCase().split('_');
     if (aliasWords.some((word) => CONTENT_EFFECT_WORDS[word])) return true;
     if (/^(?:reset|complete)quests$/i.test(alias)) return true;
-    return /\b(?:inv|stat)_(?:add|clear|del|set|advance|sub|boost|drain|heal)\b|\b(?:queue|send_quest_progress|clear_pk_skull|damage_self|healenergy)\s*(?:\(|\b)|%[a-z][a-z0-9_]*\s*=|\b(?:give|drop|reset|complete|kill|damage|poison|maxme)(?:_|\b)/i.test(body);
+    const effectBody = withoutSourceCommentsAndStrings(body);
+    return /\b(?:inv|stat)_(?:add|clear|del|set|advance|sub|boost|drain|heal)\b|\b(?:queue|send_quest_progress|clear_pk_skull|damage_self|healenergy)\s*(?:\(|\b)|%[a-z][a-z0-9_]*\s*=|\b(?:give|drop|reset|complete|kill|damage|poison|maxme)(?:_|\b)/i.test(effectBody);
 }
 
 const HEADER_PATTERN = /^\s*\[([a-z][a-z0-9_]*)\s*,\s*([^\],\s]+)\]/i;

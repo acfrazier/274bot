@@ -50,6 +50,17 @@ assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_maxme.rs2').find((ro
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_other.rs2').find((row) => row.name === '~addxp')?.destructive, true);
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_teles.rs2').find((row) => row.name === '~east')?.destructive, false);
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_serverstats.rs2').find((row) => row.name === '~lag')?.destructive, false);
+assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_help.rs2').find((row) => row.name === '~help')?.destructive, false);
+const stringOnlyEffect = parseDebugprocSource(
+    '[debugproc,help]\nmes("Reset your progress with give coins");',
+    'scripts/string-only.rs2',
+);
+assert.equal(stringOnlyEffect[0].destructive, false);
+const codeEffectAfterQuotedText = parseDebugprocSource(
+    '[debugproc,mutate]\n// operator\'s note\nmes("http://example.invalid/reset");\ninv_add(inv, coins, 1);',
+    'scripts/comment-and-string.rs2',
+);
+assert.equal(codeEffectAfterQuotedText[0].destructive, true);
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_treasuretrails.rs2').find((row) => row.name === '~giveclues')?.category, 'Item');
 const bounded = parseDebugprocSource(
     '[debugproc,inspect]\nmes("read only");\n[label,unrelated]\ninv_add(inv, coins, 1);\n[debugproc,next]\nmes("next");',

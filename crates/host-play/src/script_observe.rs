@@ -1421,11 +1421,17 @@ pub(crate) fn script_observe_cached_with_channels(
         let mut all = cheats.lock().unwrap();
         all.get_mut(name).map(std::mem::take).unwrap_or_default()
     };
-    for cmd in cmds.into_iter().filter(|_| up) {
+    for queued in cmds.into_iter().filter(|_| up) {
+        let (cmd, observe_replies) = match queued.strip_prefix(crate::Play::INTERNAL_CHEAT_PREFIX) {
+            Some(cmd) => (cmd.to_string(), false),
+            None => (queued, true),
+        };
         if api::interact::cheat(driver, &cmd) == client::CheatSend::Sent {
             wrote = true;
-            if let (Some(replies), Some(snapshot)) = (debug_replies.as_deref_mut(), snapshot) {
-                replies.sent(name, cmd, snapshot);
+            if observe_replies {
+                if let (Some(replies), Some(snapshot)) = (debug_replies.as_deref_mut(), snapshot) {
+                    replies.sent(name, cmd, snapshot);
+                }
             }
         } else {
             api::host_log!(
