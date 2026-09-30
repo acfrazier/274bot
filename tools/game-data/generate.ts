@@ -8,7 +8,7 @@ import generatedInputPins from './generated-inputs.json';
 import { sha256, sourceFile, parseRows, parsePack, integer, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
 import { extractGatheringFamily, miningHazards } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
-import { extractQuestStartFacts } from './extractors/quest-starts.ts';
+import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractLocNamesFacts } from './extractors/loc-names.ts';
 import { extractNpcPlacementsFacts } from './extractors/npc-placements.ts';
@@ -2616,7 +2616,8 @@ async function generate(spec: Revision) {
     assertTrioGiverPins(trioGivers.facts, spec.revision);
     assertTrioGiverNpcJoins(trioGivers.facts, npcModule.default.configs);
     const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file));
-    const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file));
+    const contentInputPaths = [...new Set([...contentFiles, ...questStartContentFiles(spec.content)])];
+    const contentInputs = contentInputPaths.map((file) => sourceFile(spec.content, file));
     const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
     const rs2b0tRoot = envPath('RS2B0T', path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0'));
     assertRs2b0tPinned(rs2b0tRoot);
