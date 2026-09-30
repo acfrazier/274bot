@@ -65,6 +65,7 @@ use host_play::map_cache::MapDemand;
 
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
+use crate::overlay::ConfirmKind;
 use crate::script_shape::{
     categories_present, resolve_category_order, rs2b0t_root_has_index, BrowseCard,
 };
@@ -1714,6 +1715,27 @@ impl TuiSession {
         self.apply_script_notice(app);
     }
 
+    /// Freeze the focused bot's settings for the selected script against
+    /// the marked bots (the same core command as the panel's Fleet window)
+    /// and ask to confirm the frozen scope; nothing is written before that.
+    fn prepare_apply_settings_marked(&mut self, app: &mut TuiApp) {
+        let (Some(source), Some(card)) = (app.focused_name(), app.script_sel.clone()) else {
+            app.error = Some("Apply to marked: focus a bot and select a script".into());
+            return;
+        };
+        match frontend_core::prepare_apply_settings_marked(
+            &app.table.selection,
+            &mut self.core,
+            &mut self.scripts,
+            &source,
+            &card,
+        ) {
+            Ok(scope) => app.confirm(ConfirmKind::ApplyMarked(scope.prompt().to_string())),
+            Err(error) => app.error = Some(error),
+        }
+        self.apply_script_notice(app);
+    }
+
     /// Log in every marked bot, loading the ones not loaded yet.
     fn login_marked(&mut self, app: &mut TuiApp) {
         let (core, mut surface) = self.core_and_surface();
@@ -2927,6 +2949,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptStopAll => session.script_stop_all(app),
         AppAction::ScriptAssignMarked => session.script_assign_marked(app),
         AppAction::ScriptRestartMarked => session.script_restart_marked(app),
+        AppAction::ScriptApplyMarkedPrepare => session.prepare_apply_settings_marked(app),
         AppAction::LoginMarked => session.login_marked(app),
         AppAction::LogoutMarked => session.logout_marked(app),
         AppAction::ScriptReload => session.script_reload(app),

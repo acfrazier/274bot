@@ -3268,3 +3268,139 @@ fn tui_start_all_paces_admission_through_the_shared_coordinator() {
         session.core.play().unwrap().script_stop(name);
     }
 }
+
+fn screen_text(app: &mut TuiApp, w: u16, h: u16) -> String {
+    let buffer = screen(app, w, h);
+    let area = buffer.area;
+    (area.top()..area.bottom())
+        .map(|y| {
+            (area.left()..area.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The command palette's *Apply focused bot's settings to marked* copies the
+/// focused bot's parameters to the marked same-card bots only: the frozen
+/// scope is confirmed first (Esc drops it), an unmarked same-card bot keeps
+/// its own, and the report names the marked bot that could not take it.
+#[test]
+fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
+    let iso = IsolatedEnv::enter("tui-apply-marked");
+    let (mut session, mut app) =
+        tui_with_profiles(&iso, &["alice", "bob", "carol", "dave", "erin"]);
+    let thiever = iso.dir.join("thiever.ts");
+    std::fs::write(&thiever, THIEVER_TS).unwrap();
+    let card = session.scripts.js.load(&thiever).unwrap();
+    let looping = iso.dir.join("looping.ts");
+    std::fs::write(&looping, LOOPING_TS).unwrap();
+    let other = session.scripts.js.load(&looping).unwrap();
+    for name in ["alice", "bob", "carol", "dave"] {
+        assign(&mut session, name, &card);
+    }
+    assign(&mut session, "erin", &other);
+    session
+        .scripts
+        .set_profile_setting(
+            &mut session.core,
+            "alice",
+            card.source,
+            &card.name,
+            &card.path,
+            "target",
+            serde_json::json!("Guard"),
+        )
+        .unwrap();
+    session.core.flush_writes();
+    session.pump(&mut app);
+
+    focus_member(&mut session, &mut app, "alice");
+    app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let command = crate::commands::Command::ScriptApplyMarked;
+    assert_eq!(command.availability(&app), Err("mark fleet rows first"));
+    // bob and carol take it; erin is marked but on another card; dave is not
+    // marked.
+    for name in ["bob", "carol", "erin"] {
+        let id = session.core.profile_identity(name).unwrap();
+        app.table.selection.set(id, true);
+    }
+    assert_eq!(command.availability(&app), Ok(()));
+
+    // The palette lists the command over the marked scope, at both sizes.
+    for (w, h) in SIZES {
+        app.modal = None;
+        let open = app.run_command(crate::commands::Command::Palette);
+        dispatch(&mut session, &mut app, open);
+        for c in "apply focused".chars() {
+            app.on_key(settings_key(crossterm::event::KeyCode::Char(c)));
+        }
+        let shown = screen_text(&mut app, w, h);
+        assert!(
+            shown.contains("Apply focused bot's settings to marked"),
+            "{w}x{h}: {shown}"
+        );
+    }
+
+    // Running it freezes the scope and asks first; Esc drops it unwritten.
+    app.modal = None;
+    let action = app.run_command(command);
+    dispatch(&mut session, &mut app, action);
+    let prompt = session.scripts.prepared_settings_sync().unwrap().prompt();
+    assert!(
+        prompt.contains("to 2 marked same-card bot(s)")
+            && prompt.contains("erin (assigned another card)")
+            && prompt.contains("1 unmarked bot(s) left unchanged"),
+        "{prompt}"
+    );
+    let shown = screen_text(&mut app, 80, 24);
+    assert!(
+        shown.contains("marked same-card") && shown.contains("Apply y"),
+        "{shown}"
+    );
+    let cancel = app.on_key(settings_key(crossterm::event::KeyCode::Esc));
+    dispatch(&mut session, &mut app, cancel);
+    assert!(session.scripts.prepared_settings_sync().is_none());
+    session.core.flush_writes();
+    let key = card.identity_key();
+    let saved = |session: &TuiSession, name: &str| {
+        session
+            .core
+            .vault()
+            .unwrap()
+            .get(name)
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .cloned()
+    };
+    assert_eq!(saved(&session, "bob"), None, "cancel writes nothing");
+
+    // Confirming applies it to the marked same-card bots only.
+    let action = app.run_command(command);
+    dispatch(&mut session, &mut app, action);
+    let apply = app.on_key(settings_key(crossterm::event::KeyCode::Char('y')));
+    dispatch(&mut session, &mut app, apply);
+    session.core.flush_writes();
+    session.pump(&mut app);
+    let want: serde_json::Map<String, serde_json::Value> =
+        std::iter::once(("target".to_string(), serde_json::json!("Guard"))).collect();
+    assert_eq!(saved(&session, "bob"), Some(want.clone()));
+    assert_eq!(saved(&session, "carol"), Some(want));
+    assert_eq!(
+        saved(&session, "dave"),
+        None,
+        "an unmarked bot is unchanged"
+    );
+    assert_eq!(saved(&session, "erin"), None, "another card is unchanged");
+    let report = session.scripts.last_settings_sync().unwrap().summary();
+    assert!(
+        report.starts_with("Apply to marked ")
+            && report.contains("saved 2")
+            && report.contains("erin: skipped, assigned another card")
+            && report.contains("1 unmarked unchanged"),
+        "{report}"
+    );
+}

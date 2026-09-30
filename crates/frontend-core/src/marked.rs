@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::bulk::{BulkOutcome, BulkReport, BulkRow};
-use crate::scripts::Scripts;
+use crate::scripts::{Scripts, SyncScope};
 use crate::selection::{profile_rows, MarkedSelection};
 use crate::session::OperatorSession;
 use crate::surface::SlotSurface;
@@ -257,6 +257,66 @@ pub fn logout_marked<Io>(
         );
     }
     BulkReport::new(LABEL, DONE, rows, None)
+}
+
+/// Freeze *Apply focused bot's settings to marked* for `card`: the parameters
+/// `source` (the focused bot) holds for the card, and the marked same-card
+/// bots that would take them. Unmarked bots are never targets and are only
+/// counted; every marked row that cannot take the copy is named with its
+/// reason. Nothing is written until [`Scripts::apply_settings_sync`]; a scope
+/// with no marked target to copy to is refused instead of prepared.
+pub fn prepare_apply_settings_marked<'a, Io>(
+    selection: &MarkedSelection,
+    core: &mut OperatorSession<Io>,
+    scripts: &'a mut Scripts,
+    source: &str,
+    card: &script::ScriptSel,
+) -> Result<&'a SyncScope, String> {
+    const LABEL: &str = "Apply to marked";
+    scripts.cancel_settings_sync();
+    if selection.is_empty() {
+        return Err(format!("{LABEL}: mark fleet rows first"));
+    }
+    match card {
+        script::ScriptSel::Compiled(id) => {
+            scripts.prepare_compiled_settings_sync(core, source, *id, None)?;
+        }
+        script::ScriptSel::Loaded(card_source, lookup) => {
+            let (name, path) = scripts
+                .js
+                .get(*card_source, lookup)
+                .map(|card| (card.name.clone(), card.path.clone()))
+                .ok_or_else(|| format!("{LABEL}: unavailable: {lookup}"))?;
+            scripts.prepare_settings_sync(core, source, *card_source, &name, &path);
+        }
+    }
+    let Resolved { names, gone } = resolve(selection, core);
+    scripts.restrict_prepared_settings_sync(&names, gone);
+    let refusal = scripts.prepared_settings_sync().and_then(|scope| {
+        scope.targets.is_empty().then(|| {
+            let why = if scope.skipped.is_empty() {
+                "the only marked bot is the source".to_string()
+            } else {
+                scope
+                    .skipped
+                    .iter()
+                    .map(|(name, why)| format!("{name}: {why}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            format!(
+                "{LABEL}: no marked bot on {} to copy {source}'s settings to ({why})",
+                scope.card_name
+            )
+        })
+    });
+    if let Some(refusal) = refusal {
+        scripts.cancel_settings_sync();
+        return Err(refusal);
+    }
+    scripts
+        .prepared_settings_sync()
+        .ok_or_else(|| format!("{LABEL}: nothing prepared"))
 }
 
 #[cfg(test)]

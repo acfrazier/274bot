@@ -42,8 +42,8 @@ pub use map_bake::{
     MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
 pub use marked::{
-    assign_and_restart_marked, assign_marked, login_marked, logout_marked, restart_scope,
-    RestartScope,
+    assign_and_restart_marked, assign_marked, login_marked, logout_marked,
+    prepare_apply_settings_marked, restart_scope, RestartScope,
 };
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use profile_form::{FormNotice, ProfileFormSave, SavedProfile, NOTHING_SAVED};
