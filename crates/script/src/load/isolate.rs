@@ -456,11 +456,8 @@ impl LoadIsolate {
         let thread_counters = counters.clone();
         let work_generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let thread_generation = work_generation.clone();
-        let compat_journal = matches!(
-            shape,
-            LoadShape::CompatDefineBot | LoadShape::CompatClass
-        )
-        .then(|| std::sync::Arc::new(crate::quest_journal::CompatJournalLease::default()));
+        let compat_journal = matches!(shape, LoadShape::CompatDefineBot | LoadShape::CompatClass)
+            .then(|| std::sync::Arc::new(crate::quest_journal::CompatJournalLease::default()));
         let thread_compat_journal = compat_journal.clone();
         let teardown = std::sync::Arc::new(Mutex::new(TeardownState::new()));
         let thread_teardown = teardown.clone();

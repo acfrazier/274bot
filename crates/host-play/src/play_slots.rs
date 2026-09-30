@@ -1344,7 +1344,7 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 || projected_npc_boxes(c),
                             );
-                            script_observe_cached_with_channels(
+                            let observation = script_observe_cached_with_channels(
                                 c,
                                 name,
                                 up,
@@ -1372,6 +1372,7 @@ fn spawn_slot_thread(
                                 Some(run_policy),
                                 Some(&mut debug_replies),
                             );
+                            c.set_journal_paint_hidden(c.ingame && observation.journal_paint_hidden);
                             // TUI chat / WASD sends: run the queued wire
                             // commands through `Interactions` on this
                             // slot's own Client, so Continue/Answer/Walk

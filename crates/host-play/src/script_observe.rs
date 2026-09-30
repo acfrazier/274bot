@@ -277,6 +277,7 @@ pub(crate) fn script_observe_cached(
         run_policy,
         None,
     )
+    .wrote
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -308,6 +309,14 @@ pub(crate) fn drain_observed_host_interacts(
     )
 }
 
+/// Paint ownership leaves the same locked observation that admits and drains
+/// game work. The client flag is applied before this pump can rasterize.
+#[derive(Default)]
+pub(crate) struct ScriptObservation {
+    pub wrote: bool,
+    pub journal_paint_hidden: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn script_observe_cached_with_channels(
     driver: &mut dyn Driver,
@@ -336,11 +345,13 @@ pub(crate) fn script_observe_cached_with_channels(
     channel_world: super::script_channels::BrokerWorld,
     run_policy: Option<&mut ScriptRunPolicy>,
     mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
-) -> bool {
+) -> ScriptObservation {
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
     }
     let mut wrote = false;
+    let mut journal_wall_now = None;
+    let mut journal_paint_hidden = false;
     let mut interact = Vec::new();
     let mut pending_withdraw_x_active = false;
     let mut pending_bank_op_active = false;
@@ -840,6 +851,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 &[]
             };
             let now = Instant::now();
+            journal_wall_now = Some(now);
             if frozen {
                 if slot.watchdog().recovering_anchor().is_some() {
                     if hold {
@@ -988,6 +1000,7 @@ pub(crate) fn script_observe_cached_with_channels(
         )
         .then_some(slot.runtime_generation());
         has_native_actions = slot.has_native_actions();
+        journal_paint_hidden = journal_wall_now.is_some_and(|now| slot.journal_paint_hidden(now));
     }
     if let Some(run_policy) = run_policy {
         run_policy.sync_runtime(policy_runtime_generation);
@@ -1037,7 +1050,10 @@ pub(crate) fn script_observe_cached_with_channels(
                     .as_ref()
                     .is_some_and(|observed| Arc::ptr_eq(observed, &dispatch_slot));
                 let Ok(mut slot) = dispatch_slot.lock() else {
-                    return wrote;
+                    return ScriptObservation {
+                        wrote,
+                        journal_paint_hidden,
+                    };
                 };
                 if same_lifetime
                     && slot.state() == script::RunState::Running
@@ -1383,7 +1399,10 @@ pub(crate) fn script_observe_cached_with_channels(
                         .as_ref()
                         .is_some_and(|observed| Arc::ptr_eq(observed, &slot));
                     let Ok(mut slot) = slot.lock() else {
-                        return wrote;
+                        return ScriptObservation {
+                            wrote,
+                            journal_paint_hidden,
+                        };
                     };
                     if same_lifetime && Some(slot.work_epoch()) == slot_work_epoch {
                         for _ in 0..rejected_x {
@@ -1424,7 +1443,10 @@ pub(crate) fn script_observe_cached_with_channels(
                     .as_ref()
                     .is_some_and(|observed| Arc::ptr_eq(observed, &slot));
                 let Ok(mut slot) = slot.lock() else {
-                    return wrote;
+                    return ScriptObservation {
+                        wrote,
+                        journal_paint_hidden,
+                    };
                 };
                 if same_lifetime && Some(slot.work_epoch()) == slot_work_epoch {
                     for _ in 0..rejected_x {
@@ -1465,7 +1487,10 @@ pub(crate) fn script_observe_cached_with_channels(
             );
         }
     }
-    wrote
+    ScriptObservation {
+        wrote,
+        journal_paint_hidden,
+    }
 }
 
 /// Hand a native walk's terminal to its owner's ledger. Two sources: a

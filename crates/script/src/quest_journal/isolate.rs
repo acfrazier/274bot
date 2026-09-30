@@ -86,13 +86,19 @@ impl CompatJournalLease {
 
     pub(crate) fn acquire(&self, token: u64, generation: u64, since: std::time::Instant) {
         if self.generation() != generation
-            || self.host_generation.load(std::sync::atomic::Ordering::Acquire) != generation
+            || self
+                .host_generation
+                .load(std::sync::atomic::Ordering::Acquire)
+                != generation
         {
             return;
         }
         let mut state = self.state.lock();
         if self.generation() != generation
-            || self.host_generation.load(std::sync::atomic::Ordering::Acquire) != generation
+            || self
+                .host_generation
+                .load(std::sync::atomic::Ordering::Acquire)
+                != generation
         {
             return;
         }
@@ -106,9 +112,10 @@ impl CompatJournalLease {
 
     pub(crate) fn clear(&self, token: u64, generation: u64) {
         let mut state = self.state.lock();
-        if state.as_ref().is_some_and(|active| {
-            active.key == (CompatJournalKey { token, generation })
-        }) {
+        if state
+            .as_ref()
+            .is_some_and(|active| active.key == (CompatJournalKey { token, generation }))
+        {
             *state = None;
             self.active
                 .store(false, std::sync::atomic::Ordering::Release);
@@ -133,7 +140,10 @@ impl CompatJournalLease {
         };
         if active.key.generation != generation
             || self.generation() != generation
-            || self.host_generation.load(std::sync::atomic::Ordering::Acquire) != generation
+            || self
+                .host_generation
+                .load(std::sync::atomic::Ordering::Acquire)
+                != generation
             || now.saturating_duration_since(active.since) >= COMPAT_PAINT_QUIET_TIMEOUT
         {
             *state = None;
@@ -227,7 +237,6 @@ impl JournalRuntime {
             .as_ref()
             .is_none_or(|lease| lease.live(self.generation, std::time::Instant::now()))
     }
-
 
     fn frozen(&self) -> bool {
         self.clock.frozen()
@@ -986,14 +995,8 @@ mod tests {
         let wall_expired = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
         let wall_started = std::time::Instant::now();
         assert!(lease.live(7, wall_started));
-        assert!(!lease.live(
-            7,
-            wall_started + std::time::Duration::from_secs(10),
-        ));
-        assert_eq!(
-            call("next", wall_expired, 7)["reason"],
-            "modal-timeout"
-        );
+        assert!(!lease.live(7, wall_started + std::time::Duration::from_secs(10),));
+        assert_eq!(call("next", wall_expired, 7)["reason"], "modal-timeout");
 
         let stopped = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
         assert!(lease.live(7, std::time::Instant::now()));
