@@ -158,6 +158,12 @@ revision/cache-identity check, reads + decodes the staged pack once
 (`NavLoadCounters`), and loads the bound reach sidecar with cheap geometry/binding
 checks and zero `bake_reach` calls, while `--nav-pack` / `NAV_PACK` / `--nav-flags` overrides
 keep the external path (including its one-time reach flood) and a differing cache identity falls back to it.
+Runtime pack decoding uses a bounded 64 KiB input buffer and fills the final
+collision storage directly. Bound reach and canlight sidecars decode into their
+final shared `Arc<[u64]>` bitplanes in fixed-size chunks, without full-file staging
+buffers or intermediate decoded-vector copies. External pack SHA-256 is computed
+over the exact stream, including accepted trailing bytes, before publishing the
+world; the nav formats and collision/transport semantics are unchanged.
 
 Real-artifact check (needs a default application build in this target profile
 plus the canonical cache):

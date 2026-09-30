@@ -1,6 +1,61 @@
 use super::*;
 use api::host_log;
 use api::hostlog::{Category, Level};
+use sha2::{Digest, Sha256};
+use std::io::{BufRead, BufReader, Read};
+
+// Hash the very bytes the decoder reads, without reopening the resource or
+// retaining a full-file staging allocation. Bundled identities need no hash.
+struct NavReader<'a> {
+    file: std::fs::File,
+    digest: Option<Sha256>,
+    completed: u64,
+    total: u64,
+    observer: &'a ProfileProgressObserver,
+}
+
+impl Read for NavReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.file.read(buffer)?;
+        if let Some(digest) = &mut self.digest {
+            digest.update(&buffer[..count]);
+            self.completed += count as u64;
+            if self.completed < self.total {
+                self.observer.report(ProfileProgress::bytes(
+                    ProfileProgressStage::CheckingNavigationFiles,
+                    self.completed,
+                    self.total,
+                ));
+            }
+        }
+        Ok(count)
+    }
+}
+
+fn open_nav_file(path: &Path) -> std::io::Result<(std::fs::File, usize)> {
+    let file = std::fs::File::open(path)?;
+    let length = usize::try_from(file.metadata()?.len())
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    Ok((file, length))
+}
+
+fn finish_nav_hash(mut reader: BufReader<NavReader<'_>>) -> std::io::Result<String> {
+    // Byte decoders historically accept trailing bytes. They still contribute
+    // to the external identity, including bytes already buffered by BufReader.
+    std::io::copy(&mut reader, &mut std::io::sink())?;
+    let mut reader = reader.into_inner();
+    let hash = format!(
+        "{:x}",
+        reader.digest.take().expect("external nav hash").finalize()
+    );
+    reader.observer.report(ProfileProgress::bytes(
+        ProfileProgressStage::CheckingNavigationFiles,
+        reader.completed,
+        reader.completed,
+    ));
+    Ok(hash)
+}
+
 const JAGS: [&str; 8] = CacheManifest::ARCHIVES;
 struct LoadedNav {
     availability: NavAvailability,
@@ -695,12 +750,25 @@ impl ProfileSelection {
                 counters,
             });
         }
-        let bytes = std::fs::read(pack_path)
+        let (file, length) = open_nav_file(pack_path)
             .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
+        let mut reader = BufReader::with_capacity(
+            64 * 1024,
+            NavReader {
+                file,
+                digest: (!origin.is_bundled()).then(Sha256::new),
+                completed: 0,
+                total: length as u64,
+                observer,
+            },
+        );
         counters.pack_reads = 1;
+        let prefix = reader
+            .fill_buf()
+            .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
         if !origin.is_bundled()
-            && bytes.starts_with(b"274V")
-            && bytes
+            && prefix.starts_with(b"274V")
+            && prefix
                 .get(4)
                 .is_some_and(|version| *version < nav::pack::VERSION)
         {
@@ -718,6 +786,8 @@ impl ProfileSelection {
                 counters,
             });
         }
+        let world_result =
+            decode_nav_world(&mut reader, length, pack_path, observer, &mut counters);
         let identity = match origin {
             NavOrigin::Bundled { identity, .. } => NavManifest {
                 revision: identity.revision,
@@ -731,18 +801,13 @@ impl ProfileSelection {
                 source_sha256: identity.source_sha256.clone(),
             },
             NavOrigin::External { .. } => {
-                let nav_hash = hash_bytes_with_progress(&bytes, |completed, total| {
-                    observer.report(ProfileProgress::bytes(
-                        ProfileProgressStage::CheckingNavigationFiles,
-                        completed,
-                        total,
-                    ));
-                });
+                let nav_hash = finish_nav_hash(reader)
+                    .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
                 counters.pack_hashes = 1;
                 let manifest_path = nav_manifest_path(pack_path);
                 if !manifest_path.exists() {
                     if self.revision() == ClientRevision::R274 && content_id.is_none() {
-                        let world = decode_nav_world(&bytes, pack_path, observer, &mut counters)?;
+                        let world = world_result?;
                         let identity = NavManifest {
                             revision,
                             cache_id: cache.identity(),
@@ -776,7 +841,7 @@ impl ProfileSelection {
                 manifest
             }
         };
-        let world = decode_nav_world(&bytes, pack_path, observer, &mut counters)?;
+        let world = world_result?;
         let reach = if origin.is_bundled() {
             if identity.reach_sha256.is_none() {
                 return Err("bundled navigation reach identity is missing".into());
@@ -833,10 +898,11 @@ fn load_bundled_reach(
             reach_path.display()
         ));
     }
-    let bytes = std::fs::read(&reach_path)
+    let (file, length) = open_nav_file(&reach_path)
         .map_err(|e| format!("bundled navigation {}: {e}", reach_path.display()))?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
     counters.reach_reads = 1;
-    let side = decode_reach_sidecar(&bytes)
+    let side = nav::pack::read_reach_sidecar(&mut reader, length)
         .map_err(|e| format!("bundled navigation {}: {e}", reach_path.display()))?;
     if sha256_hex(&side.binding) != nav_sha256 {
         return Err(format!(
@@ -857,7 +923,7 @@ fn load_bundled_reach(
             reach_path.display()
         ));
     }
-    Ok(Arc::from(side.bits))
+    Ok(side.bits)
 }
 
 fn load_bundled_canlight(
@@ -874,10 +940,11 @@ fn load_bundled_canlight(
             canlight_path.display()
         ));
     }
-    let bytes = std::fs::read(&canlight_path)
+    let (file, length) = open_nav_file(&canlight_path)
         .map_err(|e| format!("bundled navigation {}: {e}", canlight_path.display()))?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
     counters.canlight_reads = 1;
-    let side = decode_canlight_sidecar(&bytes).map_err(|e| match e {
+    let side = nav::pack::read_canlight_sidecar(&mut reader, length).map_err(|e| match e {
         nav::pack::PackError::BadMagic => {
             format!("bundled navigation {}: bad magic", canlight_path.display())
         }
@@ -911,11 +978,12 @@ fn load_bundled_canlight(
             canlight_path.display()
         ));
     }
-    Ok(Arc::from(side.bits))
+    Ok(side.bits)
 }
 
 fn decode_nav_world(
-    bytes: &[u8],
+    reader: &mut impl BufRead,
+    length: usize,
     pack_path: &Path,
     observer: &ProfileProgressObserver,
     counters: &mut NavLoadCounters,
@@ -925,7 +993,7 @@ fn decode_nav_world(
         0,
         1,
     ));
-    let world = NavWorld::from_bytes(bytes)
+    let world = NavWorld::from_reader(reader, length)
         .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
     counters.pack_decodes = 1;
     observer.report(ProfileProgress::steps(
