@@ -1,6 +1,7 @@
 //! S1 step families and predicate plans.
 
 pub mod dialogue;
+pub mod progress_predicates;
 pub mod reach;
 
 use super::compile::{
@@ -145,6 +146,16 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             kind: "prayer_points_at_least",
             version: 1,
             compile: compile_prayer_points,
+        },
+        super::compile::PredicateHandler {
+            kind: "stage_in",
+            version: 1,
+            compile: progress_predicates::compile_stage_in,
+        },
+        super::compile::PredicateHandler {
+            kind: "flag",
+            version: 1,
+            compile: progress_predicates::compile_flag,
         },
     ]
 }
