@@ -83,6 +83,8 @@ pub(super) fn zanaris_door_edges(
         bump(skipped, SKIP_ZANARIS_ROUTE, ZANARIS_DECLARED_ROUTES);
         return;
     };
+    // The staff branch runs only on a members world (`map_members = ^true`).
+    let members_req = normalized_body(&body).contains("map_members=^true");
     let edge_start = graph.edges.len();
     for loc in placements {
         if loc.level != 0 || loc.shape != 0 {
@@ -106,7 +108,7 @@ pub(super) fn zanaris_door_edges(
             quest_req: vec!["Lost City".to_string()],
             varp_req: vec![],
             worn_req: vec![staff_id],
-            members_req: true,
+            members_req,
             wildy_cap: None,
             quest_gates: None,
         });

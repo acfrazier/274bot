@@ -1503,3 +1503,24 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
     assert!(!arms.contains_key("bot3"));
 }
+
+/// Each failure keeps its own summary label: a nav-identity mismatch reads
+/// "stale", a membership refusal "members-only path", anything else "failed".
+#[test]
+fn group_walk_summary_labels_stale_and_members_only_separately() {
+    let outcome = |name: &str, error| WalkSlotOutcome {
+        name: name.to_string(),
+        kind: WalkSlotOutcomeKind::Failed(error),
+    };
+    let report = GroupWalkReport {
+        outcomes: vec![
+            outcome("bot1", ActionError::Blocked),
+            outcome("bot2", ActionError::Stale),
+            outcome("bot3", ActionError::MembersOnly),
+        ],
+    };
+    assert_eq!(
+        report.summary(),
+        "0 walking, 1 failed: bot1, 1 stale: bot2, 1 members-only path: bot3"
+    );
+}

@@ -254,6 +254,11 @@ pub(super) fn parse_jm2_npcs(text: &str, mx: i32, mz: i32) -> Vec<NpcPlacement> 
 
 /// Every `.loc` config text under `scripts`, recursively.
 pub(super) fn visit_loc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
+    visit_configs(dir, "loc", cb);
+}
+
+/// Every `.<ext>` config text under `dir`, recursively.
+pub(super) fn visit_configs(dir: &Path, ext: &str, cb: &mut impl FnMut(&str)) {
     let mut pending = vec![dir.to_path_buf()];
     while let Some(dir) = pending.pop() {
         let Ok(entries) = fs::read_dir(&dir) else {
@@ -263,7 +268,7 @@ pub(super) fn visit_loc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
             let path = ent.path();
             if path.is_dir() {
                 pending.push(path);
-            } else if path.extension().and_then(|s| s.to_str()) == Some("loc") {
+            } else if path.extension().and_then(|s| s.to_str()) == Some(ext) {
                 if let Ok(text) = fs::read_to_string(&path) {
                     cb(&text);
                 }

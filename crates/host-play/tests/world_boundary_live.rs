@@ -357,6 +357,7 @@ fn follow_to(
     scenario.settings.nav.engine_speed_ms = None;
     scenario.settings.deadline = Duration::from_secs(60);
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
+    runner.set_map_members(template.profile().map_members());
     runner.set_live_names(&[name.to_owned()]);
     runner.set_shot_sink(Box::new(|_, _| {}));
     let deadline = Instant::now() + Duration::from_secs(60);

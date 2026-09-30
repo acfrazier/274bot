@@ -48,6 +48,7 @@ mod index;
 mod levers;
 mod magic_guild;
 mod membergate;
+mod members_guard;
 mod npc_hops;
 mod observable;
 mod quest_doors;
@@ -81,6 +82,8 @@ pub(crate) use index::{loc_ids_by_name, loc_positions, npc_ids_by_name, npc_posi
 use levers::*;
 use magic_guild::*;
 use membergate::*;
+pub(crate) use members_guard::require_members_guards;
+use members_guard::{apply_members_guards, MembersGuards};
 use npc_hops::*;
 pub(crate) use observable::{assert_transmitted_varp_reqs, VarpGateAudit};
 use observable::{JournalLinks, ObservableGates};
@@ -171,9 +174,12 @@ pub struct TransportEdge {
     pub quest_req: Vec<String>,
     pub varp_req: Vec<(i32, i32)>,
     pub worn_req: Vec<i32>,
-    /// WORLD membership required (`MAP_MEMBERS`). Content derivers set this
-    /// for canonical members-gated scripts, including Zanaris and the
-    /// `membergatel`/`membergater` family. Packed as a `u8` on the v9 wire
+    /// WORLD membership required (`MAP_MEMBERS`). Set from the edge's source
+    /// handler (see `members_guard`): an F2P refusal at its top gates every
+    /// edge through it; gliders, Zanaris, stage doors and the spell table
+    /// read their own `map_members` shape. The bake refuses a graph with an
+    /// edge whose source reads `map_members` and packs `false`. Packed as a
+    /// `u8` on the v9 wire.
     pub members_req: bool,
     /// Content-derived max wilderness level this teleport may be used from
     /// (`~wilderness_level(coord) > cap` refuses). `None` = no wilderness cap.
@@ -340,7 +346,7 @@ fn derive_transports_with_audit(
         collision,
         &mut skipped,
     );
-    boat_edges(content_root, &mut graph, &gates, &mut audit);
+    boat_edges(&mut graph, &gates, &mut audit);
     cart_edges(&mut graph);
     essence_mine_edges(&mut graph);
     elkoy_edges(&mut graph);
@@ -377,6 +383,9 @@ fn derive_transports_with_audit(
         &mut audit,
     );
     teleport_edges(content_root, &mut graph, &mut skipped);
+    // After every producer: the members gate each edge's source handler
+    // declares, read once for every kind.
+    apply_members_guards(&MembersGuards::from_content(content_root), &mut graph);
 
     // The derivers visit hash sets and directory listings whose order varies
     // per run and per filesystem. A revision's pack must be a fixed point of
