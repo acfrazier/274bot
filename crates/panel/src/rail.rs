@@ -1,6 +1,7 @@
 //! Sidecar rail chrome: window geometry, the tile size, and the colour of
 //! each member's status dot (its [`Light`] comes from the shared fleet row).
 
+use dear_imgui_rs::Ui;
 use frontend_core::Light;
 
 /// Width of the MultiBox sidecar rail (rs2b0t's 264px strip).
@@ -44,8 +45,6 @@ pub fn rail_split_ratio(window_w: f32) -> f32 {
     (RAIL_W / window_w.max(1.0)).clamp(0.05, 0.85)
 }
 
-/// Status dot glyph (U+2059), colored by [`Light::rgb`].
-pub const STATUS_GLYPH: &str = "\u{2059}";
 /// Remove glyph (U+2717), drawn in `theme::ERROR` red.
 pub const REMOVE_GLYPH: &str = "\u{2717}";
 /// Fold the rail blit (squash the head). Operator may swap; see spec.
@@ -61,6 +60,37 @@ pub fn light_rgb(light: Light) -> [f32; 4] {
         Light::Yellow => crate::theme::ACCENT,
         Light::Green => crate::theme::GREEN,
     }
+}
+/// Draw five filled squares in the U+2059 pattern for a member's light.
+/// The marker consumes one text line and does not depend on font coverage.
+pub(crate) fn draw_status_dot(ui: &Ui, light: Light, width: f32) {
+    const DOT_CENTERS: [[f32; 2]; 5] = [
+        [0.28, 0.28],
+        [0.72, 0.28],
+        [0.50, 0.50],
+        [0.28, 0.72],
+        [0.72, 0.72],
+    ];
+
+    let line_h = ui.text_line_height();
+    let [x, y] = ui.cursor_screen_pos();
+    let half = line_h * 0.11;
+    let colour = light_rgb(light);
+    {
+        let draw_list = ui.get_window_draw_list();
+        for [cx, cy] in DOT_CENTERS {
+            let center = [x + width * cx, y + line_h * cy];
+            draw_list
+                .add_rect(
+                    [center[0] - half, center[1] - half],
+                    [center[0] + half, center[1] + half],
+                    colour,
+                )
+                .filled(true)
+                .build();
+        }
+    }
+    ui.dummy([width, line_h]);
 }
 
 /// Whether this rail/grid tile shows its blit. Sidecar + `only_selected` stays
@@ -84,9 +114,10 @@ pub fn rail_preview_open(
 #[cfg(test)]
 mod tests {
     use super::{
-        os_window_size, rail_preview_open, rail_split_ratio, BASE_WINDOW_H, BASE_WINDOW_W,
-        FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, STATUS_GLYPH, TILE_H, TILE_W, UNFOLD_GLYPH,
+        os_window_size, rail_preview_open, rail_split_ratio, BASE_WINDOW_H, BASE_WINDOW_W, RAIL_W,
+        TILE_H, TILE_W,
     };
+    use frontend_core::Light;
 
     #[test]
     fn rail_constants_match_the_plan() {
@@ -189,10 +220,84 @@ mod tests {
     }
 
     #[test]
-    fn cap_glyphs_are_the_spec_code_points() {
-        assert_eq!(STATUS_GLYPH, "\u{2059}");
-        assert_eq!(REMOVE_GLYPH, "\u{2717}");
-        assert_eq!(FOLD_GLYPH, "\u{2582}");
-        assert_eq!(UNFOLD_GLYPH, "\u{2585}");
+    fn status_dot_draws_five_light_colored_squares_inside_one_line() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let _ = ctx.font_atlas_mut().build();
+        ctx.io_mut().set_display_size([128.0, 96.0]);
+        ctx.io_mut().set_delta_time(1.0 / 60.0);
+
+        let light = Light::Yellow;
+        let width = 18.0;
+        let mut row = None;
+        {
+            let ui = ctx.frame();
+            ui.window("##status-dot-test")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([80.0, 48.0], dear_imgui_rs::Condition::Always)
+                .flags(
+                    dear_imgui_rs::WindowFlags::NO_TITLE_BAR
+                        | dear_imgui_rs::WindowFlags::NO_RESIZE
+                        | dear_imgui_rs::WindowFlags::NO_MOVE
+                        | dear_imgui_rs::WindowFlags::NO_SAVED_SETTINGS
+                        | dear_imgui_rs::WindowFlags::NO_BACKGROUND,
+                )
+                .build(|| {
+                    row = Some((ui.cursor_screen_pos(), ui.text_line_height()));
+                    super::draw_status_dot(ui, light, width);
+                });
+        }
+        let (origin, line_h) = row.expect("the status-dot test window was drawn");
+        let draw_data = ctx.render();
+        let vertices: Vec<_> = draw_data
+            .draw_lists()
+            .flat_map(|list| list.vtx_buffer().iter())
+            .collect();
+        let indices = draw_data
+            .draw_lists()
+            .map(|list| list.idx_buffer().len())
+            .sum::<usize>();
+        assert_eq!(vertices.len(), 5 * 4, "five rectangle quads are drawn");
+        assert_eq!(indices, 5 * 6, "five rectangles have six indices each");
+
+        let expected_colour = super::light_rgb(light);
+        for rectangle in vertices.as_chunks::<4>().0 {
+            assert!(
+                rectangle.iter().all(|vertex| {
+                    let actual = dear_imgui_rs::Color::from_imgui_u32(vertex.col).to_array();
+                    actual
+                        .into_iter()
+                        .zip(expected_colour)
+                        .all(|(actual, expected)| (actual - expected).abs() <= 1.0 / 255.0)
+                }),
+                "every square uses Light::rgb"
+            );
+            let min_y = rectangle
+                .iter()
+                .map(|vertex| vertex.pos[1])
+                .fold(f32::INFINITY, f32::min);
+            let max_y = rectangle
+                .iter()
+                .map(|vertex| vertex.pos[1])
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert!(
+                min_y >= origin[1] && max_y <= origin[1] + line_h,
+                "square y range {min_y}..{max_y} stays inside line {origin_y}..{}",
+                origin[1] + line_h,
+                origin_y = origin[1]
+            );
+            let min_x = rectangle
+                .iter()
+                .map(|vertex| vertex.pos[0])
+                .fold(f32::INFINITY, f32::min);
+            let max_x = rectangle
+                .iter()
+                .map(|vertex| vertex.pos[0])
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert!(
+                ((max_x - min_x) - (max_y - min_y)).abs() < 0.01,
+                "each marker rectangle is square"
+            );
+        }
     }
 }

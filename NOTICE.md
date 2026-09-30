@@ -26,6 +26,9 @@ Do **not** present this repo as “Lost City Client,” “LC,” “Fairy Ring,
 ## Embedded fonts
 
 Pass-2 native Canvas metrics/raster embed Liberation Sans Regular and Liberation Mono Regular 2.1.5 (`crates/script/fonts/`) under the SIL Open Font License 1.1. See that directory’s LICENSE and AUTHORS. Reserved Font Name: Liberation.
+Panel chrome embeds a subset of 3270 Nerd Font Condensed. Copyright 2022 The 3270font Authors; Copyright (c) 2011–2022 Ricardo Banffy; 1993–2011 Paul Mattes; 2004–2005 Don Russell; 2004 Dick Altenbern; 1990 Jeff Sparkes; and 1989 Georgia Tech Research Corporation. BSD-3-Clause.
+
+The embedded Nerd Fonts icon glyphs are Font Awesome icons. Copyright Fonticons, Inc.; CC BY 4.0, via Nerd Fonts.
 
 ## AI use (explicit)
 
