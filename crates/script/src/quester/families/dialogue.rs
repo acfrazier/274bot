@@ -1,12 +1,12 @@
 //! Native chat-dialogue driver extracted from the isolate `dialog` family.
-//! Constants and sequencing match `crates/script/src/dialog.rs`.
+//! Page sequencing matches the isolate driver; completion waits on game ticks.
 
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::shim::InteractReq;
 use std::sync::Arc;
 use std::task::Poll;
 
-pub const DIALOG_GAP_MS: u64 = 1_500;
+pub const DIALOG_GAP_TICKS: u64 = 4;
 pub const DIALOGUE_OPEN_MS: u64 = 8_000;
 pub const DRIVE_STEPS: u32 = 120;
 pub const PAGE_ACK_MS: u64 = 3_000;
@@ -112,7 +112,7 @@ impl NativeMachine for Dialogue {
                 if obs.ready {
                     self.phase = Phase::Drive;
                     self.drive(cx, &obs)
-                } else if now >= self.deadline_ms {
+                } else if obs.tick >= self.due_tick {
                     Poll::Ready(Ok(!obs.open))
                 } else {
                     Poll::Pending
@@ -156,7 +156,7 @@ impl Dialogue {
         }
         if !obs.ready {
             self.phase = Phase::WaitGap;
-            self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOG_GAP_MS;
+            self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
             return Poll::Pending;
         }
         if obs.r#continue {

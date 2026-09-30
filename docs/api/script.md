@@ -82,6 +82,23 @@ timeouts. An operator logout, Stop, or slot removal ends the session instead:
 the in-flight machine rows and task runtimes end (`aborted`, `reset`). Compiled
 scripts end their live step at either boundary.
 
+### Quester journal reads
+
+Native Quester dialogue completion requires four observed game ticks with
+chat closed, rather than an elapsed host-millisecond gap. A journal transaction
+that loses ownership or becomes transiently busy is retried only after both
+main and chat modals have been observed closed for three game ticks. Unknown
+modal observations or reopened modals restart this quiet interval.
+
+A logical progress read allows at most three journal transactions, each with
+at most one quest-row click; adopting an already-open matching page also
+consumes a transaction but does not click. Exhaustion parks with
+`journal read retry limit reached` and retains the transient failure reason.
+Successful reads and explicit Retry reset this budget. A chat modal at read
+start waits within the existing bounded read window; if it remains occupied,
+the parked status names the chat root and text. Modal ownership, quiet leases
+and Stop/Pause revocation still govern all captures and closes.
+
 ### Gatherer power gathering
 
 Gatherer supports Woodcutting and Mining with a usable carried or equipped

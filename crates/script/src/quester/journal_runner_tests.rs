@@ -378,8 +378,10 @@ fn transient_busy_during_read_retries_but_repeated_busy_is_bounded() {
     assert!(!script.parked, "first in-flight Busy must not park");
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
     snapshot.seed_main_modal(-1, vec![]);
-    drive(&mut script, &snapshot, &mut ledger, 3);
-    finish_read(&mut script, &mut snapshot, &mut ledger, 4, "seeded branch");
+    for tick in 3..=6 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+    }
+    finish_read(&mut script, &mut snapshot, &mut ledger, 7, "seeded branch");
     assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
     assert!(!script.parked);
 
@@ -411,9 +413,105 @@ fn ownership_lost_before_close_retries_without_closing_another_modal() {
     drive(&mut script, &snapshot, &mut ledger, 4);
     assert!(!script.parked);
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
-    drive(&mut script, &snapshot, &mut ledger, 5);
-    finish_read(&mut script, &mut snapshot, &mut ledger, 6, "seeded branch");
+    for tick in 5..=8 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+    }
+    finish_read(&mut script, &mut snapshot, &mut ledger, 9, "seeded branch");
     assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
     assert!(!script.parked);
-    assert_eq!(script.last_journal().unwrap().acquired.tick, 7);
+    assert_eq!(script.last_journal().unwrap().acquired.tick, 10);
+}
+
+#[test]
+fn transient_journal_retry_requires_continuously_closed_observed_ticks() {
+    let (mut script, mut snapshot) = fixture(true);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    drive(&mut script, &snapshot, &mut ledger, 2);
+    ack(&mut ledger, 2);
+    journal(&mut snapshot, "seeded branch");
+    drive(&mut script, &snapshot, &mut ledger, 3);
+    snapshot.seed_main_modal(-1, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, 4);
+    for tick in [5, 5, 5] {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        assert!(
+            script.journal.is_none(),
+            "same-frame retries must stay quiet"
+        );
+    }
+    snapshot.seed_chat_modal(4882, vec!["Aubury".into()]);
+    drive(&mut script, &snapshot, &mut ledger, 6);
+    snapshot.seed_chat_modal(-1, vec![]);
+    for tick in 7..10 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        assert!(
+            script.journal.is_none(),
+            "chat must reset the quiet interval"
+        );
+    }
+    drive(&mut script, &snapshot, &mut ledger, 10);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 11, "seeded branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert!(!script.parked);
+}
+
+#[test]
+fn repeated_journal_ownership_loss_caps_row_clicks_per_read() {
+    let (mut script, mut snapshot) = fixture(true);
+    let mut ledger = None;
+    let mut clicks = 0;
+    for tick in 1..80 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        if ledger
+            .as_ref()
+            .is_some_and(|ledger| !ledger.outbox.is_empty())
+        {
+            assert!(
+                matches!(
+                    ack(&mut ledger, tick),
+                    HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+                ),
+                "a lost page must never emit a compensating close"
+            );
+            clicks += 1;
+            journal(&mut snapshot, "seeded branch");
+        } else {
+            snapshot.seed_main_modal(-1, vec![]);
+        }
+        if script.parked {
+            break;
+        }
+    }
+    assert!(script.parked);
+    assert_eq!(clicks, 3, "a logical read must not spray row clicks");
+    assert_eq!(script.park_reason, "journal read retry limit reached");
+    script.read_journal().unwrap();
+    drive(&mut script, &snapshot, &mut ledger, 81);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 82, "seeded branch");
+    assert!(!script.parked, "operator retry gets a fresh read budget");
+}
+
+#[test]
+fn named_chat_at_read_start_waits_then_recovers_or_names_the_timeout() {
+    let (mut script, mut snapshot) = fixture(true);
+    snapshot.seed_chat_modal(4882, vec!["Aubury".into()]);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    assert!(!script.parked, "a transient conversation tail must wait");
+    snapshot.seed_chat_modal(-1, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, 2);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 3, "seeded branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+
+    let (mut script, mut snapshot) = fixture(true);
+    snapshot.seed_chat_modal(4882, vec!["Aubury".into()]);
+    for tick in 1..35 {
+        drive(&mut script, &snapshot, &mut None, tick);
+    }
+    assert!(script.parked);
+    assert!(script
+        .last_error
+        .as_ref()
+        .is_some_and(|reason| reason.contains("4882") && reason.contains("Aubury")));
 }

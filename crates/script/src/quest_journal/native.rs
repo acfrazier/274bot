@@ -94,8 +94,7 @@ impl NativeMachine for JournalMachine {
         let pair = snapshot.main_modal().ok_or(ActionError::Busy)?;
         let chat = snapshot.chat_modal().ok_or(ActionError::Busy)?;
         let adopted_before = if chat.value.root != -1 || !chat.value.texts.is_empty() {
-            return Err(foreign_modal_failure(chat.value.root, chat.value.texts)
-                .unwrap_or(ActionError::Busy));
+            return Err(ActionError::Busy);
         } else if pair.value.root == ROOT_289 {
             match snapshot.journal_widgets(ROOT_289, TITLE_289) {
                 Some(page) if title_matches(page.value.title, title) => Some(page.stamp),
