@@ -18,7 +18,7 @@ pub const MIN_CELL_PPT: f64 = 4.0;
 /// NSEW text is drawn only at this screen density.
 pub const NSEW_PPT: f64 = 16.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OverlayLayers {
     pub grid: bool,
     pub collision_fill: bool,
@@ -26,11 +26,19 @@ pub struct OverlayLayers {
     pub nsew: bool,
     pub path: bool,
     pub flood: bool,
+    /// Content-defined area tint (currently the packed wilderness zones).
+    pub special_areas: bool,
 }
 
 impl OverlayLayers {
     pub fn any(self) -> bool {
-        self.grid || self.collision_fill || self.reach || self.nsew || self.path || self.flood
+        self.grid
+            || self.collision_fill
+            || self.reach
+            || self.nsew
+            || self.path
+            || self.flood
+            || self.special_areas
     }
 }
 
@@ -61,7 +69,7 @@ pub fn overlay_fit(view: View) -> OverlayFit {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OverlayColors {
     pub grid: [u8; 4],
     pub collision: [u8; 4],
@@ -71,8 +79,9 @@ pub struct OverlayColors {
     pub flood_b: [u8; 4],
     pub unreached: [u8; 4],
     pub nsew: [u8; 4],
+    /// A translucent tint for tiles in content-defined special areas.
+    pub special_areas: [u8; 4],
 }
-
 impl Default for OverlayColors {
     fn default() -> Self {
         Self {
@@ -84,6 +93,7 @@ impl Default for OverlayColors {
             flood_b: [200, 40, 240, 160],
             unreached: [200, 40, 240, 160],
             nsew: [220, 220, 220, 220],
+            special_areas: [255, 160, 0, 96],
         }
     }
 }
@@ -180,6 +190,13 @@ fn cell_color(
     }
     if paint.layers.grid && world.collision.walkable(wt) {
         return paint.colors.grid;
+    }
+    // The wilderness rules are decoded from the selected content and packed
+    // into the same graph used by routing. Checking membership per tile keeps
+    // the rendered boundary on the nav tile edges; the caller does not enter
+    // this loop at all while the layer is hidden.
+    if paint.layers.special_areas && world.graph.wilderness.contains(wt) {
+        return paint.colors.special_areas;
     }
     [0, 0, 0, 0]
 }
@@ -316,6 +333,57 @@ mod rasterize_rules {
         )
     }
 
+    #[test]
+    fn special_area_uses_content_zone_tile_edges() {
+        let mut base = bake_world(5, 4, &[]);
+        base.collision.origin = WorldTile {
+            x: 2944,
+            z: 3519,
+            level: 0,
+        };
+        let graph = TransportGraph {
+            wilderness: nav::transport::WildernessRules {
+                zones: vec![nav::transport::WildernessZone {
+                    x1: 2944,
+                    z1: 3520,
+                    x2: 2948,
+                    z2: 3521,
+                    level1: 0,
+                    level2: 0,
+                    origin_z: 3520,
+                }],
+                divisor: 1,
+                offset: 1,
+            },
+            ..Default::default()
+        };
+        let banks = base.banks().to_vec();
+        let world = NavWorld::from_parts(base.collision, graph, banks);
+        let view = View {
+            west: 2944.0,
+            south: 3519.0,
+            east: 2949.0,
+            north: 3523.0,
+            pixels_per_tile: 16.0,
+            plane: 0,
+            max_lod: 0,
+        };
+        let layers = OverlayLayers {
+            special_areas: true,
+            ..OverlayLayers::default()
+        };
+        let (rgba, w, h) = sample(view, &world, layers, &[], &[], None);
+        let colors = OverlayColors::default();
+        assert_eq!(at_tile(&rgba, w, h, view, 2946, 3520), colors.special_areas);
+        assert_eq!(at_tile(&rgba, w, h, view, 2946, 3521), colors.special_areas);
+        assert_eq!(at_tile(&rgba, w, h, view, 2946, 3519), [0, 0, 0, 0]);
+        assert_eq!(at_tile(&rgba, w, h, view, 2946, 3522), [0, 0, 0, 0]);
+        // The wilderness edge at z=3520 is the shared pixel edge between
+        // nav tiles, not an interpolated world-coordinate stroke.
+        assert_eq!(pixel(&rgba, w, 2, 8), colors.special_areas);
+        assert_eq!(pixel(&rgba, w, 2, 12), [0, 0, 0, 0]);
+    }
+
     fn disconnected_world() -> NavWorld {
         let mut extras = Vec::new();
         for z in 0..7 {
@@ -383,6 +451,7 @@ mod rasterize_rules {
             nsew: false,
             path: false,
             flood: false,
+            special_areas: false,
         };
         let (rgba, w, h) = sample(view, &world, layers, &[], &[], None);
         let colors = OverlayColors::default();
@@ -427,6 +496,7 @@ mod rasterize_rules {
             nsew: false,
             path: false,
             flood: false,
+            special_areas: false,
         };
         let (rgba, w, h) = sample(view, &world, layers, &[], &[], None);
         let colors = OverlayColors::default();
@@ -471,6 +541,7 @@ mod rasterize_rules {
             nsew: false,
             path: false,
             flood: true,
+            special_areas: false,
         };
         let (rgba, w, h) = sample(view, &world, layers, &[], &floods, None);
         let colors = OverlayColors::default();
@@ -541,6 +612,7 @@ mod rasterize_rules {
             nsew: false,
             path: false,
             flood: false,
+            special_areas: false,
         };
         let (rgba, w, h) = sample(view, &world, layers, &[], &[], Some(&bits));
         let colors = OverlayColors::default();
@@ -585,6 +657,7 @@ mod rasterize_rules {
             nsew: false,
             path: true,
             flood: false,
+            special_areas: false,
         };
         let (rgba, w, h) = sample(view, &world, layers, &path, &[], None);
         let colors = OverlayColors::default();

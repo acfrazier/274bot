@@ -649,6 +649,17 @@ fn map_layers(map: &WalkMapRenderer, view: nav::map::spatial::View) -> OverlayLa
         nsew: map.show_nsew && view.pixels_per_tile >= NSEW_PPT,
         path: false,
         flood: map.show_flood,
+        special_areas: map.show_special_areas,
+    }
+}
+
+fn persist_special_area_toggle(session: &mut Session, map: &WalkMapRenderer) {
+    if session.ui.nav.show_special_areas == map.show_special_areas {
+        return;
+    }
+    session.ui.nav.show_special_areas = map.show_special_areas;
+    if session.persist_ui {
+        crate::ui_state::save(&session.ui);
     }
 }
 
@@ -942,13 +953,14 @@ fn draw_walkto_toolbar(
     if ui.is_item_focused() && ui.is_key_pressed(Key::Enter) {
         apply_search_jump(session, map, world);
     }
-    let toggles: [(&str, &mut bool); 6] = [
+    let toggles: [(&str, &mut bool); 7] = [
         ("basemap", &mut map.show_basemap),
         ("grid", &mut map.show_grid),
         ("reach", &mut map.show_reach),
         ("collision", &mut map.show_collision),
         ("nsew", &mut map.show_nsew),
         ("flood", &mut map.show_flood),
+        ("wilderness", &mut map.show_special_areas),
     ];
     for (i, (label, flag)) in toggles.into_iter().enumerate() {
         if i > 0 {
@@ -1552,8 +1564,10 @@ fn picker_map_body(
     map.bind_catalogue(session.map_catalogue.clone());
     map.set_observed(session.observed_map_services.clone());
     bind_map_model(session, world);
-    // Reset the view when the picker opens fresh.
+    // Reset the view when the picker opens fresh and restore the persisted
+    // map-layer choice.
     if !PREV_OPEN.swap(true, Ordering::Relaxed) {
+        map.show_special_areas = session.ui.nav.show_special_areas;
         let observed = session
             .focused_tile()
             .map(|(x, z, level)| Tile { x, z, level });
@@ -1566,6 +1580,7 @@ fn picker_map_body(
         .position(|l| *l == LEVEL.load(Ordering::Relaxed))
         .unwrap_or(0);
     let toolbar = draw_walkto_toolbar(ui, session, map, world, &levels, &mut lvl_idx);
+    persist_special_area_toggle(session, map);
     if !map.search.trim().is_empty() {
         if let Ok(coord) = MapModel::parse_coordinates(map.search.trim()) {
             ui.text_disabled(format!("coord {} {} {}", coord.x, coord.z, coord.level));
