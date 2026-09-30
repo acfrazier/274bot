@@ -66,14 +66,10 @@ const SYNTHETIC_TIMEOUT: Duration = Duration::from_secs(240);
 const COOK_TIMEOUT: Duration = Duration::from_secs(1000);
 const JOURNAL_ROOT_R289: i32 = 8134;
 const JOURNAL_TITLE_COMPONENT_R289: i32 = 8144;
-#[cfg(all(windows, feature = "journal-paint-proof"))]
 const JOURNAL_ROOT: i32 = 8134;
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 const JOURNAL_TITLE_COMPONENT: i32 = 8144;
 const JOURNAL_BUTTON: i32 = 42;
-// Center of the R289 journal's "Close Window" text button, not the frame corner.
-const JOURNAL_CLOSE_X: i32 = 460;
-const JOURNAL_CLOSE_Y: i32 = 38;
 
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 const MODAL_ROI: (usize, usize, usize, usize) = (4, 516, 4, 338);
@@ -154,6 +150,17 @@ impl CaptureHandle {
         }
     }
 
+    fn mark_stop(&self) {
+        #[cfg(all(windows, feature = "journal-paint-proof"))]
+        {
+            self.inner.check_fatal();
+            let mut state = self.inner.state.lock();
+            state.stop_generation = Some(self.inner.mailbox.generation());
+            state.saw_visible_after_hidden = false;
+            state.restored_frame = None;
+        }
+    }
+
     fn saw_visible_after_hidden(&self) -> bool {
         #[cfg(all(windows, feature = "journal-paint-proof"))]
         {
@@ -183,7 +190,9 @@ impl CaptureHandle {
         {
             self.inner.check_fatal();
             let state = self.inner.state.lock();
-            state.frames > 0
+            state
+                .stop_generation
+                .is_some_and(|generation| state.last_generation > generation)
                 && !state.last_observation.journal_paint_hidden
                 && state.last_observation.modal_root != JOURNAL_ROOT
         }
@@ -255,7 +264,8 @@ struct CaptureState {
     fatal: Option<String>,
     saw_hidden_root: bool,
     saw_visible_after_hidden: bool,
-    close_requested: bool,
+    stop_generation: Option<u64>,
+    close_generation: Option<u64>,
     saw_closed_after_click: bool,
     visible_template: Option<Vec<u32>>,
     quiet_frame: Option<Vec<u32>>,
@@ -297,7 +307,8 @@ impl HeadedCapture {
             fatal: None,
             saw_hidden_root: false,
             saw_visible_after_hidden: false,
-            close_requested: false,
+            stop_generation: None,
+            close_generation: None,
             saw_closed_after_click: false,
             visible_template: None,
             quiet_frame: None,
@@ -393,7 +404,7 @@ impl HeadedCapture {
         self.check_fatal();
         {
             let mut state = self.state.lock();
-            state.close_requested = true;
+            state.close_generation = Some(self.mailbox.generation());
             state.saw_closed_after_click = false;
         }
         self.input.set_enabled(true);
@@ -730,13 +741,20 @@ fn remember_frame(
         if state.visible_template.is_none() {
             state.visible_template = Some(pixels.to_vec());
         }
-        if state.saw_hidden_root {
+        if state.saw_hidden_root
+            && state
+                .stop_generation
+                .is_some_and(|stopped| generation > stopped)
+        {
             state.saw_visible_after_hidden = true;
             if state.restored_frame.is_none() {
                 state.restored_frame = Some(pixels.to_vec());
             }
         }
-    } else if state.close_requested {
+    } else if state
+        .close_generation
+        .is_some_and(|clicked| generation > clicked)
+    {
         state.saw_closed_after_click = true;
     }
 }
@@ -799,6 +817,8 @@ struct SetupState {
     journal_titles: Vec<String>,
     journal_title_mismatch: Option<String>,
     open_unowned_journal: bool,
+    reopen_after_tick: Option<u64>,
+    journal_close_target: Option<(i32, i32)>,
 }
 
 /// The live engine is shared by the operator's tunnel.  Keep its profile and
@@ -1119,14 +1139,55 @@ fn frame_hook(
             post_relog(client, mode);
             state.relog_ready = true;
         }
-        if state.open_unowned_journal && !client.journal_paint_hidden() {
-            assert!(
-                interact::press(client, JOURNAL_BUTTON),
-                "unowned Rune Mysteries journal button must be accepted"
-            );
-            state.open_unowned_journal = false;
+        if headed && client.main_modal_id == JOURNAL_ROOT && !client.journal_paint_hidden() {
+            state.journal_close_target = Some(journal_close_target(client));
+        }
+        if state.open_unowned_journal && !client.journal_paint_hidden() && client.out.pos == 0 {
+            // CLOSE_MODAL clears the local root immediately, but the engine
+            // defers its close until processQueues. An IF_BUTTON sent in that
+            // same server tick opens a journal that the pending close removes.
+            // Cross two received PLAYER_INFO boundaries after flushing output:
+            // the first can already be in flight when the close is sent.
+            let after = *state
+                .reopen_after_tick
+                .get_or_insert(client.gens.player_info + 2);
+            if client.gens.player_info >= after {
+                assert!(
+                    interact::press(client, JOURNAL_BUTTON),
+                    "unowned Rune Mysteries journal button must be accepted"
+                );
+                eprintln!(
+                    "journal-proof-reopen player_info={} after_tick={after} root={}",
+                    client.gens.player_info, client.main_modal_id
+                );
+                state.open_unowned_journal = false;
+            }
         }
     }
+}
+
+fn journal_close_target(client: &client::client::Client) -> (i32, i32) {
+    use client::config::if_type::ButtonType;
+
+    let root = client.if_(JOURNAL_ROOT as usize).expect("live journal root");
+    let children = root.children.as_ref().expect("journal root children");
+    let xs = root.child_x.as_ref().expect("journal child x bounds");
+    let ys = root.child_y.as_ref().expect("journal child y bounds");
+    let mut targets = children.iter().enumerate().filter_map(|(index, id)| {
+        let child = client.if_(*id as usize)?;
+        (child.button_type == ButtonType::BUTTON_CLOSE && !child.hide).then(|| {
+            assert!(child.width > 0 && child.height > 0, "empty close bounds");
+            // Match build_minimenu/add_component_options, including the
+            // viewport origin and the mutable per-client component offset.
+            let x = 4 + xs[index] + child.x + child.width / 2;
+            let y = 4 + ys[index] + child.y + child.height / 2;
+            assert!((5..516).contains(&x) && (5..338).contains(&y));
+            (x, y)
+        })
+    });
+    let target = targets.next().expect("live journal close component");
+    assert!(targets.next().is_none(), "ambiguous journal close component");
+    target
 }
 
 fn launch_live(
@@ -1542,6 +1603,7 @@ fn live_quester_journal_synthetic_runemysteries() {
                         .is_some_and(|status| truth(&status, "needs_read") == Truth::True)
             },
         );
+        capture.mark_stop();
         eprintln!(
             "journal-proof-stop event=requested run={run:?} unix_ns={}",
             SystemTime::now()
@@ -1571,8 +1633,8 @@ fn live_quester_journal_synthetic_runemysteries() {
             || capture.saw_visible_after_hidden() || capture.normal_closed_paint(),
         );
         if !capture.saw_visible_after_hidden() {
-            // Stop can leave the root open or close it. Reopen only when
-            // needed, through the real client button path without a reader.
+            // An ordinary read close may already have been accepted before
+            // revocation. Reopen after its server tick, without a reader.
             setup
                 .lock()
                 .expect("quester live setup lock")
@@ -1584,7 +1646,13 @@ fn live_quester_journal_synthetic_runemysteries() {
             Duration::from_secs(20),
             || capture.saw_visible_after_hidden(),
         );
-        capture.click(JOURNAL_CLOSE_X, JOURNAL_CLOSE_Y);
+        let (close_x, close_y) = setup
+            .lock()
+            .expect("quester live setup lock")
+            .journal_close_target
+            .expect("visible journal must expose a live close target");
+        eprintln!("journal-proof-click x={close_x} y={close_y}");
+        capture.click(close_x, close_y);
         play.wake(&name);
         wait_until(
             "close unowned synthetic journal modal",
