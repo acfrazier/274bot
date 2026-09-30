@@ -1087,10 +1087,8 @@ fn tick_loop(
     // Locals drop before the `runtime` parameter: machine rows (and any
     // V8 handles they hold) never outlive the isolate.
     let _machines = MachinesStop;
-    if compat {
-        if let Some(lease) = compat_journal.as_ref() {
-            crate::quest_journal::bind_compat_runtime(lease.clone());
-        }
+    if let Some(lease) = compat_journal.as_ref() {
+        crate::quest_journal::bind_compat_runtime(lease.clone());
     }
     #[cfg(feature = "memory-profile")]
     let mut last_heap_sample = None::<Instant>;
@@ -1751,13 +1749,11 @@ fn tick_loop(
                 keep_work,
                 generation: reset_generation,
             } => {
-                if compat {
-                    if let Some(lease) = compat_journal.as_ref() {
-                        lease.set_generation(reset_generation);
-                        lease.revoke();
-                    }
-                    crate::quest_journal::on_reset();
+                if let Some(lease) = compat_journal.as_ref() {
+                    lease.set_generation(reset_generation);
+                    lease.revoke();
                 }
+                crate::quest_journal::on_reset();
                 // The scene caches belong to the ended connection: the host
                 // posts a keyframe for the next one.
                 crate::observed::on_reset();
@@ -1774,9 +1770,6 @@ fn tick_loop(
                     crate::hunt_key::on_reset();
                     crate::hunt_cell::on_reset();
                     crate::hunt_bank::on_reset();
-                    if !compat {
-                        crate::quest_journal::on_reset();
-                    }
                     crate::clue::on_reset();
                     crate::duel::on_reset();
                 }
