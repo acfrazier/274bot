@@ -22731,3 +22731,5 @@ mod read_journal_tests {
         assert_eq!(slot.last_error(), Some("read callback panicked"));
     }
 }
+#[path = "script_journal_paint_tests.rs"]
+mod journal_paint;

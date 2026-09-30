@@ -36,15 +36,15 @@ use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, Truth};
 use api::snapshot::GameSnapshot;
 use client::client::MiniMenuAction;
-use host::{FrameBuf, SlotInput};
-#[cfg(all(windows, feature = "journal-paint-proof"))]
-use host::InputEv;
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 use client::client::present::{PresentTarget, WindowTarget};
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 use client::client::{GameShell, APPLET_H, APPLET_W};
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 use client::render::backend::FrameOutput;
+#[cfg(all(windows, feature = "journal-paint-proof"))]
+use host::InputEv;
+use host::{FrameBuf, SlotInput};
 use script::native::{NativePhase, ScriptStatus, StatusValue};
 use script::quester::compile::{compile_uncached_for_test, decode_cook};
 use script::quester::path::{
@@ -56,26 +56,32 @@ use vault::{Profile, ProfileSettings};
 
 use super::{run_with_template, ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 
-
 const SYNTHETIC_QUEST: &str = "runemysteries";
 const ACCOUNT_UID: i32 = 274_279_003;
 const SYNTHETIC_TIMEOUT: Duration = Duration::from_secs(240);
 const COOK_TIMEOUT: Duration = Duration::from_secs(1000);
 const JOURNAL_ROOT_R289: i32 = 8134;
 const JOURNAL_TITLE_COMPONENT_R289: i32 = 8144;
+#[cfg(all(windows, feature = "journal-paint-proof"))]
 const JOURNAL_ROOT: i32 = 8134;
+#[cfg(all(windows, feature = "journal-paint-proof"))]
 const JOURNAL_TITLE_COMPONENT: i32 = 8144;
 const JOURNAL_CLOSE_X: i32 = 496;
 const JOURNAL_CLOSE_Y: i32 = 8;
 
+#[cfg(all(windows, feature = "journal-paint-proof"))]
 const MODAL_ROI: (usize, usize, usize, usize) = (4, 516, 4, 338);
+#[cfg(all(windows, feature = "journal-paint-proof"))]
 const SIDE_ROI: (usize, usize, usize, usize) = (553, 743, 205, 466);
+#[cfg(all(windows, feature = "journal-paint-proof"))]
 const TABS_TOP_ROI: (usize, usize, usize, usize) = (516, 765, 160, 205);
+#[cfg(all(windows, feature = "journal-paint-proof"))]
 const TABS_BOTTOM_ROI: (usize, usize, usize, usize) = (496, 765, 466, 503);
 
 #[derive(Clone, Copy, Debug, Default)]
 struct PaintObservation {
     sequence: u64,
+    paint_generation: u64,
     modal_root: i32,
     journal_paint_hidden: bool,
 }
@@ -84,6 +90,13 @@ struct PaintObservation {
 type CaptureMutex<T> = parking_lot::Mutex<T>;
 #[cfg(not(all(windows, feature = "journal-paint-proof")))]
 type CaptureMutex<T> = std::sync::Mutex<T>;
+
+struct PaintProbe {
+    metadata: Arc<CaptureMutex<PaintObservation>>,
+    mailbox: Arc<FrameBuf>,
+    #[cfg(all(windows, feature = "journal-paint-proof"))]
+    observations: mpsc::SyncSender<PaintObservation>,
+}
 
 struct CaptureHandle {
     #[cfg(all(windows, feature = "journal-paint-proof"))]
@@ -132,15 +145,19 @@ impl CaptureHandle {
         }
     }
 
-    fn metadata(&self) -> Arc<CaptureMutex<PaintObservation>> {
+    fn probe(&self) -> Option<PaintProbe> {
         #[cfg(all(windows, feature = "journal-paint-proof"))]
         {
-            self.inner.metadata()
+            Some(PaintProbe {
+                metadata: Arc::clone(&self.inner.metadata),
+                mailbox: Arc::clone(&self.inner.mailbox),
+                observations: self.inner.observations.clone(),
+            })
         }
         #[cfg(not(all(windows, feature = "journal-paint-proof")))]
         {
             let _ = self;
-            Arc::new(CaptureMutex::new(PaintObservation::default()))
+            None
         }
     }
 
@@ -180,14 +197,19 @@ impl CaptureHandle {
         }
     }
 
-    fn reset_phase(&self) {
+    fn normal_closed_paint(&self) -> bool {
         #[cfg(all(windows, feature = "journal-paint-proof"))]
         {
-            self.inner.reset_phase();
+            self.inner.check_fatal();
+            let state = self.inner.state.lock();
+            state.frames > 0
+                && !state.last_observation.journal_paint_hidden
+                && state.last_observation.modal_root != JOURNAL_ROOT
         }
         #[cfg(not(all(windows, feature = "journal-paint-proof")))]
         {
             let _ = self;
+            false
         }
     }
 
@@ -220,9 +242,9 @@ impl CaptureHandle {
         }
         #[cfg(not(all(windows, feature = "journal-paint-proof")))]
         {
-            drop(self);
+            let _ = self;
         }
-}
+    }
 }
 
 #[cfg(all(windows, feature = "journal-paint-proof"))]
@@ -230,6 +252,7 @@ struct HeadedCapture {
     input: Arc<SlotInput>,
     mailbox: Arc<FrameBuf>,
     metadata: Arc<CaptureMutex<PaintObservation>>,
+    observations: mpsc::SyncSender<PaintObservation>,
     input_tx: mpsc::Sender<InputEv>,
     commands: mpsc::Sender<CaptureCommand>,
     state: Arc<CaptureMutex<CaptureState>>,
@@ -248,6 +271,8 @@ struct CaptureState {
     baseline: u64,
     last_generation: u64,
     frames: u64,
+    cpu_frames: u64,
+    gpu_frames: u64,
     fatal: Option<String>,
     saw_hidden_root: bool,
     saw_visible_after_hidden: bool,
@@ -256,6 +281,8 @@ struct CaptureState {
     visible_template: Option<Vec<u32>>,
     quiet_frame: Option<Vec<u32>>,
     restored_frame: Option<Vec<u32>>,
+    hidden_frames: Vec<(u64, Vec<u32>)>,
+    last_observation: PaintObservation,
 }
 
 #[cfg(all(windows, feature = "journal-paint-proof"))]
@@ -280,6 +307,7 @@ impl HeadedCapture {
         input.set_enabled(false);
         let mailbox = FrameBuf::new();
         let metadata = Arc::new(CaptureMutex::new(PaintObservation::default()));
+        let (observations, observation_rx) = mpsc::sync_channel(256);
         let (input_tx, input_rx) = mpsc::channel();
         input.connect_rx(input_rx);
         let (commands, command_rx) = mpsc::channel();
@@ -287,6 +315,8 @@ impl HeadedCapture {
             baseline: 0,
             last_generation: 0,
             frames: 0,
+            cpu_frames: 0,
+            gpu_frames: 0,
             fatal: None,
             saw_hidden_root: false,
             saw_visible_after_hidden: false,
@@ -295,6 +325,8 @@ impl HeadedCapture {
             visible_template: None,
             quiet_frame: None,
             restored_frame: None,
+            hidden_frames: Vec::new(),
+            last_observation: PaintObservation::default(),
         }));
         let ready_state = Arc::clone(&state);
         let ready_mailbox = Arc::clone(&mailbox);
@@ -303,14 +335,12 @@ impl HeadedCapture {
         let ready_input_tx = input_tx.clone();
         let ready_output = run_dir.clone();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let title = format!("274bot journal proof: {label}");
         let worker = thread::Builder::new()
             .name(format!("journal-capture-{label}"))
             .spawn(move || {
-                let mut target = match WindowTarget::open(
-                    APPLET_W as u32,
-                    APPLET_H as u32,
-                    &format!("274bot journal proof: {label}"),
-                ) {
+                let mut target = match WindowTarget::open(APPLET_W as u32, APPLET_H as u32, &title)
+                {
                     Ok(target) => target,
                     Err(error) => {
                         let message = format!("open headed journal proof window: {error}");
@@ -330,6 +360,7 @@ impl HeadedCapture {
                     &mut target,
                     ready_mailbox,
                     ready_metadata,
+                    observation_rx,
                     ready_input,
                     ready_input_tx,
                     command_rx,
@@ -349,6 +380,7 @@ impl HeadedCapture {
             input,
             mailbox,
             metadata,
+            observations,
             input_tx,
             commands,
             state,
@@ -358,11 +390,10 @@ impl HeadedCapture {
     }
 
     fn slots(&self) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>) {
-        (Some(Arc::clone(&self.input)), Some(Arc::clone(&self.mailbox)))
-    }
-
-    fn metadata(&self) -> Arc<CaptureMutex<PaintObservation>> {
-        Arc::clone(&self.metadata)
+        (
+            Some(Arc::clone(&self.input)),
+            Some(Arc::clone(&self.mailbox)),
+        )
     }
 
     fn check_fatal(&self) {
@@ -385,15 +416,6 @@ impl HeadedCapture {
         self.check_fatal();
         self.state.lock().saw_closed_after_click
     }
-    fn reset_phase(&self) {
-        let mut state = self.state.lock();
-        state.saw_hidden_root = false;
-        state.saw_visible_after_hidden = false;
-        state.saw_closed_after_click = false;
-        state.quiet_frame = None;
-        state.restored_frame = None;
-    }
-
 
     fn click(&self, x: i32, y: i32) {
         self.check_fatal();
@@ -440,6 +462,17 @@ impl HeadedCapture {
             state.restored_frame.is_some(),
             "headed proof did not retain a post-Stop normal journal frame"
         );
+        assert!(
+            !state.hidden_frames.is_empty(),
+            "no owned journal frames captured"
+        );
+        for (generation, pixels) in &state.hidden_frames {
+            let (changed, total) = roi_diff(visible, pixels, MODAL_ROI);
+            assert!(
+                changed * 10 >= total,
+                "journal modal flashed in owned painted frame {generation}: only {changed}/{total} main pixels differ from the visible control"
+            );
+        }
         let (modal_changed, modal_total) = roi_diff(visible, quiet, MODAL_ROI);
         assert!(
             modal_changed * 10 >= modal_total,
@@ -448,8 +481,8 @@ impl HeadedCapture {
         let (side_changed, side_total) = roi_diff(visible, quiet, SIDE_ROI);
         let (top_changed, top_total) = roi_diff(visible, quiet, TABS_TOP_ROI);
         let (bottom_changed, bottom_total) = roi_diff(visible, quiet, TABS_BOTTOM_ROI);
-        let retained = side_total + top_total + bottom_total
-            - (side_changed + top_changed + bottom_changed);
+        let retained =
+            side_total + top_total + bottom_total - (side_changed + top_changed + bottom_changed);
         let retained_total = side_total + top_total + bottom_total;
         assert!(
             retained * 4 >= retained_total * 3,
@@ -460,16 +493,18 @@ impl HeadedCapture {
     fn finish(mut self) {
         let _ = self.commands.send(CaptureCommand::Stop);
         if let Some(worker) = self.worker.take() {
-            worker.join().expect("headed journal capture worker panicked");
+            worker
+                .join()
+                .expect("headed journal capture worker panicked");
         }
         let state = self.state.lock();
         let runtime_model = std::env::var("BOT_RUNTIME_MODEL")
             .or_else(|_| std::env::var("BOT_ENGINE_MODEL"))
             .unwrap_or_else(|_| "R289".into());
-        let backend = if std::env::var("BOT_CPU").as_deref() == Ok("1") {
-            "cpu"
-        } else {
+        let backend = if state.gpu_frames > 0 {
             "gpu-readback"
+        } else {
+            "cpu"
         };
         let summary = serde_json::json!({
             "runtime_model": runtime_model,
@@ -477,13 +512,16 @@ impl HeadedCapture {
             "baseline_generation": state.baseline,
             "last_generation": state.last_generation,
             "frames": state.frames,
+            "cpu_frames": state.cpu_frames,
+            "gpu_frames": state.gpu_frames,
             "journal_root": JOURNAL_ROOT,
             "journal_title_component": JOURNAL_TITLE_COMPONENT,
             "saw_hidden_root": state.saw_hidden_root,
             "saw_visible_after_hidden": state.saw_visible_after_hidden,
             "saw_closed_after_click": state.saw_closed_after_click,
+            "owned_frames_checked": state.hidden_frames.len(),
             "fatal": state.fatal,
-            "metadata_relation": "latest frame-hook observation before the paint; not a synthetic modal claim",
+            "metadata_relation": "first callback after the completed paint generation; modal root is current server state",
         });
         std::fs::write(
             self.output_dir.join("summary.json"),
@@ -514,10 +552,12 @@ impl Drop for HeadedCapture {
 }
 
 #[cfg(all(windows, feature = "journal-paint-proof"))]
+#[allow(clippy::too_many_arguments)]
 fn capture_loop(
     target: &mut WindowTarget,
     mailbox: Arc<FrameBuf>,
     metadata: Arc<CaptureMutex<PaintObservation>>,
+    observations: mpsc::Receiver<PaintObservation>,
     input: Arc<SlotInput>,
     input_tx: mpsc::Sender<InputEv>,
     commands: mpsc::Receiver<CaptureCommand>,
@@ -547,9 +587,8 @@ fn capture_loop(
             }
         }
         if !target.poll(&mut shell) {
-            state.lock().fatal = Some(
-                "headed journal proof window was closed before capture finished".into(),
-            );
+            state.lock().fatal =
+                Some("headed journal proof window was closed before capture finished".into());
             break;
         }
         if shell.mouse_x != last_mouse.0 || shell.mouse_y != last_mouse.1 {
@@ -587,7 +626,40 @@ fn capture_loop(
                     ));
                     break;
                 }
-                let observation = *metadata.lock();
+                // The callback precedes this pass's lease update/raster. The
+                // first callback tagged with the completed generation reads
+                // the flag used by that paint, rather than its predecessor.
+                let observation = loop {
+                    match observations.recv_timeout(Duration::from_secs(1)) {
+                        Ok(observation) if observation.paint_generation < generation => {}
+                        Ok(observation) if observation.paint_generation == generation => {
+                            break observation;
+                        }
+                        Ok(observation) => {
+                            state.fatal = Some(format!(
+                                "paint metadata skipped generation {generation}: reached {}",
+                                observation.paint_generation
+                            ));
+                            return;
+                        }
+                        Err(error) => {
+                            if matches!(commands.try_recv(), Ok(CaptureCommand::Stop)) {
+                                stop = true;
+                            }
+                            let latest = *metadata.lock();
+                            // Teardown follows a closed, revoked journal. A
+                            // final non-owned frame can have no next callback;
+                            // retain its old generation explicitly in JSON.
+                            if stop && !latest.journal_paint_hidden {
+                                break latest;
+                            }
+                            state.fatal = Some(format!(
+                                "missing post-paint metadata for generation {generation}: {error}"
+                            ));
+                            return;
+                        }
+                    }
+                };
                 match frame {
                     FrameOutput::PixMap(pix) => {
                         let width = pix.width;
@@ -610,16 +682,14 @@ fn capture_loop(
                             ));
                             break;
                         }
-                        if let Err(error) = write_capture_frame(
-                            &output_dir,
-                            generation,
-                            &observation,
-                            &pixels,
-                        ) {
+                        if let Err(error) =
+                            write_capture_frame(&output_dir, generation, &observation, &pixels)
+                        {
                             state.fatal = Some(error);
                             break;
                         }
-                        remember_frame(&mut state, &observation, &pixels);
+                        remember_frame(&mut state, generation, &observation, &pixels);
+                        state.cpu_frames += 1;
                         target.present(FrameOutput::PixMap(pix));
                     }
                     FrameOutput::Texture(handle) => {
@@ -642,16 +712,14 @@ fn capture_loop(
                             ));
                             break;
                         }
-                        if let Err(error) = write_capture_frame(
-                            &output_dir,
-                            generation,
-                            &observation,
-                            &pixels,
-                        ) {
+                        if let Err(error) =
+                            write_capture_frame(&output_dir, generation, &observation, &pixels)
+                        {
                             state.fatal = Some(error);
                             break;
                         }
-                        remember_frame(&mut state, &observation, &pixels);
+                        remember_frame(&mut state, generation, &observation, &pixels);
+                        state.gpu_frames += 1;
                         target.present(FrameOutput::Texture(handle));
                     }
                 }
@@ -707,7 +775,9 @@ fn write_capture_frame(
         "modal_root": observation.modal_root,
         "journal_paint_hidden": observation.journal_paint_hidden,
         "metadata_sequence": observation.sequence,
-        "metadata_relation": "latest frame-hook observation before the paint; not a synthetic modal claim",
+        "metadata_paint_generation": observation.paint_generation,
+        "flag_sample_matches_paint": observation.paint_generation == generation,
+        "metadata_relation": "first callback after the completed paint generation; modal root is current server state",
         "journal_root": JOURNAL_ROOT,
         "journal_title_component": JOURNAL_TITLE_COMPONENT,
         "width": APPLET_W,
@@ -724,29 +794,25 @@ fn write_capture_frame(
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 fn remember_frame(
     state: &mut CaptureState,
+    generation: u64,
     observation: &PaintObservation,
     pixels: &[u32],
 ) {
-    if observation.modal_root == JOURNAL_ROOT {
-        if observation.journal_paint_hidden {
-            state.saw_hidden_root = true;
-            if state.quiet_frame.is_none() {
-                if let Some(visible) = state.visible_template.as_ref() {
-                    let (changed, total) = roi_diff(visible, pixels, MODAL_ROI);
-                    if changed * 10 >= total {
-                        state.quiet_frame = Some(pixels.to_vec());
-                    }
-                }
-            }
-        } else {
-            if state.visible_template.is_none() {
-                state.visible_template = Some(pixels.to_vec());
-            }
-            if state.saw_hidden_root {
-                state.saw_visible_after_hidden = true;
-                if state.restored_frame.is_none() {
-                    state.restored_frame = Some(pixels.to_vec());
-                }
+    state.last_observation = *observation;
+    if observation.journal_paint_hidden {
+        state.saw_hidden_root |= observation.modal_root == JOURNAL_ROOT;
+        state.hidden_frames.push((generation, pixels.to_vec()));
+        if state.quiet_frame.is_none() && observation.modal_root == JOURNAL_ROOT {
+            state.quiet_frame = Some(pixels.to_vec());
+        }
+    } else if observation.modal_root == JOURNAL_ROOT {
+        if state.visible_template.is_none() {
+            state.visible_template = Some(pixels.to_vec());
+        }
+        if state.saw_hidden_root {
+            state.saw_visible_after_hidden = true;
+            if state.restored_frame.is_none() {
+                state.restored_frame = Some(pixels.to_vec());
             }
         }
     } else if state.close_requested {
@@ -774,25 +840,22 @@ fn roi_diff(
 }
 
 #[cfg(all(windows, feature = "journal-paint-proof"))]
-fn update_paint_observation(
-    metadata: &CaptureMutex<PaintObservation>,
-    client: &client::client::Client,
-) {
-    let mut observation = metadata.lock();
+fn update_paint_observation(probe: &PaintProbe, client: &client::client::Client) {
+    let mut observation = probe.metadata.lock();
     observation.sequence = observation.sequence.wrapping_add(1);
     observation.modal_root = client.main_modal_id;
     observation.journal_paint_hidden = client.journal_paint_hidden();
+    observation.paint_generation = probe.mailbox.generation();
+    let _ = probe.observations.try_send(*observation);
 }
 
 #[cfg(not(all(windows, feature = "journal-paint-proof")))]
-fn update_paint_observation(
-    metadata: &CaptureMutex<PaintObservation>,
-    client: &client::client::Client,
-) {
-    let mut observation = metadata.lock().expect("journal paint metadata lock");
+fn update_paint_observation(probe: &PaintProbe, client: &client::client::Client) {
+    let mut observation = probe.metadata.lock().expect("journal paint metadata lock");
     observation.sequence = observation.sequence.wrapping_add(1);
     observation.modal_root = client.main_modal_id;
     observation.journal_paint_hidden = client.journal_paint_hidden();
+    observation.paint_generation = probe.mailbox.generation();
 }
 
 #[cfg(all(windows, feature = "journal-paint-proof"))]
@@ -1118,7 +1181,7 @@ fn wait_journal_open(
 fn frame_hook(
     state: Arc<Mutex<SetupState>>,
     mode: SetupMode,
-    metadata: Option<Arc<CaptureMutex<PaintObservation>>>,
+    metadata: Option<PaintProbe>,
 ) -> impl Fn(&mut client::client::Client, &str, bool) + Send + Sync + 'static {
     move |client, _name, _hold| {
         if let Some(metadata) = &metadata {
@@ -1179,7 +1242,7 @@ fn launch_live(
     let name = account_name();
     let state = Arc::new(Mutex::new(SetupState::default()));
     let capture = CaptureHandle::from_env(label);
-    let metadata = capture.as_ref().map(CaptureHandle::metadata);
+    let metadata = capture.as_ref().and_then(CaptureHandle::probe);
     let slots = capture
         .as_ref()
         .map(CaptureHandle::slots)
@@ -1565,18 +1628,20 @@ fn live_quester_journal_synthetic_runemysteries() {
             SYNTHETIC_TIMEOUT,
             || {
                 capture.saw_hidden_root()
-                    && play.script_native_status(&name).is_some_and(|status| {
-                        truth(&status, "needs_read") == Truth::True
-                    })
+                    && play
+                        .script_native_status(&name)
+                        .is_some_and(|status| truth(&status, "needs_read") == Truth::True)
             },
         );
         assert!(
             play.script_native_stop(&name, run),
             "forced Stop must revoke the initial synthetic journal read"
         );
-        wait_until("forced synthetic read Stop", Duration::from_secs(20), || {
-            handle.idle(&name)
-        });
+        wait_until(
+            "forced synthetic read Stop",
+            Duration::from_secs(20),
+            || handle.idle(&name),
+        );
         wait_until(
             "forced synthetic read flag cleared",
             Duration::from_secs(20),
@@ -1681,9 +1746,6 @@ fn live_quester_journal_synthetic_runemysteries() {
     wait_until("synthetic Quester stop", Duration::from_secs(20), || {
         handle.idle(&name)
     });
-    if let Some(capture) = capture.as_ref() {
-        capture.reset_phase();
-    }
     let no_match_run = handle
         .start_test_script(
             &name,
@@ -1768,28 +1830,9 @@ fn live_quester_journal_synthetic_runemysteries() {
 
     if let Some(capture) = capture.as_ref() {
         wait_until(
-            "headed no-match journal remains hidden while blocked",
+            "normal closed journal paint after no-match",
             Duration::from_secs(20),
-            || capture.saw_hidden_root(),
-        );
-        assert!(
-            play.script_native_stop(&name, no_match_run),
-            "stop no-match journal owner"
-        );
-        wait_until("no-match Quester stop", Duration::from_secs(20), || {
-            handle.idle(&name)
-        });
-        wait_until(
-            "normal journal paint after no-match Stop",
-            Duration::from_secs(20),
-            || capture.saw_visible_after_hidden(),
-        );
-        capture.click(JOURNAL_CLOSE_X, JOURNAL_CLOSE_Y);
-        play.wake(&name);
-        wait_until(
-            "close no-match user-owned journal modal",
-            Duration::from_secs(20),
-            || capture.saw_closed_after_click(),
+            || capture.normal_closed_paint(),
         );
         capture.assert_no_flash();
     }
@@ -2233,26 +2276,6 @@ fn live_quester_cook_reaches_complete() {
     println!("Cook terminal receipt: {receipt:?}");
     assert_eq!(receipt.state, script::ScriptTerminalState::Completed);
     assert_eq!(handle.run_state(&name), script::RunState::Idle);
-    if let Some(capture) = capture.as_ref() {
-        wait_until(
-            "headed Cook journal paint",
-            COOK_TIMEOUT,
-            || capture.saw_hidden_root(),
-        );
-        wait_until(
-            "normal Cook journal paint after completion",
-            Duration::from_secs(20),
-            || capture.saw_visible_after_hidden(),
-        );
-        capture.click(JOURNAL_CLOSE_X, JOURNAL_CLOSE_Y);
-        play.wake(&name);
-        wait_until(
-            "close Cook user-owned journal modal",
-            Duration::from_secs(20),
-            || capture.saw_closed_after_click(),
-        );
-        capture.assert_no_flash();
-    }
     drop(play);
     drop(home);
     if let Some(capture) = capture {
