@@ -301,6 +301,8 @@ pub struct ServerProfile {
     canlight: Option<Arc<[u64]>>,
     nav: NavAvailability,
     content_dir: PathBuf,
+    #[cfg(feature = "debug-catalog")]
+    debug_engine_dir: PathBuf,
     vault_path: PathBuf,
     catalog_root: Option<PathBuf>,
     world_members: WorldMembersFact,

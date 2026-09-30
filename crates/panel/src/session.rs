@@ -1916,6 +1916,7 @@ impl Session {
             lowmem: true,
             mainland: false,
         };
+        self.release_debug_catalog();
         self.server_profile = Some(profile);
         self.template = Some(template);
         self.error = None;
@@ -3186,7 +3187,54 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        play.cheat(&name, cmd);
+        let _ = play.cheat(&name, cmd);
+    }
+
+    /// Attach the opt-in Debug catalog from the immutable server profile.
+    /// Normal selected game data is deliberately not used as a fallback.
+    pub fn debug_catalog(&self) -> Result<Arc<api::debug_commands::DebugCatalog>, String> {
+        let profile = self
+            .server_profile
+            .as_ref()
+            .ok_or_else(|| "no bound server profile".to_string())?;
+        profile.debug_catalog()
+    }
+
+    /// Decode and retain the catalog for an open Debug window. A failed
+    /// attachment is retained as exact text until the app releases this
+    /// session's Debug state, so a bad provenance check is not retried every
+    /// frame.
+    pub(crate) fn ensure_debug_catalog(&mut self) -> Result<(), String> {
+        let profile_key = self
+            .server_profile
+            .as_ref()
+            .map(|profile| Arc::as_ptr(profile) as usize);
+        if self.debug_panel.catalog_profile() != profile_key {
+            self.debug_panel.release_catalog();
+            self.debug_panel.set_catalog_profile(profile_key);
+        }
+        if self.debug_panel.catalog().is_some() {
+            return Ok(());
+        }
+        if let Some(error) = self.debug_panel.catalog_error() {
+            return Err(error.to_string());
+        }
+        match self.debug_catalog() {
+            Ok(catalog) => {
+                self.debug_panel.attach_catalog(catalog);
+                Ok(())
+            }
+            Err(error) => {
+                self.debug_panel.set_catalog_error(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    /// Release the opt-in catalog when the Debug window closes or its bound
+    /// server profile changes.
+    pub(crate) fn release_debug_catalog(&mut self) {
+        self.debug_panel.release_catalog();
     }
 
     /// Debug catalog actions deliberately target the displayed focused bot.
@@ -3197,11 +3245,44 @@ impl Session {
         }
         let name = self.focused_name().ok_or("Pick a focused bot")?;
         let play = self.core.play().ok_or("No active play session")?;
-        if play.cheat(&name, cmd) {
-            Ok(())
-        } else {
-            Err(format!("{name}: command refused (requires an in-game Local bot and at most 80 ASCII characters)"))
-        }
+        play.cheat(&name, cmd)
+            .map_err(|error| format!("{name}: command refused: {error}"))
+    }
+
+    /// Snapshot every visible profile row with its stable marked-selection
+    /// identity. The owned snapshot keeps a bulk send from retargeting after
+    /// a profile rename/removal or a status poll.
+    pub(crate) fn debug_target_snapshot(&self) -> Vec<(frontend_core::ProfileIdentity, String)> {
+        self.core
+            .profile_names()
+            .into_iter()
+            .map(|name| {
+                let identity = self
+                    .core
+                    .profile_identity(&name)
+                    .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(&name));
+                (identity, name)
+            })
+            .collect()
+    }
+
+    /// Admit one formatted command against the supplied marked snapshot
+    /// through the same host admission path used by focused sends.
+    pub(crate) fn send_debug_command_marked_snapshot(
+        &self,
+        cmd: &str,
+        snapshot: Vec<(frontend_core::ProfileIdentity, String)>,
+    ) -> frontend_core::MarkedCommandReport {
+        let mut selection = self.fleet_selection.clone();
+        selection.retain(snapshot.iter().map(|(identity, _)| *identity));
+        let Some(play) = self.core.play() else {
+            return frontend_core::run_marked_command(&selection, snapshot, |_| {
+                Err("no active play session".into())
+            });
+        };
+        frontend_core::run_marked_command(&selection, snapshot, |name| {
+            play.cheat(name, cmd).map_err(|error| error.to_string())
+        })
     }
 
     /// True when the resolved launch profile is Local.
@@ -3286,7 +3367,7 @@ impl Session {
             return;
         }
         if let Some(play) = self.core.play() {
-            play.cheat(&name, "getvar tutorial");
+            let _ = play.cheat(&name, "getvar tutorial");
         }
     }
 
@@ -3476,13 +3557,16 @@ impl Session {
         // mirror the slot threads read. Destination is not a bot: switching
         // focus keeps the pending tile.
         self.core.select(name);
+        let (old, capture) = {
+            let focus = self.focus.lock().unwrap();
+            if focus.focused.as_deref() == Some(name) {
+                return;
+            }
+            (focus.focused.clone(), focus.capture)
+        };
+        self.debug_panel.clear_target_feedback();
         let mut focus = self.focus.lock().unwrap();
-        if focus.focused.as_deref() == Some(name) {
-            return;
-        }
-        let old = focus.focused.clone();
         focus.focused = Some(name.to_string());
-        let capture = focus.capture;
         drop(focus);
         // The overlay follows the focused traveller: switching focus may
         // show a different (or no) route, so force a rebuild.

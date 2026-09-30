@@ -78,7 +78,7 @@ const arg = (name: string, kind: string, optional = false): DebugArgument => ({ 
 export const ENGINE_DEBUG_COMMANDS: readonly DebugCommand[] = [
     command('reload', 'Reload world scripts.', [], false, true),
     command('rebuild', 'Rebuild world scripts.', [], false, true),
-    command('speed', 'Set the world tick duration in milliseconds.', [arg('ms', 'int')]),
+    command('speed', 'Set the world tick duration in milliseconds.', [arg('ms', 'int')], false, true),
     command('fly', 'Toggle fly movement.', [], false, false),
     command('naive', 'Toggle naive movement.', [], false, false),
     command('random', 'Trigger a random event.', [], false, false),
@@ -168,8 +168,29 @@ export function parseDebugHelp(text: string): Map<string, HelpEntry> {
     return entries;
 }
 
-function sourceFallbackCategory(relative: string) {
+type SourceHeader = { kind: string; name: string; index: number; close: number };
+type SourceBlock = { body: string };
+
+const CONTENT_EFFECT_WORDS: Record<string, true> = {
+    give: true,
+    drop: true,
+    reset: true,
+    complete: true,
+    kill: true,
+    damage: true,
+    poison: true,
+    maxme: true,
+};
+
+function withoutSourceComments(text: string) {
+    return text.replace(/\/\/.*$/gm, '');
+}
+
+function sourceFallbackCategory(relative: string, alias: string, body: string) {
     const lower = relative.toLowerCase();
+    const lowerAlias = alias.toLowerCase();
+    const effectBody = withoutSourceComments(body);
+    if (lowerAlias.startsWith('give') || /\b(?:inv|obj)_(?:add|clear|del|set)\b/i.test(effectBody)) return 'Item';
     if (lower.includes('/quests/') || lower.includes('quest')) return 'Quest';
     if (lower.includes('teles') || lower.includes('teleport')) return 'Teleport';
     if (lower.includes('cheat_bank') || lower.includes('cheat_item') || lower.includes('clearinv') || lower.includes('cheat_magic')) return 'Item';
@@ -177,6 +198,41 @@ function sourceFallbackCategory(relative: string) {
     if (lower.includes('cheat_other') || lower.includes('cheat_reset') || lower.includes('cheat_maxme')) return 'Account';
     return 'Client & Engine';
 }
+
+function sourceBlockBody(lines: string[], header: SourceHeader, nextHeader: number) {
+    const trailing = lines[header.index].slice(header.close + 1).replace(/\s*\/\/.*$/, '').trim();
+    const body = lines.slice(header.index + 1, nextHeader).join('\n');
+    return [trailing, body].filter(Boolean).join('\n');
+}
+const MENU_CALL = /\bp_choice\d+(?:_header)?\s*\(/i;
+
+function followedSourceBody(body: string, blocks: ReadonlyMap<string, SourceBlock>) {
+    const followed = new Set<string>();
+    const collect = (fragment: string, root: boolean): string => {
+        const clean = withoutSourceComments(fragment);
+        const menu = root ? null : MENU_CALL.exec(clean);
+        const visible = menu ? clean.slice(0, menu.index + menu[0].length) : clean;
+        const parts = [visible];
+        for (const match of visible.matchAll(/[@~]([a-z][a-z0-9_]*)\b/gi)) {
+            const name = match[1].toLowerCase();
+            const target = blocks.get(name);
+            if (!target || followed.has(name)) continue;
+            followed.add(name);
+            parts.push(collect(target.body, false));
+        }
+        return parts.join('\n');
+    };
+    return collect(body, true);
+}
+
+function hasContentEffect(alias: string, body: string) {
+    const aliasWords = alias.toLowerCase().split('_');
+    if (aliasWords.some((word) => CONTENT_EFFECT_WORDS[word])) return true;
+    if (/^(?:reset|complete)quests$/i.test(alias)) return true;
+    return /\b(?:inv|stat)_(?:add|clear|del|set|advance|sub|boost|drain|heal)\b|\b(?:queue|send_quest_progress|clear_pk_skull|damage_self|healenergy)\s*(?:\(|\b)|%[a-z][a-z0-9_]*\s*=|\b(?:give|drop|reset|complete|kill|damage|poison|maxme)(?:_|\b)/i.test(body);
+}
+
+const HEADER_PATTERN = /^\s*\[([a-z][a-z0-9_]*)\s*,\s*([^\],\s]+)\]/i;
 
 function parseArgument(raw: string, source: string): DebugArgument {
     let value = raw.trim();
@@ -197,28 +253,46 @@ export type ParsedDebugproc = DebugCommand & { source: string; line: number };
 /** Parse all debugproc headers from one selected `.rs2` source. */
 export function parseDebugprocSource(text: string, relative: string, help = new Map<string, HelpEntry>): ParsedDebugproc[] {
     const lines = text.split(/\r?\n/);
+    const headers: SourceHeader[] = [];
+    for (let index = 0; index < lines.length; index += 1) {
+        const match = HEADER_PATTERN.exec(lines[index]);
+        if (!match) continue;
+        headers.push({ kind: match[1].toLowerCase(), name: match[2], index, close: match[0].lastIndexOf(']') });
+    }
+    const nextHeaderByIndex = new Map<number, number>();
+    const headerByIndex = new Map<number, SourceHeader>();
+    const blocks = new Map<string, SourceBlock>();
+    for (let position = 0; position < headers.length; position += 1) {
+        const header = headers[position];
+        const nextHeader = headers[position + 1]?.index ?? lines.length;
+        nextHeaderByIndex.set(header.index, nextHeader);
+        headerByIndex.set(header.index, header);
+        if (header.kind === 'label' || header.kind === 'proc') {
+            blocks.set(header.name.toLowerCase(), { body: sourceBlockBody(lines, header, nextHeader) });
+        }
+    }
     const rows: ParsedDebugproc[] = [];
     for (let index = 0; index < lines.length; index += 1) {
         const raw = lines[index];
-        const match = /^\s*\[debugproc,([^\],\s]+)\](?:\(([^)]*)\))?\s*(.*)$/.exec(raw);
+        const match = /^\s*\[debugproc,\s*([^\],\s]+)\](?:\(([^)]*)\))?\s*(.*)$/.exec(raw);
         if (!match) continue;
         const alias = match[1];
         const wire = `~${alias}`;
         const args = match[2]?.trim() ? match[2].split(',').map((value) => parseArgument(value, `${relative}:${index + 1}`)) : [];
-        const nextHeader = lines.findIndex((line, candidate) => candidate > index && /^\s*\[debugproc,/.test(line));
+        const header = headerByIndex.get(index);
+        if (!header) throw new Error(`${relative}:${index + 1}: malformed debugproc header`);
+        const body = sourceBlockBody(lines, header, nextHeaderByIndex.get(index) ?? lines.length);
+        const effectBody = followedSourceBody(body, blocks);
         const trailing = match[3].trim();
-        const bodyStart = trailing.replace(/\s*\/\/.*$/, '').trim();
-        const body = [bodyStart, lines.slice(index + 1, nextHeader < 0 ? lines.length : nextHeader).join('\n')].filter(Boolean).join('\n');
         const hint = help.get(alias.toLowerCase());
         const inline = /\/\/\s*(.*)$/.exec(trailing)?.[1]?.trim();
         const description = hint?.description ?? inline ?? '';
-        const destructive = /(?:inv_(?:add|clear|del)|obj_add|loc_(?:add|del|change)|npc_(?:add|del)|p_(?:teleport|telejump)|stat_(?:add|sub|boost|drain)|settimer|queue\s*\(|healenergy|send_quest_progress|clear_pk_skull|damage_self|(?:^|[_-])(give|drop|reset|complete|kill|damage|poison|maxme)(?:[_-]|$))/i.test(`${alias}\n${body}`);
         rows.push({
             name: wire,
-            category: hint?.category ?? sourceFallbackCategory(relative),
+            category: hint?.category ?? sourceFallbackCategory(relative, alias, effectBody),
             description,
             args,
-            destructive,
+            destructive: hasContentEffect(alias, effectBody),
             production_only: false,
             source: relative,
             line: index + 1,
@@ -227,19 +301,45 @@ export function parseDebugprocSource(text: string, relative: string, help = new 
     return rows;
 }
 
-function parseEngineCommandNames(text: string) {
-    const found = new Set<string>();
-    for (const match of text.matchAll(/\bcmd\s*===\s*(['"])([a-z0-9_]+)\1/g)) found.add(match[2]);
+type EngineProductionGate = 'none' | 'production' | 'non-production';
+type ParsedEngineCommand = { name: string; productionGate: EngineProductionGate };
+
+const ENGINE_NON_PRODUCTION_ONLY: Record<string, true> = { givebank: true };
+
+function parseEngineCommands(text: string) {
+    const found = new Map<string, ParsedEngineCommand>();
+    for (const match of text.matchAll(/\bcmd\s*===\s*(['"])([a-z0-9_]+)\1/g)) {
+        const index = match.index ?? 0;
+        const lineEnd = text.indexOf('\n', index);
+        const condition = text.slice(index, lineEnd < 0 ? text.length : lineEnd);
+        const productionGate: EngineProductionGate = /&&\s*!\s*Environment\.node\.production\b/.test(condition)
+            ? 'non-production'
+            : /&&\s*Environment\.node\.production\b/.test(condition)
+              ? 'production'
+              : 'none';
+        found.set(match[2], { name: match[2], productionGate });
+    }
     return found;
+}
+
+function expectedEngineProductionGate(row: DebugCommand): EngineProductionGate {
+    if (row.production_only) return 'production';
+    if (ENGINE_NON_PRODUCTION_ONLY[row.name]) return 'non-production';
+    return 'none';
 }
 
 /** Verify the hand-maintained engine metadata still covers the selected handler. */
 export function assertEngineCommandDrift(text: string) {
-    const found = parseEngineCommandNames(text);
-    const missing = [...found].filter((name) => !ENGINE_COMMAND_NAMES.includes(name));
+    const found = parseEngineCommands(text);
+    const missing = [...found.keys()].filter((name) => !ENGINE_COMMAND_NAMES.includes(name));
     const stale = [...ENGINE_COMMAND_NAMES].filter((name) => !found.has(name) && !ENGINE_OPTIONAL_COMMAND_NAMES.some((optional) => optional === name));
-    if (missing.length || stale.length) {
-        throw new Error(`ClientCheatHandler command drift: missing metadata [${missing.join(', ')}], stale metadata [${stale.join(', ')}]`);
+    const gateDrift = ENGINE_DEBUG_COMMANDS.filter((row) => {
+        const source = found.get(row.name);
+        return source && source.productionGate !== expectedEngineProductionGate(row);
+    }).map((row) => `${row.name}: expected ${expectedEngineProductionGate(row)}`);
+    if (missing.length || stale.length || gateDrift.length) {
+        const suffix = gateDrift.length ? `, production gate drift [${gateDrift.join(', ')}]` : '';
+        throw new Error(`ClientCheatHandler command drift: missing metadata [${missing.join(', ')}], stale metadata [${stale.join(', ')}]${suffix}`);
     }
     return ENGINE_DEBUG_COMMANDS.filter((row) => found.has(row.name)).map((row) => ({ ...row, args: row.args.map((value) => ({ ...value })) }));
 }

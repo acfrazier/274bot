@@ -50,6 +50,7 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [features]
+debug-catalog = ["api/debug-catalog"]
 # Opt-in memory benchmark harness. No effect unless BOT_MEMORY_N is set.
 # Frontend binaries install CountingAllocator (T3).
 memory-profile = ["script/memory-profile", "host/performance-profile", "dep:scenario"]

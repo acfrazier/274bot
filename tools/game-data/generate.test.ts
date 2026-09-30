@@ -2321,4 +2321,80 @@ assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.rmSy
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.writeFileSync(path.join(rootDir, 'maps/m50_50.jm2'), '==== LOC ====\n0 10 10: 2092 10 0 extra tokens\n'))), /tokens/);
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, 'scripts/skill_mining/configs/mine.dbrow', 'data=rock,copperrock1', 'data=rock,not_a_packed_loc'))), /failed join/);
 
+
+/* ------------------------------------------------------------------ *
+ * debug family isolation (M2): the base asset carries no debug catalog.
+ * Fails before the split (base embeds debug_commands/debug_names and its
+ * provenance merges debug-only inputs); passes on the split artifacts.
+ * ------------------------------------------------------------------ */
+for (const revision of [274, 289]) {
+    const baseFile = path.join(repoRoot, `crates/api/data/game-data/${revision}.json`);
+    const base = JSON.parse(fs.readFileSync(baseFile, 'utf8'));
+    assert.equal('debug_commands' in base, false, `${revision}: base must not embed debug commands`);
+    assert.equal('debug_names' in base, false, `${revision}: base must not embed debug names`);
+    assert.deepEqual(base.provenance.inputs.map((input: { path: string }) => input.path), ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'], `${revision}: base engine inputs stay the original three`);
+    assert.equal(base.provenance.content_inputs.some((input: { path: string }) => input.path === 'pack/seq.pack'), false, `${revision}: debug-only packs stay out of base provenance`);
+    const debugFile = path.join(repoRoot, `crates/api/data/game-data/${revision}/debug.json`);
+    const debug = JSON.parse(fs.readFileSync(debugFile, 'utf8'));
+    assert.equal(debug.schema_version, 1, `${revision}: debug artifact schema`);
+    assert.equal(debug.revision, revision, `${revision}: debug artifact revision`);
+    assert.deepEqual(debug.provenance.inputs.map((input: { path: string }) => input.path).sort(), ['data/pack/server/npc.dat', 'src/engine/entity/PlayerStat.ts', 'src/network/game/client/handler/ClientCheatHandler.ts'].sort(), `${revision}: debug engine provenance`);
+    assert.equal(debug.provenance.content_inputs.some((input: { path: string }) => input.path === 'pack/seq.pack'), true, `${revision}: debug provenance covers debug-only packs`);
+    assert.equal('obj' in debug.debug_names, false, `${revision}: object picker reuses base items, no obj duplication`);
+    assert.equal('namedobj' in debug.debug_names, false, `${revision}: no namedobj duplication`);
+    assert.ok(debug.debug_commands.length > 0, `${revision}: debug commands present`);
+    const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'crates/api/data/game-data/manifest.json'), 'utf8'));
+    const row = manifest.revisions.find((entry: { revision: number }) => entry.revision === revision);
+    assert.deepEqual(row.families.debug, { path: `${revision}/debug.json`, schema: 1, ...sha256(debugFile) }, `${revision}: manifest debug descriptor matches the artifact`);
+}
+
+/* ------------------------------------------------------------------ *
+ * debug provenance isolation (M2 behavior regression): mutating a
+ * debug-only input moves the debug provenance while the base
+ * provenance bytes stay identical.
+ * ------------------------------------------------------------------ */
+import { BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, DEBUG_STAT_RELATIVE, baseContentFileList, baseProvenanceInputs, buildDebugArtifact, debugArtifactBytes, debugProvenanceInputs } from './generate.ts';
+import { engineHandlerRelative } from './extractors/debug.ts';
+
+const isoEngine = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-debug-iso-engine-'));
+const isoContent = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-debug-iso-content-'));
+for (const relative of [...BASE_ENGINE_INPUT_PATHS, ...DEBUG_ENGINE_INPUT_PATHS]) {
+    const file = path.join(isoEngine, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `stub ${relative}\n`);
+}
+for (const relative of baseContentFileList()) {
+    const file = path.join(isoContent, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `stub ${relative}\n`);
+}
+// A debugproc source the extractor would report: never a base content input.
+const DEBUG_ONLY_CONTENT = 'scripts/_test/scripts/cheats/cheat_extra.rs2';
+assert.equal(baseContentFileList().includes(DEBUG_ONLY_CONTENT), false, 'the fixture debugproc source is debug-only');
+const debugOnlyFile = path.join(isoContent, DEBUG_ONLY_CONTENT);
+fs.mkdirSync(path.dirname(debugOnlyFile), { recursive: true });
+fs.writeFileSync(debugOnlyFile, '[debugproc,extra]\n');
+const debugOnlyEngine = DEBUG_ENGINE_INPUT_PATHS.filter((relative) => !BASE_ENGINE_INPUT_PATHS.includes(relative));
+assert.ok(debugOnlyEngine.includes(engineHandlerRelative()), 'the cheat handler is a debug-only engine input');
+assert.ok(debugOnlyEngine.includes(DEBUG_STAT_RELATIVE), 'PlayerStat is a debug-only engine input');
+const baseBefore = JSON.stringify(baseProvenanceInputs(isoEngine, isoContent));
+const debugBefore = JSON.stringify({ engine: debugProvenanceInputs(isoEngine), content: [sourceFile(isoContent, DEBUG_ONLY_CONTENT)] });
+// Mutate debug-only inputs: the handler and one debugproc source.
+fs.appendFileSync(path.join(isoEngine, engineHandlerRelative()), '// drift\n');
+fs.appendFileSync(debugOnlyFile, '// drift\n');
+const baseAfter = JSON.stringify(baseProvenanceInputs(isoEngine, isoContent));
+const debugAfter = JSON.stringify({ engine: debugProvenanceInputs(isoEngine), content: [sourceFile(isoContent, DEBUG_ONLY_CONTENT)] });
+assert.equal(baseAfter, baseBefore, 'a debug-only change must leave base provenance bytes unchanged');
+assert.notEqual(debugAfter, debugBefore, 'a debug-only change must move debug provenance');
+
+// The debug artifact shape: schema 1, no base item name duplication, strict bytes.
+const debugProvFixture = { engine_commit: 'engine', content_commit: 'content', inputs: [], content_inputs: [], cache_identity: { cache_id: 'cache', nav_sha256: 'nav', flags_sha256: 'flags' } };
+const debugBuilt = buildDebugArtifact(289, debugProvFixture, { commands: [{ name: '~extra' }], names: { npc: [{ id: 1, alias: 'man', name: 'Man' }] } });
+assert.equal(debugBuilt.schema_version, DEBUG_SCHEMA_VERSION);
+assert.equal(debugBuilt.revision, 289);
+assert.deepEqual(JSON.parse(debugArtifactBytes(debugBuilt)), { schema_version: 1, revision: 289, provenance: debugProvFixture, debug_commands: [{ name: '~extra' }], debug_names: { npc: [{ id: 1, alias: 'man', name: 'Man' }] } });
+assert.throws(() => buildDebugArtifact(289, debugProvFixture, { commands: [], names: { obj: [{ id: 1, alias: 'coin', name: 'Coins' }] } }), /must not duplicate base item names/);
+const tamperedSchema = JSON.parse(debugArtifactBytes(debugBuilt));
+tamperedSchema.schema_version = 2;
+assert.throws(() => debugArtifactBytes(tamperedSchema), /invalid debug artifact schema/);
 console.log('generate fixture passed');

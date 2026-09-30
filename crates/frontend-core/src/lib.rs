@@ -54,7 +54,8 @@ pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use selection::{
-    start_marked, stop_marked, BulkSkip, MarkedSelection, ProfileIdentity, StopReport,
+    run_marked_command, start_marked, stop_marked, BulkSkip, MarkedCommandReport, MarkedSelection,
+    ProfileIdentity, StopReport,
 };
 pub use session::{
     ArmMirror, MemoryNotice, OperatorSession, Removal, ScriptStart, Selection, SlotTransition,

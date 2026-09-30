@@ -5,7 +5,9 @@
 //! names and name pickers come from the selected game-data pin; this module
 //! does not maintain a second cheat table.
 
-use api::debug_commands::{DebugCommand, DebugName};
+use std::sync::Arc;
+
+use api::debug_commands::{DebugCatalog, DebugCommand, DebugName};
 use dear_imgui_rs::{StyleColor, TreeNodeFlags, Ui};
 use serde::{Deserialize, Serialize};
 
@@ -99,11 +101,20 @@ fn normalize_names(names: &mut Vec<String>, limit: usize) {
     names.truncate(limit);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum DebugTargetMode {
+    #[default]
+    Focused,
+    Marked,
+}
+
+type TargetRow = (frontend_core::ProfileIdentity, String);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingSend {
     command_name: String,
     wire: String,
-    target: String,
+    targets: Vec<TargetRow>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +149,7 @@ pub struct DebugPanelState {
     picker_query: String,
     pending_send: Option<PendingSend>,
     status: Option<PanelStatus>,
+    target_mode: DebugTargetMode,
     filter_catalog: Option<CatalogKey>,
     filter_query: String,
     filtered_indices: Vec<usize>,
@@ -145,6 +157,69 @@ pub struct DebugPanelState {
     picker_cached_kind: String,
     picker_cached_query: String,
     picker_hits: Vec<DebugName>,
+    /// Decoded only while the Debug window is open. The selected game facts
+    /// never retain this catalog.
+    catalog: Option<Arc<DebugCatalog>>,
+    catalog_error: Option<String>,
+    catalog_profile: Option<usize>,
+}
+
+impl DebugPanelState {
+    pub(crate) fn catalog(&self) -> Option<&DebugCatalog> {
+        self.catalog.as_deref()
+    }
+
+    pub(crate) fn catalog_profile(&self) -> Option<usize> {
+        self.catalog_profile
+    }
+
+    pub(crate) fn set_catalog_profile(&mut self, profile: Option<usize>) {
+        self.catalog_profile = profile;
+    }
+
+    pub(crate) fn catalog_error(&self) -> Option<&str> {
+        self.catalog_error.as_deref()
+    }
+
+    pub(crate) fn attach_catalog(&mut self, catalog: Arc<DebugCatalog>) {
+        self.catalog = Some(catalog);
+        self.catalog_error = None;
+        self.filter_catalog = None;
+        self.selected_catalog = None;
+        self.picker_cached_kind.clear();
+        self.picker_cached_query.clear();
+        self.picker_hits.clear();
+        reset_selection_state(self);
+    }
+
+    pub(crate) fn set_catalog_error(&mut self, error: String) {
+        self.catalog = None;
+        self.catalog_error = Some(error);
+        self.filter_catalog = None;
+        self.selected_catalog = None;
+        self.filtered_indices.clear();
+        reset_selection_state(self);
+    }
+
+    /// Drop the lazily decoded catalog and all command-derived ephemeral
+    /// state. Persisted recents/favorites live in [`PanelUiState`] instead.
+    pub(crate) fn release_catalog(&mut self) {
+        self.catalog = None;
+        self.catalog_error = None;
+        self.catalog_profile = None;
+        self.filter_catalog = None;
+        self.selected_catalog = None;
+        self.filtered_indices.clear();
+        self.picker_cached_kind.clear();
+        self.picker_cached_query.clear();
+        self.picker_hits.clear();
+        reset_selection_state(self);
+    }
+
+    pub(crate) fn clear_target_feedback(&mut self) {
+        self.pending_send = None;
+        self.status = None;
+    }
 }
 
 /// Draw the body of the Settings-style Debug tab.
@@ -152,26 +227,26 @@ pub struct DebugPanelState {
 /// The containing window and the existing Teleports popup are owned by
 /// `app.rs`; the link below only sets `Session::debug_open_teleports`.
 pub fn draw(ui: &Ui, session: &mut Session) {
-    let data = session.selected_game_data();
-    let commands: &[DebugCommand] = data.as_deref().map_or(&[], |data| data.debug_commands());
-
     draw_target_header(ui, session);
     if !session.debug_ui() {
         ui.text_colored(ERROR, "Debug commands require a Local profile.");
         return;
     }
+    if let Err(error) = session.ensure_debug_catalog() {
+        ui.text_colored(ERROR, format!("Debug catalog unavailable: {error}"));
+        return;
+    }
+    // Clone only the Arc handle: command rows remain borrowed from the
+    // lazily attached catalog while the panel's mutable UI state changes.
+    let catalog = session.debug_panel.catalog.clone();
+    let commands: &[DebugCommand] = catalog.as_deref().map_or(&[], DebugCatalog::commands);
 
+    draw_target_controls(ui, session);
     draw_search_row(ui, session);
     if ui.button("Open Teleports") {
         session.debug_open_teleports = true;
     }
     ui.set_item_tooltip("Open the existing Teleports controls; this tab does not duplicate them.");
-
-    if data.is_none() {
-        ui.text_wrapped(
-            "No content-derived Debug catalog is available for this profile's cache identity. Rebind a profile whose cache matches the generated facts to enable Debug commands and name pickers.",
-        );
-    }
 
     let selected_catalog = catalog_key(commands);
     if session.debug_panel.selected_catalog != Some(selected_catalog) {
@@ -216,7 +291,7 @@ pub fn draw(ui: &Ui, session: &mut Session) {
         draw_command_groups(ui, session, commands, &visible_indices, search_active);
     }
 
-    draw_name_picker(ui, session, data.as_deref());
+    draw_name_picker(ui, session, catalog.as_deref());
     draw_confirmation(ui, session);
     session.debug_panel.filtered_indices = visible_indices;
 }
@@ -226,6 +301,57 @@ fn draw_target_header(ui: &Ui, session: &Session) {
     ui.text_wrapped(format!(
         "Focused account: {}",
         session.focused_name().as_deref().unwrap_or("(none)")
+    ));
+}
+
+fn target_rows(session: &Session) -> Vec<TargetRow> {
+    let rows = session.debug_target_snapshot();
+    match session.debug_panel.target_mode {
+        DebugTargetMode::Focused => session
+            .focused_name()
+            .and_then(|name| rows.into_iter().find(|(_, row)| *row == name))
+            .into_iter()
+            .collect(),
+        DebugTargetMode::Marked => rows
+            .into_iter()
+            .filter(|(identity, _)| session.fleet_selection.contains(*identity))
+            .collect(),
+    }
+}
+
+fn target_description(rows: &[TargetRow]) -> String {
+    if rows.is_empty() {
+        return "(none)".into();
+    }
+    let names = rows
+        .iter()
+        .map(|(_, name)| name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if rows.len() == 1 {
+        names
+    } else {
+        format!("{} marked bots: {names}", rows.len())
+    }
+}
+
+fn draw_target_controls(ui: &Ui, session: &mut Session) {
+    ui.text_colored(ACCENT, "Target");
+    if ui.button("Focused bot##debug-target-focused") {
+        session.debug_panel.target_mode = DebugTargetMode::Focused;
+        session.debug_panel.clear_target_feedback();
+    }
+    ui.same_line();
+    let marked_count = session.fleet_selection.len();
+    let _disabled = (marked_count == 0).then(|| ui.begin_disabled());
+    if ui.button(format!("Marked bots ({marked_count})##debug-target-marked")) {
+        session.debug_panel.target_mode = DebugTargetMode::Marked;
+        session.debug_panel.clear_target_feedback();
+    }
+    drop(_disabled);
+    ui.text_wrapped(format!(
+        "Actual targets: {}",
+        target_description(&target_rows(session))
     ));
 }
 
@@ -445,8 +571,10 @@ fn default_argument_values(command: &DebugCommand) -> Vec<String> {
 
 fn select_command(session: &mut Session, name: &str) {
     let values = session
-        .selected_game_data()
-        .and_then(|data| command_for_name(data.debug_commands(), name).map(default_argument_values))
+        .debug_panel
+        .catalog
+        .as_ref()
+        .and_then(|catalog| command_for_name(catalog.commands(), name).map(default_argument_values))
         .unwrap_or_default();
     session.debug_panel.selected_command = Some(name.to_string());
     session.debug_panel.values = values;
@@ -459,16 +587,20 @@ fn select_command(session: &mut Session, name: &str) {
     session.debug_panel.status = None;
 }
 
+fn reset_selection_state(state: &mut DebugPanelState) {
+    state.selected_command = None;
+    state.values.clear();
+    state.picker_arg = None;
+    state.picker_query.clear();
+    state.picker_cached_kind.clear();
+    state.picker_cached_query.clear();
+    state.picker_hits.clear();
+    state.pending_send = None;
+    state.status = None;
+}
+
 fn clear_selection(session: &mut Session) {
-    session.debug_panel.selected_command = None;
-    session.debug_panel.values.clear();
-    session.debug_panel.picker_arg = None;
-    session.debug_panel.picker_query.clear();
-    session.debug_panel.picker_cached_kind.clear();
-    session.debug_panel.picker_cached_query.clear();
-    session.debug_panel.picker_hits.clear();
-    session.debug_panel.pending_send = None;
-    session.debug_panel.status = None;
+    reset_selection_state(&mut session.debug_panel);
 }
 
 fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
@@ -547,19 +679,21 @@ fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
                     "Destructive command — confirmation is required before sending.",
                 );
             }
+            let targets = target_rows(session);
+            let _disabled = (targets.is_empty()).then(|| ui.begin_disabled());
             if ui.button("Send##debug-send") {
                 if command.destructive {
-                    let target = focused_target(session);
                     session.debug_panel.pending_send = Some(PendingSend {
                         command_name: command.name.clone(),
                         wire,
-                        target,
+                        targets,
                     });
                     ui.open_popup(CONFIRM_POPUP);
                 } else {
-                    send_wire(session, &command.name, &wire);
+                    send_wire(session, &command.name, &wire, targets);
                 }
             }
+            drop(_disabled);
         }
         Err(error) => {
             let color = ui.push_style_color(StyleColor::Text, ERROR);
@@ -588,19 +722,15 @@ fn destructive_tooltip(ui: &Ui) {
     });
 }
 
-fn draw_name_picker(
-    ui: &Ui,
-    session: &mut Session,
-    data: Option<&api::game_data::SelectedGameData>,
-) {
+fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalog>) {
     let Some(index) = session.debug_panel.picker_arg else {
         return;
     };
     let Some(command_name) = session.debug_panel.selected_command.clone() else {
         return;
     };
-    let Some(kind) = data
-        .and_then(|data| command_for_name(data.debug_commands(), &command_name))
+    let Some(kind) = catalog
+        .and_then(|catalog| command_for_name(catalog.commands(), &command_name))
         .and_then(|command| command.args.get(index))
         .map(|argument| argument.kind.clone())
     else {
@@ -624,8 +754,8 @@ fn draw_name_picker(
             let query = session.debug_panel.picker_query.clone();
             session.debug_panel.picker_cached_kind.clone_from(&kind);
             session.debug_panel.picker_cached_query = query.clone();
-            session.debug_panel.picker_hits = data
-                .map(|data| data.search_debug_names(&kind, &query, NAME_PICKER_LIMIT))
+            session.debug_panel.picker_hits = catalog
+                .map(|catalog| catalog.search_names(&kind, &query, NAME_PICKER_LIMIT))
                 .unwrap_or_default();
         }
         if session.debug_panel.picker_hits.is_empty() {
@@ -670,18 +800,27 @@ fn set_picked_value(session: &mut Session, index: usize, value: &str) {
     session.debug_panel.picker_query.clear();
 }
 
+fn same_targets(left: &[TargetRow], right: &[TargetRow]) -> bool {
+    let mut left = left.to_vec();
+    let mut right = right.to_vec();
+    left.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    right.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    left == right
+}
+
 fn draw_confirmation(ui: &Ui, session: &mut Session) {
     let Some(pending) = session.debug_panel.pending_send.clone() else {
         return;
     };
-    let current_target = focused_target(session);
-    if current_target != pending.target {
+    let current_targets = target_rows(session);
+    if !same_targets(&current_targets, &pending.targets) {
         session.debug_panel.pending_send = None;
         session.debug_panel.status = Some(PanelStatus {
             success: false,
             text: format!(
-                "Confirmation cancelled: focused account changed from {} to {}.",
-                pending.target, current_target
+                "Confirmation cancelled: targets changed from {} to {}.",
+                target_description(&pending.targets),
+                target_description(&current_targets)
             ),
         });
         return;
@@ -693,16 +832,22 @@ fn draw_confirmation(ui: &Ui, session: &mut Session) {
         red.pop();
         ui.text_wrapped(format!(
             "Send {} to {}? This command may change or remove game state.",
-            pending.wire, pending.target
+            pending.wire,
+            target_description(&pending.targets)
         ));
         if ui.button("Confirm send##debug-confirm") {
-            if focused_target(session) == pending.target {
-                send_wire(session, &pending.command_name, &pending.wire);
+            if same_targets(&target_rows(session), &pending.targets) {
+                send_wire(
+                    session,
+                    &pending.command_name,
+                    &pending.wire,
+                    pending.targets.clone(),
+                );
             } else {
                 session.debug_panel.pending_send = None;
                 session.debug_panel.status = Some(PanelStatus {
                     success: false,
-                    text: "Confirmation cancelled: focused account changed.".into(),
+                    text: "Confirmation cancelled: targets changed.".into(),
                 });
             }
             ui.close_current_popup();
@@ -715,27 +860,65 @@ fn draw_confirmation(ui: &Ui, session: &mut Session) {
     });
 }
 
-fn focused_target(session: &Session) -> String {
-    session
-        .focused_name()
-        .unwrap_or_else(|| "(none)".to_string())
-}
-fn send_wire(session: &mut Session, command_name: &str, wire: &str) {
-    let target = focused_target(session);
+fn send_wire(session: &mut Session, command_name: &str, wire: &str, targets: Vec<TargetRow>) {
+    if !same_targets(&target_rows(session), &targets) {
+        session.debug_panel.pending_send = None;
+        session.debug_panel.status = Some(PanelStatus {
+            success: false,
+            text: format!(
+                "Send cancelled: targets changed from {} to {}.",
+                target_description(&targets),
+                target_description(&target_rows(session))
+            ),
+        });
+        return;
+    }
     session.debug_panel.pending_send = None;
-    match session.send_debug_command(wire) {
-        Ok(()) => {
-            session.ui.debug_panel.remember_recent(command_name);
-            save_prefs(session);
-            session.debug_panel.status = Some(PanelStatus {
-                success: true,
-                text: format!("Queued for {target}: {wire}"),
-            });
+    match session.debug_panel.target_mode {
+        DebugTargetMode::Focused => {
+            let target = target_description(&targets);
+            match session.send_debug_command(wire) {
+                Ok(()) => {
+                    session.ui.debug_panel.remember_recent(command_name);
+                    save_prefs(session);
+                    session.debug_panel.status = Some(PanelStatus {
+                        success: true,
+                        text: format!("Queued for {target}: {wire}"),
+                    });
+                }
+                Err(error) => {
+                    session.debug_panel.status = Some(PanelStatus {
+                        success: false,
+                        text: format!("Send failed: {error}"),
+                    });
+                }
+            }
         }
-        Err(error) => {
+        DebugTargetMode::Marked => {
+            let report = session.send_debug_command_marked_snapshot(wire, targets.clone());
+            if report.accepted > 0 {
+                session.ui.debug_panel.remember_recent(command_name);
+                save_prefs(session);
+            }
+            let mut text = if report.accepted > 0 {
+                format!(
+                    "Queued for {}/{} ({}) : {wire}",
+                    report.accepted,
+                    report.total(),
+                    target_description(&targets)
+                )
+            } else {
+                format!("Send failed for {}: ", target_description(&targets))
+            };
+            if !report.skipped.is_empty() || report.accepted == 0 {
+                if report.accepted > 0 {
+                    text.push_str("; ");
+                }
+                text.push_str(&report.summary("Admission"));
+            }
             session.debug_panel.status = Some(PanelStatus {
-                success: false,
-                text: format!("Send failed: {error}"),
+                success: report.accepted > 0,
+                text,
             });
         }
     }
@@ -749,7 +932,25 @@ fn save_prefs(session: &Session) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DebugPanelPrefs, MAX_FAVORITES, MAX_RECENTS};
+    use super::{same_targets, DebugPanelPrefs, MAX_FAVORITES, MAX_RECENTS};
+
+    #[test]
+    fn target_snapshot_rejects_identity_or_name_changes() {
+        let alice = frontend_core::ProfileIdentity::uid(11);
+        let bob = frontend_core::ProfileIdentity::uid(22);
+        assert!(same_targets(
+            &[(alice, "alice".into()), (bob, "bob".into())],
+            &[(bob, "bob".into()), (alice, "alice".into())],
+        ));
+        assert!(!same_targets(
+            &[(alice, "alice".into())],
+            &[(alice, "renamed".into())],
+        ));
+        assert!(!same_targets(
+            &[(alice, "alice".into())],
+            &[(bob, "bob".into())],
+        ));
+    }
 
     #[test]
     fn recent_commands_are_unique_newest_first_and_bounded() {

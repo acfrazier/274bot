@@ -7616,3 +7616,70 @@ fn memory_relog_arm_is_per_bot() {
     s.select("bob");
     assert!(!s.mem_relog_armed(), "arming never leaks across bots");
 }
+
+#[test]
+fn marked_debug_command_queues_ready_and_reports_ineligible_rows() {
+    let mut play = empty_play();
+    play.spawn_slot(
+        profile("alice", "pw", 11),
+        None,
+        None,
+        Some(SlotArm::new(11, false)),
+    );
+    play.spawn_slot(
+        profile("bob", "pw", 22),
+        None,
+        None,
+        Some(SlotArm::new(22, false)),
+    );
+    {
+        let mut statuses = play.statuses.lock().unwrap();
+        statuses
+            .iter_mut()
+            .find(|status| status.username == "alice")
+            .unwrap()
+            .ingame = true;
+        statuses
+            .iter_mut()
+            .find(|status| status.username == "alice")
+            .unwrap()
+            .scene_state = 2;
+        statuses
+            .iter_mut()
+            .find(|status| status.username == "bob")
+            .unwrap()
+            .ingame = false;
+    }
+
+    let path = tmp_vault("marked-debug-command.vault");
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    vault.upsert(profile("alice", "pw", 11)).unwrap();
+    vault.upsert(profile("bob", "pw", 22)).unwrap();
+    vault.upsert(profile("missing", "pw", 33)).unwrap();
+
+    let mut session = Session::new();
+    session.core.set_spawn_workers(false);
+    session.core.set_vault(Some(vault));
+    session.core.set_play(Some(play));
+    session.fleet_selection.mark_all([
+        frontend_core::ProfileIdentity::uid(11),
+        frontend_core::ProfileIdentity::uid(22),
+        frontend_core::ProfileIdentity::uid(33),
+    ]);
+
+    let snapshot = session.debug_target_snapshot();
+    let report = session.send_debug_command_marked_snapshot("getcoord", snapshot);
+    assert_eq!(report.accepted, 1);
+    assert_eq!(report.total(), 3);
+    assert_eq!(
+        report
+            .skipped
+            .iter()
+            .map(|skip| (skip.profile.as_str(), skip.reason.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("bob", "bot is not in game"),
+            ("missing", "bot is not running"),
+        ]
+    );
+}

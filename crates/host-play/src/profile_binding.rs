@@ -83,6 +83,30 @@ fn verify_source_inputs<'a>(
     }
 }
 
+#[cfg(feature = "debug-catalog")]
+impl ServerProfile {
+    /// Independently verify and decode on Debug-tab demand, never on bind.
+    /// The caller owns the catalog; closing the tab releases its heap.
+    pub fn debug_catalog(&self) -> Result<Arc<api::debug_commands::DebugCatalog>, String> {
+        if self.profile_class() != ProfileClass::Local {
+            return Err("Debug commands require a Local profile".into());
+        }
+        let data = self.game_data().ok_or_else(|| {
+            format!(
+                "Debug catalog unavailable: {}",
+                self.game_data_status().detail()
+            )
+        })?;
+        let catalog = api::debug_commands::DebugCatalog::load(self.revision(), data)?;
+        verify_source_inputs(catalog.source_inputs(), &self.debug_engine_dir, &self.content_dir)
+            .map_err(|rejection| format!(
+                "Debug catalog withheld: {} of {} debug inputs failed verification; other generated facts remain available",
+                rejection.failures.len(), rejection.total
+            ))?;
+        Ok(Arc::new(catalog))
+    }
+}
+
 impl ProfileSelection {
     pub fn selection(&self) -> &LaunchProfile {
         &self.profile
@@ -535,6 +559,8 @@ impl ProfileSelection {
             canlight: loaded.canlight,
             nav: loaded.availability,
             content_dir: self.content_dir.clone(),
+            #[cfg(feature = "debug-catalog")]
+            debug_engine_dir: self.engine_dir.clone(),
             vault_path: self.vault_path.clone(),
             catalog_root: self.catalog_root.clone(),
             world_members: self.world_members.clone(),

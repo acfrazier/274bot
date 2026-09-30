@@ -45,11 +45,19 @@ section retains **TutSkip**, **Lumbridge**, **maxme**, and **Teles**, and links
 to the **Debug** tab. The tab groups commands from the selected content
 catalog by `~help` category, with search, typed arguments, content-derived
 name pickers, favourites and recent commands. Item pickers share Loadouts'
-item search. Commands target only the focused running profile; the target is
-shown before sending. Destructive commands require confirmation. Public and
-Remote profiles cannot send cheats; production-only commands are hidden.
-Host logs record queued commands and nearby chat/modal reply candidates
-(temporal correlation, not server acknowledgement). The Profiles editor
+item search, with exact aliases/names ranked before prefixes and substrings.
+Commands target the focused running profile or the shared marked selection.
+Marked sends check each bot separately and report queued targets and skipped
+targets with their refusal reasons. Destructive commands require confirmation
+naming the target or marked count. Public and Remote profiles cannot send
+cheats; production-only commands are hidden.
+The separate Debug catalog is loaded only while a Local session opens the tab
+and released when it closes. Its source verification is independent: drift in
+debug-only inputs disables Debug without withholding other generated facts.
+Headless builds do not embed the catalog unless explicitly built with the
+`debug-catalog` feature. Host logs record queued commands and each nearby
+chat/modal reply candidate once, listing the pending commands (temporal
+correlation, not server acknowledgement). The Profiles editor
 offers `auto` or each listed rs2b2t world; the selected world is used on the
 next slot start. Live slot rows display the current world.
 

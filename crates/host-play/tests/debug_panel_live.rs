@@ -1,4 +1,5 @@
 //! Explicit local-only proof of the Debug catalog's existing host cheat path.
+#![cfg(feature = "debug-catalog")]
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -75,10 +76,10 @@ fn debug_catalog_commands_and_host_reply_log() {
         "selected catalog: {}",
         profile.game_data_status().detail()
     );
+    let game_data = profile
+        .debug_catalog()
+        .expect("verified Local Debug catalog");
     let template = SharedClientTemplate::load(profile).unwrap();
-    let game_data = template
-        .game_data()
-        .expect("selected local content catalog");
     let replies = &*REPLIES;
     assert!(api::hostlog::install_sink(replies));
     let state = Arc::new(Mutex::new(Observation::default()));
@@ -119,7 +120,8 @@ fn debug_catalog_commands_and_host_reply_log() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let user = format!("dbgv2{:06}", serial % 1_000_000);
+    let prefix = std::env::var("DEBUGPANEL_PREFIX").unwrap_or_else(|_| "dbg2".into());
+    let user = format!("{prefix}{:06}", serial % 1_000_000);
     let slot = Profile {
         username: user.clone(),
         password: "debug-fixture".into(),
@@ -133,7 +135,7 @@ fn debug_catalog_commands_and_host_reply_log() {
     wait_for(&state, "local ingame scene 2", |s| s.ready);
     let send = |name: &str, arguments: &[&str]| {
         let command = game_data
-            .debug_commands()
+            .commands()
             .iter()
             .find(|command| command.name == name)
             .unwrap_or_else(|| panic!("selected content lacks {name}"));
@@ -144,7 +146,7 @@ fn debug_catalog_commands_and_host_reply_log() {
             .collect::<Vec<_>>();
         let wire = command.format_command(&arguments).unwrap();
         println!("SEND {}: {wire}", command.category);
-        assert!(play.cheat(&user, &wire));
+        play.cheat(&user, &wire).unwrap();
     };
     send("setvar", &["tutorial", "1000"]);
     send("tele", &["0,50,50,20,20"]);
@@ -169,9 +171,7 @@ fn debug_catalog_commands_and_host_reply_log() {
     let until = Instant::now() + Duration::from_secs(30);
     loop {
         if replies.0.lock().iter().any(|(slot, message)| {
-            slot == &user
-                && message.contains("::getcoord: ")
-                && message.contains("reply candidate:")
+            slot == &user && message.contains("getcoord") && message.contains("reply candidate:")
         }) {
             break;
         }

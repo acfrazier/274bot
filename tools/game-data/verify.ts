@@ -1,14 +1,15 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, revisions, requestedRevisions } from './generate.ts';
 import { parsePack } from './extractors/common.ts';
 import { extractGatheringFamily, miningHazards } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
-import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs } from './generate.ts';
+import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION } from './generate.ts';
+import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
-import { ENGINE_DEBUG_COMMANDS } from './extractors/debug.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
@@ -64,6 +65,54 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, 'crates/api/data/gam
 assertEqual(manifest.schema_version, 4, 'manifest schema');
 const results = [];
 const publishedTrioGivers = new Map<number, PublishedTrioGivers>();
+export type DebugVerifyStatus = { status: 'verified'; commands: number } | { status: 'source-rejected'; reason: string };
+/** The debug family's own verification: a debug-only mismatch withholds only the Debug catalog. */
+async function verifyDebugArtifact(revision: number, manifestRow: any, pin: { engine: string; content: string; engineRoot: string; contentRoot: string; cache: unknown }): Promise<DebugVerifyStatus> {
+    try {
+        const debugFile = path.join(root, `crates/api/data/game-data/${revision}/debug.json`);
+        const debug = JSON.parse(fs.readFileSync(debugFile, 'utf8')) as any;
+        assertEqual(debug.schema_version, DEBUG_SCHEMA_VERSION, `${revision} debug schema`);
+        assertEqual(debug.revision, revision, `${revision} debug revision`);
+        assertEqual(debug.provenance.engine_commit, pin.engine, `${revision} debug engine pin`);
+        assertEqual(debug.provenance.content_commit, pin.content, `${revision} debug content pin`);
+        assertEqual(JSON.stringify(debug.provenance.inputs.map((input: { path: string }) => input.path).sort()), JSON.stringify([...DEBUG_ENGINE_INPUT_PATHS].sort()), `${revision} debug engine inputs`);
+        assertEqual(JSON.stringify(debug.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} debug cache identity`);
+        for (const input of debug.provenance.inputs) { const actual = digest(path.join(pin.engineRoot, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} debug ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} debug ${input.path} hash`); }
+        for (const input of debug.provenance.content_inputs) { const actual = digest(path.join(pin.contentRoot, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} debug ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} debug ${input.path} hash`); }
+        // The decoder lives under the revision-selected engine root, so it cannot be a static import (mirrors generate.ts).
+        const cwd = process.cwd();
+        process.chdir(pin.engineRoot);
+        let npcs: { id: number; debugname?: string | null; name: string | null }[];
+        try {
+            const npcModule = (await import(pathToFileURL(path.join(pin.engineRoot, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: { id: number; debugname?: string | null; name: string | null }[] } };
+            npcModule.default.load('data/pack');
+            npcs = npcModule.default.configs;
+        } finally {
+            process.chdir(cwd);
+        }
+        const handlerText = fs.readFileSync(path.join(pin.engineRoot, engineHandlerRelative()), 'utf8');
+        const statText = fs.readFileSync(path.join(pin.engineRoot, 'src/engine/entity/PlayerStat.ts'), 'utf8');
+        const fresh = extractDebugCatalog(pin.contentRoot, handlerText, statText, npcs);
+        assertEqual(JSON.stringify(debug.provenance.content_inputs), JSON.stringify(fresh.inputs), `${revision} debug content inputs match the extractor scan`);
+        assertEqual(JSON.stringify(debug.debug_commands), JSON.stringify(fresh.commands), `${revision} debug commands match the writer extract`);
+        assertEqual(JSON.stringify(debug.debug_names), JSON.stringify(fresh.names), `${revision} debug names match the writer extract`);
+        const debugCommands = debug.debug_commands as { name: string; category: string; args: { name: string; kind: string; optional: boolean }[]; production_only: boolean }[];
+        const expectedEngine = ENGINE_DEBUG_COMMANDS.filter((row) => revision !== 274 || row.name !== 'givebank').map((row) => row.name).sort();
+        if (!Array.isArray(debugCommands) || debugCommands.length <= expectedEngine.length) throw new Error(`${revision}: incomplete debug command catalog`);
+        const engineNames = debugCommands.filter((row) => !row.name.startsWith('~')).map((row) => row.name).sort();
+        assertEqual(JSON.stringify(engineNames), JSON.stringify(expectedEngine), `${revision} engine debug command catalog`);
+        if (new Set(debugCommands.map((row) => row.name)).size !== debugCommands.length || debugCommands.some((row) => !row.category || !Array.isArray(row.args))) throw new Error(`${revision}: invalid debug command rows`);
+        const debugNames = debug.debug_names as Record<string, { id: number; alias: string; name: string }[]>;
+        if (Object.hasOwn(debugNames, 'obj') || Object.hasOwn(debugNames, 'namedobj')) throw new Error(`${revision}: duplicate item debug-name family`);
+        for (const kind of ['npc', 'loc', 'seq', 'spotanim', 'interface', 'stat', 'varp', 'inv', 'idkit']) if (!Array.isArray(debugNames?.[kind]) || debugNames[kind].length === 0) throw new Error(`${revision}: missing debug name family ${kind}`);
+        assertEqual(debugNames.stat.length, 19, `${revision} stat debug names`);
+        assertEqual(JSON.stringify(manifestRow.families?.debug), JSON.stringify({ path: `${revision}/debug.json`, schema: DEBUG_SCHEMA_VERSION, ...digest(debugFile) }), `${revision} manifest debug descriptor`);
+        return { status: 'verified', commands: debugCommands.length };
+    } catch (error) {
+        return { status: 'source-rejected', reason: error instanceof Error ? error.message : String(error) };
+    }
+}
+
 async function verifyRevision(revision: number) {
     const file = path.join(root, `crates/api/data/game-data/${revision}.json`); const payload = JSON.parse(fs.readFileSync(file, 'utf8')) as any; const pin = expected[revision]; const manifestRow = manifest.revisions.find((entry) => entry.revision === revision); if (!manifestRow) throw new Error(`${revision}: missing manifest row`);
     assertEqual(payload.schema_version, 4, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`); assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`);
@@ -74,10 +123,10 @@ async function verifyRevision(revision: number) {
         ? contentFiles
         : [...new Set([...contentFiles, ...questStartContentFiles(pin.contentRoot)])];
     assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: any) => input.path)), JSON.stringify(expectedContentFiles), `${revision} complete content provenance`);
+    if (payload.debug_commands !== undefined || payload.debug_names !== undefined) throw new Error(`${revision}: the debug catalog lives in the debug family, not the core asset`);
+    assertEqual(JSON.stringify(payload.provenance.inputs.map((input: { path: string }) => input.path)), JSON.stringify([...BASE_ENGINE_INPUT_PATHS]), `${revision} base engine inputs`);
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
     const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
-    const debugCommands = payload.debug_commands as { name: string; category: string; args: { name: string; kind: string; optional: boolean }[]; production_only: boolean }[]; const expectedEngine = ENGINE_DEBUG_COMMANDS.filter((row) => revision !== 274 || row.name !== 'givebank').map((row) => row.name).sort(); if (!Array.isArray(debugCommands) || debugCommands.length <= expectedEngine.length) throw new Error(`${revision}: incomplete debug command catalog`); const engineNames = debugCommands.filter((row) => !row.name.startsWith('~')).map((row) => row.name).sort(); assertEqual(JSON.stringify(engineNames), JSON.stringify(expectedEngine), `${revision} engine debug command catalog`); if (new Set(debugCommands.map((row) => row.name)).size !== debugCommands.length || debugCommands.some((row) => !row.category || !Array.isArray(row.args))) throw new Error(`${revision}: invalid debug command rows`);
-    const debugNames = payload.debug_names as Record<string, { id: number; alias: string; name: string }[]>; if (Object.hasOwn(debugNames, 'obj') || Object.hasOwn(debugNames, 'namedobj')) throw new Error(`${revision}: duplicate item debug-name family`); for (const kind of ['npc', 'loc', 'seq', 'spotanim', 'interface', 'stat', 'varp', 'inv', 'idkit']) if (!Array.isArray(debugNames?.[kind]) || debugNames[kind].length === 0) throw new Error(`${revision}: missing debug name family ${kind}`); assertEqual(debugNames.stat.length, 19, `${revision} stat debug names`);
     const byAlias = new Map(payload.items.filter((item: any) => item.alias !== null).map((item: any) => [item.alias, item])); const plate = byAlias.get('rune_platebody'); const chain = byAlias.get('rune_chainbody'); if (!plate || plate.name !== 'Rune platebody' || !chain || chain.name !== 'Rune chainbody' || plate.cost <= chain.cost) throw new Error(`${revision}: Rune platebody/chainbody value order`); if (payload.items.filter((item: any) => item.name === 'Dragonhide').length < 2) throw new Error(`${revision}: same-name Dragonhide identity`); if (new Set(payload.items.map((item: any) => item.id)).size !== payload.items.length || new Set(payload.items.map((item: any) => item.alias)).size !== payload.items.length) throw new Error(`${revision}: duplicate IDs or aliases`);
     const fixed = new Map(payload.consumption.filter((fact: any) => fact.qualification === 'fixed_hp_heal').map((fact: any) => [fact.item.alias, fact.stat_heal[0].base])); for (const [alias, heal] of [['lobster', 12], ['bread', 4], ['anchovies', 3]] as const) if (fixed.get(alias) !== heal) throw new Error(`${revision}: ${alias} fixed heal mismatch`); const guard = payload.pickpocket.find((fact: any) => fact.npcs.some((npc: any) => npc.alias === 'guard1')); if (!guard || guard.level !== 40) throw new Error(`${revision}: Guard thieving level mismatch`); if (payload.pickpocket.some((fact: any) => fact.npcs.length === 0 || fact.loot.some((loot: any) => loot.min > loot.max))) throw new Error(`${revision}: invalid pickpocket joins`);
     const drops = payload.drop_tables ?? [];
@@ -468,7 +517,10 @@ async function verifyRevision(revision: number) {
     }), `${revision} cook catalog and surface inputs`);
     assertEqual(fs.readFileSync(path.join(root, 'crates/api/data/game-data/cook-catalog.rs'), 'utf8'), cookCatalogRust(cookCatalog), `${revision} compiled cook camps match frozen AST`);
     publishedTrioGivers.set(revision, trioGivers);
+    const debug = await verifyDebugArtifact(revision, manifestRow, pin);
+    if (debug.status !== 'verified') process.exitCode = 1;
     results.push({ revision, records: payload.items.length, consumption: payload.consumption.length, pickpocket: payload.pickpocket.length, drop_tables: drops.length, spells: spells.length, staves: staves.length, herbs: herbs.length, prayers: prayers.length, pickaxes: nurmof.pickaxes.length, flour_six: 6, gathering: gathering.summary, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trailRows.length, clues: trailRows.filter((row: any) => row.role === 'clue').length, caskets: trailRows.filter((row: any) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: constrained.length }, talk_key: { talk: talkRows.length, talk_with_spawn: talkRows.filter((row) => row.spawn !== undefined).length, keys: keyRows.length, keys_with_spawn: keyRows.filter((row) => row.spawn !== undefined).length, coverage: talkKey.coverage.length, scripts: extractedTalkKey.inputs.scripts.files, npc_configs: extractedTalkKey.inputs.npc_configs.files }, trio_givers: { rows: giverRows.length, with_spawn: giverRows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.coverage.length, maps: extractedTrioGivers.inputs.maps.files, handlers: extractedTrioGivers.inputs.handlers.length, npc_configs: extractedTrioGivers.inputs.npc_configs.length, aliases: giverRows.map((row) => row.alias) }, equipment_names: { resolved: resolved.length, absent: absent.length, family_counts: familyCounts }, fire_staff_providers: fireProviders, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, fixed_food_heals: Object.fromEntries(fixed), output_sha256: output.sha256, input_hashes: true, content_hashes: true, source_pins: true, dirty_gate: true, cache_identity: pin.cache });
+    results[results.length - 1].debug = debug;
 }
 const requested = requestedRevisions(process.argv.slice(2));
 const refused: { revision: number; reason: string }[] = [];

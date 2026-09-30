@@ -13,7 +13,7 @@ dear-imgui-wgpu = "0.15"
 dear-imgui-winit = "0.15"
 frontend-core = { path = "../frontend-core" }
 host = { path = "../host" }
-host-play = { path = "../host-play", features = ["live-harness"] }
+host-play = { path = "../host-play", features = ["live-harness", "debug-catalog"] }
 nav = { path = "../nav" }
 scenario = { path = "../scenario" }
 script = { path = "../script" }

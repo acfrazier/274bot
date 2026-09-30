@@ -4529,6 +4529,7 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 
 fn debug_panel_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.debug_panel_open || !session.debug_ui() {
+        session.release_debug_catalog();
         return;
     }
     let mut open = true;
@@ -4548,6 +4549,9 @@ fn debug_panel_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             debug_teleports_popup(ui, session);
         });
     session.debug_panel_open = open;
+    if !open {
+        session.release_debug_catalog();
+    }
 }
 
 /// Profile-global clue traversal partner. Unlike card parameters this follows
