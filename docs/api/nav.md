@@ -308,6 +308,18 @@ on_leg, troll_doors }`.
   three times per follow, before the follow ends `Refused` — a region
   rebuild briefly empties the client's local route (frozen
   `CANDIDATE_SETTLE_TRIES`, `WalkExecutor.ts:1178-1184`).
+- **NPC-backed Boat/Npc/Glider recovery:** choose an operable stand by live
+  scene-route cost, re-picking reachable same-type NPCs and retargeting a
+  wandering NPC before the old approach settles. The shared stand predicate
+  requires a cardinal shared edge without a wall and excludes the NPC's
+  footprint; diagonals are considered only when no cardinal stand exists.
+  A fresh server reach failure permits at most three actual interactions in
+  one leg budget, including approach and fare dialogue. Retry watermarks
+  advance after each send, failed stands/instances lose priority, and an
+  open fare dialogue is never cancelled by re-clicking the NPC. Missing or
+  changed tracked targets and unrecognized dialogue choices produce an
+  explanatory terminal `Blocked` receipt; attempt exhaustion names its
+  actual attempt count. Duplicate snapshot polls do not spend this budget.
 
 - **Default door leg:** interact the door transport's menu option, then
   settle `arrived(to, close_enough)` — cheap, no per-tick door polling.

@@ -533,6 +533,10 @@ fn step_walk(
     dest: WorldTile,
 ) -> (bool, StepEnd) {
     if walk_arrived(here, dest, world) {
+        // A stand follow may have left a stale Traveller run armed against the
+        // private route. The next poll belongs to the restored post-session
+        // route, so drop that run first.
+        bot.traveller.clear();
         if let Some(pending) = bot.bank_fetch.as_ref() {
             bot.route = Some(pending.final_route.clone());
         }

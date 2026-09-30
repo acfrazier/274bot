@@ -229,6 +229,7 @@ owners.
 | `traveller/dialog.rs` | dialog and teleport-send helpers | chat and teleport sends |
 | `traveller/walk.rs` | walk-hop execution and reporting | walk targeting |
 | `traveller/transport_hop.rs` | transport-hop execution | approach and door execution |
+| `traveller/npc_hop.rs` | NPC-backed Boat/Npc/Glider approach and recovery | live scene operability, reachable-cost selection, bounded retry |
 | `traveller/legacy_grid.rs` | legacy-grid execution | via the stable grid API |
 | `walk_destinations.rs` | shared walk-destination pins | town tiles for WalkTo confirm |
 | `world.rs` | bound world handle | packed collision plus transport graph |
