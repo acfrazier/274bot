@@ -159,7 +159,12 @@ pub enum InteractReq {
     /// (`Bury`, `Wear`, …). The host resolves the name through ObjNames
     /// and dispatches the item's menu op (rs2b0t `Item.interact`).
     #[serde(rename = "held")]
-    Held { name: String, action: String },
+    Held {
+        name: String,
+        action: String,
+        #[serde(default)]
+        slot: Option<i32>,
+    },
     /// Selected component-item operation (`Input.invButton`). Host
     /// dispatch re-resolves the exact current bank row by id/slot/
     /// component and sends `ActionSpec::Operation`. It does not answer

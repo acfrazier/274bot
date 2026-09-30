@@ -100,6 +100,8 @@ pub(crate) struct Ledger {
     pub walk: Option<WalkReceipt>,
     pub interaction: Option<InteractionReceipt>,
     pub interaction_request: Option<NonZeroU64>,
+    pub disposal_receipts: [Option<InteractionReceipt>; 5],
+    next_disposal_receipt: usize,
     pub quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
 }
 
@@ -112,6 +114,8 @@ impl Default for Ledger {
             walk: None,
             interaction: None,
             interaction_request: None,
+            disposal_receipts: std::array::from_fn(|_| None),
+            next_disposal_receipt: 0,
             quiet_since: None,
         }
     }
@@ -151,6 +155,8 @@ impl Ledger {
         self.walk = None;
         self.interaction = None;
         self.interaction_request = None;
+        self.disposal_receipts.fill(None);
+        self.next_disposal_receipt = 0;
         self.quiet_since = None;
     }
 
@@ -158,14 +164,21 @@ impl Ledger {
         if !authority.live()
             || authority.request_id().get() != receipt.request_id
             || authority.run() != receipt.evidence.run
-            || self.interaction_request != Some(authority.request_id())
-            || self.interaction.is_some()
+            || !self.owner.as_ref().is_some_and(|owner| {
+                owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
+            })
         {
             return;
         }
-        if self.owner.as_ref().is_some_and(|owner| {
-            owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
-        }) {
+        let owner = self.owner.as_ref().expect("owner checked");
+        if owner.disposal_live(authority.request_id()) {
+            self.disposal_receipts[self.next_disposal_receipt] = Some(receipt);
+            self.next_disposal_receipt =
+                (self.next_disposal_receipt + 1) % self.disposal_receipts.len();
+            owner.cancel_interaction(authority.request_id());
+        } else if self.interaction_request == Some(authority.request_id())
+            && self.interaction.is_none()
+        {
             self.interaction = Some(receipt);
         }
     }

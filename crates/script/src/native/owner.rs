@@ -12,6 +12,7 @@ pub(crate) struct Owner {
     quiet: AtomicU64,
     walk: AtomicU64,
     interaction: AtomicU64,
+    disposal: [AtomicU64; 5],
 }
 
 impl Owner {
@@ -23,6 +24,7 @@ impl Owner {
             quiet: AtomicU64::new(0),
             walk: AtomicU64::new(0),
             interaction: AtomicU64::new(0),
+            disposal: std::array::from_fn(|_| AtomicU64::new(0)),
         })
     }
 
@@ -35,6 +37,9 @@ impl Owner {
         self.quiet.store(0, Ordering::Release);
         self.walk.store(0, Ordering::Release);
         self.interaction.store(0, Ordering::Release);
+        for slot in &self.disposal {
+            slot.store(0, Ordering::Release);
+        }
     }
 
     pub fn acquire_quiet(&self, request: NonZeroU64) -> bool {
@@ -80,10 +85,31 @@ impl Owner {
             Ordering::AcqRel,
             Ordering::Acquire,
         );
+        for slot in &self.disposal {
+            let _ = slot.compare_exchange(request.get(), 0, Ordering::AcqRel, Ordering::Acquire);
+        }
+    }
+
+    pub fn acquire_disposal(&self, request: NonZeroU64) -> bool {
+        self.live()
+            && self.disposal.iter().any(|slot| {
+                slot.compare_exchange(0, request.get(), Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            })
+    }
+
+    pub fn disposal_live(&self, request: NonZeroU64) -> bool {
+        self.live()
+            && self
+                .disposal
+                .iter()
+                .any(|slot| slot.load(Ordering::Acquire) == request.get())
     }
 
     pub fn interaction_live(&self, request: NonZeroU64) -> bool {
-        self.live() && self.interaction.load(Ordering::Acquire) == request.get()
+        self.live()
+            && (self.interaction.load(Ordering::Acquire) == request.get()
+                || self.disposal_live(request))
     }
 }
 

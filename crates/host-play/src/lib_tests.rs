@@ -9755,7 +9755,8 @@ fn dispatch_script_interact_sends_held_item_bury() {
             "alice",
             vec![script::shim::InteractReq::Held {
                 name: "Bones".into(),
-                action: "Bury".into()
+                action: "Bury".into(),
+                slot: None,
             }],
         ),
         "held Bury must dispatch"
@@ -9776,17 +9777,130 @@ fn dispatch_script_interact_sends_held_item_bury() {
         vec![
             script::shim::InteractReq::Held {
                 name: "Bones".into(),
-                action: "Wear".into()
+                action: "Wear".into(),
+                slot: None,
             },
             script::shim::InteractReq::Held {
                 name: "Lobster".into(),
-                action: "Bury".into()
+                action: "Bury".into(),
+                slot: None,
             },
         ],
     ));
     assert_eq!(
         c.out.pos, before,
         "a label no held op resolves and an unknown name send nothing"
+    );
+}
+
+#[test]
+fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_slot() {
+    let mut c = bank_fetch_client();
+    Arc::get_mut(&mut c.cache).unwrap().objs[1].iop = [None, None, None, None, Some("Drop".into())];
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![2, 2, 2, 2, 2, 3]),
+            link_obj_number: Some(vec![1; 6]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+    let (navs, world) = empty_nav();
+    let before = c.out.pos;
+    let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snap,
+        Some(&names),
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        (0..5)
+            .map(|slot| script::shim::InteractReq::Held {
+                name: "Bones".into(),
+                action: "Drop".into(),
+                slot: Some(slot),
+            })
+            .collect(),
+    ));
+    let bytes = &c.out.data()[before..c.out.pos];
+    assert_eq!(bytes.len(), 5 * 7);
+    for (slot, packet) in bytes.as_chunks::<7>().0.iter().enumerate() {
+        assert_eq!(packet[0], client::io::ClientProt::OPHELD5.id as u8);
+        assert_eq!(u16::from_be_bytes([packet[1], packet[2]]), 1);
+        assert_eq!(u16::from_be_bytes([packet[3], packet[4]]), slot as u16);
+        assert_eq!(u16::from_be_bytes([packet[5], packet[6]]), 500);
+    }
+    let mut traced = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &c,
+        *checkpoint,
+        &mut |op| traced.push(op)
+    ));
+    assert_eq!(traced, vec![client::io::ClientProt::OPHELD5.id as u8; 5]);
+    let before = c.out.pos;
+    for slot in [5, 9, -1] {
+        assert!(!dispatch_script_interact(
+            &mut c,
+            &snap,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Held {
+                name: "Bones".into(),
+                action: "Drop".into(),
+                slot: Some(slot),
+            }],
+        ));
+    }
+    assert_eq!(
+        c.out.pos, before,
+        "a changed or missing slot cannot fall back"
+    );
+    c.out.random = Some(client::io::Isaac::new(&[1, 2, 3, 4]));
+    let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    let requests = std::iter::once(script::shim::InteractReq::CloseModal)
+        .chain((0..4).map(|slot| script::shim::InteractReq::Held {
+            name: "Bones".into(),
+            action: "Drop".into(),
+            slot: Some(slot),
+        }))
+        .collect();
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snap,
+        Some(&names),
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        requests,
+    ));
+    let mut traced = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &c,
+        *checkpoint,
+        &mut |op| traced.push(op)
+    ));
+    assert_eq!(
+        traced,
+        [
+            client::io::ClientProt::CLOSE_MODAL.id as u8,
+            client::io::ClientProt::OPHELD5.id as u8,
+            client::io::ClientProt::OPHELD5.id as u8,
+            client::io::ClientProt::OPHELD5.id as u8,
+            client::io::ClientProt::OPHELD5.id as u8,
+        ],
     );
 }
 
@@ -10094,6 +10208,37 @@ fn loc_req(id: Option<i32>, action: &str) -> script::shim::InteractReq {
         action: action.into(),
         id,
     }
+}
+
+#[test]
+fn native_loc_click_driver_trace_counts_move_and_operation_packets() {
+    let (mut client, snapshot) = colocated_wall_flax(false);
+    let (navs, world) = empty_nav();
+    let checkpoint = api::interact::Driver::packet_checkpoint(&client).unwrap();
+    assert!(dispatch_script_interact(
+        &mut client,
+        &snapshot,
+        None,
+        Some((4, 5, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        vec![loc_req(Some(2646), "Pick")],
+    ));
+    let mut packets = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &client,
+        *checkpoint,
+        &mut |opcode| packets.push(opcode),
+    ));
+    assert_eq!(
+        packets,
+        [
+            client::io::ClientProt::MOVE_OPCLICK.id as u8,
+            client::io::ClientProt::OPLOC2.id as u8,
+        ],
+    );
 }
 
 fn dispatch_loc(snap: &GameSnapshot, req: script::shim::InteractReq) -> GuardRec {
@@ -11246,7 +11391,8 @@ fn dispatch_script_interact_held_first_match_only() {
         "alice",
         vec![script::shim::InteractReq::Held {
             name: "Bones".into(),
-            action: "Bury".into()
+            action: "Bury".into(),
+            slot: None,
         }],
     ));
     let one_op = one.out.pos - before_one;
@@ -11290,7 +11436,8 @@ fn dispatch_script_interact_held_first_match_only() {
         "alice",
         vec![script::shim::InteractReq::Held {
             name: "Bones".into(),
-            action: "Bury".into()
+            action: "Bury".into(),
+            slot: None,
         }],
     ));
     assert_eq!(

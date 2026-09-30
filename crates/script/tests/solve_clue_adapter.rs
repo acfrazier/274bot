@@ -1013,6 +1013,7 @@ export default class T extends TaskBot {
         vec![InteractReq::Held {
             name: "Casket".to_string(),
             action: "Open".to_string(),
+            slot: None,
         }],
         "the casket Open is a held-item request"
     );
@@ -1099,6 +1100,7 @@ export default class T extends TaskBot {
         vec![InteractReq::Held {
             name: "Spade".into(),
             action: "Dig".into(),
+            slot: None,
         }],
         "after travel settles the same clue token reaches its Dig"
     );
@@ -1230,6 +1232,7 @@ export default class T extends TaskBot {
         vec![InteractReq::Held {
             name: "Spade".into(),
             action: "Dig".into(),
+            slot: None,
         }]
     );
     let callback_logs = json(&iso, "JSON.stringify(globalThis.__logs)");
@@ -1398,6 +1401,7 @@ export default class T extends TaskBot {
         vec![InteractReq::Held {
             name: "Casket".to_string(),
             action: "Open".to_string(),
+            slot: None,
         }],
         "the casket Open is the landed held step"
     );
@@ -1619,6 +1623,7 @@ export default class T extends TaskBot {
         vec![InteractReq::Held {
             name: "Spade".to_string(),
             action: "Dig".to_string(),
+            slot: None,
         }],
         "the posted Spade is the Dig"
     );
@@ -2067,6 +2072,7 @@ export default class T extends TaskBot {
         vec![InteractReq::Held {
             name: "Spade".to_string(),
             action: "Dig".to_string(),
+            slot: None,
         }],
         "the held trio is the fall-through to the Dig"
     );
@@ -2549,6 +2555,7 @@ export default class T extends TaskBot {
         vec![InteractReq::Held {
             name: "Casket".to_string(),
             action: "Open".to_string(),
+            slot: None,
         }],
         "the held casket's own Open"
     );

@@ -4040,7 +4040,8 @@ export default class T extends LoopingBot {
         reqs,
         vec![script::shim::InteractReq::Held {
             name: "Bones".into(),
-            action: "Bury".into()
+            action: "Bury".into(),
+            slot: None,
         }],
         "first().interact('Bury') queues the held op"
     );
@@ -9170,6 +9171,7 @@ export default class T extends LoopingBot {
         vec![script::shim::InteractReq::Held {
             name: "Logs".into(),
             action: "Use".into(),
+            slot: None,
         }],
         "heldOp must not treat slot as a packed-array index"
     );
