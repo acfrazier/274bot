@@ -2,7 +2,7 @@
 // map placements, all joined from the pinned content tree. Unknown constructs become explicit gaps, never guesses.
 import fs from 'node:fs';
 import path from 'node:path';
-import { indexContent, parseDbRows, parseCoord, scanMapSection, spanRef, stripComment, type ContentIndex, type DbRow, type Rs2Block, type Section, type Span } from './gathering-content.ts';
+import { indexContent, parseDbRows, parseCoord, scanMapSection, spanRef, stripComment, type ContentIndex, type DbRow, type Rs2Block, type Rs2Header, type Section, type Span } from './gathering-content.ts';
 import { parseBody, walkStatements, returns, type Node, type PathCond, type Stmt } from './gathering-rs2.ts';
 
 /** Extractor schema. Bump on any change to the wire shape below; the Rust decoder pins the same number. */
@@ -338,12 +338,58 @@ function firstSwingLabel(ctx: Ctx, header: { span: Span }): string | null {
     return match ? match[1] : null;
 }
 
+/** A custom-handled rock whose Mine handler provably yields one dbrow ore: ore group and handler span. */
+type CustomOre = { ore: string; handler: Span };
+
 type MiningModel = {
     rows: DbRow[];
     rocks: Map<string, Rock>;
     labels: Map<string, MiningLabel | Gap>;
     population: string[];
+    /** M-215: custom-handler rocks promoted to resource by their proven ore product. */
+    customOre: Map<string, CustomOre>;
 };
+
+/** dbrow rock outputs mapped to the ore groups that yield them (M-215 custom-rock join key). */
+function oreOutputs(rows: DbRow[]): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const row of rows) {
+        const ore = row.data.get('ore_name')?.[0]?.values[0];
+        const output = row.data.get('rock_output')?.[0]?.values[0];
+        if (!ore || !output) continue;
+        const ores = out.get(output) ?? out.set(output, []).get(output)!;
+        if (!ores.includes(ore)) ores.push(ore);
+    }
+    return out;
+}
+
+const CUSTOM_YIELD = /^inv_add\(inv, ([A-Za-z0-9_]+), 1\)$/;
+
+/**
+ * M-215: prove a custom-handled rock's ore from its own Mine handler. Promotes only when the rock's
+ * Mine slot is handled by exactly one custom `oploc` (no standard dispatch on that slot), and that
+ * handler yields exactly one literal item, one time, which exactly one dbrow ore group outputs.
+ * Anything else (quest crystals, spawners, obstacles, dummies, decor) stays unclassified, never guessed.
+ */
+function customOreTarget(ctx: Ctx, slot: number | null, aliasHeaders: Rs2Header[], categoryHeaders: Rs2Header[], outputs: Map<string, string[]>): CustomOre | null {
+    if (slot === null) return null;
+    const mine = `oploc${slot}`;
+    const custom = aliasHeaders.filter((header) => header.kind === mine && !header.span.file.startsWith('scripts/skill_mining/'));
+    if (custom.length !== 1) return null;
+    if ([...aliasHeaders, ...categoryHeaders].some((header) => header.kind === mine && header.span.file === MINING_SCRIPT)) return null;
+    const block = ctx.idx.blocks(custom[0].span.file).find((each) => each.span.first === custom[0].span.first);
+    if (!block) return null;
+    const { flat } = flatten(block);
+    const yields = new Set<string>();
+    for (const { stmt } of flat) {
+        const match = CUSTOM_YIELD.exec(stmt.text);
+        if (match) yields.add(match[1]);
+    }
+    if (yields.size !== 1) return null;
+    const ores = outputs.get([...yields][0]) ?? [];
+    if (ores.length !== 1) return null;
+    return { ore: ores[0], handler: custom[0].span };
+}
 
 function classifyRocks(ctx: Ctx, rows: DbRow[]): MiningModel {
     const tableMembers = new Set(rows.flatMap((row) => (row.data.get('rock') ?? []).map((data) => data.values[0])));
@@ -364,6 +410,8 @@ function classifyRocks(ctx: Ctx, rows: DbRow[]): MiningModel {
     const label = (name: string) => labels.get(name) ?? labels.set(name, miningLabel(ctx, name)).get(name)!;
     const gasHeader = (ctx.idx.headers.get('oploc1,_mining_rock_macro_gas') ?? []).find((header) => header.span.file === GAS_SCRIPT);
     const rocks = new Map<string, Rock>();
+    const customOre = new Map<string, CustomOre>();
+    const outputs = oreOutputs(rows);
     for (const alias of [...population].sort()) {
         const def = ctx.idx.loc.get(alias);
         if (!def) {
@@ -380,7 +428,13 @@ function classifyRocks(ctx: Ctx, rows: DbRow[]): MiningModel {
         } else if (def.params.get('mining_rock_empty')?.[0] === '1' && custom.length === 0) {
             result = { alias, span: def.span, class: 'depleted', slot, label: null, gap: null };
         } else if (custom.length > 0) {
-            result = { alias, span: def.span, class: 'unclassified', slot, label: null, gap: gap('custom-handler', def.span, ...custom.map((header) => header.span)) };
+            const derived = customOreTarget(ctx, slot, aliasHeaders, categoryHeaders, outputs);
+            if (derived) {
+                customOre.set(alias, derived);
+                result = { alias, span: def.span, class: 'resource', slot, label: null, gap: null };
+            } else {
+                result = { alias, span: def.span, class: 'unclassified', slot, label: null, gap: gap('custom-handler', def.span, ...custom.map((header) => header.span)) };
+            }
         } else if (!tableMembers.has(alias)) {
             const handled = aliasHeaders.length + categoryHeaders.length > 0;
             result = { alias, span: def.span, class: 'unclassified', slot, label: null, gap: gap(handled ? 'not-in-mining-table' : 'no-handler', def.span) };
@@ -394,7 +448,7 @@ function classifyRocks(ctx: Ctx, rows: DbRow[]): MiningModel {
         }
         rocks.set(alias, result.class !== 'unclassified' && result.slot === null ? { ...result, class: 'unclassified', gap: gap('no-mine-op', def.span) } : result);
     }
-    return { rows, rocks, labels, population: [...population].sort() };
+    return { rows, rocks, labels, population: [...population].sort(), customOre };
 }
 
 // ---- assembly helpers ----------------------------------------------------------------------------------------
@@ -510,6 +564,7 @@ function extractMining(ctx: Ctx, pick: Know<ToolWire[]>, scale: PlayerScale | Ga
         for (const row of group) {
             const rate = row.data.get('rock_respawnrate')?.[0];
             for (const data of row.data.get('rock') ?? []) {
+                if (model.customOre.has(data.values[0])) continue;
                 const rock = model.rocks.get(data.values[0])!;
                 if (rock.class === 'unclassified') continue;
                 const def = ctx.idx.loc.get(rock.alias)!;
@@ -535,6 +590,15 @@ function extractMining(ctx: Ctx, pick: Know<ToolWire[]>, scale: PlayerScale | Ga
                     else add(other, known(null));
                 }
             }
+        }
+        for (const [alias, derived] of model.customOre) {
+            if (derived.ore !== ore) continue;
+            const rock = model.rocks.get(alias)!;
+            if (rock.class !== 'resource' || attached.has(alias)) continue;
+            const respawn: Know<RespawnWire | null> = unknown('custom-deplete', [spanRef(rock.span), spanRef(derived.handler)]);
+            add(rock, respawn);
+            resourceRocks.push(rock);
+            targetGaps.push(gap('custom-handler-target', derived.handler));
         }
         const resources = [...targets.values()].filter((target) => target.class === 'resource');
         const levels = new Set(group.map((row) => row.data.get('rock_level')?.[0]?.values[0]));

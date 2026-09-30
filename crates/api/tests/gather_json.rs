@@ -224,7 +224,24 @@ fn method_rows_keep_every_fact_next_to_its_completeness() {
             .iter()
             .map(|id| id["id"].as_i64().unwrap())
             .collect();
-        assert_eq!(resources, [2090, 2091]);
+        assert_eq!(
+            resources,
+            [2090, 2091, 3042],
+            "{revision}: the tutorial copper rock is typed"
+        );
+
+        let tin = row(&all, "mining.tin");
+        let tin_resources: Vec<i64> = tin["loc_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id["id"].as_i64().unwrap())
+            .collect();
+        assert_eq!(
+            tin_resources,
+            [2094, 2095, 3043],
+            "{revision}: the tutorial tin rock is typed"
+        );
 
         // Respawn is per target: three limestone rocks, three rates.
         let limestone = row(&all, "mining.limestone");

@@ -19,8 +19,8 @@
         "gathering": {
           "path": "274/gathering.json",
           "schema": 1,
-          "bytes": 1343664,
-          "sha256": "31c544528ff0ad7372b31adc9539a8fd5c6328ef6c721b90431d00216db96365"
+          "bytes": 1345642,
+          "sha256": "894445bb239c55000fcfc708fe2da18cb6d8f59f9963001521be3a57a0c3d5bc"
         }
       },
       "gathering": {
@@ -31,19 +31,19 @@
         },
         "rocks": {
           "population": 62,
-          "resource": 27,
+          "resource": 29,
           "depleted": 5,
           "hazard": 22,
-          "unclassified": 8,
+          "unclassified": 6,
           "unclassified_reasons": {
             "no-handler": 3,
-            "custom-handler": 5
+            "custom-handler": 3
           }
         },
-        "targets": 208,
+        "targets": 210,
         "placements": {
-          "rows": 15630,
-          "files": 234,
+          "rows": 15668,
+          "files": 235,
           "by_method": {
             "woodcutting.normal": 12672,
             "fishing.memberfish.op1": 16,
@@ -63,8 +63,8 @@
             "mining.clay": 33,
             "mining.coal": 228,
             "mining.gold": 44,
-            "mining.copper": 53,
-            "mining.tin": 62,
+            "mining.copper": 73,
+            "mining.tin": 80,
             "fishing.loc_2027.op1": 10,
             "fishing.loc_2027.op2": 10,
             "fishing.category_633.op1": 4,
@@ -88,7 +88,7 @@
         },
         "zones": 1,
         "knowledge": {
-          "partial": 16,
+          "partial": 18,
           "unknown": 6
         }
       },
@@ -625,8 +625,8 @@
         "gathering": {
           "path": "289/gathering.json",
           "schema": 1,
-          "bytes": 1412318,
-          "sha256": "5e9689635984ea71d4a44a4a66f8dff4488291b10fe14ff1500d78e482cab459"
+          "bytes": 1414296,
+          "sha256": "3fef0a19502857b10f133e620ab130d1939376d3a8771fa4552eb85b92f4a3b5"
         }
       },
       "gathering": {
@@ -637,19 +637,19 @@
         },
         "rocks": {
           "population": 84,
-          "resource": 27,
+          "resource": 29,
           "depleted": 5,
           "hazard": 22,
-          "unclassified": 30,
+          "unclassified": 28,
           "unclassified_reasons": {
-            "custom-handler": 8,
+            "custom-handler": 6,
             "no-handler": 22
           }
         },
-        "targets": 216,
+        "targets": 218,
         "placements": {
-          "rows": 15936,
-          "files": 246,
+          "rows": 15974,
+          "files": 247,
           "by_method": {
             "woodcutting.normal": 12947,
             "fishing.memberfish.op1": 18,
@@ -669,8 +669,8 @@
             "mining.clay": 33,
             "mining.coal": 235,
             "mining.gold": 44,
-            "mining.copper": 53,
-            "mining.tin": 62,
+            "mining.copper": 73,
+            "mining.tin": 80,
             "fishing.loc_2027.op1": 10,
             "fishing.loc_2027.op2": 10,
             "woodcutting.maple": 101,
@@ -694,7 +694,7 @@
         },
         "zones": 3,
         "knowledge": {
-          "partial": 18,
+          "partial": 20,
           "unknown": 6
         }
       },
