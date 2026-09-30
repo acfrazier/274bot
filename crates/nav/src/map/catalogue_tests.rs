@@ -103,6 +103,54 @@ fn nameless_loc_without_a_key_legend_name_is_not_a_poi() {
     );
 }
 
+#[test]
+fn quest_start_names_aggregate_nearby_targets_and_keep_far_markers_generic() {
+    let catalog = QuestStartCatalog {
+        entries: vec![
+            QuestStartEntry {
+                display: "Cook's Assistant".to_string(),
+                kind: QuestStartTargetKind::Npc,
+                id: 10,
+            },
+            QuestStartEntry {
+                display: "Rune Mysteries Quest".to_string(),
+                kind: QuestStartTargetKind::Npc,
+                id: 11,
+            },
+            QuestStartEntry {
+                display: "Arena Quest".to_string(),
+                kind: QuestStartTargetKind::Loc,
+                id: 20,
+            },
+        ],
+        npc_placements: vec![
+            QuestStartPlacement {
+                id: 10,
+                x: 100,
+                z: 200,
+                plane: 0,
+            },
+            QuestStartPlacement {
+                id: 11,
+                x: 101,
+                z: 200,
+                plane: 0,
+            },
+        ],
+        loc_ids: HashSet::from([20]),
+    };
+    let loc_placements = [QuestStartPlacement {
+        id: 20,
+        x: 300,
+        z: 300,
+        plane: 0,
+    }];
+    let name = quest_start_name_at(&catalog, 0, 100.5, 200.5, &loc_placements)
+        .expect("nearby quest starts are named");
+    assert_eq!(name.as_str(), "Cook's Assistant, Rune Mysteries Quest");
+    assert!(quest_start_name_at(&catalog, 0, 500.5, 500.5, &loc_placements).is_none());
+}
+
 /// Rare-Trees markers (mapfunction 34, empty name) take the nearest visited
 /// woodcutting tree's client-cache loc name on the same plane. Same-tile
 /// markers match exactly; an isolated marker with no tree within range on its
