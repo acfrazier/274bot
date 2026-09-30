@@ -811,6 +811,22 @@ fn straight_door_landing(
 /// the traveller drives the gated branch's pass-handover chat dialogs
 /// for this loc (see [`crate::traveller`]).
 pub(crate) const SHANTAY_HENGE_LOC_ID: i32 = 4031;
+/// `border_gate_toll_left` in `pack/loc.pack`: the southern Al Kharid
+/// border gate (m51_50 (4,27) = (3268,3227)).
+pub(crate) const AL_KHARID_TOLL_LEFT_LOC_ID: i32 = 2882;
+/// `border_gate_toll_right` in `pack/loc.pack`: the northern Al Kharid
+/// border gate (m51_50 (4,28) = (3268,3228)).
+pub(crate) const AL_KHARID_TOLL_RIGHT_LOC_ID: i32 = 2883;
+pub(crate) use toll::AL_KHARID_TOLL_COINS;
+
+/// Dialogue-driven Door hops: the Al Kharid border toll (`border_gate.rs2`
+/// `oploc1` → border-guard `p_choice3`) and the Shantay henge
+/// (`shantay_pass.rs2` `oploc1` pass handover / first-crossing disclaimer).
+pub(crate) fn is_dialogue_door_loc(loc_id: i32) -> bool {
+    loc_id == SHANTAY_HENGE_LOC_ID
+        || loc_id == AL_KHARID_TOLL_LEFT_LOC_ID
+        || loc_id == AL_KHARID_TOLL_RIGHT_LOC_ID
+}
 
 #[cfg(test)]
 #[path = "transport_tests.rs"]

@@ -294,3 +294,38 @@ fn hop_dialog_choice_rides_the_young_spirit_tree_single_destination() {
         Some(1)
     );
 }
+
+#[test]
+fn door_dialog_alkharid_pay_selects_yes_ok_not_the_refuse_branch() {
+    assert_eq!(
+        choice(
+            TransportKind::Door,
+            &[
+                "No thank you, I'll walk around.",
+                "Who does my money go to?",
+                "Yes, ok.",
+            ],
+        ),
+        Some(3)
+    );
+}
+
+#[test]
+fn door_dialog_shantay_disclaimer_selects_enter_regardless_of_order() {
+    assert_eq!(
+        choice(
+            TransportKind::Door,
+            &[
+                "No, I'm having serious second thoughts now.",
+                "Yeah, that poster doesn't scare me!",
+            ],
+        ),
+        Some(2)
+    );
+}
+
+#[test]
+fn door_dialog_unknown_or_duplicate_page_fails_closed() {
+    assert_eq!(choice(TransportKind::Door, &["Hello.", "Goodbye."]), None);
+    assert_eq!(choice(TransportKind::Door, &["Yes, ok.", "Yes, ok."]), None);
+}

@@ -3,7 +3,7 @@ use super::*;
 /// The Al Kharid border toll: 10 coins (`inv_del(inv, coins, 10)` in
 /// `border_gate.rs2`'s `pass_toll_gate`, guarded by
 /// `inv_total(inv, coins) < 10`).
-pub(super) const AL_KHARID_TOLL_COINS: i32 = 10;
+pub(crate) const AL_KHARID_TOLL_COINS: i32 = 10;
 /// The Shantay henge doorway's `to`: `p_teleport(0_51_48_40_46)`
 /// (3304,3118) then `p_telejump(movecoord(coord,0,0,-3))` → (3304,3115)
 /// in `shantay_pass.rs2`'s `[queue,shantay_pass_enter]`.

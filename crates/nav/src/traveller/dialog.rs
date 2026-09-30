@@ -162,6 +162,8 @@ pub(super) fn chat_page_key(snapshot: &GameSnapshot) -> String {
 /// NPC-backed rides are content-driven: the recognized affirmative option is
 /// selected even when Dragon Slayer inserts Crandor before the normal fare.
 /// An unrecognized NPC page returns `None` rather than guessing a destination.
+/// Dialogue Door hops (Al Kharid toll, Shantay disclaimer) use the same
+/// fail-closed content labels.
 pub(super) fn hop_dialog_choice(
     leg: &Leg,
     teleports: Option<&[TransportEdge]>,
@@ -180,7 +182,29 @@ pub(super) fn hop_dialog_choice(
     ) {
         return npc_hop_dialog_choice(edge, packed, chat_options);
     }
+    if edge.kind == TransportKind::Door {
+        return door_hop_dialog_choice(chat_options);
+    }
     Some(dest_dialog_choice(leg, teleports, packed))
+}
+
+/// Content-driven Door chat: the Al Kharid border-guard pay option and the
+/// Shantay first-crossing disclaimer. Unknown or duplicate labels fail
+/// closed — choice 1 on the toll page is "walk around", not pay.
+pub(super) fn door_hop_dialog_choice(
+    chat_options: &[api::snapshot::ChatOptionView],
+) -> Option<i32> {
+    for matcher in [
+        is_alkharid_pay_choice as fn(&str) -> bool,
+        is_shantay_disclaimer_choice,
+    ] {
+        match unique_option_choice(chat_options, matcher) {
+            Err(()) => return None,
+            Ok(Some(choice)) => return Some(choice),
+            Ok(None) => {}
+        }
+    }
+    None
 }
 
 /// Select the affirmative branch of a packed NPC-backed transport dialog.
@@ -319,6 +343,38 @@ fn is_affirmative_ride_choice(text: &str) -> bool {
         || option_eq(text, "Yes, I'm ready to go")
         || option_eq(text, "Yes, okay, I'm ready to go")
 }
+
+/// `border_gate.rs2` `~p_choice3(..., "Yes, ok.", 3)`: the only branch that
+/// pays and calls `@pass_toll_gate`. The first option walks around.
+fn is_alkharid_pay_choice(text: &str) -> bool {
+    option_eq(text, "Yes, ok")
+}
+
+/// `shantay_pass.rs2` first-crossing `~p_choice2_header(..., "Go into Desert?")`.
+fn is_shantay_disclaimer_choice(text: &str) -> bool {
+    option_eq(text, "Yeah, that poster doesn't scare me!")
+}
+
+/// Honest refusal for the Al Kharid pay page when the inventory cannot
+/// cover `inv_total(inv, coins) < 10` in `border_gate.rs2`. Other Door
+/// pages (Shantay disclaimer) are not a coin charge.
+pub(super) fn door_hop_choice_blocked(
+    edge: &TransportEdge,
+    snapshot: &GameSnapshot,
+    choice: i32,
+) -> Option<String> {
+    if edge.kind != TransportKind::Door {
+        return None;
+    }
+    let index = usize::try_from(choice.checked_sub(1)?).ok()?;
+    let text = snapshot.chat_options().get(index)?.text.as_str();
+    if !is_alkharid_pay_choice(text) {
+        return None;
+    }
+    (snapshot.inv_count(995) < AL_KHARID_TOLL_COINS)
+        .then(|| format!("need {AL_KHARID_TOLL_COINS} coins to pay the Al Kharid toll"))
+}
+
 pub(super) fn spirit_tree_choice(
     leg: &Leg,
     edge: &TransportEdge,
