@@ -10,12 +10,12 @@ use super::{
     chooser_should_open_popup, clamp_hop_label_px, debug_caption, drive_startup,
     edit_parameters_enabled, game_window_flags, hold_script_terminal_shot, live_null_tick,
     live_script_tick, live_smoke_tick, live_stress_tick, loading_text, logout_enabled,
-    manual_shot_label, parse_args, parse_live_args, progress_channel, request_clean_stop_capture,
-    request_native_failure_capture, runner_config, script_failure_scenario, smoke_settled,
-    smoke_should_fire, startup_progress, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke,
-    LiveStress, PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
-    StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
-    SMOKE_DEADLINE, SMOKE_SETTLE,
+    manual_shot_label, parse_args, parse_live_args, popup_position_in_work_area, progress_channel,
+    request_clean_stop_capture, request_native_failure_capture, runner_config,
+    script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
+    status_value_visible, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
+    ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation,
+    BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
 use crate::test_support::TestDir;
@@ -27,6 +27,40 @@ use client::io::Packet;
 use dear_imgui_rs::{ConfigFlags, Id, WindowFlags};
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
+
+#[test]
+fn empty_walk_queue_and_modal_values_are_not_status_rows() {
+    for value in ["", "—", "-1"] {
+        assert!(
+            !status_value_visible("walk", value),
+            "walk placeholder {value:?} is hidden"
+        );
+        assert!(
+            !status_value_visible("queue", value),
+            "queue placeholder {value:?} is hidden"
+        );
+        assert!(
+            !status_value_visible("modals", value),
+            "modal placeholder {value:?} is hidden"
+        );
+    }
+    assert!(status_value_visible("walk", "2659 3292 0"));
+    assert!(status_value_visible("queue", "1 of 2"));
+    assert!(status_value_visible("modals", "0"));
+    assert!(status_value_visible("state", "idle"));
+}
+
+#[test]
+fn popup_position_clamps_far_right_profile_anchor_to_work_area() {
+    let pos = popup_position_in_work_area(
+        [0.0, 0.0],
+        [1024.0, 640.0],
+        [930.0, 570.0],
+        [400.0, 120.0],
+        8.0,
+    );
+    assert_eq!(pos, [616.0, 512.0]);
+}
 
 #[test]
 fn catalog_assignment_without_catalog_has_a_distinct_prefs_hint() {
