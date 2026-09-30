@@ -1508,8 +1508,8 @@ declare module '*api/thieving/stealRules.js' {
   export const THIEVER_BANKING_OPTIONS: any;
   export const STUN_COMBAT_TICKS: any;
   export function nextWithdrawChunk(need: unknown): unknown;
-  export function withdrawTo(name: string, target: unknown, count: number): Promise<boolean>;
-  export function closeBankAndConfirmCount(expected: unknown, count: number): Promise<boolean>;
+  export function withdrawTo(name: string, target: number, countInInv?: () => number): Promise<number>;
+  export function closeBankAndConfirmCount(expected: number, count: () => number): Promise<boolean>;
   export function autoFoodBanking(mode: number): unknown;
   export function foodMatches(name: string, keyword: unknown): unknown;
   export function countFood(items: unknown, keyword: unknown): number;
