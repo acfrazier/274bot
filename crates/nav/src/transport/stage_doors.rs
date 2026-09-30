@@ -1327,7 +1327,7 @@ pub(super) fn stage_door_edges(
                             LocRef::Itself => None,
                         }
                         .filter(|&leaf| leaf != id);
-                        let Some(to) = door_far_side(at, dir, collision) else {
+                        let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
                             continue;
                         };
                         let Some(mut edge) = gated_edge(TransportKind::Door, id, at, to, needs)

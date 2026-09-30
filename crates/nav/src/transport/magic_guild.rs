@@ -67,7 +67,7 @@ pub(super) fn magicguild_door_edges(
                 level: p.level,
             };
             for dir in [angle_dir, opposite(angle_dir)] {
-                let Some(to) = door_far_side(at, dir, collision) else {
+                let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
                     continue;
                 };
                 graph.edges.push(TransportEdge {

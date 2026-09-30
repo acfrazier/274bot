@@ -36,7 +36,7 @@ pub const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doo
 /// Manual generator identity. Bump when the bake's semantics change in a way
 /// [`FORMAT_ID`] does not already capture (a pack format bump changes the
 /// format identity instead).
-pub const GENERATOR_ID: &str = "nav-bake-1";
+pub const GENERATOR_ID: &str = "nav-bake-2";
 pub use crate::map::services::{pois_generator_identity, POIS_GENERATOR_SOURCES};
 
 /// Baker sources whose bytes join the generator identity: a generated

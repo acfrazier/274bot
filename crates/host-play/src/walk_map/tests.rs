@@ -531,6 +531,54 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
 }
 
 #[test]
+fn present_blocked_origin_is_not_a_missing_player_and_does_not_arm_walk() {
+    let world = world(t(3218, 3218, 0), 5, &[(2, 2, 0)]);
+    let ctx = context();
+    let mut model = MapModel::default();
+    model.bind(ctx);
+    let dest = t(3222, 3222, 0);
+    model.select_tile(&world, dest);
+    let command = model
+        .confirm(
+            ActionKind::Walk,
+            &ctx,
+            Some(t(3220, 3220, 0)),
+            FindOptions::default(),
+        )
+        .unwrap();
+    let arms = crate::WalkArms::default();
+    let error = command
+        .walk_on(&world, &ctx, "alice", &WorldState::empty(), &[], &arms)
+        .unwrap_err();
+    assert_eq!(error, ActionError::OriginNotStandable);
+    assert!(
+        arms.lock().expect("walk arms").is_empty(),
+        "refusal must not queue a route"
+    );
+    model.select_tile(&world, dest);
+    assert_eq!(
+        model
+            .confirm(ActionKind::Walk, &ctx, None, FindOptions::default())
+            .unwrap_err(),
+        ActionError::NoOrigin,
+        "a genuinely missing player keeps the missing-origin reason"
+    );
+    model.select_tile(&world, dest);
+    assert_eq!(
+        model
+            .confirm(
+                ActionKind::Walk,
+                &ctx,
+                Some(t(3220, 3220, 4)),
+                FindOptions::default()
+            )
+            .unwrap_err(),
+        ActionError::InvalidCoordinates,
+        "a present invalid plane is not a missing player"
+    );
+}
+
+#[test]
 fn debug_authority_requires_local_profile_and_loopback_host() {
     use crate::ProfileClass;
     assert!(!super::debug_teleport_authorized(
