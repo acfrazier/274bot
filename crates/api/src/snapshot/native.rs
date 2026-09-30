@@ -532,18 +532,20 @@ mod tests {
             tick: 4,
             sequence: 5,
         };
-        let mut snapshot = GameSnapshot::default();
-        snapshot.ingame = true;
-        snapshot.base = Some((3200, 3400));
-        snapshot.world = super::super::WorldStateView {
-            map_base_x: 3200,
-            map_base_z: 3400,
-            level: 1,
-            members: true,
-            multi_combat: false,
-            player_count: 1,
-            npc_count: 0,
-            cycle: 99,
+        let mut snapshot = GameSnapshot {
+            ingame: true,
+            base: Some((3200, 3400)),
+            world: super::super::WorldStateView {
+                map_base_x: 3200,
+                map_base_z: 3400,
+                level: 1,
+                members: true,
+                multi_combat: false,
+                player_count: 1,
+                npc_count: 0,
+                cycle: 99,
+            },
+            ..GameSnapshot::default()
         };
         snapshot.seed_local_player(super::super::LocalPlayerView {
             player: super::super::PlayerView {

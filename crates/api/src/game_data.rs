@@ -949,6 +949,26 @@ where
         .map_err(serde::de::Error::custom)
 }
 
+/// One pinned row of the selected core's `gather_resources` slice, carried so
+/// the UI never decodes the gathering family. `key` is the selectable setting
+/// value: the resource key for woodcutting/mining, the method id for fishing.
+/// A row with `selectable == false` carries the admission `gap` code; the UI
+/// shows it with that code and Start refuses it.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GatherResourceOption {
+    pub skill: String,
+    pub method: String,
+    pub key: String,
+    pub resources: Vec<String>,
+    pub label: String,
+    #[serde(default)]
+    pub level: u16,
+    pub selectable: bool,
+    #[serde(default)]
+    pub gap: Option<String>,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -1006,6 +1026,8 @@ pub struct SelectedGameData {
     cook_surfaces: Option<crate::cook_locations::CookSurfaceFacts>,
     #[serde(default)]
     mining_hazards: Option<Vec<crate::gather_methods::MiningHazard>>,
+    #[serde(default)]
+    gather_resources: Vec<GatherResourceOption>,
     #[serde(skip)]
     item_id_index: Vec<Option<usize>>,
     #[serde(skip)]
@@ -1599,6 +1621,35 @@ impl SelectedGameData {
     /// decoded. `None` when not generated.
     pub fn mining_hazards(&self) -> Option<&[crate::gather_methods::MiningHazard]> {
         self.mining_hazards.as_deref()
+    }
+
+    /// Pinned per-skill gather option rows in generator (content) order; empty
+    /// when not generated. The UI reads these, never the gathering family.
+    pub fn gather_resources(&self) -> &[GatherResourceOption] {
+        &self.gather_resources
+    }
+
+    /// Pinned gather option rows for one skill (`woodcutting`, `mining`,
+    /// `fishing`; trimmed, ASCII case-insensitive), in generator order.
+    pub fn gather_resources_for<'a>(
+        &'a self,
+        skill: &'a str,
+    ) -> impl Iterator<Item = &'a GatherResourceOption> {
+        let wanted = skill.trim();
+        self.gather_resources
+            .iter()
+            .filter(move |row| row.skill.eq_ignore_ascii_case(wanted))
+    }
+
+    /// One pinned gather option by skill and selectable key (both trimmed,
+    /// ASCII case-insensitive). Used by prepare to resolve a setting value to
+    /// its method.
+    pub fn gather_option(&self, skill: &str, key: &str) -> Option<&GatherResourceOption> {
+        let skill = skill.trim();
+        let key = key.trim();
+        self.gather_resources
+            .iter()
+            .find(|row| row.skill.eq_ignore_ascii_case(skill) && row.key.eq_ignore_ascii_case(key))
     }
 
     pub fn herb_by_key(&self, key: &str) -> Option<&HerbFact> {

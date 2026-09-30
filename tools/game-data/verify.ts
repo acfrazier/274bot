@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, revisions, requestedRevisions } from './generate.ts';
 import { parsePack } from './extractors/common.ts';
-import { extractGatheringFamily, miningHazards } from './extractors/gathering.ts';
+import { extractGatheringFamily, gatherResources, miningHazards } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
@@ -296,6 +296,9 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(manifestRow.families?.gathering), JSON.stringify({ path: `${revision}/gathering.json`, schema: gathering.schema, ...digest(familyFile) }), `${revision} manifest gathering descriptor`);
     assertEqual(JSON.stringify(manifestRow.gathering), JSON.stringify(gathering.summary), `${revision} manifest gathering summary`);
     assertEqual(JSON.stringify(payload.mining_hazards), JSON.stringify(miningHazards(gathering.payload)), `${revision} core mining_hazards is the family's hazard slice`);
+    const gatherItemNames = new Map<number, string>();
+    for (const item of payload.items) if (item.name !== null && item.name !== '') gatherItemNames.set(item.id, item.name);
+    assertEqual(JSON.stringify(payload.gather_resources), JSON.stringify(gatherResources(gathering.payload, gatherItemNames)), `${revision} core gather_resources is the family's admitted option slice`);
     // Content pins: the family and the writer could agree and both be wrong, so anchor a few facts to the pinned content.
     const gatherFacts = gathering.payload;
     const aliases = new Map(gatherFacts.entities.map((row) => { const [kind, id, alias] = row.split(' '); return [`${kind}:${id}`, alias]; }));

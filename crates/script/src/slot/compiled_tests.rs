@@ -613,3 +613,545 @@ fn a_relog_advances_the_compiled_session_and_fences_pre_relog_evidence() {
         "a walk fenced by the dropped session's evidence is stale"
     );
 }
+
+fn gatherer_snapshot() -> api::snapshot::GameSnapshot {
+    FamilyPreparation::run(|families| {
+        let selected = selected();
+        let mut cx = PrepareContext {
+            pin: selected.selected_pin().unwrap(),
+            selected,
+            banks: Arc::default(),
+            families,
+        };
+        crate::gatherer::test_full_pack_fixture(&mut cx).unwrap().1
+    })
+    .unwrap()
+    .join()
+    .unwrap()
+}
+
+fn gatherer_tick(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot, tick: u32) {
+    slot.on_game_tick(&mut ScriptCtx {
+        driver: &mut NullDriver::default(),
+        tick: u64::from(tick),
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: Some(snapshot),
+        obj_names: None,
+        compiled: crate::CompiledTick::default(),
+    });
+}
+
+fn gatherer_slot(incarnation: u64) -> SlotScript {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(incarnation);
+    slot.start_compiled(
+        "gatherer-lifecycle",
+        crate::CompiledId("Gatherer"),
+        Arc::new(SettingsBag::new()),
+        selected(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    slot
+}
+
+fn queue_gatherer_drop(
+    slot: &mut SlotScript,
+    snapshot: &api::snapshot::GameSnapshot,
+    first_tick: u32,
+) -> (u32, Vec<crate::native::HostAuthority>) {
+    for tick in first_tick..first_tick + 16 {
+        gatherer_tick(slot, snapshot, tick);
+        if slot.has_native_actions() {
+            let ledger = slot.native_runtime.ledger.as_ref().unwrap();
+            let authorities = ledger
+                .outbox
+                .iter()
+                .map(|action| {
+                    assert!(
+                        matches!(
+                            &action.effect,
+                            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+                                action,
+                                slot: Some(_),
+                                ..
+                            }) if action == "Drop"
+                        ),
+                        "full inventory must enter disposal before gathering"
+                    );
+                    action.authority()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                authorities.len(),
+                5,
+                "the full pack queues one five-drop batch"
+            );
+            assert!(authorities.iter().all(crate::native::HostAuthority::live));
+            return (tick, authorities);
+        }
+    }
+    panic!(
+        "Gatherer never queued its full-pack disposal: {:?}",
+        slot.native_status()
+    );
+}
+
+#[test]
+fn gatherer_slot_stop_pause_and_watchdog_revoke_every_undrained_drop() {
+    let snapshot = gatherer_snapshot();
+    for boundary in 0..3 {
+        let mut slot = gatherer_slot(80 + boundary);
+        let (tick, authorities) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+        let old_run = slot.native_run().unwrap();
+        match boundary {
+            0 => slot.stop(),
+            1 => slot.pause(),
+            2 => restart_and_settle(&mut slot, Instant::now()),
+            _ => unreachable!(),
+        }
+        assert!(authorities.iter().all(|authority| !authority.live()));
+        assert!(
+            slot.take_native_action().is_none(),
+            "old queued drops must never drain"
+        );
+        if boundary == 0 {
+            assert!(!slot.has_native_actions());
+            continue;
+        }
+        if boundary == 1 {
+            slot.resume();
+        } else {
+            assert_ne!(slot.native_run().unwrap(), old_run);
+        }
+        let (_, fresh) = queue_gatherer_drop(&mut slot, &snapshot, tick + 1);
+        assert!(fresh.iter().all(crate::native::HostAuthority::live));
+        assert!(authorities.iter().all(|authority| !authority.live()));
+        slot.stop();
+        assert!(fresh.iter().all(|authority| !authority.live()));
+    }
+}
+
+#[test]
+fn gatherer_session_change_replans_drop_from_observation_not_old_authority() {
+    let snapshot = gatherer_snapshot();
+    let mut slot = gatherer_slot(84);
+    let (tick, authorities) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+    let old_run = slot.native_run().unwrap();
+    slot.reconnect_session_work();
+    slot.on_is_up(true);
+    assert!(authorities.iter().all(|authority| !authority.live()));
+    assert!(slot.take_native_action().is_none());
+    let (_, fresh) = queue_gatherer_drop(&mut slot, &snapshot, tick + 1);
+    let new_run = slot.native_run().unwrap();
+    assert_eq!((new_run.slot, new_run.run), (old_run.slot, old_run.run));
+    assert_ne!(new_run.session, old_run.session);
+    assert!(fresh.iter().all(|authority| authority.run() == new_run));
+    assert!(authorities.iter().all(|authority| !authority.live()));
+    slot.stop();
+}
+
+#[test]
+fn gatherer_death_observation_cancels_undrained_drop_without_retry() {
+    let mut snapshot = gatherer_snapshot();
+    let mut slot = gatherer_slot(85);
+    let (tick, authorities) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+    snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        type_: 0,
+        username: None,
+        text: "Oh dear, you are dead!".into(),
+        sequence: 1,
+    }]);
+    gatherer_tick(&mut slot, &snapshot, tick + 1);
+    assert!(authorities.iter().all(|authority| !authority.live()));
+    assert!(slot.take_native_action().is_none());
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let failure = status.failure.as_ref().unwrap();
+    assert_eq!(failure.code.as_ref(), "died");
+    assert!(!failure.retryable);
+    gatherer_tick(&mut slot, &snapshot, tick + 2);
+    assert!(
+        !slot.has_native_actions(),
+        "latched death cannot resume disposal"
+    );
+    slot.stop();
+}
+
+#[test]
+fn gatherer_active_gather_allocates_nothing_on_one_thousand_unchanged_polls() {
+    let mut snapshot = gatherer_snapshot();
+    snapshot.seed_inventory(Vec::new(), 28);
+    let mut player = snapshot.local_player().unwrap().clone();
+    player.player.actor.animation = 879;
+    snapshot.seed_local_player(player);
+    let mut slot = gatherer_slot(86);
+    let mut clicked_at = None;
+    for tick in 1..17 {
+        gatherer_tick(&mut slot, &snapshot, tick);
+        if let Some(action) = slot.take_native_action() {
+            assert!(matches!(
+                action.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { .. })
+            ));
+            let authority = action.authority();
+            slot.complete_native_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: u64::from(tick),
+                        sequence: u64::from(tick),
+                    },
+                    accepted: true,
+                },
+            );
+            clicked_at = Some(tick);
+            break;
+        }
+    }
+    let first = clicked_at.expect("ready empty pack must click a real catalog tree") + 1;
+    gatherer_tick(&mut slot, &snapshot, first);
+    let allocations = allocation_counter::measure(|| {
+        for tick in first + 1..first + 1001 {
+            gatherer_tick(&mut slot, &snapshot, tick);
+        }
+    })
+    .count_total;
+    assert_eq!(
+        allocations, 0,
+        "unchanged animated gathering must not allocate"
+    );
+    assert!(
+        !slot.has_native_actions(),
+        "no extra click without a transition"
+    );
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Working);
+    println!("Gatherer steady polls=1000 allocations={allocations}");
+    slot.stop();
+}
+
+#[test]
+fn gatherer_delayed_drops_replan_after_two_ticks_without_assuming_progress() {
+    let snapshot = gatherer_snapshot();
+    let mut slot = gatherer_slot(87);
+    let (tick, _) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+    let mut sent_slots = Vec::new();
+    while let Some(action) = slot.take_native_action() {
+        if let crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+            slot: Some(index),
+            ..
+        }) = &action.effect
+        {
+            sent_slots.push(*index);
+        }
+        let authority = action.authority();
+        slot.complete_native_interaction(
+            &authority,
+            crate::native::InteractionReceipt {
+                request_id: action.request_id.get(),
+                evidence: EvidenceStamp {
+                    run: authority.run(),
+                    tick: u64::from(tick),
+                    sequence: u64::from(tick),
+                },
+                accepted: true,
+            },
+        );
+    }
+    gatherer_tick(&mut slot, &snapshot, tick + 1);
+    assert!(
+        !slot.has_native_actions(),
+        "accepted writes are still awaiting observation"
+    );
+    gatherer_tick(&mut slot, &snapshot, tick + 2);
+    let mut resent_slots = Vec::new();
+    while let Some(action) = slot.take_native_action() {
+        if let crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+            slot: Some(index),
+            ..
+        }) = action.effect
+        {
+            resent_slots.push(index);
+        }
+    }
+    assert_eq!(
+        resent_slots, sent_slots,
+        "unsettled slots must be re-planned, not blocked after three polls"
+    );
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Working);
+    slot.stop();
+}
+
+fn accept_gatherer_drops(slot: &mut SlotScript, tick: u32, refused_slot: Option<i32>) -> Vec<i32> {
+    let mut slots = Vec::new();
+    while let Some(action) = slot.take_native_action() {
+        let crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+            slot: Some(index),
+            ..
+        }) = &action.effect
+        else {
+            panic!("expected slot-exact drop")
+        };
+        slots.push(*index);
+        let authority = action.authority();
+        slot.complete_native_interaction(
+            &authority,
+            crate::native::InteractionReceipt {
+                request_id: action.request_id.get(),
+                evidence: EvidenceStamp {
+                    run: authority.run(),
+                    tick: u64::from(tick),
+                    sequence: u64::from(tick),
+                },
+                accepted: refused_slot != Some(*index),
+            },
+        );
+    }
+    slots
+}
+
+#[test]
+fn gatherer_rejected_drop_replans_only_its_slot_then_observes_late_settlement() {
+    let mut snapshot = gatherer_snapshot();
+    let mut slot = gatherer_slot(88);
+    let (tick, _) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+    assert_eq!(
+        accept_gatherer_drops(&mut slot, tick, Some(2)),
+        [0, 1, 2, 3, 4]
+    );
+    gatherer_tick(&mut slot, &snapshot, tick + 1);
+    assert_eq!(accept_gatherer_drops(&mut slot, tick + 1, None), [2]);
+    let rows = snapshot
+        .inventory()
+        .iter()
+        .filter(|row| row.slot > 4)
+        .cloned()
+        .collect();
+    snapshot.seed_inventory(rows, 28);
+    gatherer_tick(&mut slot, &snapshot, tick + 2);
+    assert_eq!(
+        accept_gatherer_drops(&mut slot, tick + 2, None),
+        [5, 6, 7, 8, 9]
+    );
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Working);
+    slot.stop();
+}
+
+#[test]
+fn gatherer_three_unsettled_rounds_block_without_counting_dispatch_as_progress() {
+    let snapshot = gatherer_snapshot();
+    let mut slot = gatherer_slot(89);
+    let (tick, _) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+    assert_eq!(
+        accept_gatherer_drops(&mut slot, tick, None),
+        [0, 1, 2, 3, 4]
+    );
+    for round in 1..=2 {
+        gatherer_tick(&mut slot, &snapshot, tick + round * 2 - 1);
+        assert!(!slot.has_native_actions());
+        gatherer_tick(&mut slot, &snapshot, tick + round * 2);
+        assert_eq!(
+            accept_gatherer_drops(&mut slot, tick + round * 2, None),
+            [0, 1, 2, 3, 4]
+        );
+    }
+    gatherer_tick(&mut slot, &snapshot, tick + 5);
+    gatherer_tick(&mut slot, &snapshot, tick + 6);
+    assert!(!slot.has_native_actions());
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let failure = status.failure.as_ref().unwrap();
+    assert_eq!(failure.code.as_ref(), "inventory-blocked");
+    assert!(failure.retryable);
+    slot.stop();
+}
+
+#[test]
+fn gatherer_full_pack_chat_modal_consumes_one_of_five_packets() {
+    let mut snapshot = gatherer_snapshot();
+    snapshot.seed_chat_modal(123, vec!["Your inventory is too full.".into()]);
+    let mut slot = gatherer_slot(90);
+    for tick in 1..17 {
+        gatherer_tick(&mut slot, &snapshot, tick);
+        if !slot.has_native_actions() {
+            continue;
+        }
+        let first = slot.take_native_action().unwrap();
+        assert!(
+            matches!(
+                first.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+            ),
+            "mining mesbox must close before disposal"
+        );
+        assert_eq!(accept_gatherer_drops(&mut slot, tick, None), [0, 1, 2, 3]);
+        slot.stop();
+        return;
+    }
+    panic!("full-pack mesbox never entered disposal");
+}
+
+#[test]
+fn gatherer_rejected_click_observes_missing_target_before_retry() {
+    let mut snapshot = gatherer_snapshot();
+    snapshot.seed_inventory(Vec::new(), 28);
+    let mut slot = gatherer_slot(91);
+    let mut clicked_at = None;
+    for tick in 1..17 {
+        gatherer_tick(&mut slot, &snapshot, tick);
+        if let Some(action) = slot.take_native_action() {
+            assert!(matches!(
+                action.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { .. })
+            ));
+            let authority = action.authority();
+            slot.complete_native_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: u64::from(tick),
+                        sequence: u64::from(tick),
+                    },
+                    accepted: false,
+                },
+            );
+            clicked_at = Some(tick);
+            break;
+        }
+    }
+    snapshot.seed_locs(Vec::new());
+    let first = clicked_at.unwrap();
+    for tick in first + 1..=first + 4 {
+        gatherer_tick(&mut slot, &snapshot, tick);
+        assert!(
+            !slot.has_native_actions(),
+            "missing target must never be retried"
+        );
+    }
+    assert_eq!(
+        slot.native_status()
+            .unwrap()
+            .failure
+            .as_ref()
+            .unwrap()
+            .code
+            .as_ref(),
+        "resource-unavailable"
+    );
+    slot.stop();
+}
+
+#[test]
+fn gatherer_counts_yield_observed_after_target_depletion() {
+    let mut snapshot = gatherer_snapshot();
+    let product = snapshot.inventory()[0].clone();
+    snapshot.seed_inventory(Vec::new(), 28);
+    let mut slot = gatherer_slot(92);
+    let mut clicked_at = None;
+    for tick in 1..17 {
+        gatherer_tick(&mut slot, &snapshot, tick);
+        if let Some(action) = slot.take_native_action() {
+            let authority = action.authority();
+            slot.complete_native_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: u64::from(tick),
+                        sequence: u64::from(tick),
+                    },
+                    accepted: true,
+                },
+            );
+            clicked_at = Some(tick);
+            break;
+        }
+    }
+    let first = clicked_at.unwrap();
+    snapshot.seed_locs(Vec::new());
+    gatherer_tick(&mut slot, &snapshot, first + 1);
+    snapshot.seed_inventory(vec![product], 28);
+    gatherer_tick(&mut slot, &snapshot, first + 2);
+    let status = slot.native_status().unwrap();
+    let yielded = status
+        .fields
+        .iter()
+        .find(|field| field.key == "yielded")
+        .unwrap();
+    assert_eq!(yielded.value, crate::native::StatusValue::Integer(1));
+    assert_eq!(
+        slot.retained
+            .as_ref()
+            .unwrap()
+            .lock()
+            .expect("retained memory")
+            .gather()
+            .yielded,
+        1
+    );
+    slot.stop();
+}
+
+#[test]
+fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
+    fn measure_prepared() -> (Arc<PreparedConfig>, allocation_counter::AllocationInfo) {
+        FamilyPreparation::run(|families| {
+            let selected = selected();
+            let mut cx = PrepareContext {
+                pin: selected.selected_pin().unwrap(),
+                selected,
+                banks: Arc::default(),
+                families,
+            };
+            let mut prepared = None;
+            let info = allocation_counter::measure(|| {
+                prepared = Some(
+                    (crate::gatherer::CARD.prepare)(&mut cx, 1, Arc::new(SettingsBag::new()))
+                        .unwrap(),
+                );
+            });
+            (prepared.unwrap(), info)
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+    }
+    let snapshot = gatherer_snapshot();
+    let (cold_prepared, cold) = measure_prepared();
+    let mut warm = gatherer_slot(92);
+    let (prepared, preparation) = measure_prepared();
+    let prepare_bytes = preparation.bytes_current;
+    let mut measured = None;
+    let main = allocation_counter::measure(|| {
+        let mut slot = gatherer_slot(93);
+        let (tick, _) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+        accept_gatherer_drops(&mut slot, tick, None);
+        measured = Some(slot);
+    });
+    // Preparation runs on its own thread; count its retained allocation
+    // separately from the real slot's instance, ledger, status and paint.
+    let exclusive = prepare_bytes + main.bytes_current;
+    println!("Gatherer exclusive heap: prepared={prepare_bytes}, slot={main:?}, total={exclusive}");
+    println!(
+        "Gatherer preparation: first={cold:?}, cached={preparation:?}, shared_delta={}, worker_transient_peak={}",
+        cold.bytes_current - prepare_bytes,
+        i128::from(cold.bytes_max) - i128::from(cold.bytes_current),
+    );
+    assert!(
+        (0..=8192).contains(&exclusive),
+        "exclusive Gatherer heap exceeds 8 KiB"
+    );
+    measured.as_mut().unwrap().stop();
+    warm.stop();
+    drop(prepared);
+    drop(cold_prepared);
+}

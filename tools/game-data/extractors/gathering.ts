@@ -1237,3 +1237,106 @@ export function miningHazards(facts: GatheringFacts): MiningHazardWire[] {
         return locs.length === 0 ? [] : [{ resources: method.resources, locs }];
     });
 }
+
+/**
+ * The one admission rule (design-gatherer §2.2 step 4, also §3 rule 1, as
+ * ruled: copper/tin default work). Targets admit per row: rows without a
+ * respawn fact (tutorial-gate rocks) are excluded, and the method is admitted
+ * on its Known target rows, refusing iff zero remain. `tools`, `consumes`,
+ * `requirements` and `spots` must be `Known`; `products` may be `Known` or
+ * `Partial` whose gap codes are all incidental gem rolls. Anything else
+ * refuses the method with its gap code (e.g. `woodcutting.jungle`, karambwan,
+ * memberfish on 289). There is no target-gap allowlist: excluded rows never
+ * block, they simply do not admit.
+ */
+export const ACCEPTED_PRODUCT_GAPS: readonly string[] = ['incidental-gem-roll'];
+
+/**
+ * One pinned row of the selected core's `gather_resources` slice. `key` is the
+ * selectable setting value: the resource key for woodcutting/mining (one row
+ * per resource) or the method id for fishing (one row per method, which can
+ * name several resources). `gap` is present exactly when the method fails
+ * admission; the UI shows such rows with their gap code and Start refuses them.
+ */
+export type GatherResourceWire = {
+    skill: SkillName;
+    method: string;
+    key: string;
+    resources: string[];
+    label: string;
+    level: number;
+    selectable: boolean;
+    gap: string | null;
+};
+
+/** A target row the slice admits on: it carries a respawn fact (`Known`, even `null` for never-depleting spots). */
+export function isKnownGatherTarget(target: TargetWire): boolean {
+    return target.respawn.state === 'known';
+}
+
+/** First blocking gap code of one method, in design cell order; null when admitted. */
+export function gatherMethodGap(method: MethodWire): string | null {
+    const knownTargets = method.targets.state === 'unknown' ? [] : method.targets.value.filter(isKnownGatherTarget);
+    if (knownTargets.length === 0) {
+        if (method.targets.state === 'unknown') return method.targets.gap.code;
+        if (method.targets.state === 'partial' && method.targets.gaps.length > 0) return method.targets.gaps[0].code;
+        const excluded = method.targets.state === 'known' ? method.targets.value.find((target) => !isKnownGatherTarget(target)) : undefined;
+        if (excluded !== undefined && excluded.respawn.state === 'unknown') return excluded.respawn.gap.code;
+        return 'no-known-target';
+    }
+    const cells: Know<unknown>[] = [method.tools, method.consumes, method.requirements, method.spots];
+    for (const knowledge of cells) {
+        if (knowledge.state === 'unknown') return knowledge.gap.code;
+        if (knowledge.state === 'partial' && knowledge.gaps.length > 0) return knowledge.gaps[0].code;
+    }
+    if (method.products.state === 'unknown') return method.products.gap.code;
+    if (method.products.state === 'partial') {
+        const blocking = method.products.gaps.find((each) => !ACCEPTED_PRODUCT_GAPS.includes(each.code));
+        if (blocking !== undefined) return blocking.code;
+    }
+    return null;
+}
+
+/** `raw_shrimp` → `Raw shrimp`; already-spaced keys (`rune stones`) only gain a capital. */
+export function humanizeResourceKey(key: string): string {
+    const spaced = key.replace(/_/g, ' ');
+    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/**
+ * Display label from the method's own product facts joined to obj display
+ * names: one product name, or several joined with ` / `. Methods with no
+ * product rows (refused) fall back to the humanized resource keys.
+ */
+export function gatherResourceLabel(method: MethodWire, itemNames: ReadonlyMap<number, string>): string {
+    const products = method.products.state === 'unknown' ? [] : method.products.value;
+    const names = products.map((product) => itemNames.get(product.item)).filter((name) => name !== undefined && name !== '');
+    if (names.length > 0) return names.join(' / ');
+    return method.resources.map(humanizeResourceKey).join(' / ');
+}
+
+/** Minimum product level of one method; 0 when it names no product rows. */
+export function gatherMethodLevel(method: MethodWire): number {
+    const products = method.products.state === 'unknown' ? [] : method.products.value;
+    if (products.length === 0) return 0;
+    return products.reduce((min, product) => Math.min(min, product.level), Number.POSITIVE_INFINITY);
+}
+
+/**
+ * The pinned per-skill option rows the selected core carries so the UI never
+ * decodes the family: every method in content order, selectable or refused
+ * with its gap code. Labels come from the family's own product facts, never a
+ * hand table.
+ */
+export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<number, string>): GatherResourceWire[] {
+    return facts.methods.flatMap((method) => {
+        const gap = gatherMethodGap(method);
+        const label = gatherResourceLabel(method, itemNames);
+        const level = gatherMethodLevel(method);
+        const selectable = gap === null;
+        if (method.skill === 'fishing') {
+            return [{ skill: method.skill, method: method.id, key: method.id, resources: [...method.resources], label, level, selectable, gap }];
+        }
+        return method.resources.map((resource) => ({ skill: method.skill, method: method.id, key: resource, resources: [...method.resources], label, level, selectable, gap }));
+    });
+}
