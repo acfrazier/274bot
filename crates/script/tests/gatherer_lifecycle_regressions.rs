@@ -1,0 +1,616 @@
+//! Gatherer lifecycle regressions from the G1 independent review.
+use api::interact::Driver;
+use api::prot::Out;
+use api::quest_progress::EvidenceStamp;
+use api::snapshot::{
+    ActorView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocalPlayerView,
+    PlayerView, StatView, WorldStateView, WorldTile,
+};
+use api::ItemDefView;
+use script::native::{HostEffect, InteractionReceipt, NativePhase, SettingsBag};
+use script::shim::InteractReq;
+use script::slot::{StartOutcome, StartPoll};
+use script::{CompiledTick, ScriptCtx, SlotScript};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+#[derive(Default)]
+struct OutSink;
+impl Out for OutSink {
+    fn p1_enc(&mut self, _opcode: i32) {}
+    fn p1(&mut self, _value: i32) {}
+    fn p2(&mut self, _value: i32) {}
+    fn p4(&mut self, _value: i32) {}
+    fn pjstr(&mut self, _s: &str) {}
+}
+
+#[derive(Default)]
+struct Rec {
+    out: OutSink,
+}
+impl Driver for Rec {
+    fn set_menu(&mut self, _slot: i32, _action: i32, _a: i32, _b: i32, _c: i32) {}
+    fn do_action(&mut self, _slot: i32) -> bool {
+        true
+    }
+    fn try_move(
+        &mut self,
+        _src_x: i32,
+        _src_z: i32,
+        _dx: i32,
+        _dz: i32,
+        _try_nearest: bool,
+        _loc_width: i32,
+        _loc_length: i32,
+        _loc_angle: i32,
+        _loc_shape: i32,
+        _forceapproach: i32,
+        _type: i32,
+    ) -> bool {
+        true
+    }
+    fn local_route(&self) -> Option<(i32, i32)> {
+        None
+    }
+    fn build_base(&self) -> (i32, i32) {
+        (0, 0)
+    }
+    fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
+        None
+    }
+    fn out(&mut self) -> &mut dyn Out {
+        &mut self.out
+    }
+    fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
+        true
+    }
+}
+
+fn def(id: i32, name: &str) -> ItemDefView {
+    ItemDefView {
+        id,
+        name: Some(name.into()),
+        stackable: false,
+        members: false,
+        base_value: 0,
+        noted: false,
+        certificate_link: -1,
+        certificate_template: -1,
+    }
+}
+
+fn log(slot: i32) -> ItemView {
+    ItemView {
+        def: def(1511, "Logs"),
+        container: ItemContainer::Inventory,
+        action_family: ItemActionFamily::Held,
+        slot,
+        count: 1,
+        actions: vec![Some("Drop".into())],
+        component_id: -1,
+    }
+}
+
+fn snapshot(slots: &[i32]) -> GameSnapshot {
+    let here = WorldTile {
+        x: 3190,
+        z: 3245,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_world(WorldStateView {
+        map_base_x: here.x - 52,
+        map_base_z: here.z - 52,
+        level: 0,
+        members: true,
+        multi_combat: false,
+        player_count: 1,
+        npc_count: 0,
+        cycle: 1,
+    });
+    snapshot.seed_local_player(LocalPlayerView {
+        player: PlayerView {
+            index: 0,
+            actor: ActorView {
+                name: Some("alice".into()),
+                actions: Vec::new(),
+                tile: here,
+                distance: 0,
+                animation: -1,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                health: 10,
+                total_health: 10,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: false,
+            },
+            combat_level: 3,
+            skill_level: 1,
+        },
+        energy: 100,
+        weight: 0,
+    });
+    snapshot.seed_stats(vec![StatView {
+        index: 8,
+        name: "woodcutting".into(),
+        effective: 1,
+        base: 1,
+        xp: 0,
+        used: true,
+    }]);
+    snapshot.seed_inventory(slots.iter().map(|&slot| log(slot)).collect(), 28);
+    snapshot.seed_equipment(vec![ItemView {
+        def: def(1351, "Bronze axe"),
+        container: ItemContainer::Equipment,
+        action_family: ItemActionFamily::Held,
+        slot: 0,
+        count: 1,
+        actions: vec![Some("Remove".into())],
+        component_id: -1,
+    }]);
+    snapshot.seed_locs(Vec::new());
+    snapshot
+}
+
+fn depleted_snapshot(selected: &api::game_data::SelectedGameData) -> GameSnapshot {
+    use api::gather_methods::{SceneRegionInput, TargetClass};
+    use api::selected::{EntityId, Knowledge};
+    use api::snapshot::{LocLayer, LocView};
+    let catalog = api::gather_methods::cached(selected).expect("slot holds the catalog");
+    let region = SceneRegionInput {
+        min_x: 3190 - 12,
+        min_z: 3245 - 12,
+        max_x: 3190 + 12,
+        max_z: 3245 + 12,
+        level: 0,
+    };
+    let mut locs = Vec::new();
+    for method in catalog.methods_for_resource("normal") {
+        let Knowledge::Known(targets) = &method.targets else {
+            continue;
+        };
+        let Some(depleted) = targets.iter().find_map(|target| {
+            (target.class == TargetClass::Depleted && matches!(target.respawn, Knowledge::Known(_)))
+                .then_some(target.entity)
+                .and_then(|entity| match entity {
+                    EntityId::Loc(id) => Some(id),
+                    _ => None,
+                })
+        }) else {
+            continue;
+        };
+        for spot in catalog.spots(method, &region).unwrap() {
+            locs.push(LocView {
+                typecode: 10,
+                info: 0,
+                id: depleted,
+                name: Some("Tree stump".into()),
+                description: None,
+                actions: Vec::new(),
+                tile: spot.origin,
+                distance: 0,
+                layer: LocLayer::Ground,
+                shape: 10,
+                angle: 0,
+                width: 1,
+                length: 1,
+                footprint_width: 1,
+                footprint_length: 1,
+                block_walk: false,
+                block_range: false,
+                active: true,
+                animation: -1,
+                map_function: -1,
+                map_scene: -1,
+                force_approach: 0,
+            });
+        }
+    }
+    let mut snapshot = snapshot(&[]);
+    snapshot.seed_locs(locs);
+    snapshot
+}
+
+fn tick(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64) {
+    slot.on_game_tick(&mut ScriptCtx {
+        driver: &mut Rec::default(),
+        tick,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: Some(snapshot),
+        obj_names: None,
+        compiled: CompiledTick::default(),
+    });
+}
+
+/// Drain the tick's outbox like the host: every drop is written and accepted.
+fn drain(slot: &mut SlotScript, tick: u64) -> Vec<i32> {
+    let mut sent = Vec::new();
+    while let Some(action) = slot.take_native_action() {
+        if let HostEffect::Interaction(InteractReq::Held {
+            slot: Some(index), ..
+        }) = &action.effect
+        {
+            sent.push(*index);
+        }
+        let authority = action.authority();
+        slot.complete_native_interaction(
+            &authority,
+            InteractionReceipt {
+                request_id: action.request_id.get(),
+                evidence: EvidenceStamp {
+                    run: authority.run(),
+                    tick,
+                    sequence: tick,
+                },
+                accepted: true,
+            },
+        );
+    }
+    sent
+}
+
+fn started(incarnation: u64, selected: &Arc<api::game_data::SelectedGameData>) -> SlotScript {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(incarnation);
+    slot.start_compiled(
+        "alice",
+        script::CompiledId("Gatherer"),
+        Arc::new(SettingsBag::new()),
+        Arc::clone(selected),
+        Arc::default(),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match slot.poll_start() {
+            StartPoll::Settled(outcome) => {
+                assert_eq!(outcome, StartOutcome::Ready);
+                return slot;
+            }
+            StartPoll::Pending => {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            StartPoll::NotOwed => panic!("no start owed"),
+        }
+    }
+}
+
+fn selected() -> Arc<api::game_data::SelectedGameData> {
+    api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap()
+}
+
+/// An unsettled drop remains retryable after newer receipts evict its receipt.
+#[test]
+fn unsettled_drop_is_replanned_or_blocked_after_receipt_eviction() {
+    let mut slot = started(4242, &selected());
+    // Slot 0 is the drop the engine refused: it never empties.
+    let mut present: Vec<i32> = (0..28).collect();
+    let mut t = 1;
+    let mut first = Vec::new();
+    while first.is_empty() && t < 20 {
+        tick(&mut slot, &snapshot(&present), t);
+        first = drain(&mut slot, t);
+        t += 1;
+    }
+    assert_eq!(first, [0, 1, 2, 3, 4], "first batch");
+    let mut resent_zero = false;
+    for step in 0..60 {
+        // Every other sent slot lands on the next tick; slot 0 never does.
+        present.retain(|slot| *slot == 0 || !first.contains(slot));
+        tick(&mut slot, &snapshot(&present), t);
+        let sent = drain(&mut slot, t);
+        if !sent.is_empty() || step % 10 == 0 {
+            let status = slot.native_status().unwrap();
+            eprintln!(
+                "tick {t} present={} sent {sent:?} phase={:?} failure={:?}",
+                present.len(),
+                status.phase,
+                status.failure
+            );
+        }
+        resent_zero |= sent.contains(&0);
+        if slot.native_status().unwrap().phase == NativePhase::Blocked {
+            break;
+        }
+        first = sent;
+        t += 1;
+    }
+    let status = slot.native_status().unwrap();
+    assert!(
+        resent_zero || status.phase == NativePhase::Blocked,
+        "slot 0 was never re-planned and the batch never blocked: phase={:?}",
+        status.phase
+    );
+    slot.stop();
+}
+
+/// F2: a full pack holding nothing droppable begins and clears a DropBatch every tick.
+#[test]
+fn full_pack_without_products_blocks_instead_of_looping() {
+    let mut slot = started(4243, &selected());
+    let mut snapshot = snapshot(&[]);
+    let bones = (0..28)
+        .map(|slot| ItemView {
+            def: def(526, "Bones"),
+            ..log(slot)
+        })
+        .collect();
+    snapshot.seed_inventory(bones, 28);
+    let mut sent = 0;
+    for t in 1..200 {
+        tick(&mut slot, &snapshot, t);
+        sent += drain(&mut slot, t).len();
+        if slot.native_status().unwrap().phase == NativePhase::Blocked {
+            break;
+        }
+    }
+    let status = slot.native_status().unwrap();
+    eprintln!(
+        "after 200 ticks: phase={:?} failure={:?} sent={sent} fields={:?}",
+        status.phase, status.failure, status.fields
+    );
+    assert_eq!(
+        status.phase,
+        NativePhase::Blocked,
+        "a full pack with nothing droppable must block, not loop"
+    );
+    assert_eq!(
+        status.failure.as_ref().unwrap().code.as_ref(),
+        "inventory-blocked"
+    );
+    assert_eq!(sent, 0, "non-products must never be dropped");
+    slot.stop();
+}
+
+/// F4: an unchanged resource wait allocates on every poll.
+#[test]
+fn unchanged_resource_wait_does_not_allocate() {
+    let selected = selected();
+    let mut slot = started(4244, &selected);
+    let snapshot = depleted_snapshot(&selected);
+    for t in 1..30 {
+        tick(&mut slot, &snapshot, t);
+        drain(&mut slot, t);
+    }
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
+    let info = allocation_counter::measure(|| {
+        for t in 30..1030 {
+            tick(&mut slot, &snapshot, t);
+        }
+    });
+    eprintln!(
+        "resource wait: 1000 unchanged polls allocations={} bytes={}",
+        info.count_total, info.bytes_total
+    );
+    assert_eq!(
+        info.count_total, 0,
+        "unchanged resource wait must not allocate"
+    );
+    slot.stop();
+}
+
+/// F3: a RestartRequired edit is applied in place at the next idle boundary.
+#[test]
+fn restart_required_edit_is_not_applied_in_place() {
+    let selected = selected();
+    let mut slot = started(4245, &selected);
+    let snapshot = depleted_snapshot(&selected);
+    tick(&mut slot, &snapshot, 1);
+    let run = slot.native_run().unwrap();
+    let mut bag = SettingsBag::new();
+    bag.insert("skill".into(), serde_json::json!("Mining"));
+    bag.insert("miningResources".into(), serde_json::json!(["copper"]));
+    let prepared_selected = Arc::clone(&selected);
+    let config = api::selected::FamilyPreparation::run(move |families| {
+        script::slot::prepare_config(
+            families,
+            script::CompiledId("Gatherer"),
+            2,
+            Arc::new(bag),
+            prepared_selected,
+            Arc::default(),
+        )
+    })
+    .unwrap()
+    .join()
+    .unwrap()
+    .unwrap();
+    eprintln!("delivery={:?}", slot.configure_compiled(config, run));
+    for t in 2..6 {
+        tick(&mut slot, &snapshot, t);
+        drain(&mut slot, t);
+    }
+    let status = slot.native_status().unwrap();
+    let skill = status.fields.iter().find(|field| field.key == "skill");
+    eprintln!(
+        "active={} pending={:?} skill={skill:?}",
+        status.active_settings, status.pending_settings
+    );
+    assert_eq!(status.active_settings, 1);
+    assert_eq!(status.pending_settings, Some(2));
+    assert!(
+        matches!(
+            skill.map(|field| &field.value),
+            Some(script::native::StatusValue::Text(value)) if value.as_ref() == "Woodcutting"
+        ),
+        "the old skill must stay active until the slot restarts"
+    );
+    slot.stop();
+}
+
+#[test]
+fn partial_drop_progress_survives_pause_and_stop() {
+    for pause in [true, false] {
+        let mut slot = started(4250 + u64::from(pause), &selected());
+        let present: Vec<i32> = (0..28).collect();
+        let mut sent = Vec::new();
+        let mut t = 1;
+        while sent.is_empty() && t < 20 {
+            tick(&mut slot, &snapshot(&present), t);
+            sent = drain(&mut slot, t);
+            t += 1;
+        }
+        assert_eq!(sent, [0, 1, 2, 3, 4]);
+        let remaining: Vec<_> = present.into_iter().filter(|s| !sent.contains(s)).collect();
+        tick(&mut slot, &snapshot(&remaining), t);
+        let status = slot.native_status().unwrap();
+        let dropped = status
+            .fields
+            .iter()
+            .find(|field| field.key == "dropped")
+            .unwrap();
+        assert_eq!(dropped.value, script::native::StatusValue::Integer(5));
+        if pause {
+            slot.pause();
+            let status = slot.native_status().unwrap();
+            let dropped = status
+                .fields
+                .iter()
+                .find(|field| field.key == "dropped")
+                .unwrap();
+            assert_eq!(dropped.value, script::native::StatusValue::Integer(5));
+        } else {
+            slot.stop();
+        }
+    }
+}
+
+#[test]
+fn bronze_tool_remains_carried_below_catalog_wield_level() {
+    let selected = selected();
+    let mut slot = started(4252, &selected);
+    let mut snapshot = depleted_snapshot(&selected);
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(1351, "Bronze axe"),
+            actions: vec![Some("Wield".into()), Some("Drop".into())],
+            ..log(0)
+        }],
+        28,
+    );
+    for t in 1..5 {
+        tick(&mut slot, &snapshot, t);
+        while let Some(action) = slot.take_native_action() {
+            assert!(
+                !matches!(
+                    action.effect,
+                    HostEffect::Interaction(InteractReq::Held { .. })
+                ),
+                "Attack 0 must not attempt to wield the Attack-1 bronze axe"
+            );
+        }
+    }
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
+    slot.stop();
+}
+
+#[test]
+fn late_drop_settlement_counts_while_modal_budget_defers_resend() {
+    let mut slot = started(4253, &selected());
+    let all: Vec<i32> = (0..28).collect();
+    let mut snapshot = snapshot(&all);
+    let mut sent = Vec::new();
+    let mut t = 1;
+    while sent.is_empty() && t < 20 {
+        tick(&mut slot, &snapshot, t);
+        sent = drain(&mut slot, t);
+        t += 1;
+    }
+    assert_eq!(sent, [0, 1, 2, 3, 4]);
+    tick(&mut slot, &snapshot, t);
+    assert!(drain(&mut slot, t).is_empty());
+    snapshot.seed_chat_modal(123, vec!["Your inventory is too full.".into()]);
+    tick(&mut slot, &snapshot, t + 1);
+    assert_eq!(drain(&mut slot, t + 1), [0, 1, 2, 3]);
+    snapshot.seed_inventory(all.into_iter().filter(|s| *s != 4).map(log).collect(), 28);
+    tick(&mut slot, &snapshot, t + 2);
+    let status = slot.native_status().unwrap();
+    let dropped = status
+        .fields
+        .iter()
+        .find(|field| field.key == "dropped")
+        .unwrap();
+    assert_eq!(dropped.value, script::native::StatusValue::Integer(1));
+    slot.stop();
+}
+
+#[test]
+fn restart_required_edit_supersedes_an_older_boundary_edit() {
+    let selected = selected();
+    let mut slot = started(4254, &selected);
+    let snapshot = depleted_snapshot(&selected);
+    tick(&mut slot, &snapshot, 1);
+    let original_area = slot
+        .native_status()
+        .unwrap()
+        .fields
+        .iter()
+        .find(|field| field.key == "area")
+        .unwrap()
+        .value
+        .clone();
+    let run = slot.native_run().unwrap();
+    for (revision, bag) in [
+        (
+            2,
+            [("radius".into(), serde_json::json!(6))]
+                .into_iter()
+                .collect(),
+        ),
+        (
+            3,
+            [("skill".into(), serde_json::json!("Mining"))]
+                .into_iter()
+                .collect(),
+        ),
+    ] {
+        let selected = Arc::clone(&selected);
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            script::slot::prepare_config(
+                families,
+                script::CompiledId("Gatherer"),
+                revision,
+                Arc::new(bag),
+                selected,
+                Arc::default(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        slot.configure_compiled(config, run);
+    }
+    for t in 2..6 {
+        tick(&mut slot, &snapshot, t);
+        drain(&mut slot, t);
+    }
+    let status = slot.native_status().unwrap();
+    assert_eq!(
+        status.active_settings, 1,
+        "superseded boundary edit must not activate"
+    );
+    assert_eq!(status.pending_settings, Some(3));
+    let area = status
+        .fields
+        .iter()
+        .find(|field| field.key == "area")
+        .unwrap();
+    assert_eq!(
+        area.value, original_area,
+        "the active work area must remain unchanged"
+    );
+    slot.stop();
+}

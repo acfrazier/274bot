@@ -704,6 +704,16 @@ fn queue_gatherer_drop(
 #[test]
 fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
     let mut snapshot = gatherer_snapshot();
+    let mut stats = snapshot.stats().to_vec();
+    stats.push(api::snapshot::StatView {
+        index: 0,
+        name: "attack".into(),
+        base: 1,
+        effective: 1,
+        xp: 0,
+        used: true,
+    });
+    snapshot.seed_stats(stats);
     let equipped = snapshot.equipment()[0].clone();
     let mut held = equipped.clone();
     held.container = api::snapshot::ItemContainer::Inventory;

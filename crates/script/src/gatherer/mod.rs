@@ -3,6 +3,11 @@
 //! The module deliberately keeps the stage boundary visible: fishing, Auto,
 //! banking, combat and recovery are added by later slices rather than being
 //! represented by inert fields here.
+//!
+//! Power mining drops selected ores but keeps valuable incidental uncut gems,
+//! just like other non-selected items. This deliberately favors keeping a rare
+//! valuable roll over discarding it for uninterrupted XP. If kept items fill
+//! the pack, the card stops with `inventory-blocked`; clear space and Retry.
 
 mod area;
 mod card;
@@ -40,7 +45,7 @@ pub(crate) fn test_full_pack_fixture(
 
     let config = card::prepare(cx, 1, Arc::new(crate::native::SettingsBag::new()))?;
     let prepared = config
-        .get::<card::Prepared>()
+        .get::<Arc<card::Prepared>>()
         .expect("Gatherer card preparation returns its own payload");
     let region = SceneRegionInput {
         min_x: i32::MIN / 2,

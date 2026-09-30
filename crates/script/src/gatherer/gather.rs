@@ -1,7 +1,6 @@
 use super::select::TargetPlan;
 use crate::native::{ActionContext, ActionError, NativeMachine};
 use crate::shim::InteractReq;
-use api::gather_methods::TargetClass;
 use api::selected::EntityId;
 #[cfg(test)]
 use std::sync::Arc;
@@ -11,10 +10,8 @@ pub const DEFAULT_STALL_TICKS: u64 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GatherEnd {
-    Depleted,
     Full,
     TargetGone,
-    Hazard,
     Refused,
     Idle,
 }
@@ -123,36 +120,14 @@ impl NativeMachine for GatherRun {
             }));
         }
 
-        let Some(target_row) = scene_target(snapshot, &self.args.target) else {
+        // Only the originally selected resource is actionable. Once it changes,
+        // selection reclassifies the observed replacement (depleted or hazard).
+        if scene_target(snapshot, &self.args.target).is_none() {
             return Poll::Ready(Ok(GatherResult {
                 end: GatherEnd::TargetGone,
                 gained: self.gained,
                 xp: self.xp_gain,
             }));
-        };
-        match target_row.1 {
-            TargetClass::Resource => {}
-            TargetClass::Depleted => {
-                return Poll::Ready(Ok(GatherResult {
-                    end: GatherEnd::Depleted,
-                    gained: self.gained,
-                    xp: self.xp_gain,
-                }));
-            }
-            TargetClass::Hazard => {
-                return Poll::Ready(Ok(GatherResult {
-                    end: GatherEnd::Hazard,
-                    gained: self.gained,
-                    xp: self.xp_gain,
-                }));
-            }
-            TargetClass::Unclassified => {
-                return Poll::Ready(Ok(GatherResult {
-                    end: GatherEnd::TargetGone,
-                    gained: self.gained,
-                    xp: self.xp_gain,
-                }));
-            }
         }
         if refused {
             return Poll::Ready(Ok(GatherResult {
@@ -248,13 +223,11 @@ fn latest_chat(snapshot: api::snapshot::SnapshotView<'_>) -> Option<i32> {
 fn scene_target<'a>(
     snapshot: api::snapshot::SnapshotView<'a>,
     target: &TargetPlan,
-) -> Option<(&'a api::snapshot::LocView, TargetClass)> {
+) -> Option<&'a api::snapshot::LocView> {
     let locs = snapshot.locs()?;
-    let loc = locs
-        .value
+    locs.value
         .iter()
-        .find(|loc| loc.tile == target.tile && loc.id == entity_id(target.entity))?;
-    Some((loc, target.class))
+        .find(|loc| loc.tile == target.tile && loc.id == entity_id(target.entity))
 }
 
 fn entity_id(entity: EntityId) -> i32 {
@@ -328,8 +301,6 @@ mod tests {
             products: [1511, 0, 0, 0, 0, 0, 0, 0],
             products_len: 1,
             skill_stat: 8,
-            respawn_max: 0,
-            class: TargetClass::Resource,
         };
         assert_eq!(product_count(&[], &target), 0);
     }
