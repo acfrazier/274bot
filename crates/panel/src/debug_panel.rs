@@ -643,7 +643,7 @@ fn draw_name_picker(
                         format!("#{}  {}  {}", hit.id, hit.name, hit.alias)
                     };
                     if ui.selectable_config(&label).build() {
-                        picked = Some(hit.name.clone());
+                        picked = Some(hit.alias.clone());
                     }
                     if ui.is_item_hovered() {
                         ui.tooltip_text(&label);
