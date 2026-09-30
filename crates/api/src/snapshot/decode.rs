@@ -222,14 +222,16 @@ impl GameSnapshot {
         // pick an unrelated empty container (a shop/trade modal) and fail
         // the nav `WorldState` gate closed. Tests/stub clients without a
         // side tab fall back to the first TYPE_INV that actually holds
-        // decoded slots, else the first TYPE_INV in the table.
+        // decoded slots, else the first TYPE_INV in the table. The bank's
+        // withdraw grid is never the backpack: with no side tab bound it
+        // would otherwise read the banked objs as carried.
         let inv = tab_inv_component(client, 3)
             .and_then(|id| client.if_(id as usize))
             .or_else(|| {
                 let mut first = None;
                 for com in client
                     .ifaces_merged()
-                    .filter(|f| f.r#type == ComponentType::TYPE_INV)
+                    .filter(|f| f.r#type == ComponentType::TYPE_INV && !is_bank_withdraw_grid(f))
                 {
                     if com
                         .link_obj_type
@@ -355,13 +357,7 @@ impl GameSnapshot {
         let bank_component_id = if client.main_modal_id == -1 {
             -1
         } else {
-            let root = client.main_modal_id;
-            find_inv_component(client, root, |com| {
-                com.iop[0]
-                    .as_deref()
-                    .is_some_and(|s| s.to_ascii_lowercase().contains("withdraw"))
-            })
-            .unwrap_or(-1)
+            find_inv_component(client, client.main_modal_id, is_bank_withdraw_grid).unwrap_or(-1)
         };
         let modal = client.main_modal_packet_state();
         let modal_delta = modal
@@ -1806,6 +1802,14 @@ pub fn tab_inv_component(client: &Client, tab: usize) -> Option<i32> {
         return None;
     }
     find_inv_component(client, root, |com| com.obj_ops || tab == 4)
+}
+
+/// Whether `com` is a bank's withdraw grid (m8aq `bankItems`): its first
+/// interface op withdraws.
+fn is_bank_withdraw_grid(com: &IfType) -> bool {
+    com.iop[0]
+        .as_deref()
+        .is_some_and(|s| s.to_ascii_lowercase().contains("withdraw"))
 }
 
 /// Depth-first search for a TYPE_INV component satisfying `accept` under

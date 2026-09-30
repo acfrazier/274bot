@@ -159,8 +159,8 @@ pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, samp
 pub use scatter::{scatter_tile_for, tele_args};
 use script_runtime::*;
 use walk_plan::{
-    fetch_stand, fetch_tile, fetchable_facts, route_or_bank_fetch, BankFetchFlight, RouteOutcome,
-    StandFetch,
+    fetch_stand, fetch_tile, fetchable_facts, route_or_bank_fetch, BankFetchFlight, FlightTarget,
+    RouteOutcome, StandFetch,
 };
 pub use walk_plan::{PendingBankFetch, StepProgress};
 

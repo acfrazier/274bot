@@ -410,6 +410,81 @@ fn inv_rebuild_prefers_the_side_tab_container_over_an_earlier_type_inv() {
     );
 }
 
+/// With no side tab bound, the inv fallback never reads the bank's withdraw
+/// grid as the backpack, open or closed: an empty pack stays empty, and a
+/// filled pack reads its own rows.
+#[test]
+fn inv_fallback_never_reads_the_bank_withdraw_grid() {
+    let mut c = client_with_npc();
+    let grid = c.push_iface(IfType {
+        r#type: ComponentType::TYPE_INV,
+        iop: [
+            Some("Withdraw 1".into()),
+            Some("Withdraw 5".into()),
+            Some("Withdraw 10".into()),
+            Some("Withdraw All".into()),
+            Some("Withdraw X".into()),
+        ],
+        ..Default::default()
+    });
+    c.set_iface_mut(
+        grid,
+        IfTypeMut {
+            link_obj_type: Some(vec![3, 0]),
+            link_obj_number: Some(vec![20, 0]),
+            ..Default::default()
+        },
+    );
+    let pack = c.push_iface(IfType {
+        r#type: ComponentType::TYPE_INV,
+        obj_ops: true,
+        ..Default::default()
+    });
+    c.set_iface_mut(
+        pack,
+        IfTypeMut {
+            link_obj_type: Some(vec![0, 0]),
+            link_obj_number: Some(vec![0, 0]),
+            ..Default::default()
+        },
+    );
+    assert_eq!(c.side_icon[3], -1, "no inv tab is bound");
+
+    let mut snap = GameSnapshot::new();
+    for main_modal in [grid as i32, -1] {
+        c.main_modal_id = main_modal;
+        c.set_iface_mut(
+            pack,
+            IfTypeMut {
+                link_obj_type: Some(vec![0, 0]),
+                link_obj_number: Some(vec![0, 0]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        assert!(snap.rebuild_family(&c, Family::Inv));
+        assert!(
+            snap.inv().is_empty(),
+            "the banked rows are not carried (main modal {main_modal})"
+        );
+        c.set_iface_mut(
+            pack,
+            IfTypeMut {
+                link_obj_type: Some(vec![2, 0]),
+                link_obj_number: Some(vec![3, 0]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        assert!(snap.rebuild_family(&c, Family::Inv));
+        assert_eq!(
+            snap.inv(),
+            &[(1, 3)],
+            "the pack's own rows (main modal {main_modal})"
+        );
+    }
+}
+
 /// Chat-family rebuild: the ring head (`chat_text[0]`) is the latest line.
 #[test]
 fn chat_rebuild_reads_the_ring_head() {
