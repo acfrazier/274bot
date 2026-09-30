@@ -411,6 +411,30 @@ fn tsc_consumer_probe_rejects_wrong_uses() {
     }
 }
 
+/// Frozen-valid consumer from the R4 review (no `@ts-expect-error`). Must be 0 diagnostics
+/// against the authored declarations under pinned TypeScript 5.8.3.
+/// `npx -p typescript@5.8.3 --yes tsc --noEmit -p crates/script/tests/compat_dts_probe/consumer.tsconfig.json`
+#[test]
+#[ignore = "requires tsc; npx -p typescript@5.8.3 --yes tsc --noEmit -p crates/script/tests/compat_dts_probe/consumer.tsconfig.json"]
+fn tsc_valid_consumer_probe_has_zero_diagnostics() {
+    let probe =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/compat_dts_probe/consumer.tsconfig.json");
+    let mut cmd = tsc_command();
+    cmd.arg("--noEmit").arg("-p").arg(&probe);
+    let out = cmd
+        .output()
+        .unwrap_or_else(|e| panic!("tsc valid consumer probe failed to spawn: {e}"));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{stdout}\n{stderr}");
+    let diag_count = combined.lines().filter(|l| l.contains("error TS")).count();
+    if !out.status.success() || diag_count != 0 {
+        panic!(
+            "valid consumer must have 0 diagnostics against authored declarations (saw {diag_count}):\n{stdout}\n{stderr}"
+        );
+    }
+}
+
 /// Pinned compiler: a bare `tsc` on `PATH` (Homebrew ships 7.x) would change the diagnostics.
 fn tsc_command() -> std::process::Command {
     let mut npx = std::process::Command::new("npx");
