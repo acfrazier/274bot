@@ -7,6 +7,7 @@ use client::io::ClientRevision;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::debug_commands::{DebugCommand, DebugName};
 use crate::selected::{FactError, SelectedPin};
 
 const SCHEMA_VERSION: u16 = 4;
@@ -956,6 +957,10 @@ pub struct SelectedGameData {
     revision: i32,
     provenance: Provenance,
     items: Vec<GameItem>,
+    #[serde(default)]
+    debug_commands: Vec<DebugCommand>,
+    #[serde(default)]
+    debug_names: HashMap<String, Vec<DebugName>>,
     consumption: Vec<ConsumptionFact>,
     pickpocket: Vec<PickpocketFact>,
     #[serde(default)]
@@ -1702,6 +1707,48 @@ impl SelectedGameData {
             .copied()
             .flatten()?;
         self.items.get(index)
+    }
+    pub fn debug_commands(&self) -> &[DebugCommand] {
+        &self.debug_commands
+    }
+
+    /// Bounded search over selected-content names for typed debug arguments.
+    /// Objects use the existing item search so certificates and empty queries
+    /// retain the same loadout/editor behavior.
+    pub fn search_debug_names(&self, kind: &str, query: &str, limit: usize) -> Vec<DebugName> {
+        let normalized = kind.trim().to_ascii_lowercase();
+        if normalized == "obj" || normalized == "namedobj" {
+            return self
+                .search_named_items(query, limit)
+                .into_iter()
+                .map(|item| DebugName {
+                    id: item.id,
+                    alias: item.alias,
+                    name: item.name,
+                })
+                .collect();
+        }
+        if query.trim().is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let family = if normalized == "varbit" {
+            "varp"
+        } else {
+            normalized.as_str()
+        };
+        let Some(rows) = self.debug_names.get(family) else {
+            return Vec::new();
+        };
+        let wanted = query.trim().to_ascii_lowercase();
+        rows.iter()
+            .filter(|row| {
+                row.name.to_ascii_lowercase().contains(&wanted)
+                    || row.alias.to_ascii_lowercase().contains(&wanted)
+                    || row.id.to_string() == wanted
+            })
+            .take(limit)
+            .cloned()
+            .collect()
     }
 
     /// Bounded slot search over generated wearpos facts. Empty query still

@@ -54,24 +54,31 @@ impl Play {
     /// Queue `cmd` for a running local-profile slot. The slot's client
     /// performs the final admission and ingame check at the encoder.
     /// Pending bytes keep the slot awake for the next frame's flush.
-    pub fn cheat(&self, user: &str, cmd: &str) {
+    pub fn cheat(&self, user: &str, cmd: &str) -> bool {
         if self.connection.require_bot_operation().is_err()
-            || self.connection.profile_class() != crate::ProfileClass::Local
+            || !self.map_teleport_authorized()
+            || cmd.is_empty()
+            || cmd.len() > 80
+            || !cmd.is_ascii()
+            || cmd.bytes().any(|byte| byte.is_ascii_control())
         {
-            return;
+            return false;
         }
         let statuses = lock_statuses(&self.statuses);
         if !statuses
             .iter()
             .any(|status| status.username == user && status.ingame)
         {
-            return;
+            return false;
         }
         if let Some(q) = self.cheats.lock().unwrap().get_mut(user) {
             q.push_back(cmd.to_string());
+        } else {
+            return false;
         }
         drop(statuses);
         self.wake(user);
+        true
     }
 
     /// Queue a chat or one-tile movement command for a connected slot.

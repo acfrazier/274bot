@@ -12,6 +12,7 @@ import { extractQuestStartFacts, questStartContentFiles } from './extractors/que
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractLocNamesFacts } from './extractors/loc-names.ts';
 import { extractNpcPlacementsFacts } from './extractors/npc-placements.ts';
+import { extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null };
@@ -86,6 +87,8 @@ export const CONTENT_TREE_PATHSPECS = ['scripts', 'pack', 'maps'];
 export const ENGINE_INPUT_PATHS = [
     ...decoderSources,
     'src/network/game/client/ClientGameProtCategory.ts',
+    'src/network/game/client/handler/ClientCheatHandler.ts',
+    'src/engine/entity/PlayerStat.ts',
     'src/engine/entity/NetworkPlayer.ts',
     'src/network/game/client/model',
     'data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config',
@@ -2558,6 +2561,11 @@ async function generate(spec: Revision) {
     const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const piles = pileModels(objModule.default.configs); const items = objModule.default.configs.map((obj) => row(obj, piles)); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
+    const debugHandlerPath = engineHandlerRelative();
+    const debugHandlerText = fs.readFileSync(path.join(spec.engine, debugHandlerPath), 'utf8');
+    const debugStatPath = 'src/engine/entity/PlayerStat.ts';
+    const debugStatText = fs.readFileSync(path.join(spec.engine, debugStatPath), 'utf8');
+    const debugCatalog = extractDebugCatalog(spec.content, debugHandlerText, debugStatText, npcModule.default.configs);
     const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 5) throw new Error(`${spec.revision}: expected five combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: magic data mismatch`);
     const herbs = extractHerbFacts(spec.content, objModule.default.configs);
     if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`);
@@ -2615,9 +2623,9 @@ async function generate(spec: Revision) {
     const trioGivers = extractTrioGiversFacts(spec.content);
     assertTrioGiverPins(trioGivers.facts, spec.revision);
     assertTrioGiverNpcJoins(trioGivers.facts, npcModule.default.configs);
-    const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file));
+    const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config', debugHandlerPath, debugStatPath].map((file) => sourceFile(spec.engine, file));
     const contentInputPaths = [...new Set([...contentFiles, ...questStartContentFiles(spec.content)])];
-    const contentInputs = contentInputPaths.map((file) => sourceFile(spec.content, file));
+    const contentInputs = [...new Map([...contentInputPaths.map((file) => sourceFile(spec.content, file)), ...debugCatalog.inputs].map((input) => [input.path, input])).values()];
     const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
     const rs2b0tRoot = envPath('RS2B0T', path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0'));
     assertRs2b0tPinned(rs2b0tRoot);

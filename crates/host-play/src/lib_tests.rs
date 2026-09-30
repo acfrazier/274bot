@@ -6366,6 +6366,65 @@ fn disconnected_slot_rejects_new_wire_and_cheat_work() {
 }
 
 #[test]
+fn debug_command_admission_rejects_remote_prod_and_invalid_wire_bodies() {
+    for (host, transport, admitted) in [
+        ("127.0.0.1", client::Transport::Tcp, true),
+        ("example.invalid", client::Transport::Tcp, false),
+        ("127.0.0.1", client::Transport::Wss, false),
+    ] {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: host.into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        // No slots or sockets: vary the admission metadata after constructing
+        // the TCP-only offline fixture, including the production WSS transport.
+        let crate::play_bootstrap::PlayConnection::Direct(options) = &mut play.connection else {
+            unreachable!("run_with_io creates the direct offline fixture");
+        };
+        options.transport = transport;
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: "alice".into(),
+            ingame: true,
+            scene_state: 2,
+            ..SlotStatus::default()
+        });
+        play.cheats
+            .lock()
+            .unwrap()
+            .insert("alice".into(), VecDeque::new());
+        for invalid in [
+            "".to_string(),
+            "x".repeat(81),
+            "~help\ngetcoord".into(),
+            "give café".into(),
+        ] {
+            play.cheat("alice", &invalid);
+            assert!(
+                play.cheats.lock().unwrap()["alice"].is_empty(),
+                "{invalid:?} was queued"
+            );
+        }
+        play.cheat("alice", "getcoord");
+        let queues = play.cheats.lock().unwrap();
+        let expected = if admitted {
+            VecDeque::from(["getcoord".to_string()])
+        } else {
+            VecDeque::new()
+        };
+        assert_eq!(queues["alice"], expected, "{host} {transport:?}");
+    }
+}
+
+#[test]
 fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
     let ScriptWiring {
         scripts, cheats, ..
@@ -17251,6 +17310,7 @@ impl ReconnectRig {
             None,
             Some(&self.channels),
             script_channels::BrokerWorld::Local,
+            None,
             None,
         );
         self.slot().lock().unwrap().probe("true").unwrap();

@@ -15522,6 +15522,11 @@
       "sha256": "141c5da19bb0d3e6251abe815526a831429addbc9b1307ac9f35533d4618173a"
     },
     {
+      "path": "engine/src/engine/entity/PlayerStat.ts",
+      "bytes": 1649,
+      "sha256": "9dee615c1d2708ba620e2eab448d72922320f59eb4d264919c0f6c653056333a"
+    },
+    {
       "path": "engine/src/io/BZip2.ts",
       "bytes": 131,
       "sha256": "bac68744b37e5e294632e66bac895a5210492ec35fa509d9b5c5315c99791024"
@@ -15540,6 +15545,11 @@
       "path": "engine/src/network/game/client/ClientGameProtCategory.ts",
       "bytes": 713,
       "sha256": "5ce0f59b1a63139f56985c4bb64a2f56d2b9b0771ec5eb8e1f35c0cb013fbea4"
+    },
+    {
+      "path": "engine/src/network/game/client/handler/ClientCheatHandler.ts",
+      "bytes": 27951,
+      "sha256": "d206a141b61edb8610f645b7ff6b68e2d29017cdd00c8552e1639b1bdcf00d69"
     },
     {
       "path": "engine/src/network/game/client/model/AnticheatCycleLogic.ts",

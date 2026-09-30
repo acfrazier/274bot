@@ -1104,6 +1104,7 @@ fn spawn_slot_thread(
                         let mut nav_snapshot = GameSnapshot::new();
                         let mut session_epoch = 0u64;
                         let mut welcome = login_readiness::LoginReadiness::default();
+                        let mut debug_replies = super::debug_replies::DebugReplies::default();
                         // This frame's random status is published before
                         // observe; its hold freezes script tick and nav follow.
                         move |c, _ignored, run_sends, status: &RandomStatus, run_policy| {
@@ -1150,6 +1151,7 @@ fn spawn_slot_thread(
                                 nav_snapshot.ingame(),
                             );
                             if session_boundary {
+                                debug_replies = super::debug_replies::DebugReplies::default();
                                 session_epoch = session_epoch.wrapping_add(1);
                                 if c.ingame {
                                     reset_slot_session_boundary(
@@ -1176,6 +1178,7 @@ fn spawn_slot_thread(
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
                             api::hostlog::set_tick(nav_snapshot.tick());
+                            debug_replies.observe(name, &nav_snapshot);
                             // `script_observe_with_npc_boxes` below reaps the
                             // isolate and can publish a Stop receipt. The next
                             // frame attaches that bounded value here before
@@ -1367,6 +1370,7 @@ fn spawn_slot_thread(
                                 Some(&observe_channels),
                                 broker_world,
                                 Some(run_policy),
+                                Some(&mut debug_replies),
                             );
                             // TUI chat / WASD sends: run the queued wire
                             // commands through `Interactions` on this
