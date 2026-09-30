@@ -1351,10 +1351,9 @@ impl SlotScript {
         }
         #[cfg(feature = "load")]
         {
-            return self
-                .load
+            self.load
                 .as_ref()
-                .is_some_and(|isolate| isolate.compat_journal_paint_hidden(now));
+                .is_some_and(|isolate| isolate.compat_journal_paint_hidden(now))
         }
         #[cfg(not(feature = "load"))]
         {
