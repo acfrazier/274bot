@@ -145,7 +145,7 @@ fn prime(client: &mut client::client::Client, mode: SetupMode) {
     // Tutorial completion must be followed by a relog before the quest tab is
     // trusted.  The quest varp/item cheats only choose a deterministic fixture
     // state; all journal clicks and subsequent actions remain host-owned.
-    let _ = interact::cheat(client, "setvar tutorial 1000");
+    interact::mainland_hop(client);
     match mode {
         SetupMode::Synthetic => {
             let _ = interact::cheat(client, "setvar runemysteries 3");
@@ -159,12 +159,15 @@ fn prime(client: &mut client::client::Client, mode: SetupMode) {
 }
 
 fn post_relog(client: &mut client::client::Client, mode: SetupMode) {
-    let command = match mode {
+    let (x, z) = match mode {
         // Aubury is the real Rune Mysteries branch-3 advance target.
-        SetupMode::Synthetic => "tele 3253 3420 0",
-        SetupMode::Cook => "tele 3209 3215 0",
+        SetupMode::Synthetic => (3253, 3401),
+        SetupMode::Cook => (3209, 3215),
     };
-    let _ = interact::cheat(client, command);
+    assert_eq!(
+        interact::cheat(client, &interact::tele_args(0, x, z)),
+        client::CheatSend::Sent
+    );
 }
 
 fn frame_hook(
@@ -287,6 +290,11 @@ fn wait_status(
             if predicate(&status) {
                 return status;
             }
+            assert_ne!(
+                status.phase,
+                NativePhase::Blocked,
+                "{label} blocked: {status:#?}"
+            );
         }
         assert!(
             Instant::now() < deadline,
@@ -325,7 +333,7 @@ fn synthetic_document(no_match: bool) -> PathDocument {
         .enumerate()
         .map(|(index, stage)| {
             let mut sequence = SequenceDocument {
-                stage: FactKey::new(*stage),
+                stage: FactKey::new(stage),
                 required: Vec::new(),
                 terminal: *stage == "rm:6",
                 recovery_entry: None,
@@ -341,7 +349,11 @@ fn synthetic_document(no_match: bool) -> PathDocument {
                     // asks for the Research Package at Aubury. The host
                     // dialogue machine performs the talk; it is not faked by
                     // changing the journal/status wire.
-                    step.args = serde_json::json!({"npc":"aubury", "leash": 8, "prefer": []});
+                    step.args = serde_json::json!({
+                        "npc": "aubury",
+                        "leash": 8,
+                        "prefer": ["I have been sent here with a package for you."],
+                    });
                     step.settle = PredicateDocument::Fact {
                         kind: "stage_in".into(),
                         version: 1,
@@ -358,11 +370,13 @@ fn synthetic_document(no_match: bool) -> PathDocument {
                     step.version = 1;
                     step.args = serde_json::json!({
                         "until": {
-                            "kind": "quest_colour",
-                            "version": 1,
-                            "args": {
-                                "quest": SYNTHETIC_QUEST,
-                                "is": "complete",
+                            "Fact": {
+                                "kind": "quest_colour",
+                                "version": 1,
+                                "args": {
+                                    "quest": SYNTHETIC_QUEST,
+                                    "is": "complete",
+                                },
                             },
                         },
                         "max_ticks": 1000,
@@ -605,7 +619,7 @@ fn live_quester_journal_synthetic_runemysteries() {
         |status| {
             status.phase == NativePhase::Blocked
                 && text(status, "rule") == "unknown"
-                && text(status, "journal_lines").contains("Research Package")
+                && text(status, "journal_lines") == text(&advanced, "journal_lines")
         },
     );
     assert_eq!(parked.run, no_match_run);
