@@ -261,8 +261,14 @@ fn unclassified_rocks_stay_unknown_with_a_reason_and_are_never_resources() {
     assert!(slide.method.is_none());
     // A loc with no handler anywhere is proven inert by content and engine dispatch
     // (M-215 R2), so it is excluded from the mining catalogue entirely: no rock fact.
-    assert!(catalog.rock(4976).is_none(), "loc 4976 has no handler, so it is not a rock at all");
-    assert!(catalog.rock(3431).is_none(), "newbierocks1 has no handler, so it is not a rock at all");
+    assert!(
+        catalog.rock(4976).is_none(),
+        "loc 4976 has no handler, so it is not a rock at all"
+    );
+    assert!(
+        catalog.rock(3431).is_none(),
+        "newbierocks1 has no handler, so it is not a rock at all"
+    );
     // No method ever offers an unclassified rock as a target.
     for method in catalog.methods() {
         for target in known_rows(&method.targets) {

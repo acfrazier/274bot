@@ -2046,8 +2046,9 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(JSON.stringify(extractGatheringFamily(root).payload), JSON.stringify(facts), `${revision} extraction is deterministic`);
     assert.deepEqual(family.summary.methods, { woodcutting: 10, mining: 15, fishing: 15 }, `${revision} method inventory`);
 
-    // M-215 R2: handler-less locs are proven inert (no alias, category, or global oploc
-    // handler, so the engine runs its default no-op): they are excluded from the mining
+    // M-215 R2/R3: handler-less locs are proven inert (no alias or category oploc handler;
+    // a global handler fails closed at index time, so reaching here proves there is none
+    // and the engine runs its default no-op): they are excluded from the mining
     // catalogue entirely — no method target, no loose row, no entity join. Every other
     // rock loc the content offers a Mine op on is classified or left Unknown with a gap code.
     const rockClass = new Map<number, string>();
@@ -2262,12 +2263,15 @@ const gatedPike = gatherView(gated).method('fishing.freshfish.op3').requirements
 assert.equal(gatedPike.state === 'partial' && gatedPike.gaps.some((each) => each.code === 'varp-gate'), true, 'an unmodelled quest guard is a gap, never silently ignored');
 assert.equal(gatherView(gated).method('fishing.freshfish.op1').requirements.state, 'known', 'other methods are unaffected');
 
+// M-215 R3: a global `[oploc1]` handler is the engine's third dispatch tier (type, then
+// category, then global per `ScriptProvider.getByTrigger`), which the no-handler exclusion
+// rule does not model. Extraction fails closed on it instead of silently dropping the rock.
+assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.appendFileSync(path.join(rootDir, 'scripts/areas/area_miscellania/scripts/miner_magnus.rs2'), '\n[oploc1]\nmes("Global mine handler.");\n'))), /doesn't model global handlers/);
 // Required inputs fail closed.
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.rmSync(path.join(rootDir, 'scripts/skill_mining/configs/mine.dbrow')))), /mine\.dbrow/);
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.rmSync(path.join(rootDir, 'pack/npc.pack')))), /npc\.pack/);
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.rmSync(path.join(rootDir, 'maps'), { recursive: true }))), /maps.*required directory missing|ENOENT/);
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.writeFileSync(path.join(rootDir, 'maps/m50_50.jm2'), '==== LOC ====\n0 10 10: 2092 10 0 extra tokens\n'))), /tokens/);
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, 'scripts/skill_mining/configs/mine.dbrow', 'data=rock,copperrock1', 'data=rock,not_a_packed_loc'))), /failed join/);
-
 
 console.log('generate fixture passed');

@@ -442,10 +442,11 @@ function classifyRocks(ctx: Ctx, rows: DbRow[]): MiningModel {
                 result = { alias, span: def.span, class: 'unclassified', slot, label: null, gap: gap('custom-handler', def.span, ...custom.map((header) => header.span)) };
             }
         } else if (!tableMembers.has(alias)) {
-            // M-215 R2: no alias, category, or global handler anywhere means the engine runs its
-            // default no-op, so the loc cannot mine at all. It is not a resource and not an
-            // unknown one either: exclude it from the mining catalogue entirely, never a method
-            // target, rock fact, or coverage row.
+            // M-215 R2/R3: no alias or category handler anywhere means the engine runs its
+            // default no-op, so the loc cannot mine at all. (A global handler would have
+            // failed closed at index time, so reaching here proves there is none.) It is not
+            // a resource and not an unknown one either: exclude it from the mining catalogue
+            // entirely, never a method target, rock fact, or coverage row.
             if (aliasHeaders.length + categoryHeaders.length === 0) {
                 population.delete(alias);
                 continue;
