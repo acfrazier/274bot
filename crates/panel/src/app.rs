@@ -1056,7 +1056,13 @@ fn size_changed(prev: Option<[f32; 2]>, size: [f32; 2]) -> bool {
 /// or they float over the panel with a leftover tab bar.
 fn dock_panel_tabs(ui: &Ui, panel: Id) {
     DockBuilder::dock_window(ui, PANEL_WINDOW, panel);
-    for title in ["Profiles", "General config", "Nav config", "Script prefs"] {
+    for title in [
+        "Profiles",
+        "General config",
+        "Nav config",
+        "Script prefs",
+        "Debug",
+    ] {
         DockBuilder::dock_window(ui, title, panel);
     }
 }
@@ -1978,8 +1984,9 @@ fn debug_section(ui: &Ui, session: &mut Session) {
         let caption = debug_caption(label);
         match *label {
             "DebugPanel" => {
-                let _off = ui.begin_disabled();
-                let _ = ui.button_with_size(caption, [w, 0.0]);
+                if ui.button_with_size(caption, [w, 0.0]) {
+                    session.debug_panel_open = true;
+                }
                 ui.set_item_tooltip("DebugPanel v2 — full cheat catalog");
             }
             "TutSkip" => {
@@ -2009,6 +2016,10 @@ fn debug_section(ui: &Ui, session: &mut Session) {
             _ => {}
         }
     }
+    debug_teleports_popup(ui, session);
+}
+
+fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
     ui.popup("##debug-teles", || {
         let dests = debug_dest_cheats();
         let avail = PANEL_WIDTH;
@@ -4112,8 +4123,8 @@ fn rail_cap(
     gap_line(ui);
     let red = ui.push_style_color(StyleColor::Text, ERROR);
     let removed = ui.button_with_size(REMOVE_GLYPH, [BTN, 0.0]);
-    ui.set_item_tooltip("drop from the wall — does not delete the vault profile");
     red.pop();
+    ui.set_item_tooltip("drop from the wall — does not delete the vault profile");
     (clicked, removed, folded)
 }
 
@@ -4514,6 +4525,29 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             });
         });
     session.global_settings_open = open;
+}
+
+fn debug_panel_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
+    if !session.debug_panel_open || !session.debug_ui() {
+        return;
+    }
+    let mut open = true;
+    ui.set_next_window_class(&panel_window_class());
+    if let Some(id) = panel_dock {
+        ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
+    }
+    ui.window("Debug")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size([PANEL_WIDTH, 480.0], Condition::FirstUseEver)
+        .build(|| {
+            crate::debug_panel::draw(ui, session);
+            if std::mem::take(&mut session.debug_open_teleports) {
+                ui.open_popup("##debug-teles");
+            }
+            debug_teleports_popup(ui, session);
+        });
+    session.debug_panel_open = open;
 }
 
 /// Profile-global clue traversal partner. Unlike card parameters this follows
@@ -5204,6 +5238,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     // the close so the next open is a fresh rising edge.
     chooser_window(ui, &mut state.session, state.panel_dock_node);
     settings_window(ui, &mut state.session, state.panel_dock_node);
+    debug_panel_window(ui, &mut state.session, state.panel_dock_node);
     browse_window(ui, &mut state.session);
     nav_settings_window(ui, &mut state.session, state.panel_dock_node);
     script_prefs_window(ui, &mut state.session, state.panel_dock_node);

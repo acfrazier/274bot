@@ -69,6 +69,10 @@ pub struct PanelUiState {
     /// (see `fleet_columns`).
     #[serde(default)]
     pub fleet_columns: HashMap<String, bool>,
+    /// Debug command recents and favorites. Argument buffers stay ephemeral
+    /// because the selected content pin may change command shapes.
+    #[serde(default)]
+    pub debug_panel: crate::debug_panel::DebugPanelPrefs,
 }
 
 /// Panel subsection ids in General config (parameters shares
@@ -132,6 +136,7 @@ impl Default for PanelUiState {
             map_bake: frontend_core::MapBakeChoice::Ask,
             session_log_file: false,
             fleet_columns: HashMap::new(),
+            debug_panel: crate::debug_panel::DebugPanelPrefs::default(),
         }
     }
 }
@@ -178,12 +183,28 @@ pub fn save(state: &PanelUiState) {
 
 pub fn load_at(p: &Path) -> PanelUiState {
     match std::fs::read(p) {
-        Ok(data) => serde_json::from_slice(&data).unwrap_or_default(),
+        Ok(data) => match serde_json::from_slice::<PanelUiState>(&data) {
+            Ok(mut state) => {
+                state.debug_panel.normalize();
+                state
+            }
+            Err(_) => PanelUiState::default(),
+        },
         Err(_) => PanelUiState::default(),
     }
 }
 
 pub fn save_at(p: &Path, state: &PanelUiState) {
+    // A malformed or incompatible existing prefs file is evidence that the
+    // operator may need to recover it. Never replace it with defaults or a
+    // partial state (M-044); a later explicit repair can still write a new
+    // file.
+    match std::fs::read(p) {
+        Ok(existing) if serde_json::from_slice::<PanelUiState>(&existing).is_err() => return,
+        Ok(_) => {}
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return,
+        Err(_) => {}
+    }
     if let Ok(data) = serde_json::to_vec_pretty(state) {
         let _ = vault::write_private_file(p, &data);
     }
@@ -305,11 +326,15 @@ mod tests {
         state
             .collapsed
             .insert("bob".into(), HashMap::from([("nav".into(), true)]));
+        state.debug_panel.recents = vec!["~give".into()];
+        state.debug_panel.favorites = vec!["~reset".into()];
         save_at(&p, &state);
 
         let loaded = load_at(&p);
         assert_eq!(loaded.last_focus.as_deref(), Some("bob"));
         assert!(loaded.collapsed["bob"]["nav"]);
+        assert_eq!(loaded.debug_panel.recents, vec!["~give"]);
+        assert_eq!(loaded.debug_panel.favorites, vec!["~reset"]);
     }
 
     #[test]
@@ -319,6 +344,16 @@ mod tests {
         let loaded = load_at(&p);
         assert!(loaded.last_focus.is_none());
         assert!(loaded.collapsed.is_empty());
+    }
+
+    #[test]
+    fn save_does_not_clobber_corrupt_existing_prefs() {
+        let dir = TestDir::new("ui-corrupt");
+        let p = dir.join("panel-ui.json");
+        let corrupt = b"{ not valid json";
+        std::fs::write(&p, corrupt).unwrap();
+        save_at(&p, &PanelUiState::default());
+        assert_eq!(std::fs::read(&p).unwrap(), corrupt);
     }
 
     #[test]

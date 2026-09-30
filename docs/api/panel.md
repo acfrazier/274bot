@@ -40,14 +40,18 @@ terminal) and unlocks **before** the window opens, for launchers and
 harnesses that cannot type; see [vault.md](vault.md#passphrase-sourcing).
 `BOT_VAULT_PASS` and `--vault-pass` were removed. There is **no mainland checkbox** in the
 panel: `BOT_MAINLAND=1` or host-play `--mainland` still queues
-`mainland_hop` after scene 2. On a **loopback** engine the **Debug**
-section is shown: **TutSkip** (`setvar tutorial 1000`, hidden once the
-profile is known skipped; unknown profiles `getvar tutorial` first),
-**Lumbridge** (`~home`), **maxme** (19× `setstat`
-99), **Teles** popup, and a disabled **DebugPanel** stub (v2 later).
-Public world hosts hide that heading. The Profiles editor offers `auto` or
-each listed rs2b2t world; the selected world is
-used on the next slot start. Live slot rows display the current world.
+`mainland_hop` after scene 2. On a **Local loopback** engine the **Debug**
+section retains **TutSkip**, **Lumbridge**, **maxme**, and **Teles**, and links
+to the **Debug** tab. The tab groups commands from the selected content
+catalog by `~help` category, with search, typed arguments, content-derived
+name pickers, favourites and recent commands. Item pickers share Loadouts'
+item search. Commands target only the focused running profile; the target is
+shown before sending. Destructive commands require confirmation. Public and
+Remote profiles cannot send cheats; production-only commands are hidden.
+Host logs record queued commands and nearby chat/modal reply candidates
+(temporal correlation, not server acknowledgement). The Profiles editor
+offers `auto` or each listed rs2b2t world; the selected world is used on the
+next slot start. Live slot rows display the current world.
 
 Last focused profile is restored from `~/.274bot/panel-ui.json`
 (`last_focus`). Collapsible section open/closed state persists there per

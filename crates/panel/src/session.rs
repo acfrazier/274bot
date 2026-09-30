@@ -976,6 +976,9 @@ pub struct Session {
     pub nav_settings_open: bool,
     /// Non-modal settings window (renderer / capture / mem).
     pub global_settings_open: bool,
+    pub debug_panel: crate::debug_panel::DebugPanelState,
+    pub debug_panel_open: bool,
+    pub debug_open_teleports: bool,
     /// Usernames we already sent `getvar tutorial` for this session.
     tutorial_getvar_sent: HashSet<String>,
     /// Subset of `tutorial_getvar_sent` whose pending-text box we already
@@ -1355,6 +1358,9 @@ impl Session {
             walk_send: WalkSendState::default(),
             nav_settings_open: false,
             global_settings_open: false,
+            debug_panel: crate::debug_panel::DebugPanelState::default(),
+            debug_panel_open: false,
+            debug_open_teleports: false,
             tutorial_getvar_sent: HashSet::new(),
             tutorial_getvar_drained: HashSet::new(),
             vault_reset_open: false,
@@ -3181,6 +3187,21 @@ impl Session {
             return;
         };
         play.cheat(&name, cmd);
+    }
+
+    /// Debug catalog actions deliberately target the displayed focused bot.
+    /// The host queue and the client encoder retain final cheat admission.
+    pub fn send_debug_command(&mut self, cmd: &str) -> Result<(), String> {
+        if !self.debug_ui() {
+            return Err("Debug commands require a Local profile".into());
+        }
+        let name = self.focused_name().ok_or("Pick a focused bot")?;
+        let play = self.core.play().ok_or("No active play session")?;
+        if play.cheat(&name, cmd) {
+            Ok(())
+        } else {
+            Err(format!("{name}: command refused (requires an in-game Local bot and at most 80 ASCII characters)"))
+        }
     }
 
     /// True when the resolved launch profile is Local.

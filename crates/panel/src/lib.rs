@@ -2,6 +2,7 @@ pub mod app;
 pub mod build_info;
 pub mod chrome;
 pub mod clipboard;
+pub mod debug_panel;
 pub mod fleet;
 mod fleet_actions;
 mod fleet_columns;

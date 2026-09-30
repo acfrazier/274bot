@@ -275,6 +275,7 @@ pub(crate) fn script_observe_cached(
         None,
         super::script_channels::BrokerWorld::Unavailable,
         run_policy,
+        None,
     )
 }
 
@@ -334,6 +335,7 @@ pub(crate) fn script_observe_cached_with_channels(
     channels: Option<&super::script_channels::SlotChannels>,
     channel_world: super::script_channels::BrokerWorld,
     run_policy: Option<&mut ScriptRunPolicy>,
+    mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
 ) -> bool {
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
@@ -1420,8 +1422,19 @@ pub(crate) fn script_observe_cached_with_channels(
         all.get_mut(name).map(std::mem::take).unwrap_or_default()
     };
     for cmd in cmds.into_iter().filter(|_| up) {
-        api::interact::cheat(driver, &cmd);
-        wrote = true;
+        if api::interact::cheat(driver, &cmd) == client::CheatSend::Sent {
+            wrote = true;
+            if let (Some(replies), Some(snapshot)) = (debug_replies.as_deref_mut(), snapshot) {
+                replies.sent(name, cmd, snapshot);
+            }
+        } else {
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Warn,
+                slot = name,
+                "debug ::{cmd}: refused by client cheat admission"
+            );
+        }
     }
     wrote
 }

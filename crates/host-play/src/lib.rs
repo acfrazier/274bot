@@ -63,6 +63,7 @@ pub use host::Host;
 pub use host::{RandomClaim, RandomStatus};
 #[cfg(test)]
 use parking_lot::Mutex as QueueMutex;
+mod debug_replies;
 mod instance_lock;
 mod play_bootstrap;
 mod play_login;
