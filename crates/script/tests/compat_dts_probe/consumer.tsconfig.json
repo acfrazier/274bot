@@ -7,5 +7,12 @@
     "skipLibCheck": false,
     "noEmit": true
   },
-  "files": ["consumer.ts", "../../compat-js/index.d.ts"]
+  "files": [
+    "consumer.ts",
+    "valid-extra.ts",
+    "invalid-extra.ts",
+    "reach.ts",
+    "settings.ts",
+    "../../compat-js/index.d.ts"
+  ]
 }
