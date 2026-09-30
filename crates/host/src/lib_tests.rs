@@ -1077,6 +1077,41 @@ fn headless_slot_constructs_no_renderer_and_never_draws() {
 }
 
 #[test]
+fn draw_off_logout_edge_constructs_no_renderer_and_publishes_no_frame() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut client = Client::new_with_revision(cfg(), client::client::ClientRevision::R289);
+    client.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    let (_server, _) = listener.accept().unwrap();
+    client.ingame = true;
+    client.scene_state = 2;
+    client.last_response = Some(Instant::now() - Duration::from_secs(16));
+    client.set_draw(false);
+    let mailbox = FrameBuf::new();
+    let mut slot = SlotLoop::new();
+    let mut sends = 0;
+
+    Host::client_frame(
+        &mut client,
+        &mut slot,
+        "headless",
+        None,
+        Some(&mailbox),
+        &mut sends,
+        None,
+    );
+
+    assert!(!client.ingame, "the watchdog must cross onto the title");
+    assert!(
+        slot.renderer.is_none(),
+        "a draw-off logout edge must not construct a renderer"
+    );
+    assert_eq!(slot.paint_n, 0);
+    assert_eq!(mailbox.generation(), 0);
+}
+
+#[test]
 fn draw_off_drops_renderer_draw_on_reattaches() {
     force_cpu_backend();
     let mut c = prepare_client(
@@ -1675,43 +1710,52 @@ fn raster_this_tick_watch_is_wall_clock_one_fps_capture_is_every_tick() {
 }
 
 #[test]
-fn full_rate_title_paints_every_host_tick() {
-    force_cpu_backend();
-    let mut c = prepare_client(
-        cfg(),
-        1,
-        Arc::new(Cache::default()),
-        Arc::new(vec![]),
-        Vec::new(),
+fn captured_title_paints_only_on_flame_deadline() {
+    let t0 = Instant::now();
+    let mut last = None;
+    let mut on = false;
+    assert!(title_raster_this_tick(true, false, t0, &mut last, &mut on));
+    assert!(!title_raster_this_tick(
+        true,
+        false,
+        t0 + Duration::from_millis(20),
+        &mut last,
+        &mut on
+    ));
+    assert!(!title_raster_this_tick(
+        true,
+        false,
+        t0 + Duration::from_millis(36),
+        &mut last,
+        &mut on
+    ));
+    assert!(title_raster_this_tick(
+        true,
+        false,
+        t0 + Duration::from_millis(37),
+        &mut last,
+        &mut on
+    ));
+    assert!(
+        title_raster_this_tick(
+            true,
+            true,
+            t0 + Duration::from_millis(40),
+            &mut last,
+            &mut on
+        ),
+        "visible title input paints immediately"
     );
-    let buf = FrameBuf::new();
-    let mut slot = SlotLoop::new();
-    let mut sends = 0u32;
-    let inp = SlotInput::new();
-    inp.set_full_rate(true);
-    c.set_draw(true);
-    c.ingame = false;
-
-    Host::client_frame(
-        &mut c,
-        &mut slot,
-        "t",
-        Some(&inp),
-        Some(&buf),
-        &mut sends,
-        None,
+    assert!(
+        !title_raster_this_tick(
+            false,
+            true,
+            t0 + Duration::from_millis(74),
+            &mut last,
+            &mut on
+        ),
+        "draw off gates even a dirty title edge"
     );
-    Host::client_frame(
-        &mut c,
-        &mut slot,
-        "t",
-        Some(&inp),
-        Some(&buf),
-        &mut sends,
-        None,
-    );
-
-    assert_eq!(buf.generation(), 2, "a full-rate title paints every tick");
 }
 
 #[test]

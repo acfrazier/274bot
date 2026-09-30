@@ -3,7 +3,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use api::host_log;
 use api::hostlog::{Category, Level};
@@ -13,7 +13,7 @@ use client::config::{Cache, IfType, IfTypeMut};
 use host::login_queue::LoginBackoff;
 use host::{
     prepare_client, should_emit_tick, wake_channel, DetectedRandom, FrameBuf, Host, Pump,
-    ScriptRunPolicy, SlotInput, SlotPark,
+    ScriptRunPolicy, SlotInput, SlotPark, SlotWake,
 };
 use nav::world::NavWorld;
 use vault::Profile;
@@ -350,6 +350,7 @@ impl Play {
         // The control wake: `Play::wake` kicks the parked slot thread on
         // focus/draw/stop/spawn changes; the slot thread polls the park end.
         let (wake, park) = wake_channel();
+        let worker_wake = wake.clone();
         self.wakes.insert(profile.username.clone(), wake);
         // A slot lifetime owns exactly one row/script/command set. Publish
         // every entry synchronously before the worker can run; each lock is
@@ -392,6 +393,7 @@ impl Play {
             slot_input,
             mailbox,
             Some(park),
+            worker_wake,
             arm,
             Arc::clone(&self.cache),
             self.ifaces.clone(),
@@ -650,6 +652,7 @@ fn spawn_slot_thread(
     slot_input: Arc<SlotInput>,
     slot_mailbox: Option<Arc<FrameBuf>>,
     park: Option<SlotPark>,
+    slot_wake: SlotWake,
     arm: Arc<SlotArm>,
     slot_cache: Arc<Cache>,
     ifaces_template: Arc<Vec<Option<Box<IfType>>>>,
@@ -805,8 +808,8 @@ fn spawn_slot_thread(
                             last_relog_park = Some(reason);
                         }
                         // No pending intent (title hold, latched logout, or a
-                        // withdrawn wait): a parked slot holds no FIFO place
-                        // and publishes no `k of n`.
+                        // withdrawn wait): the live title pump holds no FIFO
+                        // place and publishes no `k of n`.
                         drop_queue_place(
                             &slot_queue,
                             &slot_statuses,
@@ -814,9 +817,13 @@ fn spawn_slot_thread(
                             arm.queue_owner,
                         );
                         publish_login_latched_from_arm(&slot_statuses, &username, &arm);
-                        thread::sleep(Duration::from_millis(20));
-                        continue;
                     }
+                }
+                if !client.ingame && should_handshake(&arm, client.ingame) {
+                    // A request raised after the observe armed this handshake
+                    // must not survive the ownership handoff and undo a later
+                    // operator Logout.
+                    let _ = client.take_title_login_request();
                     last_relog_park = None;
                     // Leaving title park for handshake: refresh latch from the
                     // arm so an explicit Log in cannot keep a stale TRUE from
@@ -991,6 +998,9 @@ fn spawn_slot_thread(
                         }
                     }
                 }
+                let title_park_reason = &mut last_relog_park;
+                let title_wake = slot_wake.clone();
+                let pump_had_session = client.ingame;
                 let mut mainland_sent = false;
                 let arm_obs = Arc::clone(&arm);
                 let arm_latch_obs = Arc::clone(&arm_obs);
@@ -1049,11 +1059,43 @@ fn spawn_slot_thread(
                         let mut nav_snapshot = GameSnapshot::new();
                         let mut session_epoch = 0u64;
                         let mut welcome = login_readiness::LoginReadiness::default();
-                        // This frame's random status is published by
-                        // `client_frame` before observe; its hold freezes
-                        // script tick and nav follow.
+                        // This frame's random status is published before
+                        // observe; its hold freezes script tick and nav follow.
                         move |c, _ignored, run_sends, status: &RandomStatus, run_policy| {
                             let name = &obs_name;
+                            if !c.ingame {
+                                // The live title pump owns offline script/latch
+                                // synchronization. A hosted title click is only
+                                // operator intent: arm the ordinary vault/FIFO
+                                // path and never use the client's title fields.
+                                if c.take_title_login_request() {
+                                    arm_latch_obs.arm_explicit_login();
+                                    title_wake.wake();
+                                }
+                                sync_script_login(&arm_latch_obs, &slot_scripts, name);
+                                apply_offline_logout_reset(
+                                    name,
+                                    &arm_latch_obs,
+                                    &slot_scripts,
+                                    &slot_cheats,
+                                    &slot_wires,
+                                    &slot_navs,
+                                    &observe_channels,
+                                );
+                                if should_handshake(&arm_latch_obs, c.ingame) {
+                                    *title_park_reason = None;
+                                } else {
+                                    let reason = arm_latch_obs.relog_park_reason();
+                                    if *title_park_reason != Some(reason) {
+                                        host_log!(
+                                            Category::Login,
+                                            Level::Info,
+                                            "relog decision park reason={reason}"
+                                        );
+                                        *title_park_reason = Some(reason);
+                                    }
+                                }
+                            }
                             let drain = pump.drain_client(c);
                             let session_boundary = publish_session_boundary_status(
                                 &slot_statuses,
@@ -1353,20 +1395,22 @@ fn spawn_slot_thread(
                     },
                     {
                         let ifaces_template = ifaces_template.clone();
-                        move |c| tick_flags(c, &ifaces_template, &arm_obs) || !c.ingame
+                        move |c| slot_client_pump_should_exit(c, &ifaces_template, &arm_obs)
                     },
                     knock,
                 );
-                publish_slot_disconnected(&slot_statuses, &username);
-                end_slot_session(
-                    &username,
-                    &arm,
-                    &slot_scripts,
-                    &slot_cheats,
-                    &slot_wires,
-                    &slot_navs,
-                    &slot_channels,
-                );
+                if pump_had_session && arm.session_online() {
+                    publish_slot_disconnected(&slot_statuses, &username);
+                    end_slot_session(
+                        &username,
+                        &arm,
+                        &slot_scripts,
+                        &slot_cheats,
+                        &slot_wires,
+                        &slot_navs,
+                        &slot_channels,
+                    );
+                }
                 if arm.stop.load(Ordering::Relaxed) {
                     return;
                 }
@@ -1404,4 +1448,14 @@ fn spawn_slot_thread(
             })
             .expect("failed to spawn slot thread"),
     );
+}
+
+/// Return the live client pump to its slot owner for Stop or for a newly
+/// eligible host-owned handshake. Login itself remains outside the pump.
+pub(super) fn slot_client_pump_should_exit(
+    client: &mut Client,
+    ifaces: &[Option<Box<IfType>>],
+    arm: &SlotArm,
+) -> bool {
+    tick_flags(client, ifaces, arm) || (!client.ingame && should_handshake(arm, client.ingame))
 }

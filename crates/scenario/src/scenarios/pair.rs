@@ -872,12 +872,11 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
             }
         }
         PairPrepStage::WaitRelog => {
-            // Host::run_client probe returns on !ingame before the next
-            // observe, so companion_tick never sees the off-world frame.
-            // A successful login/reconnect bumps c.gens.session; that
-            // change since intentional logout is the delivered signal.
-            // last_login_reconnect may already be true from an earlier
-            // grant and must not admit stale pre-logout scene2.
+            // The live hosted-title pump normally delivers an off-world
+            // observe. The session-generation edge remains the fallback when
+            // ownership moves directly into a queued handshake before that
+            // frame is observed. last_login_reconnect may already be true from
+            // an earlier grant and must not admit stale pre-logout scene2.
             if pair_relog_seen(
                 slot.logout_sent,
                 slot.saw_logout,

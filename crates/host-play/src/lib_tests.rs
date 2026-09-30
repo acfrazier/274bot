@@ -1,7 +1,7 @@
 use super::*;
 use client::config::if_type::ComponentType;
 use client::{ClientSessionConfig, ClientSessionProfile};
-use host::Guardian;
+use host::{Guardian, InputEv};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -17998,6 +17998,56 @@ fn offline_play(endpoint: std::net::SocketAddr) -> Play {
         |_| (None, None),
         |_, _, _| {},
     )
+}
+
+#[test]
+fn hosted_title_click_enters_the_login_fifo_without_opening_a_socket() {
+    let (endpoint, attempts) = counting_login_server();
+    let mut play = offline_play(endpoint);
+    play.queue
+        .lock()
+        .hold_for(Instant::now(), Duration::from_secs(10));
+    let arm = SlotArm::new(42, false);
+    arm.bypass_asset_startup_for_test();
+    arm.hold_logged_out();
+    let input = SlotInput::new();
+    input.set_enabled(true);
+    let (input_tx, input_rx) = std::sync::mpsc::channel();
+    input.connect_rx(input_rx);
+    play.spawn_slot(
+        profile("titlefifo", 42),
+        Some(Arc::clone(&input)),
+        None,
+        Some(Arc::clone(&arm)),
+    );
+
+    input_tx
+        .send(InputEv::Down {
+            button: 1,
+            x: client::client::APPLET_W / 2,
+            y: client::client::APPLET_H / 2 + 40,
+        })
+        .unwrap();
+    play.wake("titlefifo");
+
+    assert!(
+        wait_until(2_000, || arm.wants_login()),
+        "the live title must turn the hosted button into explicit login intent"
+    );
+    assert!(
+        wait_until(2_000, || play
+            .queue
+            .lock()
+            .status_owner(arm.queue_owner)
+            .is_some()),
+        "the explicit login intent must enter the ordinary FIFO"
+    );
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        0,
+        "the hosted title must not open a socket before the FIFO grants it"
+    );
+    play.stop_slot("titlefifo");
 }
 
 fn start_offline_script(play: &Play) {
