@@ -416,10 +416,18 @@ struct MakeLoc {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct MakeMenu {
+    obj: String,
+    source: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MakeArgs {
     loc: MakeLoc,
     anchor: Anchor,
     product: String,
+    #[serde(default)]
+    menu: Option<MakeMenu>,
     qty: i32,
     #[serde(default)]
     make_x: bool,
@@ -445,12 +453,22 @@ pub fn compile_make(
         return Err(CompileError::code("unsupported-loc-op"));
     }
     let product = item(cx, &args.product)?;
+    let menu_id = match args.menu {
+        Some(menu) => {
+            if menu.source.trim().is_empty() {
+                return Err(CompileError::code("invalid-make-menu"));
+            }
+            item(cx, &menu.obj)?.id
+        }
+        None => product.id,
+    };
     Ok(Arc::new(MakePlan {
         tile: anchor(args.anchor.tile),
         loc_id: loc.id,
         loc_name: Arc::from(loc.display.as_deref().unwrap_or(&args.loc.name)),
         op: Arc::from(args.loc.op),
         product,
+        menu_id,
         qty: args.qty,
         make_x: args.make_x,
     }))
@@ -461,6 +479,7 @@ struct MakePlan {
     loc_name: Arc<str>,
     op: Arc<str>,
     product: BankItem,
+    menu_id: i32,
     qty: i32,
     make_x: bool,
 }
@@ -473,7 +492,7 @@ impl StepPlan for MakePlan {
             op: Arc::clone(&self.op),
             request: MakeRequest {
                 product_id: self.product.id,
-                product_name: Arc::clone(&self.product.name),
+                menu_id: self.menu_id,
                 qty: self.qty,
                 make_x: self.make_x,
             },

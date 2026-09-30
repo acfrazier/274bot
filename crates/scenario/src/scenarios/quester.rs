@@ -66,19 +66,10 @@ pub fn quester_stage(
         });
     }
     steps.push(Step {
-        name: "relog so the quest tab colour matches the seeded varp",
-        kind: StepKind::Relog,
-        wait: Wait {
-            arm: Proof::SideTabAvailable { index: 3 },
-            budget_ticks: 600,
-        },
-    });
-    steps.push(Step {
         name: "stand at the quest start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
-                cheat(c, &tele_args(stand.level, stand.x, stand.z));
-                true
+                cheat(c, &tele_args(stand.level, stand.x, stand.z)).is_sent()
             }),
         },
         wait: Wait {
@@ -88,6 +79,14 @@ pub fn quester_stage(
                 level: stand.level,
             },
             budget_ticks: 200,
+        },
+    });
+    steps.push(Step {
+        name: "relog so the quest tab colour matches the seeded varp",
+        kind: StepKind::Relog,
+        wait: Wait {
+            arm: Proof::SideTabAvailable { index: 3 },
+            budget_ticks: 600,
         },
     });
     steps.push(start_compiled_step());
@@ -144,10 +143,10 @@ pub(crate) fn quester_sheep_scenario() -> Scenario {
         "Sheep Shearer",
         "sheep",
         0,
-        &[("bronze_sword", 1), ("coins", 100)],
+        &[("bronze_sword", 1), ("coins", 100), ("wool", 19)],
         WorldTile {
-            x: 3189,
-            z: 3273,
+            x: 3197,
+            z: 3266,
             level: 0,
         },
     );
@@ -155,17 +154,19 @@ pub(crate) fn quester_sheep_scenario() -> Scenario {
     scenario
 }
 
+/// Exercise the package-to-notes half of Rune Mysteries without depending on
+/// the castle's unsupported exterior-to-upper-floor navigation.
 pub(crate) fn quester_rune_mysteries_scenario() -> Scenario {
     let mut scenario = quester_stage(
         "quester_rune_mysteries",
         "Rune Mysteries Quest",
         "runemysteries",
-        0,
-        &[],
+        3,
+        &[("research_package", 1)],
         WorldTile {
-            x: 3208,
-            z: 3222,
-            level: 1,
+            x: 3253,
+            z: 3402,
+            level: 0,
         },
     );
     scenario.settings.script_settings_inject = Some(RUNE_MYSTERIES_SETTINGS);
