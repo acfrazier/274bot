@@ -15,7 +15,8 @@ const PRODUCT_BOUND: Duration = Duration::from_secs(2 * 60);
 #[derive(Debug, Clone)]
 pub struct MakeRequest {
     pub product_id: i32,
-    pub product_name: Arc<str>,
+    /// Object represented by the menu row; it may be the input, not the output.
+    pub menu_id: i32,
     /// Desired held count after this run.
     pub qty: i32,
     pub make_x: bool,
@@ -75,15 +76,10 @@ impl NativeMachine for MakeMachine {
                     let Some(products) = snapshot.make_products() else {
                         return Poll::Pending;
                     };
-                    let product = products.value.iter().find(|product| {
-                        product
-                            .name
-                            .eq_ignore_ascii_case(&self.request.product_name)
-                            || product
-                                .name
-                                .to_ascii_lowercase()
-                                .contains(&self.request.product_name.to_ascii_lowercase())
-                    });
+                    let product = products
+                        .value
+                        .iter()
+                        .find(|product| product.object_id == self.request.menu_id);
                     let Some(product) = product else {
                         if cx.active_now() >= self.deadline {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(

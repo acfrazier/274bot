@@ -15,7 +15,7 @@
       { "obj": "ball_of_wool", "qty": 20, "kind": "acquirable", "acquire": null }
     ],
     "acquire": {},
-    "bank": { "tile": [3093, 3243, 0], "source": "A defs/sheepshearer.ts:36" },
+    "bank": { "tile": [3092, 3242, 0], "source": "289 observed walkable east approach to Draynor booth 2213" },
     "coin_float": 3,
     "loadouts": {},
     "areas": {},
@@ -40,7 +40,7 @@
           "args": {
             "npc": "fred_the_farmer",
             "anchor": { "tile": [3189, 3273, 0], "source": "A defs/sheepshearer.ts:7-10" },
-            "leash": 6,
+            "leash": 2,
             "prefer": ["I'm looking for a quest.", "Yes okay. I can do that."]
           },
           "skip_if": { "Any": [] },
@@ -84,12 +84,6 @@
             "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_sword" } } }
           },
           {
-            "id": "unequip-service-proof", "kind": "unequip", "version": 1,
-            "args": { "obj": "bronze_sword" },
-            "skip_if": { "Not": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_sword" } } } },
-            "settle": { "Not": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_sword" } } } }
-          },
-          {
             "id": "shear", "kind": "use_on", "version": 1,
             "args": {
               "item": "shears", "target": { "npc": "sheepunsheered" },
@@ -97,7 +91,10 @@
               "radius": 8, "product": "wool", "until": { "obj": "wool", "qty": 20 },
               "settle_ms": 240000
             },
-            "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "wool", "qty": 20 } } },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "wool", "qty": 20 } } },
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } }
+            ] },
             "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "wool", "qty": 20 } } }
           },
           {
@@ -105,7 +102,8 @@
             "args": {
               "loc": { "name": "spinningwheel", "op": "Spin" },
               "anchor": { "tile": [2982, 3315, 0], "source": "A exec/wool.ts:40-75" },
-              "product": "ball_of_wool", "qty": 20, "make_x": true
+              "product": "ball_of_wool", "qty": 20, "make_x": true,
+              "menu": { "obj": "wool", "source": "289 scripts/skill_crafting/scripts/spinning/spinning.rs2:48-52 input menu row" }
             },
             "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } },
             "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } }

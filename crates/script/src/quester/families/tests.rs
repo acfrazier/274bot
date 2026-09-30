@@ -809,6 +809,215 @@ fn use_on_approaches_a_distant_npc_before_using_the_item() {
 }
 
 #[test]
+fn make_selects_the_input_menu_row_and_settles_on_the_output() {
+    use crate::native_production::{MakeMachine, MakeRequest};
+    use client::client::{Client, ClientConfig};
+    use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
+    use client::io::ServerProt;
+
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp/274bot-no-production-cache".into(),
+        members: true,
+        lowmem: false,
+    });
+    let cache = Arc::get_mut(&mut client.cache).unwrap();
+    cache.objs.resize(1738, client::config::ObjType::default());
+    cache.objs[1737] = client::config::ObjType {
+        id: 1737,
+        name: "Wool".into(),
+        ..Default::default()
+    };
+    client.set_iface(
+        2100,
+        IfType {
+            id: 2100,
+            layer_id: 2100,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![2110, 2120]),
+            ..Default::default()
+        },
+    );
+    client.set_iface(
+        2110,
+        IfType {
+            id: 2110,
+            layer_id: 2100,
+            r#type: ComponentType::TYPE_MODEL,
+            ..Default::default()
+        },
+    );
+    client.set_iface_mut(
+        2110,
+        IfTypeMut {
+            model1_type: 4,
+            model1_id: 1737,
+            ..Default::default()
+        },
+    );
+    client.set_iface(
+        2120,
+        IfType {
+            id: 2120,
+            layer_id: 2100,
+            r#type: ComponentType::TYPE_TEXT,
+            button_text: "Make X".into(),
+            ..Default::default()
+        },
+    );
+    client.set_iface_mut(
+        2120,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_OK,
+            ..Default::default()
+        },
+    );
+    client.chat_modal_id = 2100;
+    client.bump_gens(ServerProt::IF_OPENCHAT);
+    let mut snapshot = ready();
+    snapshot.rebuild_family(&client, api::snapshot::Family::MakeProducts);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<MakeMachine>(
+                MakeRequest {
+                    product_id: 1759,
+                    menu_id: 1737,
+                    qty: 20,
+                    make_x: true,
+                },
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::IfButton { component_id: 2120 }
+    ));
+    let before = ledger.as_ref().unwrap().outbox.len();
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), before);
+    client.dialog_input_open = true;
+    client.bump_gens(ServerProt::IF_OPENCHAT);
+    snapshot.rebuild_family(&client, api::snapshot::Family::Modals);
+    assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::AnswerCount { value: 20 }
+    ));
+    client.dialog_input_open = false;
+    client.bump_gens(ServerProt::IF_OPENCHAT);
+    snapshot.rebuild_family(&client, api::snapshot::Family::Modals);
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(1737, "Wool"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 20,
+            actions: vec![],
+            component_id: 3214,
+        }],
+        28,
+    );
+    assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(1759, "Ball of wool"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 20,
+            actions: vec![],
+            component_id: 3214,
+        }],
+        28,
+    );
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 6, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(crate::native_production::MakeReceipt { held: 20 }))
+    ));
+}
+
+#[test]
+fn sheep_product_progress_selects_shear_spin_then_hand_in() {
+    compile_context_test(|cx| {
+        let document = serde_json::from_str(crate::quester::compile::SHEEP_JSON).unwrap();
+        let path =
+            crate::quester::compile::compile_uncached_for_test(&document, cx.selected, cx.quests)
+                .unwrap();
+        let mut bank = crate::quester::bank_memo::BankMemo::default();
+        bank.update(&crate::native_bank::BankReceipt {
+            counts: vec![],
+            complete: true,
+        });
+        for (id, name, count, expected) in [
+            (1737, "Wool", 19, "shear"),
+            (1737, "Wool", 20, "spin"),
+            (1759, "Ball of wool", 20, "hand-in"),
+        ] {
+            let mut snapshot = ready();
+            snapshot.seed_inventory(
+                vec![
+                    ItemView {
+                        def: def(id, name),
+                        container: ItemContainer::Inventory,
+                        action_family: ItemActionFamily::Held,
+                        slot: 0,
+                        count,
+                        actions: vec![],
+                        component_id: 3214,
+                    },
+                    ItemView {
+                        def: def(1735, "Shears"),
+                        container: ItemContainer::Inventory,
+                        action_family: ItemActionFamily::Held,
+                        slot: 1,
+                        count: 1,
+                        actions: vec![],
+                        component_id: 3214,
+                    },
+                ],
+                28,
+            );
+            with_tick(&snapshot, &mut None, 1, |tick| {
+                let context = PredicateContext {
+                    cx: &tick.cx,
+                    quests: cx.quests,
+                    progress: &[],
+                    required_after: tick.cx.evidence(),
+                    chat_since: 0,
+                    outcome: None,
+                    bank: &bank,
+                };
+                let crate::quester::select::SelectionDecision::Selected(selection) =
+                    crate::quester::select::select(&path, 1, &context)
+                else {
+                    panic!("expected a known product-progress step");
+                };
+                assert_eq!(selection.step.id.0.as_ref(), expected);
+            });
+        }
+    });
+}
+
+#[test]
 fn wait_observes_until_and_expires_at_the_authored_bound() {
     compile_context_test(|cx| {
         let args = serde_json::json!({"until":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"egg"}}},"max_ticks":3});

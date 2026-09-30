@@ -15,7 +15,7 @@
       { "obj": "research_notes", "qty": 1, "kind": "acquirable", "acquire": null }
     ],
     "acquire": {},
-    "bank": { "tile": [3093, 3243, 0], "source": "A defs/runemysteries.ts:44" },
+    "bank": { "tile": [3092, 3242, 0], "source": "289 observed walkable east approach to Draynor booth 2213" },
     "coin_float": 0,
     "loadouts": {},
     "areas": {},
@@ -101,6 +101,16 @@
               "leash": 8, "prefer": ["I have been sent here with a package for you."]
             },
             "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } } },
+            "settle": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } } }
+          },
+          {
+            "id": "collect-notes", "kind": "talk", "version": 1,
+            "args": {
+              "npc": "aubury",
+              "anchor": { "tile": [3253, 3402, 0], "source": "A defs/runemysteries.ts:8" },
+              "leash": 8, "prefer": []
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } },
             "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
           },
           {
