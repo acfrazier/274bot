@@ -520,11 +520,27 @@ struct NavPublishCfg {
     generation: u64,
 }
 
+/// Retire the debug-only producer on arrival or after leaving its route,
+/// even while the slot is unfocused and no paint is being materialized.
+fn retire_client_trail(client: &mut Client, here: Option<WorldTile>) {
+    let Some(here) = here else {
+        return;
+    };
+    let base_x = client.map_build_base_x;
+    let base_z = client.map_build_base_z;
+    let position = client
+        .try_move_path
+        .iter()
+        .position(|&(x, z)| base_x + x == here.x && base_z + z == here.z);
+    if position.is_none() || position.is_some_and(|i| i + 1 == client.try_move_path.len()) {
+        client.try_move_path.clear();
+    }
+}
+
 /// Map the client's last tryMove BFS into world tiles and trim it for
-/// paint. The producer (`try_move_path`) is debug-only: reaching dest or
-/// leaving the path must retire it so a later off-path step or revisit
-/// cannot republish the last click. `here == None` does not retire
-/// (startup / network wait).
+/// paint. The producer (`try_move_path`) is debug-only; retirement runs
+/// independently every frame so an inactive slot cannot retain a stale
+/// trail. `here == None` keeps a pending trail during startup/network wait.
 fn live_client_trail(client: &mut Client, here: Option<WorldTile>) -> Vec<WorldTile> {
     let base_x = client.map_build_base_x;
     let base_z = client.map_build_base_z;
@@ -2726,6 +2742,7 @@ impl Session {
                         z: c.map_build_base_z + lp.route_z[0],
                         level: 0,
                     });
+                    retire_client_trail(c, here);
                     // Run orb (varp 173 / 274 overlay), not the run
                     // animation — the anim is only true while a run
                     // cycle plays.
@@ -2742,11 +2759,11 @@ impl Session {
                         trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
                         run_on,
                     };
-                    let changed = nav_paint_cache.lock().unwrap().changed(name, facts);
+                    let changed = nav_paint_cache.lock().unwrap().begin_frame(name, facts);
                     if changed {
                         // Full tryMove BFS (every scene tile, src→dest), not
-                        // the entity walk buffer (capped at 9). It is trimmed
-                        // only when a GPU consumer needs a fresh view.
+                        // the entity walk buffer (capped at 9). Materialize
+                        // it only when an active GPU consumer needs a view.
                         let trail_world = if active {
                             live_client_trail(c, here)
                         } else {
