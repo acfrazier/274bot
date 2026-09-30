@@ -56,6 +56,43 @@ pub enum WatchdogAction {
     Restart { reason: RestartReason },
 }
 
+/// Skill slots in the client's stat table.
+pub const SKILL_SLOTS: usize = 25;
+
+/// What the Fleet window shows about one run: how long it has run, how long
+/// since gameplay last progressed, and the levels gained since Start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScriptProgress {
+    pub running_for: Duration,
+    /// Time since the watchdog's gameplay clock last moved (tile change, XP
+    /// gain, script progress note). `None` while the clock is frozen (Pause,
+    /// not in game) and while no run is armed.
+    pub idle_for: Option<Duration>,
+    /// Levels gained per skill slot since the run's first in-game
+    /// observation.
+    pub gained: [u8; SKILL_SLOTS],
+}
+
+impl ScriptProgress {
+    /// Total levels gained across every skill.
+    pub fn levels_gained(&self) -> u32 {
+        self.gained.iter().map(|g| u32::from(*g)).sum()
+    }
+}
+
+/// The per-run copy of the levels taken at Start. Allocated by a fresh
+/// Start only (a stopped or never-started slot holds none) and kept across
+/// relogs and watchdog restarts within the run.
+#[derive(Debug)]
+struct RunProgress {
+    started: Instant,
+    baseline: [u8; SKILL_SLOTS],
+    latest: [u8; SKILL_SLOTS],
+    /// The baseline is copied from the first in-game observation, not from
+    /// the pre-login all-zero table.
+    seen: bool,
+}
+
 #[derive(Debug)]
 pub struct ProgressWatchdog {
     state: WatchdogState,
@@ -72,6 +109,8 @@ pub struct ProgressWatchdog {
     deferred: Option<Tile>,
     /// The re-armed recovery's walk is owed on the next [`Self::observe`].
     rearm_walk: bool,
+    /// Present while a run is armed; see [`RunProgress`].
+    progress: Option<Box<RunProgress>>,
 }
 
 impl Default for ProgressWatchdog {
@@ -94,7 +133,44 @@ impl ProgressWatchdog {
             frozen: false,
             deferred: None,
             rearm_walk: false,
+            progress: None,
         }
+    }
+
+    /// Record the current base levels (one per skill slot, in slot order).
+    /// The first call of a run fixes its baseline. Call only from a
+    /// game-ready observation.
+    pub fn note_levels(&mut self, levels: impl Iterator<Item = i32>) {
+        let Some(progress) = self.progress.as_deref_mut() else {
+            return;
+        };
+        for (slot, level) in progress.latest.iter_mut().zip(levels) {
+            *slot = level.clamp(0, i32::from(u8::MAX)) as u8;
+        }
+        if !progress.seen {
+            progress.baseline = progress.latest;
+            progress.seen = true;
+        }
+    }
+
+    /// The Fleet window's view of the armed run, or `None` when none is
+    /// armed. Reads clocks only; it never stamps them.
+    pub fn progress(&self, now: Instant) -> Option<ScriptProgress> {
+        let run = self.progress.as_deref()?;
+        let mut gained = [0u8; SKILL_SLOTS];
+        if run.seen {
+            for (slot, (latest, base)) in
+                gained.iter_mut().zip(run.latest.iter().zip(&run.baseline))
+            {
+                *slot = latest.saturating_sub(*base);
+            }
+        }
+        Some(ScriptProgress {
+            running_for: now.saturating_duration_since(run.started),
+            idle_for: (self.state != WatchdogState::Idle && !self.frozen)
+                .then(|| self.gameplay_elapsed(now)),
+            gained,
+        })
     }
 
     pub fn state(&self) -> WatchdogState {
@@ -173,6 +249,12 @@ impl ProgressWatchdog {
         self.state = WatchdogState::Armed;
         self.last_scheduler = Some(now);
         self.last_gameplay = Some(now);
+        self.progress = Some(Box::new(RunProgress {
+            started: now,
+            baseline: [0; SKILL_SLOTS],
+            latest: [0; SKILL_SLOTS],
+            seen: false,
+        }));
         self.last_recovery = None;
         self.last_tile = None;
         self.last_xp.clear();
@@ -1121,5 +1203,80 @@ mod tests {
         w.arm_fresh(t);
         assert_eq!(w.observe(t + HARD_STALL, false), WatchdogAction::None);
         assert_eq!(w.state(), WatchdogState::Armed);
+    }
+
+    fn levels(values: &[i32]) -> impl Iterator<Item = i32> + '_ {
+        values.iter().copied()
+    }
+
+    /// Levels gained count from the first game-ready observation of the run,
+    /// survive a watchdog restart, and start over on a new Start.
+    #[test]
+    fn levels_gained_count_from_the_first_ready_observation_of_the_run() {
+        let mut w = ProgressWatchdog::new();
+        let t = t0();
+        assert!(w.progress(t).is_none(), "no run armed");
+        w.note_levels(levels(&[50]));
+        assert!(w.progress(t).is_none(), "a note without a run is dropped");
+
+        w.arm_fresh(t);
+        assert_eq!(w.progress(t).unwrap().levels_gained(), 0);
+        w.note_levels(levels(&[10, 20, 30]));
+        w.note_levels(levels(&[11, 20, 32]));
+        let progress = w.progress(t + Duration::from_secs(90)).unwrap();
+        assert_eq!(progress.running_for, Duration::from_secs(90));
+        assert_eq!(&progress.gained[..4], &[1, 0, 2, 0]);
+        assert_eq!(progress.levels_gained(), 3);
+
+        w.arm_after_restart(t + Duration::from_secs(100));
+        w.note_levels(levels(&[11, 21, 32]));
+        assert_eq!(
+            w.progress(t + Duration::from_secs(120))
+                .unwrap()
+                .levels_gained(),
+            4,
+            "a watchdog restart keeps the run's baseline"
+        );
+
+        w.arm_fresh(t + Duration::from_secs(200));
+        w.note_levels(levels(&[11, 21, 32]));
+        assert_eq!(
+            w.progress(t + Duration::from_secs(201))
+                .unwrap()
+                .levels_gained(),
+            0,
+            "a new Start takes a new baseline"
+        );
+        w.cancel_clear();
+        assert!(w.progress(t + Duration::from_secs(300)).is_none());
+    }
+
+    /// Time since progress follows the gameplay clock, resets on progress
+    /// and is absent while the clock is frozen.
+    #[test]
+    fn idle_time_follows_the_gameplay_clock_and_hides_while_frozen() {
+        let mut w = ProgressWatchdog::new();
+        let t = t0();
+        w.arm_fresh(t);
+        assert_eq!(
+            w.progress(t + Duration::from_secs(30)).unwrap().idle_for,
+            Some(Duration::from_secs(30))
+        );
+        w.stamp_note_progress(t + Duration::from_secs(40));
+        assert_eq!(
+            w.progress(t + Duration::from_secs(45)).unwrap().idle_for,
+            Some(Duration::from_secs(5))
+        );
+        w.set_frozen(true, t + Duration::from_secs(50));
+        assert_eq!(
+            w.progress(t + Duration::from_secs(60)).unwrap().idle_for,
+            None
+        );
+        w.set_frozen(false, t + Duration::from_secs(70));
+        assert_eq!(
+            w.progress(t + Duration::from_secs(75)).unwrap().idle_for,
+            Some(Duration::from_secs(5)),
+            "Resume restarts the clock"
+        );
     }
 }

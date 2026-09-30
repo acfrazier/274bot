@@ -321,6 +321,27 @@ each skipped or failed bot also gets a line in its log. Stop and Stop all
 cancel bots that are still waiting (Stop on marked rows reports them as
 cancelled); Stop all also stops running and paused wall members and live
 slots.
+
+The **Fleet** window (the button beside WalkTo) is the panel's view of the
+shared marked selection: one row per vault profile with a checkbox mark,
+filter and sort. Its action bar runs on the marked rows only and each action
+puts one report in the window, counting every marked bot once with failures
+first: **Start selected card**, **Stop**, **Assign selected card** (saves the
+card without starting; running bots are skipped), **Assign & restart…** (a
+confirmation names the bots whose running script it stops; the Starts are
+paced like Start all), **Log in** / **Log out**, **Walk N to…** (opens the
+WalkTo picker in group mode; each marked bot walks to the chosen tile from
+its own position, and bots that are logged out, have no position or run a
+script are skipped with that reason) and **Apply focused bot's settings to
+marked…** (Apply to all narrowed to the marked bots, with a confirmation).
+Checkboxes under the buttons toggle the status columns: world and login
+state, card, run state (the script error on hover), runtime, last log line,
+time since the last progress (the watchdog's gameplay clock; `—` while
+paused, out of game or idle) and levels gained since the run's Start (the
+per-skill breakdown on hover). The choice is saved in `panel-ui.json` as
+`fleet_columns` (only the toggles you changed). A hidden column, or a closed
+window, reads nothing from the host.
+
 Parameters **Edit** is live for a loaded card with a settings schema
 (typed editors honour `showIf` / `group`; File Load parses
 `export const SETTINGS` with no V8) and writes the focused profile’s vault

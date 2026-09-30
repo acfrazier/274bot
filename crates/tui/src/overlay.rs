@@ -176,10 +176,20 @@ impl Confirm {
                     format!("all {n}")
                 };
                 match command {
+                    Command::LoadLoginAll if *marked => vec![
+                        format!("Log in {scope} (unloaded ones are loaded first):"),
+                        names,
+                        "Bots already logging in or logged in are skipped.".into(),
+                    ],
                     Command::LoadLoginAll => vec![
                         "Load every vault profile that is not in the fleet,".into(),
                         "then log every member in (a logged-out member logs back in).".into(),
                         format!("Members now ({count}): {names}"),
+                    ],
+                    Command::LogoutAll if *marked => vec![
+                        format!("Log out {scope}:"),
+                        names,
+                        "Bots that are not logged in are skipped.".into(),
                     ],
                     Command::LogoutAll => vec![
                         format!("Log out all {n}: {names}"),
@@ -202,6 +212,22 @@ impl Confirm {
                         names,
                         "Queued replacement Starts are cancelled too.".into(),
                     ],
+                    Command::ScriptAssignMarked => match app.script_sel.as_ref() {
+                        Some(sel) => vec![
+                            format!("Assign {} to {scope}:", sel.label()),
+                            names,
+                            "Nothing starts; running bots are skipped with a reason.".into(),
+                        ],
+                        None => vec!["Browse to pick a script first.".into()],
+                    },
+                    Command::ScriptRestartMarked => match app.script_sel.as_ref() {
+                        Some(sel) => vec![
+                            format!("Assign {} to {scope} and start it:", sel.label()),
+                            names,
+                            "Running scripts on these bots are stopped first.".into(),
+                        ],
+                        None => vec!["Browse to pick a script first.".into()],
+                    },
                     _ => vec![format!("{} over {scope}: {names}", command.label(app))],
                 }
             }
@@ -381,10 +407,14 @@ impl TuiApp {
                     return (Some(Modal::Confirm(refreshed)), AppAction::None);
                 }
                 let action = match command {
+                    Command::LoadLoginAll if marked => AppAction::LoginMarked,
                     Command::LoadLoginAll => AppAction::SpawnAll,
+                    Command::LogoutAll if marked => AppAction::LogoutMarked,
                     Command::LogoutAll => AppAction::LogoutAll,
                     Command::ScriptStartAll => AppAction::ScriptStartAll,
                     Command::ScriptStopAll => AppAction::ScriptStopAll,
+                    Command::ScriptAssignMarked => AppAction::ScriptAssignMarked,
+                    Command::ScriptRestartMarked => AppAction::ScriptRestartMarked,
                     _ => AppAction::None,
                 };
                 (None, action)

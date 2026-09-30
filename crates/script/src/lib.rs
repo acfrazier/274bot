@@ -97,7 +97,8 @@ pub use slot::{
     StartOutcome, StartPoll,
 };
 pub use watchdog::{
-    ProgressWatchdog, RestartReason, Tile as WatchdogTile, WatchdogAction, WatchdogState,
+    ProgressWatchdog, RestartReason, ScriptProgress, Tile as WatchdogTile, WatchdogAction,
+    WatchdogState, SKILL_SLOTS,
 };
 
 #[cfg(feature = "load")]

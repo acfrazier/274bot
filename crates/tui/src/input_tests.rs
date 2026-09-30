@@ -358,6 +358,63 @@ fn marked_start_confirm_names_the_selected_script_it_will_run() {
     assert!(!all.contains("last successful script"), "{all}");
 }
 
+/// With rows marked, Log in and Log out confirm the marked scope and run the
+/// marked commands; with none marked they keep their whole-fleet meaning.
+#[test]
+fn marked_login_and_logout_confirm_the_marked_scope_and_run_marked_commands() {
+    let mut app = fleet_app(&["alice", "bob", "carol"]);
+    app.table
+        .selection
+        .set(app.profile_id_for_name("bob"), true);
+
+    assert_eq!(app.on_key(ch('m')), AppAction::None);
+    let all = text(&draw(&mut app, 120, 40));
+    assert!(all.contains("Log in 1 marked bot"), "{all}");
+    assert!(!all.contains("Load every vault profile"), "{all}");
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::LoginMarked);
+
+    assert_eq!(app.on_key(ch('U')), AppAction::None);
+    let all = text(&draw(&mut app, 120, 40));
+    assert!(all.contains("Log out 1 marked bot"), "{all}");
+    assert_eq!(app.on_key(ch('y')), AppAction::LogoutMarked);
+
+    app.table.selection.clear();
+    assert_eq!(app.on_key(ch('m')), AppAction::None);
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::SpawnAll);
+    assert_eq!(app.on_key(ch('U')), AppAction::None);
+    assert_eq!(app.on_key(ch('y')), AppAction::LogoutAll);
+}
+
+/// Assign and Assign & restart need marked rows and a selected script, say
+/// which is missing, then confirm the marked scope and the script they use.
+#[test]
+fn marked_assign_commands_need_marks_and_a_script_and_name_both() {
+    for command in [Command::ScriptAssignMarked, Command::ScriptRestartMarked] {
+        let mut app = fleet_app(&["alice", "bob"]);
+        assert_eq!(command.availability(&app), Err("mark fleet rows first"));
+        app.table
+            .selection
+            .set(app.profile_id_for_name("alice"), true);
+        assert_eq!(
+            command.availability(&app),
+            Err("browse to pick a script first")
+        );
+        app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+        assert_eq!(command.availability(&app), Ok(()));
+
+        assert_eq!(app.run_command(command), AppAction::None);
+        let all = text(&draw(&mut app, 120, 40));
+        let label = app.script_sel.as_ref().unwrap().label();
+        assert!(all.contains(&label), "{all}");
+        assert!(all.contains("1 marked bot"), "{all}");
+        let expected = match command {
+            Command::ScriptAssignMarked => AppAction::ScriptAssignMarked,
+            _ => AppAction::ScriptRestartMarked,
+        };
+        assert_eq!(app.on_key(key(KeyCode::Enter)), expected);
+    }
+}
+
 /// An NPC dialogue is visible everywhere but only the Chat tab answers it.
 #[test]
 fn a_dialogue_never_takes_keys_from_other_panes() {

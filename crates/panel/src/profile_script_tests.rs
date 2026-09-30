@@ -1952,6 +1952,72 @@ fn fleet_report_follows_a_start_all_that_lands_while_marked_rows_wait() {
     assert_eq!(play.script_state("carol"), script::RunState::Idle);
 }
 
+/// Assign & restart from the Fleet window swaps the card on a running marked
+/// bot and starts it on an idle one; the fleet report follows the paced
+/// Starts to their end. Plain Assign with no card selected says so and
+/// changes nothing.
+#[test]
+fn fleet_assign_and_restart_swaps_the_card_and_follows_the_paced_starts() {
+    let (mut s, dir) = session_with_play(&["alice", "bob"]);
+    let old = s
+        .scripts
+        .js
+        .load(&write_bot(&dir, "old.ts", BOT_TS))
+        .unwrap();
+    let new = s
+        .scripts
+        .js
+        .load(&write_bot(&dir, "new.ts", BOT_TS))
+        .unwrap();
+    s.persist_successful_assignment("alice", old.assignment());
+    s.script_start_profile("alice").unwrap();
+    settle(&mut s);
+    let before = s
+        .core
+        .play()
+        .unwrap()
+        .script_runtime_generation("alice")
+        .unwrap();
+    for name in ["alice", "bob"] {
+        let identity = s.core.profile_identity(name).unwrap();
+        s.fleet_selection.set(identity, true);
+    }
+
+    s.script_sel = None;
+    s.fleet_assign_selected();
+    assert_eq!(
+        s.fleet_report.as_deref(),
+        Some("Assign: select a card in Scripts first")
+    );
+
+    s.script_sel = Some(script::ScriptSel::Loaded(new.source, new.identity_id()));
+    let scope = s.fleet_restart_scope();
+    assert_eq!(
+        (scope.interrupted.as_slice(), scope.starting.as_slice()),
+        (&["alice".to_string()][..], &["bob".to_string()][..])
+    );
+    s.fleet_assign_restart_selected();
+    settle(&mut s);
+    s.core.flush_writes();
+    let play = s.core.play().unwrap();
+    for name in ["alice", "bob"] {
+        assert_eq!(play.script_state(name), script::RunState::Running, "{name}");
+        assert_eq!(
+            s.profile_assignment(name).unwrap().key(),
+            new.identity_key(),
+            "{name}"
+        );
+    }
+    assert!(play.script_runtime_generation("alice").unwrap() > before);
+    assert_eq!(
+        s.fleet_report.as_deref(),
+        Some("Assign & restart: started 2, skipped 0")
+    );
+    for name in ["alice", "bob"] {
+        play.script_stop(name);
+    }
+}
+
 #[test]
 fn catalog_native_stop_skips_target_and_reloads_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -2170,4 +2236,37 @@ fn start_all_paces_admission_through_the_shared_coordinator() {
         wait_state(&s, name, script::RunState::Running);
         s.core.play().unwrap().script_stop(name);
     }
+}
+
+/// The Fleet window's apply-settings prepares the focused bot's parameters
+/// for the marked same-card bots only: an unmarked bot on the same card is
+/// left out and named as such, and nothing is written before Apply.
+#[test]
+fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
+    let (mut s, dir) = session_with_play(&["alice", "bob", "dave"]);
+    let thiever = write_bot(&dir, "thiever.ts", THIEVER_TS);
+    s.load_js(&thiever);
+    let card = s
+        .scripts
+        .js
+        .get(script::ScriptSource::File, &thiever.to_string_lossy())
+        .unwrap()
+        .clone();
+    for name in ["alice", "bob", "dave"] {
+        s.persist_successful_assignment(name, card.assignment());
+    }
+    focus_profile(&mut s, "alice");
+    s.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let bob = s.core.profile_identity("bob").unwrap();
+    s.fleet_selection.set(bob, true);
+
+    s.fleet_prepare_apply_settings();
+
+    let scope = s.scripts.prepared_settings_sync().expect("prepared");
+    assert_eq!(scope.targets, ["bob"]);
+    assert_eq!(
+        scope.skipped,
+        [("dave".to_string(), "not marked".to_string())]
+    );
+    assert!(scope.prompt().contains("1 marked same-card member(s)"));
 }

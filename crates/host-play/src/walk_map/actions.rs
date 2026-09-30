@@ -86,6 +86,25 @@ impl fmt::Display for ActionError {
         })
     }
 }
+
+impl ActionError {
+    /// The short reason a bulk report names for a slot this refused.
+    pub fn short(self) -> &'static str {
+        match self {
+            Self::NoSelection => "no destination selected",
+            Self::Blocked => "destination blocked",
+            Self::NoOrigin => "no position yet",
+            Self::NoFocus => "not logged in",
+            Self::Stale => "stale",
+            Self::NoNavigation => "navigation unavailable",
+            Self::NoPath => "no path",
+            Self::Unauthorized => "not authorised",
+            Self::WrongAction => "wrong action",
+            Self::InvalidCoordinates => "invalid coordinates",
+            Self::RunningScript => "running a script",
+        }
+    }
+}
 impl std::error::Error for ActionError {}
 
 /// One operator WalkTo request, including refusals before a command can be
@@ -515,15 +534,15 @@ pub enum WalkSlotOutcomeKind {
 }
 
 impl WalkSlotOutcomeKind {
-    fn summary_reason(self) -> Option<&'static str> {
+    /// The short reason a slot did not start walking, in the wording every
+    /// front end shows; `None` for a slot that is walking.
+    pub fn reason(self) -> Option<&'static str> {
         match self {
             Self::Walking => None,
             Self::Excluded(WalkExclude::NotLoggedIn) => Some("not logged in"),
             Self::Excluded(WalkExclude::NoPosition) => Some("no position yet"),
             Self::Excluded(WalkExclude::RunningScript) => Some("running a script"),
-            Self::Failed(ActionError::NoPath) => Some("no path"),
-            Self::Failed(ActionError::Stale) => Some("stale"),
-            Self::Failed(_) => Some("failed"),
+            Self::Failed(error) => Some(error.short()),
         }
     }
 }
@@ -534,39 +553,11 @@ pub struct WalkSlotOutcome {
     pub kind: WalkSlotOutcomeKind,
 }
 
-/// Per-bot Walk results. Summary matches Start all: `4 walking, 1 no path: bot3`.
+/// Per-bot Walk results, in request order. Front ends fold them into their
+/// bulk report (`frontend_core::MarkedWalkReport`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GroupWalkReport {
     pub outcomes: Vec<WalkSlotOutcome>,
-}
-
-impl GroupWalkReport {
-    pub fn walking_count(&self) -> usize {
-        self.outcomes
-            .iter()
-            .filter(|o| matches!(o.kind, WalkSlotOutcomeKind::Walking))
-            .count()
-    }
-
-    pub fn summary(&self) -> String {
-        let walking = self.walking_count();
-        let mut parts = vec![format!("{walking} walking")];
-        let mut seen: Vec<(&'static str, Vec<&str>)> = Vec::new();
-        for outcome in &self.outcomes {
-            let Some(reason) = outcome.kind.summary_reason() else {
-                continue;
-            };
-            if let Some((_, names)) = seen.iter_mut().find(|(r, _)| *r == reason) {
-                names.push(outcome.name.as_str());
-            } else {
-                seen.push((reason, vec![outcome.name.as_str()]));
-            }
-        }
-        for (reason, names) in seen {
-            parts.push(format!("{} {reason}: {}", names.len(), names.join(", ")));
-        }
-        parts.join(", ")
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

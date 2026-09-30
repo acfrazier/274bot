@@ -14,6 +14,7 @@
 mod native;
 pub use native::{NativeCommand, NativeDetail, NativeTarget, SchemaView};
 
+mod marked;
 mod reload;
 mod start_admit;
 mod start_tally;
@@ -1066,6 +1067,7 @@ impl Scripts {
     /// Call once per UI frame, after [`OperatorSession::poll`].
     pub fn poll<Io>(&mut self, core: &mut OperatorSession<Io>) {
         self.poll_reload_validation(core);
+        self.release_stopped_restarts(core);
         if !self.admit.is_empty() {
             self.admit_ready(core);
         }

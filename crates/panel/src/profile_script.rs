@@ -24,7 +24,7 @@ impl Session {
 
     /// The catalog root a Start may fill the catalog from; a server-profile
     /// error is shown and fills nothing.
-    fn start_catalog_root(&mut self) -> Option<PathBuf> {
+    pub(crate) fn start_catalog_root(&mut self) -> Option<PathBuf> {
         if self.scripts.catalog_filled() {
             return None;
         }
@@ -195,7 +195,7 @@ impl Session {
     }
 
     /// Copy the latest bulk report into the fleet report when it changed.
-    fn follow_fleet_report(&mut self) {
+    pub(crate) fn follow_fleet_report(&mut self) {
         let Some(report) = self.scripts.last_bulk_report() else {
             return;
         };

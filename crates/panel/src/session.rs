@@ -929,6 +929,8 @@ pub struct Session {
     /// Set by a marked Start: the fleet report follows the running Start
     /// report (and a later Stop all) until the next marked Stop.
     pub(crate) fleet_report_follows_start: bool,
+    /// The Assign & restart confirmation is open (it names the bots).
+    pub(crate) fleet_restart_confirm: bool,
     /// One application-owned map view/catalogue, never a copy on each bot.
     pub map_model: host_play::walk_map::MapModel,
     pub map_catalogue: Option<Arc<host_play::walk_map::Catalogue>>,
@@ -1303,6 +1305,7 @@ impl Session {
             fleet_sort: crate::fleet::FleetSort::Name,
             fleet_report: None,
             fleet_report_follows_start: false,
+            fleet_restart_confirm: false,
             walkto_open: false,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
@@ -3540,6 +3543,14 @@ impl Session {
         }
     }
 
+    /// Log in every marked fleet row (loading the ones not loaded yet)
+    /// through the panel's slot surface. Focus does not move.
+    pub(crate) fn login_marked_rows(&mut self) -> frontend_core::BulkReport {
+        let selection = self.fleet_selection.clone();
+        let (core, mut surface) = self.core_and_surface();
+        frontend_core::login_marked(&selection, core, &mut surface)
+    }
+
     /// Credentials Log in: clear the logout latch, arm an explicit one-shot
     /// handshake, then select (spawn if needed).
     pub fn login(&mut self, name: &str) {
@@ -4329,6 +4340,15 @@ impl Session {
         self.walk_send.sync_walk_label();
     }
 
+    /// Open the WalkTo picker for the Fleet window's marked bots: group
+    /// mode, checked from the marks (a mark is never added here).
+    pub fn open_walkto_for_marked(&mut self) {
+        self.walkto_open = true;
+        self.refresh_walk_send();
+        self.walk_send.mode = WalkSendMode::Group;
+        self.walk_send.sync_walk_label();
+    }
+
     pub fn walk_send_none(&mut self) {
         self.fleet_selection.clear();
         for row in &mut self.walk_send.rows {
@@ -4354,15 +4374,11 @@ impl Session {
         self.walk_send.sync_walk_label();
     }
 
+    /// Walk every marked bot to the confirmed destination through the shared
+    /// [`frontend_core::walk_marked`]: each bot routes from its own tile, and
+    /// marked bots that cannot walk are named with their reason.
     pub fn confirm_picker_group_walk(&mut self, world: &NavWorld) -> bool {
-        use host_play::walk_map::{ActionError, WalkSlotOutcomeKind, WalkSlotRequest};
-        let names: Vec<String> = self
-            .walk_send
-            .rows
-            .iter()
-            .filter(|row| row.checked)
-            .map(|row| row.name.clone())
-            .collect();
+        use frontend_core::{MarkedWalk, WalkInputs};
         let context = self.picker_context(world);
         let options = FindOptions {
             allow_teleports: self.ui.nav.allow_teleports,
@@ -4374,64 +4390,36 @@ impl Session {
             .map_model
             .pending()
             .map(|s| s.target.unwrap_or(s.requested));
-        let plan = self
+        let prepared = self
             .map_model
             .confirm_walk_plan(&context, options)
-            .and_then(|plan| {
-                self.core.play().ok_or(ActionError::NoFocus)?;
-                Ok(plan)
-            });
-        let plan = match plan {
-            Ok(plan) => plan,
-            Err(error) => {
-                host_play::walk_map::WalkRequest::refuse_group(
-                    self.core.play(),
-                    &names,
-                    destination,
-                    options,
-                    self.server_profile
-                        .as_ref()
-                        .map_or(&host_play::WorldMembersFact::Unknown, |p| p.world_members()),
-                    error,
-                );
-                self.error = Some(error.to_string());
-                return false;
-            }
-        };
-        self.walk_dest = Some(plan.destination());
-        let states: Vec<WorldState> = names
-            .iter()
-            .map(|name| self.walk_state(Some(name)))
-            .collect();
-        let banks: Vec<Vec<(i32, i32)>> = names
-            .iter()
-            .map(|name| self.walk_bank(Some(name)))
-            .collect();
-        let reqs: Vec<WalkSlotRequest<'_>> = names
-            .iter()
-            .enumerate()
-            .map(|(i, name)| WalkSlotRequest {
-                name,
-                state: &states[i],
-                bank: &banks[i],
-            })
-            .collect();
-        let report =
-            self.core
-                .play()
-                .unwrap()
-                .map_walk_group(plan, &context, &reqs, &self.travellers);
-        {
+            .map(|plan| (context, plan));
+        let planned = prepared.as_ref().ok().map(|(_, plan)| plan.destination());
+        let report = frontend_core::walk_marked(
+            &self.fleet_selection,
+            &self.core,
+            MarkedWalk {
+                prepared,
+                destination,
+                options,
+                arms: &self.travellers,
+            },
+            |name| WalkInputs {
+                state: self.walk_state(Some(name)),
+                bank: self.walk_bank(Some(name)),
+            },
+        );
+        let walking = report.done_count();
+        if walking > 0 {
             let mut latch = self.tick_latch.lock().unwrap();
-            for outcome in &report.outcomes {
-                if matches!(outcome.kind, WalkSlotOutcomeKind::Walking) {
-                    latch.remove(&outcome.name);
-                }
+            for name in report.done() {
+                latch.remove(name);
             }
+            drop(latch);
+            self.walk_dest = planned;
+            self.walk_clear.store(false, Ordering::Relaxed);
+            self.route_gen = self.route_gen.wrapping_add(1);
         }
-        self.walk_clear.store(false, Ordering::Relaxed);
-        self.route_gen = self.route_gen.wrapping_add(1);
-        let walking = report.walking_count();
         self.error = Some(report.summary());
         walking > 0
     }

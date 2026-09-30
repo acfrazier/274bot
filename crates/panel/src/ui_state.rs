@@ -65,6 +65,10 @@ pub struct PanelUiState {
     /// TUI as `frontend_core::log_file::SESSION_LOG_KEY`). Absent = off.
     #[serde(default)]
     pub session_log_file: bool,
+    /// Fleet window status-column toggles that differ from their defaults
+    /// (see `fleet_columns`).
+    #[serde(default)]
+    pub fleet_columns: HashMap<String, bool>,
 }
 
 /// Panel subsection ids in General config (parameters shares
@@ -127,6 +131,7 @@ impl Default for PanelUiState {
             chrome: crate::theme::ChromeColors::default(),
             map_bake: frontend_core::MapBakeChoice::Ask,
             session_log_file: false,
+            fleet_columns: HashMap::new(),
         }
     }
 }

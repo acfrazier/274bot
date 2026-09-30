@@ -1403,9 +1403,17 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
             ("bot3", WalkSlotOutcomeKind::Failed(ActionError::NoPath)),
         ]
     );
+    let reasons: Vec<Option<&str>> = report.outcomes.iter().map(|o| o.kind.reason()).collect();
     assert_eq!(
-        report.summary(),
-        "2 walking, 1 not logged in: logged-out, 1 no position yet: nopos, 1 running a script: scripter, 1 no path: bot3"
+        reasons,
+        vec![
+            None,
+            None,
+            Some("not logged in"),
+            Some("no position yet"),
+            Some("running a script"),
+            Some("no path"),
+        ]
     );
     let records = crate::walk_map::test_log::records_since(log_mark);
     assert_eq!(records.len(), names.len() + 4, "{records:?}");

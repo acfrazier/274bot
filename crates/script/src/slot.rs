@@ -1493,6 +1493,16 @@ impl SlotScript {
         &self.watchdog
     }
 
+    /// Record the run's current base levels (game-ready observations only).
+    pub fn note_levels(&mut self, levels: impl Iterator<Item = i32>) {
+        self.watchdog.note_levels(levels);
+    }
+
+    /// The armed run's runtime, gameplay idle time and levels gained.
+    pub fn progress(&self, now: Instant) -> Option<crate::watchdog::ScriptProgress> {
+        self.watchdog.progress(now)
+    }
+
     /// Apply isolate lifecycle facts and host tile/XP, then decide.
     pub fn feed_watchdog(
         &mut self,

@@ -529,6 +529,21 @@ impl LogStore {
             .map_or(0, |r| r.entries.len())
     }
 
+    /// Copy `slot`'s newest line into `out` (replacing its content). Returns
+    /// whether the slot has one. The caller reuses `out`, so a Fleet row
+    /// costs no allocation when its line fits.
+    pub fn slot_last_message(&self, slot: &str, out: &mut String) -> bool {
+        out.clear();
+        let inner = self.inner.lock();
+        match inner.slots.get(slot).and_then(|ring| ring.entries.back()) {
+            Some(entry) => {
+                out.push_str(&entry.message);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Turn the per-session file on (`Some`) or off (`None`). Closing drops
     /// the sender; the writer thread flushes what it has and exits on its
     /// own, so neither direction blocks the caller on I/O.

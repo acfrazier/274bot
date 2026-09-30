@@ -168,6 +168,12 @@ pub fn stat_used(index: usize) -> bool {
     Skill::used.get(index).copied().unwrap_or(false)
 }
 
+/// The client's name for stat slot `index` (`Skill::names`); empty outside
+/// the table.
+pub fn stat_name(index: usize) -> &'static str {
+    Skill::names.get(index).copied().unwrap_or("")
+}
+
 /// One varp's value from the client's `var` table (the m8aq
 /// `VarpSnapshot`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

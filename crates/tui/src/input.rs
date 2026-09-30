@@ -291,8 +291,15 @@ impl TuiApp {
             return AppAction::None;
         }
         if command.is_bulk() {
-            let marked = matches!(command, Command::ScriptStartAll | Command::ScriptStopAll)
-                && !self.table.selection.is_empty();
+            let marked = matches!(
+                command,
+                Command::ScriptStartAll
+                    | Command::ScriptStopAll
+                    | Command::ScriptAssignMarked
+                    | Command::ScriptRestartMarked
+                    | Command::LoadLoginAll
+                    | Command::LogoutAll
+            ) && !self.table.selection.is_empty();
             let members = if marked {
                 self.marked_names()
             } else {
@@ -405,7 +412,9 @@ impl TuiApp {
             Command::LoadLoginAll
             | Command::LogoutAll
             | Command::ScriptStartAll
-            | Command::ScriptStopAll => {}
+            | Command::ScriptStopAll
+            | Command::ScriptAssignMarked
+            | Command::ScriptRestartMarked => {}
         }
         AppAction::None
     }
