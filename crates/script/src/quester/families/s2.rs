@@ -72,6 +72,17 @@ fn resolve_bank(
     .ok_or_else(|| ActionError::Unavailable(Arc::from("no eligible bank")))
 }
 
+fn metal_family_rank(name: &str) -> Option<(usize, &str)> {
+    const METALS: [&str; 8] = [
+        "bronze", "iron", "steel", "black", "mithril", "adamant", "rune", "dragon",
+    ];
+    let (metal, suffix) = name.trim().split_once(' ')?;
+    METALS
+        .iter()
+        .position(|known| metal.eq_ignore_ascii_case(known))
+        .map(|rank| (rank, suffix))
+}
+
 fn anchor(tile: [i32; 3]) -> WorldTile {
     WorldTile {
         x: tile[0],
@@ -663,27 +674,46 @@ pub fn compile_loadout(
         .resolve(&qualified)
         .ok_or_else(|| CompileError::code("unknown-loadout"))?
         .row();
-    let mut withdraw = Vec::new();
     for carry in &row.carry {
-        withdraw.push((
-            named_item(cx, &carry.item)?,
-            i32::try_from(carry.qty).unwrap_or(i32::MAX),
-        ));
+        let _ = named_item(cx, &carry.item)?;
     }
-    let mut worn = Vec::new();
     for name in row.worn.values() {
-        let item = named_item(cx, name)?;
-        if !withdraw.iter().any(|(known, _)| known.id == item.id) {
-            withdraw.push((item.clone(), 1));
-        }
-        worn.push(item);
+        let _ = named_item(cx, name)?;
     }
-    let _ = args.allow_lower_tier;
+    let mut resolved = Vec::new();
+    for candidate in cx.selected.items() {
+        let Some(name) = candidate.name.as_deref() else {
+            continue;
+        };
+        let relevant = row
+            .carry
+            .iter()
+            .any(|entry| entry.item.eq_ignore_ascii_case(name))
+            || row.worn.values().any(|wanted| {
+                wanted.eq_ignore_ascii_case(name)
+                    || (wanted.eq_ignore_ascii_case("dragon longsword")
+                        && name.eq_ignore_ascii_case("rune sword"))
+                    || (wanted.eq_ignore_ascii_case("rune platebody")
+                        && name.eq_ignore_ascii_case("rune chainbody"))
+                    || metal_family_rank(wanted).is_some_and(|(wanted_rank, wanted_suffix)| {
+                        metal_family_rank(name).is_some_and(|(rank, suffix)| {
+                            rank <= wanted_rank && suffix.eq_ignore_ascii_case(wanted_suffix)
+                        })
+                    })
+            });
+        if relevant {
+            resolved.push(BankItem {
+                id: candidate.id,
+                name: Arc::from(name),
+            });
+        }
+    }
     Ok(Arc::new(LoadoutPlan {
         bank: cx.bank,
         memo_ids: Arc::from(cx.bank_items),
-        withdraw: Arc::from(withdraw),
-        worn: Arc::from(worn),
+        row: row.clone(),
+        resolved: Arc::from(resolved),
+        allow_lower_tier: args.allow_lower_tier,
         strip: args.strip,
     }))
 }
@@ -691,22 +721,80 @@ pub fn compile_loadout(
 struct LoadoutPlan {
     bank: Option<api::named_banks::NamedBank>,
     memo_ids: Arc<[i32]>,
-    withdraw: Arc<[(BankItem, i32)]>,
-    worn: Arc<[BankItem]>,
+    row: crate::loadouts_store::Loadout,
+    resolved: Arc<[BankItem]>,
+    allow_lower_tier: bool,
     strip: bool,
 }
 impl StepPlan for LoadoutPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        let mut bank_actions = Vec::new();
-        if !self.strip {
-            bank_actions.extend(
-                self.withdraw
+        let snapshot = cx.tick.cx.snapshot();
+        let skill = |name: &str| {
+            snapshot.stats().and_then(|stats| {
+                stats
+                    .value
                     .iter()
-                    .map(|(item, qty)| BankAction::Withdraw {
+                    .find(|stat| stat.name.eq_ignore_ascii_case(name))
+                    .map(|stat| stat.base)
+            })
+        };
+        let owned = self
+            .resolved
+            .iter()
+            .filter(|candidate| {
+                snapshot.inventory().is_some_and(|rows| {
+                    rows.value
+                        .iter()
+                        .any(|row| row.def.id == candidate.id && row.count > 0)
+                }) || snapshot.equipment().is_some_and(|rows| {
+                    rows.value
+                        .iter()
+                        .any(|row| row.def.id == candidate.id && row.count > 0)
+                })
+            })
+            .map(|candidate| candidate.name.to_string())
+            .collect::<Vec<_>>();
+        let row = if self.allow_lower_tier {
+            crate::quester::loadouts::fill_owned_lower_tiers(
+                &self.row,
+                &owned,
+                crate::quester::loadouts::TierFacts {
+                    attack: skill("attack").unwrap_or(0),
+                    defence: skill("defence").unwrap_or(0),
+                    ..Default::default()
+                },
+            )
+        } else {
+            self.row.clone()
+        };
+        let resolve = |name: &str| {
+            self.resolved
+                .iter()
+                .find(|item| item.name.eq_ignore_ascii_case(name))
+                .cloned()
+                .ok_or_else(|| ActionError::Unavailable(Arc::from("unresolved loadout item")))
+        };
+        let mut bank_actions = Vec::new();
+        let mut worn = Vec::new();
+        if !self.strip {
+            for carry in &row.carry {
+                bank_actions.push(BankAction::Withdraw {
+                    item: resolve(&carry.item)?,
+                    qty: i32::try_from(carry.qty).unwrap_or(i32::MAX),
+                });
+            }
+            for name in row.worn.values() {
+                let item = resolve(name)?;
+                if !bank_actions.iter().any(
+                    |action| matches!(action, BankAction::Withdraw { item: known, .. } if known.id == item.id),
+                ) {
+                    bank_actions.push(BankAction::Withdraw {
                         item: item.clone(),
-                        qty: *qty,
-                    }),
-            );
+                        qty: 1,
+                    });
+                }
+                worn.push(item);
+            }
             bank_actions.push(BankAction::Close);
         }
         Ok(Box::new(LoadoutRun {
@@ -724,7 +812,7 @@ impl StepPlan for LoadoutPlan {
                     last: None,
                 })
             },
-            worn: Arc::clone(&self.worn),
+            worn: Arc::from(worn),
             worn_index: 0,
             equipment: None,
             strip: self.strip,
@@ -885,7 +973,33 @@ pub fn compile_loadout_ready(
     let worn = row
         .worn
         .values()
-        .map(|name| named_item(cx, name).map(|item| item.id))
+        .map(|wanted| {
+            let wanted_item = named_item(cx, wanted)?;
+            let wanted_family = metal_family_rank(wanted);
+            let mut ids = vec![wanted_item.id];
+            if args.allow_lower_tier {
+                ids.extend(cx.selected.items().iter().filter_map(|candidate| {
+                    let name = candidate.name.as_deref()?;
+                    let (wanted_rank, wanted_suffix) = wanted_family?;
+                    let (rank, suffix) = metal_family_rank(name)?;
+                    (rank <= wanted_rank && suffix.eq_ignore_ascii_case(wanted_suffix))
+                        .then_some(candidate.id)
+                }));
+                if wanted.eq_ignore_ascii_case("dragon longsword") {
+                    if let Ok(item) = named_item(cx, "Rune sword") {
+                        ids.push(item.id);
+                    }
+                }
+                if wanted.eq_ignore_ascii_case("rune platebody") {
+                    if let Ok(item) = named_item(cx, "Rune chainbody") {
+                        ids.push(item.id);
+                    }
+                }
+                ids.sort_unstable();
+                ids.dedup();
+            }
+            Ok(Arc::from(ids))
+        })
         .collect::<Result<Vec<_>, CompileError>>()?;
     Ok(Arc::new(LoadoutReady {
         carry: Arc::from(carry),
@@ -896,7 +1010,7 @@ pub fn compile_loadout_ready(
 
 struct LoadoutReady {
     carry: Arc<[(i32, i32)]>,
-    worn: Arc<[i32]>,
+    worn: Arc<[Arc<[i32]>]>,
     strip: bool,
 }
 impl PredicatePlan for LoadoutReady {
@@ -920,9 +1034,12 @@ impl PredicatePlan for LoadoutReady {
         let worn_ready = if self.strip {
             equipment.value.is_empty()
         } else {
-            self.worn
-                .iter()
-                .all(|id| equipment.value.iter().any(|item| item.def.id == *id))
+            self.worn.iter().all(|ids| {
+                equipment
+                    .value
+                    .iter()
+                    .any(|item| ids.contains(&item.def.id))
+            })
         };
         if carry_ready && worn_ready {
             Truth::True

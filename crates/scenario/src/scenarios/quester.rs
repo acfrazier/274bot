@@ -144,7 +144,7 @@ pub(crate) fn quester_sheep_scenario() -> Scenario {
         "Sheep Shearer",
         "sheep",
         0,
-        &[],
+        &[("bronze_sword", 1), ("coins", 100)],
         WorldTile {
             x: 3189,
             z: 3273,

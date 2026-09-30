@@ -84,9 +84,9 @@ const METALS: [(&str, i32); 8] = [
     ("dragon", 60),
 ];
 
-/// Fill only missing named worn pieces, never carry rows and never a piece the
-/// account already owns. The substitute must be an actually owned, same-type
-/// lower metal tier and pass its stat/quest gate.
+/// Fill missing or unusable named worn pieces, never carry rows. A substitute
+/// must be an actually owned, same-type lower metal tier and pass its
+/// stat/quest gate.
 pub fn fill_owned_lower_tiers(row: &Loadout, owned: &[String], facts: TierFacts) -> Loadout {
     let mut filled = row.clone();
     for (slot, wanted) in &row.worn {
@@ -119,6 +119,16 @@ pub fn fill_owned_lower_tiers(row: &Loadout, owned: &[String], facts: TierFacts)
             })
             .max_by_key(|(rank, _)| *rank)
             .map(|(_, name)| name.clone())
+            .or_else(|| {
+                (wanted.eq_ignore_ascii_case("dragon longsword") && facts.attack >= 40)
+                    .then(|| {
+                        owned
+                            .iter()
+                            .find(|name| name.eq_ignore_ascii_case("rune sword"))
+                            .cloned()
+                    })
+                    .flatten()
+            })
             .or_else(|| {
                 (wanted.eq_ignore_ascii_case("rune platebody") && facts.defence >= 40)
                     .then(|| {
@@ -182,7 +192,7 @@ mod tests {
     fn tier_fill_uses_owned_stat_legal_piece_and_respects_quest_gate() {
         let row = Loadout::new("quest/melee")
             .with_slot("righthand", "Dragon longsword")
-            .with_slot("body", "Rune platebody");
+            .with_slot("torso", "Rune platebody");
         let owned = vec![
             "Dragon longsword".into(),
             "Rune sword".into(),
@@ -199,6 +209,6 @@ mod tests {
             },
         );
         assert_eq!(filled.worn["righthand"], "Rune sword");
-        assert_eq!(filled.worn["body"], "Rune chainbody");
+        assert_eq!(filled.worn["torso"], "Rune chainbody");
     }
 }
