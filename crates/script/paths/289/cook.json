@@ -216,7 +216,7 @@
         }
       ]
     },
-    "bank": { "tile": [3093, 3243, 0], "source": "A defs/cooksassistant.ts:145" },
+    "bank": { "tile": [3092, 3242, 0], "source": "289 observed walkable east approach to Draynor booth 2213" },
     "coin_float": 0,
     "loadouts": {},
     "areas": {},

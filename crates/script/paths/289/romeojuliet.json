@@ -15,7 +15,7 @@
       { "obj": "cadava", "qty": 1, "kind": "acquirable", "acquire": null }
     ],
     "acquire": {},
-    "bank": { "tile": [3185, 3440, 0], "source": "A defs/romeojuliet.ts:103-125" },
+    "bank": { "tile": [3185, 3438, 0], "source": "289 Varrock West public-side tile beside bank booth 2213 at [3186,3438,0]" },
     "coin_float": 0,
     "loadouts": {},
     "areas": {},

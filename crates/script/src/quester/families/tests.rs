@@ -674,6 +674,141 @@ fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
 }
 
 #[test]
+fn dialogue_approaches_a_distant_npc_before_talking() {
+    compile_context_test(|cx| {
+        let row = cx.selected.npc_by_config("king_bolren").unwrap();
+        let npc = |distance| api::snapshot::NpcView {
+            index: 42,
+            r#type: Some(row.id as usize),
+            name: row.display.clone(),
+            actions: vec![Some("Talk-to".into())],
+            tile: tile(2542, 3170),
+            distance,
+            animation: -1,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            health: 1,
+            total_health: 1,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 1,
+            size: 1,
+            network: tile(2542, 3170),
+            x: 0,
+            z: 0,
+            yaw: 0,
+        };
+        let mut far = ready();
+        far.seed_npcs(vec![npc(8)]);
+        let plan = compile_talk(&serde_json::json!({"npc":"king_bolren"}), cx).unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&far, &mut ledger, 1, |t| {
+            with_step(t, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&far, &mut ledger, 2, |t| {
+            with_step(t, |cx| run.poll(cx))
+        })
+        .is_pending());
+        match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
+            HostEffect::Walk(request) => {
+                assert_eq!(request.target, tile(2542, 3170));
+                assert_eq!(request.radius, 1);
+            }
+            HostEffect::Interaction(_) => panic!("talked before approaching the NPC"),
+        }
+
+        let mut near = ready();
+        near.seed_npcs(vec![npc(1)]);
+        assert!(with_tick(&near, &mut ledger, 3, |t| {
+            with_step(t, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(emitted(&ledger), InteractReq::Npc {name, index:Some(42), ..} if name == "King Bolren")
+        );
+    });
+}
+
+#[test]
+fn use_on_approaches_a_distant_npc_before_using_the_item() {
+    compile_context_test(|cx| {
+        let row = cx.selected.npc_by_config("sheepunsheered").unwrap();
+        let npc = |distance| api::snapshot::NpcView {
+            index: 42,
+            r#type: Some(row.id as usize),
+            name: row.display.clone(),
+            actions: vec![Some("Shear".into())],
+            tile: tile(3200, 3276),
+            distance,
+            animation: -1,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            health: 1,
+            total_health: 1,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 1,
+            size: 1,
+            network: tile(3200, 3276),
+            x: 0,
+            z: 0,
+            yaw: 0,
+        };
+        let mut far = ready();
+        far.seed_npcs(vec![npc(4)]);
+        let shears = resolve_obj(cx, "shears").unwrap();
+        far.seed_inventory(
+            vec![ItemView {
+                def: def(shears, "Shears"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 7,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            }],
+            28,
+        );
+        let plan = compile_use_on(
+            &serde_json::json!({
+                "item": "shears",
+                "target": {"npc": "sheepunsheered"},
+                "radius": 8
+            }),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&far, &mut ledger, 1, |t| {
+            with_step(t, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&far, &mut ledger, 2, |t| {
+            with_step(t, |cx| run.poll(cx))
+        })
+        .is_pending());
+        match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
+            HostEffect::Walk(request) => {
+                assert_eq!(request.target, tile(3200, 3276));
+                assert_eq!(request.radius, 1);
+            }
+            HostEffect::Interaction(_) => panic!("used the item before approaching the NPC"),
+        }
+    });
+}
+
+#[test]
 fn wait_observes_until_and_expires_at_the_authored_bound() {
     compile_context_test(|cx| {
         let args = serde_json::json!({"until":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"egg"}}},"max_ticks":3});

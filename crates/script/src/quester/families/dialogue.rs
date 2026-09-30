@@ -1,6 +1,7 @@
 //! Native chat-dialogue driver extracted from the isolate `dialog` family.
 //! Constants and sequencing match `crates/script/src/dialog.rs`.
 
+use super::reach;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::shim::InteractReq;
 use std::sync::Arc;
@@ -8,6 +9,7 @@ use std::task::Poll;
 
 pub const DIALOG_GAP_MS: u64 = 1_500;
 pub const DIALOGUE_OPEN_MS: u64 = 8_000;
+pub const DIALOGUE_APPROACH_MS: u64 = 20_000;
 pub const DRIVE_STEPS: u32 = 120;
 pub const PAGE_ACK_MS: u64 = 3_000;
 pub const CONTINUE_TICKS: u64 = 1;
@@ -23,6 +25,7 @@ pub struct DialogueArgs {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
+    Approach,
     Open,
     Drive,
     WaitContinueAck,
@@ -41,6 +44,7 @@ pub struct Dialogue {
     npc_index: i32,
     npc_action: Arc<str>,
     deadline_ms: u64,
+    walk_request_id: u64,
 }
 
 impl NativeMachine for Dialogue {
@@ -57,6 +61,7 @@ impl NativeMachine for Dialogue {
             npc_index: -1,
             npc_action: Arc::from("Talk-to"),
             deadline_ms: cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS,
+            walk_request_id: 0,
         };
         dialogue.open(cx)?;
         Ok(dialogue)
@@ -68,6 +73,29 @@ impl NativeMachine for Dialogue {
             return Poll::Pending;
         };
         match self.phase {
+            Phase::Approach => {
+                if let Some(target) = nearest_talk(cx, self.args.id) {
+                    if target.distance <= 2 {
+                        self.npc_index = target.index;
+                        self.npc_action = Arc::from(target.action);
+                        cx.cancel_request(self.walk_request_id);
+                        self.walk_request_id = 0;
+                        return match self.open(cx) {
+                            Ok(()) => Poll::Pending,
+                            Err(error) => Poll::Ready(Err(error)),
+                        };
+                    }
+                }
+                if now >= self.deadline_ms
+                    || (self.walk_request_id != 0
+                        && cx.walk_receipt(self.walk_request_id).is_some())
+                {
+                    cx.cancel_request(self.walk_request_id);
+                    self.walk_request_id = 0;
+                    return Poll::Ready(Ok(false));
+                }
+                Poll::Pending
+            }
             Phase::Open => {
                 if obs.ready {
                     self.phase = Phase::Drive;
@@ -132,9 +160,16 @@ impl Dialogue {
                 self.phase = Phase::Drive;
                 return Ok(());
             }
-            if let Some((index, action)) = nearest_talk(cx, self.args.id) {
-                self.npc_index = index;
-                self.npc_action = action;
+            if let Some(target) = nearest_talk(cx, self.args.id) {
+                if target.distance > 2 {
+                    self.walk_request_id =
+                        cx.walk(reach::walk_request(target.tile, 1, cx.evidence()))?;
+                    self.phase = Phase::Approach;
+                    self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOGUE_APPROACH_MS;
+                    return Ok(());
+                }
+                self.npc_index = target.index;
+                self.npc_action = Arc::from(target.action);
             }
         }
         cx.emit(InteractReq::Npc {
@@ -215,7 +250,14 @@ fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
     })
 }
 
-fn nearest_talk(cx: &ActionContext<'_>, wanted: i32) -> Option<(i32, Arc<str>)> {
+struct TalkTarget<'a> {
+    index: i32,
+    action: &'a str,
+    tile: api::WorldTile,
+    distance: i32,
+}
+
+fn nearest_talk<'a>(cx: &'a ActionContext<'_>, wanted: i32) -> Option<TalkTarget<'a>> {
     let npcs = cx.snapshot().npcs()?.value;
     npcs.iter()
         .filter_map(|npc| {
@@ -227,14 +269,14 @@ fn nearest_talk(cx: &ActionContext<'_>, wanted: i32) -> Option<(i32, Arc<str>)> 
                 .iter()
                 .flatten()
                 .find(|action| action.len() >= 4 && action[..4].eq_ignore_ascii_case("talk"))?;
-            Some((
-                npc.distance,
-                npc.index as i32,
-                Arc::<str>::from(action.as_str()),
-            ))
+            Some(TalkTarget {
+                index: npc.index as i32,
+                action,
+                tile: npc.tile,
+                distance: npc.distance,
+            })
         })
-        .min_by_key(|(distance, _, _)| *distance)
-        .map(|(_, index, action)| (index, action))
+        .min_by_key(|target| target.distance)
 }
 
 pub fn pick_preferred(

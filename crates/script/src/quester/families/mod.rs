@@ -1656,7 +1656,16 @@ impl StepRun for UseOnRun {
                     else {
                         return Poll::Pending;
                     };
-                    (npc.tile, Some(npc.index as i32), None)
+                    let tile = npc.tile;
+                    let index = npc.index as i32;
+                    if npc.distance > 1 {
+                        self.walk = Some(cx.tick.actions.begin::<Walk>(
+                            reach::walk_request(tile, 1, cx.required_after),
+                            &mut cx.tick.cx,
+                        )?);
+                        return Poll::Pending;
+                    }
+                    (tile, Some(index), None)
                 }
                 _ => {
                     let Some(target) = inventory
