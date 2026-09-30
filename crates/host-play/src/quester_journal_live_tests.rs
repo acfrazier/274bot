@@ -1294,7 +1294,7 @@ fn frame_hook(
                     && !observation.hostile_npc_targeting_local
                     && observation
                         .idle_mugger_distance
-                        .is_some_and(|distance| distance <= 3)
+                        .is_some_and(|distance| distance <= 5)
             })
         {
             assert_eq!(
@@ -2583,7 +2583,7 @@ fn live_quester_journal_hp_only_combat_interrupts_dialogue() {
     // its active step with a fresh journal read. Stage an available nearby
     // attacker before starting instead, while Defence still prevents aggro.
     wait_until_fast(
-        "idle Mugger observed next to combat-safe Aubury fixture",
+        "idle Mugger observed within content hunt radius of combat-safe fixture",
         SYNTHETIC_TIMEOUT,
         || {
             let observation = setup.lock().expect("nearby Mugger staging").current_combat;
@@ -2593,7 +2593,7 @@ fn live_quester_journal_hp_only_combat_interrupts_dialogue() {
                     && !observation.hostile_npc_targeting_local
                     && observation
                         .idle_mugger_distance
-                        .is_some_and(|distance| distance <= 1)
+                        .is_some_and(|distance| distance <= 5)
             })
         },
     );
