@@ -370,7 +370,7 @@ impl NativeMachine for BankMachine {
                         let row = side
                             .value
                             .iter()
-                            .find(|row| row.count > 0 && !keep.iter().any(|id| *id == row.def.id));
+                            .find(|row| row.count > 0 && !keep.contains(&row.def.id));
                         let Some(row) = row else {
                             return Poll::Ready(Ok(self.receipt(cx, true)));
                         };
@@ -382,7 +382,7 @@ impl NativeMachine for BankMachine {
                         let before = side
                             .value
                             .iter()
-                            .filter(|row| !keep.iter().any(|id| *id == row.def.id))
+                            .filter(|row| !keep.contains(&row.def.id))
                             .map(|row| row.count)
                             .sum();
                         cx.emit(InteractReq::Deposit { name })?;
@@ -415,7 +415,7 @@ impl NativeMachine for BankMachine {
                         BankAction::DepositAll { keep } => cx.snapshot().bank_side().map(|rows| {
                             rows.value
                                 .iter()
-                                .filter(|row| !keep.iter().any(|id| *id == row.def.id))
+                                .filter(|row| !keep.contains(&row.def.id))
                                 .map(|row| row.count)
                                 .sum()
                         }),

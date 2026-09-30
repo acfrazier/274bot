@@ -27,10 +27,10 @@ pub struct MakeReceipt {
 }
 
 enum Phase {
-    WaitMenu,
-    WaitCount,
-    WaitCountClose,
-    WaitProduct,
+    Menu,
+    Count,
+    CountClose,
+    Product,
 }
 
 pub struct MakeMachine {
@@ -54,7 +54,7 @@ impl NativeMachine for MakeMachine {
         let before = held(cx, request.product_id).unwrap_or(0);
         Ok(Self {
             request,
-            phase: Phase::WaitMenu,
+            phase: Phase::Menu,
             deadline: cx.active_now().saturating_add(MENU_BOUND),
             answer: 0,
             before,
@@ -70,7 +70,7 @@ impl NativeMachine for MakeMachine {
                 }));
             }
             match self.phase {
-                Phase::WaitMenu => {
+                Phase::Menu => {
                     let snapshot = cx.snapshot();
                     let Some(products) = snapshot.make_products() else {
                         return Poll::Pending;
@@ -122,14 +122,14 @@ impl NativeMachine for MakeMachine {
                     if self.request.make_x {
                         self.answer = need;
                         self.deadline = cx.active_now().saturating_add(COUNT_BOUND);
-                        self.phase = Phase::WaitCount;
+                        self.phase = Phase::Count;
                     } else {
                         self.deadline = cx.active_now().saturating_add(PRODUCT_BOUND);
-                        self.phase = Phase::WaitProduct;
+                        self.phase = Phase::Product;
                     }
                     return Poll::Pending;
                 }
-                Phase::WaitCount => {
+                Phase::Count => {
                     if cx
                         .snapshot()
                         .count_dialog_open()
@@ -137,7 +137,7 @@ impl NativeMachine for MakeMachine {
                     {
                         cx.emit(InteractReq::AnswerCount { value: self.answer })?;
                         self.deadline = cx.active_now().saturating_add(COUNT_BOUND);
-                        self.phase = Phase::WaitCountClose;
+                        self.phase = Phase::CountClose;
                         return Poll::Pending;
                     }
                     if cx.active_now() >= self.deadline {
@@ -147,14 +147,14 @@ impl NativeMachine for MakeMachine {
                     }
                     return Poll::Pending;
                 }
-                Phase::WaitCountClose => {
+                Phase::CountClose => {
                     if cx
                         .snapshot()
                         .count_dialog_open()
                         .is_some_and(|open| !open.value)
                     {
                         self.deadline = cx.active_now().saturating_add(PRODUCT_BOUND);
-                        self.phase = Phase::WaitProduct;
+                        self.phase = Phase::Product;
                         continue;
                     }
                     if cx.active_now() >= self.deadline {
@@ -164,7 +164,7 @@ impl NativeMachine for MakeMachine {
                     }
                     return Poll::Pending;
                 }
-                Phase::WaitProduct => {
+                Phase::Product => {
                     if now_held.is_some_and(|count| count > self.before) {
                         // A fixed button may make fewer than requested. The caller's
                         // authored settle sees the exact held count and re-selects.
