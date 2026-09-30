@@ -728,6 +728,7 @@ impl TuiSession {
                     match live_start::fire_pending_catalog_start(
                         &mut pending_script.lock().unwrap(),
                         runner.on_start_script(),
+                        runner.on_stop_script(),
                         || start_arming.lock().unwrap().clone(),
                     ) {
                         live_start::StartScriptPump::Continue => {

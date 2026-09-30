@@ -5934,6 +5934,72 @@ fn script_start_handle_explicit_loadouts_starts() {
 }
 
 #[test]
+fn live_start_retains_the_card_for_a_second_start() {
+    let _env = script::IsolatedEnv::enter("quester-stop-restart");
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    let handle = play.script_start_handle();
+    let arming = || crate::live_start::StartArming {
+        handle: Some(handle.clone()),
+        catalog: None,
+        pair: None,
+    };
+    let mut pending = vec![crate::live_start::PendingCatalogStart::load(
+        "alice",
+        "export function tick() {}".into(),
+        script::LoadShape::NativeTick,
+        None,
+        vec![],
+        vec![],
+    )];
+    assert!(crate::live_start::fire_pending_catalog_start(
+        &mut pending,
+        true,
+        false,
+        arming
+    ));
+    wait_script_state(&play, "alice", script::RunState::Running);
+    assert!(crate::live_start::fire_pending_catalog_start(
+        &mut pending,
+        false,
+        false,
+        arming
+    ));
+    assert_eq!(
+        pending.len(),
+        1,
+        "setup settlement must preserve a restartable card"
+    );
+    assert!(crate::live_start::fire_pending_catalog_start(
+        &mut pending,
+        false,
+        true,
+        arming
+    ));
+    wait_script_state(&play, "alice", script::RunState::Idle);
+    assert!(crate::live_start::fire_pending_catalog_start(
+        &mut pending,
+        true,
+        false,
+        arming
+    ));
+    wait_script_state(&play, "alice", script::RunState::Running);
+    play.script_stop("alice");
+}
+
+#[test]
 fn script_paint_click_is_noop_when_idle_paused_or_unadvertised() {
     let mut play = run_with_io(
         &PlayOptions {

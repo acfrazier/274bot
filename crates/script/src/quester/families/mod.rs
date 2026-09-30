@@ -72,6 +72,11 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             compile: compile_message,
         },
         super::compile::PredicateHandler {
+            kind: "message_state",
+            version: 1,
+            compile: compile_message_state,
+        },
+        super::compile::PredicateHandler {
             kind: "quest_colour",
             version: 1,
             compile: compile_quest_colour,
@@ -338,8 +343,63 @@ impl PredicatePlan for Message {
 }
 
 fn contains_any(line: &ChatLineView, needles: &[String]) -> bool {
-    let lower = line.text.to_ascii_lowercase();
-    needles.iter().any(|needle| lower.contains(needle.as_str()))
+    needles.iter().any(|needle| {
+        needle.is_empty()
+            || line
+                .text
+                .as_bytes()
+                .windows(needle.len().max(1))
+                .any(|part| part.eq_ignore_ascii_case(needle.as_bytes()))
+    })
+}
+
+/// A recoverable observed state, unlike `message`'s post-step settle event.
+/// The newest matching event in the available chat history wins; a clearing
+/// event prevents a previous successful operation from being replayed forever.
+#[derive(Deserialize)]
+struct MessageStateArg {
+    set: Vec<String>,
+    clear: Vec<String>,
+}
+fn compile_message_state(
+    args: &serde_json::Value,
+    _cx: &CompileContext<'_>,
+) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    let arg: MessageStateArg =
+        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    Ok(Arc::new(MessageState {
+        set: arg
+            .set
+            .into_iter()
+            .map(|n| n.to_ascii_lowercase())
+            .collect(),
+        clear: arg
+            .clear
+            .into_iter()
+            .map(|n| n.to_ascii_lowercase())
+            .collect(),
+    }))
+}
+struct MessageState {
+    set: Vec<String>,
+    clear: Vec<String>,
+}
+impl PredicatePlan for MessageState {
+    fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        let snapshot = cx.cx.snapshot();
+        let Some(lines) = snapshot.chat_lines(-1) else {
+            return Truth::Unknown;
+        };
+        let mut latest = (-1, false);
+        for line in lines.value.iter() {
+            let clear = contains_any(line, &self.clear);
+            let set = contains_any(line, &self.set);
+            if (clear || set) && line.sequence >= latest.0 {
+                latest = (line.sequence, set && !clear);
+            }
+        }
+        truth(latest.1)
+    }
 }
 
 #[derive(Deserialize)]
@@ -1002,7 +1062,7 @@ fn compile_interact(
             obj: Arc::from(name),
         }
     } else if let Some(loc) = arg.target.loc {
-        let id = resolve_loc(cx, &loc).ok();
+        let id = Some(resolve_loc(cx, &loc)?);
         reach::ReachKind::Loc {
             id,
             name: Some(Arc::from(loc)),
@@ -1044,16 +1104,15 @@ struct InteractPlan {
     settle_ms: Option<u64>,
 }
 impl StepPlan for InteractPlan {
-    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(InteractRun {
             kind: self.kind.clone(),
             op: Arc::clone(&self.op),
             tile: self.tile,
             radius: self.radius,
             wait_if_missing: self.wait_if_missing,
-            deadline: Some(
-                cx.tick.cx.active_now() + Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
-            ),
+            deadline: None,
+            settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
             reach: None,
             started: false,
@@ -1068,12 +1127,17 @@ struct InteractRun {
     radius: i32,
     wait_if_missing: bool,
     deadline: Option<Duration>,
+    settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
     reach: Option<ActionHandle<reach::Reach>>,
     started: bool,
 }
 impl StepRun for InteractRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let available = reach::target_available(&cx.tick.cx, &self.kind, &self.op, self.radius);
+        if self.started && self.deadline.is_none() && available {
+            self.deadline = Some(cx.tick.cx.active_now() + self.settle_duration);
+        }
         if self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d) {
             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                 "interact settle timeout",
@@ -1087,7 +1151,7 @@ impl StepRun for InteractRun {
             }
         }
         if !self.started {
-            if let Some(tile) = self.tile {
+            if let Some(tile) = self.tile.filter(|_| !available) {
                 let here = cx.tick.cx.snapshot().here();
                 if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
                     self.walk = Some(cx.tick.actions.begin::<Walk>(
@@ -1096,6 +1160,9 @@ impl StepRun for InteractRun {
                     )?);
                     return Poll::Pending;
                 }
+            }
+            if available || !self.wait_if_missing {
+                self.deadline = Some(cx.tick.cx.active_now() + self.settle_duration);
             }
             self.reach = Some(cx.tick.actions.begin::<reach::Reach>(
                 reach::ReachArgs {
@@ -1113,7 +1180,10 @@ impl StepRun for InteractRun {
         if let Some(handle) = &self.reach {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(Ok(_)) => Poll::Ready(Ok(StepOutcome {
+                Poll::Ready(Ok(false)) => Poll::Ready(Err(ActionError::Failed(Arc::from(
+                    "interact target not reached",
+                )))),
+                Poll::Ready(Ok(true)) => Poll::Ready(Ok(StepOutcome {
                     progress: None,
                     evidence: cx.tick.cx.evidence(),
                     receipt: None,
@@ -1167,40 +1237,56 @@ fn compile_use_on(
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     let arg: UseOnArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    let _ = resolve_obj(cx, &arg.item)?;
-    if let Some(npc) = &arg.target.npc {
-        let _ = resolve_npc(cx, npc)?;
-    }
-    if let Some(loc) = &arg.target.loc {
-        let _ = resolve_loc(cx, loc)?;
-    }
-    if let Some(item) = &arg.target.item {
-        let _ = resolve_obj(cx, item)?;
-    }
-    if let Some(product) = &arg.product {
-        let _ = resolve_obj(cx, product)?;
-    }
+    let item_id = resolve_obj(cx, &arg.item)?;
+    let item_name = cx
+        .selected
+        .item_by_alias(&arg.item)
+        .and_then(|row| row.name.as_deref())
+        .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+    let (kind, target_id, target_name) = if let Some(npc) = &arg.target.npc {
+        let id = resolve_npc(cx, npc)?;
+        let name = cx
+            .selected
+            .npc_by_config(npc)
+            .and_then(|row| row.display.as_deref())
+            .ok_or_else(|| CompileError::code("unresolved-npc"))?;
+        ("npc", id, Arc::<str>::from(name))
+    } else if let Some(loc) = &arg.target.loc {
+        let id = resolve_loc(cx, loc)?;
+        let name = cx
+            .selected
+            .loc_by_config(loc)
+            .and_then(|row| row.display.as_deref())
+            .ok_or_else(|| CompileError::code("unresolved-loc"))?;
+        ("loc", id, Arc::<str>::from(name))
+    } else if let Some(item) = &arg.target.item {
+        let id = resolve_obj(cx, item)?;
+        let name = cx
+            .selected
+            .item_by_alias(item)
+            .and_then(|row| row.name.as_deref())
+            .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+        ("item", id, Arc::<str>::from(name))
+    } else {
+        return Err(CompileError::code("invalid-args"));
+    };
     let tile = arg.anchor.map(|a| WorldTile {
         x: a.tile[0],
         z: a.tile[1],
         level: a.tile[2],
     });
-    let kind = if arg.target.npc.is_some() {
-        "npc"
-    } else if arg.target.loc.is_some() {
-        "loc"
-    } else {
-        "item"
-    };
+    let product = arg
+        .product
+        .as_deref()
+        .map(|name| resolve_obj(cx, name))
+        .transpose()?;
     Ok(Arc::new(UseOnPlan {
-        item: Arc::from(arg.item),
+        item: Arc::from(item_name),
+        item_id,
         kind: Arc::from(kind),
-        target_name: arg
-            .target
-            .npc
-            .or(arg.target.loc)
-            .or(arg.target.item)
-            .map(Arc::from),
+        target_id,
+        target_name: Some(target_name),
+        product,
         tile,
         radius: arg.radius.max(1),
         settle_ms: arg.settle_ms,
@@ -1209,6 +1295,9 @@ fn compile_use_on(
 
 struct UseOnPlan {
     item: Arc<str>,
+    item_id: i32,
+    target_id: i32,
+    product: Option<i32>,
     kind: Arc<str>,
     target_name: Option<Arc<str>>,
     tile: Option<WorldTile>,
@@ -1216,31 +1305,39 @@ struct UseOnPlan {
     settle_ms: Option<u64>,
 }
 impl StepPlan for UseOnPlan {
-    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(UseOnRun {
             item: Arc::clone(&self.item),
+            item_id: self.item_id,
+            target_id: self.target_id,
+            product: self.product,
             kind: Arc::clone(&self.kind),
             target_name: self.target_name.clone(),
             tile: self.tile,
             radius: self.radius,
-            deadline: self
-                .settle_ms
-                .map(|ms| cx.tick.cx.active_now() + Duration::from_millis(ms)),
+            deadline: None,
+            settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
-            emitted: false,
+            interaction: None,
+            accepted: false,
         }))
     }
 }
 
 struct UseOnRun {
     item: Arc<str>,
+    item_id: i32,
+    target_id: i32,
+    product: Option<i32>,
     kind: Arc<str>,
     target_name: Option<Arc<str>>,
     tile: Option<WorldTile>,
     radius: i32,
     deadline: Option<Duration>,
+    settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
-    emitted: bool,
+    interaction: Option<ActionHandle<UseOnAction>>,
+    accepted: bool,
 }
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
@@ -1254,7 +1351,7 @@ impl StepRun for UseOnRun {
                 Poll::Ready(Ok(_)) => self.walk = None,
             }
         }
-        if !self.emitted {
+        if self.interaction.is_none() {
             if let Some(tile) = self.tile {
                 let here = cx.tick.cx.snapshot().here();
                 if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
@@ -1265,25 +1362,102 @@ impl StepRun for UseOnRun {
                     return Poll::Pending;
                 }
             }
-            let tile = self.tile.unwrap_or(WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            });
-            cx.tick.cx.emit(InteractReq::UseOn {
+            self.deadline
+                .get_or_insert(cx.tick.cx.active_now() + self.settle_duration);
+            let snapshot = cx.tick.cx.snapshot();
+            let Some(inventory) = snapshot.inventory() else {
+                return Poll::Pending;
+            };
+            let Some(source) = inventory
+                .value
+                .iter()
+                .find(|row| row.def.id == self.item_id && row.count > 0)
+            else {
+                return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on source missing"))));
+            };
+            let (tile, index, target_item_slot) = match self.kind.as_ref() {
+                "loc" => {
+                    let Some(loc) = reach::nearest_loc(
+                        &cx.tick.cx,
+                        Some(self.target_id),
+                        None,
+                        None,
+                        self.radius,
+                    ) else {
+                        return Poll::Pending;
+                    };
+                    (loc.tile, None, None)
+                }
+                "npc" => {
+                    let Some(npcs) = snapshot.npcs() else {
+                        return Poll::Pending;
+                    };
+                    let Some(npc) = npcs
+                        .value
+                        .iter()
+                        .filter(|row| {
+                            row.r#type == Some(self.target_id as usize)
+                                && row.distance <= self.radius
+                        })
+                        .min_by_key(|row| row.distance)
+                    else {
+                        return Poll::Pending;
+                    };
+                    (npc.tile, Some(npc.index as i32), None)
+                }
+                _ => {
+                    let Some(target) = inventory
+                        .value
+                        .iter()
+                        .find(|row| row.def.id == self.target_id)
+                    else {
+                        return Poll::Pending;
+                    };
+                    (
+                        WorldTile {
+                            x: 0,
+                            z: 0,
+                            level: 0,
+                        },
+                        None,
+                        Some(target.slot),
+                    )
+                }
+            };
+            let request = InteractReq::UseOn {
                 name: self.item.to_string(),
                 kind: self.kind.to_string(),
                 target_name: self.target_name.as_ref().map(|n| n.to_string()),
                 x: tile.x,
                 z: tile.z,
                 level: tile.level,
-                index: None,
-                source_item_id: None,
-                source_item_slot: None,
-                target_item_id: None,
-                target_item_slot: None,
-            })?;
-            self.emitted = true;
+                index,
+                source_item_id: Some(source.def.id),
+                source_item_slot: Some(source.slot),
+                target_item_id: (self.kind.as_ref() == "item").then_some(self.target_id),
+                target_item_slot,
+            };
+            self.interaction = Some(
+                cx.tick
+                    .actions
+                    .begin::<UseOnAction>(request, &mut cx.tick.cx)?,
+            );
+            return Poll::Pending;
+        }
+        if let Some(handle) = self.interaction.as_ref().filter(|_| !self.accepted) {
+            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => self.accepted = true,
+            }
+        }
+        if self.product.is_some_and(|id| {
+            !cx.tick.cx.snapshot().inventory().is_some_and(|inv| {
+                inv.value
+                    .iter()
+                    .any(|row| row.def.id == id && row.count > 0)
+            })
+        }) {
             return Poll::Pending;
         }
         Poll::Ready(Ok(StepOutcome {
@@ -1294,7 +1468,34 @@ impl StepRun for UseOnRun {
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {
         self.walk = None;
+        self.interaction = None;
     }
+}
+
+struct UseOnAction {
+    request: u64,
+}
+impl crate::native::NativeMachine for UseOnAction {
+    type Args = InteractReq;
+    type Output = ();
+    fn begin(
+        request: Self::Args,
+        cx: &mut crate::native::ActionContext<'_>,
+    ) -> Result<Self, ActionError> {
+        Ok(Self {
+            request: cx.emit(request)?,
+        })
+    }
+    fn poll(&mut self, cx: &mut crate::native::ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+        match cx.interaction_receipt(self.request) {
+            Some(receipt) if receipt.accepted => Poll::Ready(Ok(())),
+            Some(_) => Poll::Ready(Err(ActionError::Failed(Arc::from(
+                "use_on dispatch rejected",
+            )))),
+            None => Poll::Pending,
+        }
+    }
+    fn cancel(&mut self) {}
 }
 
 #[derive(Deserialize)]
@@ -1342,6 +1543,9 @@ impl StepPlan for AcquirePlan {
             steps: self.steps.clone(),
             current: None,
             index: 0,
+            chat_since: 0,
+            settling: false,
+            settle_ticks: 0,
         }))
     }
 }
@@ -1350,10 +1554,35 @@ struct AcquireRun {
     steps: Vec<CompiledAcquireStep>,
     current: Option<Box<dyn StepRun>>,
     index: usize,
+    chat_since: u64,
+    settling: bool,
+    settle_ticks: u8,
 }
 impl StepRun for AcquireRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         loop {
+            if self.settling {
+                let mut stamp = cx.required_after;
+                stamp.sequence = self.chat_since;
+                let truth = self.steps[self.index].settle.evaluate(&PredicateContext {
+                    cx: &cx.tick.cx,
+                    quests: cx.quests,
+                    progress: cx.progress,
+                    required_after: stamp,
+                    outcome: None,
+                });
+                if truth != Truth::True {
+                    self.settle_ticks = self.settle_ticks.saturating_add(1);
+                    if self.settle_ticks >= 40 {
+                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                            "acquire settle timeout",
+                        ))));
+                    }
+                    return Poll::Pending;
+                }
+                self.settling = false;
+                self.index += 1;
+            }
             if self.current.is_none() {
                 while self.index < self.steps.len() {
                     let skip = self.steps[self.index].skip_if.evaluate(&PredicateContext {
@@ -1367,6 +1596,7 @@ impl StepRun for AcquireRun {
                         self.index += 1;
                         continue;
                     }
+                    self.chat_since = reach::last_chat_seq(&cx.tick.cx) as u64;
                     let run = self.steps[self.index].plan.begin(cx)?;
                     self.current = Some(run);
                     break;
@@ -1384,7 +1614,8 @@ impl StepRun for AcquireRun {
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(_)) => {
                     self.current = None;
-                    self.index += 1;
+                    self.settling = true;
+                    self.settle_ticks = 0;
                 }
             }
         }
@@ -1440,3 +1671,6 @@ impl StepRun for WaitRun {
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {}
 }
+
+#[cfg(test)]
+pub(crate) mod tests;

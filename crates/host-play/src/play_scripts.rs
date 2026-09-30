@@ -197,6 +197,18 @@ impl ScriptStartHandle {
         })
     }
 
+    /// Stop from a slot-thread pump, revoking both script and navigation work.
+    pub fn stop(&self, name: &str) -> Result<(), String> {
+        let slot = script_slot(&self.scripts, name).ok_or_else(|| format!("no slot: {name}"))?;
+        let mut slot = slot
+            .lock()
+            .map_err(|_| format!("script slot retiring: {name}"))?;
+        slot.stop();
+        abort_script_walk(&self.navs, name);
+        invalidate_bank_pick(&self.navs, name);
+        Ok(())
+    }
+
     /// `name`'s latest recorded paint frame (the frame its status row
     /// publishes), for the live pump's File-card receipt watches.
     pub fn paint(&self, name: &str) -> Option<Arc<script::shim::ScriptPaint>> {
