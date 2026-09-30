@@ -8,6 +8,8 @@
 //!
 //! The tests are ignored because they need the shared local R289 engine.  Run
 //! one at a time with a throwaway HOME, for example:
+//! Set BOT_ENGINE_DIR to the local engine install. Each empty throwaway HOME
+//! uses the same cold `prepare_template` route as panel/TUI startup.
 //!
 //! ```text
 //! LIVE=1 cargo test -p host-play --lib live_quester_journal_synthetic_runemysteries -- --ignored --nocapture --test-threads=1
@@ -38,7 +40,7 @@ use api::interact;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, Truth};
-use api::snapshot::GameSnapshot;
+use api::snapshot::{ActorKind, GameSnapshot};
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 use client::client::present::{PresentTarget, WindowTarget};
 use client::client::MiniMenuAction;
@@ -58,7 +60,7 @@ use script::quester::path::{
 use script::quester::runner::Quester;
 use vault::{Profile, ProfileSettings};
 
-use super::{run_with_template, ProfileOptions, ScriptStartHandle, SharedClientTemplate};
+use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
 const SYNTHETIC_QUEST: &str = "runemysteries";
 const ACCOUNT_UID: i32 = 274_279_003;
@@ -821,6 +823,9 @@ struct SetupState {
     logout_sent: bool,
     saw_offline: bool,
     relog_ready: bool,
+    pre_teleport_ready: bool,
+    pre_teleport: Option<CombatObservation>,
+    pre_teleport_hit_cycles: Option<[i32; 4]>,
     journal_capture: bool,
     journal_capture_ready: bool,
     journal_expected_display: Option<String>,
@@ -836,6 +841,17 @@ struct SetupState {
     reopen_after_tick: Option<u64>,
     journal_close_target: Option<(i32, i32)>,
     close_hover_ready: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CombatObservation {
+    combat_level: i32,
+    attack_base: i32,
+    strength_base: i32,
+    defence_base: i32,
+    hitpoints_base: i32,
+    local_in_combat: bool,
+    hostile_npc_targeting_local: bool,
 }
 
 /// The live engine is shared by the operator's tunnel.  Keep its profile and
@@ -876,6 +892,8 @@ fn live() -> bool {
     std::env::var("LIVE").as_deref() == Ok("1")
 }
 
+/// Keep cache_dir unset: prepare_template must exercise the genuine cold
+/// panel/TUI route inside this fixture's empty HOME.
 fn live_options(home: &Path) -> ProfileOptions {
     let default_port = if cfg!(windows) { 44594 } else { 45594 };
     let default_http_port = if cfg!(windows) { 1080 } else { 2080 };
@@ -894,6 +912,9 @@ fn live_options(home: &Path) -> ProfileOptions {
                 .join("../../target/debug/nav/289/274bot.navpack");
             own.exists().then_some(own)
         });
+    let engine_dir = std::env::var_os("BOT_ENGINE_DIR")
+        .map(PathBuf::from)
+        .expect("journal live fixtures require BOT_ENGINE_DIR");
     ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
@@ -904,7 +925,7 @@ fn live_options(home: &Path) -> ProfileOptions {
         vault_path: Some(home.join("vault")),
         unpack_dir: Some(home.join("unpack")),
         nav_pack,
-        engine_dir: std::env::var_os("BOT_ENGINE_DIR").map(PathBuf::from),
+        engine_dir: Some(engine_dir),
         ..ProfileOptions::default()
     }
 }
@@ -920,13 +941,25 @@ fn profile(name: &str) -> Profile {
 
 fn prime(client: &mut client::client::Client, mode: SetupMode) {
     // Tutorial completion must be followed by a relog before the quest tab is
-    // trusted.  The quest varp/item cheats only choose a deterministic fixture
-    // state; all journal clicks and subsequent actions remain host-owned.
+    // trusted. Reset only this minted test account to its bounded baseline,
+    // then raise Defence enough to clear the Mugger aggression threshold. The
+    // hook observes the resulting combat level and hostile state before it
+    // teleports.
     interact::mainland_hop(client);
     match mode {
         SetupMode::Synthetic => {
+            assert_eq!(
+                interact::cheat(client, "minme"),
+                client::CheatSend::Sent,
+                "reset minted fixture stats"
+            );
             let _ = interact::cheat(client, "setvar runemysteries 3");
             let _ = interact::cheat(client, "give research_package 1");
+            assert_eq!(
+                interact::cheat(client, "setstat defence 40"),
+                client::CheatSend::Sent,
+                "stage bounded anti-aggro Defence"
+            );
         }
         SetupMode::Cook => {
             let _ = interact::cheat(client, "~clearinv");
@@ -961,6 +994,43 @@ fn observed_journal_title(snapshot: &GameSnapshot) -> Option<String> {
                 && !widget.hidden
         })
         .and_then(|widget| widget.text.clone())
+}
+
+fn combat_observation(snapshot: &GameSnapshot) -> Option<CombatObservation> {
+    let local = snapshot.local_player()?;
+    let stat_base = |name: &str| {
+        snapshot
+            .stats()
+            .iter()
+            .find(|stat| stat.name.eq_ignore_ascii_case(name))
+            .map(|stat| stat.base)
+    };
+    let hitpoints = snapshot
+        .stats()
+        .iter()
+        .find(|stat| stat.name.eq_ignore_ascii_case("hitpoints"))?;
+    let local_index = local.player.index;
+    let targets_local = |npc: &api::snapshot::NpcView| {
+        npc.in_combat
+            && npc.target.is_some_and(|target| {
+                target.kind == ActorKind::Player && target.index == local_index
+            })
+    };
+    Some(CombatObservation {
+        combat_level: local.player.combat_level,
+        attack_base: stat_base("attack")?,
+        strength_base: stat_base("strength")?,
+        defence_base: stat_base("defence")?,
+        hitpoints_base: hitpoints.base,
+        local_in_combat: local.player.actor.in_combat,
+        hostile_npc_targeting_local: snapshot.npcs().iter().any(targets_local),
+    })
+}
+
+fn live_combat_observation(client: &mut client::client::Client) -> Option<CombatObservation> {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(client);
+    combat_observation(&snapshot)
 }
 
 fn observe_journal(client: &mut client::client::Client, state: &mut SetupState) {
@@ -1143,8 +1213,30 @@ fn frame_hook(
             return;
         }
         if state.logout_sent && state.saw_offline && !state.relog_ready {
-            post_relog(client, mode);
-            state.relog_ready = true;
+            match mode {
+                SetupMode::Synthetic => {
+                    if let Some(observation) = live_combat_observation(client) {
+                        state.pre_teleport = Some(observation);
+                        if observation.combat_level > 12
+                            && !observation.local_in_combat
+                            && !observation.hostile_npc_targeting_local
+                        {
+                            state.pre_teleport_ready = true;
+                            state.pre_teleport_hit_cycles = client
+                                .local_player
+                                .as_ref()
+                                .map(|player| player.entity.damage_cycles);
+                            post_relog(client, mode);
+                            state.relog_ready = true;
+                        }
+                    }
+                }
+                SetupMode::Cook => {
+                    state.pre_teleport_ready = true;
+                    post_relog(client, mode);
+                    state.relog_ready = true;
+                }
+            }
         }
         state.close_hover_ready = false;
         if headed && client.main_modal_id == JOURNAL_ROOT && !client.journal_paint_hidden() {
@@ -1227,13 +1319,11 @@ fn launch_live(
 ) {
     let home = ThrowawayHome::enter(label);
     let options = live_options(&home.path);
-    let server_profile = options
+    let template = options
         .resolve(None)
         .expect("resolve local-289 profile")
-        .bind()
-        .expect("bind local-289 profile");
-    let template =
-        SharedClientTemplate::load(Arc::clone(&server_profile)).expect("load live template");
+        .prepare_template()
+        .expect("prepare cold live template");
     let name = super::mint_live_names(1)
         .pop()
         .expect("mint one live journal account");
@@ -1278,6 +1368,44 @@ fn wait_relogged(play: &super::Play, state: &Arc<Mutex<SetupState>>) {
                 .iter()
                 .any(|status| status.ingame && status.scene_state == 2)
     });
+}
+
+fn assert_synthetic_pre_teleport(state: &Arc<Mutex<SetupState>>) {
+    let state = state.lock().expect("synthetic pre-teleport state");
+    assert!(
+        state.pre_teleport_ready,
+        "synthetic staging was not observed"
+    );
+    let observation = state
+        .pre_teleport
+        .expect("synthetic pre-teleport combat observation");
+    assert!(
+        observation.combat_level > 12,
+        "Mugger-safe staging must observe combat level >12 before Aubury teleport: {observation:?}"
+    );
+    assert!(
+        !observation.local_in_combat,
+        "synthetic staging must observe the local player out of combat before teleport: {observation:?}"
+    );
+    assert!(
+        !observation.hostile_npc_targeting_local,
+        "synthetic staging must observe no in-combat NPC targeting the local player before teleport: {observation:?}"
+    );
+    assert_eq!(
+        (
+            observation.attack_base,
+            observation.strength_base,
+            observation.defence_base,
+            observation.hitpoints_base
+        ),
+        (1, 1, 40, 10),
+        "fixture staging must change only bounded Defence and retain HP10: {observation:?}"
+    );
+    assert!(
+        state.pre_teleport_hit_cycles.is_some(),
+        "synthetic staging must capture pre-teleport hitmark cycles"
+    );
+    println!("Observed safe pre-teleport combat staging: {observation:?}");
 }
 
 fn field<'a>(status: &'a ScriptStatus, key: &str) -> &'a StatusValue {
@@ -1592,6 +1720,7 @@ fn live_quester_journal_synthetic_runemysteries() {
     );
     let (home, play, setup, name, capture) = launch_live(SetupMode::Synthetic, "journal");
     wait_relogged(&play, &setup);
+    assert_synthetic_pre_teleport(&setup);
 
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("R289 game data");
     let quests =
@@ -1895,9 +2024,10 @@ struct SyntheticLive {
     expected_title: String,
 }
 
-fn prepare_synthetic_live(label: &str) -> SyntheticLive {
-    let (home, play, setup, name, _capture) = launch_live(SetupMode::Synthetic, label);
+fn prepare_synthetic_live(label: &str, mode: SetupMode) -> SyntheticLive {
+    let (home, play, setup, name, _capture) = launch_live(mode, label);
     wait_relogged(&play, &setup);
+    assert_synthetic_pre_teleport(&setup);
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("R289 game data");
     let quests =
         Arc::new(QuestCatalog::from_identity(selected.quest_identity()).expect("quest catalog"));
@@ -2027,7 +2157,7 @@ fn live_quester_journal_debug_reply_does_not_take_modal_ownership() {
         quests,
         path,
         expected_title,
-    } = prepare_synthetic_live("journal-debug");
+    } = prepare_synthetic_live("journal-debug", SetupMode::Synthetic);
     let log = &*JOURNAL_DEBUG_LOG;
     *log.state.lock().expect("debug journal state") = Some(Arc::clone(&setup));
     assert!(api::hostlog::install_sink(log));
@@ -2114,7 +2244,7 @@ fn live_quester_journal_stop_start_recovers_stranded_page() {
         quests,
         path,
         expected_title,
-    } = prepare_synthetic_live("journal-stop");
+    } = prepare_synthetic_live("journal-stop", SetupMode::Synthetic);
     let handle = play.script_start_handle();
     let first_run = start_synthetic(&handle, &play, &name, Arc::clone(&path), &quests, &selected);
     let _opened = wait_journal_open(&setup, &expected_title, "Stop mid-read journal capture");
@@ -2211,7 +2341,7 @@ fn live_quester_journal_pause_resume_recovers_stranded_page() {
         quests,
         path,
         expected_title,
-    } = prepare_synthetic_live("journal-pause");
+    } = prepare_synthetic_live("journal-pause", SetupMode::Synthetic);
     let handle = play.script_start_handle();
     let run = start_synthetic(&handle, &play, &name, Arc::clone(&path), &quests, &selected);
     let _opened = wait_journal_open(&setup, &expected_title, "Pause mid-read journal capture");

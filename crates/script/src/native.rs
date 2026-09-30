@@ -426,6 +426,8 @@ pub enum ActionError {
     Cancelled,
     Unavailable(Arc<str>),
     Failed(Arc<str>),
+    /// The step cannot continue safely without an explicit operator retry.
+    Blocked(Arc<str>),
 }
 
 pub trait NativeMachine: Send + 'static {
