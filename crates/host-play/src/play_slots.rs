@@ -1344,7 +1344,7 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 || projected_npc_boxes(c),
                             );
-                            let crate::script_observe::ScriptObservation {
+                            let crate::script_runtime::ScriptObservation {
                                 wrote: _wrote,
                                 journal_paint_hidden,
                             } = script_observe_cached_with_channels(

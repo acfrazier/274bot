@@ -11,4 +11,7 @@ pub(crate) use native::tests::widget as test_widget;
 #[path = "quest_journal/isolate.rs"]
 mod isolate;
 #[cfg(feature = "load")]
-pub(crate) use isolate::{dispatch, on_hold, on_pause, on_reset, on_resume, QuestJournal};
+pub(crate) use isolate::{
+    bind_compat_runtime, dispatch, on_hold, on_pause, on_reset, on_resume, on_stop,
+    CompatJournalLease, QuestJournal,
+};

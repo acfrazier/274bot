@@ -265,8 +265,8 @@ pub struct LoadIsolate {
     #[cfg(feature = "memory-profile")]
     dispatched: std::sync::atomic::AtomicU64,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    /// Rust-only compat journal quiet lease shared with the isolate thread.
-    /// Native isolates do not allocate this bridge.
+    /// Rust-only Load journal lease shared with the isolate thread. Native
+    /// v2 tick cards and compatibility cards use the same journal adapter.
     compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
     /// Host-owned identity of forwarded paint frames. Unique per spawn
     /// and bumped on session reset so a stale overlay generation cannot
@@ -456,7 +456,7 @@ impl LoadIsolate {
         let thread_counters = counters.clone();
         let work_generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let thread_generation = work_generation.clone();
-        let compat_journal = matches!(shape, LoadShape::CompatDefineBot | LoadShape::CompatClass)
+        let compat_journal = (shape != LoadShape::Reject)
             .then(|| std::sync::Arc::new(crate::quest_journal::CompatJournalLease::default()));
         let thread_compat_journal = compat_journal.clone();
         let teardown = std::sync::Arc::new(Mutex::new(TeardownState::new()));
