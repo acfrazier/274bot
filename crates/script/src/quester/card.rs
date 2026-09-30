@@ -42,15 +42,17 @@ struct ReleasePath {
     id: String,
     file: String,
 }
-static COOK_RELEASED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
-    serde_json::from_str::<ReleaseIndex>(INDEX_JSON).is_ok_and(|index| {
+fn cook_released(index_json: &str) -> bool {
+    serde_json::from_str::<ReleaseIndex>(index_json).is_ok_and(|index| {
         index.schema == 1
             && index
                 .paths
                 .iter()
                 .any(|path| path.id == "cook" && path.file == "cook.json")
     })
-});
+}
+static COOK_RELEASED: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| cook_released(INDEX_JSON));
 
 struct Prepared {
     selected: Arc<api::game_data::SelectedGameData>,
@@ -123,4 +125,53 @@ fn create(
         path,
         Arc::clone(&prepared.quests),
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use api::selected::{ClientRevision, FamilyPreparation};
+
+    #[test]
+    fn prepare_on_274_reports_289_only_without_creating_a_run() {
+        let selected = api::game_data::for_revision(ClientRevision::R274).unwrap();
+        FamilyPreparation::run(move |families| {
+            let pin = selected.selected_pin().unwrap();
+            let mut cx = PrepareContext {
+                selected,
+                pin,
+                banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+                families,
+            };
+            match prepare(&mut cx, 1, Arc::new(SettingsBag::new())) {
+                Err(StartError::Unavailable(reason)) => {
+                    assert_eq!(reason.as_ref(), "Quester S1 supports revision 289 only");
+                }
+                other => panic!("274 must be unavailable, got {other:?}"),
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn release_index_requires_schema_and_exact_cook_identity() {
+        assert!(cook_released(INDEX_JSON));
+        assert!(cook_released(
+            r#"{"schema":1,"paths":[{"id":"other","file":"other.json"},{"id":"cook","file":"cook.json"}]}"#
+        ));
+        for rejected in [
+            r#"{"schema":2,"paths":[{"id":"cook","file":"cook.json"}]}"#,
+            r#"{"schema":1,"paths":[]}"#,
+            r#"{"schema":1,"paths":[{"id":"other","file":"cook.json"}]}"#,
+            r#"{"schema":1,"paths":[{"id":"cook","file":"other.json"}]}"#,
+            r#"{"schema":1,"paths":[{"id":"cook","file":"other.json"},{"id":"other","file":"cook.json"}]}"#,
+            r#"{"schema":1,"paths":[{"id":"cook","file":"cook.json","unknown":true}]}"#,
+            r#"{"schema":1,"paths":[{"id":"cook","file":"cook.json"}],"unknown":true}"#,
+            "not json",
+        ] {
+            assert!(!cook_released(rejected), "accepted {rejected}");
+        }
+    }
 }
