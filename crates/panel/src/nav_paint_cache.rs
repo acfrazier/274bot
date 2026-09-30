@@ -28,10 +28,19 @@ impl Cache {
         self.slots.remove(name);
     }
 
-    pub fn changed(&self, name: &str, facts: Facts) -> bool {
-        self.slots.get(name) != Some(&facts)
+    /// Record this frame's visible facts and report whether the caller must
+    /// publish. The changed state is committed atomically with the decision,
+    /// so identical frames cannot request duplicate materialization.
+    pub fn begin_frame(&mut self, name: &str, facts: Facts) -> bool {
+        if self.slots.get(name) == Some(&facts) {
+            return false;
+        }
+        self.slots.insert(name.to_owned(), facts);
+        true
     }
 
+    /// Correct a fact changed as a side effect of publication (trail
+    /// retirement) without requesting a second publication.
     pub fn record(&mut self, name: &str, facts: Facts) {
         self.slots.insert(name.to_owned(), facts);
     }
@@ -81,7 +90,7 @@ pub(crate) fn trail_fingerprint(path: &[(i32, i32)]) -> u64 {
 mod tests {
     use super::*;
 
-    fn facts(trail: u64) -> Facts {
+    fn facts() -> Facts {
         Facts {
             settings_generation: 2,
             active: true,
@@ -94,19 +103,56 @@ mod tests {
             }),
             route: 7,
             click: None,
-            trail,
+            trail: 11,
             run_on: false,
         }
     }
 
     #[test]
-    fn unchanged_nav_facts_do_not_request_another_materialization() {
+    fn per_frame_gate_republishes_visible_changes_and_clears_once() {
         let mut cache = Cache::default();
-        assert!(cache.changed("alice", facts(11)));
-        cache.record("alice", facts(11));
-        assert!(!cache.changed("alice", facts(11)));
-        assert!(cache.changed("alice", facts(12)));
-        cache.invalidate("alice");
-        assert!(cache.changed("alice", facts(11)));
+        let mut publishes = 0;
+        let baseline = facts();
+
+        for candidate in [
+            baseline,
+            baseline,
+            Facts {
+                here: Some(WorldTile {
+                    x: 3202,
+                    ..baseline.here.unwrap()
+                }),
+                ..baseline
+            },
+            Facts {
+                route: 8,
+                ..baseline
+            },
+            Facts {
+                base_x: 3264,
+                ..baseline
+            },
+            Facts {
+                settings_generation: 3,
+                ..baseline
+            },
+            Facts {
+                active: false,
+                ..baseline
+            },
+            Facts {
+                active: false,
+                ..baseline
+            },
+        ] {
+            if cache.begin_frame("alice", candidate) {
+                publishes += 1;
+            }
+        }
+
+        assert_eq!(
+            publishes, 6,
+            "initial paint, each visible change, and one inactive clear publish"
+        );
     }
 }

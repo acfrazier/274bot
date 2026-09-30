@@ -2,9 +2,9 @@ use super::{
     combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, live_client_trail,
     live_or_walk_paint, load_live_example_card, nav_snapshot_for_follow, null_raster_live_entries,
     parse_getvar_line, publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime,
-    script_active, script_pause_enabled, script_stop_enabled, seed_on_first_world,
-    stress_live_entries, temp_live_vault_from, ProfilePreparationCompletion, Session, SlotIo,
-    WalkArm,
+    retire_client_trail, script_active, script_pause_enabled, script_stop_enabled,
+    seed_on_first_world, stress_live_entries, temp_live_vault_from, ProfilePreparationCompletion,
+    Session, SlotIo, WalkArm,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -1946,6 +1946,24 @@ fn live_client_trail_rearms_on_fresh_path_and_keeps_unknown_here() {
         c.try_move_path.len(),
         3,
         "unknown here must not retire a pending trail"
+    );
+}
+
+#[test]
+fn inactive_slot_retires_stale_client_trail() {
+    let mut c = paint_client();
+    c.try_move_path = vec![(0, 0), (1, 0), (2, 0)];
+
+    retire_client_trail(&mut c, Some(wt(3201, 3200)));
+    assert_eq!(
+        c.try_move_path.len(),
+        3,
+        "an inactive slot keeps a trail while still walking it"
+    );
+    retire_client_trail(&mut c, Some(wt(3202, 3200)));
+    assert!(
+        c.try_move_path.is_empty(),
+        "arrival retires the producer without paint materialization"
     );
 }
 
