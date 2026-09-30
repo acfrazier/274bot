@@ -4400,8 +4400,8 @@ fn opening_another_profile_over_unsaved_edits_asks_first() {
 
 /// The prompt keeps one width however long it stays open. Its buttons sit
 /// side by side, and a gap between them different from the one their width
-/// was computed with made the popup wider every frame, until Keep editing
-/// had left the screen (the headed narrow-dock run showed only Discard).
+/// was computed with made the popup 2 px wider every frame (the R1 headed
+/// review saw only Discard on the narrow dock).
 #[test]
 fn the_leave_prompt_keeps_a_stable_width_so_both_buttons_stay_on_screen() {
     let _guard = crate::test_support::imgui_context_guard();
