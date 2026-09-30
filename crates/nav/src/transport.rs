@@ -218,10 +218,10 @@ pub struct TransportGraph {
 /// Doors come from `scripts/doors/configs/*.loc` + the jm2 LOC placements;
 /// ladders/stairs from `scripts/ladders+stairs/scripts/*.rs2`; agility
 /// shortcuts from `scripts/skill_agility/scripts/*.rs2`. Placements and
-/// destinations that resolve emit an edge — doors emit two per placement
-/// (`dir` and its opposite, each with an adjacent standable destination); `at` the
-/// loc tile, `to` the resolved landing (no walkability filter — the router
-/// applies the collision map). Boats, gnome gliders, the Rune Mysteries
+/// destinations that resolve emit an edge — straight doors join the loc
+/// tile and its angle neighbour, with standable landings in both directions.
+/// `at` is the interact target, `to` the resolved arrival. Boats, gnome
+/// gliders, the Rune Mysteries
 /// essence-mine wizards and Elkoy's maze escorts are the explicit 2004
 /// route/placement tables below, and spirit trees the `area_gnome` network
 /// (see `spirit_tree_edges`). Teleports (spells + jewellery rubs) are any-tile
@@ -773,6 +773,23 @@ fn door_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Opt
         level: at.level,
     };
     collision.standable(to).then_some(to)
+}
+
+/// A straight wall separates `at` from `at + angle_dir`, not from both
+/// neighbours. `~door_open` removes that wall (and `open_and_close_door`
+/// teleports to the same two endpoints). The reverse lands on the loc's
+/// original tile; scenery behind it is irrelevant and is never skipped.
+fn straight_door_landing(
+    at: WorldTile,
+    angle_dir: DoorDir,
+    dir: DoorDir,
+    collision: &WorldCollision,
+) -> Option<WorldTile> {
+    if dir == angle_dir {
+        door_far_side(at, dir, collision)
+    } else {
+        collision.standable(at).then_some(at)
+    }
 }
 
 // ---------------------------------------------------------------------------

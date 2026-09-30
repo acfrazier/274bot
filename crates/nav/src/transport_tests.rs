@@ -663,6 +663,108 @@ fn selected_274_and_289_content_derives_the_keyed_hut_crossing() {
 }
 
 #[test]
+fn straight_door_reverse_routes_out_when_behind_loc_is_scenery() {
+    use crate::router::{find, Leg, RouteError};
+    use client::dash3d::CollisionFlag;
+
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "1530=loc_1530\n1531=loc_1531\n");
+    fx.write(
+        "scripts/doors/configs/doors.loc",
+        "[loc_1530]\nname=Door\nop1=Open\ncategory=door_closed\nparam=next_loc_stage,loc_1531\n",
+    );
+    fx.write("maps/m44_53.jm2", "==== LOC ====\n0 1 1: 1530 0 2\n");
+    let defs = loc_defs(&[(1530, 1, 1)]);
+    let at = WorldTile {
+        x: 2817,
+        z: 3393,
+        level: 0,
+    };
+    let inside = WorldTile { x: 2818, ..at };
+    let outside = WorldTile { z: 3394, ..at };
+    let mut flags = vec![CollisionFlag::WALK_SCENERY as u32; 3 * 3 * 4];
+    flags[4] = CollisionFlag::W_E as u32;
+    flags[5] = CollisionFlag::W_W as u32;
+    flags[7] = 0;
+    let (walk, blocked) = crate::collision::pack_walk(&flags);
+    let collision = WorldCollision {
+        origin: WorldTile {
+            x: 2816,
+            z: 3392,
+            level: 0,
+        },
+        width: 3,
+        height: 3,
+        walk,
+        blocked,
+        flags: Some(flags),
+    };
+    assert!(
+        matches!(
+            find(&collision, &TransportGraph::default(), inside, outside),
+            Err(RouteError::NoPath)
+        ),
+        "closed wall isolates the standable origin"
+    );
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    // Exercise the packed graph, not just the deriver's in-memory endpoints.
+    let bytes = crate::pack::encode(&collision, &graph, &[]);
+    let (collision, graph, _) = crate::pack::decode(&bytes).unwrap();
+    for (from, to) in [(inside, outside), (outside, inside)] {
+        let route = find(&collision, &graph, from, to).expect("door routes both ways");
+        assert!(route.legs.iter().any(|leg| matches!(
+            leg, Leg::Transport { edge } if edge.loc_id == 1530
+        )));
+    }
+}
+
+#[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
+fn ardougne_market_pocket_routes_via_door_without_origin_snap() {
+    use crate::router::{find_with, FindOptions, Leg};
+    for (_, graph, collision) in qualification_worlds() {
+        let from = WorldTile {
+            x: 2659,
+            z: 3292,
+            level: 0,
+        };
+        assert!(collision.standable(from));
+        for to in [
+            WorldTile {
+                x: 2661,
+                z: 3301,
+                level: 0,
+            },
+            WorldTile {
+                x: 2724,
+                z: 3484,
+                level: 0,
+            },
+        ] {
+            let route = find_with(
+                collision,
+                graph,
+                from,
+                to,
+                FindOptions::default(),
+                &crate::WorldState {
+                    map_members: true,
+                    ..crate::WorldState::empty()
+                },
+            )
+            .expect("market pocket must have a packed exit");
+            assert!(
+                route.legs.iter().any(|leg| matches!(
+                    leg, Leg::Transport { edge }
+                        if edge.loc_id == 1530 && edge.to == edge.at
+                )),
+                "route must leave through the actual door"
+            );
+        }
+    }
+}
+
+#[test]
 fn door_far_side_does_not_skip_bank_return_obstacles() {
     // Captured at (2651..=2657,3292): counter/plant/bench footprints
     // separate Door1530 at2656 from the old bogus west landing2651.
@@ -731,97 +833,6 @@ fn web_far_side_preserves_multi_tile_footprint_crossing() {
     );
     assert_eq!(door_far_side(at, DoorDir::E, &collision), None);
     assert_eq!(web_far_side(at, DoorDir::W, &collision), None);
-}
-
-#[test]
-fn derive_transports_door_edge_at_dir_to_open_loc_id() {
-    let fx = Fixture::new();
-    fx.write("pack/loc.pack", "1530=loc_1530\n1531=loc_1531\n");
-    fx.write(
-        "scripts/doors/configs/doors.loc",
-        "[loc_1530]\nname=Door\nop1=Open\ncategory=door_closed\nparam=next_loc_stage,loc_1531\n",
-    );
-    // m44_53 local (0,46) = absolute (2816,3438). Wall 980 (angle
-    // SOUTH) sits on the door's south approach tile (2816,3437), so
-    // the south-bound adjacent destination accepts that tile — its W_S
-    // face flag stands (face flags never disqualify). The closed
-    // door's own angle-NORTH stamp puts W_S on (2816,3439), which also
-    // stands.
-    fx.write(
-        "maps/m44_53.jm2",
-        "\
-==== MAP ====
-0 0 45: h1 o6 u50
-0 0 46: h1 o6 u50
-0 0 47: h1 o6 u50
-==== LOC ====
-0 0 46: 1530 0 1
-0 0 45: 980 0 3
-",
-    );
-    let defs = loc_defs(&[(1530, 1, 1), (980, 1, 1)]);
-    let mut door_ids = HashSet::new();
-    door_ids.insert(1530);
-    let wc = bake_from_maps(&fx.path().join("maps"), &defs, &door_ids).unwrap();
-    let graph = derive_transports(fx.path(), &defs, &wc);
-
-    let doors: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|e| e.kind == TransportKind::Door && e.loc_id == 1530)
-        .collect();
-    // Two edges per placement: `dir` and its opposite, each with its
-    // own adjacent standable destination. `at` is the door loc tile.
-    assert_eq!(doors.len(), 2);
-    for edge in &doors {
-        assert_eq!(edge.at.level, edge.to.level);
-        assert_eq!(
-            (edge.at.x - edge.to.x).abs() + (edge.at.z - edge.to.z).abs(),
-            1
-        );
-    }
-    let n = doors
-        .iter()
-        .find(|e| e.dir == Some(DoorDir::N))
-        .expect("north-bound door edge");
-    let s = doors
-        .iter()
-        .find(|e| e.dir == Some(DoorDir::S))
-        .expect("south-bound door edge");
-    for d in [n, s] {
-        assert_eq!(
-            d.at,
-            WorldTile {
-                x: 2816,
-                z: 3438,
-                level: 0
-            }
-        );
-        assert_eq!(d.open_loc_id, Some(1531));
-        assert_eq!(d.option, 1);
-        assert_eq!(d.ticks, 1);
-        assert!(d.varp_req.is_empty());
-    }
-    assert_eq!(
-        n.to,
-        WorldTile {
-            x: 2816,
-            z: 3439,
-            level: 0
-        }
-    );
-    // The south-bound destination is wall 980's own tile: its W_S
-    // face flag stands (the wall's face flag never disqualifies).
-    assert_eq!(
-        s.to,
-        WorldTile {
-            x: 2816,
-            z: 3437,
-            level: 0
-        }
-    );
-    // The at-index keys the door loc tile with both directed edges.
-    assert_eq!(graph.at[&n.at].len(), 2);
 }
 
 /// A revision's pack is a fixed point of its inputs: two derivations of
@@ -904,14 +915,14 @@ param=next_loc_stage,loc_1556
     assert_eq!(
         door_crossings(&graph, 1551),
         vec![
-            ((2821, 3438), 'E', (2822, 3438)),
+            ((2821, 3438), 'E', (2821, 3438)),
             ((2821, 3438), 'W', (2820, 3438)),
         ]
     );
     assert_eq!(
         door_crossings(&graph, 1553),
         vec![
-            ((2821, 3439), 'E', (2822, 3439)),
+            ((2821, 3439), 'E', (2821, 3439)),
             ((2821, 3439), 'W', (2820, 3439)),
         ]
     );
@@ -1562,23 +1573,15 @@ fn seers_street_reaches_rock_crabs_after_gates() {
 }
 
 #[test]
-fn derive_transports_pins_catherby_door_and_a_ladder() {
+fn derive_transports_pins_source_ladder() {
     let fx = Fixture::new();
-    fx.write("pack/loc.pack", "1530=loc_1530\n1747=ladder\n");
-    fx.write(
-        "scripts/doors/configs/doors.loc",
-        "[loc_1530]\nname=Door\nop1=Open\ncategory=door_closed\n",
-    );
+    fx.write("pack/loc.pack", "1747=ladder\n");
     fx.write(
         "maps/m44_53.jm2",
         "\
 ==== MAP ====
-0 0 45: h1 o6 u50
-0 0 46: h1 o6 u50
-0 0 47: h1 o6 u50
 0 10 10: h1 o6 u50
 ==== LOC ====
-0 0 46: 1530 0 1
 0 10 10: 1747 0 0
 ",
     );
@@ -1593,60 +1596,9 @@ switch_coord (loc_coord) {
 }
 ",
     );
-    let defs = loc_defs(&[(1530, 1, 1), (1747, 1, 1)]);
-    let mut door_ids = HashSet::new();
-    door_ids.insert(1530);
-    let wc = bake_collision(&fx, &defs, &door_ids);
+    let defs = loc_defs(&[(1747, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
     let graph = derive_transports(fx.path(), &defs, &wc);
-
-    // The Catherby door (loc 1530 @ 2816,3438,0, angle 1): two edges
-    // per placement — `at` the loc tile, `dir` N and S, each `to` the
-    // adjacent standable destination, `Open` op 1, one tick.
-    let doors: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|e| e.kind == TransportKind::Door && e.loc_id == 1530)
-        .collect();
-    assert_eq!(doors.len(), 2);
-    let n = doors
-        .iter()
-        .find(|e| e.dir == Some(DoorDir::N))
-        .expect("north-bound door edge");
-    let s = doors
-        .iter()
-        .find(|e| e.dir == Some(DoorDir::S))
-        .expect("south-bound door edge");
-    for d in [n, s] {
-        assert_eq!(
-            d.at,
-            WorldTile {
-                x: 2816,
-                z: 3438,
-                level: 0
-            }
-        );
-        assert_eq!(d.option, 1);
-        assert_eq!(d.ticks, 1);
-    }
-    // (2816,3439) carries the closed door's own south-face stamp, which
-    // stands (face flags never disqualify); the south far side is the
-    // open tile straight below the door.
-    assert_eq!(
-        n.to,
-        WorldTile {
-            x: 2816,
-            z: 3439,
-            level: 0
-        }
-    );
-    assert_eq!(
-        s.to,
-        WorldTile {
-            x: 2816,
-            z: 3437,
-            level: 0
-        }
-    );
 
     // One ladder placement (id 1747 @ 2826,3402,0) climbing to
     // (1,2826,3468): one edge per placement — `at` the loc tile
@@ -1678,28 +1630,6 @@ switch_coord (loc_coord) {
     assert_eq!(ladder.ticks, 3); // op base 1 + ladder extra 2
     assert!(ladder.skill_req.is_empty());
 
-    // The at-index keys the door loc tile (both directed edges) and the
-    // ladder loc tile.
-    let door_at = WorldTile {
-        x: 2816,
-        z: 3438,
-        level: 0,
-    };
-    assert_eq!(graph.at[&door_at].len(), 2);
-    let door_tos: Vec<_> = graph.at[&door_at]
-        .iter()
-        .map(|&i| graph.edges[i].to)
-        .collect();
-    assert!(door_tos.contains(&WorldTile {
-        x: 2816,
-        z: 3439,
-        level: 0
-    }));
-    assert!(door_tos.contains(&WorldTile {
-        x: 2816,
-        z: 3437,
-        level: 0
-    }));
     let ladder_at = WorldTile {
         x: 2826,
         z: 3402,
@@ -3001,17 +2931,13 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
     let wc = bake_collision(&fx, &defs, &door_ids);
     let graph = derive_transports(fx.path(), &defs, &wc);
 
-    // The Elena door (Plague City) carries its `%elenaquest >= 28`
-    // gate on its east-bound edge (the west-bound far side is off the
-    // bake's grid, so no west-bound edge resolves).
+    // The Elena door (Plague City) carries `%elenaquest >= 28`
+    // on both crossings, including the reverse back onto the loc tile.
     let elena: Vec<_> = graph
         .edges
         .iter()
         .filter(|e| e.kind == TransportKind::Door && e.loc_id == 2526)
         .collect();
-    // One edge per placement (a single loc placement each); the west
-    // far side never becomes standable inside the bake.
-    assert_eq!(elena.len(), 1);
     for d in &elena {
         assert_eq!(d.varp_req, vec![(165, 28)]);
         assert!(d.quest_req.is_empty());
@@ -3140,10 +3066,10 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
     assert_eq!(
         door_crossings(&graph, 3745),
         vec![
-            ((2822, 3530), 'E', (2823, 3530)),
+            ((2822, 3530), 'E', (2822, 3530)),
             ((2822, 3530), 'W', (2821, 3530)),
             ((2822, 3555), 'E', (2823, 3555)),
-            ((2822, 3555), 'W', (2821, 3555)),
+            ((2822, 3555), 'W', (2822, 3555)),
         ],
         "3745 emits the free `$leaving = true` crossing along the \
              placement angle and the gated reverse"
@@ -3152,7 +3078,7 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
         door_crossings(&graph, 3746),
         vec![
             ((2820, 3557), 'N', (2820, 3558)),
-            ((2820, 3557), 'S', (2820, 3556)),
+            ((2820, 3557), 'S', (2820, 3557)),
         ],
         "3746 emits the free `$leaving = false` crossing into the hut \
              and the gated garden exit"
@@ -3735,7 +3661,7 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
         door_crossings(&control, 3745),
         vec![
             ((2822, 3555), 'E', (2823, 3555)),
-            ((2822, 3555), 'W', (2821, 3555)),
+            ((2822, 3555), 'W', (2822, 3555)),
         ],
         "the sherpa control keeps the free exit and gated reverse"
     );
@@ -3874,7 +3800,7 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
     );
     assert_eq!(
         door_crossings(&wrong_polarity, 3745),
-        vec![((2822, 3555), 'W', (2821, 3555))],
+        vec![((2822, 3555), 'W', (2822, 3555))],
         "the flipped polarity still proves its free crossing"
     );
     assert!(
@@ -4941,7 +4867,7 @@ fn write_blocked_square(fx: &Fixture, mx: i32, mz: i32, walk: &[(i32, i32)], loc
     fx.write(&format!("maps/m{mx}_{mz}.jm2"), &map);
 }
 
-/// The Taverley membergate pair emits four crossings with members_req.
+/// The Taverley pair keeps member-only crossings and rejects blocked landings.
 #[test]
 fn derive_transports_emits_membergate_family_crossings() {
     let fx = Fixture::new();
@@ -4964,17 +4890,14 @@ fn derive_transports_emits_membergate_family_crossings() {
         door_crossings(&graph, 1596),
         vec![
             ((2935, 3451), 'E', (2936, 3451)),
-            ((2935, 3451), 'W', (2934, 3451)),
+            ((2935, 3451), 'W', (2935, 3451)),
         ],
         "1596 crosses both ways"
     );
     assert_eq!(
         door_crossings(&graph, 1597),
-        vec![
-            ((2935, 3450), 'E', (2936, 3450)),
-            ((2935, 3450), 'W', (2934, 3450)),
-        ],
-        "1597 crosses both ways"
+        vec![((2935, 3450), 'E', (2936, 3450))],
+        "1597 cannot land back on its MAP-blocked loc tile"
     );
     for id in [1560, 1561] {
         assert!(
@@ -5501,14 +5424,17 @@ param=next_loc_stage,death_fencegate_r
         door_crossings(&graph, 3725),
         vec![
             ((2824, 3555), 'E', (2825, 3555)),
-            ((2824, 3555), 'W', (2823, 3555)),
+            ((2824, 3555), 'W', (2824, 3555)),
         ],
         "the main member crosses both ways"
     );
     assert_eq!(
         door_crossings(&graph, 3726),
-        vec![((2824, 3554), 'E', (2825, 3554))],
-        "the outer member keeps only its standable east crossing"
+        vec![
+            ((2824, 3554), 'E', (2825, 3554)),
+            ((2824, 3554), 'W', (2824, 3554)),
+        ],
+        "scenery behind the loc does not block the reverse onto the loc tile"
     );
     for id in [3727, 3728] {
         assert!(
@@ -5706,7 +5632,7 @@ return;
         door_crossings(&graph, 5071),
         vec![
             ((2818, 3396), 'E', (2819, 3396)),
-            ((2818, 3396), 'W', (2817, 3396)),
+            ((2818, 3396), 'W', (2818, 3396)),
         ],
         "the valid control member must be admitted from the same fixture"
     );
@@ -5890,7 +5816,7 @@ category=gate_main_open
         door_crossings(&graph, 5081),
         vec![
             ((2817, 3396), 'E', (2818, 3396)),
-            ((2817, 3396), 'W', (2816, 3396)),
+            ((2817, 3396), 'W', (2817, 3396)),
         ],
         "the valid control must still be admitted"
     );
@@ -5898,7 +5824,7 @@ category=gate_main_open
         door_crossings(&graph, 5085),
         vec![
             ((2818, 3396), 'E', (2819, 3396)),
-            ((2818, 3396), 'W', (2817, 3396)),
+            ((2818, 3396), 'W', (2818, 3396)),
         ],
         "an unresolvable header must not steal the previous member"
     );
@@ -6184,8 +6110,8 @@ fn derive_transports_emits_magicguild_door_crossings() {
         door_crossings(&graph, 1600),
         vec![
             ((2584, 3088), 'E', (2585, 3088)),
-            ((2584, 3088), 'W', (2583, 3088)),
-            ((2597, 3087), 'E', (2598, 3087)),
+            ((2584, 3088), 'W', (2584, 3088)),
+            ((2597, 3087), 'E', (2597, 3087)),
             ((2597, 3087), 'W', (2596, 3087)),
         ],
         "1600 at the west and east guild doors"
@@ -6194,8 +6120,8 @@ fn derive_transports_emits_magicguild_door_crossings() {
         door_crossings(&graph, 1601),
         vec![
             ((2584, 3087), 'E', (2585, 3087)),
-            ((2584, 3087), 'W', (2583, 3087)),
-            ((2597, 3088), 'E', (2598, 3088)),
+            ((2584, 3087), 'W', (2584, 3087)),
+            ((2597, 3088), 'E', (2597, 3088)),
             ((2597, 3088), 'W', (2596, 3088)),
         ],
         "1601 paired with 1600"
@@ -6256,7 +6182,7 @@ fn magicguild_door_eligibility_follows_entering_axis() {
     let fx = Fixture::new();
     write_magicguild_source(&fx, magicguild_opener_script());
     let mut walk = Vec::new();
-    for x in 2580..=2583 {
+    for x in 2580..=2584 {
         walk.push((x, 3088));
     }
     for x in 2585..=2588 {
@@ -7366,14 +7292,6 @@ param=next_loc_stage,loc_1564
         }
     );
     assert_eq!(extras[0].dir, Some(DoorDir::W));
-    assert_eq!(
-        extras[1].to,
-        WorldTile {
-            x: 3269,
-            z: 3227,
-            level: 0
-        }
-    );
     assert_eq!(extras[1].dir, Some(DoorDir::E));
     for e in &extras {
         assert_eq!(e.kind, TransportKind::Door, "{e:?}");
@@ -7478,8 +7396,8 @@ param=next_loc_stage,loc_1522
         door_crossings(&graph, 1600),
         vec![
             ((2584, 3088), 'E', (2585, 3088)),
-            ((2584, 3088), 'W', (2583, 3088)),
-            ((2597, 3087), 'E', (2598, 3087)),
+            ((2584, 3088), 'W', (2584, 3088)),
+            ((2597, 3087), 'E', (2597, 3087)),
             ((2597, 3087), 'W', (2596, 3087)),
         ],
         "admitted left door still emits"
@@ -8062,7 +7980,7 @@ param=next_loc_stage,locked_door_open
         door_crossings(&graph, 2997),
         vec![
             ((2821, 3438), 'N', (2821, 3439)),
-            ((2821, 3438), 'S', (2821, 3437)),
+            ((2821, 3438), 'S', (2821, 3438)),
         ]
     );
     assert!(door_crossings(&graph, 3000).is_empty());
@@ -8487,7 +8405,7 @@ p_teleport($end);
     assert_eq!(
         door_crossings(&graph, 2068),
         vec![
-            ((2541, 3331), 'E', (2542, 3331)),
+            ((2541, 3331), 'E', (2541, 3331)),
             ((2541, 3331), 'W', (2540, 3331)),
         ]
     );

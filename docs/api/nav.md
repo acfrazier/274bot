@@ -184,6 +184,21 @@ jewellery teleports also carry a content-derived wilderness cap; `find`
 will not take them from a tile whose packed `wilderness_level` exceeds
 that cap. `find` also fail-closes on live `WorldState`.
 
+Straight wall doors join the loc's own tile (`at`) and the adjacent tile
+along its placement angle. Opening removes the closed wall between those
+two tiles; the reverse crossing lands back on `at`, not on a second tile
+behind the loc. Both landings must be standable, so this reconnects enclosed
+shop floors without jumping over scenery or snapping a standable origin.
+The follower requires crossing the wall before completing a hop, including
+arrival on `at` for the reverse. Diagonal doors keep their separate
+content-derived geometry.
+
+The corrected straight-door geometry uses generator version `nav-bake-2`.
+It changes no wire fields: the pack format stays `274V11`. The generator
+and producer-source digests invalidate staged bundles and trigger a normal
+rebake, with refreshed pack/reach/canlight/navpois bindings. Explicit custom
+packs baked with the previous generator need to be rebaked too.
+
 ### Quest-stage gates (`nav::quest_gates`)
 
 An edge that a quest stage opens carries `quest_gates: Option<QuestGates>`:
@@ -404,6 +419,11 @@ map path (panel UI GPU). `walk_status_text` mirrors the armed dest and
 clears on any terminal outcome. Place names keep `/` as a stored world-map
 line break; lists and canvas labels show a space. Canvas labels skip
 overlapping text (markers still draw; at most 32 labels).
+
+A present but non-standable origin refuses with `OriginNotStandable`
+("observed player tile is not standable"), without queuing a route or
+snapping across a wall. `NoOrigin` is reserved for a missing observed player;
+a present invalid origin plane uses `InvalidCoordinates`.
 
 ## Live tests
 

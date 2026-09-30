@@ -58,6 +58,7 @@ pub enum ActionError {
     NoSelection,
     Blocked,
     NoOrigin,
+    OriginNotStandable,
     NoFocus,
     Stale,
     NoNavigation,
@@ -73,6 +74,7 @@ impl fmt::Display for ActionError {
             Self::NoSelection => "Select a map destination first",
             Self::Blocked => "No walkable tile within radius 16 (or no proven POI stand)",
             Self::NoOrigin => "Walk/Teleport unavailable: no observed player",
+            Self::OriginNotStandable => "Walk unavailable: observed player tile is not standable",
             Self::NoFocus => "Walk/Teleport unavailable: no focused running slot",
             Self::Stale => "Map selection expired: nav identity or map binding changed",
             Self::NoNavigation => "Navigation unavailable",
@@ -763,8 +765,9 @@ impl MapModel {
                 t
             }
         };
-        if origin.is_none_or(|t| !(0..4).contains(&t.level)) {
-            return Err(ActionError::NoOrigin);
+        let origin = origin.ok_or(ActionError::NoOrigin)?;
+        if !(0..4).contains(&origin.level) {
+            return Err(ActionError::InvalidCoordinates);
         }
         current.focus.ok_or(ActionError::NoFocus)?;
         Ok(destination)
@@ -869,7 +872,7 @@ impl MapCommand {
     ) -> Result<Route, ActionError> {
         self.check(current, ActionKind::Walk)?;
         if !safe_standable(world, world_tile(self.origin)) {
-            return Err(ActionError::NoOrigin);
+            return Err(ActionError::OriginNotStandable);
         }
         if !safe_standable(world, world_tile(self.destination)) {
             return Err(ActionError::Blocked);

@@ -4,15 +4,14 @@ use super::*;
 /// `scripts/general_use/configs/gates.loc` (fence gates) openable ids +
 /// the jm2 LOC placements (on their game plane, every level), two edges
 /// per placement: `at` = the door loc tile, `dir` = the crossing direction
-/// and its opposite (a door is bidirectional), `to` = each crossing's
-/// adjacent landing tile when the collision admits it (otherwise no edge),
-/// `open_loc_id` = the config's `param=next_loc_stage` open leaf. `option`
-/// 1 is the `Open` op; each `to` is that crossing's arrival side, never a
-/// snap. A straight wall (`wall_straight`, shape 0) door crosses along its
-/// angle ([`door_far_side`]); a diagonal (`wall_diagonal`, shape 9) door
-/// crosses its tile only when its open is the generic `~open_door`
-/// ([`diagonal_door_crossings`]); any other shape has no `~door_open`
-/// offset in `door_procs.rs2` and is counted and left out.
+/// and its opposite (a door is bidirectional), `to` = the crossing's
+/// standable landing, `open_loc_id` = the config's open leaf. `option` 1
+/// is the `Open` op; `to` is never a snap. A straight wall (shape 0)
+/// separates `at` and its angle neighbour: the forward crossing lands on
+/// that neighbour and the reverse on `at` ([`straight_door_landing`]).
+/// A diagonal (shape 9) crosses its tile only when its open is the generic
+/// `~open_door` ([`diagonal_door_crossings`]); other shapes have no
+/// `~door_open` offset in `door_procs.rs2` and are counted and left out.
 ///
 /// Quest-gated doors (`scripts/quests/*/configs/*.loc` and
 /// `scripts/areas/*/configs/*.loc` named blocks) join the door set when
@@ -145,12 +144,12 @@ pub(super) fn door_edges(
                 z: p.z,
                 level: p.level,
             };
-            // A door is bidirectional: a crossing in each direction, each
-            // with an adjacent landing the collision admits. A blocked
-            // landing yields no edge; opening a door cannot erase scenery.
+            // Opening the wall joins its two sides, not the two tiles
+            // flanking the loc. Neither landing may erase scenery.
             let crossings = match p.shape {
-                LocShape::WALL_STRAIGHT => [angle_dir, opposite(angle_dir)]
-                    .map(|dir| door_far_side(at, dir, collision).map(|to| (dir, to))),
+                LocShape::WALL_STRAIGHT => [angle_dir, opposite(angle_dir)].map(|dir| {
+                    straight_door_landing(at, angle_dir, dir, collision).map(|to| (dir, to))
+                }),
                 LocShape::WALL_DIAGONAL if swings_off_tile => {
                     diagonal_door_crossings(at, p.angle, collision)
                 }

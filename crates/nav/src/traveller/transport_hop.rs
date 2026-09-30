@@ -205,15 +205,17 @@ pub(super) fn door_tile(edge: &TransportEdge) -> WorldTile {
     edge.at
 }
 
-/// Whether `here` has crossed a door edge to its far side. `dir` is the
-/// wall's crossing direction; proximity alone can match a near-side
-/// approach tile to `to` when `close_enough` is 2.
+/// Whether `here` is on the arrival side of the wall. A reverse straight
+/// crossing lands on `at` itself, so its boundary is inclusive. Other
+/// crossings retain the strict half-plane test; proximity alone must
+/// never count a near-side approach as a completed hop.
 pub(super) fn door_crossed(edge: &TransportEdge, here: WorldTile) -> bool {
+    let on_loc_side = edge.to == edge.at;
     match edge.dir {
-        Some(DoorDir::N) => here.z > edge.at.z,
-        Some(DoorDir::S) => here.z < edge.at.z,
-        Some(DoorDir::E) => here.x > edge.at.x,
-        Some(DoorDir::W) => here.x < edge.at.x,
+        Some(DoorDir::N) => here.z > edge.at.z || (on_loc_side && here.z == edge.at.z),
+        Some(DoorDir::S) => here.z < edge.at.z || (on_loc_side && here.z == edge.at.z),
+        Some(DoorDir::E) => here.x > edge.at.x || (on_loc_side && here.x == edge.at.x),
+        Some(DoorDir::W) => here.x < edge.at.x || (on_loc_side && here.x == edge.at.x),
         None => true,
     }
 }

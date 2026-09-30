@@ -120,7 +120,7 @@ pub(super) fn toll_edges(
             if p.level != 0 || p.shape != 0 {
                 continue;
             }
-            let Some(dir) = door_dir(p.angle) else {
+            let Some(angle_dir) = door_dir(p.angle) else {
                 continue;
             };
             let at = WorldTile {
@@ -128,8 +128,8 @@ pub(super) fn toll_edges(
                 z: p.z,
                 level: p.level,
             };
-            for dir in [dir, opposite(dir)] {
-                let Some(to) = door_far_side(at, dir, collision) else {
+            for dir in [angle_dir, opposite(angle_dir)] {
+                let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
                     continue;
                 };
                 let edge = |item_req, quest_req| TransportEdge {

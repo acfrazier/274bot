@@ -3778,6 +3778,54 @@ fn follow_far_dir_none_door_keeps_close_enough_tolerance() {
     }
 }
 
+#[test]
+fn follow_reverse_straight_door_waits_for_crossing_then_arrives_on_loc_tile() {
+    let mut c = scene_client();
+    plant_door(&mut c, false, 1);
+    let mut snap = snap_at(&mut c, 2, 0);
+    let mut rec = FollowRec {
+        route: Some((2, 0)),
+        ..FollowRec::default()
+    };
+    let mut edge = door_edge();
+    edge.to = edge.at;
+    edge.dir = Some(DoorDir::W);
+    edge.open_loc_id = Some(1531);
+    let dest = edge.to;
+    let route = Route {
+        legs: vec![Leg::Transport { edge }],
+        dest,
+        ticks: 1.0,
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions::default();
+    follow_still_pending(
+        &mut traveller,
+        &mut rec,
+        &snap,
+        &route,
+        &mut options,
+        "reverse Open",
+    );
+    assert_eq!(rec.loc_ops, 1);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(
+        traveller
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none(),
+        "adjacency on the pocket side must not count as crossing"
+    );
+    plant_player(&mut c, 1, 0);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(
+        matches!(
+            traveller.follow(&mut rec, &snap, route, &mut options),
+            Some(TravelOutcome::Arrived { at }) if at == dest
+        ),
+        "reverse crossing lands on the original loc tile"
+    );
+}
+
 /// Cardinal doors keep tolerant dest-adjacent completion under default 2.
 #[test]
 fn follow_cardinal_door_still_arrives_adjacent_to_to_under_default_close_enough() {

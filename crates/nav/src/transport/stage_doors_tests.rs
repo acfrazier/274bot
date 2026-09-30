@@ -145,7 +145,7 @@ fn quest_stage_double_doors_cross_only_with_the_completed_quest() {
     assert_eq!(
         door_crossings(&graph, 2624),
         vec![
-            ((2821, 3438), 'E', (2822, 3438)),
+            ((2821, 3438), 'E', (2821, 3438)),
             ((2821, 3438), 'W', (2820, 3438)),
         ]
     );
@@ -304,7 +304,7 @@ mes(\"The door is locked from the inside.\");
     let (graph, _) = derive_stage(&fx, &[2184]);
     assert_eq!(
         door_crossings(&graph, 2184),
-        vec![((2821, 3432), 'S', (2821, 3431))]
+        vec![((2821, 3432), 'S', (2821, 3432))]
     );
 }
 
@@ -552,7 +552,7 @@ if($key_used = true) {
     }
     assert_eq!(
         door_crossings(&graph, 2623),
-        vec![((2821, 3432), 'E', (2822, 3432))],
+        vec![((2821, 3432), 'E', (2821, 3432))],
         "the jail door lets its prisoner out only"
     );
     assert!(door_crossings(&graph, 950).is_empty());
