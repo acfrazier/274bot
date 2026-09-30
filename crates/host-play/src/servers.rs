@@ -341,6 +341,21 @@ fn create_new_server_file(
     match publish_result {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        // Filesystems without hard links (FAT/exFAT, some shares) keep the
+        // previous direct create_new publish; only there can a racing reader
+        // still see a partial file.
+        Err(_) => create_new_in_place(path, contents),
+    }
+}
+
+fn create_new_in_place(path: &Path, contents: &[u8]) -> std::io::Result<bool> {
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => file.write_all(contents).map(|()| true),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
         Err(error) => Err(error),
     }
 }
