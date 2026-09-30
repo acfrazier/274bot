@@ -185,6 +185,25 @@ impl ScriptStartHandle {
         }
         result
     }
+    /// Install a native card fixture through the same SlotScript lifecycle as
+    /// a compiled Start. This seam is test-only: it does not add a registry
+    /// card or another production start path.
+    #[cfg(test)]
+    pub(crate) fn start_test_script(
+        &self,
+        name: &str,
+        script: Box<dyn script::native::Script>,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) -> Result<api::selected::RunKey, String> {
+        let slot = script_slot_or_insert(&self.scripts, name);
+        let mut slot = slot
+            .lock()
+            .map_err(|_| format!("script slot retiring: {name}"))?;
+        slot.start_test_script(script, selected)?;
+        slot.native_run()
+            .ok_or_else(|| format!("test script did not publish a run: {name}"))
+    }
+
 
     /// `name`'s latest Start, read atomically (see [`Play::script_poll_start`]).
     pub fn poll_start(&self, name: &str) -> script::StartPoll {
