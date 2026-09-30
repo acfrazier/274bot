@@ -19,7 +19,7 @@ use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::grid::StepGrid;
-use crate::pack::{decode, decode_any_reader, decode_grid, BankStand, DecodedInput, PackError};
+use crate::pack::{decode, decode_any_reader, decode_grid, BankStand, PackError};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
@@ -88,12 +88,9 @@ impl NavWorld {
     /// reported as `BadVersion` rather than falling through to the grid.
     /// Accepted trailing bytes are drained without buffering.
     pub fn from_reader(reader: &mut impl BufRead, length: usize) -> Result<Self, PackError> {
-        match decode_any_reader(reader, length)? {
-            DecodedInput::Pack(collision, graph, banks) => {
-                Ok(Self::from_parts(collision, graph, banks))
-            }
-            DecodedInput::Grid(grid) => Ok(Self::from_grid(&grid)),
-        }
+        decode_any_reader(reader, length, Self::from_parts, |grid| {
+            Self::from_grid(&grid)
+        })
     }
 
     /// Load the baked nav pack (`$NAV_PACK` or the default path) into the

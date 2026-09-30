@@ -201,7 +201,7 @@ fn map_stream_error(error: io::Error) -> PackError {
     }
 }
 
-impl<'a> PackRead for Cursor<&'a [u8]> {
+impl PackRead for Cursor<&[u8]> {
     fn remaining(&self) -> usize {
         self.get_ref()
             .len()
@@ -394,30 +394,28 @@ fn decode_grid_body<R: PackRead>(mut r: R) -> Result<StepGrid, PackError> {
     Ok(StepGrid::from_parts(origin, width, height, walk, doors))
 }
 
-pub(super) enum DecodedInput {
-    Pack(WorldCollision, TransportGraph, Vec<BankStand>),
-    Grid(StepGrid),
-}
-
 /// Dispatch a bounded stream by magic, preserving the legacy-grid fallback
 /// and draining accepted trailing bytes for callers that hash while reading.
-pub(super) fn decode_any_reader<R: BufRead>(
+pub(super) fn decode_any_reader<R: BufRead, T>(
     reader: &mut R,
     length: usize,
-) -> Result<DecodedInput, PackError> {
+    from_pack: impl FnOnce(WorldCollision, TransportGraph, Vec<BankStand>) -> T,
+    from_grid: impl FnOnce(StepGrid) -> T,
+) -> Result<T, PackError> {
     let mut r = BoundedReader::new(reader, length);
     let mut magic = [0u8; 4];
     r.read_bytes_exact(&mut magic)?;
-    let decoded = if &magic == MAGIC {
+    if &magic == MAGIC {
         let (collision, graph, banks) = decode_pack_body(&mut r)?;
-        DecodedInput::Pack(collision, graph, banks)
+        r.drain_remaining()?;
+        Ok(from_pack(collision, graph, banks))
     } else if &magic == MAGIC_GRID {
-        DecodedInput::Grid(decode_grid_body(&mut r)?)
+        let grid = decode_grid_body(&mut r)?;
+        r.drain_remaining()?;
+        Ok(from_grid(grid))
     } else {
-        return Err(PackError::BadMagic);
-    };
-    r.drain_remaining()?;
-    Ok(decoded)
+        Err(PackError::BadMagic)
+    }
 }
 
 fn read_magic<R: PackRead>(r: &mut R, expected: &[u8; 4]) -> Result<(), PackError> {
