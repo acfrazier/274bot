@@ -1,11 +1,112 @@
 // Compat (JS API v1) declarations — generated declarations gated against the live shim.
 use script::compat_dts::{
     check_compat_dts_drift, collect_compat_surface_from, compat_dts_path, drift_against_shim,
-    load_authored_dts, load_authored_dts_from,
+    load_authored_dts, load_authored_dts_from, shim_source_pairs,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+/// Rebuild the live shim surface after changing exactly one real shim source.
+fn drift_for_shim_replacement(suffix: &str, before: &str, after: &str) -> Vec<String> {
+    let mut sources = shim_source_pairs();
+    let (specifier, source) = sources
+        .iter_mut()
+        .find(|(specifier, _)| specifier.ends_with(suffix))
+        .unwrap_or_else(|| panic!("no shim source ending in {suffix}"));
+    assert_eq!(
+        source.matches(before).count(),
+        1,
+        "expected exactly one `{before}` in {specifier}"
+    );
+    *source = source.replacen(before, after, 1);
+    let sources: Vec<_> = sources
+        .iter()
+        .map(|(specifier, source)| (specifier.as_str(), source.as_str()))
+        .collect();
+    let shim = collect_compat_surface_from(&sources);
+    drift_against_shim(
+        &load_authored_dts().expect("generated compat declarations"),
+        &shim,
+    )
+}
+
+#[test]
+fn drift_gate_rejects_async_to_sync_bank_member_mutation() {
+    let drifts = drift_for_shim_replacement(
+        "/api/bank/Bank.js",
+        "async depositAllExcept(",
+        "depositAllExcept(",
+    );
+    assert!(
+        drifts
+            .iter()
+            .any(|drift| drift.contains("Bank.depositAllExcept async-ness")),
+        "a synchronous Bank.depositAllExcept must not satisfy a Promise declaration: {drifts:?}"
+    );
+}
+
+#[test]
+fn drift_gate_rejects_async_to_sync_function_mutation() {
+    let drifts = drift_for_shim_replacement(
+        "/api/bank/BankLocations.js",
+        "export async function nearestBankReachable(",
+        "export function nearestBankReachable(",
+    );
+    assert!(
+        drifts
+            .iter()
+            .any(|drift| drift.contains("nearestBankReachable async-ness")),
+        "a synchronous nearestBankReachable must not satisfy a Promise declaration: {drifts:?}"
+    );
+}
+
+#[test]
+fn drift_gate_accepts_sync_or_async_bot_loop_contract() {
+    let authored = load_authored_dts().expect("generated compat declarations");
+    let shim = script::compat_dts::collect_compat_surface();
+    let drifts = drift_against_shim(&authored, &shim);
+    assert!(
+        !drifts.iter().any(|drift| drift.contains("LoopingBot.loop async-ness")),
+        "LoopingBot.loop legitimately permits synchronous or Promise results: {drifts:?}"
+    );
+    let loop_decl = authored
+        .modules
+        .iter()
+        .flat_map(|module| module.exports.iter())
+        .find_map(|export| match export {
+            script::compat_dts::CompatExport::Class { name, members, .. } if name == "LoopingBot" => {
+                members.iter().find(|member| member.name == "loop")
+            }
+            _ => None,
+        })
+        .expect("authored LoopingBot.loop declaration");
+    assert!(loop_decl.is_async, "declaration union includes Promise");
+    assert!(
+        loop_decl.allows_non_promise,
+        "declaration union also includes synchronous results"
+    );
+}
+
+#[test]
+fn authored_tree_preserves_header_and_sibling_imports() {
+    let dir = unique_temp_path("tree");
+    script::compat_dts::write_compat_dts_tree(&dir).expect("write declaration tree");
+    let index = fs::read_to_string(compat_dts_path()).expect("read generated declarations");
+    let header_end = index.find("declare module").expect("ambient module header");
+    let header = &index[..header_end];
+    let banking =
+        fs::read_to_string(dir.join("api/bank/Banking.d.ts")).expect("read Banking tree module");
+    assert!(
+        header.contains("MIT License") && banking.starts_with(header),
+        "declaration-tree files retain the generated MIT preamble"
+    );
+    assert!(
+        banking.contains("from \"./BankLocations.js\"")
+            && banking.contains("from \"./bankRules.js\""),
+        "same-directory declaration imports need explicit ./ specifiers:\n{banking}"
+    );
+    fs::remove_dir_all(&dir).expect("remove generated declaration tree");
+}
 
 #[test]
 fn compat_dts_is_fresh() {
@@ -43,6 +144,178 @@ fn generator_check_matches_frozen_emit_and_overlay() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// Exercise an extension in an isolated copy: add a runtime barrel re-export
+/// and typed sidecar, regenerate, and verify freshness plus the Rust drift gate.
+#[test]
+#[ignore = "requires npm, node, and RS2B0T set to the frozen rs2b0t source"]
+fn scratch_barrel_sidecar_extension_passes_freshness_and_drift_gates() {
+    let rs2b0t = std::env::var_os("RS2B0T")
+        .expect("set RS2B0T to the frozen rs2b0t 00d39a17e0 source");
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let scratch = unique_temp_path("runtime-extension");
+    let crate_copy = scratch.join("crate");
+    let compat_js = crate_copy.join("compat-js");
+    let shim_dir = crate_copy.join("src/shim");
+    copy_tree(&manifest.join("compat-js"), &compat_js).expect("copy compat-js emitter inputs");
+    copy_tree(&manifest.join("src/shim"), &shim_dir).expect("copy shim barrel and modules");
+
+    let barrel_path = shim_dir.join("declared_surface.js");
+    let mut barrel = fs::read_to_string(&barrel_path).expect("read isolated runtime barrel");
+    assert!(
+        !barrel.contains("export { Gatherer }"),
+        "the temporary extension must not already be present in the runtime barrel"
+    );
+    barrel.push_str("\nexport { Gatherer } from '../../api/gather/Gatherer.js';\n");
+    fs::write(&barrel_path, barrel).expect("add isolated runtime barrel re-export");
+    let sidecar_dir = compat_js.join("api/gather");
+    fs::create_dir_all(&sidecar_dir).expect("create Gatherer sidecar directory");
+    fs::write(
+        sidecar_dir.join("Gatherer.d.ts"),
+        r#"/** Isolated O-SCRIPT-API extension proof. */
+export type GatherMode = 'woodcut' | 'mine' | 'fish' | 'harvest';
+export interface GatherStart {
+  ok: boolean;
+  site: string;
+}
+export const Gatherer: {
+  start(mode: GatherMode): Promise<GatherStart>;
+};
+"#,
+    )
+    .expect("write isolated Gatherer sidecar");
+
+    let install = Command::new("npm")
+        .arg("ci")
+        .current_dir(&compat_js)
+        .output()
+        .expect("spawn npm ci for isolated generator");
+    assert!(
+        install.status.success(),
+        "isolated npm ci failed:\n{}\n{}",
+        String::from_utf8_lossy(&install.stdout),
+        String::from_utf8_lossy(&install.stderr)
+    );
+
+    let generate = Command::new("node")
+        .arg("generate.cjs")
+        .env("RS2B0T", &rs2b0t)
+        .current_dir(&compat_js)
+        .output()
+        .expect("spawn frozen declaration generator");
+    assert!(
+        generate.status.success(),
+        "isolated generator failed:\n{}\n{}",
+        String::from_utf8_lossy(&generate.stdout),
+        String::from_utf8_lossy(&generate.stderr)
+    );
+    let freshness = Command::new("node")
+        .args(["generate.cjs", "--check"])
+        .env("RS2B0T", &rs2b0t)
+        .current_dir(&compat_js)
+        .output()
+        .expect("spawn isolated generator freshness check");
+    assert!(
+        freshness.status.success(),
+        "isolated generator --check failed:\n{}\n{}",
+        String::from_utf8_lossy(&freshness.stdout),
+        String::from_utf8_lossy(&freshness.stderr)
+    );
+
+    let authored = load_authored_dts_from(&compat_js).expect("load generated extension surface");
+    let gatherer = authored
+        .modules
+        .iter()
+        .find(|module| module.specifier.ends_with("api/gather/Gatherer.js"))
+        .expect("load authored Gatherer sidecar");
+    assert!(gatherer.extension_file, "Gatherer comes from the typed sidecar");
+    let drifts = drift_against_shim(
+        &authored,
+        &script::compat_dts::collect_compat_surface(),
+    );
+    assert!(
+        drifts.is_empty(),
+        "rendered runtime barrel plus typed sidecar must satisfy the live drift gate: {drifts:?}"
+    );
+
+    let wrong_revision = scratch.join("wrong-rs2b0t");
+    fs::create_dir_all(&wrong_revision).expect("create wrong-revision repository");
+    let init = Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&wrong_revision)
+        .output()
+        .expect("spawn git init for wrong-revision probe");
+    assert!(
+        init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    fs::write(wrong_revision.join("revision.txt"), "not the frozen source\n")
+        .expect("write wrong-revision fixture");
+    let add = Command::new("git")
+        .args(["add", "revision.txt"])
+        .current_dir(&wrong_revision)
+        .output()
+        .expect("spawn git add for wrong-revision probe");
+    assert!(
+        add.status.success(),
+        "git add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let commit = Command::new("git")
+        .args([
+            "-c",
+            "user.name=Compat DTS Test",
+            "-c",
+            "user.email=compat-dts@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "wrong frozen source",
+        ])
+        .current_dir(&wrong_revision)
+        .output()
+        .expect("spawn git commit for wrong-revision probe");
+    assert!(
+        commit.status.success(),
+        "git commit failed: {}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+    let actual_wrong_commit = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&wrong_revision)
+        .output()
+        .expect("read wrong-revision commit");
+    assert!(actual_wrong_commit.status.success());
+    let actual_wrong_commit = String::from_utf8_lossy(&actual_wrong_commit.stdout)
+        .trim()
+        .to_string();
+    assert_ne!(
+        actual_wrong_commit,
+        "00d39a17e056df6c5e461f3f2cfd3598ff9720b6"
+    );
+    let rejected = Command::new("node")
+        .arg("generate.cjs")
+        .env("RS2B0T", &wrong_revision)
+        .current_dir(&compat_js)
+        .output()
+        .expect("spawn wrong-revision rejection probe");
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(!rejected.status.success(), "wrong revision unexpectedly accepted");
+    assert!(
+        stderr.contains(
+            "RS2B0T revision check failed: expected 00d39a17e0 (00d39a17e056df6c5e461f3f2cfd3598ff9720b6)"
+        ),
+        "wrong-revision failure must have the stable prefix: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("git HEAD is {actual_wrong_commit}")),
+        "wrong-revision diagnostic must report the actual commit {actual_wrong_commit}: {stderr}"
+    );
+    fs::remove_dir_all(&scratch).expect("remove isolated generator copy");
 }
 
 /// Exercise the declaration-tree export used by frozen recounts. Set COMPAT_DTS_TREE
@@ -150,10 +423,87 @@ fn tsc_valid_consumer_probe_has_zero_diagnostics() {
     );
 }
 
+/// Compile an actual per-module consumer so same-directory `./` imports resolve.
+#[test]
+#[ignore = "requires npx and TypeScript 5.8.3"]
+fn tsc_generated_bank_tree_resolves_sibling_imports() {
+    let dir = unique_temp_path("bank-tree-consumer");
+    script::compat_dts::write_compat_dts_tree(&dir).expect("write declaration tree");
+    let consumer = dir.join("consumer.ts");
+    fs::write(
+        &consumer,
+        r#"
+import { Banking, PERIODIC_BANK_SETTINGS, depositAllExcept } from "./api/bank/Banking.js";
+
+void Banking.open();
+void depositAllExcept(["junk"]);
+const settings: typeof PERIODIC_BANK_SETTINGS = PERIODIC_BANK_SETTINGS;
+void settings;
+// @ts-expect-error periodic bank settings are structured data, not a number
+const invalid: number = PERIODIC_BANK_SETTINGS;
+void invalid;
+"#,
+    )
+    .expect("write bank-tree consumer");
+    let output = tsc_command()
+        .args([
+            "--noEmit",
+            "--strict",
+            "--target",
+            "ESNext",
+            "--module",
+            "ESNext",
+            "--moduleResolution",
+            "Bundler",
+            "--skipLibCheck",
+            "false",
+        ])
+        .arg(&consumer)
+        .output()
+        .unwrap_or_else(|e| panic!("tsc generated-tree consumer failed to spawn: {e}"));
+    assert!(
+        output.status.success(),
+        "generated-tree consumer failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(&dir).expect("remove generated-tree consumer");
+}
+
 fn tsc_command() -> Command {
     let mut npx = Command::new("npx");
     npx.args(["-p", "typescript@5.8.3", "--yes", "tsc"]);
     npx
+}
+
+fn unique_temp_path(label: &str) -> PathBuf {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time after Unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "compat-dts-{label}-{}-{timestamp}",
+        std::process::id()
+    ))
+}
+
+fn copy_tree(source: &Path, target: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(target)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if matches!(name.to_string_lossy().as_ref(), "node_modules" | ".git") {
+            continue;
+        }
+        let from = entry.path();
+        let to = target.join(name);
+        if entry.file_type()?.is_dir() {
+            copy_tree(&from, &to)?;
+        } else {
+            fs::copy(from, to)?;
+        }
+    }
+    Ok(())
 }
 
 /// Locate the barrel structurally so TypeScript printer quoting and whitespace are irrelevant.
