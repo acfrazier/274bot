@@ -163,6 +163,7 @@
           "args": {
             "target": { "name": "Hopper controls" },
             "op": "Operate",
+            "anchor": { "tile": [3166, 3305, 2], "source": "S1 integration review Nit-2; re-approach hopper controls after respawn" },
             "radius": 8,
             "settle_ms": 20000
           },
