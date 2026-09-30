@@ -4,11 +4,12 @@
 //! the running Start report), and a row that cannot take the command is
 //! skipped with its reason.
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::bulk::{BulkOutcome, BulkReport, BulkRow};
 use crate::scripts::{Scripts, SyncScope};
-use crate::selection::{profile_rows, MarkedSelection};
+use crate::selection::{profile_rows, BulkSkip, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::SlotSurface;
 use crate::views::Phase;
@@ -35,6 +36,76 @@ fn resolve<Io>(selection: &MarkedSelection, core: &OperatorSession<Io>) -> Resol
     }
     names.sort();
     Resolved { names, gone }
+}
+
+/// The outcome of one command admitted against a frozen marked-row snapshot.
+///
+/// `accepted + skipped.len()` is the number of rows in the snapshot that were
+/// selected. Callers should retain this report rather than inferring success
+/// from the number of marked rows after the command: a profile can disappear
+/// or change readiness while the per-row admission closure runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkedCommandReport {
+    pub accepted: usize,
+    pub skipped: Vec<BulkSkip>,
+}
+
+impl MarkedCommandReport {
+    pub fn total(&self) -> usize {
+        self.accepted + self.skipped.len()
+    }
+
+    pub fn summary(&self, action: &str) -> String {
+        let mut text = format!(
+            "{action}: accepted {}, skipped {}",
+            self.accepted,
+            self.skipped.len()
+        );
+        let mut sep = ": ";
+        for skip in &self.skipped {
+            let _ = write!(text, "{sep}{}: {}", skip.profile, skip.reason);
+            sep = ", ";
+        }
+        text
+    }
+}
+
+/// Admit one command on each marked row in a frozen identity/name snapshot.
+///
+/// The caller supplies rows as owned values before invoking the closure. This
+/// is intentional: admission may wake workers and publish status changes, but
+/// those changes must not alter which names this command reports or targets.
+pub fn run_marked_command<I, F>(
+    selection: &MarkedSelection,
+    rows: I,
+    mut admit: F,
+) -> MarkedCommandReport
+where
+    I: IntoIterator<Item = (ProfileIdentity, String)>,
+    F: FnMut(&str) -> Result<(), String>,
+{
+    let rows: Vec<_> = rows.into_iter().collect();
+    let mut report = MarkedCommandReport {
+        accepted: 0,
+        skipped: Vec::new(),
+    };
+    for identity in selection.iter() {
+        let Some((_, profile)) = rows.iter().find(|(row_id, _)| *row_id == identity) else {
+            report.skipped.push(BulkSkip {
+                profile: format!("profile#{}", identity.raw()),
+                reason: "profile unavailable".into(),
+            });
+            continue;
+        };
+        match admit(profile) {
+            Ok(()) => report.accepted += 1,
+            Err(reason) => report.skipped.push(BulkSkip {
+                profile: profile.clone(),
+                reason,
+            }),
+        }
+    }
+    report
 }
 
 fn unavailable_rows(gone: Vec<String>) -> Vec<BulkRow> {

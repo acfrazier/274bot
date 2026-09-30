@@ -44,7 +44,8 @@ pub use map_bake::{
 };
 pub use marked::{
     assign_and_restart_marked, assign_marked, login_marked, logout_marked,
-    prepare_apply_settings_marked, restart_scope, RestartScope,
+    prepare_apply_settings_marked, restart_scope, run_marked_command, MarkedCommandReport,
+    RestartScope,
 };
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use profile_form::{
@@ -54,8 +55,7 @@ pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use selection::{
-    run_marked_command, start_marked, stop_marked, BulkSkip, MarkedCommandReport, MarkedSelection,
-    ProfileIdentity, StopReport,
+    start_marked, stop_marked, BulkSkip, MarkedSelection, ProfileIdentity, StopReport,
 };
 pub use session::{
     ArmMirror, MemoryNotice, OperatorSession, Removal, ScriptStart, Selection, SlotTransition,

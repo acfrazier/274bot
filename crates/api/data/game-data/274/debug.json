@@ -862,7 +862,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
