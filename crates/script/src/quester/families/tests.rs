@@ -1,7 +1,8 @@
 use super::*;
 use crate::native::{ledger, HostEffect, NativeOutput, NativeTick, RetainedMemory, ScriptStatus};
 use api::obj_names::ItemDefView;
-use api::selected::{ClientRevision, RunKey};
+use api::quest_progress::{EvidenceStamp, ProgressFlag, QuestProgress};
+use api::selected::{ClientRevision, FactKey, Knowledge, RunKey, Truth};
 use api::snapshot::{
     GameSnapshot, GroundItemView, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView,
     SnapshotView,
@@ -905,6 +906,76 @@ fn real_empty_hopper_message_clears_the_loaded_hint() {
                 outcome: None,
             };
             assert_eq!(loaded.evaluate(&pred), Truth::False);
+        });
+    });
+}
+
+#[test]
+fn progress_predicates_require_known_same_run_evidence() {
+    compile_context_test(|cx| {
+        let stage = compile_predicate(
+            &PredicateDocument::Fact {
+                kind: "stage_in".into(),
+                version: 1,
+                args: serde_json::json!({"quest":"cook","any":["cook:1"]}),
+            },
+            cx,
+        )
+        .unwrap();
+        let flag = compile_predicate(
+            &PredicateDocument::Fact {
+                kind: "flag".into(),
+                version: 1,
+                args: serde_json::json!({"quest":"cook","flag":"feather"}),
+            },
+            cx,
+        )
+        .unwrap();
+        let snapshot = ready();
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |t| {
+            let unknown = PredicateContext {
+                cx: &t.cx,
+                quests: cx.quests,
+                progress: &[],
+                required_after: t.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+            };
+            assert_eq!(stage.evaluate(&unknown), Truth::Unknown);
+            assert_eq!(flag.evaluate(&unknown), Truth::Unknown);
+
+            let evidence = t.cx.evidence();
+            let pin = cx.selected.selected_pin().unwrap();
+            let progress = [QuestProgress {
+                quest: FactKey::new("cook"),
+                stage: Knowledge::Known(FactKey::new("cook:1")),
+                complete: Truth::False,
+                signals: Arc::from(Vec::<api::selected::SignalRange>::new()),
+                flags: Arc::from(vec![ProgressFlag {
+                    flag: FactKey::new("feather"),
+                    truth: Truth::True,
+                    count: None,
+                }]),
+                evidence,
+                binding: FactKey::new("journal:cook"),
+                role: None,
+                rule: Knowledge::Known(FactKey::new("cook:1")),
+                pin,
+            }];
+            let known = PredicateContext {
+                cx: &t.cx,
+                quests: cx.quests,
+                progress: &progress,
+                required_after: EvidenceStamp {
+                    tick: evidence.tick + 10,
+                    ..evidence
+                },
+                chat_since: 0,
+                outcome: None,
+            };
+            assert_eq!(stage.evaluate(&known), Truth::True);
+            assert_eq!(flag.evaluate(&known), Truth::True);
         });
     });
 }
