@@ -281,6 +281,7 @@ struct GatherSlot {
     start_requested: bool,
     baseline: Option<Observation>,
     latest: Option<Observation>,
+    unsettled_items: BTreeMap<(i32, i32), Instant>,
     witness: Witness,
     error: Option<String>,
 }
@@ -302,6 +303,7 @@ impl GatherSlot {
             start_requested: false,
             baseline: None,
             latest: None,
+            unsettled_items: BTreeMap::new(),
             witness: Witness::default(),
             error: None,
         }
@@ -401,6 +403,29 @@ impl GatherSlot {
         {
             return Err("Gatherer fetched the unusable banked pickaxe".into());
         }
+        // Inventory and equipment arrive in separate packets. A removed tool
+        // must reappear in an observed container within the settlement bound.
+        self.unsettled_items.retain(|&(id, count), _| {
+            !observation
+                .inventory
+                .values()
+                .any(|item| item.id == id && item.count == count)
+                && !self
+                    .snapshot
+                    .equipment()
+                    .iter()
+                    .any(|item| item.def.id == id && item.count == count)
+        });
+        if let Some((&(id, count), _)) = self
+            .unsettled_items
+            .iter()
+            .find(|(_, since)| since.elapsed() >= Duration::from_secs(2))
+        {
+            return Err(format!(
+                "{}: non-product id {id} count {count} was not conserved",
+                self.cell.name()
+            ));
+        }
         if let Some(previous) = previous {
             for (slot, old) in &previous.inventory {
                 if self.cell.products().contains(&old.id) {
@@ -408,13 +433,16 @@ impl GatherSlot {
                         self.witness.confirmed_drops =
                             self.witness.confirmed_drops.saturating_add(1);
                     }
-                } else if !observation.inventory.contains_key(slot) {
-                    return Err(format!(
-                        "{}: non-product id {} disappeared from slot {}",
-                        self.cell.name(),
-                        old.id,
-                        slot
-                    ));
+                } else if !observation.inventory.contains_key(slot)
+                    && !self
+                        .snapshot
+                        .equipment()
+                        .iter()
+                        .any(|item| item.def.id == old.id && item.count == old.count)
+                {
+                    self.unsettled_items
+                        .entry((old.id, old.count))
+                        .or_insert_with(Instant::now);
                 }
             }
         }
@@ -1261,7 +1289,13 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 witness.run_key_changed && witness.confirmed_drops >= 28
             }
         };
-        if done {
+        if done
+            && state
+                .lock()
+                .map_err(|_| "live state poisoned")?
+                .unsettled_items
+                .is_empty()
+        {
             break Ok(());
         }
         let deadline = if phase == Prep::Running {

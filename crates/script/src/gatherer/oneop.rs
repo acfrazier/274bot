@@ -24,11 +24,11 @@ pub struct OneOp {
 }
 
 impl OneOpArgs {
-    pub fn wear(name: Arc<str>, item_id: i32) -> Self {
+    pub fn wear(name: Arc<str>, item_id: i32, action: &str) -> Self {
         Self {
             request: InteractReq::Held {
                 name: name.to_string(),
-                action: "Wear".into(),
+                action: action.into(),
                 slot: None,
             },
             kind: OneOpKind::Wear { item_id },

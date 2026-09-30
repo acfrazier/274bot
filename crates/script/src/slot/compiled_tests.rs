@@ -702,6 +702,69 @@ fn queue_gatherer_drop(
 }
 
 #[test]
+fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
+    let mut snapshot = gatherer_snapshot();
+    let equipped = snapshot.equipment()[0].clone();
+    let mut held = equipped.clone();
+    held.container = api::snapshot::ItemContainer::Inventory;
+    held.actions = vec![Some("Wield".into()), Some("Drop".into())];
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_inventory(vec![held.clone()], 28);
+    let mut slot = gatherer_slot(92);
+    let mut equip_tick = None;
+    for tick in 1..17 {
+        gatherer_tick(&mut slot, &snapshot, tick);
+        if let Some(action) = slot.take_native_action() {
+            let crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+                name,
+                action: operation,
+                ..
+            }) = &action.effect
+            else {
+                panic!("gathering must wait for observed equipment");
+            };
+            assert_eq!(name, held.def.name.as_ref().unwrap());
+            assert!(
+                held.actions
+                    .iter()
+                    .flatten()
+                    .any(|candidate| candidate == operation),
+                "equip request must resolve an available operation, got {operation}"
+            );
+            assert_ne!(operation, "Drop", "the tool is protected");
+            equip_tick = Some(tick);
+            break;
+        }
+    }
+    let tick = equip_tick.expect("held usable tool must enter equipment admission");
+    gatherer_tick(&mut slot, &snapshot, tick + 1);
+    assert!(
+        !slot.has_native_actions(),
+        "dispatch is not observed equipment"
+    );
+    snapshot.seed_equipment(vec![equipped]);
+    snapshot.seed_inventory(Vec::new(), 28);
+    for next in tick + 2..tick + 10 {
+        gatherer_tick(&mut slot, &snapshot, next);
+        if let Some(action) = slot.take_native_action() {
+            assert!(
+                matches!(
+                    action.effect,
+                    crate::native::HostEffect::Walk(_)
+                        | crate::native::HostEffect::Interaction(
+                            crate::shim::InteractReq::Loc { .. }
+                        )
+                ),
+                "observed equipment must advance to a resource, not repeat equip"
+            );
+            slot.stop();
+            return;
+        }
+    }
+    panic!("observed equipment must release gathering admission");
+}
+
+#[test]
 fn gatherer_slot_stop_pause_and_watchdog_revoke_every_undrained_drop() {
     let snapshot = gatherer_snapshot();
     for boundary in 0..3 {

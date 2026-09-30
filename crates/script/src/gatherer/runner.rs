@@ -427,13 +427,23 @@ impl Gatherer {
             );
             return;
         };
+        let Some(action) = row.actions.iter().flatten().find(|action| {
+            action.eq_ignore_ascii_case("Wield") || action.eq_ignore_ascii_case("Wear")
+        }) else {
+            self.fail(
+                "tool-unusable",
+                "the selected tool has no observed equip action",
+                false,
+            );
+            return;
+        };
         if !self.fence.reserve(1) {
             return;
         }
-        match tick
-            .actions
-            .begin::<OneOp>(OneOpArgs::wear(Arc::from(name), self.tool.id), &mut tick.cx)
-        {
+        match tick.actions.begin::<OneOp>(
+            OneOpArgs::wear(Arc::from(name), self.tool.id, action),
+            &mut tick.cx,
+        ) {
             Ok(handle) => {
                 self.active = Active::Tend(handle);
                 self.set_event("wielding tool");
