@@ -52,47 +52,41 @@ impl FormNotice {
 }
 
 /// A durable save seen by [`ProfileFormSave::settle`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SavedProfile {
-    /// The profile written (a rename's new name).
-    pub name: String,
+    /// The operation's record of the save: the profile written
+    /// (`destination`, a rename's new name) and the draft it carried.
+    pub record: SaveRecord,
     /// Whether the form it was submitted from is still showing. That form
     /// now shows `Saved <name>.`.
     pub same_form: bool,
 }
 
 /// A save whose write failed, seen by [`ProfileFormSave::settle`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FailedSave {
-    /// The profile the save would have written.
-    pub name: String,
+    /// The operation's record of the save: the profile it would have
+    /// written and the draft that did not land.
+    pub record: SaveRecord,
     /// Whether the form it was submitted from is still showing. That form
     /// now shows the failure, and still holds the draft.
     pub same_form: bool,
 }
 
 /// One settled save.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FormSettled {
     Saved(SavedProfile),
     Failed(FailedSave),
 }
 
-/// An accepted save whose write has not settled, and the form instance it
-/// was submitted from.
-#[derive(Debug)]
-struct Submitted {
-    op: OperationId,
-    name: String,
-    form: u64,
-}
-
-/// One profile edit form's save feedback: which form instance is showing,
-/// the saves still being written, and the form's notice.
+/// One profile edit form's save feedback: which form instance is showing
+/// and the form's notice. The saves themselves are the session's
+/// [`SaveRecord`]s, owned by their write operations; the form asks the
+/// session which of them are its own (a session has one such form).
 #[derive(Debug, Default)]
 pub struct ProfileFormSave {
     form: u64,
-    submitted: Vec<Submitted>,
     notice: Option<FormNotice>,
 }
 
@@ -120,7 +114,7 @@ impl ProfileFormSave {
     /// `destination` (a rename's or a new profile's name) from a form that
     /// was editing `source` (`None` for a new profile). The record of it,
     /// with the draft the write carries (the staged row), is registered on
-    /// `core` under `op`.
+    /// `core` under `op`; it is the only state of the save.
     pub fn submitted<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -137,61 +131,67 @@ impl ProfileFormSave {
         core.track_save(SaveRecord {
             op,
             source: source.map(str::to_string),
-            destination: destination.clone(),
+            destination,
             draft,
             form: self.form,
         });
-        self.submitted.push(Submitted {
-            op,
-            name: destination,
-            form: self.form,
-        });
     }
 
-    /// Whether this form instance's own save is still being written: the
-    /// form holds a draft whose write can still fail, so leaving it is not
-    /// free.
-    pub fn saving(&self) -> bool {
-        self.submitted.iter().any(|s| s.form == self.form)
+    /// This form instance's own saves that `core` has not settled: the form
+    /// holds a draft whose write can still fail.
+    fn own<'a, Io>(&self, core: &'a OperatorSession<Io>) -> impl Iterator<Item = &'a SaveRecord> {
+        let form = self.form;
+        core.saves_in_flight()
+            .iter()
+            .filter(move |r| r.form == form)
     }
 
-    /// The profile the newest save still in flight writes, whichever form it
-    /// came from.
-    pub fn in_flight(&self) -> Option<&str> {
-        self.submitted.last().map(|s| s.name.as_str())
+    /// Whether this form instance's own save is still being written:
+    /// leaving the form is not free, since the write can still fail.
+    pub fn saving<Io>(&self, core: &OperatorSession<Io>) -> bool {
+        self.own(core).next().is_some()
+    }
+
+    /// The profile the newest of this form instance's saves still in flight
+    /// writes.
+    pub fn saving_name<'a, Io>(&self, core: &'a OperatorSession<Io>) -> Option<&'a str> {
+        self.own(core).last().map(|r| r.destination.as_str())
     }
 
     pub fn notice(&self) -> Option<&FormNotice> {
         self.notice.as_ref()
     }
 
-    /// Settle the saves in flight from their operations' records. Each
-    /// durable save is [`FormSettled::Saved`], each failed write
-    /// [`FormSettled::Failed`]; the form they came from, if still showing,
-    /// gets the notice. A save whose profile a later write removed settles
-    /// silently.
+    /// Settle the saves the session has finished writing, from their
+    /// records. Each durable save is [`FormSettled::Saved`], each failed
+    /// write [`FormSettled::Failed`]; the form they came from, if still
+    /// showing, gets the notice. A save whose profile a later write removed
+    /// settles silently.
     pub fn settle<Io>(&mut self, core: &mut OperatorSession<Io>) -> Vec<FormSettled> {
         let mut settled = Vec::new();
-        let mut i = 0;
-        while i < self.submitted.len() {
-            let Some(done) = core.take_save(self.submitted[i].op) else {
-                i += 1;
-                continue;
-            };
-            let Submitted { name, form, .. } = self.submitted.remove(i);
-            let same_form = form == self.form;
+        for done in core.take_settled_saves() {
+            let same_form = done.record.form == self.form;
             match done.result {
                 SaveResult::Saved => {
                     if same_form {
-                        self.notice = Some(FormNotice::Saved(format!("Saved {name}.")));
+                        self.notice = Some(FormNotice::Saved(format!(
+                            "Saved {}.",
+                            done.record.destination
+                        )));
                     }
-                    settled.push(FormSettled::Saved(SavedProfile { name, same_form }));
+                    settled.push(FormSettled::Saved(SavedProfile {
+                        record: done.record,
+                        same_form,
+                    }));
                 }
                 SaveResult::Failed(failure) => {
                     if same_form {
                         self.notice = Some(FormNotice::Failed(failure.to_string()));
                     }
-                    settled.push(FormSettled::Failed(FailedSave { name, same_form }));
+                    settled.push(FormSettled::Failed(FailedSave {
+                        record: done.record,
+                        same_form,
+                    }));
                 }
                 SaveResult::Gone => {}
             }

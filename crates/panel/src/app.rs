@@ -4226,26 +4226,31 @@ fn chooser_dock_id(panel: Option<Id>) -> Option<Id> {
     panel
 }
 
-/// Unsaved-changes prompt for a staged edit-target switch: Discard drops
-/// the draft and opens the pending target, Keep editing (or Escape) stays
-/// on the current form. Rendered from the Profiles window while
-/// `pending_edit_switch` is set.
+/// Unsaved-changes prompt for a staged leave of the edit form (switch,
+/// close, delete of its profile, MultiBox off): Discard drops the draft and
+/// leaves, Keep editing (or Escape) stays on the current form. Rendered from
+/// the Profiles window while `pending_edit_switch` is set. The prompt goes
+/// when the session retires it (the save it waited on settled), so it never
+/// shows over the result it warned about.
 fn edit_switch_popup(ui: &Ui, session: &mut Session) {
-    if session.pending_edit_switch.is_none() {
+    let open = ui.is_popup_open(PROFILE_EDIT_SWITCH_POPUP);
+    if session.pending_edit_switch.is_none() && !open {
         return;
     }
-    if !ui.is_popup_open(PROFILE_EDIT_SWITCH_POPUP) {
+    if !open {
         ui.open_popup(PROFILE_EDIT_SWITCH_POPUP);
     }
     ui.popup(PROFILE_EDIT_SWITCH_POPUP, || {
+        let Some(switch) = session.pending_edit_switch.as_ref() else {
+            ui.close_current_popup();
+            return;
+        };
         if ui.is_key_pressed(Key::Escape) {
             session.cancel_pending_edit_switch();
             ui.close_current_popup();
             return;
         }
-        if let Some(switch) = session.pending_edit_switch.as_ref() {
-            popup_text(ui, &switch.prompt);
-        }
+        popup_text(ui, &switch.prompt);
         ui.spacing();
         let avail = ui.content_region_avail()[0];
         let (w, stack) = button_row_layout(avail, 2);
@@ -4404,7 +4409,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 let (bw, stack) = button_row_layout(avail, 2);
                 // One Save at a time: the form follows a rename or a new
                 // profile only once its write is durable.
-                let saving = session.chooser_save.saving().then(|| ui.begin_disabled());
+                let saving = session.form_saving().then(|| ui.begin_disabled());
                 if ui.button_with_size("Save", [bw, 0.0]) {
                     session.save_credentials();
                 }
@@ -4419,7 +4424,8 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             edit_switch_popup(ui, session);
             }
             ui.spacing();
-            if let Some(name) = session.chooser_save.in_flight() {
+            if let Some(record) = session.core.saves_in_flight().last() {
+                let name = record.destination.as_str();
                 ui.text_disabled("saving ");
                 ui.same_line_with_spacing(0.0, 0.0);
                 ui.text_disabled(name);

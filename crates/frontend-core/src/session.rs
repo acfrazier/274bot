@@ -1673,16 +1673,22 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Register the form save `record` under its write's operation. The
-    /// write settles in [`Self::poll`]; [`Self::take_save`] then returns its
-    /// result, keyed by the same operation id.
+    /// write settles in [`Self::poll`]; the record then moves from
+    /// [`Self::saves_in_flight`] to [`Self::take_settled_saves`], with the
+    /// write's result.
     pub fn track_save(&mut self, record: SaveRecord) {
         self.saves.track(record);
     }
 
-    /// The settled result of the form save queued as `op`, once. `None`
-    /// while it is still being written, or when it was never registered.
-    pub fn take_save(&mut self, op: OperationId) -> Option<SaveSettled> {
-        self.saves.take(op)
+    /// The form saves whose writes have not settled, oldest first.
+    pub fn saves_in_flight(&self) -> &[SaveRecord] {
+        self.saves.in_flight()
+    }
+
+    /// The form saves settled since the last take, in the order they
+    /// settled.
+    pub fn take_settled_saves(&mut self) -> Vec<SaveSettled> {
+        self.saves.take_settled()
     }
 
     /// Script-parameter writes settled since the last take: what was saved
