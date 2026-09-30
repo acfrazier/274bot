@@ -1356,9 +1356,9 @@ fn draw_special_areas(
     }
 }
 
-/// Screen-space bounds for one inclusive content zone. The right and bottom
-/// edges use the exclusive world bounds `(x2 + 1, z1)` so the tint ends on
-/// the same tile edges as routing.
+/// Screen-space bounds for one inclusive content zone. The right and top
+/// edges use the exclusive world bounds `(x2 + 1, z2 + 1)` so the tint ends
+/// on the same tile edges as routing.
 pub(crate) fn special_area_rect(
     view: View,
     origin: [f32; 2],
@@ -1624,7 +1624,7 @@ pub fn overlay_colors(nav: &NavSettings) -> OverlayColors {
         flood_b: [200, 40, 240, 160],
         unreached: [200, 40, 240, 160],
         nsew: [220, 220, 220, 220],
-        special_areas: [220, 40, 180, 88],
+        special_areas: [0, 180, 160, 52],
     }
 }
 

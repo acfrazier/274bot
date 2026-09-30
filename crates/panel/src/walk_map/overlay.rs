@@ -94,7 +94,7 @@ impl Default for OverlayColors {
             flood_b: [200, 40, 240, 160],
             unreached: [200, 40, 240, 160],
             nsew: [220, 220, 220, 220],
-            special_areas: [220, 40, 180, 88],
+            special_areas: [0, 180, 160, 52],
         }
     }
 }
