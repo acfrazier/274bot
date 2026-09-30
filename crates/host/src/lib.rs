@@ -21,7 +21,7 @@ use api::snapshot::GameSnapshot;
 use auto_run::{auto_run_ready, auto_run_tick, resolve_run_policy, RunPolicy};
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
-use client::render::backend::FrameOutput;
+use client::render::backend::{BackendKind, FrameOutput};
 use client::render::Renderer;
 use vault::{Profile, ProfileSettings};
 
@@ -470,6 +470,17 @@ impl Host {
         if should_emit_tick(result.player_info) {
             slot.tick_n = slot.tick_n.wrapping_add(1);
         }
+        // Publish actual render demand before the frontend observe hook.
+        // A GPU-requested head may have fallen back to CpuPix3D, so the
+        // renderer kind — not the request — controls nav materialization.
+        let want_cpu = slot_want_cpu(input);
+        client.set_nav_debug_drawable(
+            !want_cpu
+                && slot
+                    .renderer
+                    .as_ref()
+                    .is_some_and(|renderer| renderer.backend_kind() == BackendKind::Gpu),
+        );
         let t_obs = Instant::now();
         let busy = observe(client, username, *run_sends, &status, &mut slot.run_policy);
         let observe_ns = t_obs.elapsed().as_nanos() as u64;
@@ -505,10 +516,8 @@ impl Host {
         let zap = client.ingame && client.scene_state != 2;
         let full_rate = input.map(|i| i.full_rate()).unwrap_or(false);
         let title_fast = input.map(|i| i.enabled()).unwrap_or(false) || full_rate;
-        // The backend the slot's head must be built for: the per-slot
-        // CpuPix3D latch **or** the process `BOT_CPU` env (both false is
-        // GPU-first, the host default). SlotInput must not hide `BOT_CPU=1`.
-        let want_cpu = slot_want_cpu(input);
+        // The per-slot CpuPix3D latch and BOT_CPU environment were sampled
+        // before observe so the frontend sees current nav-draw demand.
         // A drawing slot lazily builds its `Renderer` on the first paint
         // tick; a headless (draw off) slot constructs none and never
         // enters a draw.
