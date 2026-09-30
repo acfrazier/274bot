@@ -138,14 +138,47 @@ pub(crate) fn quester_cook_resume_scenario() -> Scenario {
     )
 }
 
-/// Mid-quest stop/restart seed: in-progress without products.
+/// Stop after an observed egg, then restart from live colour with that item held.
 pub(crate) fn quester_cook_restart_scenario() -> Scenario {
-    quester_stage(
+    let mut scenario = quester_stage(
         "quester_cook_restart",
         "Cook's Assistant",
         "cookquest",
         1,
         &[],
         COOK_KITCHEN,
-    )
+    );
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    scenario.steps.splice(
+        start + 1..start + 1,
+        [
+            Step {
+                name: "watch Quester acquire an egg before Stop",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::Item {
+                        name: "Egg",
+                        count: 1,
+                    },
+                    budget_ticks: COOK_WATCH,
+                },
+            },
+            Step {
+                name: "stop Quester mid-quest",
+                kind: StepKind::StopScript,
+                wait: Wait {
+                    arm: Proof::Stat { id: 16, min: 0 },
+                    budget_ticks: 1,
+                },
+            },
+            start_catalog_step(),
+        ],
+    );
+    scenario
 }

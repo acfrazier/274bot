@@ -42,11 +42,16 @@ impl DeathLatch {
 }
 
 pub fn is_death_line(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    let Some(at) = lower.find(DEATH_NEEDLE_A) else {
+    let bytes = text.as_bytes();
+    let Some(at) = bytes
+        .windows(DEATH_NEEDLE_A.len())
+        .position(|part| part.eq_ignore_ascii_case(DEATH_NEEDLE_A.as_bytes()))
+    else {
         return false;
     };
-    lower[at + DEATH_NEEDLE_A.len()..].contains(DEATH_NEEDLE_B)
+    bytes[at + DEATH_NEEDLE_A.len()..]
+        .windows(DEATH_NEEDLE_B.len())
+        .any(|part| part.eq_ignore_ascii_case(DEATH_NEEDLE_B.as_bytes()))
 }
 
 #[cfg(test)]

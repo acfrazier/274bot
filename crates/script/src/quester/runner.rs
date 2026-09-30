@@ -29,6 +29,7 @@ pub struct Quester {
     in_prelude: bool,
     settling: bool,
     settle_ticks: u8,
+    chat_since: u64,
     needs_read: bool,
     deaths: u8,
     attempts: u8,
@@ -65,6 +66,7 @@ impl Quester {
             in_prelude: false,
             settling: false,
             settle_ticks: 0,
+            chat_since: 0,
             needs_read: true,
             deaths: 0,
             attempts: 0,
@@ -258,11 +260,13 @@ impl Script for Quester {
                 self.read_stage(tick, false);
             }
             let truth = {
+                let mut required_after = tick.cx.evidence();
+                required_after.sequence = self.chat_since;
                 let pred = PredicateContext {
                     cx: &tick.cx,
                     quests: &self.quests,
                     progress: &[],
-                    required_after: tick.cx.evidence(),
+                    required_after,
                     outcome: None,
                 };
                 self.current_step()
@@ -326,6 +330,7 @@ impl Script for Quester {
                 &self.path.sequences[self.seq_index].steps[index]
             };
             debug_assert!(std::ptr::eq(step as *const _, ptr));
+            self.chat_since = super::families::reach::last_chat_seq(&tick.cx) as u64;
             let evidence: Arc<dyn EvidenceProvider> = Arc::clone(&self.evidence) as _;
             let required_after = tick.cx.evidence();
             let mut step_cx = StepContext {
@@ -428,5 +433,64 @@ mod tests {
         let bytes = std::mem::size_of::<Quester>();
         eprintln!("Quester size_of={bytes}");
         assert!(bytes < 4096, "Quester is {bytes} bytes");
+    }
+
+    #[test]
+    fn message_settle_uses_step_begin_chat_not_tick_sequence() {
+        use super::super::families::tests::with_tick;
+        use api::snapshot::{ChatLineView, GameSnapshot, QuestStatusView};
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let step = &mut document.roles[0].sequences[0].steps[0];
+        step.kind = "wait".into();
+        step.args = serde_json::json!({"max_ticks": 10});
+        step.advances = false;
+        step.settle = super::super::path::PredicateDocument::Fact {
+            kind: "message".into(),
+            version: 1,
+            args: serde_json::json!({"any": ["you put the grain in the hopper"]}),
+        };
+        let path =
+            super::super::compile::compile_path(&document, b"message-regression", &data, &quests)
+                .unwrap();
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let mut script = Quester::new(run, path, quests);
+        let mut s = GameSnapshot::new();
+        s.seed_ingame(2);
+        s.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xff0000,
+            }],
+            true,
+        );
+        s.seed_chat_lines(vec![ChatLineView {
+            type_: 0,
+            username: None,
+            text: "you put the grain in the hopper".into(),
+            sequence: 2,
+        }]);
+        let mut ledger = None;
+        with_tick(&s, &mut ledger, 5000, |t| script.tick(t).unwrap());
+        with_tick(&s, &mut ledger, 5001, |t| script.tick(t).unwrap());
+        with_tick(&s, &mut ledger, 5002, |t| script.tick(t).unwrap());
+        assert!(script.settling, "old matching chat must not settle");
+        s.seed_chat_lines(vec![ChatLineView {
+            type_: 0,
+            username: None,
+            text: "You put the grain in the hopper.".into(),
+            sequence: 3,
+        }]);
+        with_tick(&s, &mut ledger, 5003, |t| script.tick(t).unwrap());
+        assert!(
+            !script.settling,
+            "a new sequence 3 message settles at tick 5003"
+        );
     }
 }

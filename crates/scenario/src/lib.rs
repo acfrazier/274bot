@@ -495,6 +495,8 @@ pub enum StepKind {
     /// No-op on the client. File cards wait a one-tick arm; compiled
     /// cards wait until Start is Running (or fail with the rejection).
     StartScript,
+    /// Host stops the selected script and its walk. No-op on the client.
+    StopScript,
 }
 
 /// Evidence wait for a step: a named predicate and a tick budget.

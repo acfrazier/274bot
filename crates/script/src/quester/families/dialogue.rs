@@ -170,7 +170,7 @@ impl Dialogue {
         }
         if !obs.options.is_empty() {
             let option = self.args.choose.unwrap_or_else(|| {
-                pick_preferred(&obs.options, &self.args.prefer)
+                pick_preferred(obs.options, &self.args.prefer)
                     .map(|index| (index + 1) as i32)
                     .unwrap_or(obs.options.len() as i32)
             });
@@ -190,17 +190,17 @@ impl Dialogue {
     }
 }
 
-struct ChatObs {
+struct ChatObs<'a> {
     open: bool,
     ready: bool,
     r#continue: bool,
     modal: i32,
     tick: u64,
-    options: Vec<String>,
+    options: &'a [api::snapshot::ChatOptionView],
 }
 
-fn observe(cx: &ActionContext<'_>) -> Option<ChatObs> {
-    let chat = cx.snapshot().chat_modal()?;
+fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
+    let chat = cx.snapshot.chat_modal()?;
     let modal = chat.value.root;
     let r#continue = chat.value.continue_component_id >= 0;
     let open = modal != -1;
@@ -210,22 +210,17 @@ fn observe(cx: &ActionContext<'_>) -> Option<ChatObs> {
         r#continue,
         modal,
         tick: cx.evidence().tick,
-        options: chat
-            .value
-            .options
-            .iter()
-            .map(|option| option.text.clone())
-            .collect(),
+        options: chat.value.options,
     })
 }
 
 fn nearest_talk(cx: &ActionContext<'_>, wanted: &str) -> Option<(i32, Arc<str>)> {
     let npcs = cx.snapshot().npcs()?.value;
-    let want = wanted.trim().to_ascii_lowercase();
+    let want = wanted.trim();
     npcs.iter()
         .filter_map(|npc| {
             let name = npc.name.as_deref()?.trim();
-            if name.to_ascii_lowercase() != want {
+            if !name.eq_ignore_ascii_case(want) {
                 return None;
             }
             let action = npc
@@ -243,13 +238,20 @@ fn nearest_talk(cx: &ActionContext<'_>, wanted: &str) -> Option<(i32, Arc<str>)>
         .map(|(_, index, action)| (index, action))
 }
 
-pub fn pick_preferred(options: &[String], prefer: &[Arc<str>]) -> Option<usize> {
+pub fn pick_preferred(
+    options: &[api::snapshot::ChatOptionView],
+    prefer: &[Arc<str>],
+) -> Option<usize> {
     prefer.iter().find_map(|fragment| {
-        let want = fragment.to_ascii_lowercase();
-        options
-            .iter()
-            .position(|option| option.to_ascii_lowercase().contains(&want))
-            .filter(|&index| !options[index].is_empty())
+        options.iter().position(|option| {
+            !option.text.is_empty()
+                && (fragment.is_empty()
+                    || option
+                        .text
+                        .as_bytes()
+                        .windows(fragment.len())
+                        .any(|part| part.eq_ignore_ascii_case(fragment.as_bytes())))
+        })
     })
 }
 

@@ -2824,6 +2824,7 @@ impl Session {
                     match live_start::fire_pending_catalog_start(
                         &mut pending_script.lock().unwrap(),
                         runner.on_start_script(),
+                        runner.on_stop_script(),
                         || StartArming {
                             handle: script_start_handle.lock().unwrap().clone(),
                             catalog: catalog_core_watch.lock().unwrap().clone(),

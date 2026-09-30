@@ -97,7 +97,8 @@
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } },
-              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"], "clear": ["you fill a pot with", "flour bin is already empty"] } } }
             ]
           },
           "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } }
@@ -114,7 +115,8 @@
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 2], "radius": 6 } } },
-              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"], "clear": ["you fill a pot with", "flour bin is already empty"] } } }
             ]
           },
           "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 2], "radius": 2 } } }
@@ -126,6 +128,7 @@
           "args": {
             "item": "grain",
             "target": { "loc": "hopper_lumbridge" },
+            "anchor": { "tile": [3166, 3306, 2], "source": "A defs/cooksassistant.ts:17,35" },
             "radius": 8,
             "settle_message": [
               "you put the grain in the hopper",
@@ -133,7 +136,12 @@
             ],
             "settle_ms": 20000
           },
-          "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } } },
+          "skip_if": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"], "clear": ["you fill a pot with", "flour bin is already empty"] } } }
+            ]
+          },
           "settle": {
             "Fact": {
               "kind": "message",
@@ -157,7 +165,12 @@
             "radius": 8,
             "settle_ms": 20000
           },
-          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"], "clear": ["you fill a pot with", "flour bin is already empty"] } } }
+            ]
+          },
           "settle": {
             "Fact": {
               "kind": "message",

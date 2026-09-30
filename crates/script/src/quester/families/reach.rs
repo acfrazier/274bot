@@ -56,7 +56,7 @@ pub struct Reach {
     attempts: u32,
     chat_mark: i32,
     deadline_ms: u64,
-    seen_target: bool,
+    before_count: i32,
 }
 
 impl NativeMachine for Reach {
@@ -70,7 +70,7 @@ impl NativeMachine for Reach {
             attempts: 0,
             chat_mark: last_chat_seq(cx),
             deadline_ms: cx.active_now().as_millis() as u64 + DOOR_WAIT_MS,
-            seen_target: false,
+            before_count: 0,
         };
         reach.click(cx)?;
         Ok(reach)
@@ -81,34 +81,32 @@ impl NativeMachine for Reach {
             return Poll::Ready(Ok(false));
         }
         match self.phase {
-            Phase::Seek | Phase::Click => {
+            Phase::Seek => {
+                if self.click(cx)? {
+                    return Poll::Pending;
+                }
+                if self.args.wait_if_missing || !matches!(self.args.kind, ReachKind::Ground { .. })
+                {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Ok(false))
+                }
+            }
+            Phase::Click => {
                 if saw_cant_reach(cx, self.chat_mark) {
                     if self.clear_door(cx).is_ok() {
                         self.phase = Phase::WaitDoor;
                         self.deadline_ms = cx.active_now().as_millis() as u64 + DOOR_WAIT_MS;
-                        self.attempts += 1;
                         return Poll::Pending;
                     }
                     return Poll::Ready(Ok(false));
                 }
-                if matches!(&self.args.kind, ReachKind::Ground { .. }) {
-                    if self.target_gone(cx) {
-                        if self.seen_target {
-                            return Poll::Ready(Ok(true));
-                        }
-                        if self.args.wait_if_missing {
-                            return Poll::Pending;
-                        }
-                        return Poll::Ready(Ok(false));
-                    }
-                    self.seen_target = true;
-                    return Poll::Pending;
-                }
-                if self.target_gone(cx) {
-                    if self.args.wait_if_missing {
-                        return Poll::Pending;
-                    }
-                    return Poll::Ready(Ok(false));
+                if let ReachKind::Ground { id, .. } = self.args.kind {
+                    return if held_count(cx, id).is_some_and(|count| count > self.before_count) {
+                        Poll::Ready(Ok(true))
+                    } else {
+                        Poll::Pending
+                    };
                 }
                 Poll::Ready(Ok(true))
             }
@@ -118,7 +116,7 @@ impl NativeMachine for Reach {
                     if self.click(cx).is_err() {
                         return Poll::Ready(Ok(false));
                     }
-                    self.phase = Phase::Click;
+                    // A scene rebuild may hide the target again; click retains Seek.
                 }
                 Poll::Pending
             }
@@ -129,59 +127,73 @@ impl NativeMachine for Reach {
 }
 
 impl Reach {
-    fn click(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
-        self.phase = Phase::Click;
-        self.attempts += 1;
-        match &self.args.kind {
-            ReachKind::Npc { name, index } => cx.emit(InteractReq::Npc {
-                name: name.to_string(),
-                action: self.args.op.to_string(),
-                index: *index,
-            })?,
-            ReachKind::Loc { id, name: _ } => {
-                let tile = self
-                    .args
-                    .anchor
-                    .ok_or_else(|| ActionError::Failed(Arc::from("reach loc missing anchor")))?;
-                cx.emit(InteractReq::Loc {
-                    x: tile.x,
-                    z: tile.z,
-                    level: tile.level,
+    fn click(&mut self, cx: &mut ActionContext<'_>) -> Result<bool, ActionError> {
+        let request = match &self.args.kind {
+            ReachKind::Npc { name, index } => {
+                if !target_available(cx, &self.args.kind, &self.args.op, self.args.radius) {
+                    self.phase = Phase::Seek;
+                    return Ok(false);
+                }
+                InteractReq::Npc {
+                    name: name.to_string(),
                     action: self.args.op.to_string(),
-                    id: *id,
-                })?
+                    index: *index,
+                }
             }
-            ReachKind::Ground { obj, .. } => {
-                let tile = self
-                    .args
-                    .anchor
-                    .ok_or_else(|| ActionError::Failed(Arc::from("reach ground missing anchor")))?;
-                cx.emit(InteractReq::Obj {
+            ReachKind::Loc { id, name } => {
+                let Some(loc) =
+                    nearest_loc(cx, *id, name.as_deref(), Some(&self.args.op), PROBE_RADIUS)
+                else {
+                    self.phase = Phase::Seek;
+                    return Ok(false);
+                };
+                InteractReq::Loc {
+                    x: loc.tile.x,
+                    z: loc.tile.z,
+                    level: loc.tile.level,
+                    action: self.args.op.to_string(),
+                    id: Some(loc.id),
+                }
+            }
+            ReachKind::Ground { id, obj } => {
+                let Some(item) = nearest_ground(cx, *id) else {
+                    self.phase = Phase::Seek;
+                    return Ok(false);
+                };
+                let tile = item.tile;
+                let Some(before) = held_count(cx, *id) else {
+                    return Ok(false);
+                };
+                self.before_count = before;
+                InteractReq::Obj {
                     x: tile.x,
                     z: tile.z,
                     level: tile.level,
                     name: Some(obj.to_string()),
                     action: self.args.op.to_string(),
-                })?
+                }
             }
             ReachKind::Name { name } => {
-                if let Some(loc) = nearest_named_loc(cx, name, &self.args.op, self.args.radius) {
-                    cx.emit(InteractReq::Loc {
-                        x: loc.x,
-                        z: loc.z,
-                        level: loc.level,
-                        action: self.args.op.to_string(),
-                        id: Some(loc.id),
-                    })?
-                } else if self.args.wait_if_missing {
+                let Some(loc) =
+                    nearest_loc(cx, None, Some(name), Some(&self.args.op), self.args.radius)
+                else {
                     self.phase = Phase::Seek;
-                    return Ok(());
-                } else {
-                    return Err(ActionError::Failed(Arc::from("named loc missing")));
+                    return Ok(false);
+                };
+                InteractReq::Loc {
+                    x: loc.tile.x,
+                    z: loc.tile.z,
+                    level: loc.tile.level,
+                    action: self.args.op.to_string(),
+                    id: Some(loc.id),
                 }
             }
         };
-        Ok(())
+        cx.emit(request)?;
+        self.phase = Phase::Click;
+        self.attempts += 1;
+        self.chat_mark = last_chat_seq(cx);
+        Ok(true)
     }
 
     fn clear_door(&self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
@@ -225,72 +237,81 @@ impl Reach {
         })?;
         Ok(())
     }
+}
 
-    fn target_gone(&self, cx: &ActionContext<'_>) -> bool {
-        match &self.args.kind {
-            ReachKind::Name { name } => {
-                nearest_named_loc(cx, name, &self.args.op, self.args.radius).is_none()
-            }
-            ReachKind::Npc { name, .. } => cx.snapshot().npcs().is_some_and(|npcs| {
-                !npcs.value.iter().any(|npc| {
-                    npc.name
-                        .as_deref()
-                        .is_some_and(|n| n.eq_ignore_ascii_case(name))
-                })
-            }),
-            ReachKind::Ground { id, .. } => {
-                let Some(items) = cx.snapshot().ground_items() else {
-                    return false;
-                };
-                !items.value.iter().any(|item| {
-                    item.def.id == *id
-                        && self.args.anchor.is_none_or(|tile| {
-                            chebyshev(item.tile, tile) <= self.args.radius.max(2)
-                        })
-                })
-            }
-            _ => false,
+pub fn target_available(cx: &ActionContext<'_>, kind: &ReachKind, op: &str, radius: i32) -> bool {
+    match kind {
+        ReachKind::Ground { id, .. } => nearest_ground(cx, *id).is_some(),
+        ReachKind::Loc { id, name } => {
+            nearest_loc(cx, *id, name.as_deref(), Some(op), PROBE_RADIUS).is_some()
         }
+        ReachKind::Name { name } => nearest_loc(cx, None, Some(name), Some(op), radius).is_some(),
+        ReachKind::Npc { name, .. } => cx.snapshot().npcs().is_some_and(|npcs| {
+            npcs.value.iter().any(|npc| {
+                npc.name
+                    .as_deref()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
+            })
+        }),
     }
 }
 
-struct NamedLoc {
-    x: i32,
-    z: i32,
-    level: i32,
+fn nearest_ground<'a>(
+    cx: &'a ActionContext<'_>,
     id: i32,
+) -> Option<&'a api::snapshot::GroundItemView> {
+    cx.snapshot()
+        .ground_items()?
+        .value
+        .iter()
+        .filter(|item| item.def.id == id && item.distance <= 12)
+        .min_by_key(|item| item.distance)
 }
 
-fn nearest_named_loc(
-    cx: &ActionContext<'_>,
-    name: &str,
-    op: &str,
+fn held_count(cx: &ActionContext<'_>, id: i32) -> Option<i32> {
+    Some(
+        cx.snapshot()
+            .inventory()?
+            .value
+            .iter()
+            .filter(|item| item.def.id == id)
+            .map(|item| item.count)
+            .sum(),
+    )
+}
+
+pub fn nearest_loc<'a>(
+    cx: &'a ActionContext<'_>,
+    id: Option<i32>,
+    name: Option<&str>,
+    op: Option<&str>,
     radius: i32,
-) -> Option<NamedLoc> {
-    let locs = cx.snapshot().locs()?.value;
-    let want = name.trim();
-    locs.iter()
+) -> Option<&'a api::snapshot::LocView> {
+    cx.snapshot()
+        .locs()?
+        .value
+        .iter()
         .filter(|loc| {
-            loc.name
-                .as_deref()
-                .is_some_and(|n| n.eq_ignore_ascii_case(want))
-                && loc
-                    .actions
+            id.map_or_else(
+                || {
+                    name.is_some_and(|want| {
+                        loc.name
+                            .as_deref()
+                            .is_some_and(|n| n.eq_ignore_ascii_case(want))
+                    })
+                },
+                |id| loc.id == id,
+            ) && op.is_none_or(|op| {
+                loc.actions
                     .iter()
                     .flatten()
                     .any(|a| a.eq_ignore_ascii_case(op))
-                && (radius <= 0 || loc.distance <= radius)
+            }) && (radius <= 0 || loc.distance <= radius)
         })
         .min_by_key(|loc| loc.distance)
-        .map(|loc| NamedLoc {
-            x: loc.tile.x,
-            z: loc.tile.z,
-            level: loc.tile.level,
-            id: loc.id,
-        })
 }
 
-fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {
+pub fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {
     cx.snapshot()
         .chat_lines(0)
         .and_then(|lines| lines.value.iter().map(|line| line.sequence).max())
@@ -299,10 +320,11 @@ fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {
 
 fn saw_cant_reach(cx: &ActionContext<'_>, since: i32) -> bool {
     cx.snapshot().chat_lines(since).is_some_and(|lines| {
-        lines
-            .value
-            .iter()
-            .any(|line| line.text.to_ascii_lowercase().starts_with(CANT_REACH))
+        lines.value.iter().any(|line| {
+            line.text
+                .get(..CANT_REACH.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(CANT_REACH))
+        })
     })
 }
 

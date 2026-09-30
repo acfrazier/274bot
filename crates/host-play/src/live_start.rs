@@ -26,9 +26,9 @@ pub struct PendingCatalogStart {
     pub loadouts: Vec<script::Loadout>,
     /// Compiled registry card; when set, Start uses `start_compiled`.
     pub compiled: Option<script::CompiledId>,
-    /// Start was accepted; kept until its isolate setup settles so a setup
-    /// failure still fails the core watch with its reason.
+    /// Start was accepted; retain the card so a later Stop/Start can reuse it.
     pub started: bool,
+    pub settled: bool,
     /// Fleet-only hold after the earlier stashed members started (the
     /// JiveKQ leader lets its peers prove their missing-peer bank hold).
     delay_after_peers: Option<Duration>,
@@ -54,6 +54,7 @@ impl PendingCatalogStart {
             loadouts,
             compiled: None,
             started: false,
+            settled: false,
             delay_after_peers: None,
             delay_started: None,
         }
@@ -81,6 +82,7 @@ impl PendingCatalogStart {
             loadouts: Vec::new(),
             compiled: Some(id),
             started: false,
+            settled: false,
             delay_after_peers: None,
             delay_started: None,
         }
@@ -262,11 +264,26 @@ pub enum StartScriptPump {
 /// on its StartScript step (`on_start_script`), start every stashed isolate
 /// with its witness armed; earlier, only settle already-started setups.
 pub fn fire_pending_catalog_start(
-    pending: &mut Vec<PendingCatalogStart>,
+    pending: &mut [PendingCatalogStart],
     on_start_script: bool,
+    on_stop_script: bool,
     arming: impl FnOnce() -> StartArming,
 ) -> StartScriptPump {
-    let settling = pending.iter().any(|card| card.started);
+    if on_stop_script {
+        let Some(handle) = arming().handle else {
+            return StartScriptPump::Hold;
+        };
+        for card in pending.iter_mut() {
+            if handle.stop(&card.slot).is_err() {
+                return StartScriptPump::Hold;
+            }
+            card.started = false;
+            card.settled = false;
+            card.delay_started = None;
+        }
+        return StartScriptPump::Continue;
+    }
+    let settling = pending.iter().any(|card| card.started && !card.settled);
     let starting = on_start_script && pending.iter().any(|card| !card.started);
     if !settling && !starting {
         return StartScriptPump::Continue;
@@ -331,55 +348,49 @@ pub fn fire_pending_catalog_start(
     StartScriptPump::Continue
 }
 
-/// Drop started cards whose setup settled; a failed setup fails the watch
-/// that armed its Start (the refusal path `fail_start` already covers).
-/// Compiled cards return a pump notice so the scenario step can wait for
-/// Running or fail with the rejection reason.
+/// Settle setup once, keeping the card for a subsequent Stop/Start transaction.
+/// A failed setup fails the watch that armed its Start. Compiled cards return
+/// a pump notice so the scenario can wait for Running or report the rejection.
 fn settle_started_catalog_cards(
-    pending: &mut Vec<PendingCatalogStart>,
+    pending: &mut [PendingCatalogStart],
     handle: &ScriptStartHandle,
     arming: &StartArming,
 ) -> Option<StartScriptPump> {
-    let mut failed = Vec::new();
     let mut compiled_pump = None;
-    pending.retain(|card| {
-        if !card.started {
-            return true;
-        }
+    for card in pending
+        .iter_mut()
+        .filter(|card| card.started && !card.settled)
+    {
         let compiled = card.compiled.is_some();
-        match handle.poll_start(&card.slot) {
-            script::StartPoll::Pending => true,
+        let error = match handle.poll_start(&card.slot) {
+            script::StartPoll::Pending => continue,
             script::StartPoll::Settled(script::StartOutcome::Failed(error)) => {
                 if compiled {
                     compiled_pump = Some(StartScriptPump::CompiledFailed(format!(
                         "start failed: {error}"
                     )));
-                } else {
-                    failed.push((card.slot.clone(), error));
                 }
-                false
+                Some(error)
             }
             script::StartPoll::Settled(script::StartOutcome::Rejected(error)) => {
                 if compiled {
                     compiled_pump = Some(StartScriptPump::CompiledFailed(format!(
                         "start rejected: {error}"
                     )));
-                } else {
-                    failed.push((card.slot.clone(), error.to_string()));
                 }
-                false
+                Some(error.to_string())
             }
             script::StartPoll::Settled(script::StartOutcome::Ready) => {
                 if compiled {
                     compiled_pump = Some(StartScriptPump::CompiledRunning);
                 }
-                false
+                None
             }
             script::StartPoll::Settled(script::StartOutcome::Cancelled) => {
                 if compiled {
                     compiled_pump = Some(StartScriptPump::CompiledFailed("start cancelled".into()));
                 }
-                false
+                None
             }
             script::StartPoll::NotOwed => {
                 if compiled {
@@ -395,15 +406,16 @@ fn settle_started_catalog_cards(
                         ),
                     });
                 }
-                false
+                None
             }
-        }
-    });
-    for (slot, error) in failed {
-        if let Some(pair) = arming.pair.as_ref().filter(|pair| pair.configured()) {
-            pair.fail_start(error);
-        } else if let Some(watch) = arming.catalog.as_ref() {
-            watch.fail_start(&slot, error);
+        };
+        card.settled = true;
+        if let Some(error) = error {
+            if let Some(pair) = arming.pair.as_ref().filter(|pair| pair.configured()) {
+                pair.fail_start(error);
+            } else if let Some(watch) = arming.catalog.as_ref() {
+                watch.fail_start(&card.slot, error);
+            }
         }
     }
     compiled_pump

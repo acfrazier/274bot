@@ -429,6 +429,13 @@ impl ScenarioRunner {
             && matches!(self.current_step().kind, StepKind::StartScript)
     }
 
+    /// True while the live pump must revoke the current script before ticking.
+    pub fn on_stop_script(&self) -> bool {
+        matches!(self.phase, Phase::Running)
+            && self.step < self.scenario.steps.len()
+            && matches!(self.current_step().kind, StepKind::StopScript)
+    }
+
     /// Whether the live pump should hand this runner the driven slot's
     /// published paint: the card has started and a
     /// [`Proof::ScriptReceipt`] watch has not latched its row yet. False
@@ -787,6 +794,10 @@ impl ScenarioRunner {
             StepKind::ObserveStallCombat { .. }
         )
         .then_some(StallCombatObservation::FirstSession);
+        if matches!(self.current_step().kind, StepKind::StopScript) {
+            self.script_started = false;
+            self.script_receipts.clear();
+        }
         if matches!(self.current_step().kind, StepKind::StartScript) {
             self.script_started = true;
             self.script_running = false;
@@ -1171,6 +1182,7 @@ impl ScenarioRunner {
             }
             StepKind::Shot { .. }
             | StepKind::StartScript
+            | StepKind::StopScript
             | StepKind::Await { .. }
             | StepKind::ObserveLampRedemption { .. }
             | StepKind::ObserveStallCombat { .. } => Ok(()),
