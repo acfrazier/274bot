@@ -15,6 +15,7 @@ use api::quest_facts::QuestCatalog;
 use api::quest_progress::{JournalRead, QuestProgress};
 use api::selected::{FactKey, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -24,6 +25,10 @@ use std::time::Duration;
 // click). Adoption consumes a transaction too, but never adds a click.
 const JOURNAL_READ_ATTEMPTS: u8 = 3;
 const JOURNAL_RETRY_QUIET_TICKS: u64 = 3;
+const JOURNAL_RETRY_LIMIT_BUSY: &str =
+    "journal read retry limit reached (journal remained busy during read)";
+const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
+    "journal read retry limit reached (journal ownership repeatedly lost)";
 pub struct Quester {
     run: RunKey,
     path: Arc<CompiledPath>,
@@ -48,7 +53,7 @@ pub struct Quester {
     unreadable_reads: u8,
     journal_attempts: u8,
     journal_retry_pending: bool,
-    journal_quiet_since: Option<u64>,
+    journal_quiet_since: Option<NonZeroU32>,
     empty_reads: u8,
     park_reason: &'static str,
     last_error: Option<Arc<str>>,
@@ -303,23 +308,30 @@ impl Quester {
                 self.park_reason = reason;
                 self.last_error = None;
                 self.dirty = true;
-                if let Some(chat) = tick.cx.snapshot().chat_modal() {
-                    if chat.value.root != -1 || !chat.value.texts.is_empty() {
-                        self.last_error = Some(Arc::from(format!(
-                            "journal blocked by modal root {}{}",
-                            chat.value.root,
-                            chat.value
-                                .texts
-                                .iter()
-                                .find(|text| !text.is_empty())
-                                .map(|text| format!(" ({text})"))
-                                .unwrap_or_default()
-                        )));
-                    }
-                }
             }
         }
         false
+    }
+
+    fn wait_for_journal_read(&mut self, tick: &NativeTick<'_>, reason: &'static str) -> bool {
+        let waiting = self.wait_for_read(tick, reason);
+        if self.parked {
+            if let Some(chat) = tick.cx.snapshot().chat_modal() {
+                if chat.value.root != -1 || !chat.value.texts.is_empty() {
+                    self.last_error = Some(Arc::from(format!(
+                        "journal blocked by modal root {}{}",
+                        chat.value.root,
+                        chat.value
+                            .texts
+                            .iter()
+                            .find(|text| !text.is_empty())
+                            .map(|text| format!(" ({text})"))
+                            .unwrap_or_default()
+                    )));
+                }
+            }
+        }
+        waiting
     }
 
     fn retry_journal_read(&mut self, tick: &NativeTick<'_>, reason: &'static str) -> bool {
@@ -328,7 +340,11 @@ impl Quester {
         if self.journal_attempts >= JOURNAL_READ_ATTEMPTS {
             self.parked = true;
             self.park_reason = "journal read retry limit reached";
-            self.last_error = Some(Arc::from(reason));
+            self.last_error = Some(Arc::from(match reason {
+                "journal remained busy during read" => JOURNAL_RETRY_LIMIT_BUSY,
+                "journal ownership repeatedly lost" => JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST,
+                _ => unreachable!("only transient journal failures can be retried"),
+            }));
             self.dirty = true;
             return false;
         }
@@ -390,13 +406,24 @@ impl Quester {
                     });
                     if !closed {
                         self.journal_quiet_since = None;
-                        return self.wait_for_read(tick, "journal retry quiet period unavailable");
+                        return self
+                            .wait_for_journal_read(tick, "journal retry quiet period unavailable");
                     }
-                    let since = self
-                        .journal_quiet_since
-                        .get_or_insert(tick.cx.evidence().tick);
-                    if tick.cx.evidence().tick.saturating_sub(*since) < JOURNAL_RETRY_QUIET_TICKS {
-                        return self.wait_for_read(tick, "journal retry quiet period unavailable");
+                    let current_tick = tick.cx.evidence().tick;
+                    // The +1 encoding reserves zero for "not started"; 32-bit
+                    // game ticks cover about 81 years at the engine's tick rate.
+                    let since = self.journal_quiet_since.get_or_insert_with(|| {
+                        current_tick
+                            .checked_add(1)
+                            .and_then(|tick| u32::try_from(tick).ok())
+                            .and_then(NonZeroU32::new)
+                            .expect("journal retry tick exceeded its 32-bit storage")
+                    });
+                    if current_tick.saturating_sub(u64::from(since.get().saturating_sub(1)))
+                        < JOURNAL_RETRY_QUIET_TICKS
+                    {
+                        return self
+                            .wait_for_journal_read(tick, "journal retry quiet period unavailable");
                     }
                 }
                 let args = JournalRequest {
@@ -413,7 +440,8 @@ impl Quester {
                         self.dirty = true;
                     }
                     Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
-                        return self.wait_for_read(tick, "journal blocked by an occupied modal");
+                        return self
+                            .wait_for_journal_read(tick, "journal blocked by an occupied modal");
                     }
                     Err(error) => {
                         self.record_failure(error);
@@ -837,7 +865,7 @@ mod tests {
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
         eprintln!("Quester size_of={bytes}");
-        assert!(bytes < 4096, "Quester is {bytes} bytes");
+        assert_eq!(bytes, 504, "Quester is {bytes} bytes");
     }
 
     #[test]

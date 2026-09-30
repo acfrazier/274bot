@@ -92,8 +92,8 @@ modal observations or reopened modals restart this quiet interval.
 
 A logical progress read allows at most three journal transactions, each with
 at most one quest-row click; adopting an already-open matching page also
-consumes a transaction but does not click. Exhaustion parks with
-`journal read retry limit reached` and retains the transient failure reason.
+consumes a transaction but does not click. Exhaustion parks and reports
+`journal read retry limit reached` alongside the transient failure reason.
 Successful reads and explicit Retry reset this budget. A chat modal at read
 start waits within the existing bounded read window; if it remains occupied,
 the parked status names the chat root and text. Modal ownership, quiet leases
