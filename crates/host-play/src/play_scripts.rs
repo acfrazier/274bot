@@ -20,6 +20,15 @@ fn invalidate_bank_pick(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) 
     }
 }
 
+fn clear_script_paint_status(statuses: &Arc<Mutex<Vec<crate::SlotStatus>>>, name: &str) {
+    if let Some(status) = lock_statuses(statuses)
+        .iter_mut()
+        .find(|row| row.username == name)
+    {
+        status.script_paint = None;
+    }
+}
+
 /// Cloneable overlay source for a catalog Traveller (`InteractReq::Walk`).
 /// The panel paints this when WalkTo's [`WalkArm`] is idle so a script
 /// walk shows the same path / click as a picker walk.
@@ -43,6 +52,7 @@ impl ScriptNavPaint {
 pub struct ScriptStartHandle {
     scripts: ScriptWall,
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    statuses: Arc<Mutex<Vec<crate::SlotStatus>>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
 }
@@ -206,7 +216,18 @@ impl ScriptStartHandle {
         slot.stop();
         abort_script_walk(&self.navs, name);
         invalidate_bank_pick(&self.navs, name);
+        drop(slot);
+        clear_script_paint_status(&self.statuses, name);
         Ok(())
+    }
+
+    /// Fail closed unless the slot is observed Idle with no native run.
+    pub fn idle(&self, name: &str) -> bool {
+        script_slot(&self.scripts, name).is_some_and(|slot| {
+            slot.lock().ok().is_some_and(|slot| {
+                slot.state() == script::RunState::Idle && slot.native_run().is_none()
+            })
+        })
     }
 
     /// `name`'s latest recorded paint frame (the frame its status row
@@ -262,12 +283,7 @@ impl Play {
     /// after releasing the script-slot guard: script -> status is the sole
     /// permitted nesting order, and this path does not need to nest them.
     fn clear_script_paint_status(&self, name: &str) {
-        if let Some(status) = lock_statuses(&self.statuses)
-            .iter_mut()
-            .find(|status| status.username == name)
-        {
-            status.script_paint = None;
-        }
+        clear_script_paint_status(&self.statuses, name);
     }
 
     /// Start the same off-pump compiled preparation transaction as live/scenario
@@ -473,6 +489,7 @@ impl Play {
         ScriptStartHandle {
             scripts: Arc::clone(&self.scripts),
             navs: Arc::clone(&self.navs),
+            statuses: Arc::clone(&self.statuses),
             game_data: self.game_data.clone(),
             named_banks: Arc::clone(&self.named_banks),
         }

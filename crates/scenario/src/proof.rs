@@ -81,6 +81,9 @@ pub enum Proof {
     /// bare snapshot check fails closed. Rejection fails the step with
     /// the Start reason instead of waiting out this arm.
     ScriptRunning,
+    /// The host observes an Idle script slot with no native run after Stop.
+    /// Snapshot-only checks fail closed.
+    ScriptIdle,
     /// `in_essence_mine`: standing inside the Rune Essence mine enclosure
     /// (m45_75) — the entry teleport lands at a random
     /// `essence_mine_teleports` coord, never the pad exactly.
@@ -240,6 +243,7 @@ impl Proof {
             } => format!("arrived_ring({x},{z},{level},{min}..={max})"),
             Proof::ScriptReceipt { prefix } => format!("script_receipt({prefix})"),
             Proof::ScriptRunning => "script_running".to_string(),
+            Proof::ScriptIdle => "script_idle".to_string(),
             Proof::EssenceMine => "in_essence_mine".to_string(),
             Proof::ChatChoice => "chat_choice".to_string(),
             Proof::QuestDone { name } => format!("quest_done({name})"),
@@ -506,8 +510,8 @@ impl Proof {
                 };
                 tl == *level && (*min..=*max).contains(&chebyshev(here, center))
             }),
-            // The receipt / compiled-running latch is host-fed runner state.
-            Proof::ScriptReceipt { .. } | Proof::ScriptRunning => false,
+            // Lifecycle and receipt proofs are host-fed, never snapshot state.
+            Proof::ScriptReceipt { .. } | Proof::ScriptRunning | Proof::ScriptIdle => false,
             Proof::EssenceMine => snap.tile().is_some_and(|(tx, tz, tl)| {
                 nav::essence::in_essence_mine(WorldTile {
                     x: tx,

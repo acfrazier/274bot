@@ -725,22 +725,59 @@ impl TuiSession {
                             runner.observe_script_paint(paint.lines.iter().map(String::as_str));
                         }
                     }
-                    match live_start::fire_pending_catalog_start(
+                    let pump = live_start::fire_pending_catalog_start(
                         &mut pending_script.lock().unwrap(),
                         runner.on_start_script(),
                         runner.on_stop_script(),
                         || start_arming.lock().unwrap().clone(),
-                    ) {
-                        live_start::StartScriptPump::Continue => {
-                            runner.tick_with_hold(c, hold);
-                        }
+                    );
+                    match pump {
                         live_start::StartScriptPump::Hold => {}
-                        live_start::StartScriptPump::CompiledRunning => {
-                            runner.observe_script_running();
-                            runner.tick_with_hold(c, hold);
-                        }
                         live_start::StartScriptPump::CompiledFailed(error) => {
                             runner.fail_start(&error);
+                        }
+                        live_start::StartScriptPump::Continue
+                        | live_start::StartScriptPump::CompiledRunning => {
+                            if pump == live_start::StartScriptPump::CompiledRunning {
+                                runner.observe_script_running();
+                            }
+                            if runner.on_stop_script() {
+                                runner.observe_script_idle(start_arming.lock().is_ok_and(
+                                    |arming| {
+                                        arming
+                                            .handle
+                                            .as_ref()
+                                            .is_some_and(|handle| handle.idle(name))
+                                    },
+                                ));
+                            }
+                            runner.tick_with_hold(c, hold);
+                            // A relog can enter Start on the final off-world frame.
+                            // Arm it now rather than after the reconnect posts colour.
+                            if runner.on_start_script() {
+                                if let Ok(mut pending) = pending_script.lock() {
+                                    let pump = live_start::fire_pending_catalog_start(
+                                        &mut pending,
+                                        true,
+                                        false,
+                                        || {
+                                            start_arming
+                                                .lock()
+                                                .map(|arming| arming.clone())
+                                                .unwrap_or_default()
+                                        },
+                                    );
+                                    match pump {
+                                        live_start::StartScriptPump::CompiledRunning => {
+                                            runner.observe_script_running();
+                                        }
+                                        live_start::StartScriptPump::CompiledFailed(error) => {
+                                            runner.fail_start(&error);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
                         }
                     }
                 } else if let Some(index) = runner.companion_for(name) {

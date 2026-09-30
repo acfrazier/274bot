@@ -168,7 +168,7 @@ impl GameSnapshot {
                 });
             }
         }
-        self.refresh_loc_distances(client);
+        self.refresh_scene_distances(client);
         true
     }
 
@@ -191,19 +191,22 @@ impl GameSnapshot {
         self.taking_damage = local_player_taking_damage(client);
     }
 
-    /// Rewrite cached loc Chebyshev distances when the local player tile
-    /// moves. Names, actions and the loc vec allocation stay put.
-    fn refresh_loc_distances(&mut self, client: &Client) {
+    /// Refresh cached spatial distances only when the local origin moves.
+    /// Definitions, actions and vector allocations stay put.
+    fn refresh_scene_distances(&mut self, client: &Client) {
         let origin = local_world_tile(client);
-        if origin == self.loc_distance_tile {
+        if origin == self.scene_distance_tile {
             return;
         }
-        self.loc_distance_tile = origin;
+        self.scene_distance_tile = origin;
         let Some((lx, lz)) = origin else {
             return;
         };
         for loc in &mut self.loc {
             loc.distance = chebyshev(loc.tile.x, loc.tile.z, lx, lz);
+        }
+        for item in &mut self.ground_item {
+            item.distance = chebyshev(item.tile.x, item.tile.z, lx, lz);
         }
     }
 
@@ -342,9 +345,20 @@ impl GameSnapshot {
         if !self.equipment_gate.moved(client, self.inv_session_current) {
             return false;
         }
-        self.equipment = tab_inv_component(client, 4)
-            .and_then(|com_id| inv_items(client, com_id, ItemContainer::Equipment))
-            .unwrap_or_default();
+        let posted = tab_inv_component(client, 4)
+            .and_then(|id| client.if_(id as usize))
+            .is_some_and(|com| match (&com.link_obj_type, &com.link_obj_number) {
+                (Some(ids), Some(counts)) => !ids.is_empty() && ids.len() == counts.len(),
+                _ => false,
+            });
+        self.equipment_available = posted;
+        self.equipment = if posted {
+            tab_inv_component(client, 4)
+                .and_then(|id| inv_items(client, id, ItemContainer::Equipment))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         true
     }
 
@@ -1078,7 +1092,6 @@ impl GameSnapshot {
                 }
             }
         }
-        self.loc_distance_tile = local_tile;
         dirty
     }
 

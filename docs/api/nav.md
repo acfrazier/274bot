@@ -281,6 +281,13 @@ Agility waits packed `edge.ticks` after land. A teleport hop that never
 lands (a server-refused wilderness cast) stalls after the hop budget;
 the spell or rub is not resent.
 
+Vertical same-coordinate Ladder/Stairs hops retain the footprint of the
+observed loc actually clicked. Arrival is on the destination plane within
+that footprint expanded by the hop's one-tile landing tolerance, rather
+than within a symmetric radius of the nominal origin. This accepts far-edge
+landings from multi-tile stairs without accepting the opposite side, a
+distant tile, or the old plane. Other transport arrival rules are unchanged.
+
 ## Traveller (`nav::traveller`)
 
 `Traveller::follow(client, snapshot, route, &mut options)` is **pollable**:

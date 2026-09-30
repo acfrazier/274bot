@@ -1,26 +1,25 @@
 //! §3.2 tick loop: colour-only stage, watchdog, death, Stop/resume, no provision.
 use super::compile::{CompiledPath, CompiledStep, PredicateContext, StepContext, StepRun};
 use super::death::DeathLatch;
-use super::progress::{colour_stage, LiveEvidence};
+use super::progress::colour_stage;
 use super::provision::Provisioner;
 use super::select::{select, sequence_for_stage};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::native::{
-    Interrupt, NativeOutput, NativePhase, NativeTick, Script, ScriptFailure, ScriptFlow,
-    ScriptStatus, StatusField, StatusValue, StopReason,
+    ActionError, Interrupt, NativeOutput, NativePhase, NativeTick, Script, ScriptFailure,
+    ScriptFlow, ScriptStatus, StatusField, StatusValue, StopReason,
 };
 use crate::CompiledId;
 use api::quest_facts::QuestCatalog;
-use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{FactKey, RunKey, Truth};
 use std::sync::Arc;
 use std::task::Poll;
 
+use std::time::Duration;
 pub struct Quester {
     run: RunKey,
     path: Arc<CompiledPath>,
     quests: Arc<QuestCatalog>,
-    evidence: Arc<LiveEvidence>,
     stage: Option<FactKey>,
     seq_index: usize,
     step_index: usize,
@@ -28,9 +27,15 @@ pub struct Quester {
     advances: bool,
     in_prelude: bool,
     settling: bool,
-    settle_ticks: u8,
-    chat_since: u64,
+    settle_deadline: Duration,
+    chat_since: i32,
     needs_read: bool,
+    unreadable_since: Option<Duration>,
+    unreadable_reads: u8,
+    empty_reads: u8,
+    park_reason: &'static str,
+    last_error: Option<Arc<str>>,
+    waiting: Option<(&'static str, Arc<str>)>,
     deaths: u8,
     attempts: u8,
     fail_streak: u8,
@@ -44,20 +49,10 @@ pub struct Quester {
 
 impl Quester {
     pub fn new(run: RunKey, path: Arc<CompiledPath>, quests: Arc<QuestCatalog>) -> Self {
-        let stamp = EvidenceStamp {
-            run,
-            tick: 0,
-            sequence: 0,
-        };
         Self {
             run,
             path,
             quests,
-            evidence: Arc::new(LiveEvidence {
-                colours: Vec::new(),
-                varps: Vec::new(),
-                stamp,
-            }),
             stage: None,
             seq_index: 0,
             step_index: 0,
@@ -65,9 +60,15 @@ impl Quester {
             advances: false,
             in_prelude: false,
             settling: false,
-            settle_ticks: 0,
+            settle_deadline: Duration::ZERO,
             chat_since: 0,
             needs_read: true,
+            unreadable_since: None,
+            unreadable_reads: 0,
+            empty_reads: 0,
+            park_reason: "no progress",
+            last_error: None,
+            waiting: None,
             deaths: 0,
             attempts: 0,
             fail_streak: 0,
@@ -92,6 +93,38 @@ impl Quester {
         self.stage.as_ref()
     }
 
+    fn blocked_failure(&self) -> ScriptFailure {
+        ScriptFailure {
+            code: Arc::from("parked"),
+            message: self
+                .last_error
+                .clone()
+                .unwrap_or_else(|| Arc::from(self.park_reason)),
+            retryable: true,
+        }
+    }
+
+    fn record_failure(&mut self, error: ActionError) {
+        self.last_error = Some(match error {
+            ActionError::Unavailable(reason) | ActionError::Failed(reason) => reason,
+            error => Arc::from(format!("step error: {error:?}")),
+        });
+        self.dirty = true;
+    }
+
+    fn update_wait(&mut self) {
+        let waiting = self.step.as_ref().and_then(|step| step.waiting_for());
+        if self
+            .waiting
+            .as_ref()
+            .map(|(reason, name)| (*reason, name.as_ref()))
+            != waiting.map(|(reason, name)| (reason, name.as_ref()))
+        {
+            self.waiting = waiting.map(|(reason, name)| (reason, Arc::clone(name)));
+            self.dirty = true;
+        }
+    }
+
     fn publish(&mut self, output: &mut dyn NativeOutput) {
         if !self.dirty {
             return;
@@ -102,6 +135,47 @@ impl Quester {
             .as_ref()
             .map(|s| StatusValue::Text(Arc::from(s.0.as_ref())))
             .unwrap_or(StatusValue::Text(Arc::from("unknown")));
+        let fields = [
+            StatusField {
+                key: "quest",
+                label: "Quest",
+                value: StatusValue::Text(Arc::clone(&self.path.display_name)),
+            },
+            StatusField {
+                key: "stage",
+                label: "Stage",
+                value: stage,
+            },
+            StatusField {
+                key: "deaths",
+                label: "Deaths",
+                value: StatusValue::Integer(i64::from(self.deaths)),
+            },
+        ];
+        let detail = self
+            .waiting
+            .as_ref()
+            .map(|(reason, name)| ("waiting_for", *reason, name))
+            .or_else(|| {
+                self.last_error
+                    .as_ref()
+                    .map(|reason| ("last_failure", "Last failure", reason))
+            });
+        let fields: Arc<[StatusField]> = if let Some((key, label, value)) = detail {
+            let [quest, stage, deaths] = fields;
+            Arc::from([
+                quest,
+                stage,
+                deaths,
+                StatusField {
+                    key,
+                    label,
+                    value: StatusValue::Text(Arc::clone(value)),
+                },
+            ])
+        } else {
+            Arc::from(fields)
+        };
         output.status(ScriptStatus {
             run: self.run,
             card: CompiledId("Quester"),
@@ -112,24 +186,8 @@ impl Quester {
             },
             active_settings: 1,
             pending_settings: None,
-            fields: Arc::from([
-                StatusField {
-                    key: "quest",
-                    label: "Quest",
-                    value: StatusValue::Text(Arc::clone(&self.path.display_name)),
-                },
-                StatusField {
-                    key: "stage",
-                    label: "Stage",
-                    value: stage,
-                },
-                StatusField {
-                    key: "deaths",
-                    label: "Deaths",
-                    value: StatusValue::Integer(i64::from(self.deaths)),
-                },
-            ]),
-            failure: None,
+            fields,
+            failure: self.parked.then(|| self.blocked_failure()),
         });
     }
 
@@ -140,7 +198,11 @@ impl Quester {
         self.advances = false;
         self.attempts = 0;
         self.settling = false;
-        self.settle_ticks = 0;
+        self.settle_deadline = Duration::ZERO;
+        if self.waiting.take().is_some() {
+            self.dirty = true;
+        }
+        self.last_error = None;
     }
 
     fn current_step(&self) -> Option<&CompiledStep> {
@@ -155,24 +217,39 @@ impl Quester {
         }
     }
 
-    fn read_stage(&mut self, tick: &NativeTick<'_>, retarget: bool) {
-        let stamp = tick.cx.evidence();
-        self.evidence = Arc::new(LiveEvidence::from_snapshot(
-            tick.cx.snapshot(),
-            &self.quests,
-            stamp,
-        ));
-        if let Some(stage) = colour_stage(&self.path, &self.quests, tick.cx.snapshot()) {
-            if self.stage.as_ref() != Some(&stage) {
-                self.stage = Some(stage.clone());
-                if retarget {
-                    self.seq_index = sequence_for_stage(&self.path, stage.0.as_ref()).unwrap_or(0);
-                    self.step_index = 0;
+    fn read_stage(&mut self, tick: &NativeTick<'_>, retarget: bool) -> bool {
+        let stage = colour_stage(&self.path, &self.quests, tick.cx.snapshot());
+        let sequence = stage
+            .as_ref()
+            .and_then(|stage| sequence_for_stage(&self.path, stage.0.as_ref()));
+        let Some((stage, sequence)) = stage.zip(sequence) else {
+            // Unbound login frames are not a stage. Allow the same bounded
+            // observation window as dialogue opening, twice, without dispatch.
+            let since = self.unreadable_since.get_or_insert(tick.cx.active_now());
+            if tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(8) {
+                self.unreadable_reads += 1;
+                *since = tick.cx.active_now();
+                if self.unreadable_reads >= 2 {
+                    self.parked = true;
+                    self.park_reason = "quest colour unavailable or unknown stage";
+                    self.dirty = true;
                 }
-                self.dirty = true;
             }
+            return false;
+        };
+        self.unreadable_since = None;
+        self.unreadable_reads = 0;
+        if self.stage.as_ref() != Some(&stage) {
+            self.stage = Some(stage);
+            self.empty_reads = 0;
+            self.dirty = true;
+        }
+        if retarget {
+            self.seq_index = sequence;
+            self.step_index = 0;
         }
         self.needs_read = false;
+        true
     }
 
     fn on_step_boundary(&mut self, tick: &NativeTick<'_>) {
@@ -228,11 +305,7 @@ impl Script for Quester {
         }
         if self.parked {
             self.publish(tick.output);
-            return Ok(ScriptFlow::Blocked(ScriptFailure {
-                code: Arc::from("parked"),
-                message: Arc::from("no progress"),
-                retryable: true,
-            }));
+            return Ok(ScriptFlow::Blocked(self.blocked_failure()));
         }
         if self.death.observe(tick.cx.snapshot()) {
             self.cancel_step(tick);
@@ -241,7 +314,10 @@ impl Script for Quester {
             self.dirty = true;
         }
         if self.needs_read {
-            self.read_stage(tick, !self.settling);
+            if !self.read_stage(tick, !self.settling) {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
             if !self.settling {
                 self.step = None;
             }
@@ -256,17 +332,13 @@ impl Script for Quester {
             return Ok(ScriptFlow::Complete);
         }
         if self.settling {
-            if self.needs_read {
-                self.read_stage(tick, false);
-            }
             let truth = {
-                let mut required_after = tick.cx.evidence();
-                required_after.sequence = self.chat_since;
                 let pred = PredicateContext {
                     cx: &tick.cx,
                     quests: &self.quests,
                     progress: &[],
-                    required_after,
+                    required_after: tick.cx.evidence(),
+                    chat_since: self.chat_since,
                     outcome: None,
                 };
                 self.current_step()
@@ -275,7 +347,7 @@ impl Script for Quester {
             };
             if truth == Truth::True {
                 self.settling = false;
-                self.settle_ticks = 0;
+                self.settle_deadline = Duration::ZERO;
                 self.fail_streak = 0;
                 if let Some(stage) = self.stage.as_ref() {
                     self.seq_index =
@@ -284,10 +356,10 @@ impl Script for Quester {
                 }
                 self.on_step_boundary(tick);
             } else {
-                self.settle_ticks = self.settle_ticks.saturating_add(1);
-                if self.settle_ticks >= 40 {
+                if tick.cx.active_now() >= self.settle_deadline {
                     self.settling = false;
                     self.fail_streak = self.fail_streak.saturating_add(1);
+                    self.record_failure(ActionError::Failed(Arc::from("step settle timeout")));
                     if self.fail_streak >= 5 {
                         self.parked = true;
                     }
@@ -305,48 +377,49 @@ impl Script for Quester {
                     quests: &self.quests,
                     progress: &[],
                     required_after: tick.cx.evidence(),
+                    chat_since: super::families::reach::last_chat_seq(&tick.cx),
                     outcome: None,
                 };
-                select(&self.path, self.seq_index, &pred).map(|sel| {
-                    (
-                        sel.index,
-                        sel.step.advances,
-                        sel.prelude,
-                        sel.step as *const _,
-                    )
-                })
+                select(&self.path, self.seq_index, &pred)
+                    .map(|sel| (sel.index, sel.step.advances, sel.prelude))
             };
-            let Some((index, advances, _prelude, ptr)) = selected else {
+            let Some((index, advances, prelude)) = selected else {
+                self.empty_reads += 1;
+                if self.empty_reads >= 2 {
+                    self.parked = true;
+                    self.park_reason = "no step for stage";
+                    self.dirty = true;
+                }
                 self.needs_read = true;
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Continue);
             };
             self.step_index = index;
             self.advances = advances;
-            self.in_prelude = _prelude;
-            let step = if _prelude {
+            self.empty_reads = 0;
+            self.in_prelude = prelude;
+            let step = if prelude {
                 &self.path.prelude[index]
             } else {
                 &self.path.sequences[self.seq_index].steps[index]
             };
-            debug_assert!(std::ptr::eq(step as *const _, ptr));
-            self.chat_since = super::families::reach::last_chat_seq(&tick.cx) as u64;
-            let evidence: Arc<dyn EvidenceProvider> = Arc::clone(&self.evidence) as _;
+            self.chat_since = super::families::reach::last_chat_seq(&tick.cx);
             let required_after = tick.cx.evidence();
             let mut step_cx = StepContext {
                 tick,
                 quests: &self.quests,
                 progress: &[],
                 required_after,
-                walk_evidence: &evidence,
             };
             match step.plan.begin(&mut step_cx) {
                 Ok(run) => {
                     self.step = Some(run);
                     self.dirty = true;
+                    self.last_error = None;
                 }
-                Err(_) => {
+                Err(error) => {
                     self.attempts = self.attempts.saturating_add(1);
+                    self.record_failure(error);
                     if self.attempts >= 5 {
                         self.parked = true;
                     }
@@ -355,7 +428,6 @@ impl Script for Quester {
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
         }
-        let evidence: Arc<dyn EvidenceProvider> = Arc::clone(&self.evidence) as _;
         let required_after = tick.cx.evidence();
         let poll = {
             let mut step_cx = StepContext {
@@ -363,7 +435,6 @@ impl Script for Quester {
                 quests: &self.quests,
                 progress: &[],
                 required_after,
-                walk_evidence: &evidence,
             };
             self.step
                 .as_mut()
@@ -378,17 +449,23 @@ impl Script for Quester {
                 }
                 self.step = None;
                 self.settling = true;
-                self.settle_ticks = 0;
+                self.settle_deadline = tick.cx.active_now()
+                    + self
+                        .current_step()
+                        .map(|step| step.plan.settle_timeout())
+                        .unwrap_or_default();
             }
-            Poll::Ready(Err(_)) => {
+            Poll::Ready(Err(error)) => {
                 self.step = None;
                 self.fail_streak = self.fail_streak.saturating_add(1);
+                self.record_failure(error);
                 if self.fail_streak >= 5 {
                     self.parked = true;
                 }
                 self.on_step_boundary(tick);
             }
         }
+        self.update_wait();
         self.publish(tick.output);
         Ok(ScriptFlow::Continue)
     }
@@ -400,11 +477,13 @@ impl Script for Quester {
                 self.step = None;
                 self.settling = false;
                 self.dirty = true;
+                self.waiting = None;
             }
             Interrupt::SessionEnded => {
                 self.step = None;
                 self.settling = false;
                 self.needs_read = true;
+                self.waiting = None;
             }
             Interrupt::Pause | Interrupt::Hold(_) => {}
         }
@@ -414,12 +493,22 @@ impl Script for Quester {
         self.step = None;
         self.settling = false;
         self.dirty = true;
+        self.waiting = None;
     }
 
     fn retry(&mut self) -> Result<(), ScriptFailure> {
         self.parked = false;
         self.needs_read = true;
         self.fail_streak = 0;
+        self.attempts = 0;
+        self.watchdog = Watchdog::default();
+        self.empty_reads = 0;
+        self.unreadable_reads = 0;
+        self.unreadable_since = None;
+        self.last_error = None;
+        self.waiting = None;
+        self.park_reason = "no progress";
+        self.dirty = true;
         Ok(())
     }
 }
@@ -444,7 +533,7 @@ mod tests {
         let mut document = super::super::compile::decode_cook().unwrap();
         let step = &mut document.roles[0].sequences[0].steps[0];
         step.kind = "wait".into();
-        step.args = serde_json::json!({"max_ticks": 10});
+        step.args = serde_json::json!({"until":{"All":[]},"max_ticks": 10});
         step.advances = false;
         step.settle = super::super::path::PredicateDocument::Fact {
             kind: "message".into(),
@@ -452,8 +541,7 @@ mod tests {
             args: serde_json::json!({"any": ["you put the grain in the hopper"]}),
         };
         let path =
-            super::super::compile::compile_path(&document, b"message-regression", &data, &quests)
-                .unwrap();
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -466,7 +554,7 @@ mod tests {
             vec![QuestStatusView {
                 name: "Cook's Assistant".into(),
                 component_id: 0,
-                colour: 0xff0000,
+                colour: 0xf80000,
             }],
             true,
         );
@@ -492,5 +580,190 @@ mod tests {
             !script.settling,
             "a new sequence 3 message settles at tick 5003"
         );
+    }
+
+    fn fixture() -> (Quester, api::snapshot::GameSnapshot) {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let path = super::super::compile::compile_uncached_for_test(
+            &super::super::compile::decode_cook().unwrap(),
+            &data,
+            &quests,
+        )
+        .unwrap();
+        let mut s = api::snapshot::GameSnapshot::new();
+        s.seed_ingame(2);
+        (
+            Quester::new(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                path,
+                quests,
+            ),
+            s,
+        )
+    }
+
+    #[test]
+    fn unreadable_start_never_dispatches_start_and_retargets_when_ready() {
+        use super::super::families::tests::with_tick;
+        let (mut script, mut s) = fixture();
+        let mut ledger = None;
+        with_tick(&s, &mut ledger, 10, |t| script.tick(t).unwrap());
+        assert!(script.needs_read);
+        assert!(script.step.is_none());
+        s.seed_quest_statuses(
+            vec![api::snapshot::QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xf8f800,
+            }],
+            true,
+        );
+        with_tick(&s, &mut ledger, 11, |t| script.tick(t).unwrap());
+        assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+        assert_eq!(script.current_step().unwrap().id.0.as_ref(), "egg");
+        assert!(ledger.as_ref().is_none_or(|l| l.outbox.is_empty()));
+    }
+
+    #[test]
+    fn unavailable_colour_and_unselectable_stage_park_instead_of_spinning() {
+        use super::super::families::tests::with_tick;
+        let (mut script, s) = fixture();
+        let mut ledger = None;
+        for tick in 1..100 {
+            with_tick(&s, &mut ledger, tick, |t| script.tick(t).unwrap());
+        }
+        assert!(script.parked);
+        assert!(ledger.as_ref().is_none_or(|l| l.outbox.is_empty()));
+        let (mut script, mut s) = fixture();
+        let path = Arc::get_mut(&mut script.path).unwrap();
+        for step in &mut path.sequences[1].steps {
+            struct Yes;
+            impl super::super::compile::PredicatePlan for Yes {
+                fn evaluate(&self, _: &PredicateContext<'_, '_>) -> Truth {
+                    Truth::True
+                }
+            }
+            step.skip_if = Arc::new(Yes);
+        }
+        s.seed_quest_statuses(
+            vec![api::snapshot::QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xf8f800,
+            }],
+            true,
+        );
+        for tick in 1..10 {
+            with_tick(&s, &mut ledger, tick, |t| script.tick(t).unwrap());
+        }
+        assert!(script.parked);
+    }
+
+    #[test]
+    fn missing_spawn_status_names_the_wait_and_retains_the_park_cause() {
+        use super::super::families::tests::{with_tick, with_tick_output};
+        use api::snapshot::{GameSnapshot, QuestStatusView};
+        #[derive(Default)]
+        struct Capture(Vec<ScriptStatus>);
+        impl NativeOutput for Capture {
+            fn status(&mut self, status: ScriptStatus) {
+                self.0.push(status);
+            }
+            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
+        }
+        for (recipe, expected_name) in [
+            (None, "Egg"),
+            (Some("acquire:milk"), "Bucket"),
+            (Some("acquire:flour"), "Pot"),
+        ] {
+            let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+            let mut document = super::super::compile::decode_cook().unwrap();
+            if let Some(recipe) = recipe {
+                let mut step = document.quest.as_ref().unwrap().acquire[recipe][0].clone();
+                step.id = FactKey("spawn-policy".into());
+                // Exercise the real recipe's wait policy after approach; live runs
+                // cover its authored geometry.
+                step.args.as_object_mut().unwrap().remove("anchor");
+                document.roles[0].sequences[0].steps[0] = step;
+            } else {
+                let step = &mut document.roles[0].sequences[0].steps[0];
+                step.kind = "interact".into();
+                step.args = serde_json::json!({"target":{"ground":"egg"},"op":"Take","wait_if_missing":true});
+                step.advances = false;
+            }
+            let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests)
+                .unwrap();
+            let mut script = Quester::new(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                path,
+                quests,
+            );
+            let mut s = GameSnapshot::new();
+            s.seed_ingame(2);
+            s.seed_inventory(vec![], 28);
+            s.seed_ground_items(vec![]);
+            s.seed_quest_statuses(
+                vec![QuestStatusView {
+                    name: "Cook's Assistant".into(),
+                    component_id: 0,
+                    colour: 0xf80000,
+                }],
+                true,
+            );
+            let mut ledger = None;
+            let mut output = Capture::default();
+            for tick in 1..=3 {
+                with_tick_output(&s, &mut ledger, tick, &mut output, |t| {
+                    script.tick(t).unwrap();
+                });
+            }
+            let status = output.0.last().unwrap();
+            assert_eq!(status.phase, NativePhase::Working);
+            assert!(status.failure.is_none());
+            assert!(status
+            .fields
+            .iter()
+            .any(|field| field.label == "Waiting for ground spawn"
+                && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == expected_name)), "{expected_name} must await its shared spawn");
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+            script.fail_streak = 4;
+            with_tick_output(&s, &mut ledger, 205, &mut output, |t| {
+                script.tick(t).unwrap();
+            });
+            let status = output.0.last().unwrap();
+            assert_eq!(status.phase, NativePhase::Blocked);
+            let failure = status.failure.as_ref().unwrap();
+            assert!(failure.message.contains(expected_name) && failure.message.contains("spawn"));
+            let flow = with_tick(&s, &mut ledger, 206, |t| script.tick(t).unwrap());
+            assert!(
+                matches!(flow, ScriptFlow::Blocked(failure) if failure.message.contains(expected_name))
+            );
+        }
+    }
+
+    #[test]
+    fn retry_clears_attempt_and_watchdog_exhaustion() {
+        let (mut script, s) = fixture();
+        script.attempts = 5;
+        script.parked = true;
+        for _ in 0..9 {
+            script.watchdog.observe(None, None, &[], &[], 0);
+        }
+        script.retry().unwrap();
+        assert_eq!(script.attempts, 0);
+        super::super::families::tests::with_tick(&s, &mut None, 1, |t| script.on_step_boundary(t));
+        assert!(!script.parked);
     }
 }

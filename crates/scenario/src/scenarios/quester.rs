@@ -138,6 +138,21 @@ pub(crate) fn quester_cook_resume_scenario() -> Scenario {
     )
 }
 
+/// Start during relog, before the new session has posted its quest-tab colours.
+pub(crate) fn quester_cook_login_scenario() -> Scenario {
+    let mut scenario = quester_cook_resume_scenario();
+    scenario.name = "quester_cook_login";
+    scenario.settings.terminal_shot = Some("quester_cook_login");
+    let relog = scenario
+        .steps
+        .iter()
+        .rposition(|step| matches!(step.kind, StepKind::Relog))
+        .unwrap();
+    scenario.steps[relog].wait.arm = Proof::LoggedOut;
+    scenario.steps.remove(relog + 1);
+    scenario
+}
+
 /// Stop after an observed egg, then restart from live colour with that item held.
 pub(crate) fn quester_cook_restart_scenario() -> Scenario {
     let mut scenario = quester_stage(
@@ -173,8 +188,8 @@ pub(crate) fn quester_cook_restart_scenario() -> Scenario {
                 name: "stop Quester mid-quest",
                 kind: StepKind::StopScript,
                 wait: Wait {
-                    arm: Proof::Stat { id: 16, min: 0 },
-                    budget_ticks: 1,
+                    arm: Proof::ScriptIdle,
+                    budget_ticks: 10,
                 },
             },
             start_catalog_step(),

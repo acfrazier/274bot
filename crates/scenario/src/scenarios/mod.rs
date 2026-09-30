@@ -97,7 +97,8 @@ pub(crate) use production::{
 };
 pub use quester::quester_stage;
 pub(crate) use quester::{
-    quester_cook_restart_scenario, quester_cook_resume_scenario, quester_cook_scenario,
+    quester_cook_login_scenario, quester_cook_restart_scenario, quester_cook_resume_scenario,
+    quester_cook_scenario,
 };
 pub(crate) use ranging_guild::{
     ranging_guild_bank_scenario, ranging_guild_full_scenario, ranging_guild_redeem_scenario,

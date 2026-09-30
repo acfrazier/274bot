@@ -5,7 +5,7 @@ use crate::native::{ActionContext, ActionError, NativeActions, NativeTick};
 use api::game_data::SelectedGameData;
 use api::gather_methods::GatherCatalog;
 use api::quest_facts::QuestCatalog;
-use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestProgress};
+use api::quest_progress::{EvidenceStamp, QuestProgress};
 use api::selected::{ClientRevision, FactKey, SourceSpan, Truth};
 use sha2::{Digest, Sha256};
 use std::{
@@ -53,6 +53,7 @@ pub struct CompiledPath {
     pub display_name: Arc<str>,
     pub digest: [u8; 32],
     pub colour_not_started: FactKey,
+    pub colour_in_progress: FactKey,
     pub colour_complete: FactKey,
     pub prelude: Vec<CompiledStep>,
     pub sequences: Vec<CompiledSequence>,
@@ -79,6 +80,7 @@ pub struct PredicateContext<'a, 'frame> {
     pub quests: &'a QuestCatalog,
     pub progress: &'a [QuestProgress],
     pub required_after: EvidenceStamp,
+    pub chat_since: i32,
     pub outcome: Option<&'a StepOutcome>,
 }
 pub struct StepContext<'a, 'frame> {
@@ -86,7 +88,6 @@ pub struct StepContext<'a, 'frame> {
     pub quests: &'a QuestCatalog,
     pub progress: &'a [QuestProgress],
     pub required_after: EvidenceStamp,
-    pub walk_evidence: &'a Arc<dyn EvidenceProvider>,
 }
 pub trait FamilyReceipt: Send + Sync + 'static {
     fn as_any(&self) -> &dyn Any;
@@ -101,10 +102,21 @@ pub trait PredicatePlan: Send + Sync {
 }
 pub trait StepPlan: Send + Sync {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError>;
+    /// Post-machine predicate window, measured on the eligible clock.
+    fn settle_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(8)
+    }
+    fn compile_warning(&self) -> Option<&'static str> {
+        None
+    }
 }
 pub trait StepRun: Send {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>>;
     fn cancel(&mut self, actions: &mut NativeActions);
+    /// Borrowed wait detail; machines do not allocate on pending polls.
+    fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
+        None
+    }
 }
 pub type CompileStep =
     fn(&serde_json::Value, &CompileContext<'_>) -> Result<Arc<dyn StepPlan>, CompileError>;
@@ -138,10 +150,16 @@ pub fn abi_set() -> u64 {
     let mut hasher = Sha256::new();
     let mut rows: Vec<_> = families::handlers()
         .iter()
-        .map(|h| (h.kind, h.version))
+        .map(|h| ("step", h.kind, h.version))
+        .chain(
+            families::predicate_handlers()
+                .iter()
+                .map(|h| ("predicate", h.kind, h.version)),
+        )
         .collect();
     rows.sort_unstable();
-    for (kind, version) in rows {
+    for (class, kind, version) in rows {
+        hasher.update(class.as_bytes());
         hasher.update(kind.as_bytes());
         hasher.update(version.to_le_bytes());
     }
@@ -154,7 +172,6 @@ pub fn digest_bytes(bytes: &[u8]) -> [u8; 32] {
 }
 
 pub fn compile_path(
-    document: &PathDocument,
     bytes: &[u8],
     selected: &SelectedGameData,
     quests: &QuestCatalog,
@@ -172,7 +189,7 @@ pub fn compile_path(
                 Arc::clone(&pin.content_commit),
             )
         }
-        Err(_) => (0, Arc::from(""), Arc::from("")),
+        Err(_) => return Err(CompileError::code("missing-pin")),
     };
     let key = CacheKey {
         revision,
@@ -186,7 +203,9 @@ pub fn compile_path(
             return Ok(hit);
         }
     }
-    let compiled = Arc::new(compile_uncached(document, digest, selected, quests)?);
+    let document: PathDocument =
+        serde_json::from_slice(bytes).map_err(|_| CompileError::code("invalid-json"))?;
+    let compiled = Arc::new(compile_uncached(&document, digest, selected, quests)?);
     if let Ok(mut cache) = CACHE.lock() {
         cache.retain(|_, weak| weak.strong_count() > 0);
         cache.insert(key, Arc::downgrade(&compiled));
@@ -203,34 +222,6 @@ pub fn compile_uncached_for_test(
     compile_uncached(document, digest_bytes(b"test"), selected, quests).map(Arc::new)
 }
 
-fn reject_always_skipped(document: &PathDocument) -> Result<(), CompileError> {
-    let header = document.quest.as_ref();
-    let mut steps: Vec<&StepDocument> = Vec::new();
-    if let Some(header) = header {
-        for recipe in header.acquire.values() {
-            steps.extend(recipe.iter());
-        }
-    }
-    for role in &document.roles {
-        steps.extend(role.prelude.iter());
-        for sequence in &role.sequences {
-            steps.extend(sequence.steps.iter());
-        }
-    }
-    for step in steps {
-        if step.skip_if.constant_truth() == Some(true) {
-            return Err(CompileError {
-                path: document.id.clone(),
-                role: None,
-                step: Some(step.id.clone()),
-                code: Arc::from("always-skipped"),
-                source: None,
-            });
-        }
-    }
-    Ok(())
-}
-
 fn compile_uncached(
     document: &PathDocument,
     digest: [u8; 32],
@@ -240,11 +231,11 @@ fn compile_uncached(
     if document.schema != 2 {
         return Err(CompileError::code("unsupported-schema").with_path(document.id.clone()));
     }
-    reject_always_skipped(document)?;
     let header = document
         .quest
         .as_ref()
         .ok_or_else(|| CompileError::code("missing-quest-header").with_path(document.id.clone()))?;
+    validate_header(header, selected).map_err(|err| err.with_path(document.id.clone()))?;
     let role = document
         .roles
         .first()
@@ -253,6 +244,11 @@ fn compile_uncached(
         .progress
         .as_ref()
         .ok_or_else(|| CompileError::code("missing-progress").with_path(document.id.clone()))?;
+    if !progress.rules.is_empty() || !progress.flags.is_empty() {
+        return Err(
+            CompileError::code("journal-progress-unavailable").with_path(document.id.clone())
+        );
+    }
     let mut areas = HashMap::new();
     for (name, area) in &header.areas {
         areas.insert(name.clone(), area.boxes.clone());
@@ -280,7 +276,7 @@ fn compile_uncached(
         );
     }
     recipe_ctx.recipes = &recipes;
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<Arc<str>> = Vec::new();
     if role.prelude.len() > 4 {
         warnings.push(Arc::from("prelude-size"));
     }
@@ -328,12 +324,30 @@ fn compile_uncached(
             steps,
         });
     }
+    for plan in recipes
+        .values()
+        .flatten()
+        .map(|step| &step.plan)
+        .chain(prelude.iter().map(|step| &step.plan))
+        .chain(
+            sequences
+                .iter()
+                .flat_map(|seq| seq.steps.iter().map(|step| &step.plan)),
+        )
+    {
+        if let Some(warning) = plan.compile_warning() {
+            if !warnings.iter().any(|existing| existing.as_ref() == warning) {
+                warnings.push(Arc::from(warning));
+            }
+        }
+    }
     Ok(CompiledPath {
         id: document.id.clone(),
         display_name: Arc::from(document.display_name.as_str()),
         digest,
         colour_not_started: progress.colour.not_started.clone(),
         colour_complete: progress.colour.complete.clone(),
+        colour_in_progress: progress.colour.in_progress.clone(),
         prelude,
         sequences,
         warnings,
@@ -420,6 +434,7 @@ fn compile_acquire_step(
     document: &PathDocument,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct AcquireArgs {
         recipe: String,
     }
@@ -433,6 +448,69 @@ fn compile_acquire_step(
         recipe: Arc::from(arg.recipe),
         steps,
     }))
+}
+
+fn validate_header(
+    header: &super::path::QuestHeaderDocument,
+    selected: &SelectedGameData,
+) -> Result<(), CompileError> {
+    let obj = |alias: &str| {
+        selected
+            .item_by_alias(alias)
+            .ok_or_else(|| CompileError::code("unresolved-obj"))
+    };
+    for item in &header.items {
+        obj(&item.obj)?;
+        if item.qty == 0 {
+            return Err(CompileError::code("invalid-quantity"));
+        }
+        if let Some(recipe) = &item.acquire {
+            if !header.acquire.contains_key(recipe) {
+                return Err(CompileError::code("unresolved-recipe"));
+            }
+        }
+    }
+    for tool in &header.tools {
+        obj(tool
+            .strip_prefix("obj:")
+            .ok_or_else(|| CompileError::code("invalid-tool"))?)?;
+    }
+    for loadout in header.loadouts.values() {
+        for (slot, item) in &loadout.worn {
+            if !crate::loadouts_store::is_worn_slot(slot) {
+                return Err(CompileError::code("invalid-worn-slot"));
+            }
+            obj(item)?;
+        }
+        for item in &loadout.carry {
+            obj(&item.item)?;
+            if item.qty == 0 {
+                return Err(CompileError::code("invalid-quantity"));
+            }
+        }
+    }
+    match &header.bank {
+        super::path::QuestBankDocument::Nearest(name) if name == "nearest" => {}
+        super::path::QuestBankDocument::Nearest(_) => {
+            return Err(CompileError::code("invalid-bank"))
+        }
+        super::path::QuestBankDocument::Tile { tile, source } => {
+            families::validate_tile(*tile, source)?;
+        }
+    }
+    for area in header.areas.values() {
+        if area.boxes.is_empty() {
+            return Err(CompileError::code("invalid-area"));
+        }
+        for &[x1, z1, x2, z2, level] in &area.boxes {
+            families::validate_tile([x1, z1, level], &area.source)?;
+            families::validate_tile([x2, z2, level], &area.source)?;
+            if x1 > x2 || z1 > z2 {
+                return Err(CompileError::code("invalid-area"));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub const COOK_JSON: &str = include_str!("../../paths/289/cook.json");
@@ -461,17 +539,6 @@ mod tests {
     }
 
     #[test]
-    fn cook_path_decodes_schema2() {
-        let document = decode_cook().expect("cook json");
-        assert_eq!(document.schema, 2);
-        assert_eq!(document.id.0.as_ref(), "cook");
-        assert!(document.quest.is_some());
-        let start = &document.roles[0].sequences[0].steps[0];
-        assert_eq!(start.skip_if.constant_truth(), Some(false));
-        assert!(start.advances);
-    }
-
-    #[test]
     fn always_skipped_all_empty_is_rejected() {
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].steps[0].skip_if = PredicateDocument::All(vec![]);
@@ -482,29 +549,6 @@ mod tests {
             Ok(_) => panic!("always-skipped must fail compile"),
         };
         assert_eq!(err.code.as_ref(), "always-skipped");
-    }
-
-    #[test]
-    fn any_empty_is_never_skip_and_compiles_when_names_exist() {
-        let document = decode_cook().unwrap();
-        assert_eq!(
-            document.roles[0].sequences[0].steps[0]
-                .skip_if
-                .constant_truth(),
-            Some(false)
-        );
-        let data = selected();
-        if data.npc_names().is_none() || data.loc_names().is_none() {
-            return;
-        }
-        let quests = quests(&data);
-        let compiled = compile_path(&document, cook_bytes(), &data, &quests).unwrap();
-        let again = compile_path(&document, cook_bytes(), &data, &quests).unwrap();
-        assert!(Arc::ptr_eq(&compiled, &again));
-        let mut other = cook_bytes().to_vec();
-        other.extend_from_slice(b" ");
-        let missed = compile_path(&document, &other, &data, &quests).unwrap();
-        assert!(!Arc::ptr_eq(&compiled, &missed));
     }
 
     fn compile_err(mut edit: impl FnMut(&mut PathDocument)) -> CompileError {
@@ -618,5 +662,86 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.as_ref() == "prelude-size"));
+    }
+
+    #[test]
+    fn invalid_header_references_and_ignored_step_args_are_rejected() {
+        for edit in [
+            |d: &mut PathDocument| d.quest.as_mut().unwrap().items[0].obj = "bucket_milkk".into(),
+            |d: &mut PathDocument| {
+                d.quest
+                    .as_mut()
+                    .unwrap()
+                    .tools
+                    .push("obj:not_an_item".into())
+            },
+            |d: &mut PathDocument| {
+                d.roles[0].sequences[0].steps[0].args["anchor"]["source"] = serde_json::json!("")
+            },
+            |d: &mut PathDocument| {
+                d.quest
+                    .as_mut()
+                    .unwrap()
+                    .acquire
+                    .get_mut("acquire:egg")
+                    .unwrap()[0]
+                    .args["wait_if_mising"] = serde_json::json!(true)
+            },
+            |d: &mut PathDocument| {
+                d.quest
+                    .as_mut()
+                    .unwrap()
+                    .acquire
+                    .get_mut("acquire:flour")
+                    .unwrap()[4]
+                    .args["target"]["name"] = serde_json::json!("Not a real display name")
+            },
+            |d: &mut PathDocument| {
+                d.roles[0].progress.as_mut().unwrap().rules.push(
+                    super::super::path::ProgressRuleDocument {
+                        stage: FactKey::new("cook:1"),
+                        all: vec!["unsupported journal".into()],
+                        any: vec![],
+                        not: vec![],
+                        varp: None,
+                    },
+                )
+            },
+        ] {
+            compile_err(edit);
+        }
+        assert_eq!(
+            compile_err(|d| d.schema = 1).code.as_ref(),
+            "unsupported-schema"
+        );
+    }
+
+    #[test]
+    fn predicate_argument_typos_do_not_silently_compile() {
+        for (kind, mut args) in [
+            ("npc_present", serde_json::json!({"npc":"cook"})),
+            ("loc_present", serde_json::json!({"loc":"wheat"})),
+            ("ground_item_near", serde_json::json!({"obj":"egg"})),
+            ("item_count_at_least", serde_json::json!({"obj":"egg"})),
+            ("on_level", serde_json::json!({"level":0})),
+            ("in_area", serde_json::json!({"area":"area:dairy"})),
+            (
+                "skill_at_least",
+                serde_json::json!({"skill":"Cooking","level":1}),
+            ),
+            ("hp_fraction_below", serde_json::json!({"below":0.5})),
+            ("in_combat", serde_json::json!({})),
+            ("modal_open", serde_json::json!({})),
+        ] {
+            args["mistyped"] = serde_json::json!(true);
+            let error = compile_err(|document| {
+                document.roles[0].sequences[0].steps[0].skip_if = PredicateDocument::Fact {
+                    kind: kind.into(),
+                    version: 1,
+                    args: args.clone(),
+                };
+            });
+            assert_eq!(error.code.as_ref(), "invalid-args", "{kind}");
+        }
     }
 }

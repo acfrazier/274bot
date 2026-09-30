@@ -184,6 +184,8 @@ pub struct ScenarioRunner {
     /// StartScript has begun: paint published before it cannot belong to
     /// this run's card.
     script_started: bool,
+    /// Current Stop-step host observation, never inferred from game stats.
+    script_idle: bool,
     /// The prefixes the scenario's [`Proof::ScriptReceipt`] watches name,
     /// collected once at construction (empty, unallocated, for every
     /// scenario without one), so the per-frame pump never walks the steps.
@@ -277,6 +279,7 @@ impl ScenarioRunner {
             receipt_prefixes,
             script_receipts: Vec::new(),
             script_running: false,
+            script_idle: false,
             shot_sink: None,
         }
     }
@@ -434,6 +437,13 @@ impl ScenarioRunner {
         matches!(self.phase, Phase::Running)
             && self.step < self.scenario.steps.len()
             && matches!(self.current_step().kind, StepKind::StopScript)
+    }
+
+    /// Observe Stop's actual script-slot result before this frame's tick.
+    pub fn observe_script_idle(&mut self, idle: bool) {
+        if self.on_stop_script() {
+            self.script_idle = idle;
+        }
     }
 
     /// Whether the live pump should hand this runner the driven slot's
@@ -795,6 +805,7 @@ impl ScenarioRunner {
         )
         .then_some(StallCombatObservation::FirstSession);
         if matches!(self.current_step().kind, StepKind::StopScript) {
+            self.script_idle = false;
             self.script_started = false;
             self.script_receipts.clear();
         }
@@ -822,7 +833,11 @@ impl ScenarioRunner {
     /// Whether `proof` holds on this tick: snapshot predicates against the
     /// runner's XP baselines, File-card receipts against the host-fed latch.
     fn holds(&self, proof: Proof) -> bool {
+        if self.on_stop_script() && !self.script_idle {
+            return false;
+        }
         match proof {
+            Proof::ScriptIdle => self.script_idle,
             Proof::ScriptReceipt { prefix } => self
                 .script_receipts
                 .iter()

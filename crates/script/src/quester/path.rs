@@ -111,6 +111,7 @@ pub struct ProgressDocument {
 #[serde(deny_unknown_fields)]
 pub struct ProgressColourDocument {
     pub not_started: FactKey,
+    pub in_progress: FactKey,
     pub complete: FactKey,
 }
 
