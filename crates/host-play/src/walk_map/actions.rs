@@ -94,6 +94,7 @@ impl ActionError {
             Self::NoSelection => "no destination selected",
             Self::Blocked => "destination blocked",
             Self::NoOrigin => "no position yet",
+            Self::OriginNotStandable => "standing on a blocked tile",
             Self::NoFocus => "not logged in",
             Self::Stale => "stale",
             Self::NoNavigation => "navigation unavailable",
