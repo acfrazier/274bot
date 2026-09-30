@@ -241,10 +241,10 @@ impl StepRun for BankRun {
                 .cx
                 .snapshot()
                 .here()
-                .is_some_and(|here| reach::within(here.value, self.bank.tile, 6));
+                .is_some_and(|here| reach::within(here.value, self.bank.tile, 0));
             if !near {
                 self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(self.bank.tile, 4, cx.required_after),
+                    reach::walk_request(self.bank.tile, 0, cx.required_after),
                     &mut cx.tick.cx,
                 )?);
                 return Poll::Pending;

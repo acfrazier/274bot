@@ -770,8 +770,10 @@ mod tests {
     #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
-        eprintln!("Quester size_of={bytes}");
+        let bank_bytes = std::mem::size_of::<BankMemo>();
+        eprintln!("Quester size_of={bytes}; BankMemo size_of={bank_bytes}, heap=0");
         assert!(bytes < 4096, "Quester is {bytes} bytes");
+        assert!(bank_bytes <= 520, "BankMemo is {bank_bytes} bytes");
     }
 
     #[test]
