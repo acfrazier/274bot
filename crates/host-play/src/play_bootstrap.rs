@@ -240,7 +240,7 @@ impl SharedClientTemplate {
         let mut client = host::prepare_client_with_profile(
             Arc::clone(self.profile.client()),
             uid,
-            true,
+            self.profile.map_members(),
             lowmem,
             Arc::clone(&self.cache),
             Arc::clone(&self.ifaces),
