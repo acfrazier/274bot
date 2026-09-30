@@ -11,7 +11,7 @@ use std::{sync::Arc, task::Poll, time::Duration};
 const ROOT_289: i32 = 8134;
 const TITLE_289: i32 = 8144;
 const WINDOW: Duration = Duration::from_secs(3);
-
+const OVERALL: Duration = Duration::from_secs(8);
 pub struct JournalRequest {
     pub quest: FactKey,
     pub facts: Arc<QuestCatalog>,
@@ -20,6 +20,7 @@ pub struct JournalRequest {
 enum Phase {
     Click,
     Acquire { request: u64 },
+    Adopt { before: EvidenceStamp },
     Close,
     Closing { request: u64 },
 }
@@ -33,6 +34,7 @@ pub struct JournalMachine {
     lease: Option<QuietReadLease>,
     phase: Phase,
     deadline: Duration,
+    overall_deadline: Duration,
     acquired: Option<EvidenceStamp>,
     lines: Arc<[Arc<str>]>,
 }
@@ -45,6 +47,36 @@ fn title_matches(actual: &str, expected: &str) -> bool {
     // The selected server prefixes the title with @dre@. Do not infer a title
     // from body position or accept a different quest on the same root.
     actual.strip_prefix("@dre@").unwrap_or(actual).trim() == expected
+}
+
+fn strictly_later(actual: EvidenceStamp, before: EvidenceStamp) -> bool {
+    actual.meets(before) && actual != before
+}
+
+fn display_title(actual: &str) -> &str {
+    actual.strip_prefix("@dre@").unwrap_or(actual).trim()
+}
+
+fn foreign_modal_failure(root: i32, texts: &[String]) -> Option<ActionError> {
+    if root >= 0 {
+        let text = texts.iter().find(|text| !text.is_empty());
+        return Some(match text {
+            Some(text) => ActionError::Failed(Arc::from(format!(
+                "journal blocked by modal root {root} ({text})"
+            ))),
+            None => ActionError::Failed(Arc::from(format!(
+                "journal blocked by modal root {root}"
+            ))),
+        });
+    }
+    texts
+        .iter()
+        .find(|text| !text.is_empty())
+        .map(|text| {
+            ActionError::Failed(Arc::from(format!(
+                "journal blocked by modal text ({text})"
+            )))
+        })
 }
 
 impl NativeMachine for JournalMachine {
@@ -68,9 +100,26 @@ impl NativeMachine for JournalMachine {
         let snapshot = cx.snapshot();
         let pair = snapshot.main_modal().ok_or(ActionError::Busy)?;
         let chat = snapshot.chat_modal().ok_or(ActionError::Busy)?;
-        if pair.value.root != -1 || !pair.value.texts.is_empty() || chat.value.root != -1 {
-            return Err(ActionError::Busy);
-        }
+        let adopted_before = if chat.value.root != -1 || !chat.value.texts.is_empty() {
+            return Err(foreign_modal_failure(chat.value.root, chat.value.texts)
+                .unwrap_or(ActionError::Busy));
+        } else if pair.value.root == ROOT_289 {
+            match snapshot.journal_widgets(ROOT_289, TITLE_289) {
+                Some(page) if title_matches(page.value.title, title) => Some(page.stamp),
+                Some(page) => {
+                    return Err(ActionError::Failed(Arc::from(format!(
+                        "journal blocked by quest journal '{}'",
+                        display_title(page.value.title)
+                    ))));
+                }
+                None => return Err(ActionError::Busy),
+            }
+        } else if pair.value.root != -1 || !pair.value.texts.is_empty() {
+            return Err(foreign_modal_failure(pair.value.root, pair.value.texts)
+                .unwrap_or(ActionError::Busy));
+        } else {
+            None
+        };
         let rows = snapshot
             .quest_statuses()
             .ok_or_else(|| failure("quest tab unavailable"))?;
@@ -91,16 +140,22 @@ impl NativeMachine for JournalMachine {
             colour,
             pin: Arc::new(cx.pin().clone()),
             lease: Some(lease),
-            phase: Phase::Click,
+            phase: adopted_before
+                .map(|before| Phase::Adopt { before })
+                .unwrap_or(Phase::Click),
             deadline: cx.active_now() + WINDOW,
+            overall_deadline: cx.active_now() + OVERALL,
             acquired: None,
             lines: Arc::from([]),
         })
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<JournalRead, ActionError>> {
+        if cx.active_now() >= self.overall_deadline {
+            return Poll::Ready(Err(failure("journal transaction timeout")));
+        }
         if !self.lease.as_ref().is_some_and(QuietReadLease::live) {
-            return Poll::Ready(Err(ActionError::Cancelled));
+            return Poll::Ready(Err(failure("journal quiet lease expired")));
         }
         if cx.active_now() >= self.deadline {
             return Poll::Ready(Err(failure("journal modal timeout")));
@@ -157,11 +212,32 @@ impl NativeMachine for JournalMachine {
                 self.phase = Phase::Close;
                 self.deadline = cx.active_now() + WINDOW;
             }
-            Phase::Close => {
-                if snapshot
-                    .chat_modal()
-                    .is_none_or(|chat| chat.value.root != -1)
+            Phase::Adopt { before } => {
+                if snapshot.chat_modal().is_none_or(|chat| {
+                    chat.value.root != -1 || !chat.value.texts.is_empty()
+                }) {
+                    return Poll::Ready(Err(failure("journal ownership lost before close")));
+                }
+                let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
+                    return Poll::Ready(Err(failure("journal ownership lost before close")));
+                };
+                if !strictly_later(page.stamp, before)
+                    || !title_matches(page.value.title, &self.title)
                 {
+                    if !strictly_later(page.stamp, before) {
+                        return Poll::Pending;
+                    }
+                    return Poll::Ready(Err(failure("journal ownership lost before close")));
+                }
+                self.lines = page.value.lines().map(Arc::<str>::from).collect();
+                self.acquired = Some(page.stamp);
+                self.phase = Phase::Close;
+                self.deadline = cx.active_now() + WINDOW;
+            }
+            Phase::Close => {
+                if snapshot.chat_modal().is_none_or(|chat| {
+                    chat.value.root != -1 || !chat.value.texts.is_empty()
+                }) {
                     return Poll::Ready(Err(failure("journal ownership lost before close")));
                 }
                 let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
@@ -190,6 +266,11 @@ impl NativeMachine for JournalMachine {
                 }
                 if !pair.stamp.meets(receipt.evidence) || pair.stamp == receipt.evidence {
                     return Poll::Pending;
+                }
+                if snapshot.chat_modal().is_none_or(|chat| {
+                    chat.value.root != -1 || !chat.value.texts.is_empty()
+                }) {
+                    return Poll::Ready(Err(failure("journal ownership lost while closing")));
                 }
                 if pair.value.root == -1 && pair.value.texts.is_empty() {
                     let closed = pair.stamp;

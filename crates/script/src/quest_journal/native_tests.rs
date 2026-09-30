@@ -148,7 +148,8 @@ fn foreign_modal_busy_wrong_title_never_closed_and_cancel_revokes_click() {
     with_tick(&snapshot, &mut ledger, 1, |t| {
         assert!(matches!(
             t.actions.begin::<JournalMachine>(request, &mut t.cx),
-            Err(ActionError::Busy)
+            Err(ActionError::Failed(reason))
+                if reason.contains("root 123") && reason.contains("dialogue")
         ))
     });
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
@@ -221,4 +222,131 @@ fn unreadable_and_held_journal_are_bounded_without_hiding_forever() {
         .unwrap()
         .quiet_read(std::time::Instant::now())
         .is_none());
+}
+
+#[test]
+fn journal_adopts_matching_open_page_without_click() {
+    let (mut snapshot, request) = fixture();
+    snapshot.seed_main_modal(
+        ROOT_289,
+        vec![
+            widget(8145, "@str@Already open"),
+            widget(TITLE_289, "@dre@The Cook's Quest"),
+        ],
+    );
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<JournalMachine>(request, &mut t.cx)
+            .unwrap()
+    });
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    with_tick(&snapshot, &mut ledger, 3, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    assert!(matches!(
+        ledger.as_ref().unwrap().outbox.first().map(|action| &action.effect),
+        Some(HostEffect::Interaction(InteractReq::CloseModal))
+    ));
+    acknowledge(&mut ledger, 3);
+    snapshot.seed_main_modal(-1, vec![]);
+    let read = with_tick(&snapshot, &mut ledger, 4, |t| {
+        match t.actions.poll(&handle, &mut t.cx) {
+            Poll::Ready(Ok(read)) => read,
+            other => panic!("expected journal read, got {other:?}"),
+        }
+    });
+    assert_eq!(read.lines.as_ref(), &[Arc::<str>::from("@str@Already open")]);
+    assert_eq!(read.acquired.tick, 2);
+    assert_eq!(read.closed.tick, 4);
+}
+
+#[test]
+fn foreign_modal_begin_names_root_and_unknown_modal_stays_busy() {
+    let (mut snapshot, request) = fixture();
+    snapshot.seed_main_modal(
+        777,
+        vec![],
+    );
+    snapshot.seed_main_modal_texts(vec!["Trade confirmation".into()]);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |t| {
+        assert!(matches!(
+            t.actions.begin::<JournalMachine>(request, &mut t.cx),
+            Err(ActionError::Failed(reason))
+                if reason.contains("root 777") && reason.contains("Trade confirmation")
+        ));
+    });
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+    let (mut snapshot, request) = fixture();
+    snapshot.seed_main_modal(ROOT_289, vec![]);
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        assert!(matches!(
+            t.actions.begin::<JournalMachine>(request, &mut t.cx),
+            Err(ActionError::Busy)
+        ));
+    });
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+#[test]
+fn journal_overall_deadline_wins_after_phase_progress() {
+    let (mut snapshot, request) = fixture();
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<JournalMachine>(request, &mut t.cx)
+            .unwrap()
+    });
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    acknowledge(&mut ledger, 2);
+    snapshot.seed_main_modal(
+        ROOT_289,
+        vec![widget(TITLE_289, "@dre@The Cook's Quest")],
+    );
+    with_tick(&snapshot, &mut ledger, 3, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    with_tick(&snapshot, &mut ledger, 4, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    acknowledge(&mut ledger, 4);
+    with_tick(&snapshot, &mut ledger, 15, |t| {
+        assert!(matches!(
+            t.actions.poll(&handle, &mut t.cx),
+            Poll::Ready(Err(ActionError::Failed(reason)))
+                if reason.as_ref() == "journal transaction timeout"
+        ));
+    });
+}
+
+#[test]
+fn journal_quiet_lease_expiry_is_named() {
+    let (snapshot, request) = fixture();
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<JournalMachine>(request, &mut t.cx)
+            .unwrap()
+    });
+    let (lease, owner) = {
+        let ledger = ledger.as_ref().unwrap();
+        let (_, lease, _) = ledger.quiet_since.unwrap();
+        (lease, Arc::clone(ledger.owner.as_ref().unwrap()))
+    };
+    owner.release_quiet(lease);
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        assert!(matches!(
+            t.actions.poll(&handle, &mut t.cx),
+            Poll::Ready(Err(ActionError::Failed(reason)))
+                if reason.as_ref() == "journal quiet lease expired"
+        ));
+    });
 }
