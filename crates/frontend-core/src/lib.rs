@@ -57,8 +57,8 @@ pub use selection::{
     start_marked, stop_marked, BulkSkip, MarkedSelection, ProfileIdentity, StopReport,
 };
 pub use session::{
-    ArmMirror, OperatorSession, Removal, ScriptStart, Selection, SlotTransition, StartSettled,
-    Transition, SLOT_REMOVE_TIMEOUT,
+    ArmMirror, MemoryNotice, OperatorSession, Removal, ScriptStart, Selection, SlotTransition,
+    StartSettled, Transition, SLOT_REMOVE_TIMEOUT,
 };
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};

@@ -163,6 +163,12 @@ pub enum AppAction {
     Logout,
     /// Log out every member (after the scope confirmation).
     LogoutAll,
+    /// Relog the settings-bound member for a memory-mode switch (the
+    /// settings popup's `r` key): the binary confirms first when a
+    /// running script would be interrupted.
+    MemoryRelog(String),
+    /// Confirmed memory Relog-now: log out and back in through the FIFO.
+    MemoryRelogNow(String),
     /// Remove this member from the fleet (clean logout, then stop). The
     /// name was frozen when the operator confirmed.
     Remove(String),
@@ -411,6 +417,10 @@ pub struct TuiApp {
     /// The popup's save feedback: an inline refusal, or `Saved <name>.`
     /// once its last persist is durable.
     pub settings_save: frontend_core::ProfileFormSave,
+    /// Login-time vs current memory mode for the focused slot (the
+    /// settings popup and the status pane read it); copied from the core
+    /// each pump, `None` without a recorded login.
+    pub memory: Option<frontend_core::MemoryNotice>,
     /// Remembered WalkTo terrain-bake choice (shared `panel-ui.json` key).
     pub map_bake: MapBakeChoice,
     /// The settings popup changed [`Self::map_bake`]; the binary persists it.
@@ -520,6 +530,7 @@ impl TuiApp {
             settings_profile: None,
             settings_title: crate::settings::TITLE.to_string(),
             settings_save: frontend_core::ProfileFormSave::default(),
+            memory: None,
             map_bake: MapBakeChoice::Ask,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
@@ -1746,12 +1757,33 @@ impl TuiApp {
             .walk_dest
             .map(|t| format!("{} {} {}", t.x, t.z, t.level))
             .unwrap_or_else(|| "—".into());
-        let mem = if self.settings.lowmem {
+        let mode = if self.settings.lowmem {
             "lowmem"
         } else {
             "highmem"
         };
-        let pane = StatusPane::new(self.focused_detail(), &walk, mem)
+        let login = self.memory.filter(|n| n.differs()).map(|n| {
+            if n.login_lowmem {
+                "lowmem"
+            } else {
+                "highmem"
+            }
+        });
+        let mem: String;
+        let note: Option<&str>;
+        match login {
+            Some(login) => {
+                mem = format!("{mode} (login {login})");
+                note =
+                    Some("server tabs + sound follow at the next login (settings: r = relog now)");
+            }
+            None => {
+                mem = mode.to_string();
+                note = None;
+            }
+        }
+        let pane = StatusPane::new(self.focused_detail(), &walk, &mem)
+            .mem_notice(note)
             .resources(&self.resources)
             .notice(self.background_notice.as_deref());
         frame.render_widget(pane, area);

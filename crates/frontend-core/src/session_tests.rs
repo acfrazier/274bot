@@ -1607,6 +1607,51 @@ fn a_failed_save_hands_back_the_draft_that_did_not_land() {
 }
 
 #[test]
+fn memory_toggle_stages_arms_and_settles() {
+    let mut s = session("mem-toggle", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    assert_eq!(
+        s.memory_status("alice"),
+        Some(MemoryNotice {
+            login_lowmem: true,
+            desired_lowmem: true,
+            relog_pending: false,
+        }),
+        "a fresh spawn runs the profile mode: no notice"
+    );
+    assert_eq!(arm(&s, "alice").lowmem_handshake(), None);
+
+    let op = s.set_memory_mode("alice", false).unwrap();
+    assert_eq!(
+        arm(&s, "alice").lowmem_handshake(),
+        Some(false),
+        "the toggle arms the next handshake at once (parked slots converge)"
+    );
+    let notice = s.memory_status("alice").expect("recorded login");
+    assert!(
+        notice.differs(),
+        "server tabs/sound still follow the login mode"
+    );
+    assert_eq!((notice.login_lowmem, notice.desired_lowmem), (true, false));
+
+    s.flush_writes();
+    assert_eq!(
+        s.operation(op).unwrap().outcome("alice"),
+        Some(&Outcome::Completed)
+    );
+    assert!(
+        !s.vault().unwrap().get("alice").unwrap().settings.lowmem,
+        "the setting is durable"
+    );
+    assert_eq!(
+        arm(&s, "alice").lowmem_handshake(),
+        Some(false),
+        "settle re-affirms the armed handshake"
+    );
+}
+
+#[test]
 fn a_superseded_save_settles_with_the_commit_it_was_written_in() {
     for fails in [false, true] {
         let test = format!("form-superseded-{fails}");
@@ -1712,4 +1757,189 @@ fn a_delete_that_fails_after_a_queued_save_reports_once_and_restores_the_profile
     );
     let restored = s.vault().unwrap().get("alice").expect("alice is back");
     assert_eq!(restored.password, "pw", "the durable row, not the draft");
+}
+
+#[test]
+fn memory_toggle_before_load_applies_at_spawn_without_notice() {
+    let mut s = session("mem-early", &[("alice", 1, true)]);
+    let mut surface = Recorder::default();
+    s.set_memory_mode("alice", false).unwrap();
+    s.flush_writes();
+    s.load("alice", &mut surface);
+    assert_eq!(
+        s.memory_status("alice").map(|n| n.differs()),
+        Some(false),
+        "the spawn handshakes the toggled mode"
+    );
+}
+
+#[test]
+fn memory_status_is_none_without_a_recorded_login() {
+    let s = session("mem-none", &[("alice", 1, false)]);
+    assert_eq!(s.memory_status("alice"), None);
+    assert_eq!(s.memory_status("ghost"), None);
+    assert!(!s.memory_relog_warning("alice"));
+}
+
+#[test]
+fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
+    let mut s = session("mem-relog", &[("alice", 1, true)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    s.login("alice", &mut surface);
+    push_status(
+        &s,
+        SlotStatus {
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            ..row("alice")
+        },
+    );
+    s.poll();
+
+    s.set_memory_mode("alice", false).unwrap();
+    s.flush_writes();
+    let relog = s.request_memory_relog("alice", &mut surface);
+    assert_eq!(
+        s.operation(relog).unwrap().outcome("alice"),
+        Some(&Outcome::Pending)
+    );
+    assert!(arm(&s, "alice").login_latched(), "logout latches first");
+    assert!(arm(&s, "alice").wants_logout());
+    assert!(
+        s.memory_status("alice").unwrap().relog_pending,
+        "the poll must see the armed relog"
+    );
+
+    // The worker parks on the title after its clean logout.
+    {
+        let mut rows = s.play().unwrap().statuses.lock().unwrap();
+        rows[0].connected = false;
+        rows[0].ingame = false;
+        rows[0].login_latched = true;
+    }
+    s.poll();
+
+    let alice = arm(&s, "alice");
+    assert!(
+        alice.wants_login(),
+        "the poll re-arms the login once parked"
+    );
+    assert!(!alice.login_latched());
+    assert!(
+        !s.memory_status("alice").unwrap().relog_pending,
+        "the sequencing resolves exactly once"
+    );
+    assert!(
+        !s.memory_status("alice").unwrap().differs(),
+        "the new handshake carries the toggled mode"
+    );
+    let last = s
+        .fleet_view()
+        .row("alice")
+        .expect("member row")
+        .last_op
+        .as_ref()
+        .expect("a reported operation");
+    assert_eq!(last.action, ActionKind::Login);
+    assert_eq!(last.outcome, Outcome::Pending);
+}
+
+#[test]
+fn manual_login_supersedes_a_pending_relog() {
+    let mut s = session("mem-supersede", &[("alice", 1, true)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    s.login("alice", &mut surface);
+    s.request_memory_relog("alice", &mut surface);
+    assert!(s.memory_status("alice").unwrap().relog_pending);
+    s.login("alice", &mut surface);
+    assert!(
+        !s.memory_status("alice").unwrap().relog_pending,
+        "an explicit Log in owns the slot again"
+    );
+}
+
+#[test]
+fn a_failed_memory_write_resets_the_armed_handshake() {
+    let mut s = session("mem-write-fail", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let blocked = block_writes(&vault_path("mem-write-fail"));
+
+    let op = s.set_memory_mode("alice", false).unwrap();
+    assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(false));
+    s.flush_writes();
+    unblock_writes(blocked);
+
+    assert!(matches!(
+        s.operation(op).unwrap().outcome("alice"),
+        Some(Outcome::Failed(_))
+    ));
+    assert!(s
+        .take_write_failures()
+        .iter()
+        .any(|f| f.starts_with("memory: ")));
+    assert!(
+        s.vault().unwrap().get("alice").unwrap().settings.lowmem,
+        "the staged edit is rolled back to the durable value"
+    );
+    assert_eq!(
+        arm(&s, "alice").lowmem_handshake(),
+        Some(true),
+        "the next handshake sends the restored value, never the refused one"
+    );
+    assert!(
+        !s.memory_status("alice").unwrap().differs(),
+        "no phantom notice survives the rollback"
+    );
+}
+
+#[test]
+fn memory_relog_warns_while_a_script_runs() {
+    let iso = script::IsolatedEnv::enter("frontend-core-mem-warn");
+    let mut s = session("mem-warn", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    assert!(
+        !s.memory_relog_warning("alice"),
+        "no script: Relog-now needs no warning"
+    );
+    let (js, shape) = looping_bot(&iso.dir);
+    s.start_script(
+        "alice",
+        ScriptStart::Load {
+            js,
+            shape,
+            bag: None,
+            siblings: Vec::new(),
+        },
+        Some("file:looping".into()),
+    )
+    .unwrap();
+    let settled = settle_start(&mut s);
+    assert!(
+        settled
+            .iter()
+            .any(|st| st.outcome == Some(script::StartOutcome::Ready)),
+        "the looping script runs: {settled:?}"
+    );
+    assert!(
+        s.memory_relog_warning("alice"),
+        "a running script is interrupted by a relog"
+    );
+
+    let stop = s.stop_script("alice");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while s.operation(stop).unwrap().outcome("alice") == Some(&Outcome::Pending)
+        && Instant::now() < deadline
+    {
+        s.poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !s.memory_relog_warning("alice"),
+        "a stopped script needs no warning"
+    );
 }
