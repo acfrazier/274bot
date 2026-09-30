@@ -2,16 +2,26 @@
 //! each packed edge runs.
 //!
 //! Every loc, NPC and held-obj edge names the op it uses (`kind`, `loc_id`,
-//! `option`). The engine runs the handler `[<op>,<name>]`, else
-//! `[<op>,_<category>]`, and that handler (with the labels and queues it
-//! jumps to) is the edge's source. [`apply_members_guards`] sets
-//! `members_req` on every edge whose source opens with the F2P refusal
-//! `if (map_members = ^false …) { …; return; }`; producers whose gate has
-//! another shape (a positive `map_members = ^true` arm, a stage-door path,
-//! the spell table's `members` column) set it themselves.
-//! [`require_members_guards`] is the bake's completeness check: an edge
-//! whose source reads `map_members` anywhere must carry `members_req`,
-//! unless that exact read is listed in [`NON_GATE_READS`].
+//! `option`). The engine runs the first of `[<op>,<name>]`,
+//! `[<op>,_<category>]` and the global `[<op>,_]` that exists
+//! (`ScriptProvider.getByTrigger`: type, category, global), and that
+//! handler is the edge's source. Its *leading path* is its first statement,
+//! followed through the label when that statement is an unconditional
+//! `@label` jump, and so on. [`apply_members_guards`] sets `members_req` on
+//! every edge whose leading path is the F2P refusal
+//! `if (map_members = ^false …) { …; return; }`. A refusal anywhere else (a
+//! `@multiN` option, a queue, a label inside a conditional, a later
+//! statement) does not gate every use of the op, so the pass leaves it to
+//! the check. Producers whose gate has another shape (a positive
+//! `map_members = ^true` arm, a stage-door path, the spell table's
+//! `members` column) set the flag themselves.
+//!
+//! [`require_members_guards`] is the bake's two-way check. A free edge
+//! whose source (with every label, choice and queue it may continue into)
+//! reads `map_members` fails, unless that exact read is listed in
+//! [`NON_GATE_READS`]. A members edge whose leading path does not refuse
+//! fails too, unless its source path carries a read listed in
+//! [`MEMBERS_ARMS`].
 
 use super::*;
 
@@ -39,6 +49,31 @@ const NON_GATE_READS: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
+/// Members gates that are not their edge's leading refusal, set by the
+/// producer that reads them: `(op, handler, normalized statement, why)`. A
+/// members edge whose leading path does not refuse passes the check only
+/// when one of these exact reads lies on its source path.
+const MEMBERS_ARMS: &[(&str, &str, &str, &str)] = &[
+    (
+        "opnpc1",
+        "gnomepilot",
+        "if(%grandtree=^grandtree_complete&map_members=^true){",
+        "only this members arm opens the glider menu (gliders.rs)",
+    ),
+    (
+        "oploc1",
+        "zanarisdoor",
+        "if(inv_total(worn,dramen_staff)>0&map_members=^true){",
+        "only this members arm teleports into Zanaris (zanaris.rs)",
+    ),
+    (
+        "label",
+        "spirit_tree_tele",
+        "if(map_members=^false){",
+        "every spirit-tree ride jumps here after its quest check and menu (spirit_trees.rs)",
+    ),
+];
+
 /// Calls whose first argument names the `[queue,<name>]` block they run.
 const QUEUE_CALLS: [&str; 4] = ["queue(", "longqueue(", "strongqueue(", "weakqueue("];
 
@@ -47,9 +82,11 @@ const QUEUE_CALLS: [&str; 4] = ["queue(", "longqueue(", "strongqueue(", "weakque
 struct Handler {
     /// The first statement refuses every F2P player and returns.
     refuses_f2p: bool,
+    /// The first statement is the unconditional jump `@<label>…;`.
+    lead_jump: Option<String>,
     /// Normalized statements that read `map_members`.
     reads: Vec<String>,
-    /// `[label,…]` / `[queue,…]` blocks this body continues into.
+    /// Every `[label,…]` / `[queue,…]` block this body may continue into.
     jumps: Vec<(&'static str, String)>,
 }
 
@@ -71,6 +108,7 @@ impl MembersGuards {
                 let facts = handler_facts(&body);
                 let slot = handlers.entry((op, name)).or_default();
                 slot.refuses_f2p |= facts.refuses_f2p;
+                slot.lead_jump = slot.lead_jump.take().or(facts.lead_jump);
                 slot.reads.extend(facts.reads);
                 slot.jumps.extend(facts.jumps);
             }
@@ -107,11 +145,13 @@ impl MembersGuards {
         }
     }
 
-    /// The handler the engine runs for `edge`, as `(op, name)`: the
-    /// named block, else its `loc_N`/`npc_N` alias, else the category
-    /// block. `None` for a spell teleport (the spell table, not a handler)
-    /// and for an edge whose op has no handler at all.
-    fn source(&self, edge: &TransportEdge) -> Option<(String, String)> {
+    /// The handler keys the engine tries for `edge`'s op, as `(op, name)`,
+    /// in `ScriptProvider.getByTrigger` order: the type (its pack name,
+    /// then the `loc_N`/`npc_N`/`obj_N` spelling of the same id), the
+    /// category `_<category>`, then the global `_`. `None` for a spell
+    /// teleport (the spell table, not a handler) and the never-packed
+    /// essence exit.
+    fn candidates(&self, edge: &TransportEdge) -> Option<Vec<(String, String)>> {
         let (config, op, id_names, alias) = match edge.kind {
             TransportKind::Boat | TransportKind::Npc | TransportKind::Glider => (
                 "npc",
@@ -148,15 +188,27 @@ impl MembersGuards {
             .iter()
             .find_map(|name| self.categories.get(&(config, name.to_string())))
             .map(|cat| format!("_{cat}"));
-        names
-            .into_iter()
-            .map(str::to_string)
-            .chain(category)
-            .map(|name| (op.clone(), name))
-            .find(|key| self.handlers.contains_key(key))
+        Some(
+            names
+                .into_iter()
+                .map(str::to_string)
+                .chain(category)
+                .chain(["_".to_string()])
+                .map(|name| (op.clone(), name))
+                .collect(),
+        )
     }
 
-    /// The handler and every label/queue block it continues into.
+    /// The first of `candidates` that exists: the handler the engine runs.
+    fn resolve(&self, candidates: &[(String, String)]) -> Option<(String, String)> {
+        candidates
+            .iter()
+            .find(|key| self.handlers.contains_key(*key))
+            .cloned()
+    }
+
+    /// The handler and every label/queue block it may continue into, on
+    /// any branch: the completeness scan's reach.
     fn reached(&self, source: (String, String)) -> Vec<(&(String, String), &Handler)> {
         let mut seen = HashSet::new();
         let mut pending = vec![source];
@@ -179,18 +231,36 @@ impl MembersGuards {
         out
     }
 
+    /// Whether the leading path from `source` (its first statement, through
+    /// a chain of unconditional leading `@label` jumps) is the F2P refusal.
+    fn leading_refusal(&self, source: &(String, String)) -> bool {
+        let mut seen = HashSet::new();
+        let mut key = source.clone();
+        while let Some(handler) = self.handlers.get(&key) {
+            if handler.refuses_f2p {
+                return true;
+            }
+            let Some(label) = &handler.lead_jump else {
+                return false;
+            };
+            if !seen.insert(key) {
+                return false;
+            }
+            key = ("label".to_string(), label.clone());
+        }
+        false
+    }
+
     /// Whether the edge's source refuses every F2P player before it moves.
     fn refuses_f2p(&self, edge: &TransportEdge) -> bool {
-        self.source(edge).is_some_and(|source| {
-            self.reached(source)
-                .iter()
-                .any(|(_, handler)| handler.refuses_f2p)
-        })
+        self.candidates(edge)
+            .and_then(|candidates| self.resolve(&candidates))
+            .is_some_and(|source| self.leading_refusal(&source))
     }
 }
 
 /// Set `members_req` on every edge (and held-obj teleport) whose source
-/// handler opens with the F2P refusal.
+/// handler's leading path is the F2P refusal.
 pub(super) fn apply_members_guards(guards: &MembersGuards, graph: &mut TransportGraph) {
     for edge in graph.edges.iter_mut().chain(graph.teleports.iter_mut()) {
         if !edge.members_req && guards.refuses_f2p(edge) {
@@ -199,12 +269,14 @@ pub(super) fn apply_members_guards(guards: &MembersGuards, graph: &mut Transport
     }
 }
 
-/// Bake-time completeness check: every packed edge whose source handler
-/// (or a label/queue it continues into) reads `map_members` carries
-/// `members_req`, unless the read is a pinned [`NON_GATE_READS`] entry;
-/// every members spell in `magic_spells.dbrow` packs `members_req`; and
-/// every loc, NPC and held-obj edge resolves to a handler this check
-/// could read.
+/// Bake-time check of every packed edge's `members_req` against its
+/// source. A free edge whose source handler (or any label/choice/queue it
+/// may continue into) reads `map_members` fails, unless the read is a
+/// pinned [`NON_GATE_READS`] entry. A members edge whose leading path does
+/// not refuse F2P fails, unless a pinned [`MEMBERS_ARMS`] read lies on its
+/// source path. Every members spell in `magic_spells.dbrow` must pack
+/// `members_req`, and every loc, NPC and held-obj edge must resolve to a
+/// handler.
 pub(crate) fn require_members_guards(
     content_root: &Path,
     graph: &TransportGraph,
@@ -212,20 +284,42 @@ pub(crate) fn require_members_guards(
     let guards = MembersGuards::from_content(content_root);
     let mut errors = Vec::new();
     for edge in graph.edges.iter().chain(&graph.teleports) {
-        if edge.kind == TransportKind::Teleport && edge.loc_id == 0 {
+        let Some(candidates) = guards.candidates(edge) else {
             continue;
-        }
-        let Some(source) = guards.source(edge) else {
+        };
+        let Some(source) = guards.resolve(&candidates) else {
+            let tried: Vec<String> = candidates
+                .iter()
+                .map(|(op, name)| format!("[{op},{name}]"))
+                .collect();
             errors.push(format!(
-                "{:?} {} op{} at {:?} has no source handler",
-                edge.kind, edge.loc_id, edge.option, edge.at
+                "{:?} {} op{} at {:?} has no source handler (tried {})",
+                edge.kind,
+                edge.loc_id,
+                edge.option,
+                edge.at,
+                tried.join(", ")
             ));
             continue;
         };
+        let reached = guards.reached(source.clone());
         if edge.members_req {
+            let pinned_arm = reached.iter().any(|((op, name), handler)| {
+                handler.reads.iter().any(|read| {
+                    MEMBERS_ARMS
+                        .iter()
+                        .any(|(o, n, stmt, _)| o == op && n == name && stmt == read)
+                })
+            });
+            if !pinned_arm && !guards.leading_refusal(&source) {
+                errors.push(format!(
+                    "{:?} {} op{} at {:?} packs members_req=true but the leading path of [{},{}] does not refuse F2P",
+                    edge.kind, edge.loc_id, edge.option, edge.at, source.0, source.1
+                ));
+            }
             continue;
         }
-        for ((op, name), handler) in guards.reached(source.clone()) {
+        for ((op, name), handler) in reached {
             let gate = handler.refuses_f2p.then_some("an F2P refusal");
             let read = handler.reads.iter().find(|read| {
                 !NON_GATE_READS
@@ -336,10 +430,12 @@ fn is_word(s: &str) -> bool {
 
 fn handler_facts(body: &str) -> Handler {
     let code = strip_block_comments(body);
-    let refuses_f2p = top_level_statements(&code)
-        .first()
-        .and_then(|stmt| if_head_and_arm(stmt))
+    let statements = top_level_statements(&code);
+    let first = statements.first().map(String::as_str);
+    let refuses_f2p = first
+        .and_then(if_head_and_arm)
         .is_some_and(|(head, arm)| refusal_head(&head) && refusal_arm(&arm));
+    let lead_jump = first.and_then(label_jump);
     let reads = code
         .lines()
         .map(|raw| raw.split_once("//").map_or(raw, |(code, _)| code))
@@ -383,9 +479,22 @@ fn handler_facts(body: &str) -> Handler {
     }
     Handler {
         refuses_f2p,
+        lead_jump,
         reads,
         jumps,
     }
+}
+
+/// `@name;` or `@name(…);` as a whole statement → `name`.
+fn label_jump(stmt: &str) -> Option<String> {
+    let rest = stmt.strip_prefix('@')?;
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let (name, args) = rest.split_at(end);
+    let args = args.trim_start();
+    (!name.is_empty() && (args == ";" || (args.starts_with('(') && args.ends_with(");"))))
+        .then(|| name.to_string())
 }
 
 /// `map_members = ^false`, alone or OR-joined with other terms: every F2P
