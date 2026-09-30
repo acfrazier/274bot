@@ -888,6 +888,11 @@ pub struct Session {
     /// Explicit retarget of an unsaved edit form, awaiting the Discard /
     /// Keep editing prompt. `None` means no switch is waiting.
     pub pending_edit_switch: Option<EditSwitch>,
+    /// A Discard / Keep editing prompt was staged: the Profiles window must
+    /// come to the front (it may be a hidden tab when the leave came from
+    /// another window, or from the tab's own ✕) so the prompt shows. The
+    /// window takes it once.
+    pub focus_profiles: bool,
     /// The edit form's save feedback (its inline refusal, or `Saved <name>.`
     /// once the write is durable) and the credentials Save still being
     /// written: its profile is selected (and spawned) only after the write
@@ -1291,6 +1296,7 @@ impl Session {
             chooser_edit: None,
             chooser_form: 0,
             pending_edit_switch: None,
+            focus_profiles: false,
             chooser_save: frontend_core::ProfileFormSave::default(),
             travellers,
             script_nav_paint: Arc::new(Mutex::new(None)),
