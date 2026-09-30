@@ -511,13 +511,13 @@ fn live_or_walk_paint(
     }
 }
 
-/// Per-frame nav-paint mirror: the slot threads read it each observe to
-/// publish the focused drawing slot's scene paint.
-/// [`Session::pump_status`] re-copies it from `Session::nav_overlay` (live)
-/// or `Session::ui.nav` every UI frame.
+/// Shared nav-paint settings and their content generation. Slot threads
+/// clone the `Arc` cheaply; UI pumping advances the generation only when a
+/// setting actually changes.
 #[derive(Clone, Default)]
 struct NavPublishCfg {
-    settings: NavSettings,
+    settings: Arc<NavSettings>,
+    generation: u64,
 }
 
 /// Map the client's last tryMove BFS into world tiles and trim it for
@@ -544,20 +544,17 @@ fn live_client_trail(client: &mut Client, here: Option<WorldTile>) -> Vec<WorldT
     trail_world
 }
 
-/// Publish the nav-debug scene paint for the focused drawing slot each
-/// observe. `drawing` is the gate: only the focused slot with its renderer
-/// on publishes; unfocused / skip-paint / renderer-off slots store `None`
-/// so a stale paint never lingers. `world` is the baked pack, `route` the
-/// armed walk route, `here` the player's observed world tile, `trail_world`
-/// the local player's last `tryMove` route buffer (world tiles), `run_on`
-/// the local player's run state (two-tone trail), and `click` the
-/// traveller's current walk aim.
+/// Publish nav-debug scene facts for the focused GPU drawing slot. The
+/// caller demand-gates this function by settings and visible nav facts, so
+/// collision traversal and paint allocation occur only when the retained
+/// view changes. Non-GPU, unfocused, skip-paint and renderer-off slots
+/// publish `None` once when demand drops, preventing stale paint.
 ///
-/// World → scene: `x - map_build_base_x`, `z - map_build_base_z`.
-/// Collision covers every tile of the loaded [`SCENE_TILES`]² region the
-/// `collision_fill` / `nsew_labels` toggles warrant; the path is the
-/// remaining route subsampled to the 3D draw budget (the pack map keeps
-/// the full path).
+/// `world` is the baked pack, `route` the armed walk route, `here` the
+/// player's observed world tile, `trail_world` the local player's last
+/// `tryMove` route buffer, `run_on` its two-tone state, and `click` the
+/// traveller's current walk aim. World-to-scene is
+/// `(x - map_build_base_x, z - map_build_base_z)`.
 // The brief fixes this signature; a param struct would only shuffle names
 // across the one call site.
 #[allow(clippy::too_many_arguments)]
@@ -2657,6 +2654,7 @@ impl Session {
         let paired_core_watch = Arc::clone(&self.paired_core_watch);
         let audio = Arc::clone(&self.audio);
         let nav_publish = Arc::clone(&self.nav_publish);
+        let nav_paint_cache = Arc::new(Mutex::new(crate::nav_paint_cache::Cache::default()));
         // Last failed device-open `(slot, when)`; a machine without an
         // audio device must not re-open cpal (or re-log) every frame.
         let audio_fail: Arc<Mutex<Option<(String, Instant)>>> = Arc::new(Mutex::new(None));
@@ -2679,6 +2677,9 @@ impl Session {
             if session_boundary && focus.lock().unwrap().focused.as_deref() == Some(name) {
                 walk_clear.store(true, Ordering::Relaxed);
             }
+            if session_boundary {
+                nav_paint_cache.lock().unwrap().invalidate(name);
+            }
             // Flat model: every slot is a full Client; draw gates the
             // slot's renderer per the wall policy (focused always,
             // members when only-render-selected is off).
@@ -2692,7 +2693,10 @@ impl Session {
             // stale paint cannot linger. Flags demand is owned solely by
             // the focused slot so a non-drawing peer never loads or drops
             // the shared sidecar out from under the drawer.
-            let layers = nav_publish.lock().unwrap().settings.clone();
+            let (layers, settings_generation) = {
+                let publish = nav_publish.lock().unwrap();
+                (Arc::clone(&publish.settings), publish.generation)
+            };
             let is_focused = focused.as_deref() == Some(name);
             let drawing = is_focused && draw;
             let walk = match travellers.lock().unwrap().get(name).cloned() {
@@ -2726,30 +2730,57 @@ impl Session {
                     // animation — the anim is only true while a run
                     // cycle plays.
                     let run_on = c.run_enabled();
-                    // Full tryMove BFS (every scene tile, src→dest),
-                    // not the entity walk buffer (capped at 9) or the
-                    // MOVE waypoint list (capped at 25).
-                    let trail_world = live_client_trail(c, here);
-                    // Focused drawer owns ensure/drop; when focus is None every remaining
-                    // slot may release so a cleared focus cannot leak the sidecar.
-                    let flags_owner = is_focused || focused.is_none();
-                    publish_nav_debug(
-                        c,
-                        &world,
-                        route.as_ref(),
+                    let active = drawing && c.nav_debug_drawable();
+                    let facts = crate::nav_paint_cache::Facts {
+                        settings_generation,
+                        active,
+                        base_x: c.map_build_base_x,
+                        base_z: c.map_build_base_z,
                         here,
-                        &trail_world,
-                        run_on,
+                        route: crate::nav_paint_cache::route_fingerprint(route.as_ref()),
                         click,
-                        &layers,
-                        drawing,
-                        flags_owner,
-                    );
+                        trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
+                        run_on,
+                    };
+                    let changed = nav_paint_cache.lock().unwrap().changed(name, facts);
+                    if changed {
+                        // Full tryMove BFS (every scene tile, src→dest), not
+                        // the entity walk buffer (capped at 9). It is trimmed
+                        // only when a GPU consumer needs a fresh view.
+                        let trail_world = if active {
+                            live_client_trail(c, here)
+                        } else {
+                            Vec::new()
+                        };
+                        // Focused drawer owns ensure/drop; when focus is None
+                        // any remaining slot may release the shared sidecar.
+                        let flags_owner = is_focused || focused.is_none();
+                        publish_nav_debug(
+                            c,
+                            &world,
+                            route.as_ref(),
+                            here,
+                            &trail_world,
+                            run_on,
+                            click,
+                            &layers,
+                            active,
+                            flags_owner,
+                        );
+                        let recorded = crate::nav_paint_cache::Facts {
+                            trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
+                            ..facts
+                        };
+                        nav_paint_cache.lock().unwrap().record(name, recorded);
+                    }
                     if drawing && layers.camera_follow {
                         apply_path_camera(c, route.as_ref(), here);
                     }
                 }
-                None => c.set_nav_debug_paint(None),
+                None => {
+                    nav_paint_cache.lock().unwrap().invalidate(name);
+                    c.set_nav_debug_paint(None);
+                }
             }
             // Focused-slot speaker: at most one cpal speaker, fed by
             // this slot's Client audio state (midi/waves/fade), gated
@@ -3456,13 +3487,16 @@ impl Session {
         }
     }
 
-    /// Mirror the effective nav-paint config onto the slot threads (they
-    /// publish the focused drawing slot's paint every observe). Runs every
-    /// UI frame so a modal edit or live-overlay flip lands within a frame.
+    /// Mirror effective nav settings onto slot threads. Repeated UI frames
+    /// retain the same Arc and generation so they do not invalidate the
+    /// focused slot's materialized nav view.
     fn sync_nav_publish(&self) {
-        *self.nav_publish.lock().unwrap() = NavPublishCfg {
-            settings: self.effective_nav(),
-        };
+        let next = self.effective_nav();
+        let mut publish = self.nav_publish.lock().unwrap();
+        if *publish.settings != next {
+            publish.settings = Arc::new(next);
+            publish.generation = publish.generation.wrapping_add(1);
+        }
     }
 
     /// Live overlay when a scenario armed one, else the operator prefs.

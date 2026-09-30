@@ -4665,7 +4665,13 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
         let terminal_shot = scenario.settings.terminal_shot;
         session.live_prepare_script(scenario).unwrap();
         session.pump_status();
-        let published = session.nav_publish.lock().unwrap().settings.clone();
+        let published = session
+            .nav_publish
+            .lock()
+            .unwrap()
+            .settings
+            .as_ref()
+            .clone();
         assert_eq!(published, session.effective_nav());
         assert!(published.allow_teleports && published.allow_wilderness);
         assert_eq!(published.allow_bank_fetch, baseline.allow_bank_fetch);
