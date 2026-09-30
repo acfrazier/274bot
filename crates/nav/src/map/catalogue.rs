@@ -36,6 +36,39 @@ impl LocDefinition {
     }
 }
 
+/// World-map Key row for rare-tree groves (`WORLDMAP_KEY_NAMES[34]`). Marker
+/// locs carry only this mapfunction; the per-placement tree name comes from a
+/// nearby woodcutting loc placement already visited by the generator.
+const RARE_TREES_SYMBOL: u16 = 34;
+
+/// A placed tree the generator already visited: non-empty client-cache name
+/// with a Chop-down operation. Content-derived (client cache ops), never a
+/// handwritten id table.
+fn is_woodcut_tree(definition: &LocDefinition) -> bool {
+    !definition.name.is_empty()
+        && definition
+            .operations
+            .iter()
+            .flatten()
+            .any(|op| op.trim().eq_ignore_ascii_case("Chop down"))
+}
+
+/// One visited tree placement for Rare-Trees renaming: world origin, rotated
+/// footprint and game plane plus the loc definition id for its name.
+struct TreePlacement {
+    x: i32,
+    z: i32,
+    width: u8,
+    length: u8,
+    plane: u8,
+    id: u32,
+}
+
+/// Maximum centre distance (tiles) from a Rare-Trees marker to its tree.
+/// Same-tile markers match at ~0-1; grove-centre markers within a few tiles.
+/// Beyond this the marker stays an honest generic label.
+const MAX_TREE_MATCH_DIST2: f64 = 8.0 * 8.0;
+
 fn load_loc_definitions(jag: &client::io::JagFile) -> Result<Vec<LocDefinition>, MapError> {
     let decoded_locs = catch_unwind(AssertUnwindSafe(|| LocType::unpack(jag)))
         .map_err(|_| MapError::Invalid("location definitions"))?;
@@ -111,6 +144,7 @@ pub(super) fn derive_client_pois(
         ..CatalogueStats::default()
     };
     let mut unknown_mapfunctions = 0u32;
+    let mut woodcut_trees: Vec<TreePlacement> = Vec::new();
 
     for entry in entries {
         let land = reader.read_land(entry)?;
@@ -148,6 +182,19 @@ pub(super) fn derive_client_pois(
                 i32::from(entry.square_x) * i32::from(MAP_SQUARE_SIZE) + i32::from(placement.x);
             let world_z =
                 i32::from(entry.square_z) * i32::from(MAP_SQUARE_SIZE) + i32::from(placement.z);
+            // Remember every visited woodcutting tree for Rare-Trees renaming
+            // below. Uses only the generator's own placements + client-cache
+            // ops/names, never a handwritten coordinate table.
+            if is_woodcut_tree(definition) {
+                woodcut_trees.push(TreePlacement {
+                    x: world_x,
+                    z: world_z,
+                    width: footprint.width,
+                    length: footprint.length,
+                    plane: effective_plane,
+                    id: placement.id,
+                });
+            }
             let name = match poi_name(definition) {
                 Ok(Some(name)) => name,
                 // Nameless and off the Key legend: no picker label exists.
@@ -215,7 +262,9 @@ pub(super) fn derive_client_pois(
                     placement_error = Some(MapError::Limit("POI count"));
                     return;
                 }
-                if matches!(kind, PoiKind::MapSymbol { .. }) {
+                // Rare-Trees markers resolve to per-placement tree names below;
+                // only still-generic ones count as unknown there.
+                if matches!(kind, PoiKind::MapSymbol { symbol } if symbol != RARE_TREES_SYMBOL) {
                     unknown_mapfunctions += 1;
                 }
                 let evidence = match Rows::new(vec![evidence]) {
@@ -252,6 +301,52 @@ pub(super) fn derive_client_pois(
         })?;
         if let Some(error) = placement_error {
             return Err(error);
+        }
+    }
+    // Replace generic Rare-Trees annotation names with the nearest visited
+    // woodcutting tree's client-cache loc name on the same plane. Markers and
+    // trees share the generator's own placements (same tile for per-tree
+    // markers, a few tiles for grove-centre markers); no handwritten table.
+    // Already-specific MapSymbol 34 records (tree locs carrying their own
+    // mapfunction) keep their names and never count as unknown.
+    for record in records.iter_mut() {
+        let PoiKind::MapSymbol { symbol } = record.kind else {
+            continue;
+        };
+        if symbol != RARE_TREES_SYMBOL {
+            continue;
+        }
+        if record.name.as_str() != "Rare Trees" {
+            continue;
+        }
+        let mut best: Option<(f64, u32)> = None;
+        for tree in &woodcut_trees {
+            if tree.plane != record.effective_plane {
+                continue;
+            }
+            let tree_cx = f64::from(tree.x) + f64::from(tree.width) / 2.0;
+            let tree_cz = f64::from(tree.z) + f64::from(tree.length) / 2.0;
+            let dx = tree_cx - record.display.x;
+            let dz = tree_cz - record.display.z;
+            let dist2 = dx * dx + dz * dz;
+            if dist2 > MAX_TREE_MATCH_DIST2 {
+                continue;
+            }
+            if best.is_none_or(|(best_dist2, _)| dist2 < best_dist2) {
+                best = Some((dist2, tree.id));
+            }
+        }
+        let Some((_, tree_id)) = best else {
+            unknown_mapfunctions += 1;
+            continue;
+        };
+        let Some(tree_def) = locs.get(tree_id as usize) else {
+            unknown_mapfunctions += 1;
+            continue;
+        };
+        match Text::new(&tree_def.name) {
+            Ok(name) => record.name = name,
+            Err(_) => unknown_mapfunctions += 1,
         }
     }
 
