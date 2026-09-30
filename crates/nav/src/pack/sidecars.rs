@@ -389,7 +389,8 @@ fn read_bitset_sidecar(
         return Err(PackError::Truncated);
     }
 
-    let mut bits = Arc::<[u64]>::new_uninit_slice(word_count);
+    // One exact-size allocation (a TrustedLen collect), filled in place.
+    let mut bits: Arc<[u64]> = std::iter::repeat_n(0u64, word_count).collect();
     {
         let slots = Arc::get_mut(&mut bits).expect("new Arc is uniquely owned");
         let mut chunk = [0u8; 4096];
@@ -399,17 +400,13 @@ fn read_bitset_sidecar(
             let n = remaining.min(chunk.len());
             r.read_bytes_exact(&mut chunk[..n])?;
             for word in chunk[..n].as_chunks::<8>().0 {
-                slots[word_index].write(u64::from_le_bytes(*word));
+                slots[word_index] = u64::from_le_bytes(*word);
                 word_index += 1;
             }
             remaining -= n;
         }
         debug_assert_eq!(word_index, word_count);
     }
-    // SAFETY: every slot was written after its complete u64 bytes were read
-    // successfully. On an earlier read error, this Arc remains MaybeUninit
-    // and drops safely without assuming that any slot was initialized.
-    let bits = unsafe { bits.assume_init() };
     Ok(ReachSidecarLoad {
         origin,
         width,
