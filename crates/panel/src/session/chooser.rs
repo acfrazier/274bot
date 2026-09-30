@@ -219,6 +219,7 @@ impl Session {
             leave,
             saving: saving.is_some(),
         });
+        self.focus_profiles = true;
     }
 
     /// Switch the form to `target` (`""` is the blank new-profile row),

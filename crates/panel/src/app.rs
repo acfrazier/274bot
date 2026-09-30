@@ -4275,6 +4275,11 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
         return;
     }
+    // A leave prompt was staged from elsewhere (the tab's ✕, MultiBox): its
+    // popup draws inside this window, so bring the window's tab forward.
+    if std::mem::take(&mut session.focus_profiles) {
+        ui.set_window_focus(Some("Profiles"));
+    }
     let mut open = true;
     ui.set_next_window_class(&panel_window_class());
     if let Some(id) = chooser_dock_id(panel_dock) {
