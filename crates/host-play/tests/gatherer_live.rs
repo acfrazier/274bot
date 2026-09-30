@@ -1060,7 +1060,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                         }
                     }
                     Some(LiveCase::DeathDuringDrop)
-                        if interact::cheat(client, "killme").is_sent() =>
+                        if interact::cheat(client, "~death").is_sent() =>
                     {
                         if let Ok(mut slot) = frame_state.lock() {
                             slot.mark_death_wedge();
@@ -1155,19 +1155,24 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     slot.witness.death_restart_xp = slot.latest.as_ref().map_or(0, |row| row.xp);
                     slot.witness.last_status_yielded = 0;
                     slot.reset_after_stop_for_restart();
+                    // The castle respawn courtyard has no admitted normal tree
+                    // within twelve tiles; this fresh Start selects a wider area.
+                    let mut restart_settings = settings.clone();
+                    restart_settings.insert("radius".into(), json!(32));
                     println!(
                         "{}",
                         json!({
                             "phase": "death-restart",
                             "tile": slot.witness.death_restart_tile,
                             "xp": slot.witness.death_restart_xp,
+                            "radius": 32,
                         })
                     );
                     drop(slot);
                     if let Err(error) = play.script_start(
                         &account,
                         script::CompiledId("Gatherer"),
-                        settings.clone(),
+                        restart_settings,
                     ) {
                         break Err(format!("{} death restart failed: {error}", cell.name()));
                     }
