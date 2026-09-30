@@ -69,6 +69,18 @@ settlement: a scenario Stop revokes the script walk and bank selection, verifies
 the slot is Idle, and resets the card for a new Start. Quester's Cook fresh,
 resume, restart and login fixtures use this same compiled Start outcome gate.
 
+The headless Quester journal fixtures run with
+`LIVE=1 cargo test -p host-play --lib live_quester_journal -- --ignored --nocapture --test-threads=1`.
+Set an inline disposable `HOME`, `BOT_ENGINE_DIR` to the local R289 engine,
+and `BOT_NAV_PACK` to a matching navigation pack; remove the disposable
+directory after the command finishes. `BOT_GAME_PORT` and `BOT_HTTP_PORT`
+override these fixtures' default local endpoints. The fixtures cover a
+synthetic Rune Mysteries stage advance, parked ReadJournal retry, Stop/Start
+and Pause/Resume with a retained journal page, and a DebugPanel `getcoord`
+command sent while the journal is open. The overlap proof requires the host
+chat-reply candidate and the journal's own fresh evidence and close sequence;
+temporal debug replies are never command acknowledgements or journal progress.
+
 A scenario that waits for a card's clean stop (`wait_script_stop`) must
 also watch the card's own work. Its post-Start watch and terminal proof must
 be an outcome its pre-Start seed cannot already satisfy, or the run passes

@@ -1020,6 +1020,127 @@ fn wait_recovered_synthetic(
     recovered
 }
 
+#[derive(Default)]
+struct JournalDebugLog {
+    state: Mutex<Option<Arc<Mutex<SetupState>>>>,
+    records: Mutex<Vec<(String, String, Option<i32>)>>,
+}
+
+impl api::hostlog::Sink for JournalDebugLog {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        if record.message.starts_with("debug ::") {
+            let modal = self
+                .state
+                .lock()
+                .expect("debug journal state")
+                .as_ref()
+                .and_then(|state| {
+                    state
+                        .lock()
+                        .expect("journal capture state")
+                        .journal_last_modal
+                });
+            println!(
+                "{} {} modal={modal:?}",
+                record.slot.unwrap_or("process"),
+                record.message
+            );
+            self.records.lock().expect("debug journal records").push((
+                record.slot.unwrap_or_default().to_string(),
+                record.message.to_string(),
+                modal,
+            ));
+        }
+    }
+}
+
+static JOURNAL_DEBUG_LOG: std::sync::LazyLock<JournalDebugLog> =
+    std::sync::LazyLock::new(JournalDebugLog::default);
+
+#[test]
+#[ignore = "requires LIVE=1 and the shared tunnelled local R289 engine"]
+fn live_quester_journal_debug_reply_does_not_take_modal_ownership() {
+    assert!(live(), "journal DebugPanel proof requires LIVE=1");
+    let SyntheticLive {
+        home,
+        play,
+        setup,
+        name,
+        selected,
+        quests,
+        path,
+        expected_title,
+    } = prepare_synthetic_live("journal-debug");
+    let log = &*JOURNAL_DEBUG_LOG;
+    *log.state.lock().expect("debug journal state") = Some(Arc::clone(&setup));
+    assert!(api::hostlog::install_sink(log));
+    let handle = play.script_start_handle();
+    let run = start_synthetic(&handle, &play, &name, path, &quests, &selected);
+    let opened = wait_journal_open(&setup, &expected_title, "DebugPanel during journal read");
+    // Use the same host queue and reply tracker as the DebugPanel, not a
+    // fixture-side client cheat. getcoord emits chat without replacing a modal.
+    play.cheat(&name, "getcoord")
+        .expect("queue DebugPanel command");
+    wait_until_fast(
+        "DebugPanel journal send and chat reply",
+        Duration::from_secs(20),
+        || {
+            let records = log.records.lock().expect("debug journal records");
+            records.iter().any(|(slot, message, modal)| {
+                slot == &name
+                    && message.starts_with("debug ::getcoord: sent;")
+                    && *modal == Some(JOURNAL_ROOT_R289)
+            }) && records.iter().any(|(slot, message, _)| {
+                slot == &name && message.starts_with("debug ::[getcoord]: chat reply candidate:")
+            })
+        },
+    );
+    let advanced = wait_status(
+        &play,
+        &name,
+        SYNTHETIC_TIMEOUT,
+        "DebugPanel overlap fresh journal advancement",
+        |status| {
+            status.run == run
+                && text(status, "stage") == "rm:4"
+                && text(status, "rule") == "rm:4"
+                && text(status, "journal_lines").contains("delivered it")
+                && truth(status, "needs_read") == Truth::False
+        },
+    );
+    let after = journal_probe(&setup);
+    assert_exact_journal_titles(&after, &expected_title, "DebugPanel overlap");
+    assert_eq!(
+        after.clicks,
+        opened.clicks + 1,
+        "one fresh advancement read"
+    );
+    assert_eq!(
+        after.opens,
+        opened.opens + 1,
+        "reply tracker must not reopen the journal"
+    );
+    assert_eq!(
+        after.closes,
+        opened.closes + 2,
+        "only the two owned reads close"
+    );
+    assert!(!text(&advanced, "journal_lines").contains("getcoord"));
+    wait_until(
+        "DebugPanel overlap completion",
+        Duration::from_secs(20),
+        || {
+            play.script_lifecycle_receipt(&name)
+                .is_some_and(|receipt| receipt.state == script::ScriptTerminalState::Completed)
+        },
+    );
+    println!("DebugPanel overlap journal proof: {after:?}; status={advanced:?}");
+    assert!(handle.idle(&name));
+    drop(play);
+    *log.state.lock().expect("debug journal state") = None;
+    drop(home);
+}
+
 #[test]
 #[ignore = "requires LIVE=1 and the shared tunnelled local R289 engine"]
 fn live_quester_journal_stop_start_recovers_stranded_page() {
