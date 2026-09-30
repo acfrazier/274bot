@@ -3238,8 +3238,9 @@ impl Session {
         self.debug_panel.release_catalog();
     }
 
-    /// Debug catalog actions deliberately target the displayed focused bot.
-    /// The host queue and the client encoder retain final cheat admission.
+    /// Send one Debug command to the displayed focused bot. Marked sends use
+    /// [`send_debug_command_marked_snapshot`] so every shared mark is counted.
+    /// The host queue and client encoder retain final cheat admission.
     pub fn send_debug_command(&mut self, cmd: &str) -> Result<(), String> {
         if !self.debug_ui() {
             return Err("Debug commands require a Local profile".into());
@@ -3268,20 +3269,20 @@ impl Session {
     }
 
     /// Admit one formatted command against the supplied marked snapshot
-    /// through the same host admission path used by focused sends.
+    /// through the same host admission path used by focused sends. The shared
+    /// selection stays identity-keyed; the adapter reports marks whose row
+    /// disappeared instead of silently dropping them.
     pub(crate) fn send_debug_command_marked_snapshot(
         &self,
         cmd: &str,
         snapshot: Vec<(frontend_core::ProfileIdentity, String)>,
     ) -> frontend_core::MarkedCommandReport {
-        let mut selection = self.fleet_selection.clone();
-        selection.retain(snapshot.iter().map(|(identity, _)| *identity));
         let Some(play) = self.core.play() else {
-            return frontend_core::run_marked_command(&selection, snapshot, |_| {
+            return frontend_core::run_marked_command(&self.fleet_selection, snapshot, |_| {
                 Err("no active play session".into())
             });
         };
-        frontend_core::run_marked_command(&selection, snapshot, |name| {
+        frontend_core::run_marked_command(&self.fleet_selection, snapshot, |name| {
             play.cheat(name, cmd).map_err(|error| error.to_string())
         })
     }

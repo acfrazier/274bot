@@ -7667,7 +7667,13 @@ fn marked_debug_command_queues_ready_and_reports_ineligible_rows() {
         frontend_core::ProfileIdentity::uid(33),
     ]);
 
-    let snapshot = session.debug_target_snapshot();
+    // A marked row can disappear after the target snapshot; the shared
+    // adapter still accounts for its identity instead of dropping the mark.
+    let snapshot = session
+        .debug_target_snapshot()
+        .into_iter()
+        .filter(|(_, name)| name != "missing")
+        .collect();
     let report = session.send_debug_command_marked_snapshot("getcoord", snapshot);
     assert_eq!(report.accepted, 1);
     assert_eq!(report.total(), 3);
@@ -7679,7 +7685,7 @@ fn marked_debug_command_queues_ready_and_reports_ineligible_rows() {
             .collect::<Vec<_>>(),
         vec![
             ("bob", "bot is not in game"),
-            ("missing", "bot is not running"),
+            ("profile#33", "profile unavailable"),
         ]
     );
 }

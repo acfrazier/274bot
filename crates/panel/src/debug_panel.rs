@@ -101,6 +101,8 @@ fn normalize_names(names: &mut Vec<String>, limit: usize) {
     names.truncate(limit);
 }
 
+/// Which target scope Debug sends use. Mark membership remains in
+/// [`Session::fleet_selection`]; this enum never stores a second mark set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum DebugTargetMode {
     #[default]
