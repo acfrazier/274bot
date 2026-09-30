@@ -15873,7 +15873,6 @@
       "loc 3043 newbietinrock 1 1",
       "loc 3371 achey_tree_stump 2 2",
       "loc 3403 elemental_workshop_rock 1 1",
-      "loc 3431 newbierocks1 1 1",
       "loc 3879 regicide_tree_large 3 3",
       "loc 3880 regicide_tree_stump 3 3",
       "loc 3881 regicide_tree_large2 3 3",
@@ -15886,8 +15885,6 @@
       "loc 4030 loc_4030 1 1",
       "loc 4060 hollow_tree_big 2 2",
       "loc 4061 hollow_tree_stump_big 2 2",
-      "loc 4437 castlewars_blocked_tunnel_1 2 2",
-      "loc 4438 castlewars_blocked_tunnel_2 2 2",
       "npc 233 0_41_53_compofishspot",
       "npc 234 0_41_53_sinisterfishspot",
       "npc 235 0_41_53_bigdavefishspot",
@@ -23163,42 +23160,6 @@
           "sources": [
             "scripts/_unpack/244/all.loc:114-122",
             "scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:185-185"
-          ]
-        }
-      },
-      {
-        "skill": "mining",
-        "kind": "loc",
-        "id": 3431,
-        "class": "unclassified",
-        "gap": {
-          "code": "no-handler",
-          "sources": [
-            "scripts/_unpack/244/all.loc:363-371"
-          ]
-        }
-      },
-      {
-        "skill": "mining",
-        "kind": "loc",
-        "id": 4437,
-        "class": "unclassified",
-        "gap": {
-          "code": "no-handler",
-          "sources": [
-            "scripts/_unpack/274/all.loc:1300-1308"
-          ]
-        }
-      },
-      {
-        "skill": "mining",
-        "kind": "loc",
-        "id": 4438,
-        "class": "unclassified",
-        "gap": {
-          "code": "no-handler",
-          "sources": [
-            "scripts/_unpack/274/all.loc:1310-1318"
           ]
         }
       },

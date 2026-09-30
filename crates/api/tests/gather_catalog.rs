@@ -259,10 +259,10 @@ fn unclassified_rocks_stay_unknown_with_a_reason_and_are_never_resources() {
         .iter()
         .any(|span| span.file.ends_with(".loc")));
     assert!(slide.method.is_none());
-    // A rock with no handler at all stays unknown for that reason.
-    let bare = catalog.rock(4976).expect("loc 4976 is a known rock");
-    assert_eq!(bare.class, TargetClass::Unclassified);
-    assert_eq!(bare.gap.map(|gap| &*gap.code), Some("no-handler"));
+    // A loc with no handler anywhere is proven inert by content and engine dispatch
+    // (M-215 R2), so it is excluded from the mining catalogue entirely: no rock fact.
+    assert!(catalog.rock(4976).is_none(), "loc 4976 has no handler, so it is not a rock at all");
+    assert!(catalog.rock(3431).is_none(), "newbierocks1 has no handler, so it is not a rock at all");
     // No method ever offers an unclassified rock as a target.
     for method in catalog.methods() {
         for target in known_rows(&method.targets) {

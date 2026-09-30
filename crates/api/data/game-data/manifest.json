@@ -19,8 +19,8 @@
         "gathering": {
           "path": "274/gathering.json",
           "schema": 1,
-          "bytes": 1345642,
-          "sha256": "894445bb239c55000fcfc708fe2da18cb6d8f59f9963001521be3a57a0c3d5bc"
+          "bytes": 1344711,
+          "sha256": "1bdd9d3c9412c3676090c9c866990206d8838a262aca760b7f16830d8964acc6"
         }
       },
       "gathering": {
@@ -30,13 +30,12 @@
           "fishing": 15
         },
         "rocks": {
-          "population": 62,
+          "population": 59,
           "resource": 29,
           "depleted": 5,
           "hazard": 22,
-          "unclassified": 6,
+          "unclassified": 3,
           "unclassified_reasons": {
-            "no-handler": 3,
             "custom-handler": 3
           }
         },
@@ -625,8 +624,8 @@
         "gathering": {
           "path": "289/gathering.json",
           "schema": 1,
-          "bytes": 1414296,
-          "sha256": "3fef0a19502857b10f133e620ab130d1939376d3a8771fa4552eb85b92f4a3b5"
+          "bytes": 1407760,
+          "sha256": "54151108dc60c0904d38e070922d6828d269fe6b6c3d994ab5f7639412742dd9"
         }
       },
       "gathering": {
@@ -636,14 +635,13 @@
           "fishing": 15
         },
         "rocks": {
-          "population": 84,
+          "population": 62,
           "resource": 29,
           "depleted": 5,
           "hazard": 22,
-          "unclassified": 28,
+          "unclassified": 6,
           "unclassified_reasons": {
-            "custom-handler": 6,
-            "no-handler": 22
+            "custom-handler": 6
           }
         },
         "targets": 218,
