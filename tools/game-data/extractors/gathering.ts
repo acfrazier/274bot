@@ -364,12 +364,15 @@ function oreOutputs(rows: DbRow[]): Map<string, string[]> {
 }
 
 const CUSTOM_YIELD = /^inv_add\(inv, ([A-Za-z0-9_]+), 1\)$/;
+/** Any inventory grant in a handler: promotion requires exactly one of these in total. */
+const ANY_GRANT = /^inv_add\s*\(/;
 
 /**
  * M-215: prove a custom-handled rock's ore from its own Mine handler. Promotes only when the rock's
  * Mine slot is handled by exactly one custom `oploc` (no standard dispatch on that slot), and that
- * handler yields exactly one literal item, one time, which exactly one dbrow ore group outputs.
- * Anything else (quest crystals, spawners, obstacles, dummies, decor) stays unclassified, never guessed.
+ * handler contains exactly one `inv_add` in total — a unit grant `inv_add(inv, ITEM, 1)` where ITEM
+ * is the `rock_output` of exactly one `mine.dbrow` ore group. Repeated identical grants, extra
+ * non-unit grants, or any other additional grant fails closed to unclassified, never guessed.
  */
 function customOreTarget(ctx: Ctx, slot: number | null, aliasHeaders: Rs2Header[], categoryHeaders: Rs2Header[], outputs: Map<string, string[]>): CustomOre | null {
     if (slot === null) return null;
@@ -380,12 +383,15 @@ function customOreTarget(ctx: Ctx, slot: number | null, aliasHeaders: Rs2Header[
     const block = ctx.idx.blocks(custom[0].span.file).find((each) => each.span.first === custom[0].span.first);
     if (!block) return null;
     const { flat } = flatten(block);
+    let grants = 0;
     const yields = new Set<string>();
     for (const { stmt } of flat) {
+        if (!ANY_GRANT.test(stmt.text)) continue;
+        grants += 1;
         const match = CUSTOM_YIELD.exec(stmt.text);
         if (match) yields.add(match[1]);
     }
-    if (yields.size !== 1) return null;
+    if (grants !== 1 || yields.size !== 1) return null;
     const ores = outputs.get([...yields][0]) ?? [];
     if (ores.length !== 1) return null;
     return { ore: ores[0], handler: custom[0].span };
@@ -436,8 +442,15 @@ function classifyRocks(ctx: Ctx, rows: DbRow[]): MiningModel {
                 result = { alias, span: def.span, class: 'unclassified', slot, label: null, gap: gap('custom-handler', def.span, ...custom.map((header) => header.span)) };
             }
         } else if (!tableMembers.has(alias)) {
-            const handled = aliasHeaders.length + categoryHeaders.length > 0;
-            result = { alias, span: def.span, class: 'unclassified', slot, label: null, gap: gap(handled ? 'not-in-mining-table' : 'no-handler', def.span) };
+            // M-215 R2: no alias, category, or global handler anywhere means the engine runs its
+            // default no-op, so the loc cannot mine at all. It is not a resource and not an
+            // unknown one either: exclude it from the mining catalogue entirely, never a method
+            // target, rock fact, or coverage row.
+            if (aliasHeaders.length + categoryHeaders.length === 0) {
+                population.delete(alias);
+                continue;
+            }
+            result = { alias, span: def.span, class: 'unclassified', slot, label: null, gap: gap('not-in-mining-table', def.span) };
         } else {
             const skill = [...aliasHeaders, ...categoryHeaders].filter((header) => header.span.file === MINING_SCRIPT && header.kind === 'oploc1');
             const name = skill.length === 1 ? firstSwingLabel(ctx, skill[0]) : null;

@@ -2046,27 +2046,44 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(JSON.stringify(extractGatheringFamily(root).payload), JSON.stringify(facts), `${revision} extraction is deterministic`);
     assert.deepEqual(family.summary.methods, { woodcutting: 10, mining: 15, fishing: 15 }, `${revision} method inventory`);
 
-    // M-215: every rock loc the content offers a Mine op on is classified or left Unknown with a gap code.
+    // M-215 R2: handler-less locs are proven inert (no alias, category, or global oploc
+    // handler, so the engine runs its default no-op): they are excluded from the mining
+    // catalogue entirely — no method target, no loose row, no entity join. Every other
+    // rock loc the content offers a Mine op on is classified or left Unknown with a gap code.
     const rockClass = new Map<number, string>();
     for (const method of facts.methods.filter((each) => each.skill === 'mining')) for (const target of method.targets.state === 'unknown' ? [] : method.targets.value) rockClass.set(target.id, target.class);
     for (const loose of facts.loose.filter((each) => each.skill === 'mining')) rockClass.set(loose.id, loose.class);
     const mineOps = locSectionsWith(root, /^op[1-5]=mine$/i);
-    for (const alias of mineOps) assert.ok(rockClass.has(locPack.get(alias)!), `${revision} ${alias} has a class or a gap`);
+    const inert = revision === 289
+        ? ['newbierocks1', ...Array.from({ length: 21 }, (_, index) => `loc_${4976 + index}`)]
+        : ['newbierocks1', 'castlewars_blocked_tunnel_1', 'castlewars_blocked_tunnel_2'];
+    for (const alias of inert) {
+        const id = locPack.get(alias)!;
+        assert.ok(!rockClass.has(id), `${revision} ${alias} is excluded, not Unknown`);
+        assert.ok(!facts.loose.some((each) => each.id === id), `${revision} ${alias} has no loose row`);
+        assert.ok(!facts.entities.some((row) => row.startsWith('loc ') && row.split(' ')[2] === alias), `${revision} ${alias} is not joined`);
+    }
+    assert.ok(facts.loose.filter((each) => each.skill === 'mining').every((each) => each.gap?.code !== 'no-handler'), `${revision} no mining row claims no-handler`);
+    for (const alias of mineOps) {
+        if (inert.includes(alias)) continue;
+        assert.ok(rockClass.has(locPack.get(alias)!), `${revision} ${alias} has a class or a gap`);
+    }
     for (const alias of locSectionsWith(root, /^category=mining_rock_macro_gas$/)) assert.equal(rockClass.get(locPack.get(alias)!), 'hazard', `${revision} ${alias} is a gas hazard, never a resource`);
     for (const alias of locSectionsWith(root, /^param=mining_rock_empty,1$/)) assert.equal(rockClass.get(locPack.get(alias)!), 'depleted', `${revision} ${alias} is depleted`);
     const rocks = family.summary.rocks;
     assert.equal(rocks.population, rocks.resource + rocks.depleted + rocks.hazard + rocks.unclassified, `${revision} every rock accounted exactly once`);
+    assert.equal(rocks.population, revision === 289 ? 62 : 59, `${revision} handler-less locs are not population`);
     assert.equal(rocks.resource, 29, `${revision} resource rocks`);
     assert.equal(rocks.hazard, 22, `${revision} gas rocks`);
     assert.equal(rocks.depleted, 5, `${revision} depleted rocks`);
-    assert.equal(rocks.unclassified, revision === 289 ? 28 : 6, `${revision} unclassified rocks`);
+    assert.equal(rocks.unclassified, revision === 289 ? 6 : 3, `${revision} unclassified rocks`);
+    assert.deepEqual(rocks.unclassified_reasons, { 'custom-handler': revision === 289 ? 6 : 3 }, `${revision} every unclassified rock has a real handler`);
     for (const loose of facts.loose.filter((each) => each.class === 'unclassified')) {
         assert.ok(loose.gap && loose.gap.code && loose.gap.sources.length > 0, `${revision} ${view.name(loose.kind, loose.id)} unclassified rows carry a gap and its sources`);
     }
     const dummy = facts.loose.find((each) => each.kind === 'loc' && view.name('loc', each.id) === 'misc_dummy_coalrock1');
     assert.equal(dummy?.gap?.code, revision === 289 ? 'custom-handler' : undefined, `${revision} the Miscellania dummy rock has its own handler, so it is no coal target`);
     assert.equal(targetsOf(view.method('mining.coal'), 'resource').some((target) => view.name('loc', target.id) === 'misc_dummy_coalrock1'), false);
-    assert.equal(facts.loose.some((each) => each.gap?.code === 'no-handler' && view.name('loc', each.id) === 'loc_4976'), revision === 289, `${revision} the unhandled mineral veins stay Unknown`);
     // M-215: the tutorial Mine handlers provably yield copper/tin ore, so those rocks are typed
     // resources of their ore's method, with an unknown custom respawn and a targets caveat.
     for (const [methodId, ore, tutorial] of [['mining.copper', 'copper', 'newbiecopperrock'], ['mining.tin', 'tin', 'newbietinrock']] as const) {
@@ -2224,6 +2241,17 @@ const retypedView = gatherView(retyped);
 assert.deepEqual(targetsOf(retypedView.method('mining.copper'), 'resource').map((target) => retypedView.name('loc', target.id)), ['copperrock1', 'copperrock2']);
 assert.equal(retyped.payload.loose.find((each) => retypedView.name('loc', each.id) === 'newbiecopperrock')?.gap?.code, 'custom-handler');
 assert.equal(family289Rows(retyped, 'mining.copper'), 1, 'the tutorial rock contributes no fixture placements');
+// M-215 R2: promotion is fail-closed on yield cardinality. A second grant beside the unit
+// copper yield — even a repeated identical one or a non-unit extra — must drop the rock back
+// to Unknown instead of promoting it as a copper resource.
+const doubled = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, tutScript, 'inv_add(inv, copper_ore, 1);', 'inv_add(inv, copper_ore, 1);\ninv_add(inv, copper_ore, 1);')));
+const doubledView = gatherView(doubled);
+assert.deepEqual(targetsOf(doubledView.method('mining.copper'), 'resource').map((target) => doubledView.name('loc', target.id)), ['copperrock1', 'copperrock2']);
+assert.equal(doubled.payload.loose.find((each) => doubledView.name('loc', each.id) === 'newbiecopperrock')?.gap?.code, 'custom-handler');
+const extraGrant = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, tutScript, 'inv_add(inv, copper_ore, 1);', 'inv_add(inv, copper_ore, 1);\ninv_add(inv, tin_ore, 2);')));
+const extraView = gatherView(extraGrant);
+assert.deepEqual(targetsOf(extraView.method('mining.copper'), 'resource').map((target) => extraView.name('loc', target.id)), ['copperrock1', 'copperrock2']);
+assert.equal(extraGrant.payload.loose.find((each) => extraView.name('loc', each.id) === 'newbiecopperrock')?.gap?.code, 'custom-handler');
 
 // Bait must agree between the equipment struct and the roll; an unmodelled guard makes requirements partial.
 const wrongBait = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, fishScript, '~fish_roll(raw_pike, null, fishing_rod, fishing_bait)', '~fish_roll(raw_pike, null, fishing_rod, feather)')));
