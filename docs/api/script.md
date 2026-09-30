@@ -85,7 +85,13 @@ scripts end their live step at either boundary.
 ### Quester journal reads
 
 Native Quester dialogue completion requires four observed game ticks with
-chat closed, rather than an elapsed host-millisecond gap. A journal transaction
+chat closed, rather than an elapsed host-millisecond gap. A closed chat while
+local combat is observed produces an explicit combat-interruption outcome,
+including during dialogue opening or page acknowledgement. Quester immediately
+parks as **Blocked**, naming `dialogue interrupted by combat`; it does not count
+that interruption as successful work, settle the step, or request an advancement
+journal read. This requires an explicit operator retry; it does not fight or
+automatically retry the conversation. A journal transaction
 that loses ownership or becomes transiently busy is retried only after both
 main and chat modals have been observed closed for three game ticks. Unknown
 modal observations or reopened modals restart this quiet interval.

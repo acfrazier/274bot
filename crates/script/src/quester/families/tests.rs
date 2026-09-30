@@ -1237,6 +1237,7 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
     use super::dialogue::{Dialogue, DialogueArgs};
     let mut snapshot = ready();
     snapshot.seed_chat_modal(4882, vec![]);
+    seed_dialogue_combat(&mut snapshot, false);
     let mut ledger = None;
     let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
         t.actions
@@ -1275,7 +1276,130 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
     with_tick(&snapshot, &mut ledger, 9, |t| {
         assert!(matches!(
             t.actions.poll(&handle, &mut t.cx),
-            Poll::Ready(Ok(true))
+            Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
         ));
     });
+}
+
+pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool) {
+    snapshot.seed_local_player(api::snapshot::LocalPlayerView {
+        player: api::snapshot::PlayerView {
+            index: 0,
+            actor: api::snapshot::ActorView {
+                name: None,
+                actions: vec![],
+                tile: tile(3253, 3401),
+                distance: 0,
+                animation: -1,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                health: 10,
+                total_health: 10,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat,
+            },
+            combat_level: 3,
+            skill_level: 0,
+        },
+        energy: 100,
+        weight: 0,
+    });
+}
+
+#[test]
+fn dialogue_hostile_close_never_reports_success() {
+    use super::dialogue::{Dialogue, DialogueArgs};
+    let mut snapshot = ready();
+    snapshot.seed_chat_modal(4882, vec![]);
+    seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<Dialogue>(
+                DialogueArgs {
+                    id: 0,
+                    npc: Arc::from("Aubury"),
+                    prefer: Arc::from([]),
+                    choose: None,
+                },
+                &mut t.cx,
+            )
+            .unwrap()
+    });
+    snapshot.seed_chat_modal(-1, vec![]);
+    seed_dialogue_combat(&mut snapshot, true);
+    let mut result = Poll::Pending;
+    for tick in 2..=6 {
+        result = with_tick(&snapshot, &mut ledger, tick, |t| {
+            t.actions.poll(&handle, &mut t.cx)
+        });
+        if result.is_ready() {
+            break;
+        }
+    }
+    assert!(
+        matches!(
+            result,
+            Poll::Ready(Ok(
+                crate::dialogue_outcome::DialogueOutcome::CombatInterrupted
+            ))
+        ),
+        "a hostile close, including a zero-damage hit, cannot complete dialogue: {result:?}"
+    );
+}
+
+#[test]
+fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
+    use super::dialogue::{Dialogue, DialogueArgs};
+    use crate::dialogue_outcome::DialogueOutcome;
+    for continue_component in [None, Some(4883), Some(-1)] {
+        let mut snapshot = ready();
+        seed_dialogue_combat(&mut snapshot, false);
+        if let Some(component) = continue_component {
+            snapshot.seed_chat_modal(4882, vec![]);
+            snapshot.seed_chat_options(
+                if component == -1 {
+                    vec![api::snapshot::ChatOptionView {
+                        component_id: 1,
+                        text: "I have a package for you.".into(),
+                    }]
+                } else {
+                    vec![]
+                },
+                component,
+            );
+        }
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+            t.actions
+                .begin::<Dialogue>(
+                    DialogueArgs {
+                        id: 0,
+                        npc: Arc::from("Aubury"),
+                        prefer: Arc::from([]),
+                        choose: None,
+                    },
+                    &mut t.cx,
+                )
+                .unwrap()
+        });
+        with_tick(&snapshot, &mut ledger, 2, |t| {
+            assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+        });
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        seed_dialogue_combat(&mut snapshot, true);
+        with_tick(&snapshot, &mut ledger, 3, |t| {
+            assert!(matches!(
+                t.actions.poll(&handle, &mut t.cx),
+                Poll::Ready(Ok(DialogueOutcome::CombatInterrupted))
+            ));
+        });
+    }
 }

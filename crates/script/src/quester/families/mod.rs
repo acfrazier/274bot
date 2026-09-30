@@ -9,6 +9,7 @@ use super::compile::{
     StepPlan, StepRun,
 };
 use super::path::PredicateDocument;
+use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions, WalkEnd, WalkReceipt};
 use crate::shim::InteractReq;
@@ -1076,10 +1077,15 @@ impl StepRun for TalkRun {
         if let Some(handle) = &self.dialogue {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(Ok(false)) => {
+                Poll::Ready(Ok(DialogueOutcome::Failed)) => {
                     Poll::Ready(Err(ActionError::Failed(Arc::from("dialogue failed"))))
                 }
-                Poll::Ready(Ok(true)) => Poll::Ready(Ok(StepOutcome {
+                Poll::Ready(Ok(DialogueOutcome::CombatInterrupted)) => {
+                    static REASON: std::sync::LazyLock<Arc<str>> =
+                        std::sync::LazyLock::new(|| Arc::from("dialogue interrupted by combat"));
+                    Poll::Ready(Err(ActionError::Blocked(Arc::clone(&REASON))))
+                }
+                Poll::Ready(Ok(DialogueOutcome::Completed)) => Poll::Ready(Ok(StepOutcome {
                     progress: None,
                     evidence: cx.tick.cx.evidence(),
                     receipt: None,

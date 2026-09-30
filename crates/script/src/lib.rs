@@ -136,6 +136,7 @@ mod cook_locations;
 mod death_recovery;
 #[cfg(feature = "load")]
 mod dialog;
+pub mod dialogue_outcome;
 #[cfg(feature = "load")]
 mod drive_partner_trade;
 #[cfg(feature = "load")]

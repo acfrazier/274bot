@@ -1,6 +1,7 @@
 //! Native chat-dialogue driver extracted from the isolate `dialog` family.
 //! Page sequencing matches the isolate driver; completion waits on game ticks.
 
+use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::shim::InteractReq;
 use std::sync::Arc;
@@ -45,7 +46,7 @@ pub struct Dialogue {
 
 impl NativeMachine for Dialogue {
     type Args = DialogueArgs;
-    type Output = bool;
+    type Output = DialogueOutcome;
 
     fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         let mut dialogue = Self {
@@ -67,6 +68,11 @@ impl NativeMachine for Dialogue {
         let Some(obs) = observe(cx) else {
             return Poll::Pending;
         };
+        // NPC melee closes interfaces even when it deals zero damage. A
+        // witnessed combat close is not the quiet end of a conversation.
+        if let Some(outcome) = DialogueOutcome::combat_interruption(obs.open, obs.in_combat) {
+            return Poll::Ready(Ok(outcome));
+        }
         match self.phase {
             Phase::Open => {
                 if obs.ready {
@@ -74,7 +80,7 @@ impl NativeMachine for Dialogue {
                     return self.drive(cx, &obs);
                 }
                 if now >= self.deadline_ms {
-                    return Poll::Ready(Ok(false));
+                    return Poll::Ready(Ok(DialogueOutcome::Failed));
                 }
                 Poll::Pending
             }
@@ -85,7 +91,7 @@ impl NativeMachine for Dialogue {
                     return Poll::Pending;
                 }
                 if now >= self.deadline_ms {
-                    return Poll::Ready(Ok(false));
+                    return Poll::Ready(Ok(DialogueOutcome::Failed));
                 }
                 Poll::Pending
             }
@@ -96,7 +102,7 @@ impl NativeMachine for Dialogue {
                     return Poll::Pending;
                 }
                 if now >= self.deadline_ms {
-                    return Poll::Ready(Ok(false));
+                    return Poll::Ready(Ok(DialogueOutcome::Failed));
                 }
                 Poll::Pending
             }
@@ -113,7 +119,11 @@ impl NativeMachine for Dialogue {
                     self.phase = Phase::Drive;
                     self.drive(cx, &obs)
                 } else if obs.tick >= self.due_tick {
-                    Poll::Ready(Ok(!obs.open))
+                    Poll::Ready(Ok(if obs.open {
+                        DialogueOutcome::Failed
+                    } else {
+                        DialogueOutcome::Completed
+                    }))
                 } else {
                     Poll::Pending
                 }
@@ -150,9 +160,13 @@ impl Dialogue {
         &mut self,
         cx: &mut ActionContext<'_>,
         obs: &ChatObs,
-    ) -> Poll<Result<bool, ActionError>> {
+    ) -> Poll<Result<DialogueOutcome, ActionError>> {
         if self.steps >= DRIVE_STEPS {
-            return Poll::Ready(Ok(!obs.open));
+            return Poll::Ready(Ok(if obs.open {
+                DialogueOutcome::Failed
+            } else {
+                DialogueOutcome::Completed
+            }));
         }
         if !obs.ready {
             self.phase = Phase::WaitGap;
@@ -198,6 +212,7 @@ struct ChatObs<'a> {
     modal: i32,
     tick: u64,
     options: &'a [api::snapshot::ChatOptionView],
+    in_combat: bool,
 }
 
 fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
@@ -212,6 +227,10 @@ fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
         modal,
         tick: cx.evidence().tick,
         options: chat.value.options,
+        in_combat: cx
+            .snapshot()
+            .in_combat()
+            .is_some_and(|combat| combat.value.in_combat),
     })
 }
 
@@ -258,6 +277,6 @@ pub fn poll_dialogue(
     actions: &mut NativeActions,
     handle: &ActionHandle<Dialogue>,
     cx: &mut ActionContext<'_>,
-) -> Poll<Result<bool, ActionError>> {
+) -> Poll<Result<DialogueOutcome, ActionError>> {
     actions.poll(handle, cx)
 }
