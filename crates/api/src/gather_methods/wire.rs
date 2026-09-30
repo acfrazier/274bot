@@ -1238,7 +1238,6 @@ mod tests {
                     method_mut(family, "mining.copper")["surprise"] = json!(true);
                 }),
             ),
-
             (
                 "hazard NPC ids require NPC entity rows",
                 Box::new(|family| {
@@ -1282,7 +1281,10 @@ mod tests {
             (
                 "hazard NPC ids are required",
                 Box::new(|family| {
-                    family["facts"].as_object_mut().unwrap().remove("hazard_npcs");
+                    family["facts"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("hazard_npcs");
                 }),
             ),
             (

@@ -706,13 +706,28 @@ fn content_hazards_and_incidental_gems_are_typed_catalog_facts() {
         let catalog = prepare(revision);
         let hazards = catalog.hazard_npcs();
         assert!(!hazards.is_empty(), "{revision:?}");
-        assert!(hazards.windows(2).all(|pair| pair[0] < pair[1]), "{revision:?}");
+        assert!(
+            hazards.windows(2).all(|pair| pair[0] < pair[1]),
+            "{revision:?}"
+        );
         let names: Vec<_> = hazards
             .iter()
-            .map(|id| catalog.alias(EntityId::Npc(*id)).expect("hazard id joins to an NPC"))
+            .map(|id| {
+                catalog
+                    .alias(EntityId::Npc(*id))
+                    .expect("hazard id joins to an NPC")
+            })
             .collect();
-        assert!(names.iter().any(|name| name.starts_with("macro_ent_")), "{revision:?}");
-        assert!(names.iter().any(|name| name.starts_with("macro_whirlpool_")), "{revision:?}");
+        assert!(
+            names.iter().any(|name| name.starts_with("macro_ent_")),
+            "{revision:?}"
+        );
+        assert!(
+            names
+                .iter()
+                .any(|name| name.starts_with("macro_whirlpool_")),
+            "{revision:?}"
+        );
 
         let fishing_hazards: Vec<_> = catalog
             .methods()
@@ -725,13 +740,22 @@ fn content_hazards_and_incidental_gems_are_typed_catalog_facts() {
             })
             .collect();
         assert!(!fishing_hazards.is_empty(), "{revision:?}");
-        assert!(fishing_hazards.iter().all(|id| hazards.contains(id)), "{revision:?}");
+        assert!(
+            fishing_hazards.iter().all(|id| hazards.contains(id)),
+            "{revision:?}"
+        );
 
         let gems = catalog.incidental_gem_ids();
         assert!(!gems.is_empty(), "{revision:?}");
-        assert!(gems.windows(2).all(|pair| pair[0] < pair[1]), "{revision:?}");
+        assert!(
+            gems.windows(2).all(|pair| pair[0] < pair[1]),
+            "{revision:?}"
+        );
         for id in gems {
-            assert!(alias(&catalog, *id).starts_with("uncut_"), "{revision:?}: {id}");
+            assert!(
+                alias(&catalog, *id).starts_with("uncut_"),
+                "{revision:?}: {id}"
+            );
         }
         let copper = catalog.method("mining.copper").unwrap();
         assert!(known_rows(&copper.products)

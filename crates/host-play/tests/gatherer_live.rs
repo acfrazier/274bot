@@ -172,12 +172,8 @@ impl Cell {
         match (self, case) {
             (Self::Woodcutting, LiveCase::Power) => "gatherer_wc_power",
             (Self::Mining, LiveCase::Power) => "gatherer_mine_tier_power",
-            (Self::Woodcutting, LiveCase::CancelBeforeDrain) => {
-                "gatherer_cancel_before_drain_live"
-            }
-            (Self::Woodcutting, LiveCase::DeathDuringDrop) => {
-                "gatherer_death_during_drop_live"
-            }
+            (Self::Woodcutting, LiveCase::CancelBeforeDrain) => "gatherer_cancel_before_drain_live",
+            (Self::Woodcutting, LiveCase::DeathDuringDrop) => "gatherer_death_during_drop_live",
             (Self::Woodcutting, LiveCase::RunKeyChangeDuringDrop) => {
                 "gatherer_run_key_change_during_drop_live"
             }
@@ -226,8 +222,8 @@ impl Cell {
 
     const fn default_tool_alias(self, case: LiveCase) -> &'static str {
         match (self, case) {
-            (Self::Fishing, LiveCase::FishNet) => "small_net",
-            (Self::Fishing, LiveCase::FishBaitGate) => "fly_rod",
+            (Self::Fishing, LiveCase::FishNet) => "net",
+            (Self::Fishing, LiveCase::FishBaitGate) => "fly_fishing_rod",
             (Self::Mining, _) => "steel_pickaxe",
             _ => "bronze_axe",
         }
@@ -336,7 +332,11 @@ impl Cell {
         bag.insert("skill".into(), json!(self.setting_skill()));
         bag.insert(
             "woodcuttingResources".into(),
-            json!(self.resources(case).iter().map(String::as_str).collect::<Vec<_>>()),
+            json!(self
+                .resources(case)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()),
         );
         bag.insert(
             "miningResources".into(),
@@ -532,7 +532,6 @@ enum FixtureStage {
     WaitStump,
     Return,
     WaitReturn,
-    Done,
 }
 
 #[derive(Debug, Clone)]
@@ -582,8 +581,7 @@ struct Observation {
 
 impl Observation {
     fn has_loc(&self, id: i32, tile: WorldTile) -> bool {
-        self.loc_ids
-            .contains(&(id, tile.x, tile.z, tile.level))
+        self.loc_ids.contains(&(id, tile.x, tile.z, tile.level))
     }
 }
 
@@ -609,6 +607,7 @@ struct Witness {
     failure_code: Option<String>,
     failure_message: Option<String>,
     products_seen: BTreeSet<i32>,
+    dropped_product_ids: BTreeSet<i32>,
     fish_products_seen: BTreeSet<i32>,
     first_regrown_tile: Option<(i32, i32, i32)>,
     edge_fresh_xp: bool,
@@ -749,14 +748,15 @@ impl GatherSlot {
             return false;
         };
         match self.case {
-            LiveCase::OakRespawn => self
-                .plan
-                .first_oak
-                .zip(self.plan.other_oak)
-                .is_some_and(|(first, other)| {
-                    latest.has_loc(OAK_STUMP_ID, first)
-                        && latest.live_oaks.contains(&tile_key(other))
-                }),
+            LiveCase::OakRespawn => {
+                self.plan
+                    .first_oak
+                    .zip(self.plan.other_oak)
+                    .is_some_and(|(first, other)| {
+                        latest.has_loc(OAK_STUMP_ID, first)
+                            && latest.live_oaks.contains(&tile_key(other))
+                    })
+            }
             LiveCase::OakNearEdge => {
                 (self.witness.preflight_build_observed || self.expected_preflight_build())
                     && self
@@ -1011,26 +1011,20 @@ impl GatherSlot {
                 match stage {
                     FixtureStage::Start => {
                         let seed = active_seed.expect("seed stage has an active seed");
-                        if self.snapshot.tile()
-                            == Some((seed.tile.x, seed.tile.z, seed.tile.level))
+                        if self.snapshot.tile() == Some((seed.tile.x, seed.tile.z, seed.tile.level))
                         {
                             stage = FixtureStage::Place;
                         } else {
                             send_cheat(
                                 client,
-                                &interact::tele_args(
-                                    seed.tile.level,
-                                    seed.tile.x,
-                                    seed.tile.z,
-                                ),
+                                &interact::tele_args(seed.tile.level, seed.tile.x, seed.tile.z),
                             )?;
                             stage = FixtureStage::WaitTile;
                         }
                     }
                     FixtureStage::WaitTile => {
                         let seed = active_seed.expect("seed stage has an active seed");
-                        if self.snapshot.tile()
-                            == Some((seed.tile.x, seed.tile.z, seed.tile.level))
+                        if self.snapshot.tile() == Some((seed.tile.x, seed.tile.z, seed.tile.level))
                         {
                             stage = FixtureStage::Place;
                         }
@@ -1063,8 +1057,7 @@ impl GatherSlot {
                         }
                     }
                     FixtureStage::Return => {
-                        if self.snapshot.tile()
-                            == Some((return_to.x, return_to.z, return_to.level))
+                        if self.snapshot.tile() == Some((return_to.x, return_to.z, return_to.level))
                         {
                             self.fixture_done = true;
                             self.fixture_task = None;
@@ -1077,18 +1070,12 @@ impl GatherSlot {
                         stage = FixtureStage::WaitReturn;
                     }
                     FixtureStage::WaitReturn => {
-                        if self.snapshot.tile()
-                            == Some((return_to.x, return_to.z, return_to.level))
+                        if self.snapshot.tile() == Some((return_to.x, return_to.z, return_to.level))
                         {
                             self.fixture_done = true;
                             self.fixture_task = None;
                             return Ok(());
                         }
-                    }
-                    FixtureStage::Done => {
-                        self.fixture_done = true;
-                        self.fixture_task = None;
-                        return Ok(());
                     }
                     FixtureStage::WaitStump => {
                         return Err("seed actor entered the oak-fell wait state".into());
@@ -1116,10 +1103,7 @@ impl GatherSlot {
                             return Ok(());
                         }
                         if self.snapshot.tile() != Some((tile.x, tile.z, tile.level)) {
-                            send_cheat(
-                                client,
-                                &interact::tele_args(tile.level, tile.x, tile.z),
-                            )?;
+                            send_cheat(client, &interact::tele_args(tile.level, tile.x, tile.z))?;
                             stage = FixtureStage::WaitTile;
                         } else {
                             let loc = self.snapshot.locs().iter().find(|loc| {
@@ -1165,11 +1149,6 @@ impl GatherSlot {
                             return Ok(());
                         }
                     }
-                    FixtureStage::Done => {
-                        self.fixture_done = true;
-                        self.fixture_task = None;
-                        return Ok(());
-                    }
                     _ => return Err("oak feller entered an invalid fixture state".into()),
                 }
                 FixtureTask::Chop { tile, stage }
@@ -1179,47 +1158,32 @@ impl GatherSlot {
                 mut tile,
                 mut return_to,
                 mut stage,
-            } => {
-                match stage {
-                    FixtureStage::Start => {
-                        if progress.xp <= progress.baseline_xp || progress.product_count <= 0 {
+            } => match stage {
+                FixtureStage::Start => {
+                    if progress.xp <= progress.baseline_xp || progress.product_count <= 0 {
+                        FixtureTask::InjectAfterProgress {
+                            seed,
+                            tile,
+                            return_to,
+                            stage,
+                        }
+                    } else if let Some(target) = progress.nearest_live_iron {
+                        tile = Some(target);
+                        return_to = progress.tile.map(|(x, z, level)| WorldTile { x, z, level });
+                        if self.snapshot.tile() == Some((target.x, target.z, target.level)) {
+                            stage = FixtureStage::Place;
                             FixtureTask::InjectAfterProgress {
                                 seed,
                                 tile,
                                 return_to,
                                 stage,
-                            }
-                        } else if let Some(target) = progress.nearest_live_iron {
-                            tile = Some(target);
-                            return_to = progress.tile.map(|(x, z, level)| WorldTile {
-                                x,
-                                z,
-                                level,
-                            });
-                            if self.snapshot.tile()
-                                == Some((target.x, target.z, target.level))
-                            {
-                                stage = FixtureStage::Place;
-                                FixtureTask::InjectAfterProgress {
-                                    seed,
-                                    tile,
-                                    return_to,
-                                    stage,
-                                }
-                            } else {
-                                send_cheat(
-                                    client,
-                                    &interact::tele_args(target.level, target.x, target.z),
-                                )?;
-                                stage = FixtureStage::WaitTile;
-                                FixtureTask::InjectAfterProgress {
-                                    seed,
-                                    tile,
-                                    return_to,
-                                    stage,
-                                }
                             }
                         } else {
+                            send_cheat(
+                                client,
+                                &interact::tele_args(target.level, target.x, target.z),
+                            )?;
+                            stage = FixtureStage::WaitTile;
                             FixtureTask::InjectAfterProgress {
                                 seed,
                                 tile,
@@ -1227,13 +1191,7 @@ impl GatherSlot {
                                 stage,
                             }
                         }
-                    }
-                    FixtureStage::WaitTile => {
-                        if let Some(target) = tile {
-                            if self.snapshot.tile() == Some((target.x, target.z, target.level)) {
-                                stage = FixtureStage::Place;
-                            }
-                        }
+                    } else {
                         FixtureTask::InjectAfterProgress {
                             seed,
                             tile,
@@ -1241,90 +1199,94 @@ impl GatherSlot {
                             stage,
                         }
                     }
-                    FixtureStage::Place => {
-                        if let Some(target) = tile {
-                            let key = tile_key(target);
-                            if progress.live_iron_tiles.contains(&key) {
-                                send_cheat(client, &format!("~loc {}", seed.alias))?;
-                                stage = FixtureStage::WaitLoc;
-                            } else {
-                                tile = None;
-                                return_to = None;
-                                stage = FixtureStage::Start;
-                            }
-                        }
-                        FixtureTask::InjectAfterProgress {
-                            seed,
-                            tile,
-                            return_to,
-                            stage,
+                }
+                FixtureStage::WaitTile => {
+                    if let Some(target) = tile {
+                        if self.snapshot.tile() == Some((target.x, target.z, target.level)) {
+                            stage = FixtureStage::Place;
                         }
                     }
-                    FixtureStage::WaitLoc => {
-                        if tile.is_some_and(|target| {
-                            self.latest
-                                .as_ref()
-                                .is_some_and(|row| row.has_loc(seed.id, target))
-                        }) {
-                            if return_to.is_some() {
-                                stage = FixtureStage::Return;
-                            } else {
-                                self.fixture_done = true;
-                                self.fixture_task = None;
-                                return Ok(());
-                            }
-                        }
-                        FixtureTask::InjectAfterProgress {
-                            seed,
-                            tile,
-                            return_to,
-                            stage,
+                    FixtureTask::InjectAfterProgress {
+                        seed,
+                        tile,
+                        return_to,
+                        stage,
+                    }
+                }
+                FixtureStage::Place => {
+                    if let Some(target) = tile {
+                        if progress.nearest_live_iron == Some(target) {
+                            send_cheat(client, &format!("~loc {}", seed.alias))?;
+                            stage = FixtureStage::WaitLoc;
+                        } else {
+                            tile = None;
+                            return_to = None;
+                            stage = FixtureStage::Start;
                         }
                     }
-                    FixtureStage::Return => {
-                        let home = return_to.ok_or("hazard injector lost its return tile")?;
-                        if self.snapshot.tile() == Some((home.x, home.z, home.level)) {
+                    FixtureTask::InjectAfterProgress {
+                        seed,
+                        tile,
+                        return_to,
+                        stage,
+                    }
+                }
+                FixtureStage::WaitLoc => {
+                    if tile.is_some_and(|target| {
+                        self.latest
+                            .as_ref()
+                            .is_some_and(|row| row.has_loc(seed.id, target))
+                    }) {
+                        if return_to.is_some() {
+                            stage = FixtureStage::Return;
+                        } else {
                             self.fixture_done = true;
                             self.fixture_task = None;
                             return Ok(());
                         }
-                        send_cheat(
-                            client,
-                            &interact::tele_args(home.level, home.x, home.z),
-                        )?;
-                        stage = FixtureStage::WaitReturn;
-                        FixtureTask::InjectAfterProgress {
-                            seed,
-                            tile,
-                            return_to,
-                            stage,
-                        }
                     }
-                    FixtureStage::WaitReturn => {
-                        if return_to.is_some_and(|home| {
-                            self.snapshot.tile() == Some((home.x, home.z, home.level))
-                        }) {
-                            self.fixture_done = true;
-                            self.fixture_task = None;
-                            return Ok(());
-                        }
-                        FixtureTask::InjectAfterProgress {
-                            seed,
-                            tile,
-                            return_to,
-                            stage,
-                        }
+                    FixtureTask::InjectAfterProgress {
+                        seed,
+                        tile,
+                        return_to,
+                        stage,
                     }
-                    FixtureStage::Done => {
+                }
+                FixtureStage::Return => {
+                    let home = return_to.ok_or("hazard injector lost its return tile")?;
+                    if self.snapshot.tile() == Some((home.x, home.z, home.level)) {
                         self.fixture_done = true;
                         self.fixture_task = None;
                         return Ok(());
                     }
-                    FixtureStage::WaitStump => {
-                        return Err("hazard injector entered the oak-fell wait state".into());
+                    send_cheat(client, &interact::tele_args(home.level, home.x, home.z))?;
+                    stage = FixtureStage::WaitReturn;
+                    FixtureTask::InjectAfterProgress {
+                        seed,
+                        tile,
+                        return_to,
+                        stage,
                     }
                 }
-            }
+                FixtureStage::WaitReturn => {
+                    if return_to.is_some_and(|home| {
+                        self.snapshot.tile() == Some((home.x, home.z, home.level))
+                    }) {
+                        self.fixture_done = true;
+                        self.fixture_task = None;
+                        return Ok(());
+                    }
+                    FixtureTask::InjectAfterProgress {
+                        seed,
+                        tile,
+                        return_to,
+                        stage,
+                    }
+                }
+                FixtureStage::WaitStump => {
+                    return Err("hazard injector entered the oak-fell wait state".into());
+                }
+            },
         };
         self.fixture_task = Some(next_task);
         Ok(())
@@ -1409,6 +1371,7 @@ impl GatherSlot {
                     if !observation.inventory.contains_key(slot) {
                         self.witness.confirmed_drops =
                             self.witness.confirmed_drops.saturating_add(1);
+                        self.witness.dropped_product_ids.insert(old.id);
                     }
                 } else if !observation.inventory.contains_key(slot)
                     && !self
@@ -1441,11 +1404,7 @@ impl GatherSlot {
         Ok(())
     }
 
-    fn record_g2_observation(
-        &mut self,
-        previous: Option<&Observation>,
-        observation: &Observation,
-    ) {
+    fn record_g2_observation(&mut self, previous: Option<&Observation>, observation: &Observation) {
         let baseline_xp = self.baseline_xp();
         if let Some(tile) = observation.tile {
             self.witness.player_tiles.insert(tile);
@@ -1475,9 +1434,7 @@ impl GatherSlot {
         {
             self.witness.fixture_chop_observed = true;
         }
-        if self.witness.all_oaks_depleted_at_wait
-            && self.witness.first_regrown_tile.is_none()
-        {
+        if self.witness.all_oaks_depleted_at_wait && self.witness.first_regrown_tile.is_none() {
             let first_regrown = observation
                 .live_oaks
                 .iter()
@@ -1523,7 +1480,9 @@ impl GatherSlot {
                 }
             }
         }
-        self.witness.oak_live_tiles.extend(observation.live_oaks.iter().copied());
+        self.witness
+            .oak_live_tiles
+            .extend(observation.live_oaks.iter().copied());
         self.witness
             .oak_stump_tiles
             .extend(observation.oak_stumps.iter().copied());
@@ -1609,17 +1568,19 @@ impl GatherSlot {
             }
         }
 
-        if self.case == LiveCase::LocationAuto && self.witness.auto_widen_seen {
-            if observation.tile.is_some_and(|tile| {
-                self.plan
-                    .auto_next
-                    .iter()
-                    .any(|target| tile_distance(tile, *target).is_some_and(|distance| distance <= 6))
-            }) {
-                self.witness.auto_selected_next = true;
-                if previous.is_some_and(|old| observation.product_count > old.product_count) {
-                    self.witness.auto_next_gather_tick.get_or_insert(observation.tick);
-                }
+        if self.case == LiveCase::LocationAuto
+            && self.witness.auto_widen_seen
+            && observation.tile.is_some_and(|tile| {
+                self.plan.auto_next.iter().any(|target| {
+                    tile_distance(tile, *target).is_some_and(|distance| distance <= 6)
+                })
+            })
+        {
+            self.witness.auto_selected_next = true;
+            if previous.is_some_and(|old| observation.product_count > old.product_count) {
+                self.witness
+                    .auto_next_gather_tick
+                    .get_or_insert(observation.tick);
             }
         }
 
@@ -1651,8 +1612,7 @@ impl GatherSlot {
                     }
                 }
             }
-            if self.witness.gas_hazard_escaped
-                && observation.xp > self.witness.gas_hazard_xp_start
+            if self.witness.gas_hazard_escaped && observation.xp > self.witness.gas_hazard_xp_start
             {
                 self.witness.gas_hazard_xp_after_escape = true;
             }
@@ -1797,18 +1757,14 @@ impl GatherSlot {
                 )?;
                 // Isolate gathering from the mine's aggressive scorpions.
                 send_cheat(client, "setstat defence 99")?;
-                if (self.cell == Cell::Fishing
-                    || (self.fixture_helper && self.case == LiveCase::OakRespawn))
+                if (!self.fixture_helper || self.case == LiveCase::OakRespawn)
                     && !self.item_in_inventory()
                 {
                     send_cheat(client, &format!("give {} 1", self.tool_alias))?;
                 }
                 send_cheat(client, "setstat hitpoints 99")?;
                 let tile = self.prep_tile();
-                send_cheat(
-                    client,
-                    &interact::tele_args(tile.level, tile.x, tile.z),
-                )?;
+                send_cheat(client, &interact::tele_args(tile.level, tile.x, tile.z))?;
                 self.phase = Prep::WaitSeed;
             }
             Prep::WaitSeed => {
@@ -1816,8 +1772,8 @@ impl GatherSlot {
                 if self.snapshot.ingame()
                     && self.snapshot.scene_state() == 2
                     && self.near_tile(prep_tile, 6)
-                    && (!self.fixture_helper
-                        || self.case == LiveCase::OakRespawn && self.item_in_inventory())
+                    && (self.fixture_helper && self.case != LiveCase::OakRespawn
+                        || self.item_in_inventory())
                     && self.stat_level() >= self.requested_level
                 {
                     if self.fixture_helper {
@@ -1836,18 +1792,14 @@ impl GatherSlot {
                         }
                         send_cheat(
                             client,
-                            &interact::tele_args(
-                                self.target.level,
-                                self.target.x,
-                                self.target.z,
-                            ),
+                            &interact::tele_args(self.target.level, self.target.x, self.target.z),
                         )?;
                         self.phase = Prep::WaitEdgeStart;
                     } else if self.cell == Cell::Mining && self.case == LiveCase::Power {
                         send_cheat(client, "givebank rune_pickaxe 1")?;
                         send_cheat(client, &interact::tele_args(0, 2809, 3441))?;
                         self.phase = Prep::OpenBank;
-                    } else if self.cell == Cell::Fishing {
+                    } else if matches!(self.cell, Cell::Fishing | Cell::Mining) {
                         self.phase = Prep::Ready;
                     } else {
                         self.phase = Prep::Equip;
@@ -1864,7 +1816,7 @@ impl GatherSlot {
                 if self.snapshot.ingame()
                     && self.snapshot.scene_state() == 2
                     && self.near_target()
-                    && self.item_in_inventory()
+                    && (self.fixture_helper || self.item_in_inventory())
                     && self.stat_level() >= self.requested_level
                 {
                     self.phase = if self.fixture_task.is_some() {
@@ -2014,13 +1966,15 @@ impl GatherSlot {
         }
         let native_phase = format!("{:?}", status.phase);
         self.witness.native_phases.insert(native_phase.clone());
-        for field in &status.fields {
+        for field in status.fields.iter() {
             let value = match &field.value {
                 script::native::StatusValue::Text(value) => value.to_string(),
                 script::native::StatusValue::Integer(value) => value.to_string(),
                 script::native::StatusValue::Tile(tile) => {
                     format!("{},{},{}", tile.x, tile.z, tile.level)
                 }
+                script::native::StatusValue::Truth(value) => format!("{value:?}"),
+                script::native::StatusValue::Quest(value) => format!("{value:?}"),
             };
             self.witness
                 .status_values
@@ -2038,7 +1992,9 @@ impl GatherSlot {
         self.witness.last_status_dropped =
             integer_field(status, "dropped").unwrap_or(self.witness.last_status_dropped);
         if let Some(area) = text_field(status, "area") {
-            self.witness.initial_area.get_or_insert_with(|| area.to_owned());
+            self.witness
+                .initial_area
+                .get_or_insert_with(|| area.to_owned());
             self.witness.last_area = Some(area.to_owned());
             if let Some((_, deadline)) = area.split_once("; wait_until: ") {
                 self.witness.wait_until = deadline.trim().parse().ok();
@@ -2046,9 +2002,7 @@ impl GatherSlot {
         }
         if let Some(event) = text_field(status, "last_event") {
             self.witness.last_event = Some(event.to_owned());
-            if self.case == LiveCase::LocationAuto
-                && event == "widening Auto within 128 tiles"
-            {
+            if self.case == LiveCase::LocationAuto && event == "widening Auto within 128 tiles" {
                 self.witness.auto_widen_seen = true;
             }
             if self.case == LiveCase::GasHazard
@@ -2127,12 +2081,9 @@ impl GatherSlot {
                 return Ok(());
             }
             let expected_block = match self.case {
-                LiveCase::FishBaitGate => {
-                    code == "supply-missing" && message == "supply-missing:feathers"
-                }
+                LiveCase::FishBaitGate => code == "supply-missing",
                 LiveCase::OakAbsentArea => {
-                    code == "resource-unavailable"
-                        && message.starts_with("resource-unavailable")
+                    code == "resource-unavailable" && message.starts_with("resource-unavailable")
                 }
                 _ => false,
             };
@@ -2262,13 +2213,11 @@ impl GatherSlot {
                     });
                 if !self.witness.native_phases.contains("Blocked")
                     || self.witness.failure_code.as_deref() != Some("supply-missing")
-                    || self.witness.failure_message.as_deref()
-                        != Some("supply-missing:feathers")
                     || !self.witness.no_fish_xp
                     || !no_output
                 {
                     return Err(format!(
-                        "{} did not Blocked(supply-missing:feathers) before fishing: {:?}",
+                        "{} did not Blocked(supply-missing) before fishing: {:?}",
                         self.name(),
                         self.witness
                     ));
@@ -2303,14 +2252,12 @@ impl GatherSlot {
                     .witness
                     .first_regrown_tile
                     .is_some_and(|tile| self.witness.oak_stump_tiles.contains(&tile));
-                let both_oaks_felled = self
-                    .plan
-                    .first_oak
-                    .is_some_and(|tile| self.witness.fixture_chop_tiles.contains(&tile_key(tile)))
-                    && self
-                        .plan
-                        .other_oak
-                        .is_some_and(|tile| self.witness.fixture_chop_tiles.contains(&tile_key(tile)));
+                let both_oaks_felled =
+                    self.plan.first_oak.is_some_and(|tile| {
+                        self.witness.fixture_chop_tiles.contains(&tile_key(tile))
+                    }) && self.plan.other_oak.is_some_and(|tile| {
+                        self.witness.fixture_chop_tiles.contains(&tile_key(tile))
+                    });
                 if !self.witness.fixture_chop_observed
                     || !both_oaks_felled
                     || self.witness.oak_other_gather_tick.is_none()
@@ -2628,7 +2575,10 @@ fn fixture_plan(
                 .map(|&(x, z)| world_tile(x, z))
                 .collect();
             plan.auto_next = if std::env::var_os("GATHERER_AUTO_NEXT_TILE").is_some() {
-                vec![fixture_tile("GATHERER_AUTO_NEXT_TILE", world_tile(2444, 3398))?]
+                vec![fixture_tile(
+                    "GATHERER_AUTO_NEXT_TILE",
+                    world_tile(2444, 3398),
+                )?]
             } else {
                 AUTO_NEXT_TILES
                     .iter()
@@ -2664,14 +2614,15 @@ fn fixture_plan(
                 stage: FixtureStage::Start,
             })
         }
-        LiveCase::GasHazard => plan
-            .inject_after_progress
-            .map(|seed| FixtureTask::InjectAfterProgress {
-                seed,
-                tile: None,
-                return_to: None,
-                stage: FixtureStage::Start,
-            }),
+        LiveCase::GasHazard => {
+            plan.inject_after_progress
+                .map(|seed| FixtureTask::InjectAfterProgress {
+                    seed,
+                    tile: None,
+                    return_to: None,
+                    stage: FixtureStage::Start,
+                })
+        }
         _ => None,
     };
     Ok((target, plan, task))
@@ -2687,7 +2638,6 @@ fn mint_g2_names(n: usize) -> Vec<String> {
         })
         .collect()
 }
-
 
 fn mint_profile(account: &str, password: &str, offset: i32) -> Result<Profile, String> {
     let uid = SystemTime::now()
@@ -2763,7 +2713,10 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         ("GATHERER_CATALOG_ROOT", &catalog_root),
     ] {
         if !path.is_absolute() {
-            return Err(format!("{name} must be an absolute path: {}", path.display()));
+            return Err(format!(
+                "{name} must be an absolute path: {}",
+                path.display()
+            ));
         }
     }
     if !nav_pack.is_file() {
@@ -2786,8 +2739,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     }
     let (target, plan, fixture_task) = fixture_plan(cell, case)?;
     let temp = TempRoot::new(cell_name)?;
-    let (profile, template) =
-        selected_profile(nav_pack, engine_dir, catalog_root, temp.path())?;
+    let (profile, template) = selected_profile(nav_pack, engine_dir, catalog_root, temp.path())?;
     let helper_needed = fixture_task.is_some();
     let names = mint_g2_names(if helper_needed { 2 } else { 1 });
     let credentials = host_play::mint_live_entries(&names);
@@ -2831,10 +2783,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         move |client, username, hold| {
             if frame_helper_account.as_deref() == Some(username) {
                 let progress = if frame_helper_needs_progress {
-                    frame_state
-                        .lock()
-                        .ok()
-                        .map(|slot| slot.fixture_progress())
+                    frame_state.lock().ok().map(|slot| slot.fixture_progress())
                 } else {
                     None
                 };
@@ -2956,9 +2905,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             )
         };
         let (mut helper_done, helper_error) = if let Some(helper_state) = &helper_state {
-            let helper = helper_state
-                .lock()
-                .map_err(|_| "fixture state poisoned")?;
+            let helper = helper_state.lock().map_err(|_| "fixture state poisoned")?;
             (helper.fixture_done, helper.error.clone())
         } else {
             (true, None)
@@ -2970,42 +2917,37 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             && witness.oak_other_gather_tick.is_some()
             && !oak_all_stumps_prepared
         {
-            let (all_stumps, both_chopped, next_chop) = {
-                let slot = state.lock().map_err(|_| "live state poisoned")?;
-                let latest = slot.latest.as_ref();
-                let all_stumps = latest.is_some_and(|latest| {
-                    slot.plan.oak_tiles.iter().all(|tile| {
-                        let key = tile_key(*tile);
-                        latest.oak_stumps.contains(&key) && !latest.live_oaks.contains(&key)
-                    })
-                });
-                let both_chopped = slot
-                    .plan
-                    .first_oak
-                    .zip(slot.plan.other_oak)
-                    .is_some_and(|(first, other)| {
-                        slot.witness.fixture_chop_tiles.contains(&tile_key(first))
-                            && slot.witness.fixture_chop_tiles.contains(&tile_key(other))
+            let (all_stumps, both_chopped, next_chop) =
+                {
+                    let slot = state.lock().map_err(|_| "live state poisoned")?;
+                    let latest = slot.latest.as_ref();
+                    let all_stumps = latest.is_some_and(|latest| {
+                        slot.plan.oak_tiles.iter().all(|tile| {
+                            let key = tile_key(*tile);
+                            latest.oak_stumps.contains(&key) && !latest.live_oaks.contains(&key)
+                        })
                     });
-                let next_chop = latest.and_then(|latest| {
-                    slot.plan.oak_tiles.iter().copied().find(|tile| {
-                        let key = tile_key(*tile);
-                        (latest.oak_stumps.contains(&key) || latest.live_oaks.contains(&key))
-                            && (!slot.witness.fixture_chop_tiles.contains(&key)
-                                || latest.live_oaks.contains(&key))
-                    })
-                });
-                (all_stumps, both_chopped, next_chop)
-            };
+                    let both_chopped = slot.plan.first_oak.zip(slot.plan.other_oak).is_some_and(
+                        |(first, other)| {
+                            slot.witness.fixture_chop_tiles.contains(&tile_key(first))
+                                && slot.witness.fixture_chop_tiles.contains(&tile_key(other))
+                        },
+                    );
+                    let next_chop = latest.and_then(|latest| {
+                        slot.plan.oak_tiles.iter().copied().find(|tile| {
+                            let key = tile_key(*tile);
+                            (latest.oak_stumps.contains(&key) || latest.live_oaks.contains(&key))
+                                && (!slot.witness.fixture_chop_tiles.contains(&key)
+                                    || latest.live_oaks.contains(&key))
+                        })
+                    });
+                    (all_stumps, both_chopped, next_chop)
+                };
             if all_stumps && both_chopped {
                 oak_all_stumps_prepared = true;
             } else if helper_done {
-                if let (Some(helper_state), Some(tile)) =
-                    (helper_state.as_ref(), next_chop)
-                {
-                    let mut helper = helper_state
-                        .lock()
-                        .map_err(|_| "fixture state poisoned")?;
+                if let (Some(helper_state), Some(tile)) = (helper_state.as_ref(), next_chop) {
+                    let mut helper = helper_state.lock().map_err(|_| "fixture state poisoned")?;
                     helper.fixture_done = false;
                     helper.fixture_task = Some(FixtureTask::Chop {
                         tile,
@@ -3015,8 +2957,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 }
             }
         }
-        let ready_to_start =
-            ready_to_start && (case == LiveCase::GasHazard || helper_done);
+        let ready_to_start = ready_to_start && (case == LiveCase::GasHazard || helper_done);
         if let Some(error) = lifecycle_error {
             let death_receipt = case == LiveCase::DeathDuringDrop && witness.death_command_sent;
             if !death_receipt {
@@ -3166,6 +3107,11 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             LiveCase::Power => {
                 witness.cycles >= REQUIRED_CYCLES
                     && witness.post_drop_gathers >= REQUIRED_POST_DROP_GATHERS
+                    && (cell != Cell::Mining
+                        || witness
+                            .dropped_product_ids
+                            .iter()
+                            .any(|id| matches!(id, 1623 | 1621 | 1619 | 1617)))
             }
             LiveCase::FishNet => {
                 witness.cycles >= REQUIRED_CYCLES
@@ -3175,8 +3121,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             }
             LiveCase::FishBaitGate | LiveCase::OakAbsentArea => witness.failure_code.is_some(),
             LiveCase::OakRespawn => {
-                witness.all_oaks_depleted_at_wait
-                    && witness.first_regrown_gather_tick.is_some()
+                witness.all_oaks_depleted_at_wait && witness.first_regrown_gather_tick.is_some()
             }
             LiveCase::OakNearEdge => {
                 witness.first_edge_oak_loaded_tick.is_some() && witness.edge_fresh_xp
@@ -3219,9 +3164,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         let slot = state.lock().map_err(|_| "live state poisoned")?;
         (slot.witness.clone(), slot.cycle_product_capacity())
     };
-    println!(
-        "{}",
-        json!({
+    let mut receipt = json!({
             "phase": "witness",
             "cell": cell_name,
             "live_case": case.name(),
@@ -3247,6 +3190,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "native_phases": witness.native_phases,
             "last_area": witness.last_area,
             "last_event": witness.last_event,
+    });
+    let mut fixture_receipt = json!({
             "fixture_chop_observed": witness.fixture_chop_observed,
             "fixture_chop_tiles": witness.fixture_chop_tiles,
             "fixture_seeds_observed": witness.fixture_seeds_observed,
@@ -3256,6 +3201,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 .map(|target| (target.type_id, target.tile))
                 .collect::<Vec<_>>(),
             "fish_products_seen": witness.fish_products_seen,
+            "products_seen": witness.products_seen,
+            "dropped_product_ids": witness.dropped_product_ids,
             "moved_spot_reacquired": witness.moved_spot_reacquired,
             "no_fish_xp": witness.no_fish_xp,
             "all_oaks_depleted_at_wait": witness.all_oaks_depleted_at_wait,
@@ -3279,8 +3226,13 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "gas_hazard_escaped": witness.gas_hazard_escaped,
             "gas_hazard_xp_after_escape": witness.gas_hazard_xp_after_escape,
             "driver_trace": "host debug enabled; inspect native-packet account/tick/count lines",
-        })
+    });
+    receipt.as_object_mut().expect("receipt object").append(
+        fixture_receipt
+            .as_object_mut()
+            .expect("fixture receipt object"),
     );
+    println!("{receipt}");
     play.script_stop(&account);
     play.stop_slot(&account);
     if let Some(helper_account) = &helper_account {

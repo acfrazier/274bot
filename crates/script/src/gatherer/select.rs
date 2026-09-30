@@ -1,8 +1,7 @@
 use super::area::WorkArea;
 use super::settings::{method_level, GathererSettings, TargetPreference};
 use api::gather_methods::{
-    known_rows, GatherCatalog, GatherMethod, GatherSkill, GatherSpot, SceneRegionInput,
-    TargetClass,
+    known_rows, GatherCatalog, GatherMethod, GatherSkill, GatherSpot, SceneRegionInput, TargetClass,
 };
 use api::selected::{EntityId, Knowledge, Truth};
 use api::snapshot::{LocView, NpcView, WorldStateView, WorldTile};
@@ -84,6 +83,13 @@ pub struct SelectionObservation<'a> {
     pub skill_stat: i32,
 }
 
+pub struct PlacementScene<'a> {
+    pub world: &'a WorldStateView,
+    pub locs: &'a [LocView],
+    pub npcs: &'a [NpcView],
+    pub hazard_npcs: &'a [i32],
+}
+
 type Candidate<'a> = (
     u16,
     &'a GatherMethod,
@@ -100,13 +106,16 @@ type Candidate<'a> = (
 pub fn classify_placement(
     spot: &GatherSpot,
     method: &GatherMethod,
-    world: &WorldStateView,
-    locs: &[LocView],
-    npcs: &[NpcView],
-    hazard_npcs: &[i32],
+    scene: PlacementScene<'_>,
     avoided: &[AvoidedTile; MAX_AVOID],
     now: u64,
 ) -> PlacementClass {
+    let PlacementScene {
+        world,
+        locs,
+        npcs,
+        hazard_npcs,
+    } = scene;
     if !tile_loaded(spot.origin, world) {
         return PlacementClass::Unloaded;
     }
@@ -233,8 +242,7 @@ pub fn select(
                 continue;
             };
             for spot in spots.iter().filter(|spot| {
-                fishing_spot_eligible(spot, area)
-                    && known_resource_target(method, spot.entity)
+                fishing_spot_eligible(spot, area) && known_resource_target(method, spot.entity)
             }) {
                 if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
                     zone_gated = zone_gated.saturating_add(1);
@@ -247,9 +255,7 @@ pub fn select(
                     let Some(type_id) = npc_type_id(npc) else {
                         continue;
                     };
-                    if spot.entity != EntityId::Npc(type_id)
-                        || is_avoided(npc.tile, avoided, now)
-                    {
+                    if spot.entity != EntityId::Npc(type_id) || is_avoided(npc.tile, avoided, now) {
                         continue;
                     }
                     let Ok(index) = i32::try_from(npc.index) else {
@@ -258,13 +264,15 @@ pub fn select(
                     consider_candidate(
                         &mut best_live,
                         preference,
-                        method_index,
-                        method,
-                        spot,
-                        PlacementClass::Live,
-                        npc.tile,
-                        index,
-                        here,
+                        (
+                            method_index,
+                            method,
+                            spot,
+                            PlacementClass::Live,
+                            npc.tile,
+                            index,
+                            distance(here, npc.tile),
+                        ),
                         skill_stat,
                     );
                 }
@@ -281,10 +289,12 @@ pub fn select(
                 if classify_placement(
                     spot,
                     method,
-                    world,
-                    locs,
-                    npcs,
-                    catalog.hazard_npcs(),
+                    PlacementScene {
+                        world,
+                        locs,
+                        npcs,
+                        hazard_npcs: catalog.hazard_npcs(),
+                    },
                     avoided,
                     now,
                 ) == PlacementClass::Live
@@ -292,13 +302,15 @@ pub fn select(
                     consider_candidate(
                         &mut best_live,
                         preference,
-                        method_index,
-                        method,
-                        spot,
-                        PlacementClass::Live,
-                        spot.origin,
-                        NO_NPC_INDEX,
-                        here,
+                        (
+                            method_index,
+                            method,
+                            spot,
+                            PlacementClass::Live,
+                            spot.origin,
+                            NO_NPC_INDEX,
+                            distance(here, spot.origin),
+                        ),
                         skill_stat,
                     );
                 }
@@ -338,8 +350,7 @@ pub fn select(
                 continue;
             };
             for spot in spots.iter().filter(|spot| {
-                fishing_spot_eligible(spot, area)
-                    && known_resource_target(method, spot.entity)
+                fishing_spot_eligible(spot, area) && known_resource_target(method, spot.entity)
             }) {
                 if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
                     continue;
@@ -358,19 +369,19 @@ pub fn select(
                         consider_candidate(
                             &mut best_unloaded,
                             preference,
-                            method_index,
-                            method,
-                            spot,
-                            class,
-                            spot.origin,
-                            NO_NPC_INDEX,
-                            here,
+                            (
+                                method_index,
+                                method,
+                                spot,
+                                class,
+                                spot.origin,
+                                NO_NPC_INDEX,
+                                distance(here, spot.origin),
+                            ),
                             skill_stat,
                         );
                     }
-                    PlacementClass::Depleted
-                    | PlacementClass::Hazard
-                    | PlacementClass::Avoided => {
+                    PlacementClass::Depleted | PlacementClass::Hazard | PlacementClass::Avoided => {
                         non_absent = true;
                         let respawn = u64::from(respawn_max(method, spot));
                         let until = match class {
@@ -402,10 +413,12 @@ pub fn select(
                 let class = classify_placement(
                     spot,
                     method,
-                    world,
-                    locs,
-                    npcs,
-                    catalog.hazard_npcs(),
+                    PlacementScene {
+                        world,
+                        locs,
+                        npcs,
+                        hazard_npcs: catalog.hazard_npcs(),
+                    },
                     avoided,
                     now,
                 );
@@ -415,19 +428,19 @@ pub fn select(
                         consider_candidate(
                             &mut best_unloaded,
                             preference,
-                            method_index,
-                            method,
-                            spot,
-                            class,
-                            spot.origin,
-                            NO_NPC_INDEX,
-                            here,
+                            (
+                                method_index,
+                                method,
+                                spot,
+                                class,
+                                spot.origin,
+                                NO_NPC_INDEX,
+                                distance(here, spot.origin),
+                            ),
                             skill_stat,
                         );
                     }
-                    PlacementClass::Depleted
-                    | PlacementClass::Hazard
-                    | PlacementClass::Avoided => {
+                    PlacementClass::Depleted | PlacementClass::Hazard | PlacementClass::Avoided => {
                         non_absent = true;
                         let until = match class {
                             PlacementClass::Hazard => {
@@ -482,25 +495,20 @@ pub fn select(
 fn consider_candidate<'a>(
     best: &mut Option<Candidate<'a>>,
     preference: TargetPreference,
-    method_index: u16,
-    method: &'a GatherMethod,
-    spot: &'a GatherSpot,
-    class: PlacementClass,
-    tile: WorldTile,
-    npc_index: i32,
-    here: WorldTile,
+    candidate: Candidate<'a>,
     skill_stat: i32,
 ) {
-    let candidate_distance = distance(here, tile);
+    let (method_index, method, spot, class, tile, npc_index, candidate_distance) = candidate;
     let better = better_candidate(
         preference,
-        best.as_ref().map(|(_, current_method, current_spot, _, _, _, distance)| {
-            (
-                i64::from(method_level(current_method, skill_stat)),
-                *distance,
-                current_spot.id.0,
-            )
-        }),
+        best.as_ref()
+            .map(|(_, current_method, current_spot, _, _, _, distance)| {
+                (
+                    i64::from(method_level(current_method, skill_stat)),
+                    *distance,
+                    current_spot.id.0,
+                )
+            }),
         method,
         skill_stat,
         candidate_distance,
@@ -589,9 +597,8 @@ fn npc_type_id(npc: &NpcView) -> Option<i32> {
 }
 
 fn has_hazard_npc(npcs: &[NpcView], hazard_npcs: &[i32], tile: WorldTile) -> bool {
-    npcs.iter().any(|npc| {
-        npc.tile == tile && npc_type_id(npc).is_some_and(|id| hazard_npcs.contains(&id))
-    })
+    npcs.iter()
+        .any(|npc| npc.tile == tile && npc_type_id(npc).is_some_and(|id| hazard_npcs.contains(&id)))
 }
 
 fn is_avoided(tile: WorldTile, avoided: &[AvoidedTile; MAX_AVOID], now: u64) -> bool {
@@ -606,8 +613,7 @@ fn avoid_until(spot: &GatherSpot, skill: GatherSkill, avoided: &[AvoidedTile; MA
         .filter(|entry| {
             entry.until > 0
                 && if skill == GatherSkill::Fishing {
-                    movement_bounds(spot)
-                        .is_some_and(|bounds| region_contains(bounds, entry.tile))
+                    movement_bounds(spot).is_some_and(|bounds| region_contains(bounds, entry.tile))
                 } else {
                     entry.tile == spot.origin
                 }
@@ -886,7 +892,18 @@ mod tests {
         );
         let avoided = [AvoidedTile::EMPTY; MAX_AVOID];
         assert_eq!(
-            classify_placement(&placement, &method, &world, &[], &[], &[], &avoided, 1),
+            classify_placement(
+                &placement,
+                &method,
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[],
+                    hazard_npcs: &[]
+                },
+                &avoided,
+                1
+            ),
             PlacementClass::Unloaded
         );
 
@@ -905,13 +922,35 @@ mod tests {
         };
         assert!(area.contains(placement.origin));
         assert_eq!(
-            classify_placement(&placement, &method, &world, &[], &[], &[], &avoided, 1),
+            classify_placement(
+                &placement,
+                &method,
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[],
+                    hazard_npcs: &[]
+                },
+                &avoided,
+                1
+            ),
             PlacementClass::Unloaded
         );
 
         placement.origin.x = 3303;
         assert_eq!(
-            classify_placement(&placement, &method, &world, &[], &[], &[], &avoided, 1),
+            classify_placement(
+                &placement,
+                &method,
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[],
+                    hazard_npcs: &[]
+                },
+                &avoided,
+                1
+            ),
             PlacementClass::Absent
         );
         for (id, class, expected) in [
@@ -924,10 +963,12 @@ mod tests {
                 classify_placement(
                     &placement,
                     &method,
-                    &world,
-                    &[loc(id, placement.origin)],
-                    &[],
-                    &[],
+                    PlacementScene {
+                        world: &world,
+                        locs: &[loc(id, placement.origin)],
+                        npcs: &[],
+                        hazard_npcs: &[],
+                    },
                     &avoided,
                     1,
                 ),
@@ -943,10 +984,12 @@ mod tests {
             classify_placement(
                 &placement,
                 &method,
-                &world,
-                &[],
-                &[npc(4, 900, placement.origin)],
-                &hazard_npcs,
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[npc(4, 900, placement.origin)],
+                    hazard_npcs: &hazard_npcs,
+                },
                 &avoided,
                 1,
             ),
@@ -962,10 +1005,12 @@ mod tests {
             classify_placement(
                 &placement,
                 &method,
-                &world,
-                &[loc(12, placement.origin)],
-                &[],
-                &[],
+                PlacementScene {
+                    world: &world,
+                    locs: &[loc(12, placement.origin)],
+                    npcs: &[],
+                    hazard_npcs: &[],
+                },
                 &avoided,
                 2,
             ),
@@ -975,10 +1020,12 @@ mod tests {
             classify_placement(
                 &placement,
                 &method,
-                &world,
-                &[loc(12, placement.origin)],
-                &[],
-                &[],
+                PlacementScene {
+                    world: &world,
+                    locs: &[loc(12, placement.origin)],
+                    npcs: &[],
+                    hazard_npcs: &[],
+                },
                 &avoided,
                 3,
             ),
@@ -986,7 +1033,18 @@ mod tests {
         );
         placement.origin.level = 1;
         assert_eq!(
-            classify_placement(&placement, &method, &world, &[], &[], &[], &avoided, 2),
+            classify_placement(
+                &placement,
+                &method,
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[],
+                    hazard_npcs: &[]
+                },
+                &avoided,
+                2
+            ),
             PlacementClass::Unloaded
         );
     }
@@ -1223,9 +1281,7 @@ mod tests {
             },
         ]
         .into_iter()
-        .find(|moved| {
-            *moved != tile && area.contains(*moved) && region_contains(bounds, *moved)
-        })
+        .find(|moved| *moved != tile && area.contains(*moved) && region_contains(bounds, *moved))
         .expect("a moved fishing instance remains in its eligible movement box");
         let moved_npc = [npc(43, type_index, moved_tile)];
         let reacquired = select(
@@ -1284,9 +1340,7 @@ mod tests {
     #[test]
     fn a_live_lower_tier_beats_an_unloaded_higher_tier_and_tier_falls_back() {
         let catalog = real_catalog();
-        let low = catalog
-            .method("woodcutting.normal")
-            .expect("normal trees");
+        let low = catalog.method("woodcutting.normal").expect("normal trees");
         let high = catalog.method("woodcutting.oak").expect("oak trees");
         let low_index = method_index(&catalog, low);
         let high_index = method_index(&catalog, high);
@@ -1319,9 +1373,7 @@ mod tests {
                     let Some(z) = lower.origin.z.checked_add(dz) else {
                         continue;
                     };
-                    if let Some(higher) =
-                        high_by_tile.get(&(x, z, lower.origin.level)).copied()
-                    {
+                    if let Some(higher) = high_by_tile.get(&(x, z, lower.origin.level)).copied() {
                         pair = Some((lower, higher, dx, dz));
                         break 'placements;
                     }

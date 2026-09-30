@@ -84,18 +84,29 @@ scripts end their live step at either boundary.
 
 ### Gatherer power gathering
 
-Gatherer supports Woodcutting and Mining with a usable carried or equipped
-tool, at the Start area or a Custom location. Power mode drops selected logs
-or ores in bounded batches, counts drops only after their slots are observed
+Gatherer supports Woodcutting, Mining and Fishing with a usable carried or
+equipped tool, at the Start area, a Custom location or an Auto-selected area.
+Power mode drops selected logs, ores or fish in bounded batches, counts drops only after their slots are observed
 empty, and retains confirmed partial-batch progress across interruptions.
 Unsettled drops are retried even after their dispatch receipts age out.
 
-Incidental uncut gems are **kept**, not power-dropped. A power-miner can keep
-rare valuable rolls while discarding bulk ore; this trades uninterrupted XP
-for retaining those valuables. Tools and other non-products are also kept.
-If these items fill the pack and no selected product can be dropped, the
-card stops with `inventory-blocked` rather than gathering against a full
-inventory. Clear space and use **Retry**.
+Incidental uncut gems are power-dropped along with mining products. Tools,
+fishing bait and other non-products are kept. If protected items fill the pack
+and no selected product can be dropped, the card stops with `inventory-blocked`
+rather than gathering against a full inventory. Clear space and use **Retry**.
+
+Fishing requires the selected method's tool and bait before gathering; missing
+bait stops with `supply-missing`. Moving fishing spots are re-acquired by NPC
+identity. Depleted resources are not clicked: a live lower-tier resource can
+be selected while the higher tier respawns. Wait deadlines use the observed
+group's respawn bound and do not slide on unchanged observations.
+
+Auto searches outward in sliced 32-tile rings, up to 128 tiles from the Start
+anchor, and temporarily skips exhausted groups until their respawn bound.
+Four unexpired skipped groups produce `widen-limit`; exhausted search produces
+`resource-unavailable`. Retry resets the search. Gas, ents and whirlpools are
+identified by generated IDs and trigger reselection or a walk away, not another
+gathering click on the hazard.
 
 Level-up chat pages are continued individually. An observed change of chat
 root completes only the previous page; the new page requires its own Continue.
@@ -103,8 +114,8 @@ An unchanged page still fails after eight ticks rather than waiting indefinitely
 
 Changes marked restart-required (including skill, resources and location)
 remain pending until the slot restarts; they never switch the active run in
-place. Death stops the card; automatic recovery, banking and Fishing are not
-part of this stage.
+place. Death stops the card; automatic recovery, banking and supply trips are
+not part of this stage. Closest mode and shop provisioning are not offered.
 
 ### File Load and catalog cards
 
