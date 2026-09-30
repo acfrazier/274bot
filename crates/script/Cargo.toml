@@ -40,6 +40,7 @@ vault = { path = "../vault" }
 v8 = { version = "=137.2.1", default-features = false, optional = true }
 
 [dev-dependencies]
+allocation-counter = "=0.8.1"
 # Integration tests use isolate seams without exposing them in normal builds.
 script = { path = ".", features = ["test-hooks"] }
 # The ctx unit test builds an `ObjType` table; the compiled crate itself

@@ -365,6 +365,12 @@ impl GameSnapshot {
         self.scene_state = scene_state;
     }
 
+    /// Offline fixture seed for a completed world build and its map origin.
+    pub fn seed_world(&mut self, world: WorldStateView) {
+        self.base = Some((world.map_base_x, world.map_base_z));
+        self.world = world;
+    }
+
     pub fn seed_quest_statuses(&mut self, rows: Vec<QuestStatusView>, available: bool) {
         self.quest_statuses = rows;
         self.quest_statuses_available = available;
@@ -569,8 +575,11 @@ impl GameSnapshot {
             | Family::Menu => (current.iface, start.iface),
             Family::Camera => (current.camera, start.camera),
             Family::MapFlag => (current.map_flag, start.map_flag),
-            Family::World => (current.world, start.world),
-            Family::Scene | Family::Loc | Family::GroundItem => return true,
+            // World scalars describe the same current build as Scene/Loc.
+            // Login need not receive a world-generation packet before that
+            // build is ready; retaining defaults here misclassifies loaded
+            // placements and the account's membership.
+            Family::World | Family::Scene | Family::Loc | Family::GroundItem => return true,
         };
         now.wrapping_sub(before) != current.invalidations.wrapping_sub(start.invalidations)
     }

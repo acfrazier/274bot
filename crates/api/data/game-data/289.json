@@ -76176,6 +76176,501 @@
       }
     ]
   },
+  "gather_resources": [
+    {
+      "skill": "woodcutting",
+      "method": "woodcutting.normal",
+      "key": "normal",
+      "resources": [
+        "normal"
+      ],
+      "label": "Logs",
+      "level": 0,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "woodcutting",
+      "method": "woodcutting.jungle",
+      "key": "jungle",
+      "resources": [
+        "jungle"
+      ],
+      "label": "Jungle",
+      "level": 0,
+      "selectable": false,
+      "gap": "no-resource-target"
+    },
+    {
+      "skill": "woodcutting",
+      "method": "woodcutting.burnt",
+      "key": "burnt",
+      "resources": [
+        "burnt"
+      ],
+      "label": "Charcoal",
+      "level": 0,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "woodcutting",
+      "method": "woodcutting.achey",
+      "key": "achey",
+      "resources": [
+        "achey"
+      ],
+      "label": "Achey tree logs",
+      "level": 0,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "woodcutting",
+      "method": "woodcutting.oak",
+      "key": "oak",
+      "resources": [
+        "oak"
+      ],
+      "label": "Oak logs",
+      "level": 15,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "woodcutting",
+      "method": "woodcutting.willow",
+      "key": "willow",
+      "resources": [
+        "willow"
+      ],
+      "label": "Willow logs",
+      "level": 30,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "woodcutting",
+      "method": "woodcutting.maple",
+      "key": "maple",
+      "resources": [
+        "maple"
+      ],
+      "label": "Maple logs",
+      "level": 45,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "woodcutting",
+      "method": "woodcutting.yew",
+      "key": "yew",
+      "resources": [
+        "yew"
+      ],
+      "label": "Yew logs",
+      "level": 60,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "woodcutting",
+      "method": "woodcutting.magic",
+      "key": "magic",
+      "resources": [
+        "magic"
+      ],
+      "label": "Magic logs",
+      "level": 75,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "woodcutting",
+      "method": "woodcutting.hollow",
+      "key": "hollow",
+      "resources": [
+        "hollow"
+      ],
+      "label": "Bark",
+      "level": 45,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.rune stones",
+      "key": "rune stones",
+      "resources": [
+        "rune stones"
+      ],
+      "label": "Rune essence",
+      "level": 1,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.clay",
+      "key": "clay",
+      "resources": [
+        "clay"
+      ],
+      "label": "Clay",
+      "level": 1,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.copper",
+      "key": "copper",
+      "resources": [
+        "copper"
+      ],
+      "label": "Copper ore",
+      "level": 1,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.tin",
+      "key": "tin",
+      "resources": [
+        "tin"
+      ],
+      "label": "Tin ore",
+      "level": 1,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.iron",
+      "key": "iron",
+      "resources": [
+        "iron"
+      ],
+      "label": "Iron ore",
+      "level": 15,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.coal",
+      "key": "coal",
+      "resources": [
+        "coal"
+      ],
+      "label": "Coal",
+      "level": 30,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.gold",
+      "key": "gold",
+      "resources": [
+        "gold"
+      ],
+      "label": "Gold ore",
+      "level": 40,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.silver",
+      "key": "silver",
+      "resources": [
+        "silver"
+      ],
+      "label": "Silver ore",
+      "level": 20,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.mithril",
+      "key": "mithril",
+      "resources": [
+        "mithril"
+      ],
+      "label": "Mithril ore",
+      "level": 55,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.adamantite",
+      "key": "adamantite",
+      "resources": [
+        "adamantite"
+      ],
+      "label": "Adamantite ore",
+      "level": 70,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.runite",
+      "key": "runite",
+      "resources": [
+        "runite"
+      ],
+      "label": "Runite ore",
+      "level": 85,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.blurite",
+      "key": "blurite",
+      "resources": [
+        "blurite"
+      ],
+      "label": "Blurite ore",
+      "level": 10,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.gems",
+      "key": "gems",
+      "resources": [
+        "gems"
+      ],
+      "label": "Uncut opal / Uncut jade / Uncut red topaz / Uncut sapphire / Uncut emerald / Uncut ruby / Uncut diamond",
+      "level": 40,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.rock",
+      "key": "rock",
+      "resources": [
+        "rock"
+      ],
+      "label": "Rock",
+      "level": 1,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "mining",
+      "method": "mining.limestone",
+      "key": "limestone",
+      "resources": [
+        "limestone"
+      ],
+      "label": "Limestone",
+      "level": 10,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.loc_2027.op1",
+      "key": "fishing.loc_2027.op1",
+      "resources": [
+        "raw_trout",
+        "raw_salmon"
+      ],
+      "label": "Raw trout / Raw salmon",
+      "level": 20,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.loc_2027.op2",
+      "key": "fishing.loc_2027.op2",
+      "resources": [
+        "raw_pike"
+      ],
+      "label": "Raw pike",
+      "level": 25,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.loc_2630.op1",
+      "key": "fishing.loc_2630.op1",
+      "resources": [
+        "raw_lava_eel"
+      ],
+      "label": "Raw lava eel",
+      "level": 53,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.0_45_152_lavafish.op1",
+      "key": "fishing.0_45_152_lavafish.op1",
+      "resources": [
+        "raw_lava_eel"
+      ],
+      "label": "Raw lava eel",
+      "level": 53,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.category_632.op1",
+      "key": "fishing.category_632.op1",
+      "resources": [
+        "tbwt_raw_karambwanji",
+        "raw_shrimp"
+      ],
+      "label": "Raw karambwanji / Raw shrimps",
+      "level": 5,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.category_633.op1",
+      "key": "fishing.category_633.op1",
+      "resources": [
+        "tbwt_raw_karambwan"
+      ],
+      "label": "Raw karambwan",
+      "level": 65,
+      "selectable": false,
+      "gap": "inventory-effect"
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.freshfish.op1",
+      "key": "fishing.freshfish.op1",
+      "resources": [
+        "raw_trout",
+        "raw_salmon"
+      ],
+      "label": "Raw trout / Raw salmon",
+      "level": 20,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.freshfish.op3",
+      "key": "fishing.freshfish.op3",
+      "resources": [
+        "raw_pike"
+      ],
+      "label": "Raw pike",
+      "level": 25,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.memberfish.op1",
+      "key": "fishing.memberfish.op1",
+      "resources": [
+        "leather_boots",
+        "seaweed",
+        "leather_gloves",
+        "raw_mackerel",
+        "oystershell",
+        "casket",
+        "raw_cod",
+        "raw_bass"
+      ],
+      "label": "Leather boots / Seaweed / Leather gloves / Raw mackerel / Oyster / Casket / Raw cod / Raw bass",
+      "level": 16,
+      "selectable": false,
+      "gap": "monkey-form-forbidden"
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.memberfish.op3",
+      "key": "fishing.memberfish.op3",
+      "resources": [
+        "raw_shark"
+      ],
+      "label": "Raw shark",
+      "level": 76,
+      "selectable": false,
+      "gap": "monkey-form-forbidden"
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.rarefish.op1",
+      "key": "fishing.rarefish.op1",
+      "resources": [
+        "raw_lobster"
+      ],
+      "label": "Raw lobster",
+      "level": 40,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.rarefish.op3",
+      "key": "fishing.rarefish.op3",
+      "resources": [
+        "raw_tuna",
+        "raw_swordfish"
+      ],
+      "label": "Raw tuna / Raw swordfish",
+      "level": 35,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.saltfish.op1",
+      "key": "fishing.saltfish.op1",
+      "resources": [
+        "raw_shrimp",
+        "raw_anchovies"
+      ],
+      "label": "Raw shrimps / Raw anchovies",
+      "level": 0,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.saltfish.op3",
+      "key": "fishing.saltfish.op3",
+      "resources": [
+        "raw_sardine",
+        "raw_herring"
+      ],
+      "label": "Raw sardine / Raw herring",
+      "level": 5,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.slimeyfish.op1",
+      "key": "fishing.slimeyfish.op1",
+      "resources": [
+        "mort_slimey_eel"
+      ],
+      "label": "Slimey eel",
+      "level": 28,
+      "selectable": true,
+      "gap": null
+    }
+  ],
   "drop_tables": [
     {
       "npc_alias": "giant",

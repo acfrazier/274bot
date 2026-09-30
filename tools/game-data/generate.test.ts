@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows } from './extractors/common.ts';
-import { extractGatheringFamily, GATHERING_SCHEMA, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
+import { extractGatheringFamily, gatherMethodGap, gatherResources, isKnownGatherTarget, GATHERING_SCHEMA, type GatherResourceWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
@@ -2209,6 +2209,46 @@ for (const { revision, root } of gatheringPins) {
     else assert.deepEqual(intercepted, [], '274 content has no yield intercepts, so none are invented');
     assert.equal(intercepted.includes('mining.iron') || intercepted.includes('fishing.memberfish.op1'), false, `${revision} iron and big-net yields are not intercepted`);
     assert.equal(facts.zones.some((zone) => zone.effect === 'product-substituted' && zone.methods.includes('mining.gold') && !zone.methods.includes('mining.iron')), true);
+    // gather_resources slice: pinned per-skill option rows; admission from the
+    // family's own cells, never a hand table. Labels need obj display names,
+    // so keys/gaps/selectability pin here and label joins pin synthetically below.
+    const resourceRows = gatherResources(facts, new Map());
+    const rowByKey = new Map(resourceRows.map((row) => [`${row.skill}:${row.key}`, row]));
+    for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
+        const keys = resourceRows.filter((row) => row.skill === skill).map((row) => row.key);
+        assert.equal(new Set(keys).size, keys.length, `${revision} ${skill} option keys are unique`);
+    }
+    assert.deepEqual(
+        resourceRows.map((row) => row.method),
+        facts.methods.flatMap((method) => (method.skill === 'fishing' ? [method.id] : method.resources.map(() => method.id))),
+        `${revision} resource rows follow the family in content order`,
+    );
+    const resourceRow = (skill: string, key: string): GatherResourceWire => {
+        const found = rowByKey.get(`${skill}:${key}`);
+        assert.ok(found, `${revision} ${skill}:${key} is published`);
+        return found as GatherResourceWire;
+    };
+    assert.equal(resourceRow('woodcutting', 'oak').selectable, true);
+    assert.equal(resourceRow('woodcutting', 'oak').gap, null);
+    assert.equal(resourceRow('woodcutting', 'oak').level, 15);
+    assert.equal(resourceRow('woodcutting', 'oak').method, 'woodcutting.oak');
+    assert.equal(resourceRow('woodcutting', 'normal').selectable, true, `${revision} the G1 woodcutting default is admitted`);
+    assert.deepEqual([resourceRow('mining', 'copper').selectable, resourceRow('mining', 'tin').selectable], [true, true], `${revision} the G1 mining defaults admit on their Known ore rocks; the tutorial-gate rock is excluded per target`);
+    assert.equal(resourceRow('mining', 'copper').gap, null);
+    assert.equal(resourceRow('mining', 'tin').gap, null);
+    assert.equal(resourceRows.every((row) => row.gap !== 'no-known-target'), true, `${revision} the defensive fallback never fires on real pins`);
+    assert.equal(resourceRow('mining', 'rune stones').selectable, true, `${revision} the EssMiner preset is admitted`);
+    assert.equal(resourceRow('mining', 'iron').selectable, true);
+    assert.equal(resourceRow('woodcutting', 'jungle').selectable, false);
+    assert.equal(resourceRow('woodcutting', 'jungle').gap, 'no-resource-target');
+    assert.equal(resourceRow('fishing', 'fishing.saltfish.op1').selectable, true);
+    assert.equal(resourceRow('fishing', 'fishing.category_633.op1').selectable, false);
+    assert.equal(resourceRow('fishing', 'fishing.category_633.op1').gap, 'inventory-effect', `${revision} the karambwan consumes cell blocks first`);
+    assert.equal(
+        resourceRow('fishing', 'fishing.memberfish.op1').gap,
+        revision === 289 ? 'monkey-form-forbidden' : null,
+        `${revision} the 289 monkey-form gate refuses big-net; 274 has no such gate`,
+    );
 }
 
 // Real script text, tiny maps: mutate exactly one construct and prove the extractor degrades honestly.
@@ -2397,4 +2437,91 @@ assert.throws(() => buildDebugArtifact(289, debugProvFixture, { commands: [], na
 const tamperedSchema = JSON.parse(debugArtifactBytes(debugBuilt));
 tamperedSchema.schema_version = 2;
 assert.throws(() => debugArtifactBytes(tamperedSchema), /invalid debug artifact schema/);
+// ---- gather_resources labels and admission (synthetic methods; no content) ----
+
+const synRespawn = {
+    state: 'known' as const,
+    value: {
+        raw: 10,
+        scale: { state: 'known' as const, value: { rule: 'scale_by_playercount', min_ticks: 5, max_ticks: 10, sources: [] as string[] } },
+        source: 'mine.dbrow:1-2',
+    },
+};
+const synTarget = (id: number, respawn: TargetWire['respawn'] = synRespawn): TargetWire => ({ kind: 'loc', id, op: 1, class: 'resource', respawn });
+
+function synMethod(
+    id: string,
+    skill: MethodWire['skill'],
+    resources: string[],
+    products: MethodWire['products'],
+    requirements: MethodWire['requirements'],
+    extras?: Partial<Pick<MethodWire, 'targets' | 'tools' | 'consumes' | 'spots'>>,
+): MethodWire {
+    const knownEmpty = { state: 'known' as const, value: [] };
+    return {
+        id,
+        skill,
+        resources,
+        op: { slot: 1, label: 'Mine' },
+        targets: { state: 'known' as const, value: [synTarget(2092)] },
+        products,
+        tools: knownEmpty,
+        consumes: knownEmpty,
+        requirements,
+        spots: { state: 'known' as const, value: null },
+        sources: [],
+        ...extras,
+    };
+}
+
+const synPartialGap = (code: string) => ({ state: 'partial' as const, value: [], gaps: [{ code, sources: [] as string[] }] });
+const synUnknownGap = (code: string) => ({ state: 'unknown' as const, gap: { code, sources: [] as string[] } });
+const synKnownIds = (ids: { item: number; level: number }[]) => ({ state: 'known' as const, value: ids });
+const synFacts = (methods: MethodWire[]): GatheringFacts => ({ entities: [], methods, loose: [], zones: [], movements: [], placements: [] });
+
+const synOak = synMethod('woodcutting.oak', 'woodcutting', ['oak'], synKnownIds([{ item: 1521, level: 15 }]), synKnownIds([]));
+assert.equal(gatherMethodGap(synOak), null, 'a fully known method is admitted');
+assert.equal(isKnownGatherTarget(synTarget(2090)), true, 'a row with a respawn fact is a Known target');
+assert.equal(isKnownGatherTarget(synTarget(3042, synUnknownGap('custom-deplete'))), false, 'a tutorial-gate row without respawn is excluded per target');
+const synCopper = synMethod('mining.copper', 'mining', ['copper'], synPartialGap('incidental-gem-roll'), synKnownIds([]), {
+    targets: {
+        state: 'partial' as const,
+        value: [synTarget(2090), synTarget(2091), synTarget(3042, synUnknownGap('custom-deplete'))],
+        gaps: [{ code: 'custom-handler-target', sources: [] as string[] }],
+    },
+});
+assert.equal(gatherMethodGap(synCopper), null, 'excluded tutorial rows never block: Known ore rows admit the method');
+const synTakenOver = synMethod('mining.iron', 'mining', ['iron'], synKnownIds([{ item: 440, level: 15 }]), synKnownIds([]), {
+    targets: {
+        state: 'partial' as const,
+        value: [synTarget(1, synUnknownGap('custom-deplete'))],
+        gaps: [{ code: 'custom-handler-target', sources: [] as string[] }],
+    },
+});
+assert.equal(gatherMethodGap(synTakenOver), 'custom-handler-target', 'zero Known targets refuses with the cell gap code');
+const synJungle = synMethod('woodcutting.jungle', 'woodcutting', ['jungle'], synUnknownGap('no-resource-target'), synUnknownGap('no-resource-target'), {
+    targets: synUnknownGap('no-resource-target'),
+    tools: synUnknownGap('no-resource-target'),
+    consumes: synUnknownGap('no-resource-target'),
+    spots: synUnknownGap('no-resource-target'),
+});
+assert.equal(gatherMethodGap(synJungle), 'no-resource-target', 'an unknown cell refuses with its gap code');
+const synKarambwan = synMethod('fishing.category_633.op1', 'fishing', ['tbwt_raw_karambwan'], synPartialGap('inventory-effect'), synPartialGap('varp-gate'));
+assert.equal(gatherMethodGap(synKarambwan), 'varp-gate', 'requirements block before products under the design cell order');
+const synBigNet = synMethod('fishing.memberfish.op1', 'fishing', ['raw_mackerel'], synKnownIds([{ item: 353, level: 16 }]), synPartialGap('monkey-form-forbidden'));
+assert.equal(gatherMethodGap(synBigNet), 'monkey-form-forbidden');
+
+const synNames = new Map([[1521, 'Oak logs'], [335, 'Raw trout'], [331, 'Raw salmon']]);
+assert.deepEqual(gatherResources(synFacts([synOak]), synNames), [
+    { skill: 'woodcutting', method: 'woodcutting.oak', key: 'oak', resources: ['oak'], label: 'Oak logs', level: 15, selectable: true, gap: null },
+]);
+assert.deepEqual(gatherResources(synFacts([synJungle]), new Map()), [
+    { skill: 'woodcutting', method: 'woodcutting.jungle', key: 'jungle', resources: ['jungle'], label: 'Jungle', level: 0, selectable: false, gap: 'no-resource-target' },
+], 'a refused method keeps its row with a humanized fallback label');
+const synFresh = synMethod('fishing.freshfish.op1', 'fishing', ['raw_trout', 'raw_salmon'], synKnownIds([{ item: 335, level: 20 }, { item: 331, level: 30 }]), synKnownIds([]));
+assert.deepEqual(gatherResources(synFacts([synFresh]), synNames), [
+    { skill: 'fishing', method: 'fishing.freshfish.op1', key: 'fishing.freshfish.op1', resources: ['raw_trout', 'raw_salmon'], label: 'Raw trout / Raw salmon', level: 20, selectable: true, gap: null },
+], 'fishing keys on the method id and labels join every product');
+const synUnnamed = synMethod('woodcutting.oak', 'woodcutting', ['oak'], synKnownIds([{ item: 99999, level: 15 }]), synKnownIds([]));
+assert.equal(gatherResources(synFacts([synUnnamed]), new Map())[0].label, 'Oak', 'an unjoined product id falls back instead of inventing a name');
 console.log('generate fixture passed');

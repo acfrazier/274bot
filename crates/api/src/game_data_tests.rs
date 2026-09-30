@@ -800,3 +800,41 @@ fn unsupported_trio_giver_coverage_does_not_decode() {
         .expect_err("a support class is not unknown-spawn coverage");
     assert!(error.contains("unknown"), "unexpected error: {error}");
 }
+
+#[test]
+fn gather_resources_decode_and_skill_lookup() {
+    let tail = r#", "gather_resources": [
+        {"skill": "mining", "method": "mining.copper", "key": "copper", "resources": ["copper"], "label": "Copper ore", "level": 1, "selectable": true, "gap": null},
+        {"skill": "woodcutting", "method": "woodcutting.jungle", "key": "jungle", "resources": ["jungle"], "label": "Jungle", "selectable": false, "gap": "no-resource-target"},
+        {"skill": "fishing", "method": "fishing.saltfish.op1", "key": "fishing.saltfish.op1", "resources": ["raw_shrimp", "raw_anchovies"], "label": "Raw shrimps / Raw anchovies", "level": 0, "selectable": true, "gap": null}
+    ]"#;
+    let data = SelectedGameData::decode(minimal_json(tail).as_bytes(), ClientRevision::R274)
+        .expect("gather slice decodes");
+    assert_eq!(data.gather_resources().len(), 3);
+    let legacy = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
+        .expect("a core without the slice still decodes");
+    assert!(legacy.gather_resources().is_empty());
+    let mining: Vec<_> = data.gather_resources_for("Mining").collect();
+    assert_eq!(mining.len(), 1);
+    assert_eq!(mining[0].key, "copper");
+    assert_eq!(
+        data.gather_option("mining", " COPPER ")
+            .map(|row| row.method.as_str()),
+        Some("mining.copper")
+    );
+    assert_eq!(
+        data.gather_option("fishing", "fishing.saltfish.op1")
+            .map(|row| row.label.as_str()),
+        Some("Raw shrimps / Raw anchovies")
+    );
+    assert!(data.gather_option("mining", "coal").is_none());
+    let jungle = data
+        .gather_option("woodcutting", "jungle")
+        .expect("a refused row stays published");
+    assert!(!jungle.selectable);
+    assert_eq!(jungle.gap.as_deref(), Some("no-resource-target"));
+    assert_eq!(
+        jungle.level, 0,
+        "an omitted level defaults, it is never invented"
+    );
+}

@@ -158,11 +158,16 @@ impl std::error::Error for StartError {}
 #[derive(Default)]
 pub struct RetainedMemory {
     clue: crate::clue::ClueRecovery,
+    gather: crate::gatherer::GatherRetained,
 }
 
 impl RetainedMemory {
     pub fn clue(&mut self) -> &mut crate::clue::ClueRecovery {
         &mut self.clue
+    }
+
+    pub fn gather(&mut self) -> &mut crate::gatherer::GatherRetained {
+        &mut self.gather
     }
 }
 
@@ -379,7 +384,7 @@ pub struct InteractionReceipt {
     pub accepted: bool,
 }
 
-impl ActionContext<'_> {
+impl<'a> ActionContext<'a> {
     pub fn run(&self) -> RunKey {
         self.evidence.run
     }
@@ -395,7 +400,7 @@ impl ActionContext<'_> {
     pub fn pin(&self) -> &SelectedPin {
         self.pin
     }
-    pub fn snapshot(&self) -> SnapshotView<'_> {
+    pub fn snapshot(&self) -> SnapshotView<'a> {
         self.snapshot
     }
     pub fn retained(&mut self) -> &mut RetainedMemory {
