@@ -66,6 +66,9 @@ export class PostedConsumers extends LoopingBot {
     const plain = this.settings.tile('anchor', { x: 3200, z: 3200, level: 0 });
     // @ts-expect-error a plain fallback is returned unchanged, not promoted to Tile
     plain.distanceTo(plain);
+    // @ts-expect-error an explicit type argument cannot hide the null of an unset key
+    const forced: Tile = this.settings.tile<Tile>('anchor');
+    void forced;
   }
 }
 
@@ -75,6 +78,11 @@ const bagDistance: number = real.distanceTo(real);
 void bagDistance;
 const absent: Tile | null = bag.tile('anchor');
 void absent;
+// @ts-expect-error an explicit type argument cannot hide the null of an unset key
+const bagForced: Tile = bag.tile<Tile>('anchor');
+void bagForced;
+const explicitUndefined: Tile | null = bag.tile('anchor', undefined);
+void explicitUndefined;
 const fallback = bag.tile('anchor', { x: 3200, z: 3200, level: 0 });
 if (fallback) {
   // @ts-expect-error review's plain fallback has no Tile methods

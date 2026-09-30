@@ -982,7 +982,8 @@ export interface SettingsView {
     str(name: string, fallback?: string): string;
     num(name: string, fallback?: number): number;
     bool(name: string, fallback?: boolean): boolean;
-    tile<F extends ______adapter_ClientAdapter_js.WorldTile | null = null>(name: string, fallback?: F): ______geometry_Tile_js.default | F;
+    tile(name: string, fallback?: undefined): ______geometry_Tile_js.default | null;
+    tile<F extends ______adapter_ClientAdapter_js.WorldTile | null>(name: string, fallback: F): ______geometry_Tile_js.default | F;
     list(name: string, fallback?: string[]): string[];
 }
 export interface PostedEventMap extends Omit<EventMap, "chat.message"> {
@@ -4396,7 +4397,8 @@ export class SettingsBag {
     num(key: string, fallback?: number): number;
     str(key: string, fallback?: string): string;
     list(key: string, fallback?: string[]): string[];
-    tile<F extends ___adapter_ClientAdapter_js.WorldTile | null = null>(key: string, fallback?: F): Tile | F;
+    tile(key: string, fallback?: undefined): Tile | null;
+    tile<F extends ___adapter_ClientAdapter_js.WorldTile | null>(key: string, fallback: F): Tile | F;
 }
 export const SettingsStore: {
     saved(name: string, key: string): string | undefined;
