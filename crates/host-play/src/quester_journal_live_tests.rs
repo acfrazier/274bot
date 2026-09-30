@@ -1696,7 +1696,12 @@ fn live_quester_journal_synthetic_runemysteries() {
             "close unowned synthetic journal modal",
             Duration::from_secs(20),
             || {
-                if !clicked && setup.lock().expect("quester live setup lock").close_hover_ready {
+                if !clicked
+                    && setup
+                        .lock()
+                        .expect("quester live setup lock")
+                        .close_hover_ready
+                {
                     eprintln!("journal-proof-click hover=Close x={close_x} y={close_y}");
                     capture.click(close_x, close_y);
                     play.wake(&name);
