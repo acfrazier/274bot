@@ -290,6 +290,83 @@ fn selected() -> Arc<api::game_data::SelectedGameData> {
     api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap()
 }
 
+/// A level-up's unlock page is a new modal, not a failed close of the first page.
+#[test]
+fn chained_level_up_pages_receive_separate_continues() {
+    let mut slot = started(4250, &selected());
+    let mut snapshot = snapshot(&[]);
+    snapshot.seed_chat_modal(100, vec!["Your Mining level is now 31.".into()]);
+    snapshot.seed_chat_options(Vec::new(), 101);
+    let mut continues = 0;
+    for t in 1..25 {
+        tick(&mut slot, &snapshot, t);
+        while let Some(action) = slot.take_native_action() {
+            assert!(matches!(
+                action.effect,
+                HostEffect::Interaction(InteractReq::ContinueDialog)
+            ));
+            continues += 1;
+            let authority = action.authority();
+            slot.complete_native_interaction(
+                &authority,
+                InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: t,
+                        sequence: t,
+                    },
+                    accepted: true,
+                },
+            );
+            if continues == 1 {
+                snapshot
+                    .seed_chat_modal(200, vec!["You can now mine with Adamant Pickaxes.".into()]);
+                snapshot.seed_chat_options(Vec::new(), 201);
+            } else {
+                snapshot.seed_chat_modal(-1, Vec::new());
+                snapshot.seed_chat_options(Vec::new(), -1);
+            }
+        }
+        if continues == 2 {
+            tick(&mut slot, &snapshot, t + 1);
+            break;
+        }
+    }
+    assert_eq!(
+        continues, 2,
+        "each distinct page needs its own acknowledged continue"
+    );
+    assert!(slot.native_status().unwrap().failure.is_none());
+    slot.stop();
+}
+
+#[test]
+fn unchanged_dialog_page_still_fails_after_eight_ticks() {
+    let mut slot = started(4251, &selected());
+    let mut snapshot = snapshot(&[]);
+    snapshot.seed_chat_modal(100, vec!["Your Mining level is now 31.".into()]);
+    snapshot.seed_chat_options(Vec::new(), 101);
+    for t in 1..20 {
+        tick(&mut slot, &snapshot, t);
+        drain(&mut slot, t);
+        if slot.native_status().unwrap().phase == NativePhase::Blocked {
+            break;
+        }
+    }
+    assert_eq!(
+        slot.native_status()
+            .unwrap()
+            .failure
+            .as_ref()
+            .unwrap()
+            .code
+            .as_ref(),
+        "oneop-failed"
+    );
+    slot.stop();
+}
+
 /// An unsettled drop remains retryable after newer receipts evict its receipt.
 #[test]
 fn unsettled_drop_is_replanned_or_blocked_after_receipt_eviction() {

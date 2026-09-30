@@ -97,6 +97,10 @@ If these items fill the pack and no selected product can be dropped, the
 card stops with `inventory-blocked` rather than gathering against a full
 inventory. Clear space and use **Retry**.
 
+Level-up chat pages are continued individually. An observed change of chat
+root completes only the previous page; the new page requires its own Continue.
+An unchanged page still fails after eight ticks rather than waiting indefinitely.
+
 Changes marked restart-required (including skill, resources and location)
 remain pending until the slot restarts; they never switch the active run in
 place. Death stops the card; automatic recovery, banking and Fishing are not

@@ -21,6 +21,7 @@ pub struct OneOp {
     args: OneOpArgs,
     request_id: u64,
     deadline: u64,
+    continued_root: Option<i32>,
 }
 
 impl OneOpArgs {
@@ -58,11 +59,17 @@ impl NativeMachine for OneOp {
     type Output = bool;
 
     fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        let continued_root = if args.kind == OneOpKind::ContinueDialog {
+            cx.snapshot().chat_modal().map(|modal| modal.value.root)
+        } else {
+            None
+        };
         let request_id = cx.emit(args.request.clone())?;
         Ok(Self {
             deadline: cx.evidence().tick.saturating_add(args.bound_ticks),
             args,
             request_id,
+            continued_root,
         })
     }
 
@@ -81,10 +88,14 @@ impl NativeMachine for OneOp {
                 .snapshot()
                 .main_modal()
                 .is_some_and(|modal| modal.value.root < 0),
-            OneOpKind::ContinueDialog => cx
-                .snapshot()
-                .chat_modal()
-                .is_some_and(|modal| modal.value.root < 0),
+            OneOpKind::ContinueDialog => cx.snapshot().chat_modal().is_some_and(|modal| {
+                // A chained unlock page acknowledges this page; the runner must
+                // issue a separate continue for the new modal.
+                modal.value.root < 0
+                    || self
+                        .continued_root
+                        .is_some_and(|root| modal.value.root != root)
+            }),
         };
         if settled {
             return Poll::Ready(Ok(true));
