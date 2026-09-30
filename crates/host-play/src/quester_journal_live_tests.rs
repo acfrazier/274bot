@@ -203,6 +203,17 @@ impl CaptureHandle {
         }
     }
 
+    fn move_to(&self, x: i32, y: i32) {
+        #[cfg(all(windows, feature = "journal-paint-proof"))]
+        {
+            self.inner.move_to(x, y);
+        }
+        #[cfg(not(all(windows, feature = "journal-paint-proof")))]
+        {
+            let _ = (self, x, y);
+        }
+    }
+
     fn click(&self, x: i32, y: i32) {
         #[cfg(all(windows, feature = "journal-paint-proof"))]
         {
@@ -400,6 +411,17 @@ impl HeadedCapture {
         self.state.lock().saw_closed_after_click
     }
 
+    fn move_to(&self, x: i32, y: i32) {
+        self.check_fatal();
+        self.input.set_enabled(true);
+        self.input_tx
+            .send(InputEv::Move { x, y })
+            .expect("headed journal input worker stopped");
+        self.commands
+            .send(CaptureCommand::ArmInput)
+            .expect("headed journal capture worker stopped");
+    }
+
     fn click(&self, x: i32, y: i32) {
         self.check_fatal();
         {
@@ -409,17 +431,11 @@ impl HeadedCapture {
         }
         self.input.set_enabled(true);
         self.input_tx
-            .send(InputEv::Move { x, y })
-            .expect("headed journal input worker stopped");
-        self.input_tx
             .send(InputEv::Down { button: 1, x, y })
             .expect("headed journal input worker stopped");
         self.input_tx
             .send(InputEv::Up)
             .expect("headed journal input worker stopped");
-        self.commands
-            .send(CaptureCommand::ArmInput)
-            .expect("headed journal capture worker stopped");
     }
 
     fn assert_no_flash(&self) {
@@ -819,6 +835,7 @@ struct SetupState {
     open_unowned_journal: bool,
     reopen_after_tick: Option<u64>,
     journal_close_target: Option<(i32, i32)>,
+    close_hover_ready: bool,
 }
 
 /// The live engine is shared by the operator's tunnel.  Keep its profile and
@@ -1139,8 +1156,21 @@ fn frame_hook(
             post_relog(client, mode);
             state.relog_ready = true;
         }
+        state.close_hover_ready = false;
         if headed && client.main_modal_id == JOURNAL_ROOT && !client.journal_paint_hidden() {
-            state.journal_close_target = Some(journal_close_target(client));
+            use client::client::mini_menu_action::MiniMenuAction;
+            use client::config::if_type::ButtonType;
+
+            let target = journal_close_target(client);
+            state.journal_close_target = Some(target);
+            if client.menu_num_entries > 0 {
+                let last = client.menu_num_entries as usize - 1;
+                state.close_hover_ready = (client.shell.mouse_x, client.shell.mouse_y) == target
+                    && client.menu_action[last] == MiniMenuAction::CLOSE_BUTTON
+                    && client
+                        .if_(client.menu_param_c[last] as usize)
+                        .is_some_and(|com| com.button_type == ButtonType::BUTTON_CLOSE);
+            }
         }
         if state.open_unowned_journal && !client.journal_paint_hidden() && client.out.pos == 0 {
             // CLOSE_MODAL clears the local root immediately, but the engine
@@ -1169,7 +1199,9 @@ fn frame_hook(
 fn journal_close_target(client: &client::client::Client) -> (i32, i32) {
     use client::config::if_type::ButtonType;
 
-    let root = client.if_(JOURNAL_ROOT as usize).expect("live journal root");
+    let root = client
+        .if_(JOURNAL_ROOT as usize)
+        .expect("live journal root");
     let children = root.children.as_ref().expect("journal root children");
     let xs = root.child_x.as_ref().expect("journal child x bounds");
     let ys = root.child_y.as_ref().expect("journal child y bounds");
@@ -1186,7 +1218,10 @@ fn journal_close_target(client: &client::client::Client) -> (i32, i32) {
         })
     });
     let target = targets.next().expect("live journal close component");
-    assert!(targets.next().is_none(), "ambiguous journal close component");
+    assert!(
+        targets.next().is_none(),
+        "ambiguous journal close component"
+    );
     target
 }
 
@@ -1651,13 +1686,24 @@ fn live_quester_journal_synthetic_runemysteries() {
             .expect("quester live setup lock")
             .journal_close_target
             .expect("visible journal must expose a live close target");
-        eprintln!("journal-proof-click x={close_x} y={close_y}");
-        capture.click(close_x, close_y);
+        // mouse_loop consumes the previous paint's minimenu. Moving and
+        // clicking in one drain selects that old entry, even at correct
+        // coordinates. Let a real paint build the close hover first.
+        capture.move_to(close_x, close_y);
+        let mut clicked = false;
         play.wake(&name);
         wait_until(
             "close unowned synthetic journal modal",
             Duration::from_secs(20),
-            || capture.saw_closed_after_click(),
+            || {
+                if !clicked && setup.lock().expect("quester live setup lock").close_hover_ready {
+                    eprintln!("journal-proof-click hover=Close x={close_x} y={close_y}");
+                    capture.click(close_x, close_y);
+                    play.wake(&name);
+                    clicked = true;
+                }
+                clicked && capture.saw_closed_after_click()
+            },
         );
         run = handle
             .start_test_script(
