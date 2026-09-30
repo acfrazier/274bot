@@ -308,7 +308,7 @@
     "selector": "SettingsBag.tile",
     "reason": "Host converts posted coordinates to a real Tile, defaults fallback to null, and returns any supplied fallback unchanged without validation.",
     "runtime": "crates/script/src/shim/settings.js:29",
-    "declaration": "tile<F extends import('../adapter/ClientAdapter.js').WorldTile | null = null>(key: string, fallback?: F): Tile | F;"
+    "declaration": "tile(key: string, fallback?: undefined): Tile | null; tile<F extends import('../adapter/ClientAdapter.js').WorldTile | null>(key: string, fallback: F): Tile | F;"
   },
   {
     "id": "bot-host-unsubscribe-result",
