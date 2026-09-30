@@ -74,6 +74,7 @@ fn layers_grid() -> OverlayLayers {
         nsew: false,
         path: false,
         flood: false,
+        special_areas: false,
     }
 }
 
@@ -85,6 +86,7 @@ fn layers_none() -> OverlayLayers {
         nsew: false,
         path: false,
         flood: false,
+        special_areas: false,
     }
 }
 
@@ -96,6 +98,7 @@ fn layers_all() -> OverlayLayers {
         nsew: true,
         path: true,
         flood: true,
+        special_areas: false,
     }
 }
 
@@ -184,6 +187,7 @@ fn overlay_rasterizes_collision_not_per_tile_quads() {
                 nsew: false,
                 path: false,
                 flood: false,
+                special_areas: false,
             },
             colors,
             path: &[],
@@ -553,6 +557,7 @@ fn flood_change_rerasterizes_overlay() {
         nsew: false,
         path: false,
         flood: true,
+        special_areas: false,
     };
     let a: Arc<HashSet<WorldTile>> = Arc::new(
         [WorldTile {
@@ -669,6 +674,50 @@ fn last_layer_off_drops_overlay_buffers() {
     assert_eq!(off.overlay_cpu_bytes, 0);
     assert_eq!(off.overlay_gpu_bytes, 0);
     assert!(map.overlay_cpu().is_none());
+    assert_eq!(map.overlay_size(), (0, 0));
+}
+
+#[test]
+fn hidden_special_area_layer_keeps_frame_path_empty() {
+    let world = open_world(8, 8);
+    let mut map = WalkMapRenderer::new();
+    map.note_open();
+    let visible = OverlayLayers {
+        special_areas: true,
+        ..OverlayLayers::default()
+    };
+    map.test_sync(
+        None,
+        small_view(),
+        &world,
+        visible,
+        OverlayColors::default(),
+        &[],
+        &[],
+        None,
+    );
+    assert!(map.counters().overlay_cpu_bytes > 0);
+    map.test_sync(
+        None,
+        small_view(),
+        &world,
+        OverlayLayers::default(),
+        OverlayColors::default(),
+        &[],
+        &[],
+        None,
+    );
+    map.test_sync(
+        None,
+        small_view(),
+        &world,
+        OverlayLayers::default(),
+        OverlayColors::default(),
+        &[],
+        &[],
+        None,
+    );
+    assert_eq!(map.counters().overlay_cpu_bytes, 0);
     assert_eq!(map.overlay_size(), (0, 0));
 }
 

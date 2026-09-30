@@ -1047,8 +1047,9 @@ impl TuiApp {
     }
 
     /// The Map tab's own keys (after the router tried the `MAP_KEYS`
-    /// commands and Esc-to-leave): plane, layers, the group toggle for the
-    /// selected bot, Enter select/confirm, pan and zoom.
+    /// commands and Esc-to-leave): plane, layers (`w` toggles the
+    /// content-defined wilderness overlay), the group toggle for the selected
+    /// bot, Enter select/confirm, pan and zoom.
     pub(crate) fn map_pane_key(&mut self, key: KeyEvent) -> AppAction {
         match key.code {
             KeyCode::PageUp => self.set_map_plane(self.map.plane.saturating_add(1)),
@@ -1058,6 +1059,7 @@ impl TuiApp {
             KeyCode::Char('c') => self.map.layers.collision = !self.map.layers.collision,
             KeyCode::Char('r') => self.map.layers.reach = !self.map.layers.reach,
             KeyCode::Char(' ') => self.toggle_walk_send_focused(),
+            KeyCode::Char('w') => self.map.toggle_wilderness(),
             KeyCode::Enter => return self.map_enter(),
             _ => return self.map_on_key(key),
         }
@@ -1589,10 +1591,11 @@ impl TuiApp {
         }
 
         let title = format!(
-            "Map · plane {} · {:?} · {} · arrows/hjkl pan · +/- zoom · / search · g group · t teleport · Esc back",
+            "Map · plane {} · {:?} · {} · arrows/hjkl pan · +/- zoom · / search · g group · t teleport · w wilderness:{} · Esc back",
             self.map.plane,
             self.map_catalogue_status,
-            self.walk_send.walk_label()
+            self.walk_send.walk_label(),
+            if self.map.layers.wilderness { "on" } else { "off" }
         );
         let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(area);
@@ -1667,13 +1670,18 @@ impl TuiApp {
                 )
             }),
             Line::from(format!(
-                "legend: @ * + B T X N#  POIs:{} obs:{} {}",
+                "legend: @ * + W B T X N#  POIs:{} obs:{} {} · w wilderness:{}",
                 poi_count,
                 self.map_observed.len(),
                 if self.route.is_some() {
                     "route"
                 } else {
                     "none"
+                },
+                if self.map.layers.wilderness {
+                    "on"
+                } else {
+                    "off"
                 }
             )),
         ];

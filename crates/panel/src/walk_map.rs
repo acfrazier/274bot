@@ -153,6 +153,8 @@ pub struct WalkMapRenderer {
     pub show_collision: bool,
     pub show_nsew: bool,
     pub show_flood: bool,
+    /// Content-defined special-area tint (currently wilderness zones).
+    pub show_special_areas: bool,
     nav_identity: Digest,
     world_geom: Option<(i32, i32, u32, u32)>,
     pub search: String,
@@ -229,6 +231,7 @@ impl WalkMapRenderer {
             show_collision: false,
             show_nsew: false,
             show_flood: false,
+            show_special_areas: false,
             nav_identity: Digest([0; 32]),
             world_geom: None,
             search: String::new(),
@@ -1573,6 +1576,7 @@ pub fn overlay_colors(nav: &NavSettings) -> OverlayColors {
         flood_b: [200, 40, 240, 160],
         unreached: [200, 40, 240, 160],
         nsew: [220, 220, 220, 220],
+        special_areas: [255, 160, 0, 96],
     }
 }
 

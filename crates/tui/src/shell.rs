@@ -30,11 +30,12 @@ const OVERVIEW_BUTTONS: [Command; 7] = [
     Command::DismissNotice,
 ];
 const FLEET_BUTTONS: [Command; 2] = [Command::LoadLoginAll, Command::LogoutAll];
-const MAP_BUTTONS: [Command; 4] = [
+const MAP_BUTTONS: [Command; 5] = [
     Command::MapWalk,
     Command::MapTeleport,
     Command::MapGroup,
     Command::MapSearch,
+    Command::MapWilderness,
 ];
 
 fn dim() -> Style {

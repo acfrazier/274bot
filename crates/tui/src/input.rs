@@ -398,6 +398,7 @@ impl TuiApp {
             Command::MapSearch => self.open_map_search(),
             Command::MapRecenter => self.recenter_map(),
             Command::MapGroup => self.toggle_walk_send_mode(),
+            Command::MapWilderness => self.map.toggle_wilderness(),
             Command::MapWalk => return self.map_enter(),
             Command::MapTeleport => {
                 if let Some(pending) = self.map_model.pending() {
