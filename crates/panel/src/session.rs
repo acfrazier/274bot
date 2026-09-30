@@ -3870,8 +3870,21 @@ impl Session {
     /// (first on this process opens the chooser) and open the wall draw
     /// policy (`Focus.wall_open`), which stays true for rail **or** grid.
     /// Off: clear the grid and any open chooser and stop extra rasters
-    /// (`wall_open = false`) without logging anyone out.
-    pub fn set_multibox(&mut self, on: bool) {
+    /// (`wall_open = false`) without logging anyone out. Off closes Profiles
+    /// and its form, so while the form's save has not settled it waits: the
+    /// Discard / Keep editing prompt is staged and MultiBox stays on.
+    /// Returns whether the toggle was applied.
+    pub fn set_multibox(&mut self, on: bool) -> bool {
+        if self.multibox && !on && self.form_saving() {
+            self.stage_edit_exit(EditLeave::MultiBoxOff, "", "turn MultiBox off");
+            self.wall.chooser_open = true;
+            return false;
+        }
+        self.apply_multibox(on);
+        true
+    }
+
+    fn apply_multibox(&mut self, on: bool) {
         let turning_off = self.multibox && !on;
         self.multibox = on;
         if on {

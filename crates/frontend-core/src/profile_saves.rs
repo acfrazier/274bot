@@ -10,7 +10,6 @@
 //! commit result is shared by every write in one commit, so a save that a
 //! later write superseded settles from its own commit too.
 
-use std::collections::HashMap;
 use std::fmt;
 
 use vault::Profile;
@@ -75,30 +74,38 @@ pub struct SaveSettled {
     pub result: SaveResult,
 }
 
-/// The session's records of saves in flight and the results not yet taken.
+/// The session's records of saves in flight and the results not yet taken,
+/// each in the order it happened. The operation owns the record: a form only
+/// asks the session about it.
 #[derive(Default)]
 pub(crate) struct SaveBook {
-    records: HashMap<OperationId, SaveRecord>,
-    settled: HashMap<OperationId, SaveSettled>,
+    records: Vec<SaveRecord>,
+    settled: Vec<SaveSettled>,
 }
 
 impl SaveBook {
     pub(crate) fn track(&mut self, record: SaveRecord) {
-        self.records.insert(record.op, record);
+        self.records.push(record);
     }
 
     pub(crate) fn tracks(&self, op: OperationId) -> bool {
-        self.records.contains_key(&op)
+        self.records.iter().any(|r| r.op == op)
+    }
+
+    /// The saves whose writes have not settled, oldest first.
+    pub(crate) fn in_flight(&self) -> &[SaveRecord] {
+        &self.records
     }
 
     /// `op`'s write ended; a record tracked under it settles.
     pub(crate) fn settle(&mut self, op: OperationId, result: SaveResult) {
-        if let Some(record) = self.records.remove(&op) {
-            self.settled.insert(op, SaveSettled { record, result });
+        if let Some(i) = self.records.iter().position(|r| r.op == op) {
+            let record = self.records.remove(i);
+            self.settled.push(SaveSettled { record, result });
         }
     }
 
-    pub(crate) fn take(&mut self, op: OperationId) -> Option<SaveSettled> {
-        self.settled.remove(&op)
+    pub(crate) fn take_settled(&mut self) -> Vec<SaveSettled> {
+        std::mem::take(&mut self.settled)
     }
 }

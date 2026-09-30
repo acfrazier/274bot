@@ -3949,15 +3949,16 @@ fn a_late_failure_after_close_and_reopen_reaches_only_the_banner() {
     assert_eq!(ui.disk(), [row("alice", 42, "apass")]);
 }
 
-/// Deleting the profile whose save is still queued closes its form; when the
-/// commit then fails, the delete's failure is on the banner, the profile is
-/// back as it was on disk, and no form shows anything.
+/// Deleting the profile whose save is still queued asks first: the commit
+/// can still fail, which puts the profile back and would leave the typed
+/// draft nowhere. Keep editing deletes nothing; when the save then fails the
+/// form shows the failure on its draft, and Save retries.
 #[test]
 #[cfg(unix)]
-fn a_failure_after_deleting_the_target_reaches_only_the_banner() {
+fn deleting_the_target_while_its_save_is_pending_keeps_the_draft_on_failure() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ui = ProfilesUi::new(
-        "profiles-late-deleted",
+        "profiles-delete-pending",
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
@@ -3965,14 +3966,80 @@ fn a_failure_after_deleting_the_target_reaches_only_the_banner() {
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
-    assert!(ui.session.delete_profile("alice"));
+
+    // The delete confirm's body.
+    assert!(!ui.session.delete_profile("alice"), "the delete waits");
+    let asked = ui.frame();
+    assert!(
+        asked.has("Editing alice")
+            && asked.has("[ Discard ]")
+            && asked.has("[ Keep editing ]")
+            && asked.has("delete alice"),
+        "an unsettled save asks before its profile is deleted: {}",
+        asked.text
+    );
+    let kept = ui.click(At::SwitchPrompt, "Keep editing");
+    assert!(kept.has("Editing alice"), "{}", kept.text);
+    assert!(!kept.has("[ Discard ]"), "the prompt closed: {}", kept.text);
+    assert_eq!(ui.session.cred_pass, "newpass", "keeping drops nothing");
 
     ui.writable(false);
     drop(held);
     ui.finish_writes();
     let shown = ui.frame();
     ui.writable(true);
-    assert!(!shown.has("Editing"), "the form went with its target");
+    assert!(shown.has("Editing alice"), "{}", shown.text);
+    assert!(shown.has("credentials:"), "the reason: {}", shown.text);
+    assert_eq!(
+        shown.above_save(1),
+        [frontend_core::NOTHING_SAVED],
+        "{}",
+        shown.text
+    );
+    assert_eq!(ui.session.cred_pass, "newpass", "the draft is still there");
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")],
+        "nothing was deleted or saved"
+    );
+
+    ui.click(At::Form, "Save");
+    ui.finish_writes();
+    let saved = ui.frame();
+    assert_eq!(saved.above_save(1), ["Saved alice."], "{}", saved.text);
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "newpass"), row("bob", 43, "bpass")],
+        "the retry landed"
+    );
+}
+
+/// Discard on that prompt is the operator's choice to lose the draft: the
+/// form and the profile go, and when the commit then fails the profile is
+/// back as it is on disk with only the banner reporting it.
+#[test]
+#[cfg(unix)]
+fn discarding_a_pending_save_to_delete_its_profile_reports_only_on_the_banner() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-delete-discard",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    assert!(!ui.session.delete_profile("alice"));
+    ui.frame();
+    let deleted = ui.click(At::SwitchPrompt, "Discard");
+    assert!(!deleted.has("Editing"), "the form went: {}", deleted.text);
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
     assert!(
         !shown.has("credentials:") && !shown.has(frontend_core::NOTHING_SAVED),
         "{}",
@@ -3984,12 +4051,127 @@ fn a_failure_after_deleting_the_target_reaches_only_the_banner() {
         [row("alice", 42, "apass"), row("bob", 43, "bpass")],
         "neither the save nor the delete landed"
     );
-    let back = ui.session.core.vault().unwrap().get("alice").cloned();
-    assert_eq!(
-        back.map(|p| p.password.to_string()).as_deref(),
-        Some("apass"),
-        "alice is back in the list as it is on disk"
+    assert!(
+        ui.session.core.vault().unwrap().get("alice").is_some(),
+        "alice is back in the list"
     );
+}
+
+/// Turning MultiBox off closes Profiles and its form, so while the form's
+/// save is queued it asks first and MultiBox stays on; Keep editing leaves
+/// the draft, and a later failure shows on it.
+#[test]
+#[cfg(unix)]
+fn multibox_off_while_a_save_is_pending_asks_and_keeps_the_draft_on_failure() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-multibox-pending", &[("alice", "apass", 42)]);
+    ui.session.set_multibox(true);
+    ui.session.wall.chooser_open = true;
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+
+    assert!(!ui.session.set_multibox(false), "the toggle waits");
+    assert!(ui.session.multibox, "MultiBox is still on");
+    let asked = ui.frame();
+    assert!(
+        asked.has("Editing alice")
+            && asked.has("[ Discard ]")
+            && asked.has("[ Keep editing ]")
+            && asked.has("turn MultiBox off"),
+        "{}",
+        asked.text
+    );
+    let kept = ui.click(At::SwitchPrompt, "Keep editing");
+    assert!(kept.has("Editing alice") && ui.session.multibox);
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(shown.has("Editing alice"), "{}", shown.text);
+    assert!(shown.has("credentials:"), "the reason: {}", shown.text);
+    assert_eq!(ui.session.cred_pass, "newpass", "the draft is kept");
+    assert_eq!(ui.disk(), [row("alice", 42, "apass")]);
+
+    // Nothing is pending any more: the toggle applies at once.
+    assert!(ui.session.set_multibox(false));
+    assert!(!ui.session.multibox);
+    assert!(ui.session.chooser_edit.is_none());
+}
+
+/// Discard on the MultiBox prompt turns it off, form and all.
+#[test]
+fn discarding_a_pending_save_turns_multibox_off() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-multibox-discard", &[("alice", "apass", 42)]);
+    ui.session.set_multibox(true);
+    ui.session.wall.chooser_open = true;
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    assert!(!ui.session.set_multibox(false));
+    ui.frame();
+
+    ui.click(At::SwitchPrompt, "Discard");
+    assert!(!ui.session.multibox);
+    assert!(ui.session.chooser_edit.is_none());
+    drop(held);
+}
+
+/// A Discard / Keep editing prompt that is already open when the save it
+/// waited on settles ends with it: it must not say the save "may fail" over
+/// the result, which shows on the form instead (a failure with its reason,
+/// a success as `Saved`).
+#[test]
+#[cfg(unix)]
+fn an_open_prompt_ends_when_its_save_settles() {
+    for fails in [true, false] {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ui = ProfilesUi::new(
+            &format!("profiles-prompt-settles-{fails}"),
+            &[("alice", "apass", 42)],
+        );
+        ui.click(At::List, "Edit##edit-alice");
+        ui.session.cred_pass = "newpass".into();
+        let gate = ui.session.core.write_gate();
+        let held = gate.lock().unwrap();
+        ui.click(At::Form, "Save");
+        let asked = ui.click(At::Window, "#CLOSE");
+        assert!(
+            asked.has("[ Discard ]") && asked.has("may fail"),
+            "{}",
+            asked.text
+        );
+
+        ui.writable(!fails);
+        drop(held);
+        ui.finish_writes();
+        let shown = ui.frame();
+        ui.writable(true);
+        assert!(
+            !shown.has("may fail") && !shown.has("[ Discard ]") && !shown.has("[ Keep editing ]"),
+            "the prompt is gone once the save settled (fails={fails}): {}",
+            shown.text
+        );
+        assert!(shown.has("Editing alice"), "{}", shown.text);
+        if fails {
+            assert!(shown.has("credentials:"), "{}", shown.text);
+            assert_eq!(ui.session.cred_pass, "newpass", "the draft is kept");
+        } else {
+            assert_eq!(shown.above_save(1), ["Saved alice."], "{}", shown.text);
+        }
+        // The ✕ now closes as usual when nothing is pending.
+        if !fails {
+            let closed = ui.click(At::Window, "#CLOSE");
+            assert!(closed.text.trim().is_empty(), "{}", closed.text);
+        }
+    }
 }
 
 /// A second Save while the first is still being written is refused, not
