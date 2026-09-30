@@ -4398,6 +4398,40 @@ fn opening_another_profile_over_unsaved_edits_asks_first() {
     assert_eq!(ui.session.cred_pass, "bpass", "bob's own row loads");
 }
 
+/// The prompt keeps one width however long it stays open. Its buttons sit
+/// side by side, and a gap between them different from the one their width
+/// was computed with made the popup wider every frame, until Keep editing
+/// had left the screen (the headed narrow-dock run showed only Discard).
+#[test]
+fn the_leave_prompt_keeps_a_stable_width_so_both_buttons_stay_on_screen() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-prompt-width", &[("alice", "apass", 42)]);
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    let asked = ui.click(At::Window, "Close");
+    assert!(
+        asked.has("[ Discard ]") && asked.has("[ Keep editing ]"),
+        "{}",
+        asked.text
+    );
+    let settled = ui.switch_prompt_width().0;
+    for frame in 0..90 {
+        let width = ui.switch_prompt_width().0;
+        assert_eq!(
+            width, settled,
+            "the prompt is {width} px wide at frame {frame}, was {settled}"
+        );
+    }
+    assert!(
+        settled <= 2.0 * super::DIALOG_W,
+        "the prompt stays a dialog, not the window's width: {settled}"
+    );
+    drop(held);
+}
+
 #[test]
 fn unlock_sends_the_passphrase_exactly_as_typed() {
     let mut session = crate::session::Session::new();

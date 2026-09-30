@@ -4259,7 +4259,7 @@ fn edit_switch_popup(ui: &Ui, session: &mut Session) {
             ui.close_current_popup();
         }
         if !stack {
-            ui.same_line();
+            gap_line(ui);
         }
         if ui.button_with_size("Keep editing", [w, 0.0]) {
             session.cancel_pending_edit_switch();
