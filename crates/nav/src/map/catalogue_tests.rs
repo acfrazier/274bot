@@ -105,8 +105,9 @@ fn nameless_loc_without_a_key_legend_name_is_not_a_poi() {
 
 /// Rare-Trees markers (mapfunction 34, empty name) take the nearest visited
 /// woodcutting tree's client-cache loc name on the same plane. Same-tile
-/// markers match exactly; an isolated marker with no tree within range stays
-/// an honest generic label.
+/// markers match exactly; an isolated marker with no tree within range on its
+/// own plane (a tree directly above it on plane 1 doesn't count) stays an
+/// honest generic label.
 #[test]
 fn rare_trees_markers_take_nearby_tree_names() {
     fn tree_loc(name: &str) -> Vec<u8> {
@@ -122,13 +123,26 @@ fn rare_trees_markers_take_nearby_tree_names() {
     let yew = tree_loc("Yew tree");
     let magic = tree_loc("Magic tree");
     let maple = tree_loc("Maple tree");
+    let willow = tree_loc("Willow");
     let marker: &[u8] = &[60, 0, 34, 0];
     // id0 Yew, id1 Magic, id2 marker=Yew tile, id3 marker=Magic tile,
-    // id4 Maple, id5 marker=Maple tile, id6 isolated marker.
-    let locs: Vec<&[u8]> = vec![&yew, &magic, marker, marker, &maple, marker, marker];
-    // Local placements (x=0, z): Yew 0, Magic 5, marker 0, marker 5, Maple 10,
-    // marker 10, isolated marker 20. Position delta is z+1 for x=0 plane 0.
-    let tiles: [u8; 7] = [0, 5, 0, 5, 10, 10, 20];
+    // id4 Maple, id5 marker=Maple tile, id6 isolated marker, id7 Willow on
+    // plane 1 directly above the isolated marker.
+    let locs: Vec<&[u8]> = vec![
+        &yew, &magic, marker, marker, &maple, marker, marker, &willow,
+    ];
+    // Local placements (plane, x=0, z): Yew 0, Magic 5, marker 0, marker 5,
+    // Maple 10, marker 10, isolated marker 20, Willow plane 1 z 20.
+    let tiles: [(u16, u16); 8] = [
+        (0, 0),
+        (0, 5),
+        (0, 0),
+        (0, 5),
+        (0, 10),
+        (0, 10),
+        (0, 20),
+        (1, 20),
+    ];
     let dir = std::env::temp_dir().join(format!(
         "catalogue-rare-trees-{}-{}",
         std::process::id(),
@@ -156,8 +170,16 @@ fn rare_trees_markers_take_nearby_tree_names() {
     )
     .unwrap();
     let mut placements = Vec::new();
-    for z in tiles {
-        placements.extend([1, z + 1, 22 << 2, 0]);
+    for (plane, z) in tiles {
+        // Position delta is packed (plane << 12 | x << 6 | z) + 1 as a smart.
+        let delta = (plane << 12 | z) + 1;
+        placements.push(1);
+        if delta < 128 {
+            placements.push(delta as u8);
+        } else {
+            placements.extend((delta + 32768).to_be_bytes());
+        }
+        placements.extend([22 << 2, 0]);
     }
     placements.push(0);
     let land = vec![0; 4 * 64 * 64];
