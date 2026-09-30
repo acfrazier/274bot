@@ -1248,6 +1248,31 @@ fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
 }
 
 #[test]
+fn external_nav_identity_includes_trailing_bytes_beyond_the_read_buffer() {
+    let fixture = Fixture::new();
+    let mut bytes = tiny_v8_pack();
+    bytes.resize(bytes.len() + 128 * 1024, 0x5a);
+    let pack = fixture.0.join("trailing.navpack");
+    std::fs::write(&pack, &bytes).unwrap();
+    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
+    write_nav_sidecar(&pack, 289, cache_id, &bytes);
+    let mut options = fixture.options(289);
+    options.nav_pack = Some(pack.clone());
+    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let profile = selection.bind().unwrap();
+    let collision = &profile.world().unwrap().collision;
+    assert_eq!((collision.origin.x, collision.origin.z), (3200, 3200));
+    assert_eq!((collision.width, collision.height), (2, 1));
+
+    *bytes.last_mut().unwrap() ^= 1;
+    std::fs::write(&pack, &bytes).unwrap();
+    assert!(selection
+        .bind()
+        .unwrap_err()
+        .contains("navigation/profile mismatch"));
+}
+
+#[test]
 fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
     let fixture = Fixture::new();
     let bytes = tiny_v8_pack();
