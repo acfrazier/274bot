@@ -282,6 +282,29 @@ fn unclassified_rocks_stay_unknown_with_a_reason_and_are_never_resources() {
         (copper.class, copper.method.map(|m| &*m.id.0)),
         (TargetClass::Resource, Some("mining.copper"))
     );
+    // M-215: the tutorial Mine handlers provably yield ore, so those rocks are typed resources.
+    let tutorial_copper = catalog.rock(3042).unwrap();
+    assert_eq!(
+        (
+            tutorial_copper.class,
+            tutorial_copper.alias,
+            tutorial_copper.method.map(|m| &*m.id.0)
+        ),
+        (
+            TargetClass::Resource,
+            "newbiecopperrock",
+            Some("mining.copper")
+        )
+    );
+    let tutorial_tin = catalog.rock(3043).unwrap();
+    assert_eq!(
+        (
+            tutorial_tin.class,
+            tutorial_tin.alias,
+            tutorial_tin.method.map(|m| &*m.id.0)
+        ),
+        (TargetClass::Resource, "newbietinrock", Some("mining.tin"))
+    );
     let gas = catalog.rock(2119).unwrap();
     assert_eq!(
         (gas.class, gas.alias),

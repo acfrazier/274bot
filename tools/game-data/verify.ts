@@ -248,8 +248,13 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(gathering.summary.methods), JSON.stringify({ woodcutting: 10, mining: 15, fishing: 15 }), `${revision} gather method counts`);
     const rocks = gathering.summary.rocks;
     assertEqual(rocks.population, rocks.resource + rocks.depleted + rocks.hazard + rocks.unclassified, `${revision} every rock accounted`);
-    assertEqual(rocks.resource, 27, `${revision} resource rocks`);
+    assertEqual(rocks.resource, 29, `${revision} resource rocks`);
     assertEqual(rocks.hazard, 22, `${revision} gas rocks`);
+    // M-215: the tutorial Mine handlers provably yield copper/tin, so those rocks are typed resources.
+    for (const [method, names] of [['mining.copper', ['copperrock1', 'copperrock2', 'newbiecopperrock']], ['mining.tin', ['tinrock1', 'tinrock2', 'newbietinrock']]] as const) {
+        const typed = gatherKnown(gatherMethod(method).targets, `${method} targets`).filter((target) => target.class === 'resource');
+        assertEqual(JSON.stringify(typed.map((target) => aliases.get(`loc:${target.id}`))), JSON.stringify(names), `${revision} ${method} resources`);
+    }
     const limestone = gatherKnown(gatherMethod('mining.limestone').targets, 'limestone targets').filter((target) => target.class === 'resource');
     assertEqual(JSON.stringify(limestone.map((target) => gatherKnown(target.respawn, 'limestone respawn')?.raw)), JSON.stringify([10, 20, 40]), `${revision} limestone distinct respawn rates`);
     const essence = gatherKnown(gatherMethod('mining.rune stones').targets, 'essence targets')[0];
