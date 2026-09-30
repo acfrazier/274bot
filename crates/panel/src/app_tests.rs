@@ -8,14 +8,15 @@ use std::time::{Duration, Instant, SystemTime};
 use super::{
     apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
     chooser_should_open_popup, clamp_hop_label_px, debug_caption, drive_startup,
-    edit_parameters_enabled, game_window_flags, hold_script_terminal_shot, live_null_tick,
-    live_script_tick, live_smoke_tick, live_stress_tick, loading_text, logout_enabled,
-    manual_shot_label, parse_args, parse_live_args, progress_channel, request_clean_stop_capture,
-    request_native_failure_capture, runner_config, script_failure_scenario, smoke_settled,
-    smoke_should_fire, startup_progress, status_value_visible, Boot, LiveBoot, LiveNull,
-    LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob, ProgressPhase, RunMode,
-    ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
-    NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
+    edit_parameters_enabled, finish_panel_run, game_window_flags, hold_script_terminal_shot,
+    live_exit_code, live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick,
+    loading_text, logout_enabled, manual_shot_label, parse_args, parse_live_args, progress_channel,
+    request_clean_stop_capture, request_native_failure_capture, runner_config,
+    script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
+    status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
+    PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
+    StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
+    SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
 use crate::test_support::TestDir;
@@ -27,6 +28,153 @@ use client::io::Packet;
 use dear_imgui_rs::{ConfigFlags, Id, WindowFlags};
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
+
+#[test]
+#[ignore]
+fn panel_exit_status_child() {
+    match std::env::var("PANEL_EXIT_CHILD").as_deref() {
+        Ok("fail") => {
+            let (mut session, live, first_failure) = failed_live_script();
+            let mut live = LiveHarness::Script(live);
+            assert_eq!(live_exit_code(&live, Some(&first_failure)), Some(1));
+
+            let repeated_failure = live.tick(&mut session, &[], &ShotStatus::Missing, None, 0);
+            assert!(repeated_failure.is_none());
+            assert_eq!(live_exit_code(&live, repeated_failure.as_deref()), Some(1));
+            let result = finish_panel_run(Ok(()), live.failure().map(str::to_owned));
+            std::process::exit(if result.is_ok() { 0 } else { 1 });
+        }
+        Ok("pass") => {
+            let null = LiveHarness::Null(LiveNull {
+                started: Instant::now(),
+                saw_scene2: true,
+                passed: true,
+            });
+            let stress = LiveHarness::Stress(LiveStress {
+                started: Instant::now(),
+                last_announced: 50,
+                passed: true,
+                name: "stress50",
+                host: "127.0.0.1".into(),
+                port: 0,
+            });
+            assert_eq!(live_exit_code(&null, None), Some(0));
+            assert_eq!(live_exit_code(&stress, None), Some(0));
+            let live = LiveHarness::Script(LiveScript {
+                name: "script_exit_pass".into(),
+                passed: true,
+                failed: None,
+                last_step: None,
+                drain_started: None,
+                soak: false,
+                soak_until: None,
+                announced_pass: true,
+                native_failure_capture_requested: false,
+                clean_stop_capture_requested: false,
+                core_deadline: None,
+                soak_capture: SoakCapture::NotNeeded,
+            });
+            std::process::exit(live_exit_code(&live, None).expect("PASS exits immediately"));
+        }
+        other => panic!("unknown child mode {other:?}"),
+    }
+}
+
+#[test]
+fn latched_live_failure_exits_the_process_nonzero() {
+    let output = live_exit_child("fail");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "FAIL child stdout:\n{}\nFAIL child stderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("FAIL: live script_live_failure"),
+        "the child drove the real live-harness failure path"
+    );
+}
+
+#[test]
+fn live_pass_exits_the_process_successfully() {
+    let output = live_exit_child("pass");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "PASS child stdout:\n{}\nPASS child stderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+fn normal_interactive_window_close_remains_successful() {
+    assert!(finish_panel_run(Ok(()), None).is_ok());
+}
+
+fn live_exit_child(mode: &str) -> std::process::Output {
+    std::process::Command::new(std::env::current_exe().expect("current test executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            "--nocapture",
+            "app::tests::panel_exit_status_child",
+        ])
+        .env("PANEL_EXIT_CHILD", mode)
+        .output()
+        .expect("run live exit child")
+}
+
+fn failed_live_script() -> (crate::session::Session, LiveScript, String) {
+    use scenario::{Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait};
+
+    let fail_scenario = Scenario {
+        name: "live_failure_exit",
+        seed: Seed {
+            profiles: vec![("alice", "password")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "unmet proof after scripted action",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm: Proof::Stat { id: 16, min: 999 },
+                budget_ticks: 1,
+            },
+        }],
+        proof: Proof::Stat { id: 16, min: 999 },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut runner = ScenarioRunner::new(fail_scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = script_client();
+    runner.tick(&mut client);
+    assert!(matches!(runner.status(), scenario::RunnerStatus::Failed(_)));
+
+    let mut session = crate::session::Session::new();
+    *session.scenario.lock().unwrap() = Some(runner);
+    let mut live = LiveScript {
+        name: "script_live_failure".into(),
+        passed: false,
+        failed: None,
+        last_step: None,
+        drain_started: None,
+        soak: false,
+        soak_until: None,
+        announced_pass: false,
+        native_failure_capture_requested: false,
+        clean_stop_capture_requested: false,
+        core_deadline: None,
+        soak_capture: SoakCapture::NotNeeded,
+    };
+    let message = live_script_tick(&mut live, &mut session, &ShotStatus::Missing, None)
+        .expect("a failed scenario must FAIL the live harness");
+    (session, live, message)
+}
 
 #[test]
 fn empty_walk_queue_and_modal_values_are_not_status_rows() {
