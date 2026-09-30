@@ -388,6 +388,9 @@ struct PanelSurface<'a> {
     focus: &'a Mutex<crate::focus::Focus>,
     audio: &'a AudioGate<AudioOut>,
     memory_override: Option<bool>,
+    /// Slots the operator toggled this session: attach leaves their gate
+    /// on the toggled value instead of the spawn profile's.
+    mem_toggled: &'a HashSet<String>,
     frontend_gens: &'a Arc<Mutex<HashMap<String, ClientGens>>>,
     nav_states: &'a Arc<Mutex<HashMap<String, (GameSnapshot, WorldState)>>>,
     travellers: &'a SlotTravellers,
@@ -422,7 +425,12 @@ impl SlotSurface for PanelSurface<'_> {
             .unwrap()
             .renderer_by
             .insert(name.to_string(), raster != vault::RasterMode::Off);
-        self.audio.set_music(name, !profile.settings.lowmem);
+        // A toggled slot's gate already reflects the operator's choice;
+        // overwriting it from a pre-toggle spawn profile would flap the
+        // live client against the armed handshake value every frame.
+        if !self.mem_toggled.contains(name) {
+            self.audio.set_music(name, !profile.settings.lowmem);
+        }
         SlotAttach {
             input: Some(Arc::clone(&input)),
             mailbox: Some(Arc::clone(&pixels)),
@@ -1110,6 +1118,15 @@ pub struct Session {
     /// focused slot while its Music/SFX toggle is on. `lowmem` (toggle
     /// off) never opens cpal; slot threads reconcile on their frame loop.
     audio: Arc<AudioGate<AudioOut>>,
+    /// Mem-popup Relog-now armed for this bot: the first click only arms
+    /// (a running script would be interrupted), the second click relogs.
+    /// Cleared when the relog starts or the button targets another bot.
+    mem_relog_armed: Option<String>,
+    /// Slots the operator memory-toggled this session: their audio gate
+    /// already reflects the choice, so a later spawn (attach) must not
+    /// overwrite it from the pre-toggle profile, and a failed write pulls
+    /// it back with the restored row. Cleared on removal.
+    mem_toggled: HashSet<String>,
     /// Whether focus/multibox writes land on disk prefs. `true` in
     /// `Session::new`; every `live_prepare_*` flips it off so an ephemeral
     /// live boot never touches the operator's `last_focus`.
@@ -1405,6 +1422,8 @@ impl Session {
             external_core_enabled: false,
             external_ts: None,
             audio: Arc::new(AudioGate::new()),
+            mem_relog_armed: None,
+            mem_toggled: HashSet::new(),
             persist_ui: true,
             background_ack_open: false,
             fixture_mode: scenario::FixtureMode::Default,
@@ -3109,10 +3128,21 @@ impl Session {
 
     /// A durable profile write that failed after its edit was accepted: the
     /// banner shows it, and [`Self::settle_profile_save`] shows a failed
-    /// form save in its form too.
+    /// form save in its form too. Toggled gates follow the restored vault
+    /// rows back, so a refused memory toggle cannot leave the live client
+    /// ahead of the vault.
     fn surface_write_failures(&mut self) {
+        let mut failed = false;
         for failure in self.core.take_write_failures() {
+            failed = true;
             self.error = Some(failure.to_string());
+        }
+        if failed {
+            for name in &self.mem_toggled {
+                if let Some(profile) = self.core.vault().and_then(|v| v.get(name)) {
+                    self.audio.set_music(name, !profile.settings.lowmem);
+                }
+            }
         }
     }
 
@@ -3630,6 +3660,7 @@ impl Session {
                 focus: &self.focus,
                 audio: &self.audio,
                 memory_override: self.memory_override,
+                mem_toggled: &self.mem_toggled,
                 frontend_gens: &self.frontend_gens,
                 nav_states: &self.nav_states,
                 travellers: &self.travellers,
@@ -3775,17 +3806,76 @@ impl Session {
 
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
         self.ui.lowmem = lowmem;
-        self.persist_game_render_prefs();
+        if self.persist_ui {
+            crate::ui_state::save(&self.ui);
+        }
         self.error = None;
         let Some(name) = self.focused_name() else {
             return true;
         };
-        // The audio gate is the slot threads' lowmem channel: each frame
-        // the slot applies `c.set_lowmem(!audio.music_on(name))`, and the
-        // host drops the `Renderer` when `config.lowmem` changes so the
-        // next paint attaches with the new mode. No restart.
-        self.audio.set_music(&name, !lowmem);
+        // The shared frontend-core command persists the vault profile and
+        // arms the next handshake at once. The audio gate stays this
+        // slot's speaker switch and one live lowmem channel (the slot
+        // pump is the other, so the TUI flips without a gate); the host
+        // drops the `Renderer` when `config.lowmem` changes so the next
+        // paint attaches with the new mode. No restart.
+        match self.core.set_memory_mode(&name, lowmem) {
+            Ok(_) => {
+                self.mem_toggled.insert(name.clone());
+                self.audio.set_music(&name, !lowmem);
+                true
+            }
+            Err(error) => {
+                self.error = Some(error);
+                false
+            }
+        }
+    }
+
+    /// Login-time vs current memory mode for the focused slot: drives the
+    /// mem notice and the Relog-now button. `None` without a focused slot
+    /// that has both a recorded login and a vault row.
+    pub fn focused_memory_notice(&self) -> Option<frontend_core::MemoryNotice> {
+        let name = self.focused_name()?;
+        self.core.memory_status(&name)
+    }
+
+    /// Whether the focused slot runs a script a Relog-now would interrupt.
+    pub fn focused_memory_relog_warning(&self) -> bool {
+        let Some(name) = self.focused_name() else {
+            return false;
+        };
+        self.core.memory_relog_warning(&name)
+    }
+
+    /// Mem-popup Relog-now: log the focused bot out and back in through the
+    /// login FIFO so the toggled mode reaches the server. Returns whether
+    /// a relog started; with a running script the first call only arms the
+    /// button (its label says so) and the second starts it.
+    pub fn request_focused_memory_relog(&mut self) -> bool {
+        let Some(name) = self.focused_name() else {
+            return false;
+        };
+        let armed = self.mem_relog_armed.as_deref() == Some(name.as_str());
+        if self.core.memory_relog_warning(&name) && !armed {
+            self.mem_relog_armed = Some(name);
+            return false;
+        }
+        self.mem_relog_armed = None;
+        self.scripts.cancel_queued_as(&name, "logged out");
+        self.scripts.publish_start_places(&mut self.core);
+        self.apply_script_notice();
+        let (core, mut surface) = self.core_and_surface();
+        let op = core.request_memory_relog(&name, &mut surface);
+        self.report_failure(op);
         true
+    }
+
+    /// Whether the mem-popup Relog-now is armed for the focused bot (a
+    /// running script needs the second confirming click).
+    pub fn mem_relog_armed(&self) -> bool {
+        let focused = self.focused_name();
+        focused.is_some_and(|name| self.mem_relog_armed.as_deref() == Some(name.as_str()))
     }
 
     /// Status-row copy for the focused profile's mem mode.
@@ -3794,6 +3884,20 @@ impl Session {
             "lowmem"
         } else {
             "highmem"
+        }
+    }
+
+    /// Status-row mem cell: the live mode, plus the login mode while the
+    /// server still runs it (Relog-now in the mem picker applies it).
+    pub fn mem_notice_text(lowmem: bool, notice: Option<frontend_core::MemoryNotice>) -> String {
+        let live = Self::mem_status_text(lowmem);
+        match notice {
+            Some(n) if n.differs() => format!(
+                "{} (login {} — tabs + sound at next login)",
+                live,
+                Self::mem_status_text(n.login_lowmem)
+            ),
+            _ => live.to_string(),
         }
     }
 
@@ -4008,6 +4112,10 @@ impl Session {
         self.scripts.cancel_queued_as(name, "removed");
         self.scripts.publish_start_places(&mut self.core);
         self.apply_script_notice();
+        self.mem_toggled.remove(name);
+        if self.mem_relog_armed.as_deref() == Some(name) {
+            self.mem_relog_armed = None;
+        }
         let (core, mut surface) = self.core_and_surface();
         let removal = core.remove(name, now, &mut surface);
         self.sync_wall_focus();

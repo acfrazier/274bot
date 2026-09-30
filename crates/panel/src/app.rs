@@ -3421,11 +3421,11 @@ fn status_section(ui: &Ui, session: &mut Session) {
         return;
     }
     let walk = session.walk_status_text();
-    let mem = Session::mem_status_text(session.focused_lowmem());
+    let mem = Session::mem_notice_text(session.focused_lowmem(), session.focused_memory_notice());
     let Some(d) = session.core.fleet_view().detail() else {
         kv_row(ui, "state", "no bot selected");
         kv_row(ui, "walk", &walk);
-        kv_row(ui, "mem", mem);
+        kv_row(ui, "mem", &mem);
         return;
     };
     kv_row(ui, "state", &d.state);
@@ -3459,7 +3459,7 @@ fn status_section(ui: &Ui, session: &mut Session) {
     if let Some(op) = d.row.last_op.as_ref() {
         kv_row(ui, "operation", &op.to_string());
     }
-    kv_row(ui, "mem", mem);
+    kv_row(ui, "mem", &mem);
 }
 
 fn resource_section(ui: &Ui, session: &mut Session) {
@@ -3501,6 +3501,23 @@ fn mem_popup(ui: &Ui, session: &mut Session) {
         if inverted_button(ui, "lowmem", low, [0.0, 0.0]) {
             session.request_focused_lowmem(true);
         }
+        if session
+            .focused_memory_notice()
+            .is_some_and(|notice| notice.differs())
+        {
+            gap_line(ui);
+            ui.text_wrapped("server tabs + sound follow at the next login");
+            let notice = session.focused_memory_notice().expect("checked above");
+            if notice.relog_pending {
+                ui.text_disabled("relog queued…");
+            } else if session.mem_relog_armed() || !session.focused_memory_relog_warning() {
+                if ui.button_with_size("Relog now", [0.0, 0.0]) {
+                    session.request_focused_memory_relog();
+                }
+            } else if ui.button_with_size("Relog now (stops script — click again)", [0.0, 0.0]) {
+                session.request_focused_memory_relog();
+            }
+        }
     });
 }
 
@@ -3535,7 +3552,7 @@ fn raster_picker(ui: &Ui, session: &mut Session) {
         ui.open_popup(MEM_POPUP);
     }
     ui.set_item_tooltip(
-        "Game pane highmem / lowmem — switching mem reattaches the renderer on the live client",
+        "Game pane highmem / lowmem — the live client flips at once, server tabs + sound follow at the next login (Relog now in this picker)",
     );
     mem_popup(ui, session);
 }

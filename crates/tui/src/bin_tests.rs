@@ -3548,3 +3548,142 @@ fn script_settings_rows(session: &TuiSession) -> SettingsRows {
         .map(|row| (row.username.clone(), row.settings.script_settings.clone()))
         .collect()
 }
+
+#[test]
+fn settings_memory_row_persists_and_arms_the_handshake() {
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let alice = SlotArm::new(7, true);
+    session
+        .core
+        .start(lifecycle_vault("mem-persist"), empty_play());
+    session
+        .core
+        .play_mut()
+        .unwrap()
+        .attach_arm("alice", Arc::clone(&alice));
+    session.core.fleet_mut().add("alice");
+    session.core.select("alice");
+    let mut app = TuiApp::new("tui");
+    session.names = vec!["alice".into()];
+    session.last_focused = Some("alice".into());
+    let open = app.run_command(crate::commands::Command::Settings);
+    dispatch(&mut session, &mut app, open);
+    session.pump(&mut app);
+    // Flip the memory row draft; the binary persists it on the next pump.
+    app.settings.lowmem = false;
+    app.settings_dirty = true;
+    session.pump(&mut app);
+
+    assert_eq!(
+        alice.lowmem_handshake(),
+        Some(false),
+        "the toggle arms the next handshake at once"
+    );
+    session.core.flush_writes();
+    assert!(
+        !session
+            .core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .lowmem,
+        "the setting is durable"
+    );
+}
+
+#[test]
+fn memory_relog_now_logs_out_and_the_poll_logs_back_in() {
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session
+        .core
+        .start(lifecycle_vault("mem-relog"), empty_play());
+    {
+        let (core, mut surface) = session.core_and_surface();
+        core.load("alice", &mut surface);
+    }
+    let mut app = TuiApp::new("tui");
+    session.names = vec!["alice".into()];
+    session.core.select("alice");
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MemoryRelogNow("alice".into()),
+    );
+
+    let alice = session.core.play().unwrap().arm("alice").unwrap();
+    assert!(alice.login_latched(), "logout latches first");
+    assert!(alice.wants_logout());
+    assert!(app.error.is_none());
+
+    // The worker parks on the title after its clean logout.
+    session
+        .core
+        .play()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(host_play::SlotStatus {
+            username: "alice".into(),
+            login_latched: true,
+            connected: false,
+            ..host_play::SlotStatus::default()
+        });
+    session.pump(&mut app);
+    assert!(
+        alice.wants_login(),
+        "the poll re-arms the login once parked"
+    );
+    assert!(!alice.login_latched());
+}
+
+#[test]
+fn memory_relog_confirms_while_a_script_runs() {
+    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+    let alice = SlotArm::new(7, false);
+    play.attach_arm("alice", Arc::clone(&alice));
+    play.script_start_load(
+        "alice",
+        "export function tick(api) { api._n = (api._n||0)+1 }".to_string(),
+        script::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .unwrap();
+    wait_script_state(&play, "alice", script::RunState::Running);
+    let mut session = TuiSession::new(dummy_options());
+    session.inject_play(play);
+    let mut app = TuiApp::new("tui");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MemoryRelog("alice".into()),
+    );
+    assert!(
+        matches!(
+            &app.modal,
+            Some(crate::overlay::Modal::Confirm(c))
+                if matches!(
+                    c.kind,
+                    crate::overlay::ConfirmKind::MemoryRelog(_)
+                )
+        ),
+        "a running script forces the confirm, nothing relogs yet"
+    );
+    assert!(!alice.login_latched());
+
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MemoryRelogNow("alice".into()),
+    );
+    assert!(alice.login_latched(), "the confirmed relog logs out");
+    assert!(alice.wants_logout());
+}

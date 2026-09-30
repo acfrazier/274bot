@@ -934,6 +934,28 @@ impl TuiSession {
         self.core.logout_all();
     }
 
+    /// Settings-popup `r`: Relog-now for a memory-mode switch. Confirms
+    /// first when a running script would be interrupted, relogs directly
+    /// otherwise (the same shared command the panel's mem picker calls).
+    fn memory_relog_request(&mut self, app: &mut TuiApp, name: &str) {
+        if self.core.memory_relog_warning(name) {
+            app.confirm(ConfirmKind::MemoryRelog(name.to_string()));
+        } else {
+            self.memory_relog_now(app, name);
+        }
+    }
+
+    /// Relog `name` now: log out and back in through the login FIFO so
+    /// the toggled memory mode reaches the server tabs and sound.
+    fn memory_relog_now(&mut self, app: &mut TuiApp, name: &str) {
+        self.scripts.cancel_queued_as(name, "logged out");
+        self.scripts.publish_start_places(&mut self.core);
+        self.apply_script_notice(app);
+        let (core, mut surface) = self.core_and_surface();
+        let op = core.request_memory_relog(name, &mut surface);
+        app.error = core.failure(op);
+    }
+
     /// Remove `name` (frozen when the operator confirmed): clean logout,
     /// then its worker stops. The neighbour becomes selected when it was.
     fn remove(&mut self, app: &mut TuiApp, name: &str) {
@@ -1989,18 +2011,34 @@ impl TuiSession {
 
     /// Persist the settings popup's changes onto the profile it was opened
     /// for (the operator vault; `--live`'s temp vault is ephemeral) and
-    /// mirror guardian settings onto a running slot's arm. A refusal shows
-    /// on the message line and in the popup; `Saved <name>.` shows in the
-    /// same popup once the write is durable, and a write that fails later
-    /// shows its error there too, with the popup back on what is saved.
+    /// mirror guardian and memory settings onto a running slot's arm. A
+    /// refusal shows on the message line and in the popup; `Saved <name>.`
+    /// shows in the same popup once the write is durable, and a write that
+    /// fails later shows its error there too, with the popup back on what is
+    /// saved.
     fn persist_settings(&mut self, app: &mut TuiApp) {
         let Some(name) = app.settings_profile.clone() else {
             return;
         };
-        // Field edit, not a whole-settings replacement: the popup owns only
-        // the guardian fields, and the arm changes only after the vault
-        // write succeeded.
+        // Field edit, not a whole-settings replacement: the popup owns the
+        // guardian fields and the memory row, and each arm change lands
+        // through its own write (the form tracks the latest).
         let settings = &app.settings;
+        let lowmem_changed = self
+            .core
+            .vault()
+            .and_then(|v| v.get(&name))
+            .is_some_and(|p| p.settings.lowmem != settings.lowmem);
+        if lowmem_changed {
+            match self.core.set_memory_mode(&name, settings.lowmem) {
+                Ok(op) => app.settings_save.submitted(op, name.clone()),
+                Err(e) => {
+                    let reason = format!("settings: {e}");
+                    app.settings_save.refused(reason.clone());
+                    app.error = Some(reason);
+                }
+            }
+        }
         match self.core.set_random_settings(
             &name,
             settings.random_events,
@@ -2092,6 +2130,11 @@ impl TuiSession {
             .selected()
             .and_then(|selected| app.names.iter().position(|n| n == selected));
         self.copy_projection(app);
+        // The settings popup and the status pane read the focused slot's
+        // login-time vs current memory mode from here.
+        app.memory = app
+            .focused_name()
+            .and_then(|name| self.core.memory_status(&name));
         // A Browse pick is the pending selection of the profile whose
         // heading it replaced.
         if std::mem::take(&mut app.browse_changed) {
@@ -2977,6 +3020,8 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::Login => session.login(app),
         AppAction::Logout => session.logout(app),
         AppAction::LogoutAll => session.logout_all(),
+        AppAction::MemoryRelog(name) => session.memory_relog_request(app, &name),
+        AppAction::MemoryRelogNow(name) => session.memory_relog_now(app, &name),
         AppAction::Remove(name) => session.remove(app, &name),
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),

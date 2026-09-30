@@ -183,7 +183,7 @@ impl TuiApp {
             return "Up/Down/Tab row · Enter/Space act · type into fields · Esc close";
         }
         if self.settings_state.open {
-            return "Up/Down row · Enter/Space toggle · Esc close";
+            return "Up/Down row · Enter/Space toggle · r relog now · Esc close";
         }
         if let Some(modal) = &self.modal {
             return modal.hints();
@@ -589,6 +589,11 @@ impl TuiApp {
                 // longer describes it.
                 self.settings_save.edited();
             }
+            SettingsKey::MemoryRelog => {
+                if let Some(name) = self.settings_profile.clone() {
+                    return AppAction::MemoryRelog(name);
+                }
+            }
             SettingsKey::MapBake => self.map_bake_dirty = true,
             SettingsKey::Consumed | SettingsKey::Ignored => {}
         }
@@ -689,7 +694,7 @@ impl TuiApp {
         let popup = SettingsPane::popup_rect(self.regions.area);
         let first = popup.y + 1;
         if contains(popup, col, row) && row >= first && row < popup.y + popup.height - 1 {
-            self.settings_state.row = usize::from(row - first).min(6);
+            self.settings_state.row = usize::from(row - first).min(7);
             return self.settings_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         }
         AppAction::None

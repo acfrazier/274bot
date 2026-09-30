@@ -7447,3 +7447,99 @@ fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser(
     );
     assert!(s.core.play().unwrap().arm("bob").is_some());
 }
+
+#[test]
+fn memory_toggle_reports_login_divergence_through_the_shared_command() {
+    let path = tmp_vault("mem-toggle.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    let mut alice = profile("alice", "pw", 42);
+    alice.settings.lowmem = true;
+    vault.upsert(alice).unwrap();
+    s.core.set_vault(Some(vault));
+    assert!(s.load("alice"));
+    s.select("alice");
+
+    let clean = s
+        .focused_memory_notice()
+        .expect("a spawn records its login mode");
+    assert!(!clean.differs());
+
+    assert!(s.set_focused_lowmem(false));
+    assert!(s.audio.music_on("alice"), "the gate arms the speaker");
+    assert!(s.mem_toggled.contains("alice"));
+    let notice = s.focused_memory_notice().expect("recorded login");
+    assert!(notice.differs(), "server tabs/sound still follow lowmem");
+    assert_eq!(
+        Session::mem_notice_text(s.focused_lowmem(), Some(notice)),
+        "highmem (login lowmem — tabs + sound at next login)"
+    );
+    assert_eq!(
+        s.core
+            .play()
+            .unwrap()
+            .arm("alice")
+            .unwrap()
+            .lowmem_handshake(),
+        Some(false),
+        "the shared command arms the next handshake"
+    );
+    s.core.flush_writes();
+    assert!(
+        !s.core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .lowmem,
+        "the setting is durable"
+    );
+}
+
+#[test]
+fn memory_relog_starts_at_once_without_a_running_script() {
+    let path = tmp_vault("mem-relog.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    vault.upsert(profile("alice", "pw", 42)).unwrap();
+    s.core.set_vault(Some(vault));
+    assert!(s.load("alice"));
+    s.select("alice");
+
+    assert!(!s.focused_memory_relog_warning(), "no script runs");
+    assert!(!s.mem_relog_armed());
+    assert!(s.request_focused_memory_relog());
+    let arm = s.core.play().unwrap().arm("alice").unwrap();
+    assert!(arm.login_latched() && arm.wants_logout());
+    assert!(
+        s.core.memory_status("alice").unwrap().relog_pending,
+        "the poll must see the armed relog"
+    );
+}
+
+#[test]
+fn memory_relog_arm_is_per_bot() {
+    let path = tmp_vault("mem-arm.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    vault.upsert(profile("alice", "pw", 42)).unwrap();
+    vault.upsert(profile("bob", "pw", 43)).unwrap();
+    s.core.set_vault(Some(vault));
+    assert!(s.load("alice"));
+    assert!(s.load("bob"));
+    s.select("alice");
+    s.mem_relog_armed = Some("alice".into());
+    assert!(s.mem_relog_armed());
+    // An armed execute clears the arm.
+    assert!(s.request_focused_memory_relog());
+    assert!(!s.mem_relog_armed());
+    s.select("bob");
+    assert!(!s.mem_relog_armed(), "arming never leaks across bots");
+}
