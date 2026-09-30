@@ -126,6 +126,7 @@ impl PaintRig {
             None,
             super::super::script_channels::BrokerWorld::Unavailable,
             None,
+            None,
         )
         .journal_paint_hidden
     }
