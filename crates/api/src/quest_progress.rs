@@ -25,11 +25,25 @@ pub struct QuestProgress {
     pub stage: Knowledge<FactKey>,
     pub complete: Truth,
     pub signals: Arc<[SignalRange]>,
+    pub flags: Arc<[ProgressFlag]>,
     pub evidence: EvidenceStamp,
     pub binding: FactKey,
     pub role: Option<FactKey>,
     pub rule: Knowledge<FactKey>,
     pub pin: Arc<SelectedPin>,
+}
+
+/// One typed flag result from an examined quest journal.
+///
+/// Boolean flags use `truth` and leave `count` empty. Counted flags use the
+/// optional count capture and set `truth` to `True` when a bounded capture was
+/// found, `False` when the flag rule did not match, or `Unknown` when the
+/// journal evidence was incomplete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgressFlag {
+    pub flag: FactKey,
+    pub truth: Truth,
+    pub count: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
