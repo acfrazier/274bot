@@ -111,6 +111,8 @@ export type Rs2Block = { kind: string; name: string; params: string; span: Span;
 
 const HEADER = /^\[([A-Za-z0-9_]+),([^\]]+)\](.*)$/;
 
+/** A bare global loc-op header (`[oploc1]` with no name): the engine's third dispatch tier. */
+const GLOBAL_LOC_OP = /^\[(oploc[1-5])\s*\](.*)$/;
 /**
  * Split a script file into `[kind,name]` blocks. One-line handlers (`[opnpc1,_x] @label;`) keep their trailing
  * statement as the first body line. The span ends at the block's last non-blank, non-comment line.
@@ -203,6 +205,8 @@ export function indexContent(content: string): ContentIndex {
         if (file.endsWith('.constant')) parseConstants(file, body, constants);
         else if (file.endsWith('.rs2')) {
             lines(body).forEach((raw, index) => {
+                const global = GLOBAL_LOC_OP.exec(raw);
+                if (global) throw new Error(`${file}:${index + 1}: global [${global[1]}] handler found, but the mining no-handler exclusion rule doesn't model global handlers`);
                 const match = HEADER.exec(raw);
                 if (!match) return;
                 const key = `${match[1]},${match[2]}`;
