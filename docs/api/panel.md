@@ -69,25 +69,24 @@ profile; **script** and **parameters** default closed.
 ## Log and panel layout
 
 The structured **Log** section is in the panel by default. **Detach log**
-moves the same retained view (filters, follow position and ring history) to a
-separate floating window; **Attach log** returns it without clearing anything.
-This runner intentionally keeps ImGui multi-viewports disabled, so the
-detached window remains in the application. A backend that already supports
-multi-viewports may promote that floating window to an OS-level viewport; the
-panel never enables that capability itself.
+moves the same retained view (filters, follow flag and ring history) to an
+in-app floating window; **Attach log** returns it without clearing anything.
+The detached list fills the available height of that window. ImGui
+multi-viewports remain disabled, so the window stays inside the application.
 
-General config's **session log file** checkbox shows `writing <logfile>` on
-the line below while it is enabled. The path is the rotated file under
+General config's **session log file** checkbox shows the full rotated path as
+`writing <path>` on wrapped lines below while it is enabled. The file is under
 `~/.274bot/logs/`.
 
-Status omits walk, queue and modal rows when their value is empty, `—`, or
-`-1`; meaningful values remain visible. The active server revision appears
-once when a session is bound, while the revision selector is only shown before
-binding. Profiles uses a wider, scrollable list so the profile editor, Save,
-Cancel, and Close controls remain usable at narrow window sizes.
+Status omits walk and queue rows when their value is empty, `—`, or `-1`, and
+omits the modal row unless the selected bot is in game; meaningful values
+remain visible. The active server revision appears once when a session is
+bound, while the revision selector is only shown before binding. Profiles
+uses scrollable lists and stacks its row and form controls when the dock
+extends past the work area, so Edit, Save, Cancel, and Close remain reachable
+at narrow window sizes.
 
 ## Wiring
-
 
 `Session::unlock` starts an empty `Play` (shared `Arc<Cache>`, login FIFO)
 via `host_play::run_with_io`, then selects the restored `last_focus` (or

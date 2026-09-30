@@ -10,12 +10,12 @@ use super::{
     chooser_should_open_popup, clamp_hop_label_px, debug_caption, drive_startup,
     edit_parameters_enabled, game_window_flags, hold_script_terminal_shot, live_null_tick,
     live_script_tick, live_smoke_tick, live_stress_tick, loading_text, logout_enabled,
-    manual_shot_label, parse_args, parse_live_args, popup_position_in_work_area, progress_channel,
-    request_clean_stop_capture, request_native_failure_capture, runner_config,
-    script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
-    status_value_visible, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
-    ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation,
-    BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
+    manual_shot_label, parse_args, parse_live_args, progress_channel, request_clean_stop_capture,
+    request_native_failure_capture, runner_config, script_failure_scenario, smoke_settled,
+    smoke_should_fire, startup_progress, status_value_visible, Boot, LiveBoot, LiveNull,
+    LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob, ProgressPhase, RunMode,
+    ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
+    NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
 use crate::test_support::TestDir;
@@ -49,17 +49,127 @@ fn empty_walk_queue_and_modal_values_are_not_status_rows() {
     assert!(status_value_visible("modals", "0"));
     assert!(status_value_visible("state", "idle"));
 }
+#[test]
+fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut logged_out = frontend_core::SlotDetail::default();
+    logged_out.row.phase = frontend_core::Phase::LoggedOut;
+    logged_out.state = "logged out".into();
+    logged_out.modal = 7;
+    let hidden = draw_status_detail(&logged_out, "—", "lowmem");
+    assert!(
+        !hidden.contains("walk"),
+        "empty walk row is visible: {hidden}"
+    );
+    assert!(
+        !hidden.contains("queue"),
+        "empty queue row is visible: {hidden}"
+    );
+    assert!(
+        !hidden.contains("modals"),
+        "logged-out modal row is visible: {hidden}"
+    );
+    assert!(hidden.contains("state") && hidden.contains("logged out"));
+
+    let mut ready = frontend_core::SlotDetail::default();
+    ready.row.phase = frontend_core::Phase::Ready;
+    ready.state = "ingame scene 2".into();
+    ready.modal = 0;
+    let shown = draw_status_detail(&ready, "2659 3292 0", "lowmem");
+    assert!(shown.contains("walk") && shown.contains("2659 3292 0"));
+    assert!(shown.contains("modals") && shown.contains("0"));
+}
 
 #[test]
-fn popup_position_clamps_far_right_profile_anchor_to_work_area() {
-    let pos = popup_position_in_work_area(
-        [0.0, 0.0],
-        [1024.0, 640.0],
-        [930.0, 570.0],
-        [400.0, 120.0],
-        8.0,
+fn popup_position_clamps_every_edge_to_the_viewport_work_area() {
+    assert_eq!(
+        super::popup_position_in_work_area(
+            [100.0, 200.0],
+            [500.0, 400.0],
+            [90.0, 190.0],
+            [100.0, 80.0],
+            8.0,
+        ),
+        [108.0, 208.0],
+        "left/top margins remain visible"
     );
-    assert_eq!(pos, [616.0, 512.0]);
+    assert_eq!(
+        super::popup_position_in_work_area(
+            [100.0, 200.0],
+            [500.0, 400.0],
+            [700.0, 700.0],
+            [100.0, 80.0],
+            8.0,
+        ),
+        [492.0, 512.0],
+        "right/bottom edges remain visible"
+    );
+    assert_eq!(
+        super::popup_position_in_work_area(
+            [100.0, 200.0],
+            [500.0, 400.0],
+            [700.0, 700.0],
+            [600.0, 500.0],
+            8.0,
+        ),
+        [108.0, 208.0],
+        "an oversized popup still gets the minimum safe position"
+    );
+}
+
+#[test]
+fn edit_switch_prompt_width_stays_stable_and_inside_1024_work_area() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::with_geometry(
+        "profiles-prompt-geometry",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+        [1024.0, 768.0],
+        [694.0, 0.0],
+        [PANEL_WIDTH, 768.0],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "typed".into();
+    let asked = ui.click(At::List, "Edit##edit-bob");
+    assert!(
+        asked.has("[ Discard ]") && asked.has("[ Keep editing ]"),
+        "{}",
+        asked.text
+    );
+
+    let rects: Vec<_> = (0..60).map(|_| ui.switch_prompt_rect()).collect();
+    let stable = rects[2].1[0];
+    assert!(
+        rects
+            .iter()
+            .skip(2)
+            .all(|(_, size)| (size[0] - stable).abs() < 0.01),
+        "prompt width changed across frames: {rects:?}"
+    );
+    assert!(
+        rects.iter().all(|(pos, size)| {
+            pos[0] >= 8.0
+                && pos[1] >= 8.0
+                && pos[0] + size[0] <= 1016.0
+                && pos[1] + size[1] <= 760.0
+        }),
+        "prompt escapes the 1024 work area: {rects:?}"
+    );
+}
+
+#[test]
+fn profiles_controls_remain_reachable_when_the_dock_runs_past_1024() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::with_geometry(
+        "profiles-narrow-controls",
+        &[("alice", "apass", 42)],
+        [1024.0, 768.0],
+        [797.0, 0.0],
+        [PANEL_WIDTH, 768.0],
+    );
+    let shown = ui.click(At::List, "Edit##edit-alice");
+    for label in ["[ Edit ]", "[ ✕ ]", "[ Save ]", "[ Cancel ]", "[ Close ]"] {
+        assert!(shown.has(label), "{label} is not drawn: {}", shown.text);
+    }
 }
 
 #[test]
@@ -3353,6 +3463,23 @@ impl dear_imgui_rs::ClipboardBackend for DrawnText {
         value.clone_into(&mut self.0.borrow_mut());
     }
 }
+fn draw_status_detail(detail: &frontend_core::SlotDetail, walk: &str, mem: &str) -> String {
+    let mut ctx = dear_imgui_rs::Context::create();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([500.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("status")
+            .build(|| super::status_detail_rows(ui, detail, walk, mem));
+        ui.log_finish();
+    }
+    ctx.render();
+    drawn.0.take()
+}
 
 #[test]
 fn memory_notice_gets_its_own_readable_popup_row() {
@@ -3514,11 +3641,9 @@ fn activate_profiles_item(at: At, form: usize, label: &str) {
     }
 }
 
-/// Pin the Profiles window to the default layout's docked tab geometry (the
-/// 330 px panel, as tall as the default window) at the origin, so what
-/// draws is what the operator sees there without scrolling. Call with the
-/// frame's context bound.
-fn pin_profiles_geometry() {
+/// Pin the Profiles window to a chosen dock geometry. Call with the frame's
+/// context bound.
+fn pin_profiles_geometry_at(pos: [f32; 2], size: [f32; 2]) {
     use dear_imgui_rs::sys;
 
     let always = sys::ImGuiCond_Always;
@@ -3527,23 +3652,26 @@ fn pin_profiles_geometry() {
     unsafe {
         sys::igSetWindowPos_Str(
             c"Profiles".as_ptr(),
-            sys::ImVec2_c { x: 0.0, y: 0.0 },
+            sys::ImVec2_c {
+                x: pos[0],
+                y: pos[1],
+            },
             always,
         );
         sys::igSetWindowSize_Str(
             c"Profiles".as_ptr(),
             sys::ImVec2_c {
-                x: PANEL_WIDTH,
-                y: BASE_WINDOW_H,
+                x: size[0],
+                y: size[1],
             },
             always,
         );
     }
 }
 
-/// The Discard / Keep editing prompt's laid-out width. Call with the
+/// The Discard / Keep editing prompt's laid-out rectangle. Call with the
 /// frame's context bound, after the Profiles window drew.
-fn switch_prompt_width() -> f32 {
+fn switch_prompt_rect() -> ([f32; 2], [f32; 2]) {
     use dear_imgui_rs::sys;
     use std::ffi::CString;
 
@@ -3558,8 +3686,15 @@ fn switch_prompt_width() -> f32 {
         let name = CString::new(format!("##Popup_{id:08x}")).unwrap();
         let popup = sys::igFindWindowByName(name.as_ptr());
         assert!(!popup.is_null(), "the prompt was drawn");
-        (*popup).Size.x
+        (
+            [(*popup).Pos.x, (*popup).Pos.y],
+            [(*popup).Size.x, (*popup).Size.y],
+        )
     }
+}
+
+fn switch_prompt_width() -> f32 {
+    switch_prompt_rect().1[0]
 }
 
 /// The Profiles window over a real vault, driven through real ImGui frames
@@ -3572,11 +3707,30 @@ struct ProfilesUi {
     drawn: DrawnText,
     session: crate::session::Session,
     dir: TestDir,
+    display_size: [f32; 2],
+    window_pos: [f32; 2],
+    window_size: [f32; 2],
 }
 
 impl ProfilesUi {
     /// Profiles open over a fresh vault of `(username, password, uid)`.
     fn new(label: &str, profiles: &[(&str, &str, i32)]) -> Self {
+        Self::with_geometry(
+            label,
+            profiles,
+            [900.0, 700.0],
+            [0.0, 0.0],
+            [PANEL_WIDTH, BASE_WINDOW_H],
+        )
+    }
+
+    fn with_geometry(
+        label: &str,
+        profiles: &[(&str, &str, i32)],
+        display_size: [f32; 2],
+        window_pos: [f32; 2],
+        window_size: [f32; 2],
+    ) -> Self {
         let dir = TestDir::new(label);
         let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
         for &(username, password, uid) in profiles {
@@ -3600,6 +3754,9 @@ impl ProfilesUi {
             drawn,
             session,
             dir,
+            display_size,
+            window_pos,
+            window_size,
         };
         ui.frame();
         ui
@@ -3620,13 +3777,15 @@ impl ProfilesUi {
     fn draw(&mut self, click: Option<(At, &str)>) -> Shown {
         self.session.pump_status();
         self.ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
                 .renderer_has_textures(),
         );
         let form = self.session.chooser_form;
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
         {
             let ui = self.ctx.frame();
-            ui.with_bound_context(pin_profiles_geometry);
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
             if let Some((at, label)) = click {
                 ui.with_bound_context(|| activate_profiles_item(at, form, label));
             }
@@ -3651,12 +3810,14 @@ impl ProfilesUi {
     fn switch_prompt_width(&mut self) -> (f32, f32) {
         self.session.pump_status();
         self.ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
                 .renderer_has_textures(),
         );
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
         let width = {
             let ui = self.ctx.frame();
-            ui.with_bound_context(pin_profiles_geometry);
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
             super::chooser_window(ui, &mut self.session, None);
             let prompt = &self.session.pending_edit_switch.as_ref().unwrap().prompt;
             (
@@ -3667,6 +3828,24 @@ impl ProfilesUi {
         };
         self.ctx.render();
         width
+    }
+
+    fn switch_prompt_rect(&mut self) -> ([f32; 2], [f32; 2]) {
+        self.session.pump_status();
+        self.ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
+        let rect = {
+            let ui = self.ctx.frame();
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
+            super::chooser_window(ui, &mut self.session, None);
+            ui.with_bound_context(switch_prompt_rect)
+        };
+        self.ctx.render();
+        rect
     }
 
     /// Type `c` into the edit form, as the keyboard would: Tab to one of

@@ -3449,6 +3449,10 @@ fn status_section(ui: &Ui, session: &mut Session) {
         kv_row(ui, "mem", &mem);
         return;
     };
+    status_detail_rows(ui, d, &walk, mem);
+}
+
+fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &str) {
     kv_row(ui, "state", &d.state);
     kv_row(
         ui,
@@ -3459,13 +3463,15 @@ fn status_section(ui: &Ui, session: &mut Session) {
         kv_row(ui, "world", &format!("w{world}"));
     }
     kv_row(ui, "tile", &format!("{} {}", d.tile.0, d.tile.1));
-    status_kv_row(ui, "walk", &walk);
+    status_kv_row(ui, "walk", walk);
     let queue = d
         .row
         .queue
         .map_or_else(|| "—".to_string(), |q| q.to_string());
     status_kv_row(ui, "queue", &queue);
-    status_kv_row(ui, "modals", &d.modal.to_string());
+    if matches!(d.row.phase, Phase::Ready) {
+        status_kv_row(ui, "modals", &d.modal.to_string());
+    }
     if let Some(welcome) = d.welcome.as_deref() {
         kv_row(ui, "welcome", welcome);
     }
@@ -3512,9 +3518,7 @@ fn log_section(ui: &Ui, session: &mut Session, last: bool) {
     }
 }
 
-/// Draw the shared log in a separate in-app window. With a backend that
-/// already enables ImGui multi-viewports, `NO_DOCKING` lets ImGui promote
-/// this floating window to an OS viewport; this runner keeps that flag off.
+/// Draw the shared log in a separate in-app window.
 fn floating_log_window(ui: &Ui, session: &mut Session) {
     if !session.ui.log_detached {
         return;
@@ -3534,7 +3538,7 @@ fn floating_log_window(ui: &Ui, session: &mut Session) {
         .position(pos, Condition::FirstUseEver)
         .size(size, Condition::FirstUseEver)
         .size_constraints([280.0, 180.0], [f32::MAX, 720.0])
-        .build(|| crate::log_pane::log_body(ui, session, false));
+        .build(|| crate::log_pane::log_body(ui, session, true));
     if !open {
         session.ui.log_detached = false;
         crate::ui_state::save(&session.ui);
@@ -4359,6 +4363,17 @@ pub fn chooser_should_open_popup(want: bool, prev: bool) -> (bool, bool) {
 fn chooser_dock_id(panel: Option<Id>) -> Option<Id> {
     panel
 }
+/// Whether the docked Profiles window extends past the viewport work area.
+/// Rows and form actions stack at that edge so their controls stay clickable.
+fn chooser_controls_stack(ui: &Ui) -> bool {
+    let viewport = ui.main_viewport();
+    let pos = ui.window_pos();
+    let size = ui.window_size();
+    let work_pos = viewport.work_pos();
+    let work_size = viewport.work_size();
+    pos[0] + size[0] > work_pos[0] + work_size[0] + 0.5
+        || pos[1] + size[1] > work_pos[1] + work_size[1] + 0.5
+}
 
 /// Unsaved-changes prompt for a staged leave of the edit form (switch,
 /// close, delete of its profile, MultiBox off): Discard drops the draft and
@@ -4423,8 +4438,8 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
         .size([PANEL_WIDTH, 560.0], Condition::FirstUseEver)
-        .size_constraints([PANEL_WIDTH, 260.0], [f32::MAX, 720.0])
         .build(|| {
+            let stack_controls = chooser_controls_stack(ui);
             let _wrap = ui.push_text_wrap_pos(0.0);
             if session.core.vault().is_none() {
                 vault_unlock_prompt(ui, session);
@@ -4475,7 +4490,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                             // deletable until the write settles.
                             let saving = session.core.profile_saving(name);
                             let _saving = saving.then(|| ui.begin_disabled());
-                            let (p, r, e) = chooser_row(ui, name, selected);
+                            let (p, r, e) = chooser_row(ui, name, selected, stack_controls);
                             if saving {
                                 continue;
                             }
@@ -4553,6 +4568,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 }
                 let avail = ui.content_region_avail()[0];
                 let (bw, stack) = button_row_layout(avail, 2);
+                let stack = stack || stack_controls;
                 // One Save at a time: the form follows a rename or a new
                 // profile only once its write is durable.
                 let saving = session.form_saving().then(|| ui.begin_disabled());
@@ -4561,7 +4577,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 }
                 drop(saving);
                 if !stack {
-                    ui.same_line();
+                    gap_line(ui);
                 }
                 if ui.button_with_size("Cancel", [bw, 0.0]) {
                     session.request_cancel_edit();
@@ -4775,18 +4791,24 @@ fn lamp_skill_presets() -> Vec<&'static str> {
 
 /// One picker row: name (click focuses / loads), Edit, then red ✕ (vault
 /// delete, confirm). Sibling buttons so an Edit/✕ click never also picks.
-fn chooser_row(ui: &Ui, name: &str, selected: bool) -> (bool, bool, bool) {
+fn chooser_row(ui: &Ui, name: &str, selected: bool, stack_controls: bool) -> (bool, bool, bool) {
     const EDIT_W: f32 = 44.0;
     const X_W: f32 = 28.0;
     let avail = ui.content_region_avail()[0];
-    let name_w = (avail - EDIT_W - X_W - BUTTON_GAP * 2.0).max(10.0);
+    let name_w = if stack_controls {
+        avail
+    } else {
+        (avail - EDIT_W - X_W - BUTTON_GAP * 2.0).max(10.0)
+    };
     let loaded = ui
         .selectable_config(name)
         .selected(selected)
         .close_popups(false)
         .size([name_w, 0.0])
         .build();
-    gap_line(ui);
+    if !stack_controls {
+        gap_line(ui);
+    }
     let edit = ui.button_with_size(format!("Edit##edit-{name}"), [EDIT_W, 0.0]);
     gap_line(ui);
     let _red = ui.push_style_color(StyleColor::Text, ERROR);
@@ -4866,7 +4888,7 @@ fn init_panel_running(
     state.session.set_pair_core_enabled(args.pair_core);
     state.session.set_external_core_enabled(args.external_core);
     state.session.set_external_ts(args.external_ts.clone());
-    crate::log_pane::apply_session_log_pref(&state.session);
+    crate::log_pane::apply_session_log_pref(&mut state.session);
     let fixture_mode = if args.run_prepared {
         scenario::FixtureMode::RunPrepared
     } else {

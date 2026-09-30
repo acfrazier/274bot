@@ -63,9 +63,7 @@ pub struct PanelUiState {
     /// with the TUI. Absent (0.1.8.1) or unknown = ask.
     #[serde(default)]
     pub map_bake: frontend_core::MapBakeChoice,
-    /// Keep the shared log in a separate in-app window. When the active
-    /// backend enables ImGui multi-viewports, that window may become an OS
-    /// viewport; the panel never enables that backend flag itself.
+    /// Keep the shared log in a separate in-app window.
     #[serde(default)]
     pub log_detached: bool,
     /// Write a per-session log file under `~/.274bot/logs/` (shared with the
