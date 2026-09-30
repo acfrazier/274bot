@@ -97,20 +97,12 @@
     "declaration": "export declare class Player<S extends Partial<PlayerSnapshot> = PlayerSnapshot> implements Locatable { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get index(): PlayerRowField<S, 'index'>; get inCombat(): boolean; get combatLevel(): number; targetsMe(): boolean; tile(): Tile; distance(): number; actions(): string[]; interact(action: string): boolean; }"
   },
   {
-    "id": "scene-ground-item-row-field",
+    "id": "scene-grounditems-module",
     "module": "api/grounditems/GroundItems.js",
-    "selector": "$add",
-    "reason": "The GroundItem wrapper retains its row and checks an optional caller-supplied count before defaulting to one; count is not part of the actual posted scene row (crates/script/src/shim/grounditems.js:5-23; crates/host-play/src/script_snapshot.rs:696-719).",
+    "selector": "$module",
+    "reason": "The shim directly exports both GroundItem and GroundItems, while the frozen module reexports GroundItem from an unsupported model module; replace this module to declare the real wrapper, posted row, defaulted count and synchronous boolean interaction together (crates/script/src/shim/grounditems.js:5-55; crates/host-play/src/script_snapshot.rs:696-719; crates/script/src/load/snapshot.rs:1424-1504).",
     "runtime": "crates/script/src/shim/grounditems.js:5",
-    "declaration": "type GroundItemRowField<S extends object, K extends keyof GroundItemSnapshot> = K extends keyof S ? S[K] : GroundItemSnapshot[K] | undefined;"
-  },
-  {
-    "id": "scene-ground-item-wrapper",
-    "module": "api/grounditems/GroundItems.js",
-    "selector": "GroundItem",
-    "reason": "GroundItem retains its supplied row, reads flat x/z/level/actions, defaults missing count to one, constructs Tile, and synchronously queues interactions (crates/script/src/shim/grounditems.js:5-45).",
-    "runtime": "crates/script/src/shim/grounditems.js:5",
-    "declaration": "export declare class GroundItem<S extends Partial<GroundItemSnapshot> & { count?: number } = GroundItemSnapshot> implements Interactable, Locatable { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get id(): GroundItemRowField<S, 'id'>; get count(): number; tile(): Tile; distance(): number; actions(): string[]; interact(action: string): boolean; }"
+    "declaration": "import type { GroundItemSnapshot } from '../../adapter/ClientAdapter.js'; import Tile from '../../geometry/Tile.js'; import EntityQuery from '../query/Query.js'; type GroundItemRowField<S extends object, K extends keyof GroundItemSnapshot> = K extends keyof S ? S[K] : GroundItemSnapshot[K] | undefined; export declare class GroundItem<S extends Partial<GroundItemSnapshot> & { count?: number } = GroundItemSnapshot> { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get id(): GroundItemRowField<S, 'id'>; get count(): number; tile(): Tile; distance(): number; actions(): string[]; interact(action: string): boolean; } export declare const GroundItems: { query(): EntityQuery<GroundItem>; };"
   },
   {
     "id": "scene-inventory-item-handle",
@@ -118,7 +110,7 @@
     "selector": "InvItem",
     "reason": "Inventory emits mutable plain handles with name/count/id/slot/noted/cert plus copied actions; they have no snap or constructor, interactions synchronously return booleans, and useOn recognizes Player as well as the frozen targets (crates/script/src/shim/inventory.js:17-24,26-86; crates/script/schema/isolate.fbs:18-30).",
     "runtime": "crates/script/src/shim/inventory.js:33",
-    "declaration": "export interface InvItem { name: string; count: number; id: number; slot: number; noted: boolean; cert: number; actions(): string[]; interact(action: string): boolean; useOn(target: InvItem | Loc | Npc | GroundItem | import('../model/Player.js').Player): boolean; }"
+    "declaration": "export interface InvItem { name: string; count: number; id: number; slot: number; noted: boolean; cert: number; actions(): string[]; interact(action: string): boolean; useOn(target: InvItem | Loc | Npc | import('../grounditems/GroundItems.js').GroundItem | import('../model/Player.js').Player): boolean; }"
   },
   {
     "id": "scene-query-snapshot-row",
