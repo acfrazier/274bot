@@ -1,5 +1,39 @@
 use super::*;
 use sha2::{Digest, Sha256};
+use std::path::Component;
+
+fn normalized_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn validate_unpack_root(
+    unpack_dir: &Path,
+    engine_dir: &Path,
+    content_dir: &Path,
+) -> Result<(), String> {
+    let unpack_dir_normalized = normalized_path(unpack_dir);
+    for (label, root) in [("engine", engine_dir), ("content", content_dir)] {
+        let root_normalized = normalized_path(root);
+        if unpack_dir_normalized.starts_with(&root_normalized) {
+            return Err(format!(
+                "unpack root {} is inside the selected {label} tree {}; use a 274bot data directory instead",
+                unpack_dir.display(),
+                root.display()
+            ));
+        }
+    }
+    Ok(())
+}
 
 impl ProfileOptions {
     pub fn resolve(&self, saved_revision: Option<u16>) -> Result<ProfileSelection, String> {
@@ -195,6 +229,9 @@ impl ProfileOptions {
             }
         };
         let engine_dir = absolute(engine_dir);
+        let content_dir = absolute(content_dir);
+        let unpack_dir = absolute(unpack_dir);
+        validate_unpack_root(&unpack_dir, &engine_dir, &content_dir)?;
         let guarded = (class == ProfileClass::Local)
             .then(|| parse_guarded_local_world(profile.revision, &engine_dir))
             .flatten();
@@ -235,10 +272,10 @@ impl ProfileOptions {
             asset_port,
             engine_dir,
             cache_dir: absolute(cache_dir),
-            unpack_dir: absolute(unpack_dir),
+            unpack_dir,
             nav_pack: absolute(nav_pack),
             nav_flags: absolute(nav_flags),
-            content_dir: absolute(content_dir),
+            content_dir,
             vault_path: absolute(vault_path),
             catalog_root: self
                 .catalog_root
