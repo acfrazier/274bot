@@ -1,4 +1,4 @@
-//! Wire format of `gathering.json` (extractor schema 1) and its decode into the typed catalog. Decoding runs once
+//! Wire format of `gathering.json` (extractor schema 2) and its decode into the typed catalog. Decoding runs once
 //! per prepared catalog, off-pump; every violation is a typed `FactError`, nothing is defaulted or guessed.
 //!
 //! Field meanings mirror `tools/game-data/extractors/gathering.ts`: a `Know` cell is `known`, `partial` (rows plus
@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// The extractor schema this decoder reads. The manifest descriptor and the family header must both carry it.
-pub(super) const SCHEMA: u16 = 1;
+pub(super) const SCHEMA: u16 = 2;
 
 /// Identity fields every family file leads with; read before any fact so a stale or foreign file is refused with
 /// its typed cause even if a newer schema changed the fact layout.
@@ -63,6 +63,8 @@ struct Family<'a> {
 struct Facts<'a> {
     #[serde(borrow)]
     entities: Vec<&'a str>,
+    hazard_npcs: Vec<i32>,
+    incidental_gem_ids: Vec<i32>,
     methods: Vec<MethodWire>,
     loose: Vec<LooseWire>,
     zones: Vec<ZoneWire>,
@@ -422,6 +424,9 @@ impl Decoder {
 
     fn build(mut self, pin: &Arc<SelectedPin>, facts: Facts) -> Result<GatherCatalog, FactError> {
         let table = parse_entities(&facts.entities)?;
+        let hazard_npcs = checked_entity_ids(facts.hazard_npcs, &table, KIND_NPC, "hazard NPC")?;
+        let incidental_gem_ids =
+            checked_entity_ids(facts.incidental_gem_ids, &table, KIND_OBJ, "incidental gem")?;
 
         // Convert every method except its placements, which need every method's target set first.
         let mut methods: Vec<GatherMethod> = Vec::with_capacity(facts.methods.len());
@@ -710,6 +715,8 @@ impl Decoder {
         let rocks = rock_classes(&methods, &loose)?;
         Ok(GatherCatalog {
             pin: Arc::clone(pin),
+            hazard_npcs,
+            incidental_gem_ids,
             methods: methods.into_boxed_slice(),
             by_id,
             extras: extras.into_boxed_slice(),
@@ -889,6 +896,21 @@ fn parse_entities(lines: &[&str]) -> Result<Table, FactError> {
         return Err(invalid(format!("duplicate entity row {:?}", pair[0].key)));
     }
     Ok(Table(entities))
+}
+
+fn checked_entity_ids(
+    ids: Vec<i32>,
+    table: &Table,
+    kind: u8,
+    what: &str,
+) -> Result<Arc<[i32]>, FactError> {
+    if ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(invalid(format!("{what} ids must be sorted and unique")));
+    }
+    for id in &ids {
+        table.get((kind, *id), what)?;
+    }
+    Ok(ids.into())
 }
 
 /// Sorted, distinct entity keys of a method's resource-class targets: the entities whose placements are its spots.
@@ -1214,6 +1236,76 @@ mod tests {
                 "an unknown field is not ignored",
                 Box::new(|family| {
                     method_mut(family, "mining.copper")["surprise"] = json!(true);
+                }),
+            ),
+
+            (
+                "hazard NPC ids require NPC entity rows",
+                Box::new(|family| {
+                    let ids: Vec<i32> = family["facts"]["entities"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|row| {
+                            row.as_str()?
+                                .strip_prefix("npc ")?
+                                .split(' ')
+                                .next()?
+                                .parse()
+                                .ok()
+                        })
+                        .collect();
+                    let missing: i32 = (0..).find(|id: &i32| !ids.contains(id)).unwrap();
+                    family["facts"]["hazard_npcs"] = json!([missing]);
+                }),
+            ),
+            (
+                "incidental gem ids require Obj entity rows",
+                Box::new(|family| {
+                    let ids: Vec<i32> = family["facts"]["entities"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|row| {
+                            row.as_str()?
+                                .strip_prefix("obj ")?
+                                .split(' ')
+                                .next()?
+                                .parse()
+                                .ok()
+                        })
+                        .collect();
+                    let missing: i32 = (0..).find(|id: &i32| !ids.contains(id)).unwrap();
+                    family["facts"]["incidental_gem_ids"] = json!([missing]);
+                }),
+            ),
+            (
+                "hazard NPC ids are required",
+                Box::new(|family| {
+                    family["facts"].as_object_mut().unwrap().remove("hazard_npcs");
+                }),
+            ),
+            (
+                "incidental gem ids are required",
+                Box::new(|family| {
+                    family["facts"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("incidental_gem_ids");
+                }),
+            ),
+            (
+                "hazard NPC ids must be sorted and unique",
+                Box::new(|family| {
+                    let id = family["facts"]["hazard_npcs"][0].clone();
+                    family["facts"]["hazard_npcs"] = json!([id.clone(), id]);
+                }),
+            ),
+            (
+                "incidental gem ids must be sorted and unique",
+                Box::new(|family| {
+                    let id = family["facts"]["incidental_gem_ids"][0].clone();
+                    family["facts"]["incidental_gem_ids"] = json!([id.clone(), id]);
                 }),
             ),
             (
