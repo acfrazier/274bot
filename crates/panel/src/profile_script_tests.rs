@@ -2264,9 +2264,8 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
 
     let scope = s.scripts.prepared_settings_sync().expect("prepared");
     assert_eq!(scope.targets, ["bob"]);
-    assert_eq!(
-        scope.skipped,
-        [("dave".to_string(), "not marked".to_string())]
-    );
-    assert!(scope.prompt().contains("1 marked same-card member(s)"));
+    assert!(scope.skipped.is_empty(), "an unmarked bot is not named");
+    assert_eq!(scope.unmarked, Some(1));
+    assert!(scope.prompt().contains("1 marked same-card bot(s)"));
+    assert!(scope.prompt().contains("1 unmarked bot(s) left unchanged"));
 }

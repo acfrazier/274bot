@@ -333,7 +333,9 @@ paced like Start all), **Log in** / **Log out**, **Walk N to…** (opens the
 WalkTo picker in group mode; each marked bot walks to the chosen tile from
 its own position, and bots that are logged out, have no position or run a
 script are skipped with that reason) and **Apply focused bot's settings to
-marked…** (Apply to all narrowed to the marked bots, with a confirmation).
+marked…** (the same command as the TUI palette: the focused bot's parameters
+for the selected card go to the marked same-card bots only, with a
+confirmation that names the skipped marked bots and counts the unmarked ones).
 Checkboxes under the buttons toggle the status columns: world and login
 state, card, run state (the script error on hover), runtime, last log line,
 time since the last progress (the watchdog's gameplay clock; `—` while

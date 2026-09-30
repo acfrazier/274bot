@@ -409,6 +409,7 @@ impl TuiApp {
                 self.log.save(focused.as_deref());
             }
             Command::LogSessionFile => self.log.toggle_session_file(),
+            Command::ScriptApplyMarked => return AppAction::ScriptApplyMarkedPrepare,
             Command::LoadLoginAll
             | Command::LogoutAll
             | Command::ScriptStartAll

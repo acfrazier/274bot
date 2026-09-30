@@ -18,7 +18,8 @@ use crate::session::{ArmMirror, OperatorSession};
 
 const OTHER_CARD: &str = "assigned another card";
 const UNASSIGNED: &str = "no assignment";
-const NOT_MARKED: &str = "not marked";
+const NOT_LOADED: &str = "not loaded";
+const UNAVAILABLE: &str = "profile unavailable";
 
 /// A prepared sync, frozen for confirmation.
 #[derive(Debug, Clone, PartialEq)]
@@ -36,8 +37,26 @@ pub struct SyncScope {
     selection: script::ScriptSel,
     /// Per-target fields kept locally, published before any preparation/save.
     pub excluded: Vec<(String, Vec<String>)>,
+    /// Set when the scope is narrowed to the marked rows: how many other
+    /// wall members are left unchanged because they are not marked.
+    pub unmarked: Option<usize>,
     field: Option<String>,
     prompt: String,
+}
+
+/// `name (reason)` for the first few rows, then `+N more`.
+fn named_reasons(rows: &[(String, String)]) -> String {
+    const SHOWN: usize = 4;
+    let mut text = rows
+        .iter()
+        .take(SHOWN)
+        .map(|(name, reason)| format!("{name} ({reason})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if rows.len() > SHOWN {
+        text.push_str(&format!(" +{} more", rows.len() - SHOWN));
+    }
+    text
 }
 
 impl SyncScope {
@@ -46,27 +65,49 @@ impl SyncScope {
         &self.prompt
     }
 
-    /// Keep only the targets `keep` accepts; the rest are skipped as not
-    /// marked, and the confirmation line names the narrowed scope.
-    fn restrict(&mut self, keep: impl Fn(&str) -> bool) {
-        let (kept, dropped): (Vec<_>, Vec<_>) = std::mem::take(&mut self.targets)
-            .into_iter()
-            .partition(|target| keep(target));
-        self.targets = kept;
+    /// Narrow the scope to the marked rows (`marked`: every marked profile
+    /// name; `gone`: marks whose profile no longer exists). Unmarked members
+    /// drop out and are only counted; a marked row that cannot take the copy
+    /// (another card, no assignment, not loaded, gone) stays in `skipped`
+    /// with its reason, so every marked row is named exactly once.
+    fn restrict_to_marked(&mut self, marked: &[String], gone: Vec<String>) {
+        let others = self.targets.len() + self.skipped.len();
+        self.targets.retain(|target| marked.contains(target));
+        self.skipped.retain(|(member, _)| marked.contains(member));
         self.excluded
             .retain(|(target, _)| self.targets.contains(target));
+        self.unmarked = Some(others - self.targets.len() - self.skipped.len());
+        for name in marked {
+            let listed = *name == self.source
+                || self.targets.contains(name)
+                || self.skipped.iter().any(|(member, _)| member == name);
+            if !listed {
+                self.skipped.push((name.clone(), NOT_LOADED.to_string()));
+            }
+        }
         self.skipped.extend(
-            dropped
-                .into_iter()
-                .map(|target| (target, NOT_MARKED.to_string())),
+            gone.into_iter()
+                .map(|profile| (profile, UNAVAILABLE.to_string())),
         );
+        self.skipped.sort();
         let mut prompt = format!(
-            "Copy {} parameters from {} to {} marked same-card member(s); {} other member(s) skipped.",
+            "Copy {} parameters from {} to {} marked same-card bot(s)",
             self.card_name,
             self.source,
             self.targets.len(),
-            self.skipped.len()
         );
+        if self.skipped.is_empty() {
+            prompt.push('.');
+        } else {
+            prompt.push_str(&format!(
+                "; {} marked bot(s) skipped: {}.",
+                self.skipped.len(),
+                named_reasons(&self.skipped)
+            ));
+        }
+        if let Some(unmarked) = self.unmarked.filter(|n| *n > 0) {
+            prompt.push_str(&format!(" {unmarked} unmarked bot(s) left unchanged."));
+        }
         for (target, fields) in &self.excluded {
             prompt.push_str(&format!(" {target}: preserve {}.", fields.join(", ")));
         }
@@ -96,6 +137,8 @@ pub struct SyncReport {
     pub restart_required: usize,
     pub live_rejected: Vec<(String, String)>,
     pub excluded: Vec<(String, Vec<String>)>,
+    /// Marked-scope syncs: the unmarked members left unchanged.
+    pub unmarked: Option<usize>,
     /// Member writes not yet settled: (write operation, member).
     pending: Vec<(OperationId, String)>,
     text: String,
@@ -117,7 +160,16 @@ impl SyncReport {
     }
 
     fn refresh(&mut self) {
-        let mut text = format!("Apply to all {}: saved {}", self.card_name, self.saved);
+        let mut text = format!(
+            "Apply to {} {}: saved {}",
+            if self.unmarked.is_some() {
+                "marked"
+            } else {
+                "all"
+            },
+            self.card_name,
+            self.saved
+        );
         let counts = [
             (self.failed.len(), "failed"),
             (self.superseded, "superseded"),
@@ -129,23 +181,24 @@ impl SyncReport {
             }
         }
         if !self.skipped.is_empty() {
-            let other = self
-                .skipped
-                .iter()
-                .filter(|(_, reason)| reason == OTHER_CARD)
-                .count();
-            let unassigned = self.skipped.len() - other;
-            text.push_str(&format!(", skipped {} (", self.skipped.len()));
-            if other > 0 {
-                text.push_str(&format!("{other} other card"));
-            }
-            if unassigned > 0 {
-                if other > 0 {
-                    text.push_str(", ");
+            let mut kinds: Vec<(&str, usize)> = Vec::new();
+            for (_, reason) in &self.skipped {
+                let label = match reason.as_str() {
+                    OTHER_CARD => "other card",
+                    UNASSIGNED => "unassigned",
+                    other => other,
+                };
+                match kinds.iter_mut().find(|(kind, _)| *kind == label) {
+                    Some((_, n)) => *n += 1,
+                    None => kinds.push((label, 1)),
                 }
-                text.push_str(&format!("{unassigned} unassigned"));
             }
-            text.push(')');
+            let kinds = kinds
+                .iter()
+                .map(|(kind, n)| format!("{n} {kind}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            text.push_str(&format!(", skipped {} ({kinds})", self.skipped.len()));
         }
         let live = [
             (self.delivered, "delivered"),
@@ -167,6 +220,14 @@ impl SyncReport {
         }
         for (member, error) in self.failed.iter().take(4) {
             text.push_str(&format!("; {member}: {error} (not pushed)"));
+        }
+        if self.unmarked.is_some() {
+            for (member, reason) in self.skipped.iter().take(4) {
+                text.push_str(&format!("; {member}: skipped, {reason}"));
+            }
+        }
+        if let Some(unmarked) = self.unmarked.filter(|n| *n > 0) {
+            text.push_str(&format!("; {unmarked} unmarked unchanged"));
         }
         for (member, fields) in &self.excluded {
             text.push_str(&format!("; {member}: preserved {}", fields.join(", ")));
@@ -328,6 +389,7 @@ impl Scripts {
                 super::lookup_name(card_source, card_name, card_path),
             ),
             excluded: Vec::new(),
+            unmarked: None,
             field: None,
             prompt,
         })
@@ -394,6 +456,7 @@ impl Scripts {
             overrides,
             selection: script::ScriptSel::Compiled(id),
             excluded,
+            unmarked: None,
             field: field.map(str::to_owned),
             prompt,
         }))
@@ -403,13 +466,11 @@ impl Scripts {
         self.sync.prepared.as_ref()
     }
 
-    /// Narrow the prepared Apply to all to the members `keep` accepts (the
-    /// marked rows): the others are skipped as not marked and the
-    /// confirmation names the narrowed scope. No effect when nothing is
-    /// prepared.
-    pub fn restrict_prepared_settings_sync(&mut self, keep: impl Fn(&str) -> bool) {
+    /// Narrow the prepared sync to the marked rows; see
+    /// [`SyncScope::restrict_to_marked`]. No effect when nothing is prepared.
+    pub(crate) fn restrict_prepared_settings_sync(&mut self, marked: &[String], gone: Vec<String>) {
         if let Some(scope) = self.sync.prepared.as_mut() {
-            scope.restrict(keep);
+            scope.restrict_to_marked(marked, gone);
         }
     }
 
@@ -443,6 +504,7 @@ impl Scripts {
             overrides,
             selection,
             excluded,
+            unmarked,
             field,
             ..
         } = scope;
@@ -539,6 +601,7 @@ impl Scripts {
             restart_required: 0,
             live_rejected: Vec::new(),
             excluded,
+            unmarked,
             pending,
             text: String::new(),
         };

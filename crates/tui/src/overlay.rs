@@ -77,6 +77,9 @@ pub enum ConfirmKind {
         /// Whether the frozen scope came from marked rows rather than the whole fleet.
         marked: bool,
     },
+    /// Copy the focused bot's settings to the marked bots: the scope the
+    /// core froze (its prompt names targets, skips and the unmarked count).
+    ApplyMarked(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +145,7 @@ impl Confirm {
             ConfirmKind::Remove(_) => "Remove from fleet",
             ConfirmKind::Quit => "Quit tui-play",
             ConfirmKind::Bulk { command, .. } => command.label(app),
+            ConfirmKind::ApplyMarked(_) => Command::ScriptApplyMarked.label(app),
         }
     }
 
@@ -162,6 +166,10 @@ impl Confirm {
                     ),
                 ]
             }
+            ConfirmKind::ApplyMarked(prompt) => vec![
+                prompt.clone(),
+                "Nothing is written until you confirm.".into(),
+            ],
             ConfirmKind::Bulk {
                 command,
                 members,
@@ -243,6 +251,7 @@ impl Confirm {
             ConfirmKind::Remove(_) => "[Remove y]",
             ConfirmKind::Quit => "[Quit y]",
             ConfirmKind::Bulk { .. } => "[Run y]",
+            ConfirmKind::ApplyMarked(_) => "[Apply y]",
         }
     }
 }
@@ -278,7 +287,13 @@ impl TuiApp {
                 KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
                     self.run_confirm(confirm)
                 }
-                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => (None, AppAction::None),
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    let action = match confirm.kind {
+                        ConfirmKind::ApplyMarked(_) => AppAction::ScriptSyncCancel,
+                        _ => AppAction::None,
+                    };
+                    (None, action)
+                }
                 _ => (Some(Modal::Confirm(confirm)), AppAction::None),
             },
             Modal::Context(menu) => self.context_key(menu, key),
@@ -380,6 +395,7 @@ impl TuiApp {
                 self.quit = true;
                 (None, AppAction::Quit)
             }
+            ConfirmKind::ApplyMarked(_) => (None, AppAction::ScriptSyncApply),
             ConfirmKind::Bulk {
                 command,
                 members,

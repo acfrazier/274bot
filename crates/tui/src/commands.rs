@@ -48,6 +48,7 @@ pub enum Command {
     ScriptStopAll,
     ScriptAssignMarked,
     ScriptRestartMarked,
+    ScriptApplyMarked,
     ImportCatalog,
     ToggleGameChat,
     MapSearch,
@@ -205,6 +206,7 @@ impl Command {
         Command::ScriptStopAll,
         Command::ScriptAssignMarked,
         Command::ScriptRestartMarked,
+        Command::ScriptApplyMarked,
         Command::ImportCatalog,
         Command::ToggleGameChat,
         Command::MapSearch,
@@ -256,6 +258,7 @@ impl Command {
             | Command::ScriptStopAll
             | Command::ScriptAssignMarked
             | Command::ScriptRestartMarked
+            | Command::ScriptApplyMarked
             | Command::ImportCatalog => Group::Script,
             Command::ToggleGameChat => Group::Chat,
             Command::MapSearch
@@ -307,6 +310,7 @@ impl Command {
             Command::ScriptStopAll => "Stop all…",
             Command::ScriptAssignMarked => "Assign script to marked…",
             Command::ScriptRestartMarked => "Assign & restart marked…",
+            Command::ScriptApplyMarked => "Apply focused bot's settings to marked…",
             Command::ImportCatalog => "Import rs2b0t catalog",
             Command::ToggleGameChat => "Toggle game chat / script paint",
             Command::MapSearch => "Map: search",
@@ -397,6 +401,10 @@ impl Command {
                 ) =>
             {
                 selected_scope()
+            }
+            Group::Script if self == Command::ScriptApplyMarked => {
+                let source = app.focused_name().unwrap_or_else(|| "no bot".into());
+                format!("{source} to {} marked", app.table.selection.len())
             }
             Group::Script if matches!(self, Command::ScriptBrowse | Command::ScriptLoad) => {
                 "script library".into()
@@ -490,6 +498,18 @@ impl Command {
             Command::ScriptAssignMarked | Command::ScriptRestartMarked => {
                 if app.table.selection.is_empty() {
                     Err("mark fleet rows first")
+                } else {
+                    app.script_sel
+                        .as_ref()
+                        .map(|_| ())
+                        .ok_or("browse to pick a script first")
+                }
+            }
+            Command::ScriptApplyMarked => {
+                if app.table.selection.is_empty() {
+                    Err("mark fleet rows first")
+                } else if app.focused_name().is_none() {
+                    Err("no bot selected (Fleet: Enter or click a row)")
                 } else {
                     app.script_sel
                         .as_ref()

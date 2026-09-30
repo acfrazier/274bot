@@ -113,8 +113,12 @@ reads. With rows marked, **Load+login all** and **Logout all** log in / out
 the marked bots only (loading unloaded ones first), **Start all** / **Stop
 all** start / stop them, and the palette adds **Assign script to marked…**
 (saves the Browse pick as their assignment without starting; running bots are
-skipped) and **Assign & restart marked…** (stops a running script, then
-starts the pick through the same one-per-frame Start permit as Start all).
+skipped), **Assign & restart marked…** (stops a running script, then
+starts the pick through the same one-per-frame Start permit as Start all) and
+**Apply focused bot's settings to marked…** (copies the focused bot's
+parameters for the Browse pick to the marked bots on that card; the dialog
+names the bots it copies to, each marked bot it skips with the reason and how
+many unmarked bots stay unchanged, and nothing is written until you confirm).
 With the Map's group send (`g`), `Enter` walks every marked bot to the tile
 from its own position. Each of these prints one report with every marked bot
 counted once, failures first (`Walk marked: walking 3, skipped 2: gwalk2:

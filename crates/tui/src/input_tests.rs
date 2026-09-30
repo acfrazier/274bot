@@ -415,6 +415,42 @@ fn marked_assign_commands_need_marks_and_a_script_and_name_both() {
     }
 }
 
+/// Apply focused bot's settings to marked needs marks, a focused bot and a
+/// selected script (naming which is missing), and the 80x24 palette shows
+/// its whole label with its scope beside it instead of cutting either.
+#[test]
+fn apply_settings_to_marked_names_what_is_missing_and_fits_the_palette() {
+    let command = Command::ScriptApplyMarked;
+    let mut app = fleet_app(&["alice", "bob"]);
+    assert_eq!(command.availability(&app), Err("mark fleet rows first"));
+    app.table
+        .selection
+        .set(app.profile_id_for_name("bob"), true);
+    assert_eq!(
+        command.availability(&app),
+        Err("browse to pick a script first")
+    );
+    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    app.focused = None;
+    assert_eq!(
+        command.availability(&app),
+        Err("no bot selected (Fleet: Enter or click a row)")
+    );
+    app.focused = Some(0);
+    assert_eq!(command.availability(&app), Ok(()));
+
+    app.on_key(ctrl('p'));
+    for c in "apply focused".chars() {
+        app.on_key(ch(c));
+    }
+    let all = text(&draw(&mut app, 80, 24));
+    assert!(
+        all.contains("Apply focused bot's settings to marked… alice to 1 marked"),
+        "{all}"
+    );
+    assert!(all.contains("1 commands"), "{all}");
+}
+
 /// An NPC dialogue is visible everywhere but only the Chat tab answers it.
 #[test]
 fn a_dialogue_never_takes_keys_from_other_panes() {

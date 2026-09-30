@@ -187,6 +187,9 @@ pub enum AppAction {
     ScriptAssignMarked,
     /// Assign the selected script to every marked bot and start it there.
     ScriptRestartMarked,
+    /// Freeze copying the focused bot's settings for the selected script to
+    /// the marked bots, then ask to confirm the frozen scope.
+    ScriptApplyMarkedPrepare,
     /// Log in every marked bot (loading the ones not loaded yet).
     LoginMarked,
     /// Log out every marked bot.

@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 use host_play::{InstancePermit, Play, PlayOptions, SlotStatus};
 use vault::{Profile, ProfileSettings, Vault};
 
-use super::{assign_and_restart_marked, assign_marked, login_marked, logout_marked, restart_scope};
+use super::{
+    assign_and_restart_marked, assign_marked, login_marked, logout_marked,
+    prepare_apply_settings_marked, restart_scope,
+};
 use crate::scripts::Scripts;
 use crate::selection::{MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
@@ -329,15 +332,19 @@ fn login_and_logout_reach_only_the_bots_they_apply_to() {
 }
 
 /// Apply the focused bot's card settings to the marked bots only: an
-/// unmarked bot on the same card keeps its own, and the confirmation says
-/// why it was left out.
+/// unmarked same-card bot keeps its own and is only counted, and every
+/// marked bot that cannot take the copy is named with its reason.
 #[test]
 fn apply_settings_to_marked_copies_only_to_marked_same_card_members() {
-    let mut f = fixture("apply-marked", &["alice", "bob", "carol", "dave"], 4);
-    let (card, _) = f.card("thiever.ts");
-    for name in ["alice", "bob", "carol", "dave"] {
+    let names = ["alice", "bob", "carol", "dave", "erin", "frank"];
+    // frank is in the vault but not loaded.
+    let mut f = fixture("apply-marked", &names, 5);
+    let (card, sel) = f.card("thiever.ts");
+    let (other, _) = f.card("other.ts");
+    for name in ["alice", "bob", "dave", "erin"] {
         f.assign(name, &card);
     }
+    f.assign("carol", &other);
     f.scripts
         .set_profile_setting(
             &mut f.core,
@@ -352,30 +359,27 @@ fn apply_settings_to_marked_copies_only_to_marked_same_card_members() {
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
 
-    f.scripts
-        .prepare_settings_sync(&mut f.core, "alice", card.source, &card.name, &card.path);
-    assert_eq!(
-        f.scripts.prepared_settings_sync().unwrap().targets,
-        ["bob", "carol", "dave"],
-        "before narrowing, every same-card member is a target"
-    );
-    f.scripts
-        .restrict_prepared_settings_sync(|name| name == "bob");
-    let scope = f.scripts.prepared_settings_sync().unwrap().clone();
-    assert_eq!(scope.targets, ["bob"]);
+    // bob and dave take the copy; carol is on another card and frank is not
+    // loaded (both marked, so both are named); erin is unmarked.
+    let marked = marks(&[2, 3, 4, 6]);
+    let scope = prepare_apply_settings_marked(&marked, &mut f.core, &mut f.scripts, "alice", &sel)
+        .unwrap()
+        .clone();
+    assert_eq!(scope.targets, ["bob", "dave"]);
     assert_eq!(
         scope.skipped,
         [
-            ("carol".to_string(), "not marked".to_string()),
-            ("dave".to_string(), "not marked".to_string())
+            ("carol".to_string(), "assigned another card".to_string()),
+            ("frank".to_string(), "not loaded".to_string())
         ]
     );
+    assert_eq!(scope.unmarked, Some(1));
+    let prompt = scope.prompt();
     assert!(
-        scope
-            .prompt()
-            .contains("to 1 marked same-card member(s); 2 other"),
-        "{}",
-        scope.prompt()
+        prompt.contains("to 2 marked same-card bot(s)")
+            && prompt.contains("carol (assigned another card), frank (not loaded)")
+            && prompt.contains("1 unmarked bot(s) left unchanged"),
+        "{prompt}"
     );
 
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
@@ -395,9 +399,57 @@ fn apply_settings_to_marked_copies_only_to_marked_same_card_members() {
     };
     let want: serde_json::Map<String, serde_json::Value> =
         std::iter::once(("target".to_string(), serde_json::json!("Guard"))).collect();
-    assert_eq!(saved(&f, "bob"), Some(want));
-    assert_eq!(saved(&f, "carol"), None, "an unmarked bot keeps its own");
-    assert_eq!(saved(&f, "dave"), None);
+    assert_eq!(saved(&f, "bob"), Some(want.clone()));
+    assert_eq!(saved(&f, "dave"), Some(want));
+    assert_eq!(saved(&f, "erin"), None, "an unmarked bot keeps its own");
+    assert_eq!(saved(&f, "carol"), None);
+    assert_eq!(saved(&f, "frank"), None);
+    let summary = f.scripts.last_settings_sync().unwrap().summary();
+    assert!(
+        summary.starts_with("Apply to marked ")
+            && summary.contains("saved 2")
+            && summary.contains("skipped 2 (1 other card, 1 not loaded)")
+            && summary.contains("carol: skipped, assigned another card")
+            && summary.contains("frank: skipped, not loaded")
+            && summary.contains("1 unmarked unchanged"),
+        "{summary}"
+    );
+}
+
+/// A mark set with nothing to copy to is refused with the reason for each
+/// marked row, and leaves nothing prepared to apply.
+#[test]
+fn apply_settings_to_marked_refuses_when_no_marked_bot_can_take_it() {
+    let mut f = fixture("apply-marked-refuse", &["alice", "bob", "carol"], 3);
+    let (card, sel) = f.card("thiever.ts");
+    let (other, _) = f.card("other.ts");
+    f.assign("alice", &card);
+    f.assign("bob", &other);
+    f.assign("carol", &card);
+
+    let refused = |f: &mut Fixture, marked: &MarkedSelection| {
+        prepare_apply_settings_marked(marked, &mut f.core, &mut f.scripts, "alice", &sel)
+            .map(|_| ())
+            .unwrap_err()
+    };
+    assert_eq!(
+        refused(&mut f, &marks(&[])),
+        "Apply to marked: mark fleet rows first"
+    );
+    let only_other = refused(&mut f, &marks(&[2]));
+    assert!(
+        only_other.contains("bob: assigned another card"),
+        "{only_other}"
+    );
+    let only_source = refused(&mut f, &marks(&[1]));
+    assert!(
+        only_source.contains("the only marked bot is the source"),
+        "{only_source}"
+    );
+    assert!(
+        f.scripts.prepared_settings_sync().is_none(),
+        "a refusal leaves nothing to apply"
+    );
 }
 
 /// The Fleet window's progress columns read the host: a started run reports

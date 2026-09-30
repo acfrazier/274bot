@@ -168,6 +168,10 @@ pub fn render_palette(
         text.push_str(if index == state.cursor { "> " } else { "  " });
         let label = command.label(app);
         text.push_str(label);
+        if text.chars().count() > 2 + label_w {
+            // A long label is never cut or glued to its scope.
+            text.push(' ');
+        }
         pad(&mut text, 2 + label_w);
         let scope = command.scope(app);
         text.extend(scope.chars().take(scope_w));

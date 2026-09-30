@@ -75,15 +75,19 @@ impl Session {
     /// applies the frozen scope the Fleet window then shows.
     pub fn fleet_prepare_apply_settings(&mut self) {
         self.error = None;
-        self.prepare_settings_sync();
-        let core = &self.core;
-        let selection = &self.fleet_selection;
-        self.scripts.restrict_prepared_settings_sync(|name| {
-            core.profile_identity(name)
-                .is_some_and(|identity| selection.contains(identity))
-        });
-        if self.scripts.prepared_settings_sync().is_none() {
-            self.fleet_report = self.error.clone();
+        let (Some(source), Some(card)) = (self.focused_name(), self.script_sel.clone()) else {
+            self.fleet_report = Some("Apply to marked: focus a bot and select a card".into());
+            return;
+        };
+        if let Err(error) = frontend_core::prepare_apply_settings_marked(
+            &self.fleet_selection,
+            &mut self.core,
+            &mut self.scripts,
+            &source,
+            &card,
+        ) {
+            self.fleet_report = Some(error);
         }
+        self.apply_script_notice();
     }
 }
