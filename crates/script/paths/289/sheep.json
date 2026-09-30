@@ -19,7 +19,7 @@
     "coin_float": 3,
     "loadouts": {},
     "areas": {},
-    "tools": ["obj:shears", "obj:wool"],
+    "tools": ["obj:shears", "obj:wool", "obj:bronze_sword"],
     "owns_inventory": false
   },
   "roles": [{
@@ -73,6 +73,21 @@
             },
             "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "shears" } } },
             "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "shears" } } }
+          },
+          {
+            "id": "equip-service-proof", "kind": "equip", "version": 1,
+            "args": { "obj": "bronze_sword" },
+            "skip_if": { "Any": [
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_sword" } } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_sword" } } }
+            ] },
+            "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_sword" } } }
+          },
+          {
+            "id": "unequip-service-proof", "kind": "unequip", "version": 1,
+            "args": { "obj": "bronze_sword" },
+            "skip_if": { "Not": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_sword" } } } },
+            "settle": { "Not": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_sword" } } } }
           },
           {
             "id": "shear", "kind": "use_on", "version": 1,
