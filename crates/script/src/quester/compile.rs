@@ -5,6 +5,7 @@ pub use super::progress::CompiledProgress;
 use crate::native::{ActionContext, ActionError, NativeActions, NativeTick};
 use api::game_data::SelectedGameData;
 use api::gather_methods::GatherCatalog;
+use api::named_banks::NamedBank;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, QuestProgress};
 use api::selected::{ClientRevision, FactKey, SourceSpan, Truth};
@@ -22,6 +23,11 @@ pub struct CompileContext<'a> {
     pub gathering: Option<&'a GatherCatalog>,
     pub areas: &'a HashMap<String, Vec<[i32; 5]>>,
     pub recipes: &'a HashMap<String, Vec<CompiledAcquireStep>>,
+    /// `None` means select the nearest eligible bank at step start.
+    pub bank: Option<NamedBank>,
+    pub bank_items: &'a [i32],
+    pub path_id: &'a FactKey,
+    pub loadouts: &'a super::loadouts::LoadoutOverlay,
 }
 #[derive(Debug, Clone)]
 pub struct CompileError {
@@ -84,12 +90,14 @@ pub struct PredicateContext<'a, 'frame> {
     pub required_after: EvidenceStamp,
     pub chat_since: i32,
     pub outcome: Option<&'a StepOutcome>,
+    pub bank: &'a super::bank_memo::BankMemo,
 }
 pub struct StepContext<'a, 'frame> {
     pub tick: &'a mut NativeTick<'frame>,
     pub quests: &'a QuestCatalog,
     pub progress: &'a [QuestProgress],
     pub required_after: EvidenceStamp,
+    pub bank: &'a super::bank_memo::BankMemo,
 }
 pub trait FamilyReceipt: Send + Sync + 'static {
     fn as_any(&self) -> &dyn Any;
@@ -244,6 +252,7 @@ fn compile_uncached(
         .as_ref()
         .ok_or_else(|| CompileError::code("missing-quest-header").with_path(document.id.clone()))?;
     validate_header(header, selected).map_err(|err| err.with_path(document.id.clone()))?;
+    validate_nav_coverage(document).map_err(|err| err.with_path(document.id.clone()))?;
     let role = document
         .roles
         .first()
@@ -259,12 +268,59 @@ fn compile_uncached(
         areas.insert(name.clone(), area.boxes.clone());
     }
     let empty_recipes = HashMap::new();
+    let bank = match &header.bank {
+        super::path::QuestBankDocument::Nearest(_) => None,
+        super::path::QuestBankDocument::Tile { tile, .. } => Some(NamedBank::new(
+            "Path bank",
+            api::WorldTile {
+                x: tile[0],
+                z: tile[1],
+                level: tile[2],
+            },
+        )),
+    };
+    let mut bank_items = Vec::new();
+    for alias in header.items.iter().map(|item| item.obj.as_str()).chain(
+        header
+            .tools
+            .iter()
+            .filter_map(|tool| tool.strip_prefix("obj:")),
+    ) {
+        if let Some(item) = selected.item_by_alias(alias) {
+            if !bank_items.contains(&item.id) {
+                bank_items.push(item.id);
+            }
+        }
+    }
+    if bank_items.len() > super::bank_memo::MAX_BANK_MEMO {
+        return Err(CompileError::code("bank-memo-too-large").with_path(document.id.clone()));
+    }
+    let compiled_loadouts: Vec<_> = header
+        .loadouts
+        .iter()
+        .map(|(name, row)| {
+            let mut out = crate::loadouts_store::Loadout::new(format!("{}/{name}", document.id.0));
+            for (slot, item) in &row.worn {
+                out = out.with_slot(slot, item);
+            }
+            for carry in &row.carry {
+                out = out.with_carry(&carry.item, carry.qty);
+            }
+            out
+        })
+        .collect();
+    let loadouts =
+        super::loadouts::LoadoutOverlay::from_default_store(Arc::from(compiled_loadouts));
     let mut recipe_ctx = CompileContext {
         selected,
         quests,
         gathering: None,
         areas: &areas,
         recipes: &empty_recipes,
+        bank,
+        bank_items: &bank_items,
+        path_id: &document.id,
+        loadouts: &loadouts,
     };
     let mut recipes = HashMap::new();
     for (name, steps) in &header.acquire {
@@ -520,11 +576,87 @@ fn validate_header(
     Ok(())
 }
 
+fn validate_nav_coverage(document: &PathDocument) -> Result<(), CompileError> {
+    fn walk(value: &serde_json::Value) -> Result<(), CompileError> {
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Some(tile) = map.get("tile").and_then(serde_json::Value::as_array) {
+                    if tile.len() == 3 {
+                        let x = tile[0].as_i64().and_then(|x| i32::try_from(x).ok());
+                        let z = tile[1].as_i64().and_then(|z| i32::try_from(z).ok());
+                        if !x
+                            .zip(z)
+                            .is_some_and(|(x, z)| super::nav_coverage::covered_289(x, z))
+                        {
+                            return Err(CompileError::code("nav-tile-uncovered"));
+                        }
+                    }
+                }
+                for child in map.values() {
+                    walk(child)?;
+                }
+            }
+            serde_json::Value::Array(rows) => {
+                for row in rows {
+                    walk(row)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    let header = document
+        .quest
+        .as_ref()
+        .ok_or_else(|| CompileError::code("missing-quest-header"))?;
+    if let super::path::QuestBankDocument::Tile { tile, .. } = &header.bank {
+        if !super::nav_coverage::covered_289(tile[0], tile[1]) {
+            return Err(CompileError::code("nav-tile-uncovered"));
+        }
+    }
+    for area in header.areas.values() {
+        for row in &area.boxes {
+            if !super::nav_coverage::covered_289(row[0], row[1])
+                || !super::nav_coverage::covered_289(row[2], row[3])
+            {
+                return Err(CompileError::code("nav-tile-uncovered"));
+            }
+        }
+    }
+    for step in header
+        .acquire
+        .values()
+        .flatten()
+        .chain(document.roles.iter().flat_map(|role| {
+            role.prelude
+                .iter()
+                .chain(role.sequences.iter().flat_map(|seq| &seq.steps))
+        }))
+    {
+        walk(&step.args)?;
+    }
+    Ok(())
+}
+
 pub const COOK_JSON: &str = include_str!("../../paths/289/cook.json");
+pub const SHEEP_JSON: &str = include_str!("../../paths/289/sheep.json");
+pub const RUNE_MYSTERIES_JSON: &str = include_str!("../../paths/289/runemysteries.json");
+pub const ROMEO_AND_JULIET_JSON: &str = include_str!("../../paths/289/romeojuliet.json");
 pub const INDEX_JSON: &str = include_str!("../../paths/289/index.json");
 
+pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
+    match id {
+        "cook" => Some(COOK_JSON.as_bytes()),
+        "sheep" => Some(SHEEP_JSON.as_bytes()),
+        "runemysteries" => Some(RUNE_MYSTERIES_JSON.as_bytes()),
+        "romeojuliet" => Some(ROMEO_AND_JULIET_JSON.as_bytes()),
+        _ => None,
+    }
+}
+
 pub fn cook_bytes() -> &'static [u8] {
-    COOK_JSON.as_bytes()
+    path_bytes("cook").unwrap()
 }
 
 pub fn decode_cook() -> Result<PathDocument, CompileError> {
@@ -856,5 +988,61 @@ mod tests {
             .as_ref(),
             "unbound-progress-stage"
         );
+    }
+
+    #[test]
+    fn all_released_s2_paths_compile() {
+        let data = selected();
+        let quests = quests(&data);
+        for (id, json) in [
+            ("cook", COOK_JSON),
+            ("sheep", SHEEP_JSON),
+            ("runemysteries", RUNE_MYSTERIES_JSON),
+            ("romeojuliet", ROMEO_AND_JULIET_JSON),
+        ] {
+            let document: PathDocument =
+                serde_json::from_str(json).unwrap_or_else(|error| panic!("{id}: {error}"));
+            compile_uncached_for_test(&document, &data, &quests)
+                .unwrap_or_else(|error| panic!("{id} {:?}: {}", error.step, error.code));
+        }
+    }
+
+    #[test]
+    fn cook_loaded_hopper_reapproaches_the_upstairs_controls() {
+        let document = decode_cook().unwrap();
+        let step = document
+            .quest
+            .as_ref()
+            .unwrap()
+            .acquire
+            .values()
+            .flatten()
+            .chain(
+                document.roles[0]
+                    .sequences
+                    .iter()
+                    .flat_map(|sequence| &sequence.steps),
+            )
+            .find(|step| step.id.0.as_ref() == "operate-controls")
+            .expect("operate-controls");
+        assert_eq!(
+            step.args["anchor"]["tile"],
+            serde_json::json!([3166, 3305, 2])
+        );
+        assert!(step.args["anchor"]["source"].as_str().is_some());
+    }
+
+    #[test]
+    fn uncovered_authored_tile_is_rejected() {
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].steps[0].args["anchor"]["tile"] =
+            serde_json::json!([0, 0, 0]);
+        let data = selected();
+        let quests = quests(&data);
+        let error = match compile_uncached_for_test(&document, &data, &quests) {
+            Err(error) => error,
+            Ok(_) => panic!("uncovered tile compiled"),
+        };
+        assert_eq!(error.code.as_ref(), "nav-tile-uncovered");
     }
 }

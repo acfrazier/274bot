@@ -72,12 +72,22 @@ pub struct BankItem {
 #[derive(Debug, Clone)]
 pub enum BankAction {
     Scan,
-    Withdraw { item: BankItem, qty: i32 },
+    Withdraw {
+        item: BankItem,
+        qty: i32,
+    },
     /// First listed, held-or-banked alternative. Callers order strongest to
     /// weakest after applying stat/quest gates.
-    WithdrawAny { items: Arc<[BankItem]>, qty: i32 },
-    Deposit { item: BankItem },
-    DepositAll { keep: Arc<[i32]> },
+    WithdrawAny {
+        items: Arc<[BankItem]>,
+        qty: i32,
+    },
+    Deposit {
+        item: BankItem,
+    },
+    DepositAll {
+        keep: Arc<[i32]>,
+    },
     Close,
 }
 
@@ -124,7 +134,9 @@ impl NativeMachine for BankMachine {
 
     fn begin(request: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         if request.memo_ids.len() > MAX_MEMO {
-            return Err(ActionError::Unavailable(Arc::from("bank memo exceeds 64 items")));
+            return Err(ActionError::Unavailable(Arc::from(
+                "bank memo exceeds 64 items",
+            )));
         }
         Ok(Self {
             request,
@@ -152,7 +164,7 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::AwaitClose;
                         return Poll::Pending;
                     }
-                    if let Some(bank) = cx.snapshot().bank() {
+                    if cx.snapshot().bank().is_some() {
                         self.session = cx
                             .snapshot()
                             .bank_session()
@@ -173,15 +185,19 @@ impl NativeMachine for BankMachine {
                         .bank
                         .definition
                         .and_then(|definition| definition.object);
-                    let booth = locs.value.iter().filter(|loc| {
-                        loc.tile.level == self.request.bank.tile.level
-                            && loc.actions.iter().flatten().any(|action| {
-                                wanted.map_or_else(
-                                    || action.eq_ignore_ascii_case("Use-quickly"),
-                                    |wanted| action.eq_ignore_ascii_case(wanted.op),
-                                )
-                            })
-                    }).min_by_key(|loc| loc.distance);
+                    let booth = locs
+                        .value
+                        .iter()
+                        .filter(|loc| {
+                            loc.tile.level == self.request.bank.tile.level
+                                && loc.actions.iter().flatten().any(|action| {
+                                    wanted.map_or_else(
+                                        || action.eq_ignore_ascii_case("Use-quickly"),
+                                        |wanted| action.eq_ignore_ascii_case(wanted.op),
+                                    )
+                                })
+                        })
+                        .min_by_key(|loc| loc.distance);
                     let Some(booth) = booth else {
                         return Poll::Pending;
                     };
@@ -218,14 +234,15 @@ impl NativeMachine for BankMachine {
                 Phase::Act => match &self.request.action {
                     BankAction::Scan => return Poll::Ready(Ok(self.receipt(cx, true))),
                     BankAction::Withdraw { item, qty } => {
-                        let Some(inv) = cx.snapshot().inventory() else {
+                        let snapshot = cx.snapshot();
+                        let Some(inv) = snapshot.inventory() else {
                             return Poll::Pending;
                         };
                         let held = count(inv.value, item.id);
                         if held >= *qty {
                             return Poll::Ready(Ok(self.receipt(cx, true)));
                         }
-                        let Some(bank) = cx.snapshot().bank() else {
+                        let Some(bank) = snapshot.bank() else {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                 "bank closed during withdraw",
                             ))));
@@ -240,6 +257,7 @@ impl NativeMachine for BankMachine {
                                 ))))
                             };
                         };
+                        let bank_item_id = row.def.id;
                         let need = (*qty - held).min(row.count).max(0);
                         if need == 0 {
                             return Poll::Ready(Ok(self.receipt(cx, self.request.partial_ok)));
@@ -248,7 +266,7 @@ impl NativeMachine for BankMachine {
                             InteractReq::WithdrawX {
                                 name: item.name.to_string(),
                                 count: need,
-                                bank_item_id: row.def.id,
+                                bank_item_id,
                                 lands_as_id: item.id,
                                 action: "Withdraw-X".into(),
                                 bank_generation: self.session,
@@ -272,34 +290,35 @@ impl NativeMachine for BankMachine {
                         return Poll::Pending;
                     }
                     BankAction::WithdrawAny { items, qty } => {
-                        let Some(inv) = cx.snapshot().inventory() else {
+                        let snapshot = cx.snapshot();
+                        let Some(inv) = snapshot.inventory() else {
                             return Poll::Pending;
                         };
                         if items.iter().any(|item| count(inv.value, item.id) >= *qty) {
                             return Poll::Ready(Ok(self.receipt(cx, true)));
                         }
-                        let Some(bank) = cx.snapshot().bank() else {
+                        let Some(bank) = snapshot.bank() else {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                 "bank closed during tier withdraw",
                             ))));
                         };
-                        let Some((item, row)) = items.iter().find_map(|item| {
+                        let Some((item, bank_item_id, available)) = items.iter().find_map(|item| {
                             bank.value
                                 .iter()
                                 .find(|row| row.def.id == item.id && row.count > 0)
-                                .map(|row| (item, row))
+                                .map(|row| (item, row.def.id, row.count))
                         }) else {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                 "bank lacks every permitted loadout tier",
                             ))));
                         };
                         let before = count(inv.value, item.id);
-                        let need = (*qty - before).min(row.count).max(0);
+                        let need = (*qty - before).min(available).max(0);
                         let request = if need > 10 {
                             InteractReq::WithdrawX {
                                 name: item.name.to_string(),
                                 count: need,
-                                bank_item_id: row.def.id,
+                                bank_item_id,
                                 lands_as_id: item.id,
                                 action: "Withdraw-X".into(),
                                 bank_generation: self.session,
@@ -323,7 +342,8 @@ impl NativeMachine for BankMachine {
                         return Poll::Pending;
                     }
                     BankAction::Deposit { item } => {
-                        let Some(side) = cx.snapshot().bank_side() else {
+                        let snapshot = cx.snapshot();
+                        let Some(side) = snapshot.bank_side() else {
                             return Poll::Pending;
                         };
                         let held = count(side.value, item.id);
@@ -343,16 +363,18 @@ impl NativeMachine for BankMachine {
                                 "deposit-all exceeded 32 item rows",
                             ))));
                         }
-                        let Some(side) = cx.snapshot().bank_side() else {
+                        let snapshot = cx.snapshot();
+                        let Some(side) = snapshot.bank_side() else {
                             return Poll::Pending;
                         };
-                        let row = side.value.iter().find(|row| {
-                            row.count > 0 && !keep.iter().any(|id| *id == row.def.id)
-                        });
+                        let row = side
+                            .value
+                            .iter()
+                            .find(|row| row.count > 0 && !keep.iter().any(|id| *id == row.def.id));
                         let Some(row) = row else {
                             return Poll::Ready(Ok(self.receipt(cx, true)));
                         };
-                        let Some(name) = row.def.name.as_deref() else {
+                        let Some(name) = row.def.name.clone() else {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                 "deposit row has no resolved name",
                             ))));
@@ -363,7 +385,7 @@ impl NativeMachine for BankMachine {
                             .filter(|row| !keep.iter().any(|id| *id == row.def.id))
                             .map(|row| row.count)
                             .sum();
-                        cx.emit(InteractReq::Deposit { name: name.into() })?;
+                        cx.emit(InteractReq::Deposit { name })?;
                         self.deposits += 1;
                         self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
                         self.phase = Phase::AwaitTransfer { before };
@@ -377,16 +399,15 @@ impl NativeMachine for BankMachine {
                             .snapshot()
                             .inventory()
                             .map(|rows| count(rows.value, item.id)),
-                        BankAction::WithdrawAny { items, .. } => cx
-                            .snapshot()
-                            .inventory()
-                            .map(|rows| {
+                        BankAction::WithdrawAny { items, .. } => {
+                            cx.snapshot().inventory().map(|rows| {
                                 items
                                     .iter()
                                     .map(|item| count(rows.value, item.id))
                                     .max()
                                     .unwrap_or(0)
-                            }),
+                            })
+                        }
                         BankAction::Deposit { item } => cx
                             .snapshot()
                             .bank_side()
@@ -444,7 +465,8 @@ impl NativeMachine for BankMachine {
 
 impl BankMachine {
     fn receipt(&self, cx: &ActionContext<'_>, complete: bool) -> BankReceipt {
-        let bank = cx.snapshot().bank();
+        let snapshot = cx.snapshot();
+        let bank = snapshot.bank();
         let counts = self
             .request
             .memo_ids

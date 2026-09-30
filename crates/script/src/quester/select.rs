@@ -111,6 +111,7 @@ mod tests {
             budget: &mut budget,
             eligible: true,
         };
+        let bank = crate::quester::bank_memo::BankMemo::default();
         let pred = PredicateContext {
             cx: &cx,
             quests: &quests,
@@ -118,6 +119,7 @@ mod tests {
             required_after: stamp(),
             chat_since: 0,
             outcome: None,
+            bank: &bank,
         };
         let SelectionDecision::Selected(picked) = select(&compiled, 0, &pred) else {
             panic!("never-skip start must select");

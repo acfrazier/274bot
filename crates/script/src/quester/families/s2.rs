@@ -2,15 +2,15 @@
 use super::reach;
 use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions, WalkEnd};
-use crate::native_bank::{
-    BankAction, BankItem, BankMachine, BankReceipt, BankRequest,
-};
+use crate::native_bank::{BankAction, BankItem, BankMachine, BankReceipt, BankRequest};
 use crate::native_equipment::{EquipmentMachine, EquipmentRequest};
 use crate::native_production::{MakeMachine, MakeRequest};
 use crate::native_shop::{BuyMachine, BuyRequest};
 use crate::quester::compile::{
-    CompileContext, CompileError, FamilyReceipt, StepContext, StepOutcome, StepPlan, StepRun,
+    CompileContext, CompileError, FamilyReceipt, PredicateContext, PredicatePlan, StepContext,
+    StepOutcome, StepPlan, StepRun,
 };
+use api::selected::Truth;
 use api::snapshot::WorldTile;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -46,12 +46,30 @@ fn named_item(cx: &CompileContext<'_>, name: &str) -> Result<BankItem, CompileEr
         .selected
         .items()
         .iter()
-        .find(|item| item.name.as_deref().is_some_and(|known| known.eq_ignore_ascii_case(name)))
+        .find(|item| {
+            item.name
+                .as_deref()
+                .is_some_and(|known| known.eq_ignore_ascii_case(name))
+        })
         .ok_or_else(|| CompileError::code("unresolved-loadout-item"))?;
     Ok(BankItem {
         id: item.id,
         name: Arc::from(item.name.as_deref().unwrap_or(name)),
     })
+}
+
+fn resolve_bank(
+    bank: Option<api::named_banks::NamedBank>,
+    cx: &StepContext<'_, '_>,
+) -> Result<api::named_banks::NamedBank, ActionError> {
+    bank.or_else(|| {
+        cx.tick
+            .cx
+            .snapshot()
+            .here()
+            .and_then(|here| crate::bank_select::nearest_bank(here.value))
+    })
+    .ok_or_else(|| ActionError::Unavailable(Arc::from("no eligible bank")))
 }
 
 fn anchor(tile: [i32; 3]) -> WorldTile {
@@ -104,7 +122,11 @@ pub fn compile_bank(
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     let args: BankArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    if args.at.as_deref().is_some_and(|at| at != "quest_bank" && at != "nearest") {
+    if args
+        .at
+        .as_deref()
+        .is_some_and(|at| at != "quest_bank" && at != "nearest")
+    {
         return Err(CompileError::code("invalid-bank-target"));
     }
     let mut actions = Vec::new();
@@ -153,15 +175,15 @@ pub fn compile_bank(
 }
 
 struct BankPlan {
-    bank: api::named_banks::NamedBank,
+    bank: Option<api::named_banks::NamedBank>,
     memo_ids: Arc<[i32]>,
     actions: Arc<[BankAction]>,
     partial_ok: bool,
 }
 impl StepPlan for BankPlan {
-    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(BankRun {
-            bank: self.bank,
+            bank: resolve_bank(self.bank, cx)?,
             memo_ids: Arc::clone(&self.memo_ids),
             actions: Arc::clone(&self.actions),
             partial_ok: self.partial_ok,
@@ -194,16 +216,21 @@ impl StepRun for BankRun {
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
                     if !matches!(receipt.end, WalkEnd::Arrived | WalkEnd::RouteEnded) {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from("bank walk failed"))));
+                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                            "bank walk failed",
+                        ))));
                     }
                     self.walk = None;
                 }
             }
         }
         if self.walk.is_none() && self.index == 0 && self.machine.is_none() {
-            let near = cx.tick.cx.snapshot().here().is_some_and(|here| {
-                reach::within(here.value, self.bank.tile, 6)
-            });
+            let near = cx
+                .tick
+                .cx
+                .snapshot()
+                .here()
+                .is_some_and(|here| reach::within(here.value, self.bank.tile, 6));
             if !near {
                 self.walk = Some(cx.tick.actions.begin::<Walk>(
                     reach::walk_request(self.bank.tile, 4, cx.required_after),
@@ -217,7 +244,9 @@ impl StepRun for BankRun {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    self.last = Some(receipt);
+                    if !matches!(self.actions.get(self.index), Some(BankAction::Close)) {
+                        self.last = Some(receipt);
+                    }
                     self.machine = None;
                     self.index += 1;
                 }
@@ -235,7 +264,10 @@ impl StepRun for BankRun {
             )?);
             return Poll::Pending;
         }
-        let receipt = self.last.take().map(|receipt| Arc::new(receipt) as Arc<dyn FamilyReceipt>);
+        let receipt = self
+            .last
+            .take()
+            .map(|receipt| Arc::new(receipt) as Arc<dyn FamilyReceipt>);
         Poll::Ready(Ok(StepOutcome {
             progress: None,
             evidence: cx.tick.cx.evidence(),
@@ -332,7 +364,12 @@ impl StepRun for BuyRun {
             }
         }
         if self.buy.is_none() {
-            let near = cx.tick.cx.snapshot().here().is_some_and(|here| reach::within(here.value, self.tile, 6));
+            let near = cx
+                .tick
+                .cx
+                .snapshot()
+                .here()
+                .is_some_and(|here| reach::within(here.value, self.tile, 6));
             if !near {
                 self.walk = Some(cx.tick.actions.begin::<Walk>(
                     reach::walk_request(self.tile, 4, cx.required_after),
@@ -340,10 +377,18 @@ impl StepRun for BuyRun {
                 )?);
                 return Poll::Pending;
             }
-            self.buy = Some(cx.tick.actions.begin::<BuyMachine>(self.request.clone(), &mut cx.tick.cx)?);
+            self.buy = Some(
+                cx.tick
+                    .actions
+                    .begin::<BuyMachine>(self.request.clone(), &mut cx.tick.cx)?,
+            );
             return Poll::Pending;
         }
-        match cx.tick.actions.poll(self.buy.as_ref().unwrap(), &mut cx.tick.cx) {
+        match cx
+            .tick
+            .actions
+            .poll(self.buy.as_ref().unwrap(), &mut cx.tick.cx)
+        {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
             Poll::Ready(Ok(_)) => Poll::Ready(Ok(done(cx))),
@@ -381,7 +426,11 @@ pub fn compile_make(
         .selected
         .loc_by_config(&args.loc.name)
         .ok_or_else(|| CompileError::code("unresolved-loc"))?;
-    if !loc.ops.iter().any(|op| op.eq_ignore_ascii_case(&args.loc.op)) {
+    if !loc
+        .ops
+        .iter()
+        .any(|op| op.eq_ignore_ascii_case(&args.loc.op))
+    {
         return Err(CompileError::code("unsupported-loc-op"));
     }
     let product = item(cx, &args.product)?;
@@ -446,7 +495,12 @@ impl StepRun for MakeRun {
             }
         }
         if self.trigger.is_none() && self.make.is_none() {
-            let near = cx.tick.cx.snapshot().here().is_some_and(|here| reach::within(here.value, self.tile, 6));
+            let near = cx
+                .tick
+                .cx
+                .snapshot()
+                .here()
+                .is_some_and(|here| reach::within(here.value, self.tile, 6));
             if !near {
                 self.walk = Some(cx.tick.actions.begin::<Walk>(
                     reach::walk_request(self.tile, 4, cx.required_after),
@@ -473,15 +527,27 @@ impl StepRun for MakeRun {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(false)) => return Poll::Ready(Err(ActionError::Failed(Arc::from("production trigger failed")))),
+                Poll::Ready(Ok(false)) => {
+                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                        "production trigger failed",
+                    ))))
+                }
                 Poll::Ready(Ok(true)) => {
                     self.trigger = None;
-                    self.make = Some(cx.tick.actions.begin::<MakeMachine>(self.request.clone(), &mut cx.tick.cx)?);
+                    self.make = Some(
+                        cx.tick
+                            .actions
+                            .begin::<MakeMachine>(self.request.clone(), &mut cx.tick.cx)?,
+                    );
                     return Poll::Pending;
                 }
             }
         }
-        match cx.tick.actions.poll(self.make.as_ref().unwrap(), &mut cx.tick.cx) {
+        match cx
+            .tick
+            .actions
+            .poll(self.make.as_ref().unwrap(), &mut cx.tick.cx)
+        {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
             Poll::Ready(Ok(_)) => Poll::Ready(Ok(done(cx))),
@@ -523,9 +589,15 @@ fn compile_equipment(
         let obj = args.obj.ok_or_else(|| CompileError::code("missing-obj"))?;
         let item = item(cx, &obj)?;
         if wear {
-            EquipmentRequest::Wear { id: item.id, name: item.name }
+            EquipmentRequest::Wear {
+                id: item.id,
+                name: item.name,
+            }
         } else {
-            EquipmentRequest::Unequip { id: item.id, name: item.name }
+            EquipmentRequest::Unequip {
+                id: item.id,
+                name: item.name,
+            }
         }
     };
     Ok(Arc::new(EquipmentPlan { request }))
@@ -535,7 +607,10 @@ struct EquipmentPlan {
 }
 impl StepPlan for EquipmentPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        let handle = cx.tick.actions.begin::<EquipmentMachine>(self.request.clone(), &mut cx.tick.cx)?;
+        let handle = cx
+            .tick
+            .actions
+            .begin::<EquipmentMachine>(self.request.clone(), &mut cx.tick.cx)?;
         Ok(Box::new(EquipmentRun { handle }))
     }
 }
@@ -552,7 +627,6 @@ impl StepRun for EquipmentRun {
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {}
 }
-
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -615,14 +689,14 @@ pub fn compile_loadout(
 }
 
 struct LoadoutPlan {
-    bank: api::named_banks::NamedBank,
+    bank: Option<api::named_banks::NamedBank>,
     memo_ids: Arc<[i32]>,
     withdraw: Arc<[(BankItem, i32)]>,
     worn: Arc<[BankItem]>,
     strip: bool,
 }
 impl StepPlan for LoadoutPlan {
-    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let mut bank_actions = Vec::new();
         if !self.strip {
             bank_actions.extend(
@@ -640,7 +714,7 @@ impl StepPlan for LoadoutPlan {
                 None
             } else {
                 Some(BankRun {
-                    bank: self.bank,
+                    bank: resolve_bank(self.bank, cx)?,
                     memo_ids: Arc::clone(&self.memo_ids),
                     actions: Arc::from(bank_actions),
                     partial_ok: false,
@@ -706,10 +780,11 @@ impl StepRun for LoadoutRun {
                 })
         };
         if let Some(request) = request {
-            self.equipment = Some(cx.tick.actions.begin::<EquipmentMachine>(
-                request,
-                &mut cx.tick.cx,
-            )?);
+            self.equipment = Some(
+                cx.tick
+                    .actions
+                    .begin::<EquipmentMachine>(request, &mut cx.tick.cx)?,
+            );
             return Poll::Pending;
         }
         Poll::Ready(Ok(StepOutcome {
@@ -719,6 +794,142 @@ impl StepRun for LoadoutRun {
         }))
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {}
+}
+
+pub fn compile_bank_known(
+    args: &serde_json::Value,
+    _cx: &CompileContext<'_>,
+) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    if !args.as_object().is_some_and(serde_json::Map::is_empty) {
+        return Err(CompileError::code("invalid-args"));
+    }
+    Ok(Arc::new(BankKnown))
+}
+
+struct BankKnown;
+impl PredicatePlan for BankKnown {
+    fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        if cx.bank.known() {
+            Truth::True
+        } else {
+            Truth::False
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BankHasArgs {
+    obj: String,
+    #[serde(default = "one")]
+    qty: i32,
+}
+
+pub fn compile_bank_has(
+    args: &serde_json::Value,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    let args: BankHasArgs =
+        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    Ok(Arc::new(BankHas {
+        id: item(cx, &args.obj)?.id,
+        qty: args.qty.max(1),
+    }))
+}
+
+struct BankHas {
+    id: i32,
+    qty: i32,
+}
+impl PredicatePlan for BankHas {
+    fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        match cx.bank.count(self.id) {
+            Some(count) => {
+                if count >= self.qty {
+                    Truth::True
+                } else {
+                    Truth::False
+                }
+            }
+            None => Truth::Unknown,
+        }
+    }
+}
+
+pub fn compile_loadout_ready(
+    args: &serde_json::Value,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    let args: LoadoutArgs =
+        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    let qualified = if args.loadout.contains('/') {
+        args.loadout
+    } else {
+        format!("{}/{}", cx.path_id.0, args.loadout)
+    };
+    let row = cx
+        .loadouts
+        .resolve(&qualified)
+        .ok_or_else(|| CompileError::code("unknown-loadout"))?
+        .row();
+    let carry = row
+        .carry
+        .iter()
+        .map(|entry| {
+            Ok((
+                named_item(cx, &entry.item)?.id,
+                i32::try_from(entry.qty).unwrap_or(i32::MAX),
+            ))
+        })
+        .collect::<Result<Vec<_>, CompileError>>()?;
+    let worn = row
+        .worn
+        .values()
+        .map(|name| named_item(cx, name).map(|item| item.id))
+        .collect::<Result<Vec<_>, CompileError>>()?;
+    Ok(Arc::new(LoadoutReady {
+        carry: Arc::from(carry),
+        worn: Arc::from(worn),
+        strip: args.strip,
+    }))
+}
+
+struct LoadoutReady {
+    carry: Arc<[(i32, i32)]>,
+    worn: Arc<[i32]>,
+    strip: bool,
+}
+impl PredicatePlan for LoadoutReady {
+    fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        let snapshot = cx.cx.snapshot();
+        let Some(inventory) = snapshot.inventory() else {
+            return Truth::Unknown;
+        };
+        let Some(equipment) = snapshot.equipment() else {
+            return Truth::Unknown;
+        };
+        let carry_ready = self.carry.iter().all(|(id, qty)| {
+            inventory
+                .value
+                .iter()
+                .filter(|item| item.def.id == *id)
+                .map(|item| item.count)
+                .sum::<i32>()
+                >= *qty
+        });
+        let worn_ready = if self.strip {
+            equipment.value.is_empty()
+        } else {
+            self.worn
+                .iter()
+                .all(|id| equipment.value.iter().any(|item| item.def.id == *id))
+        };
+        if carry_ready && worn_ready {
+            Truth::True
+        } else {
+            Truth::False
+        }
+    }
 }
 
 fn done(cx: &StepContext<'_, '_>) -> StepOutcome {

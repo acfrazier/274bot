@@ -14,8 +14,8 @@ pub enum LoadoutRef<'a> {
     Compiled(&'a Loadout),
 }
 
-impl LoadoutRef<'_> {
-    pub fn row(self) -> &'_ Loadout {
+impl<'a> LoadoutRef<'a> {
+    pub fn row(self) -> &'a Loadout {
         match self {
             Self::Store(row) | Self::Compiled(row) => row,
         }
@@ -87,16 +87,9 @@ const METALS: [(&str, i32); 8] = [
 /// Fill only missing named worn pieces, never carry rows and never a piece the
 /// account already owns. The substitute must be an actually owned, same-type
 /// lower metal tier and pass its stat/quest gate.
-pub fn fill_owned_lower_tiers(
-    row: &Loadout,
-    owned: &[String],
-    facts: TierFacts,
-) -> Loadout {
+pub fn fill_owned_lower_tiers(row: &Loadout, owned: &[String], facts: TierFacts) -> Loadout {
     let mut filled = row.clone();
     for (slot, wanted) in &row.worn {
-        if owns(owned, wanted) {
-            continue;
-        }
         let Some((wanted_tier, suffix)) = split_metal(wanted) else {
             continue;
         };
@@ -109,6 +102,9 @@ pub fn fill_owned_lower_tiers(
         } else {
             facts.defence
         };
+        if owns(owned, wanted) && METALS[wanted_rank].1 <= skill && quest_usable(wanted, facts) {
+            continue;
+        }
         let best = owned
             .iter()
             .filter_map(|candidate| {
@@ -119,7 +115,7 @@ pub fn fill_owned_lower_tiers(
                     && rank <= wanted_rank
                     && level <= skill
                     && quest_usable(candidate, facts))
-                    .then_some((rank, candidate))
+                .then_some((rank, candidate))
             })
             .max_by_key(|(rank, _)| *rank)
             .map(|(_, name)| name.clone())

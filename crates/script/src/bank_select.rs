@@ -131,10 +131,6 @@ fn nearest_in(
         .copied()
 }
 
-fn nearest_with_preferences(from: WorldTile, preferences: BankPreferences) -> Option<NamedBank> {
-    BANKS.with(|banks| nearest_in(&banks.borrow(), from, preferences))
-}
-
 pub(crate) fn nearest(from: WorldTile) -> Value {
     nearest_bank(from)
         .as_ref()

@@ -1,5 +1,5 @@
 //! Compiled card `Quester`: prepare validates settings + release index only.
-use super::compile::{compile_path, cook_bytes, INDEX_JSON};
+use super::compile::{compile_path, path_bytes, INDEX_JSON};
 use super::runner::Quester;
 use crate::native::{
     CompiledCard, ConfigError, PrepareContext, PreparedConfig, RetainedMemory, SettingsBag,
@@ -42,22 +42,29 @@ struct ReleasePath {
     id: String,
     file: String,
 }
-fn cook_released(index_json: &str) -> bool {
+fn released(index_json: &str, id: &str) -> bool {
+    let Some(expected) = (match id {
+        "cook" => Some("cook.json"),
+        "sheep" => Some("sheep.json"),
+        "runemysteries" => Some("runemysteries.json"),
+        "romeojuliet" => Some("romeojuliet.json"),
+        _ => None,
+    }) else {
+        return false;
+    };
     serde_json::from_str::<ReleaseIndex>(index_json).is_ok_and(|index| {
         index.schema == 1
             && index
                 .paths
                 .iter()
-                .any(|path| path.id == "cook" && path.file == "cook.json")
+                .any(|path| path.id == id && path.file == expected)
     })
 }
-static COOK_RELEASED: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| cook_released(INDEX_JSON));
 
 struct Prepared {
     selected: Arc<api::game_data::SelectedGameData>,
     quests: Arc<QuestCatalog>,
-    _quest: String,
+    quest: String,
 }
 
 fn prepare(
@@ -83,15 +90,12 @@ fn prepare(
         bag.iter().map(|(key, value)| (key.as_str(), value)),
     ))
     .map_err(|e| StartError::Config(ConfigError::new("", "invalid-settings", e.to_string())))?;
-    if !*COOK_RELEASED {
-        return Err(StartError::Unavailable("release index missing cook".into()));
-    }
     let quest = settings.quest.unwrap_or_else(|| "cook".into());
-    if quest != "cook" {
+    if !released(INDEX_JSON, &quest) || path_bytes(&quest).is_none() {
         return Err(StartError::Config(ConfigError::new(
             "quest",
             "unknown-path",
-            "S1 ships Cook's Assistant only",
+            "choose cook, sheep, runemysteries, or romeojuliet",
         )));
     }
     let quests =
@@ -99,7 +103,7 @@ fn prepare(
     let prepared = Prepared {
         selected: Arc::clone(&cx.selected),
         quests: Arc::new(quests),
-        _quest: quest,
+        quest,
     };
     Ok(PreparedConfig::new(
         CARD.id,
@@ -118,7 +122,14 @@ fn create(
     let prepared = config.get::<Prepared>().ok_or_else(|| {
         StartError::Config(ConfigError::new("", "config-identity", "not Quester"))
     })?;
-    let path = compile_path(cook_bytes(), &prepared.selected, &prepared.quests)
+    let bytes = path_bytes(&prepared.quest).ok_or_else(|| {
+        StartError::Config(ConfigError::new(
+            "quest",
+            "unknown-path",
+            "Path is not embedded",
+        ))
+    })?;
+    let path = compile_path(bytes, &prepared.selected, &prepared.quests)
         .map_err(|err| StartError::Unavailable(Arc::from(format!("compile: {}", err.code))))?;
     Ok(Box::new(Quester::new(
         run,
@@ -156,10 +167,13 @@ mod tests {
     }
 
     #[test]
-    fn release_index_requires_schema_and_exact_cook_identity() {
-        assert!(cook_released(INDEX_JSON));
-        assert!(cook_released(
-            r#"{"schema":1,"paths":[{"id":"other","file":"other.json"},{"id":"cook","file":"cook.json"}]}"#
+    fn release_index_requires_schema_and_exact_path_identity() {
+        for id in ["cook", "sheep", "runemysteries", "romeojuliet"] {
+            assert!(released(INDEX_JSON, id), "{id} missing from release index");
+        }
+        assert!(released(
+            r#"{"schema":1,"paths":[{"id":"other","file":"other.json"},{"id":"cook","file":"cook.json"}]}"#,
+            "cook"
         ));
         for rejected in [
             r#"{"schema":2,"paths":[{"id":"cook","file":"cook.json"}]}"#,
@@ -171,7 +185,7 @@ mod tests {
             r#"{"schema":1,"paths":[{"id":"cook","file":"cook.json"}],"unknown":true}"#,
             "not json",
         ] {
-            assert!(!cook_released(rejected), "accepted {rejected}");
+            assert!(!released(rejected, "cook"), "accepted {rejected}");
         }
     }
 }

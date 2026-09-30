@@ -50,7 +50,7 @@
             "leash": 8, "prefer": ["Can I help find her for you?"]
           },
           "skip_if": { "Any": [] },
-          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "stages": ["romeojuliet:10"] } } }
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:10"] } } }
         }]
       },
       {
@@ -63,7 +63,7 @@
             "leash": 6, "prefer": []
           },
           "skip_if": { "Any": [] },
-          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "stages": ["romeojuliet:20"] } } }
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:20"] } } }
         }]
       },
       {
@@ -102,7 +102,7 @@
               "leash": 8, "prefer": []
             },
             "skip_if": { "Any": [] },
-            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "stages": ["romeojuliet:30"] } } }
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:30"] } } }
           }
         ]
       },
@@ -116,7 +116,7 @@
             "leash": 6, "prefer": []
           },
           "skip_if": { "Any": [] },
-          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "stages": ["romeojuliet:40"] } } }
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:40"] } } }
         }]
       },
       {
@@ -129,7 +129,7 @@
             "leash": 6, "prefer": []
           },
           "skip_if": { "Any": [] },
-          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "stages": ["romeojuliet:50"] } } }
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:50"] } } }
         }]
       },
       {
@@ -193,7 +193,7 @@
               "leash": 6, "prefer": []
             },
             "skip_if": { "Any": [] },
-            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "stages": ["romeojuliet:60"] } } }
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:60"] } } }
           }
         ]
       },

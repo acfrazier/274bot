@@ -47,7 +47,9 @@ impl NativeMachine for MakeMachine {
 
     fn begin(request: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         if request.qty < 1 {
-            return Err(ActionError::Unavailable(Arc::from("make quantity must be positive")));
+            return Err(ActionError::Unavailable(Arc::from(
+                "make quantity must be positive",
+            )));
         }
         let before = held(cx, request.product_id).unwrap_or(0);
         Ok(Self {
@@ -69,11 +71,14 @@ impl NativeMachine for MakeMachine {
             }
             match self.phase {
                 Phase::WaitMenu => {
-                    let Some(products) = cx.snapshot().make_products() else {
+                    let snapshot = cx.snapshot();
+                    let Some(products) = snapshot.make_products() else {
                         return Poll::Pending;
                     };
                     let product = products.value.iter().find(|product| {
-                        product.name.eq_ignore_ascii_case(&self.request.product_name)
+                        product
+                            .name
+                            .eq_ignore_ascii_case(&self.request.product_name)
                             || product
                                 .name
                                 .to_ascii_lowercase()
@@ -89,7 +94,7 @@ impl NativeMachine for MakeMachine {
                     };
                     let current = now_held.unwrap_or(0);
                     let need = (self.request.qty - current).max(1);
-                    if self.request.make_x {
+                    let component_id = if self.request.make_x {
                         let Some(button) = product
                             .buttons
                             .iter()
@@ -99,29 +104,29 @@ impl NativeMachine for MakeMachine {
                                 "make menu has no Make-X button",
                             ))));
                         };
-                        cx.emit(InteractReq::IfButton {
-                            component_id: button.component_id,
-                        })?;
+                        button.component_id
+                    } else {
+                        let Some(button) = product
+                            .buttons
+                            .iter()
+                            .filter(|button| button.quantity > 0)
+                            .max_by_key(|button| button.quantity)
+                        else {
+                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                "make menu has no fixed-quantity button",
+                            ))));
+                        };
+                        button.component_id
+                    };
+                    cx.emit(InteractReq::IfButton { component_id })?;
+                    if self.request.make_x {
                         self.answer = need;
                         self.deadline = cx.active_now().saturating_add(COUNT_BOUND);
                         self.phase = Phase::WaitCount;
-                        return Poll::Pending;
+                    } else {
+                        self.deadline = cx.active_now().saturating_add(PRODUCT_BOUND);
+                        self.phase = Phase::WaitProduct;
                     }
-                    let Some(button) = product
-                        .buttons
-                        .iter()
-                        .filter(|button| button.quantity > 0)
-                        .max_by_key(|button| button.quantity)
-                    else {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "make menu has no fixed-quantity button",
-                        ))));
-                    };
-                    cx.emit(InteractReq::IfButton {
-                        component_id: button.component_id,
-                    })?;
-                    self.deadline = cx.active_now().saturating_add(PRODUCT_BOUND);
-                    self.phase = Phase::WaitProduct;
                     return Poll::Pending;
                 }
                 Phase::WaitCount => {
