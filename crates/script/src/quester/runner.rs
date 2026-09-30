@@ -1051,6 +1051,22 @@ mod tests {
             status.failure.as_ref().unwrap().message.as_ref(),
             "dialogue interrupted by combat"
         );
+        script.interrupt(Interrupt::Resume);
+        with_tick_output(&snapshot, &mut ledger, 10, &mut output, |t| {
+            assert!(matches!(
+                script.tick(t).unwrap(),
+                ScriptFlow::Blocked(failure)
+                    if failure.message.as_ref() == "dialogue interrupted by combat"
+            ));
+        });
+        script.interrupt(Interrupt::SessionReady);
+        with_tick_output(&snapshot, &mut ledger, 11, &mut output, |t| {
+            assert!(matches!(
+                script.tick(t).unwrap(),
+                ScriptFlow::Blocked(failure)
+                    if failure.message.as_ref() == "dialogue interrupted by combat"
+            ));
+        });
     }
 
     #[test]
