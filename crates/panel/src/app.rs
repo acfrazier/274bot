@@ -3448,7 +3448,7 @@ fn status_section(ui: &Ui, session: &mut Session) {
         kv_row(ui, "mem", &mem);
         return;
     };
-    status_detail_rows(ui, d, &walk, mem);
+    status_detail_rows(ui, d, &walk, &mem);
 }
 
 fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &str) {
@@ -3485,7 +3485,7 @@ fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &
     if let Some(op) = d.row.last_op.as_ref() {
         kv_row(ui, "operation", &op.to_string());
     }
-    kv_row(ui, "mem", &mem);
+    kv_row(ui, "mem", mem);
 }
 
 fn status_kv_row(ui: &Ui, label: &str, value: &str) {
