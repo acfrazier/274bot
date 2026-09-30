@@ -2926,11 +2926,12 @@ fn a_persist_completing_after_close_shows_nothing_in_the_next_popup() {
     );
 }
 
-/// A persist that fails after it was accepted reports on the message line,
-/// as in 0.1.9, and never inside the settings popup.
+/// A persist that fails after it was accepted shows in the popup it came
+/// from, in red under the rows with "nothing was saved." under it, and on the
+/// message line; the popup goes back to what is saved.
 #[test]
 #[cfg(unix)]
-fn a_late_persist_failure_reports_on_the_message_line_only() {
+fn a_late_persist_failure_shows_in_the_popup_it_came_from() {
     use std::os::unix::fs::PermissionsExt;
 
     let iso = IsolatedEnv::enter("tui-settings-late-failure");
@@ -2941,6 +2942,7 @@ fn a_late_persist_failure_reports_on_the_message_line_only() {
     let held = gate.lock().unwrap();
     app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     session.pump(&mut app);
+    assert!(!app.settings.random_events, "the popup shows the edit");
 
     std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o500)).unwrap();
     drop(held);
@@ -2949,15 +2951,24 @@ fn a_late_persist_failure_reports_on_the_message_line_only() {
     std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     for (w, h) in SIZES {
         let screen = screen(&mut app, w, h);
-        assert!(cell_of(&screen, "settings — alice").is_some(), "{w}x{h}");
+        let (left, top) = cell_of(&screen, "settings — alice").expect("the popup is drawn");
+        let (x, y) = cell_of(&screen, "random: ")
+            .unwrap_or_else(|| panic!("{w}x{h}: the failure shows in the popup"));
+        assert!(
+            x == left && y > top,
+            "{w}x{h}: inside the popup, under its rows"
+        );
+        assert_eq!(screen[(x, y)].fg, ratatui::style::Color::Red, "{w}x{h}");
+        let (nx, ny) = cell_of(&screen, frontend_core::NOTHING_SAVED)
+            .unwrap_or_else(|| panic!("{w}x{h}: nothing-was-saved shows"));
+        assert!(nx == left && ny > y, "{w}x{h}: under the reason");
         assert!(
             cell_of(&screen, "msg: random:").is_some(),
-            "{w}x{h}: the message line reports the failure"
+            "{w}x{h}: and the message line reports it too"
         );
         assert!(
-            cell_of(&screen, "settings: random:").is_none()
-                && cell_of(&screen, frontend_core::NOTHING_SAVED).is_none(),
-            "{w}x{h}: the popup never shows it"
+            cell_of(&screen, "random events: true").is_some(),
+            "{w}x{h}: the popup is back on what is saved"
         );
     }
     assert!(
@@ -2971,6 +2982,54 @@ fn a_late_persist_failure_reports_on_the_message_line_only() {
             .random_events,
         "nothing was saved"
     );
+
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(
+            cell_of(&screen, frontend_core::NOTHING_SAVED).is_none(),
+            "{w}x{h}: the next edit clears the failure"
+        );
+    }
+}
+
+/// A persist that fails after its popup was closed never shows in the popup
+/// opened next, here on another profile: the message line reports it.
+#[test]
+#[cfg(unix)]
+fn a_persist_failing_after_close_reaches_only_the_message_line() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let iso = IsolatedEnv::enter("tui-settings-late-closed");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    focus_member(&mut session, &mut app, "alice");
+    open_settings(&mut session, &mut app);
+    let gate = session.core.write_gate();
+    let held = gate.lock().unwrap();
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    session.pump(&mut app);
+    app.on_key(settings_key(crossterm::event::KeyCode::Esc));
+    session.pump(&mut app);
+    focus_member(&mut session, &mut app, "bob");
+    open_settings(&mut session, &mut app);
+
+    std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    drop(held);
+    session.core.flush_writes();
+    session.pump(&mut app);
+    std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(cell_of(&screen, "settings — bob").is_some(), "{w}x{h}");
+        assert!(
+            cell_of(&screen, "msg: random:").is_some(),
+            "{w}x{h}: the message line reports the failure"
+        );
+        assert!(
+            cell_of(&screen, frontend_core::NOTHING_SAVED).is_none(),
+            "{w}x{h}: alice's failure never shows in bob's popup"
+        );
+    }
 }
 
 /// A refused persist (the bound profile is gone) shows in the popup, in red

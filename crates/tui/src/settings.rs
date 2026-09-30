@@ -62,8 +62,10 @@ pub enum SettingsKey {
 
 /// The settings popup widget over a `ProfileSettings`. `title` names the
 /// bound profile (for example `settings — alice`). `notice` is the bound
-/// profile's save feedback, drawn under the rows: a refusal in red with
-/// [`NOTHING_SAVED`], or `Saved <name>.` in green once the write is durable.
+/// profile's save feedback, drawn under the rows: a refusal or a failed
+/// write in red with [`NOTHING_SAVED`], or `Saved <name>.` in green once the
+/// write is durable. The notice is drawn straight into the buffer, so it
+/// costs a frame no allocation.
 pub struct SettingsPane<'a> {
     pub settings: &'a mut ProfileSettings,
     pub nav: &'a mut NavFindSettings,
@@ -158,17 +160,19 @@ impl<'a> SettingsPane<'a> {
     /// their place, so a click still lands on the row it points at.
     fn drawn_rect(area: Rect, notice: Option<&FormNotice>) -> Rect {
         let rows = Self::popup_rect(area);
-        let (lines, text) = match notice {
-            None => return rows,
-            Some(FormNotice::Refused(reason)) => (
-                2,
-                Span::raw(reason.as_str()).width().max(NOTHING_SAVED.len()),
-            ),
-            Some(FormNotice::Saved(saved)) => (1, Span::raw(saved.as_str()).width()),
+        let Some(notice) = notice else {
+            return rows;
         };
-        let width = u16::try_from(text + 2)
+        let (text, extra) = match notice.error() {
+            Some(reason) => (reason, NOTHING_SAVED),
+            None => (notice.text(), ""),
+        };
+        let wide = Span::raw(text).width().max(Span::raw(extra).width());
+        let width = u16::try_from(wide + 2)
             .unwrap_or(u16::MAX)
             .clamp(rows.width, area.width);
+        let inner = usize::from(width.saturating_sub(2)).max(1);
+        let lines = wrapped_rows(text, inner) + wrapped_rows(extra, inner);
         Rect {
             x: area.x + (area.width - width) / 2,
             y: rows.y,
@@ -197,7 +201,7 @@ impl Widget for SettingsPane<'_> {
             ("bank fetch", format!("{}", self.nav.allow_bank_fetch)),
             ("map bake", self.map_bake.as_str().to_string()),
         ];
-        let mut lines: Vec<Line> = rows
+        let lines: Vec<Line> = rows
             .iter()
             .enumerate()
             .map(|(i, (name, value))| {
@@ -205,24 +209,85 @@ impl Widget for SettingsPane<'_> {
                 Line::from(format!("{marker}{name}: {value}"))
             })
             .collect();
-        match self.notice {
-            Some(FormNotice::Refused(reason)) => {
-                let red = Style::default().fg(Color::Red);
-                lines.push(Line::styled(reason.as_str(), red));
-                lines.push(Line::styled(NOTHING_SAVED, red));
-            }
-            Some(FormNotice::Saved(saved)) => {
-                lines.push(Line::styled(
-                    saved.as_str(),
-                    Style::default().fg(Color::Green),
-                ));
-            }
-            None => {}
-        }
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .render(inner, buf);
+        if let Some(notice) = self.notice {
+            let bottom = inner.y + inner.height;
+            let mut y = inner.y + ROWS;
+            match notice.error() {
+                Some(reason) => {
+                    let red = Style::default().fg(Color::Red);
+                    y = draw_wrapped(buf, inner, y, bottom, reason, red);
+                    draw_wrapped(buf, inner, y, bottom, NOTHING_SAVED, red);
+                }
+                None => {
+                    let green = Style::default().fg(Color::Green);
+                    draw_wrapped(buf, inner, y, bottom, notice.text(), green);
+                }
+            }
+        }
     }
+}
+
+/// The popup's rows: random events, lamp skill, lamp auto, three nav
+/// opt-ins and the map-bake choice. The notice starts under them.
+const ROWS: u16 = 7;
+
+/// The width in columns of one character, as [`Span`] measures it.
+fn char_width(text: &str, at: usize, ch: char) -> usize {
+    Span::raw(&text[at..at + ch.len_utf8()]).width()
+}
+
+/// How many rows `text` takes wrapped at `width` columns (a character
+/// wrap, as [`draw_wrapped`] draws it). Empty text takes none.
+fn wrapped_rows(text: &str, width: usize) -> u16 {
+    let mut rows = 0;
+    let mut used = width;
+    for (at, ch) in text.char_indices() {
+        let w = char_width(text, at, ch);
+        if used + w > width {
+            rows += 1;
+            used = 0;
+        }
+        used += w;
+    }
+    rows
+}
+
+/// Draw `text` into `buf` inside `inner` from row `y`, wrapped at the
+/// popup's width, stopping at `bottom`. Returns the next free row. Slices
+/// the borrowed text, so it allocates nothing.
+fn draw_wrapped(
+    buf: &mut Buffer,
+    inner: Rect,
+    mut y: u16,
+    bottom: u16,
+    text: &str,
+    style: Style,
+) -> u16 {
+    let width = usize::from(inner.width).max(1);
+    let mut start = 0;
+    let mut used = 0;
+    for (at, ch) in text.char_indices() {
+        let w = char_width(text, at, ch);
+        if used + w > width {
+            if y < bottom {
+                buf.set_stringn(inner.x, y, &text[start..at], width, style);
+            }
+            y += 1;
+            start = at;
+            used = 0;
+        }
+        used += w;
+    }
+    if start < text.len() {
+        if y < bottom {
+            buf.set_stringn(inner.x, y, &text[start..], width, style);
+        }
+        y += 1;
+    }
+    y
 }
 
 #[cfg(test)]

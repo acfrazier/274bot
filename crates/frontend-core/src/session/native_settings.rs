@@ -257,7 +257,12 @@ impl<Io> OperatorSession<Io> {
                     self.operations
                         .set(op, &name, Outcome::Failed(error.clone()));
                     self.write_failures
-                        .push(format!("{}: {error}", pending.label));
+                        .push(crate::profile_saves::WriteFailure {
+                            op,
+                            target: name.clone(),
+                            label: pending.label,
+                            error: error.clone(),
+                        });
                     if matches!(pending.mirror, ArmMirror::NativeSettings { .. }) {
                         self.settings_writes.push(SettingsWrite {
                             op,

@@ -24,6 +24,7 @@ use crate::fleet::Fleet;
 use crate::operations::{
     write_op, ActionKind, OpChange, OperationBook, OperationId, OperationReport, Outcome,
 };
+use crate::profile_saves::{SaveBook, SaveRecord, SaveResult, SaveSettled, WriteFailure};
 use crate::profiles::{ProfileWriter, Written};
 use crate::resources::{ResourceView, Resources};
 use crate::scripts::{LiveDelivery, LiveSettings, SettingsResult, SettingsWrite};
@@ -212,7 +213,9 @@ pub struct OperatorSession<Io> {
     native_edits: HashMap<(String, String), OperationId>,
     preparations: HashMap<OperationId, PendingPreparation>,
     deliveries: Vec<PendingDelivery>,
-    write_failures: Vec<String>,
+    write_failures: Vec<WriteFailure>,
+    /// Profile-form saves in flight and settled ones not yet taken.
+    saves: SaveBook,
     /// Settled script-parameter writes, drained by the script coordinator.
     settings_writes: Vec<SettingsWrite>,
     /// Load Starts whose setup has not settled, by slot.
@@ -265,6 +268,7 @@ impl<Io> OperatorSession<Io> {
             preparations: HashMap::new(),
             deliveries: Vec::new(),
             write_failures: Vec::new(),
+            saves: SaveBook::default(),
             settings_writes: Vec::new(),
             starts: HashMap::new(),
             settled_starts: Vec::new(),
@@ -1662,9 +1666,23 @@ impl<Io> OperatorSession<Io> {
         Some(())
     }
 
-    /// Failed profile writes since the last take, as `label: error` lines.
-    pub fn take_write_failures(&mut self) -> Vec<String> {
+    /// Failed profile writes since the last take, for the banner or status
+    /// line (each displays as `label: error`).
+    pub fn take_write_failures(&mut self) -> Vec<WriteFailure> {
         std::mem::take(&mut self.write_failures)
+    }
+
+    /// Register the form save `record` under its write's operation. The
+    /// write settles in [`Self::poll`]; [`Self::take_save`] then returns its
+    /// result, keyed by the same operation id.
+    pub fn track_save(&mut self, record: SaveRecord) {
+        self.saves.track(record);
+    }
+
+    /// The settled result of the form save queued as `op`, once. `None`
+    /// while it is still being written, or when it was never registered.
+    pub fn take_save(&mut self, op: OperationId) -> Option<SaveSettled> {
+        self.saves.take(op)
     }
 
     /// Script-parameter writes settled since the last take: what was saved
@@ -1726,9 +1744,23 @@ impl<Io> OperatorSession<Io> {
         // through the write owning the row.
         let own_setting =
             written.superseded && self.keeps_own_setting(&member, &pending.mirror, &written.later);
+        // A form save registered under this operation settles from this
+        // write's own commit result, superseded or not: every write in a
+        // commit shares it.
+        let tracked = self.saves.tracks(written.op);
+        let durable_row = committed.is_some();
+        let commit_error = written.result.as_ref().err().filter(|_| tracked).cloned();
         let result = match written.result {
             Ok(()) if !written.superseded || own_setting => {
                 self.operations.set(written.op, &member, Outcome::Completed);
+                if tracked {
+                    let saved = if durable_row {
+                        SaveResult::Saved
+                    } else {
+                        SaveResult::Gone
+                    };
+                    self.saves.settle(written.op, saved);
+                }
                 if let ArmMirror::Remember(Some(live)) = &pending.mirror {
                     if live.run.is_some() {
                         if let Some(play) = self.play.as_mut() {
@@ -1748,14 +1780,37 @@ impl<Io> OperatorSession<Io> {
                         vault.restore(&name, durable);
                     }
                 }
-                self.write_failures
-                    .push(format!("{}: {error}", pending.label));
+                let failure = WriteFailure {
+                    op: written.op,
+                    target: member.clone(),
+                    label: pending.label,
+                    error: error.clone(),
+                };
+                if tracked {
+                    self.saves
+                        .settle(written.op, SaveResult::Failed(failure.clone()));
+                }
+                self.write_failures.push(failure);
                 self.operations
                     .set(written.op, &member, Outcome::Failed(error.clone()));
                 SettingsResult::Failed(error)
             }
             _ => {
                 self.operations.set(written.op, &member, Outcome::Cancelled);
+                if tracked {
+                    // Reported once, through the write that owns the row.
+                    let result = match commit_error {
+                        Some(error) => SaveResult::Failed(WriteFailure {
+                            op: written.op,
+                            target: member.clone(),
+                            label: pending.label,
+                            error,
+                        }),
+                        None if durable_row => SaveResult::Saved,
+                        None => SaveResult::Gone,
+                    };
+                    self.saves.settle(written.op, result);
+                }
                 SettingsResult::Superseded
             }
         };

@@ -3052,10 +3052,12 @@ impl Session {
         }
     }
 
-    /// A durable profile write that failed after its edit was accepted.
+    /// A durable profile write that failed after its edit was accepted: the
+    /// banner shows it, and [`Self::settle_profile_save`] shows a failed
+    /// form save in its form too.
     fn surface_write_failures(&mut self) {
         for failure in self.core.take_write_failures() {
-            self.error = Some(failure);
+            self.error = Some(failure.to_string());
         }
     }
 
@@ -4821,7 +4823,7 @@ impl Drop for Session {
 }
 
 mod chooser;
-pub use chooser::EditSwitch;
+pub use chooser::{EditLeave, EditSwitch};
 
 #[cfg(test)]
 #[path = "session_tests.rs"]

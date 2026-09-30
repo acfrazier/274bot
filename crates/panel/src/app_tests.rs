@@ -3703,8 +3703,10 @@ fn saved_shows_only_once_the_write_is_durable() {
     assert_eq!(ui.disk(), [row("alice", 42, "newpass")]);
 }
 
-/// Opening another profile's form before a save completes: the save still
-/// lands, but its `Saved` never shows on the other profile's form.
+/// Opening another profile's form while a save is still being written asks
+/// first: the save can still fail, and the draft is all that is left of it.
+/// Discard opens the other form; the save lands, but its `Saved` never
+/// shows there.
 #[test]
 fn a_save_completing_after_a_switch_shows_nothing_on_the_new_form() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -3717,7 +3719,13 @@ fn a_save_completing_after_a_switch_shows_nothing_on_the_new_form() {
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
-    let switched = ui.click(At::List, "Edit##edit-bob");
+    let asked = ui.click(At::List, "Edit##edit-bob");
+    assert!(
+        asked.has("Editing alice") && asked.has("[ Discard ]") && asked.has("Saving alice"),
+        "an unsettled save asks before the form is left: {}",
+        asked.text
+    );
+    let switched = ui.click(At::SwitchPrompt, "Discard");
     assert!(switched.has("Editing bob"), "{}", switched.text);
 
     drop(held);
@@ -3737,8 +3745,10 @@ fn a_save_completing_after_a_switch_shows_nothing_on_the_new_form() {
     );
 }
 
-/// Closing Profiles before a save completes and opening the same profile
-/// again: the new form never shows the earlier save's `Saved`.
+/// Closing Profiles while a save is still being written asks first, from
+/// Close and from the window's ✕ alike; Keep editing leaves the form and its
+/// draft alone. Discard closes; opening the same profile again never shows
+/// the earlier save's `Saved`.
 #[test]
 fn a_save_completing_after_close_shows_nothing_on_a_reopened_form() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -3748,8 +3758,25 @@ fn a_save_completing_after_close_shows_nothing_on_a_reopened_form() {
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
-    let closed = ui.click(At::Window, "Close");
-    assert!(closed.text.trim().is_empty(), "Close shut Profiles");
+
+    let x = ui.click(At::Window, "#CLOSE");
+    assert!(
+        x.has("Editing alice") && x.has("[ Discard ]") && x.has("close Profiles"),
+        "the ✕ asks while the save is unsettled: {}",
+        x.text
+    );
+    let kept = ui.click(At::SwitchPrompt, "Keep editing");
+    assert!(kept.has("Editing alice"), "{}", kept.text);
+    assert_eq!(ui.session.cred_pass, "newpass", "keeping drops nothing");
+
+    let asked = ui.click(At::Window, "Close");
+    assert!(
+        asked.has("Editing alice") && asked.has("[ Discard ]"),
+        "Close asks too: {}",
+        asked.text
+    );
+    let closed = ui.click(At::SwitchPrompt, "Discard");
+    assert!(closed.text.trim().is_empty(), "Discard shut Profiles");
 
     // The panel's Profiles button, then Edit on the same profile.
     ui.session.wall.chooser_open = true;
@@ -3769,12 +3796,29 @@ fn a_save_completing_after_close_shows_nothing_on_a_reopened_form() {
     assert_eq!(ui.disk(), [row("alice", 42, "newpass")]);
 }
 
-/// A save whose write fails after it was accepted reports on the main
-/// panel's banner, as in 0.1.9, and never in a form: here the form of the
-/// profile opened meanwhile.
+/// With no save unsettled, Close and the ✕ close Profiles at once, as
+/// before: the protection lasts only until the write settles.
+#[test]
+fn close_needs_no_prompt_once_the_save_settled() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-close-settled", &[("alice", "apass", 42)]);
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    ui.click(At::Form, "Save");
+    ui.finish_writes();
+    let saved = ui.frame();
+    assert_eq!(saved.above_save(1), ["Saved alice."], "{}", saved.text);
+
+    let closed = ui.click(At::Window, "#CLOSE");
+    assert!(closed.text.trim().is_empty(), "the ✕ shut Profiles");
+}
+
+/// A save whose write fails after it was accepted shows in the form it came
+/// from, as well as on the banner: the form keeps its draft and its target,
+/// and Save retries.
 #[test]
 #[cfg(unix)]
-fn a_late_write_failure_reports_on_the_banner_not_in_a_form() {
+fn a_late_write_failure_shows_in_the_form_it_came_from() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ui = ProfilesUi::new(
         "profiles-late-failure",
@@ -3786,6 +3830,68 @@ fn a_late_write_failure_reports_on_the_banner_not_in_a_form() {
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
     ui.click(At::List, "Edit##edit-bob");
+    ui.click(At::SwitchPrompt, "Keep editing");
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(shown.has("Editing alice"), "{}", shown.text);
+    assert!(shown.has("credentials:"), "the reason: {}", shown.text);
+    assert_eq!(
+        shown.above_save(1),
+        [frontend_core::NOTHING_SAVED],
+        "{}",
+        shown.text
+    );
+    assert!(shown.in_colour(super::ERROR) > 0, "in the error colour");
+    assert_eq!(ui.session.cred_pass, "newpass", "the draft is kept");
+    assert!(
+        ui.banner().contains("credentials:"),
+        "and the banner reports it too"
+    );
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")],
+        "nothing was saved"
+    );
+
+    // The form kept its draft and its target, so Save retries the write.
+    ui.click(At::Form, "Save");
+    ui.finish_writes();
+    let saved = ui.frame();
+    assert_eq!(saved.above_save(1), ["Saved alice."], "{}", saved.text);
+    assert!(
+        !saved.has("credentials:"),
+        "the earlier failure is gone: {}",
+        saved.text
+    );
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "newpass"), row("bob", 43, "bpass")],
+        "the retry landed"
+    );
+}
+
+/// A failure that arrives after the operator discarded the form it came from
+/// shows in no form: the banner reports it, and the form showing now stays
+/// clean.
+#[test]
+#[cfg(unix)]
+fn a_late_failure_after_discarding_the_form_reaches_only_the_banner() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-late-discarded",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    ui.click(At::List, "Edit##edit-bob");
+    ui.click(At::SwitchPrompt, "Discard");
 
     ui.writable(false);
     drop(held);
@@ -3807,6 +3913,175 @@ fn a_late_write_failure_reports_on_the_banner_not_in_a_form() {
         ui.disk(),
         [row("alice", 42, "apass"), row("bob", 43, "bpass")],
         "nothing was saved"
+    );
+}
+
+/// A failure after Profiles was closed and the same profile reopened shows
+/// only on the banner, not in the new form of the same target.
+#[test]
+#[cfg(unix)]
+fn a_late_failure_after_close_and_reopen_reaches_only_the_banner() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-late-reopened", &[("alice", "apass", 42)]);
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    ui.click(At::Window, "Close");
+    ui.click(At::SwitchPrompt, "Discard");
+    ui.session.wall.chooser_open = true;
+    ui.frame();
+    ui.click(At::List, "Edit##edit-alice");
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(shown.has("Editing alice"), "{}", shown.text);
+    assert!(
+        !shown.has("credentials:") && !shown.has(frontend_core::NOTHING_SAVED),
+        "the earlier form's failure never shows on the reopened one: {}",
+        shown.text
+    );
+    assert!(ui.banner().contains("credentials:"));
+    assert_eq!(ui.disk(), [row("alice", 42, "apass")]);
+}
+
+/// Deleting the profile whose save is still queued closes its form; when the
+/// commit then fails, the delete's failure is on the banner, the profile is
+/// back as it was on disk, and no form shows anything.
+#[test]
+#[cfg(unix)]
+fn a_failure_after_deleting_the_target_reaches_only_the_banner() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-late-deleted",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    assert!(ui.session.delete_profile("alice"));
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(!shown.has("Editing"), "the form went with its target");
+    assert!(
+        !shown.has("credentials:") && !shown.has(frontend_core::NOTHING_SAVED),
+        "{}",
+        shown.text
+    );
+    assert!(ui.banner().contains("chooser:"), "the delete's failure");
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")],
+        "neither the save nor the delete landed"
+    );
+    let back = ui.session.core.vault().unwrap().get("alice").cloned();
+    assert_eq!(
+        back.map(|p| p.password.to_string()).as_deref(),
+        Some("apass"),
+        "alice is back in the list as it is on disk"
+    );
+}
+
+/// A second Save while the first is still being written is refused, not
+/// queued: when the first then fails, the form shows the failure and the
+/// second attempt never wrote anything.
+#[test]
+#[cfg(unix)]
+fn a_refused_second_save_is_not_queued_behind_a_failing_one() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-second-refused",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_user = "carol".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    ui.session.cred_user = "dave".into();
+    assert!(
+        !ui.session.save_credentials(),
+        "the second attempt is refused while the first is unsettled"
+    );
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let failed = ui.frame();
+    ui.writable(true);
+    assert!(failed.has("Editing alice"), "{}", failed.text);
+    assert_eq!(
+        failed.above_save(1),
+        [frontend_core::NOTHING_SAVED],
+        "{}",
+        failed.text
+    );
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")],
+        "neither attempt wrote anything"
+    );
+
+    // The form still holds the second draft, so Save now writes that one.
+    ui.click(At::Form, "Save");
+    ui.finish_writes();
+    let saved = ui.frame();
+    assert_eq!(saved.above_save(1), ["Saved dave."], "{}", saved.text);
+    assert_eq!(
+        ui.disk(),
+        [row("bob", 43, "bpass"), row("dave", 42, "apass")]
+    );
+}
+
+/// A save a later save of the same profile superseded in the writer's queue
+/// (the operator discarded its form and saved from the next one): the
+/// commit fails, and the form showing, the later save's, shows the failure.
+#[test]
+#[cfg(unix)]
+fn a_failure_of_a_superseding_save_shows_in_the_form_that_superseded() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-superseded",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "first".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    ui.click(At::List, "Edit##edit-bob");
+    ui.click(At::SwitchPrompt, "Discard");
+    // Alice again, from a new form that loads the staged row.
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "second".into();
+    ui.click(At::Form, "Save");
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(shown.has("Editing alice"), "{}", shown.text);
+    assert_eq!(
+        shown.above_save(1),
+        [frontend_core::NOTHING_SAVED],
+        "{}",
+        shown.text
+    );
+    assert_eq!(ui.session.cred_pass, "second", "the draft is kept");
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")]
     );
 }
 

@@ -1990,8 +1990,8 @@ impl TuiSession {
     /// for (the operator vault; `--live`'s temp vault is ephemeral) and
     /// mirror guardian settings onto a running slot's arm. A refusal shows
     /// on the message line and in the popup; `Saved <name>.` shows in the
-    /// same popup once the write is durable. A write that fails later is
-    /// reported on the message line only.
+    /// same popup once the write is durable, and a write that fails later
+    /// shows its error there too, with the popup back on what is saved.
     fn persist_settings(&mut self, app: &mut TuiApp) {
         let Some(name) = app.settings_profile.clone() else {
             return;
@@ -2006,7 +2006,9 @@ impl TuiSession {
             &settings.lamp_skill,
             settings.lamp_auto,
         ) {
-            Ok(op) => app.settings_save.submitted(op, name),
+            Ok(op) => app
+                .settings_save
+                .submitted(&mut self.core, op, Some(&name), &name),
             Err(e) => {
                 let reason = format!("settings: {e}");
                 app.settings_save.refused(reason.clone());
@@ -2142,7 +2144,7 @@ impl TuiSession {
 
         let mut write_failed = false;
         for failure in self.core.take_write_failures() {
-            app.error = Some(failure);
+            app.error = Some(failure.to_string());
             write_failed = true;
         }
         if write_failed && app.params_state.open {
@@ -2315,8 +2317,24 @@ impl TuiSession {
         if !app.settings_state.open && app.settings_profile.take().is_some() {
             app.settings_save.form_changed();
         }
-        // `Saved <name>.` shows only on the popup the persist came from.
-        app.settings_save.settle(&self.core);
+        // `Saved <name>.` or the failure shows only on the popup the persist
+        // came from. A failed write put the profile back, so that popup
+        // shows what is saved rather than the edit that did not land.
+        for settled in app.settings_save.settle(&mut self.core) {
+            let frontend_core::FormSettled::Failed(failed) = settled else {
+                continue;
+            };
+            if !failed.same_form {
+                continue;
+            }
+            if let Some(saved) = app
+                .settings_profile
+                .as_deref()
+                .and_then(|name| self.core.vault().and_then(|v| v.get(name)))
+            {
+                app.settings = saved.settings.clone();
+            }
+        }
         if app.map_bake_dirty {
             self.persist_map_bake(app);
             app.map_bake_dirty = false;
