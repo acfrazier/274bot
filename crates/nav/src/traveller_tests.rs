@@ -1811,6 +1811,71 @@ fn follow_trapdoor_already_open_climb_arrives_cellar_offset() {
 }
 
 #[test]
+fn follow_vertical_ladder_lands_on_the_adjacent_player_tile() {
+    for (from_level, to_level, id, op) in [(0, 1, 1748, "Climb-up"), (2, 1, 1746, "Climb-down")] {
+        let mut c = scene_client();
+        plant_loc(&mut c, id, "Ladder", op, 2, 4);
+        let mut snap = snap_at(&mut c, 2, 3);
+        let mut loc = snap.locs()[0].clone();
+        loc.tile.level = from_level;
+        c.minusedlevel = from_level;
+        bump_rebuild(&mut c, &mut snap);
+        snap.seed_locs(vec![loc]);
+        let mut edge = trapdoor_edge();
+        edge.at.level = from_level;
+        edge.to = WorldTile {
+            x: edge.at.x,
+            z: edge.at.z,
+            level: to_level,
+        };
+        edge.loc_id = id;
+        edge.open_loc_id = None;
+        let landing = WorldTile {
+            x: 3202,
+            z: 3203,
+            level: to_level,
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: landing,
+            ticks: 3.0,
+        };
+        let mut rec = FollowRec {
+            route: Some((2, 3)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let mut options = TravelOptions {
+            close_enough: 0,
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.loc_ops, 1);
+        // The old plane must not settle the hop, even at the same x/z.
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        c.minusedlevel = to_level;
+        // A distant tile on the expected plane is not this ladder's arrival.
+        plant_player(&mut c, 2, 1);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        plant_player(&mut c, 2, 3);
+        bump_rebuild(&mut c, &mut snap);
+        assert_eq!(
+            t.follow(&mut rec, &snap, route, &mut options),
+            Some(TravelOutcome::Arrived { at: landing })
+        );
+        assert_eq!(rec.loc_ops, 1, "the completed climb must not be sent twice");
+    }
+}
+
+#[test]
 fn follow_cellar_offset_completes_finished_walk_then_uses_keyed_door() {
     let mut c = scene_client();
     c.map_build_base_x = 3114;
