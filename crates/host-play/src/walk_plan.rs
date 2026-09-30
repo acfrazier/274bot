@@ -52,13 +52,25 @@ pub struct StepProgress {
 }
 
 /// The snapshot facts a BankBudget send latched, so the next pump does
-/// not re-send until the bank, backpack or worn set actually changes.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// not re-send until the bank session or the step's own target changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BankFetchFlight {
     pub(crate) bank_gen: u64,
     pub(crate) bank_com: i32,
-    pub(crate) backpack: Vec<(i32, i32)>,
-    pub(crate) worn: Vec<i32>,
+    pub(crate) target: FlightTarget,
+}
+
+/// What a sent step moves, as the snapshot showed it at the send. A change
+/// anywhere else (another backpack row, another worn obj) is not this
+/// send's acknowledgement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FlightTarget {
+    /// Open / Close: the bank session alone.
+    Bank,
+    /// DepositAll: every backpack row `(obj id, count)`.
+    Backpack(Vec<(i32, i32)>),
+    /// Withdraw / Wear: the obj's backpack total and whether it is worn.
+    Obj { id: i32, carried: i32, worn: bool },
 }
 
 /// Outcome of a walk-arm route attempt: a direct route, a BankBudget

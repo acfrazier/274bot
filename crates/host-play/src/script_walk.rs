@@ -12,7 +12,7 @@ use nav::WorldState;
 use super::play_status::lock_statuses;
 use super::{
     deposit_all_backpack, log_walk_arm_bot, open_bank_at_here, withdraw_id, BankFetchFlight,
-    NavBot, PendingBankFetch, ScriptWalkArm, SlotStatus,
+    FlightTarget, NavBot, PendingBankFetch, ScriptWalkArm, SlotStatus,
 };
 
 /// Pumps a non-Walk BankBudget step may wait before a truthful abort.
@@ -658,7 +658,7 @@ fn step_bank_action<D: Driver>(
             BankStep::Walk { .. } => unreachable!("Walk steps in step_walk"),
         };
         if wrote {
-            pending.progress.flight = Some(Box::new(BankFetchFlight::of(snapshot)));
+            pending.progress.flight = Some(Box::new(BankFetchFlight::of(snapshot, step)));
         }
         log_walk_arm_bot(|| format!("bank_fetch {step:?} sent={wrote}"));
         wrote
@@ -771,32 +771,45 @@ fn arm_access_fallback(
 }
 
 impl BankFetchFlight {
-    /// The bank, backpack and worn facts a send is judged against.
-    fn of(snapshot: &GameSnapshot) -> Self {
+    /// The bank session and `step`'s own target a send is judged against.
+    fn of(snapshot: &GameSnapshot, step: &BankStep) -> Self {
+        let target = match *step {
+            BankStep::DepositAll => FlightTarget::Backpack(backpack(snapshot).collect()),
+            BankStep::Withdraw { id, .. } | BankStep::Wear { id } => FlightTarget::Obj {
+                id,
+                carried: backpack_count(snapshot, id),
+                worn: wearing(snapshot, id),
+            },
+            BankStep::Open | BankStep::Close | BankStep::Walk { .. } => FlightTarget::Bank,
+        };
         BankFetchFlight {
             bank_gen: snapshot.bank_session_generation(),
             bank_com: snapshot.bank_component_id(),
-            backpack: backpack(snapshot).collect(),
-            worn: worn(snapshot).collect(),
+            target,
         }
     }
 
-    /// Whether `snapshot` still shows exactly the latched facts, so the
-    /// send is still in flight. Compares in place, without a per-pump copy.
+    /// Whether `snapshot` still shows the latched bank session and target,
+    /// so the send is still in flight. Compares in place, without a
+    /// per-pump copy.
     fn matches(&self, snapshot: &GameSnapshot) -> bool {
         self.bank_gen == snapshot.bank_session_generation()
             && self.bank_com == snapshot.bank_component_id()
-            && self.backpack.iter().copied().eq(backpack(snapshot))
-            && self.worn.iter().copied().eq(worn(snapshot))
+            && match &self.target {
+                FlightTarget::Bank => true,
+                FlightTarget::Backpack(rows) => rows.iter().copied().eq(backpack(snapshot)),
+                &FlightTarget::Obj { id, carried, worn } => {
+                    backpack_count(snapshot, id) == carried && wearing(snapshot, id) == worn
+                }
+            }
     }
 }
 
 /// The backpack's own rows `(obj id, count)`, one per filled slot. While a
-/// bank is open the client shows the pack only in the bank's side panel
-/// (`bank_side`); otherwise it is the inv tab (`inventory`). Never
+/// bank is open the client shows the pack in the bank's side panel
+/// (`bank_side`); otherwise it is the inv tab (`inventory`). Not
 /// [`GameSnapshot::inv`]: with no inv tab bound, its fallback reads the
-/// first filled TYPE_INV, which is the bank's withdraw grid while the bank
-/// is open and the pack is empty.
+/// first filled TYPE_INV, which need not be the pack.
 fn backpack(snapshot: &GameSnapshot) -> impl Iterator<Item = (i32, i32)> + '_ {
     let rows = if snapshot.bank_component_id() >= 0 {
         snapshot.bank_side()

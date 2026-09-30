@@ -12209,11 +12209,10 @@ fn bank_fetch_withdraw_does_not_resend_while_in_flight() {
     }
 }
 
-/// While the bank is open the live client binds no inv tab, so
-/// `GameSnapshot::inv()` falls back to the first filled TYPE_INV: the
-/// bank's own withdraw grid once the pack is empty. Deposit and withdraw
-/// progress must read the pack itself (the bank side panel), or DepositAll
-/// never sees the pack empty and a Withdraw "lands" on the bank's rows.
+/// With no inv tab bound, the backpack shows only in the bank's side
+/// panel while the bank is open. Deposit and withdraw progress read that
+/// panel, so DepositAll sees the pack empty and a Withdraw does not "land"
+/// on the bank's rows.
 #[test]
 fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
     use nav::bank_fetch::BankStep;
@@ -12234,7 +12233,7 @@ fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
     assert!(snap.bank_component_id() >= 0, "the bank is open");
     assert!(snap.bank_side().is_empty(), "the pack is empty");
     assert!(snap.inventory().is_empty(), "no inv tab is bound");
-    assert_eq!(snap.inv(), &[(1, 20)], "inv() shows the bank's rows");
+    assert!(snap.inv().is_empty(), "inv() never reads the bank's rows");
     let route = dummy_fetch_route();
     let mut bot = NavBot {
         bank_fetch: Some(PendingBankFetch {
@@ -12390,6 +12389,151 @@ fn bank_fetch_waits_through_the_gap_after_a_sent_move() {
     snap.rebuild(&c);
     step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
     assert_eq!(front(&bot), None, "the worn knife lands the Wear");
+}
+
+/// A sent Withdraw stays in flight until its own obj moves: another
+/// backpack row changing before the withdrawal's update arrives is not an
+/// acknowledgement, so neither the script pump nor the panel/TUI pump
+/// sends the Withdraw a second time.
+#[test]
+fn bank_fetch_withdraw_ignores_an_unrelated_backpack_change() {
+    use nav::bank_fetch::BankStep;
+
+    let set_side = |c: &mut Client, obj: Vec<i32>, n: Vec<i32>| {
+        c.set_iface_mut(
+            701,
+            IfTypeMut {
+                link_obj_type: Some(obj),
+                link_obj_number: Some(n),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    };
+    let withdraw = BankStep::Withdraw { id: 2, count: 1 };
+    for walk_arm in [false, true] {
+        let mut c = bank_fetch_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let route = dummy_fetch_route();
+        let pending = PendingBankFetch {
+            steps: [withdraw.clone()].into(),
+            dest: route.dest,
+            opts: FindOptions::default(),
+            final_route: route.clone(),
+            avoid: Vec::new(),
+            progress: Default::default(),
+        };
+        let mut bot = NavBot {
+            bank_fetch: Some(pending.clone()),
+            ..Default::default()
+        };
+        let mut arm = WalkArm {
+            bank_fetch: Some(pending),
+            route: Some(route),
+            ..Default::default()
+        };
+        let mut pump = |c: &mut Client, snap: &GameSnapshot| {
+            let before = c.out.pos;
+            if walk_arm {
+                step_walk_arm_bank_fetch(c, snap, &mut arm, None, Some((0, 4, 0)), false);
+            } else {
+                step_bank_fetch_on_bot(c, snap, &mut bot, None, Some((0, 4, 0)), false);
+            }
+            let front = if walk_arm {
+                arm.bank_fetch.as_ref()
+            } else {
+                bot.bank_fetch.as_ref()
+            }
+            .and_then(|p| p.steps.front().cloned());
+            (c.out.pos > before, front)
+        };
+
+        assert_eq!(
+            pump(&mut c, &snap),
+            (true, Some(withdraw.clone())),
+            "Withdraw is sent (walk_arm={walk_arm})"
+        );
+        // The Bones stack changes; the knife is still banked, not carried.
+        set_side(&mut c, vec![2, 0], vec![4, 0]);
+        snap.rebuild(&c);
+        assert!(bank_holds_for_test(&snap, 2));
+        assert!(!snap.bank_side().iter().any(|it| it.def.id == 2));
+        assert_eq!(
+            pump(&mut c, &snap),
+            (false, Some(withdraw.clone())),
+            "an unrelated row change does not resend (walk_arm={walk_arm})"
+        );
+        set_side(&mut c, vec![2, 3], vec![4, 1]);
+        snap.rebuild(&c);
+        assert_eq!(
+            pump(&mut c, &snap),
+            (false, None),
+            "the knife in the pack lands the Withdraw (walk_arm={walk_arm})"
+        );
+    }
+}
+
+/// With the bank open, no inv tab bound and an empty backpack, an obj held
+/// only in the bank is not carried: the nav state leaves it out, so the
+/// planner fetches it from the bank instead of planning a bare Wear the
+/// open bank refuses.
+#[test]
+fn unbound_inv_tab_bank_rows_are_not_carried_for_planning() {
+    let mut c = bank_fetch_client();
+    c.side_icon[3] = -1;
+    for com in [500, 701] {
+        c.set_iface_mut(
+            com,
+            IfTypeMut {
+                link_obj_type: Some(vec![0, 0]),
+                link_obj_number: Some(vec![0, 0]),
+                ..Default::default()
+            },
+        );
+    }
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.bank_component_id() >= 0, "the bank is open");
+    assert!(snap.inventory().is_empty() && snap.bank_side().is_empty());
+    let bank_rows: Vec<(i32, i32)> = snap.bank().iter().map(|it| (it.def.id, it.count)).collect();
+    assert_eq!(bank_rows, vec![(2, 20)], "the knife is banked");
+
+    let state = WorldState::from_snapshot(&snap);
+    assert_eq!(state.inv.get(&2), None, "the banked knife is not carried");
+    let world = knife_nav_world(2);
+    let from = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let fetch = nav::bank_fetch::plan_bank_fetch(
+        &[nav::router::MissingReq::WearAny { ids: vec![2] }],
+        &state,
+        &bank_rows,
+        world.banks(),
+        from,
+        &world.collision,
+    )
+    .expect("the banked knife plans a trip");
+    let access = nav::bank_fetch::nearest_bank_access(&world.collision, world.banks(), from)
+        .expect("knife world has an access tile");
+    assert_eq!(
+        fetch.steps,
+        vec![
+            nav::bank_fetch::BankStep::Walk {
+                x: access.x,
+                z: access.z,
+                level: access.level
+            },
+            nav::bank_fetch::BankStep::Open,
+            nav::bank_fetch::BankStep::DepositAll,
+            nav::bank_fetch::BankStep::Withdraw { id: 2, count: 1 },
+            nav::bank_fetch::BankStep::Close,
+            nav::bank_fetch::BankStep::Wear { id: 2 },
+        ]
+    );
 }
 
 fn bank_holds_for_test(snapshot: &GameSnapshot, id: i32) -> bool {
