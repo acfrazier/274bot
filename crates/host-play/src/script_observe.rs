@@ -1112,7 +1112,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         "journal-proof-close origin=host-native effect=CloseModal accepted={accepted} run={:?} request={} tick={tick} snapshot_root={:?} unix_ns={}",
                                         authority.run(),
                                         authority.request_id().get(),
-                                        snapshot.main_modal().map(|pair| pair.value.root),
+                                        snapshot.modals().main,
                                         std::time::SystemTime::now()
                                             .duration_since(std::time::UNIX_EPOCH)
                                             .expect("journal proof clock")
