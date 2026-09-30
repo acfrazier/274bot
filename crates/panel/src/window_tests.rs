@@ -784,8 +784,9 @@ fn panel_font_covers_non_ascii_source_string_literals() {
     );
 }
 
-/// The 3270 14 px cell advance stays within 5% of ProggyClean's old 6 px
-/// advance at 1×, so the panel's existing horizontal layout still fits.
+/// The 3270 cell advance at [`PANEL_FONT_SIZE`] stays within 5% of
+/// ProggyClean's old 6 px advance at 1×, natively (no minimum-advance
+/// padding), so the panel's existing horizontal layout still fits.
 #[test]
 fn panel_font_advance_stays_within_five_percent_of_old_layout() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -803,12 +804,12 @@ fn panel_font_advance_stays_within_five_percent_of_old_layout() {
     };
     ctx.render();
     assert!(
-        (size - 14.0).abs() <= 0.01,
-        "font size at 1× must stay 14 px, got {size:.3}"
+        (size - PANEL_FONT_SIZE).abs() <= 0.01,
+        "font size at 1× must stay {PANEL_FONT_SIZE} px, got {size:.3}"
     );
     assert!(
         (advance - 6.0).abs() <= 0.3,
-        "14 px 3270 cell advance {advance:.3} at current size {size:.3} must stay within 5% of 6.0 px"
+        "3270 cell advance {advance:.3} at size {size:.3} must stay within 5% of 6.0 px"
     );
 }
 
