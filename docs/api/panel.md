@@ -81,10 +81,11 @@ General config's **session log file** checkbox shows the full rotated path as
 Status omits walk and queue rows when their value is empty, `—`, or `-1`, and
 omits the modal row unless the selected bot is in game; meaningful values
 remain visible. The active server revision appears once when a session is
-bound, while the revision selector is only shown before binding. Profiles
-uses scrollable lists and stacks its row and form controls when the dock
-extends past the work area, so Edit, Save, Cancel, and Close remain reachable
-at narrow window sizes.
+bound, while the revision selector is only shown before binding. When the
+docked Profiles window runs past the right edge of the app window (for
+example on a 1024×768 desktop), its rows, Save/Cancel and Close are laid out
+within the part that is on screen, so every profile's Edit and ✕ and the
+form's buttons stay reachable without scrolling.
 
 ## Wiring
 

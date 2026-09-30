@@ -4322,16 +4322,22 @@ fn chooser_dock_id(panel: Option<Id>) -> Option<Id> {
     panel
 }
 
-/// Whether the docked Profiles window extends past the viewport work area.
-/// Rows and form actions stack at that edge so their controls stay clickable.
-fn chooser_controls_stack(ui: &Ui) -> bool {
+/// The right edge Profiles controls may reach, in screen space: the docked
+/// window runs past the viewport's right edge on a narrow display
+/// (1024×768), so its controls end that edge less the window's own left
+/// padding. Call at the top of the window.
+fn chooser_right_edge(ui: &Ui) -> f32 {
     let viewport = ui.main_viewport();
-    let pos = ui.window_pos();
-    let size = ui.window_size();
-    let work_pos = viewport.work_pos();
-    let work_size = viewport.work_size();
-    pos[0] + size[0] > work_pos[0] + work_size[0] + 0.5
-        || pos[1] + size[1] > work_pos[1] + work_size[1] + 0.5
+    let padding = ui.cursor_screen_pos()[0] - ui.window_pos()[0];
+    viewport.work_pos()[0] + viewport.work_size()[0] - padding
+}
+
+/// The width from the cursor that is both inside the current window and on
+/// screen, up to `right` from [`chooser_right_edge`].
+fn on_screen_avail(ui: &Ui, right: f32) -> f32 {
+    ui.content_region_avail()[0]
+        .min(right - ui.cursor_screen_pos()[0])
+        .max(0.0)
 }
 
 /// Unsaved-changes prompt for a staged leave of the edit form (switch,
@@ -4398,15 +4404,18 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .flags(WindowFlags::NO_COLLAPSE)
         .size([PANEL_WIDTH, 560.0], Condition::FirstUseEver)
         .build(|| {
-            let stack_controls = chooser_controls_stack(ui);
-            let _wrap = ui.push_text_wrap_pos(0.0);
+            let right = chooser_right_edge(ui);
+            // Wrap text where the on-screen part of the window ends.
+            let wrap =
+                ui.cursor_screen_pos()[0] + on_screen_avail(ui, right) - ui.window_pos()[0];
+            let _wrap = ui.push_text_wrap_pos(wrap);
             if session.core.vault().is_none() {
                 vault_unlock_prompt(ui, session);
             } else {
             let names: Vec<String> = session.core.vault()
                 .map(|v| v.profiles().map(|p| p.username.clone()).collect())
                 .unwrap_or_default();
-            let w = ui.content_region_avail()[0];
+            let w = on_screen_avail(ui, right);
             let focused = session.focused_name();
             let members = session.core.members().to_vec();
             let multibox = session.multibox;
@@ -4433,13 +4442,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 } else {
                     (viewport_h - 280.0).clamp(120.0, 360.0)
                 };
-                // A stacked row takes two lines: the name, then Edit and ✕.
-                let row_h = if stack_controls {
-                    ROW_H + ui.text_line_height_with_spacing()
-                } else {
-                    ROW_H
-                };
-                let need = (names.len() as f32) * row_h + 8.0;
+                let need = (names.len() as f32) * ROW_H + 8.0;
                 let list_h = need.min(max_list);
                 ui.child_window("##profiles-list")
                     .size([0.0, list_h])
@@ -4455,7 +4458,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                             // deletable until the write settles.
                             let saving = session.core.profile_saving(name);
                             let _saving = saving.then(|| ui.begin_disabled());
-                            let (p, r, e) = chooser_row(ui, name, selected, stack_controls);
+                            let (p, r, e) = chooser_row(ui, name, selected, right);
                             if saving {
                                 continue;
                             }
@@ -4531,9 +4534,8 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     }
                     None => {}
                 }
-                let avail = ui.content_region_avail()[0];
+                let avail = on_screen_avail(ui, right);
                 let (bw, stack) = button_row_layout(avail, 2);
-                let stack = stack || stack_controls;
                 // One Save at a time: the form follows a rename or a new
                 // profile only once its write is durable.
                 let saving = session.form_saving().then(|| ui.begin_disabled());
@@ -4559,7 +4561,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 ui.same_line_with_spacing(0.0, 0.0);
                 ui.text_disabled("…");
             }
-            let w = ui.content_region_avail()[0];
+            let w = on_screen_avail(ui, right);
             if ui.button_with_size("Close", [w, 0.0]) {
                 session.request_close_profiles();
             }
@@ -4756,24 +4758,20 @@ fn lamp_skill_presets() -> Vec<&'static str> {
 
 /// One picker row: name (click focuses / loads), Edit, then red ✕ (vault
 /// delete, confirm). Sibling buttons so an Edit/✕ click never also picks.
-fn chooser_row(ui: &Ui, name: &str, selected: bool, stack_controls: bool) -> (bool, bool, bool) {
+/// The row ends at `right` (see [`chooser_right_edge`]), so Edit and ✕ stay
+/// on screen when the docked window runs past the display.
+fn chooser_row(ui: &Ui, name: &str, selected: bool, right: f32) -> (bool, bool, bool) {
     const EDIT_W: f32 = 44.0;
     const X_W: f32 = 28.0;
-    let avail = ui.content_region_avail()[0];
-    let name_w = if stack_controls {
-        avail
-    } else {
-        (avail - EDIT_W - X_W - BUTTON_GAP * 2.0).max(10.0)
-    };
+    let avail = on_screen_avail(ui, right);
+    let name_w = (avail - EDIT_W - X_W - BUTTON_GAP * 2.0).max(10.0);
     let loaded = ui
         .selectable_config(name)
         .selected(selected)
         .close_popups(false)
         .size([name_w, 0.0])
         .build();
-    if !stack_controls {
-        gap_line(ui);
-    }
+    gap_line(ui);
     let edit = ui.button_with_size(format!("Edit##edit-{name}"), [EDIT_W, 0.0]);
     gap_line(ui);
     let _red = ui.push_style_color(StyleColor::Text, ERROR);

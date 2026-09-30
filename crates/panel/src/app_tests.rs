@@ -81,21 +81,21 @@ fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
     assert!(shown.contains("modals") && shown.contains("0"));
 }
 
-/// At 1024×768 the docked Profiles window runs past the right edge of the
-/// display. Every row's Edit and ✕, and the form's Save, Cancel and Close,
-/// still show their full height and at least their center (where the label
-/// sits) on screen and in the part of their window that shows, so the last
-/// profile's controls need no scrolling, and a click there lands.
+/// On a 1024×768 desktop the app's client area is about 1008×580 and the
+/// docked Profiles window runs past its right edge. The last row's Edit and
+/// ✕, and the form's Save, Cancel and Close, all lie wholly on screen and in
+/// the part of their window that shows: no list or window scrolling, and a
+/// click there lands.
 #[test]
 fn profiles_controls_remain_reachable_when_the_dock_runs_past_1024() {
     let _guard = crate::test_support::imgui_context_guard();
-    let display = [1024.0, 768.0];
+    let display = [1008.0, 580.0];
     let mut ui = ProfilesUi::with_geometry(
         "profiles-narrow-controls",
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
         display,
-        [797.0, 0.0],
-        [PANEL_WIDTH, 768.0],
+        [790.0, 0.0],
+        [PANEL_WIDTH, 580.0],
     );
     ui.click(At::List, "Edit##edit-alice");
     for (at, label) in [
@@ -108,14 +108,13 @@ fn profiles_controls_remain_reachable_when_the_dock_runs_past_1024() {
         (At::Window, "Close"),
     ] {
         let (item, visible) = ui.item_rect(at, label);
-        let center = rect_center(item);
         for (name, area) in [("display", [[0.0, 0.0], display]), ("window", visible)] {
             assert!(
-                center[0] >= area[0][0]
-                    && center[0] <= area[1][0]
+                item[0][0] >= area[0][0]
                     && item[0][1] >= area[0][1]
+                    && item[1][0] <= area[1][0]
                     && item[1][1] <= area[1][1],
-                "{label} at {item:?} is not shown in the {name}'s {area:?}"
+                "{label} at {item:?} is not wholly shown in the {name}'s {area:?}"
             );
         }
     }
