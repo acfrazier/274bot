@@ -9,10 +9,13 @@ api = { path = "../api" }
 client = { workspace = true }
 num-bigint = "0.4"
 vault = { path = "../vault" }
+parking_lot = { version = "0.12", optional = true }
 
 [features]
 render-diagnostics = ["client/render-diagnostics"]
 performance-profile = []
+# Lossless, immutable paint witnesses for the Windows journal fixture only.
+journal-paint-proof = ["dep:parking_lot"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

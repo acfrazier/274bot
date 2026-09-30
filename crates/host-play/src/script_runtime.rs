@@ -49,7 +49,7 @@ mod script_observe;
 pub(super) use script_observe::{
     deliver_channel_events, nav_world_state_for_observe, observe_script_inv,
     project_npc_boxes_for_isolate_snapshot, projected_npc_boxes,
-    script_observe_cached_with_channels,
+    script_observe_cached_with_channels, ScriptObservation,
 };
 #[cfg(test)]
 pub(super) use script_observe::{

@@ -323,6 +323,13 @@ still-open, or unobserved page releases the token as `modal-timeout`. Pause and
 hold freeze either window. The journal pages remain private isolate scene data
 and are not exposed on `api.snapshot`.
 
+The Rust machine also owns the host's quiet-paint lease for the unchanged
+click/capture/close sequence. While it is owned, the main journal modal is not
+painted and the pre-read side panel/tab chrome is retained. Observed close,
+Stop, reset, error, and a ten-second wall-clock safety fuse release quiet
+painting. Pause and hold freeze the machine's acquisition/close windows, not
+that wall-clock fuse. This adds no JS action or snapshot field.
+
 ## Clue helpers
 
 Five sync `HelperResult` fact reads and one owned session with a synchronous

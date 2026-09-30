@@ -2372,6 +2372,7 @@ dependencies = [
  "client",
  "libc",
  "num-bigint",
+ "parking_lot",
  "vault",
  "windows-sys 0.59.0",
 ]
@@ -2388,6 +2389,7 @@ dependencies = [
  "libc",
  "nav",
  "parking_lot",
+ "png",
  "rand_core",
  "scenario",
  "script",
@@ -4617,6 +4619,7 @@ dependencies = [
  "deno_core",
  "flatbuffers",
  "nav",
+ "parking_lot",
  "rustyscript",
  "script",
  "serde",

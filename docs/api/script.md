@@ -123,6 +123,29 @@ remain pending until the slot restarts; they never switch the active run in
 place. Death stops the card; automatic recovery, banking and Fishing are not
 part of this stage.
 
+### Quiet quest-journal painting
+
+Host-owned quest-journal reads (the native Quester and the Rust journal machine
+used by Load cards) have a quiet-paint lease. It arms before the quest-row click
+and ends after the server's closed modal/text pair is observed. One client
+skip-paint flag hides the main modal while retaining the pre-read side panel
+and tab chrome; packets, input actions, widgets and server state are unchanged.
+The existing last-framebuffer freeze during `scene_state == 1` is unchanged.
+Stop, cancellation, error, disconnect/work-generation reset, or a ten-second
+wall-clock safety fuse restores ordinary painting even without an eligible
+script tick. Pause and hold do not freeze that wall-clock fuse. The inactive
+path does no capture, widget scan, backup copy, extra clock read or bridge lock.
+
+The Windows `host-play` live journal fixture's `journal-paint-proof` feature
+records every completed CPU/GPU paint with producer-attached root/flag metadata.
+Its restoration and close acknowledgments require paints newer than the
+corresponding request. The fixture resolves the close control from the live
+component bounds and lets a real paint build its hover menu before clicking.
+If an ordinary read close was already accepted at Stop, the unowned control
+reopen crosses the server's deferred-close tick before sending its button.
+These capture and input steps are fixture-only; native journal policy is
+unchanged.
+
 ### File Load and catalog cards
 
 - **Load** registers a picker card tagged **File** from an absolute/relative

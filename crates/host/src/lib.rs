@@ -32,6 +32,8 @@ pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pum
 pub use slot_io::{
     map_image_to_applet, wake_channel, FrameBuf, InputEv, SlotInput, SlotPark, SlotWake,
 };
+#[cfg(feature = "journal-paint-proof")]
+pub use slot_io::{JournalPaintStamp, JournalProofFrame};
 
 /// Enable host debug logging (host-play maps `--debug` to this).
 pub fn set_debug(enabled: bool) {
@@ -669,6 +671,15 @@ impl Host {
         // the tests.
         if let Some(frame) = frame {
             if let Some(mailbox) = mailbox {
+                #[cfg(feature = "journal-paint-proof")]
+                mailbox.store_journal_paint(
+                    frame,
+                    JournalPaintStamp {
+                        modal_root: client.main_modal_id,
+                        journal_paint_hidden: client.journal_paint_hidden(),
+                    },
+                );
+                #[cfg(not(feature = "journal-paint-proof"))]
                 mailbox.store(frame);
             }
         }
