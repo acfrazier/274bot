@@ -85,21 +85,36 @@ pub(super) const SPELL_TELEPORTS: &[SpellTeleport] = &[
     },
 ];
 
-/// The chat-modal choice an Npc hop answers to ride: the ride is always
-/// the modal's FIRST choice (the cart drivers' "Yes please…" fare and
-/// Elkoy's escort both present it first). This is the hop's dialog rule,
-/// independent of the NPC op index — [`TransportEdge::option`] is the op
-/// (Talk-to is op 1, the essence wizard's teleport op 3/4) and stays the
-/// interact's operation. Also the fallback choice when a jewellery hop's
-/// teleport list is unavailable ([`TravelOptions::teleports`]).
+/// The default 1-based chat choice used by one-option NPC rides and by
+/// jewellery/spirit hops when no packed sibling can identify a destination.
+/// NPC fare pages do not blindly use this fallback: [`npc_hop_dialog_choice`]
+/// recognizes the content's affirmative branch and returns `None` for an
+/// unknown page so a new option cannot silently select Crandor or another
+/// destination.
 pub(super) const NPC_RIDE_CHOICE: i32 = 1;
 
-/// The dialog choice a jewellery rub hop answers: the 1-based index of
-/// the edge's `to` among the packed same-`loc_id` rub edges — the
+/// Captain Shanks' two packed Boat edges share one NPC tile. Unlike a fare
+/// page, his final page names both destinations; keep the route-specific
+/// identity here so following Port Sarim cannot accidentally answer the
+/// first Khazard option.
+const SHANKS_NPC_ID: i32 = 518;
+const SHANKS_KHAZARD_DEST: WorldTile = WorldTile {
+    x: 2680,
+    z: 3150,
+    level: 0,
+};
+const SHANKS_PORT_SARIM_DEST: WorldTile = WorldTile {
+    x: 3047,
+    z: 3235,
+    level: 0,
+};
+
+/// The dialog choice a jewellery rub hop answers: the 1-based index of the
+/// edge's `to` among the packed same-`loc_id` rub edges — the
 /// `switch_int($choice)` case order the bake emitted (the dueling ring's
-/// only sibling answers 1). Npc hops (and jewellery hops without a
-/// teleport list) fall back to the modal's FIRST choice. Spirit-tree dest
-/// pages use the same rule among same-`loc_id`/`at` packed siblings.
+/// only sibling answers 1). Jewellery hops without a teleport list fall back
+/// to the modal's first choice. Spirit-tree dest pages use the same rule
+/// among same-`loc_id`/`at` packed siblings.
 pub(super) fn dest_dialog_choice(
     leg: &Leg,
     teleports: Option<&[TransportEdge]>,
@@ -136,38 +151,185 @@ pub(super) fn chat_page_key(snapshot: &GameSnapshot) -> String {
 }
 
 /// The chat choice this hop presses on the current option page.
-/// Jewellery dests and Npc fare use [`dest_dialog_choice`]. Adult spirit
-/// trees (`spirit_tree.rs2` ent / stronghold_ent) put "No thanks, old
-/// tree." first on a 2-option page; dest-index 1 there silently drops
-/// the hop. The 2-option page answers 2 ("Where can I go?"); the 3-option
-/// dest list then uses packed sibling order. The young tree (loc 1317)
-/// is a single "Yes please." / "No thank you." — choice 1 rides.
+///
+/// Jewellery destinations retain their packed sibling-index behavior. Adult
+/// spirit trees (`spirit_tree.rs2` ent / stronghold_ent) put "No thanks, old
+/// tree." first on a 2-option page; dest-index 1 there silently drops the
+/// hop. The 2-option page answers 2 ("Where can I go?"); the 3-option dest
+/// list then uses packed sibling order. The young tree (loc 1317) is a single
+/// "Yes please." / "No thank you." — choice 1 rides.
+///
+/// NPC-backed rides are content-driven: the recognized affirmative option is
+/// selected even when Dragon Slayer inserts Crandor before the normal fare.
+/// An unrecognized NPC page returns `None` rather than guessing a destination.
 pub(super) fn hop_dialog_choice(
     leg: &Leg,
     teleports: Option<&[TransportEdge]>,
     packed: Option<&[TransportEdge]>,
-    n_options: usize,
-) -> i32 {
+    chat_options: &[api::snapshot::ChatOptionView],
+) -> Option<i32> {
     let Leg::Transport { edge } = leg else {
-        return NPC_RIDE_CHOICE;
+        return Some(NPC_RIDE_CHOICE);
     };
     if edge.kind == TransportKind::SpiritTree {
-        return spirit_tree_choice(leg, edge, packed, n_options);
+        return Some(spirit_tree_choice(leg, edge, packed, chat_options));
     }
-    dest_dialog_choice(leg, teleports, packed)
+    if matches!(
+        edge.kind,
+        TransportKind::Npc | TransportKind::Boat | TransportKind::Glider
+    ) {
+        return npc_hop_dialog_choice(edge, packed, chat_options);
+    }
+    Some(dest_dialog_choice(leg, teleports, packed))
 }
 
+/// Select the affirmative branch of a packed NPC-backed transport dialog.
+///
+/// These labels are the actual 289 content branches:
+/// * sailors and cart/Elkoy fares use a "Yes please" answer;
+/// * Entrana monks use one of the explicit "ready to go" answers;
+/// * customs first asks to journey, then asks to search, then asks "Ok.";
+/// * a glider pilot asks "Can you take me on the glider?";
+/// * Captain Shanks' final page names Khazard and Port Sarim. Its target is
+///   selected only when the matching two-edge Boat family is present in the
+///   packed graph; an incomplete family fails closed.
+///
+/// The returned number is the live modal's 1-based option position, not the
+/// script's `switch_int` value.
+pub(super) fn npc_hop_dialog_choice(
+    edge: &TransportEdge,
+    packed: Option<&[TransportEdge]>,
+    chat_options: &[api::snapshot::ChatOptionView],
+) -> Option<i32> {
+    if is_shanks_destination_page(chat_options) {
+        return shanks_destination_choice(edge, packed, chat_options);
+    }
+    // Prefer the most specific page labels before the generic "Yes please"
+    // fare branch. Each matcher is unique on the content page; a duplicate
+    // match is treated as unknown rather than choosing one arbitrarily.
+    for matcher in [
+        is_glider_ride_choice as fn(&str) -> bool,
+        is_customs_journey_choice,
+        is_customs_search_choice,
+        is_customs_ok_choice,
+        is_affirmative_ride_choice,
+    ] {
+        match unique_option_choice(chat_options, matcher) {
+            Err(()) => return None,
+            Ok(Some(choice)) => return Some(choice),
+            Ok(None) => {}
+        }
+    }
+    None
+}
+
+fn is_shanks_destination_page(chat_options: &[api::snapshot::ChatOptionView]) -> bool {
+    chat_options.len() == 3
+        && option_eq(&chat_options[0].text, "Khazard Port please.")
+        && option_eq(&chat_options[1].text, "Port Sarim please.")
+        && option_eq(&chat_options[2].text, "Nowhere just at the moment thanks.")
+}
+
+fn shanks_destination_choice(
+    edge: &TransportEdge,
+    packed: Option<&[TransportEdge]>,
+    chat_options: &[api::snapshot::ChatOptionView],
+) -> Option<i32> {
+    if edge.kind != TransportKind::Boat || edge.loc_id != SHANKS_NPC_ID {
+        return None;
+    }
+    let expected_position = match edge.to {
+        SHANKS_KHAZARD_DEST => 0,
+        SHANKS_PORT_SARIM_DEST => 1,
+        _ => return None,
+    };
+    let list = packed?;
+    let mut sibling_count = 0;
+    let mut target_position = None;
+    for sibling in list.iter().filter(|sibling| {
+        sibling.kind == TransportKind::Boat
+            && sibling.loc_id == SHANKS_NPC_ID
+            && sibling.at == edge.at
+    }) {
+        if sibling.to == edge.to {
+            if target_position.is_some() {
+                return None;
+            }
+            target_position = Some(sibling_count);
+        }
+        sibling_count += 1;
+    }
+    if sibling_count != 2 || target_position != Some(expected_position) {
+        return None;
+    }
+    let choice = expected_position + 1;
+    (choice <= chat_options.len()).then_some(choice as i32)
+}
+
+fn unique_option_choice(
+    chat_options: &[api::snapshot::ChatOptionView],
+    matcher: fn(&str) -> bool,
+) -> Result<Option<i32>, ()> {
+    let mut found = None;
+    for (index, option) in chat_options.iter().enumerate() {
+        if matcher(option.text.trim()) {
+            let choice = index as i32 + 1;
+            if found.is_some() {
+                return Err(());
+            }
+            found = Some(choice);
+        }
+    }
+    Ok(found)
+}
+
+fn option_eq(text: &str, expected: &str) -> bool {
+    text.trim()
+        .trim_end_matches('.')
+        .eq_ignore_ascii_case(expected.trim_end_matches('.'))
+}
+
+fn option_starts_with(text: &str, prefix: &str) -> bool {
+    text.trim()
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+}
+
+fn is_glider_ride_choice(text: &str) -> bool {
+    option_eq(text, "Can you take me on the glider?")
+}
+
+fn is_customs_journey_choice(text: &str) -> bool {
+    option_eq(text, "Can I journey on this ship?")
+}
+
+fn is_customs_search_choice(text: &str) -> bool {
+    option_eq(text, "Search away, I have nothing to hide.")
+}
+
+fn is_customs_ok_choice(text: &str) -> bool {
+    option_eq(text, "Ok.")
+}
+
+fn is_affirmative_ride_choice(text: &str) -> bool {
+    option_eq(text, "Yes please")
+        || option_starts_with(text, "Yes please, I'd like to go")
+        || option_eq(text, "Can you show me out of the village?")
+        || option_starts_with(text, "Yes, I'll buy a ticket for the ship")
+        || option_eq(text, "Yes, I'm ready to go")
+        || option_eq(text, "Yes, okay, I'm ready to go")
+}
 pub(super) fn spirit_tree_choice(
     leg: &Leg,
     edge: &TransportEdge,
     packed: Option<&[TransportEdge]>,
-    n_options: usize,
+    chat_options: &[api::snapshot::ChatOptionView],
 ) -> i32 {
     let n_dests = spirit_tree_dest_count(edge, packed);
     if n_dests == 1 {
         return NPC_RIDE_CHOICE;
     }
-    if n_options >= 3 {
+    if chat_options.len() >= 3 {
         return dest_dialog_choice(leg, None, packed);
     }
     2
@@ -347,3 +509,6 @@ pub(super) fn teleport_send<D: Driver>(
         }
     }
 }
+#[cfg(test)]
+#[path = "dialog_tests.rs"]
+mod tests;

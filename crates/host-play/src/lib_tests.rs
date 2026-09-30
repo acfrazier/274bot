@@ -5097,6 +5097,103 @@ fn arming_the_same_walk_slot_twice_cancels_the_first_request_once() {
 }
 
 #[test]
+fn bank_session_and_direct_route_both_emit_replaced_once() {
+    let log_mark = crate::walk_map::test_log::mark();
+    let slot = "walk-receipt-bank-replaced";
+    let world = knife_nav_world(2);
+    let client = bank_fetch_client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let state = WorldState::from_snapshot(&snapshot);
+    let bank = snapshot
+        .bank()
+        .iter()
+        .map(|item| (item.def.id, item.count))
+        .collect::<Vec<_>>();
+    let travellers: WalkArms = Arc::new(Mutex::new(HashMap::new()));
+    let from = Tile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let direct_first = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let bank_target = Tile {
+        x: 4,
+        z: 4,
+        level: 0,
+    };
+    let direct_last = Tile {
+        x: 0,
+        z: 2,
+        level: 0,
+    };
+
+    arm_walk_on(
+        &world,
+        from,
+        direct_first,
+        FindOptions::default(),
+        &state,
+        &bank,
+        &travellers,
+        Some(slot),
+    )
+    .expect("the first direct route is available");
+    arm_walk_on(
+        &world,
+        from,
+        bank_target,
+        FindOptions {
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        },
+        &state,
+        &bank,
+        &travellers,
+        Some(slot),
+    )
+    .expect("the banked worn requirement plans a session");
+    arm_walk_on(
+        &world,
+        from,
+        direct_last,
+        FindOptions::default(),
+        &state,
+        &bank,
+        &travellers,
+        Some(slot),
+    )
+    .expect("the final direct route is available");
+
+    let receipts = walk_receipts(log_mark, slot);
+    assert_eq!(
+        receipts.len(),
+        2,
+        "both replacements must close one prior run"
+    );
+    assert_walk_receipt_fields(
+        &receipts[0],
+        "cancelled",
+        "(0,1,0)",
+        "(0,0,0)",
+        "Replaced",
+        "-",
+    );
+    assert_walk_receipt_fields(
+        &receipts[1],
+        "cancelled",
+        "(4,4,0)",
+        "(0,0,0)",
+        "Replaced",
+        "-",
+    );
+}
+
+#[test]
 fn unroutable_bank_stand_aborts_the_walk_request_exactly_once() {
     let log_mark = crate::walk_map::test_log::mark();
     let slot = "walk-receipt-bank-fetch";
@@ -11178,13 +11275,64 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
         }),
         ..Default::default()
     };
-    let snap = GameSnapshot::new();
     let mut driver = bank_fetch_client();
+    driver.map_build_base_x = 0;
+    driver.map_build_base_z = 0;
+    driver.minusedlevel = 1;
+    driver.local_player = Some(client::dash3d::ClientPlayer::at(10, 20));
+    // Stand walking happens before the bank opens.
+    driver.main_modal_id = -1;
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&driver);
+    let stale_stand_route = Route {
+        legs: vec![Leg::Walk {
+            tiles: vec![
+                WorldTile {
+                    x: 10,
+                    z: 20,
+                    level: 1,
+                },
+                WorldTile {
+                    x: 13,
+                    z: 20,
+                    level: 1,
+                },
+            ],
+        }],
+        dest: WorldTile {
+            x: 13,
+            z: 20,
+            level: 1,
+        },
+        ticks: 1.0,
+    };
+    bot.route = Some(stale_stand_route.clone());
+    let initial_follow = bot.traveller.follow(
+        &mut driver,
+        &snap,
+        stale_stand_route,
+        &mut nav::traveller::TravelOptions {
+            close_enough: 0,
+            ..Default::default()
+        },
+    );
+    assert!(
+        initial_follow.is_none(),
+        "the stale stand follow must remain active: {initial_follow:?}"
+    );
+    assert!(
+        bot.traveller.current_aim().is_some(),
+        "fixture must carry an active stand follow to catch stale resume"
+    );
     step_bank_fetch_on_bot(&mut driver, &snap, &mut bot, None, Some((10, 20, 1)), false);
     assert_eq!(
         bot.route,
         Some(final_route.clone()),
         "stand Walk completes when here matches the stand plane"
+    );
+    assert!(
+        bot.traveller.current_aim().is_none(),
+        "restoring final_route must clear the stale stand Traveller run"
     );
 
     bot.bank_fetch = Some(PendingBankFetch {
@@ -15456,6 +15604,7 @@ fn inventory_from_ifaces_maps_1_based_ids_to_0_based() {
     let mut rec = NavRec {
         walked: None,
         held_ops: 0,
+        npc_ops: 0,
         if_button_components: Vec::new(),
         sink: Sink,
     };
@@ -18574,6 +18723,8 @@ struct NavRec {
     walked: Option<(i32, i32)>,
     /// Held-item ops (OP_HELD1..=5): the jewellery rub arm's press.
     held_ops: usize,
+    /// NPC operation presses emitted by transport hops.
+    npc_ops: usize,
     /// The component ids pressed via IF_BUTTON, in order (the follow's
     /// dialog-ride arm asserts *which* choice was answered).
     if_button_components: Vec<i32>,
@@ -18588,6 +18739,11 @@ impl Driver for NavRec {
             | MiniMenuAction::OP_HELD3
             | MiniMenuAction::OP_HELD4
             | MiniMenuAction::OP_HELD5 => self.held_ops += 1,
+            MiniMenuAction::OP_NPC1
+            | MiniMenuAction::OP_NPC2
+            | MiniMenuAction::OP_NPC3
+            | MiniMenuAction::OP_NPC4
+            | MiniMenuAction::OP_NPC5 => self.npc_ops += 1,
             MiniMenuAction::IF_BUTTON => self.if_button_components.push(c),
             _ => {}
         }
@@ -19381,6 +19537,163 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         assert_eq!(rows[0].walk_z, -1);
         assert_eq!(rows[0].walk_level, -1);
     }
+}
+
+#[test]
+fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
+    let mut c = nav_client();
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        while cache.npcs.len() <= 7 {
+            cache.npcs.push(client::config::NpcType::default());
+        }
+        cache.npcs[7] = client::config::NpcType {
+            id: 7,
+            name: "Cart driver".into(),
+            op: vec![Some("Pay-fare".into()), None, None, None, None],
+            ..Default::default()
+        };
+    }
+    let mut npc = client::dash3d::ClientNpc::at(2, 1);
+    npc.r#type = Some(7);
+    npc.entity.x = 2 * 128 + 64;
+    npc.entity.z = 128 + 64;
+    c.npc = vec![Some(Box::new(npc))];
+    c.npc_ids = vec![0];
+    c.npc_count = 1;
+
+    let edge = TransportEdge {
+        kind: TransportKind::Npc,
+        at: WorldTile {
+            x: 2,
+            z: 1,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 10,
+            z: 10,
+            level: 0,
+        },
+        loc_id: 7,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: Vec::new(),
+        item_req: Vec::new(),
+        quest_req: Vec::new(),
+        varp_req: Vec::new(),
+        worn_req: Vec::new(),
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
+    let route = Route {
+        legs: vec![Leg::Transport { edge: edge.clone() }],
+        dest: edge.to,
+        ticks: 1.0,
+    };
+    let mut arm = WalkArm {
+        route: Some(route),
+        ..Default::default()
+    };
+    let mut d = NavRec::default();
+    let mut snap = GameSnapshot::new();
+
+    // The first operation starts from an adjacent, non-NPC tile.
+    nav_snapshot_at(&mut c, &mut snap, 1, 1);
+    assert!(
+        !step_walk_arm_follow(
+            &mut d,
+            &snap,
+            &mut arm,
+            None,
+            (1, 1, 0),
+            false,
+            Some("alice"),
+        ),
+        "the first NPC op remains in flight"
+    );
+    assert_eq!(
+        d.npc_ops, 1,
+        "the adjacent NPC receives the first operation"
+    );
+    assert!(
+        arm.route.is_some(),
+        "the host arm remains armed during the hop"
+    );
+
+    // The live network head moves three tiles. The fresh reach failure must
+    // retain the armed route and walk to the new cardinal stand, not settle
+    // or talk from the obsolete stand.
+    let npc = c.npc[0].as_mut().expect("NPC remains in its slot");
+    npc.entity.route_x[0] = 5;
+    npc.entity.x = 5 * 128 + 64;
+    c.add_chat(0, "I can't reach that!", "");
+    nav_snapshot_at(&mut c, &mut snap, 1, 1);
+    d.walked = None;
+    assert!(
+        !step_walk_arm_follow(
+            &mut d,
+            &snap,
+            &mut arm,
+            None,
+            (1, 1, 0),
+            false,
+            Some("alice"),
+        ),
+        "a recoverable reach failure keeps the WalkArm active"
+    );
+    assert!(arm.route.is_some(), "reach recovery retains the armed hop");
+    assert_eq!(
+        d.npc_ops, 1,
+        "a stale stand never receives the second operation"
+    );
+    assert_eq!(
+        d.walked,
+        Some((4, 1)),
+        "recovery walks to the moved NPC's stand"
+    );
+
+    // Settling on that new cardinal stand sends the second NPC operation.
+    nav_snapshot_at(&mut c, &mut snap, 4, 1);
+    d.walked = None;
+    assert!(
+        !step_walk_arm_follow(
+            &mut d,
+            &snap,
+            &mut arm,
+            None,
+            (4, 1, 0),
+            false,
+            Some("alice"),
+        ),
+        "the second NPC op remains in flight until landing"
+    );
+    assert_eq!(
+        d.npc_ops, 2,
+        "the retargeted stand receives the second operation"
+    );
+    assert_eq!(d.walked, None);
+    assert!(arm.route.is_some());
+
+    // A landing at the packed destination is arrival evidence; the host arm
+    // clears without issuing a third NPC operation.
+    nav_snapshot_at(&mut c, &mut snap, edge.to.x, edge.to.z);
+    assert!(
+        step_walk_arm_follow(
+            &mut d,
+            &snap,
+            &mut arm,
+            None,
+            (edge.to.x, edge.to.z, edge.to.level),
+            false,
+            Some("alice"),
+        ),
+        "the teleport landing produces a terminal arrival"
+    );
+    assert_eq!(d.npc_ops, 2, "arrival does not repeat the NPC operation");
+    assert!(arm.route.is_none(), "teleport landing clears the host arm");
 }
 
 #[test]

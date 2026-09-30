@@ -19,6 +19,9 @@ use crate::traveller::{
     TravelOutcome, Traveller,
 };
 
+#[path = "traveller/npc_hop_tests.rs"]
+mod npc_hop_tests;
+
 #[test]
 fn no_route_ticks_idle() {
     let mut t = Traveller::new();
@@ -2058,13 +2061,13 @@ fn follow_npc_edge_sends_op_npc_and_arrives() {
     // Task 2: a `TransportKind::Npc` edge (cart, essence wizard,
     // Elkoy) must interact with the driver NPC — an `OP_NPC1` on the
     // type-id match within 3 of `at` — never a loc op, and arrive at
-    // `edge.to`. The player stands on the driver's tile, so the hop
-    // interacts immediately and the cart carries the player over.
+    // `edge.to`. The player stands beside the driver on an operable
+    // cardinal tile, so the cart interaction is sent immediately.
     let mut c = scene_client();
     plant_driver_npc(&mut c, 7, 1, 1);
-    let mut snap = snap_at(&mut c, 1, 1);
+    let mut snap = snap_at(&mut c, 1, 2);
     let mut rec = FollowRec {
-        route: Some((1, 1)),
+        route: Some((1, 2)),
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
@@ -2104,9 +2107,9 @@ fn follow_boat_edge_ops_the_seaman_npc_not_a_loc() {
     // fail; the hop must OP_NPC1 the sailor.
     let mut c = scene_client();
     plant_npc_ops(&mut c, 378, 1, 1, "Seaman Thresnor", &["Talk-to"]);
-    let mut snap = snap_at(&mut c, 1, 1);
+    let mut snap = snap_at(&mut c, 1, 2);
     let mut rec = FollowRec {
-        route: Some((1, 1)),
+        route: Some((1, 2)),
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
@@ -2244,31 +2247,6 @@ fn dest_dialog_choice_indexes_spirit_tree_siblings() {
         2,
         "the second dest of the same tree is choice 2"
     );
-    // Adult tree dest 1 (village) on the 2-option gate is "No thanks,
-    // old tree." — that is the silent drop. The gate answers 2.
-    let village_leg = Leg::Transport {
-        edge: packed[0].clone(),
-    };
-    assert_eq!(
-        super::hop_dialog_choice(&village_leg, None, Some(&packed), 2),
-        2,
-        "gate page is Where can I go?, never dest-index 1"
-    );
-    assert_eq!(
-        super::hop_dialog_choice(&leg, None, Some(&packed), 3),
-        2,
-        "dest page uses packed sibling order"
-    );
-    let mut young = [tree(village)];
-    young[0].loc_id = 1317;
-    let young_leg = Leg::Transport {
-        edge: young[0].clone(),
-    };
-    assert_eq!(
-        super::hop_dialog_choice(&young_leg, None, Some(&young), 2),
-        1,
-        "young tree Yes please"
-    );
 }
 
 #[test]
@@ -2301,9 +2279,9 @@ fn follow_glider_answers_talk_then_presses_the_map_dest() {
     // glidermap — never dest-index chat and never Close Window.
     let mut c = scene_client();
     plant_npc_ops(&mut c, 170, 1, 1, "Gnome pilot", &["Talk-to"]);
-    let mut snap = snap_at(&mut c, 1, 1);
+    let mut snap = snap_at(&mut c, 1, 2);
     let mut rec = FollowRec {
-        route: Some((1, 1)),
+        route: Some((1, 2)),
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
@@ -2369,9 +2347,9 @@ fn follow_glider_answers_talk_then_presses_the_map_dest() {
 fn follow_glider_arrives_within_map_findsquare_radius_1() {
     let mut c = scene_client();
     plant_npc_ops(&mut c, 170, 1, 1, "Gnome pilot", &["Talk-to"]);
-    let mut snap = snap_at(&mut c, 1, 1);
+    let mut snap = snap_at(&mut c, 1, 2);
     let mut rec = FollowRec {
-        route: Some((1, 1)),
+        route: Some((1, 2)),
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
@@ -3125,9 +3103,9 @@ fn follow_npc_edge_answers_the_fare_dialog_before_arriving() {
     // exactly once, and settle `arrived(edge.to)`.
     let mut c = scene_client();
     plant_driver_npc(&mut c, 7, 1, 1);
-    let mut snap = snap_at(&mut c, 1, 1);
+    let mut snap = snap_at(&mut c, 1, 2);
     let mut rec = FollowRec {
-        route: Some((1, 1)),
+        route: Some((1, 2)),
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
@@ -3885,9 +3863,9 @@ fn follow_npc_edge_answers_choice_one_not_the_op_index() {
     // `edge.option` conflation and the OP_NPC1-only matcher.)
     let mut c = scene_client();
     plant_wizard_npc(&mut c, 7, 1, 1);
-    let mut snap = snap_at(&mut c, 1, 1);
+    let mut snap = snap_at(&mut c, 1, 2);
     let mut rec = FollowRec {
-        route: Some((1, 1)),
+        route: Some((1, 2)),
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
@@ -3960,9 +3938,9 @@ fn follow_essence_entry_latches_the_session_on_arrival() {
         "Aubury",
         &["Talk-to", "Talk-to", "Talk-to", "Teleport"],
     );
-    let mut snap = snap_at(&mut c, 1, 1);
+    let mut snap = snap_at(&mut c, 1, 2);
     let mut rec = FollowRec {
-        route: Some((1, 1)),
+        route: Some((1, 2)),
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
@@ -4039,9 +4017,9 @@ fn follow_essence_entry_accepts_any_mine_landing() {
         "Aubury",
         &["Talk-to", "Talk-to", "Talk-to", "Teleport"],
     );
-    let mut snap = snap_at(&mut c, 1, 1);
+    let mut snap = snap_at(&mut c, 1, 2);
     let mut rec = FollowRec {
-        route: Some((1, 1)),
+        route: Some((1, 2)),
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
@@ -4792,9 +4770,9 @@ fn follow_essence_entry_does_not_latch_for_a_cart_driver() {
     // records no session: only the essence-mine wizards latch.
     let mut c = scene_client();
     plant_driver_npc(&mut c, 7, 1, 1);
-    let mut snap = snap_at(&mut c, 1, 1);
+    let mut snap = snap_at(&mut c, 1, 2);
     let mut rec = FollowRec {
-        route: Some((1, 1)),
+        route: Some((1, 2)),
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
@@ -5204,7 +5182,7 @@ fn troll_open_door_progress_does_not_reverse_to_approach() {
             tries: 0,
             troll: true,
             npc_index: None,
-            approach_ticks_waited: 0,
+            npc_recovery: super::NpcRecovery::default(),
             open_sent_tick: None,
             chat_seq: 0,
             dialog_page: None,
@@ -5265,7 +5243,7 @@ fn troll_probes_crossing_after_open_before_snapshot_catches_up() {
         tries: 0,
         troll: true,
         npc_index: None,
-        approach_ticks_waited: 0,
+        npc_recovery: super::NpcRecovery::default(),
         open_sent_tick: None,
         chat_seq: 0,
         dialog_page: None,
@@ -5455,7 +5433,7 @@ fn troll_does_not_reopen_a_door_behind_the_walker() {
             tries: 0,
             troll: true,
             npc_index: None,
-            approach_ticks_waited: 0,
+            npc_recovery: super::NpcRecovery::default(),
             open_sent_tick: None,
             chat_seq: 0,
             dialog_page: None,
@@ -6974,7 +6952,7 @@ fn level_change_transport_requires_proximity_to_to() {
         tries: 0,
         troll: false,
         npc_index: None,
-        approach_ticks_waited: 0,
+        npc_recovery: super::NpcRecovery::default(),
         open_sent_tick: None,
         chat_seq: 0,
         dialog_page: None,

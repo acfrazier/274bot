@@ -34,11 +34,13 @@ use crate::transport::{DoorDir, TransportEdge, TransportKind, CELLAR_SHIFT, SHAN
 
 mod dialog;
 mod legacy_grid;
+mod npc_hop;
 mod snapshot;
 mod transport_hop;
 mod walk;
 
 use dialog::*;
+use npc_hop::*;
 use snapshot::*;
 use transport_hop::*;
 use walk::*;
@@ -621,7 +623,7 @@ impl FollowRun {
                                     tries: 0,
                                     troll: false,
                                     npc_index: None,
-                                    approach_ticks_waited: 0,
+                                    npc_recovery: NpcRecovery::default(),
                                     open_sent_tick: None,
                                     chat_seq: chat_seq(snapshot),
                                     dialog_page: None,
@@ -680,7 +682,7 @@ impl FollowRun {
                                     tries: 0,
                                     troll: false,
                                     npc_index: None,
-                                    approach_ticks_waited: 0,
+                                    npc_recovery: NpcRecovery::default(),
                                     open_sent_tick: None,
                                     chat_seq: chat_seq(snapshot),
                                     dialog_page: None,
@@ -700,13 +702,14 @@ impl FollowRun {
                     // paths to the live network route head rather than the
                     // rendered/interpolated tile.
                     let mut selected_npc_index = None;
+                    let mut selected_stand = None;
                     let approach_at = if npc_backed(edge) {
-                        match find_transport_target(snapshot, edge) {
-                            Some(TransportTarget::Npc(npc)) => {
+                        match select_npc_approach(snapshot, edge, here, None, &[]) {
+                            Some((npc, stand)) => {
                                 selected_npc_index = Some(npc.index);
+                                selected_stand = Some(stand);
                                 npc.network
                             }
-                            Some(TransportTarget::Loc(loc)) => loc.tile,
                             None => {
                                 self.loc_wait += 1;
                                 if self.loc_wait > self.budget {
@@ -715,7 +718,7 @@ impl FollowRun {
                                         at: here,
                                         leg: self.leg_index,
                                         detail: format!(
-                                            "transport {} {} is not within {} tiles of ({}, {}, {}) in the loaded scene",
+                                            "transport {} {} has no reachable operable target within {} tiles of ({}, {}, {}) in the loaded scene",
                                             target_word(edge),
                                             edge.loc_id,
                                             NPC_SEARCH_RADIUS,
@@ -752,7 +755,11 @@ impl FollowRun {
                             return None;
                         }
                         self.settle_until = None;
-                        let Some(approach) = approach_tile(snapshot, approach_at, here) else {
+                        let Some(approach) = selected_stand.or_else(|| {
+                            (!npc_backed(edge))
+                                .then(|| approach_tile(snapshot, approach_at, here))
+                                .flatten()
+                        }) else {
                             // No standable tile adjacent to the target in
                             // the loaded scene: keep waiting, bounded by
                             // the hop budget. The leg stays on the front
@@ -782,6 +789,11 @@ impl FollowRun {
                         report_walk(options, snapshot, here, approach, &result);
                         match result {
                             SendResult::Sent { .. } => {
+                                let npc_recovery = NpcRecovery {
+                                    waited: self.loc_wait,
+                                    last_tick: Some(snapshot.tick()),
+                                    ..Default::default()
+                                };
                                 self.loc_wait = 0;
                                 self.transport = Some(TransportHop {
                                     leg,
@@ -793,7 +805,7 @@ impl FollowRun {
                                     open_sent_tick: None,
                                     chat_seq: chat_seq(snapshot),
                                     npc_index: selected_npc_index,
-                                    approach_ticks_waited: 0,
+                                    npc_recovery,
                                     dialog_page: None,
                                     approach: Some(ApproachHop {
                                         tile: approach,
@@ -840,9 +852,10 @@ impl FollowRun {
                                     // Already-open trapdoor: this interact is
                                     // Climb-down. Mark tries so poll_transport
                                     // does not send it a second time.
-                                    let tries = if edge.open_loc_id.is_some()
-                                        && edge.kind != TransportKind::Door
-                                        && edge_loc_open(snapshot, edge)
+                                    let tries = if npc_backed(edge)
+                                        || (edge.open_loc_id.is_some()
+                                            && edge.kind != TransportKind::Door
+                                            && edge_loc_open(snapshot, edge))
                                     {
                                         1
                                     } else {
@@ -854,6 +867,11 @@ impl FollowRun {
                                     // (see `door_step_pending`).
                                     let open_sent_tick =
                                         (edge.kind == TransportKind::Door).then(|| snapshot.tick());
+                                    let npc_recovery = NpcRecovery {
+                                        waited: self.loc_wait,
+                                        last_tick: Some(snapshot.tick()),
+                                        ..Default::default()
+                                    };
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
                                         leg,
@@ -863,7 +881,7 @@ impl FollowRun {
                                         tries,
                                         troll: false,
                                         npc_index: selected_npc_index,
-                                        approach_ticks_waited: 0,
+                                        npc_recovery,
                                         open_sent_tick,
                                         chat_seq: chat_seq_at_send,
                                         dialog_page: None,
@@ -1010,9 +1028,8 @@ impl WalkHop {
 /// door-troll fallback: the hop re-reads the door's state and re-sends
 /// while closed, probes after Open, and walks when open after
 /// the cheap one-interact hop lapsed its budget. `chat_seq` is the chat
-/// watermark for the "I can't reach that!" fast-fail watch
-/// (`settle::said`'s sequence delta, never a stale-head check); NPC-backed
-/// hops refresh it when their interaction is actually sent.
+/// watermark for fresh "I can't reach that!" evidence; NPC-backed hops
+/// refresh it at every interaction and recover only before fare dialogue.
 struct TransportHop {
     leg: Leg,
     to: WorldTile,
@@ -1020,14 +1037,10 @@ struct TransportHop {
     sent_tile: Option<WorldTile>,
     tries: u32,
     troll: bool,
-    /// The NPC slot selected when an NPC-backed edge was armed. Later
-    /// interaction checks re-find this exact instance instead of silently
-    /// switching to another same-type NPC.
+    /// Current NPC slot, re-picked by reachable stand cost before interactions.
+    /// Once fare dialogue starts, the hop stays with it until arrival/expiry.
     npc_index: Option<usize>,
-    /// Total polls spent approaching before the first transport interaction.
-    /// This survives moving-target re-arms, so the existing hop budget bounds
-    /// a wanderer that never lets the player become adjacent.
-    approach_ticks_waited: u32,
+    npc_recovery: NpcRecovery,
     /// The tick a door Open was sent: one crossing probe
     /// ([`door_step_pending`]) on a later delivered tick. The troll spends
     /// it on the next tick; the cheap hop keeps it until the player stands

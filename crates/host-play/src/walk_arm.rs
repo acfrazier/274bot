@@ -112,60 +112,11 @@ pub fn arm_walk_on(
     let outcome = route_or_bank_fetch(world, from_w, dest_w, options, state, bank, &[]);
     match outcome {
         RouteOutcome::Routed(route) => {
-            if let Some(name) = focused {
-                let arm = travellers
-                    .lock()
-                    .unwrap()
-                    .entry(name.to_string())
-                    .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
-                    .clone();
-                let replaced = {
-                    let mut arm = arm.lock().unwrap();
-                    let replaced = walk_destination(&arm);
-                    // A fresh arm replaces any in-flight follow run.
-                    arm.traveller.clear();
-                    arm.bank_fetch = None;
-                    arm.route = Some(route.clone());
-                    arm.route_generation = crate::walk_map::next_map_route_generation();
-                    replaced
-                };
-                if let Some(destination) = replaced {
-                    crate::walk_map::emit_walk_cancelled(
-                        Some(name),
-                        destination,
-                        Some(from_w),
-                        "Replaced",
-                    );
-                }
-            }
+            replace_walk_arm(travellers, focused, from_w, &route, None);
             Ok(route)
         }
         RouteOutcome::BankSession { pending, route } => {
-            if let Some(name) = focused {
-                let arm = travellers
-                    .lock()
-                    .unwrap()
-                    .entry(name.to_string())
-                    .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
-                    .clone();
-                let replaced = {
-                    let mut arm = arm.lock().unwrap();
-                    let replaced = walk_destination(&arm);
-                    arm.traveller.clear();
-                    arm.bank_fetch = Some(pending);
-                    arm.route = Some(route.clone());
-                    arm.route_generation = crate::walk_map::next_map_route_generation();
-                    replaced
-                };
-                if let Some(destination) = replaced {
-                    crate::walk_map::emit_walk_cancelled(
-                        Some(name),
-                        destination,
-                        Some(from_w),
-                        "Replaced",
-                    );
-                }
-            }
+            replace_walk_arm(travellers, focused, from_w, &route, Some(pending));
             Ok(route)
         }
         RouteOutcome::NoPath => Err(NoPath),
@@ -225,6 +176,41 @@ fn bank_stand_route_active(arm: &WalkArm) -> bool {
                 if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
         )
     })
+}
+
+/// Replace the focused slot's in-flight WalkTo state with a newly routed
+/// request, preserving one consistent cancellation receipt for both direct
+/// routes and BankBudget sessions.
+fn replace_walk_arm(
+    travellers: &WalkArms,
+    focused: Option<&str>,
+    from: WorldTile,
+    route: &Route,
+    bank_fetch: Option<PendingBankFetch>,
+) {
+    let Some(name) = focused else {
+        return;
+    };
+    let arm = travellers
+        .lock()
+        .unwrap()
+        .entry(name.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
+        .clone();
+    let replaced = {
+        let mut arm = arm.lock().unwrap();
+        let replaced = walk_destination(&arm);
+        // A fresh arm replaces any in-flight follow run and its prior
+        // BankBudget session. Traveller::clear preserves the essence latch.
+        arm.traveller.clear();
+        arm.bank_fetch = bank_fetch;
+        arm.route = Some(route.clone());
+        arm.route_generation = crate::walk_map::next_map_route_generation();
+        replaced
+    };
+    if let Some(destination) = replaced {
+        crate::walk_map::emit_walk_cancelled(Some(name), destination, Some(from), "Replaced");
+    }
 }
 
 /// Panel/TUI WalkTo pump: advance BankBudget work first, then the manual
