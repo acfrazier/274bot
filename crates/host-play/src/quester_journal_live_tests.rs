@@ -39,9 +39,9 @@ use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, Truth};
 use api::snapshot::GameSnapshot;
-use client::client::MiniMenuAction;
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 use client::client::present::{PresentTarget, WindowTarget};
+use client::client::MiniMenuAction;
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 use client::client::{GameShell, APPLET_H, APPLET_W};
 #[cfg(all(windows, feature = "journal-paint-proof"))]
@@ -909,16 +909,6 @@ fn live_options(home: &Path) -> ProfileOptions {
     }
 }
 
-fn account_name() -> String {
-    format!(
-        "jq{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|value| value.as_millis() % 1_000_000_000)
-            .unwrap_or(0)
-    )
-}
-
 fn profile(name: &str) -> Profile {
     Profile {
         username: name.to_string(),
@@ -1244,7 +1234,9 @@ fn launch_live(
         .expect("bind local-289 profile");
     let template =
         SharedClientTemplate::load(Arc::clone(&server_profile)).expect("load live template");
-    let name = account_name();
+    let name = super::mint_live_names(1)
+        .pop()
+        .expect("mint one live journal account");
     let state = Arc::new(Mutex::new(SetupState::default()));
     let capture = CaptureHandle::from_env(label);
     let headed = capture.is_some();
@@ -2300,7 +2292,6 @@ fn live_quester_journal_pause_resume_recovers_stranded_page() {
     drop(play);
     drop(home);
     let _ = recovered;
-
 }
 
 #[test]
