@@ -302,6 +302,13 @@ async function verifyRevision(revision: number) {
     // Content pins: the family and the writer could agree and both be wrong, so anchor a few facts to the pinned content.
     const gatherFacts = gathering.payload;
     const aliases = new Map(gatherFacts.entities.map((row) => { const [kind, id, alias] = row.split(' '); return [`${kind}:${id}`, alias]; }));
+    for (const [field, kind] of [['hazard_npcs', 'npc'], ['incidental_gem_ids', 'obj']] as const) {
+        const ids = gatherFacts[field];
+        if (ids.length === 0 || ids.some((id, index) => !Number.isSafeInteger(id) || (index > 0 && ids[index - 1] >= id))) {
+            throw new Error(`${revision}: ${field} must be a non-empty sorted unique id list`);
+        }
+        if (ids.some((id) => !aliases.has(`${kind}:${id}`))) throw new Error(`${revision}: ${field} ids must join to ${kind} entities`);
+    }
     const gatherMethod = (id: string) => { const found = gatherFacts.methods.find((each) => each.id === id); if (!found) throw new Error(`${revision}: missing gather method ${id}`); return found; };
     const gatherKnown = <T>(cell: { state: string; value?: T }, label: string): T => { if (cell.state === 'unknown' || cell.value === undefined) throw new Error(`${revision}: ${label} is unknown`); return cell.value; };
     assertEqual(JSON.stringify(gathering.summary.methods), JSON.stringify({ woodcutting: 10, mining: 15, fishing: 15 }), `${revision} gather method counts`);

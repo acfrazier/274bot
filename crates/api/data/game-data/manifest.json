@@ -7364,9 +7364,9 @@
       "families": {
         "gathering": {
           "path": "289/gathering.json",
-          "schema": 1,
-          "bytes": 1408129,
-          "sha256": "0c42448813308dda8080a91c5dc03b3198381dd09167f5c017607b58cd7fbfb8"
+          "schema": 2,
+          "bytes": 1408685,
+          "sha256": "48998bbd8b815f756da0f57b0f8ff7770ae2942262fafde2e1712a94bd596077"
         },
         "debug": {
           "path": "289/debug.json",
