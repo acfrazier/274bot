@@ -64,19 +64,12 @@ fn foreign_modal_failure(root: i32, texts: &[String]) -> Option<ActionError> {
             Some(text) => ActionError::Failed(Arc::from(format!(
                 "journal blocked by modal root {root} ({text})"
             ))),
-            None => ActionError::Failed(Arc::from(format!(
-                "journal blocked by modal root {root}"
-            ))),
+            None => ActionError::Failed(Arc::from(format!("journal blocked by modal root {root}"))),
         });
     }
-    texts
-        .iter()
-        .find(|text| !text.is_empty())
-        .map(|text| {
-            ActionError::Failed(Arc::from(format!(
-                "journal blocked by modal text ({text})"
-            )))
-        })
+    texts.iter().find(|text| !text.is_empty()).map(|text| {
+        ActionError::Failed(Arc::from(format!("journal blocked by modal text ({text})")))
+    })
 }
 
 impl NativeMachine for JournalMachine {
@@ -213,9 +206,10 @@ impl NativeMachine for JournalMachine {
                 self.deadline = cx.active_now() + WINDOW;
             }
             Phase::Adopt { before } => {
-                if snapshot.chat_modal().is_none_or(|chat| {
-                    chat.value.root != -1 || !chat.value.texts.is_empty()
-                }) {
+                if snapshot
+                    .chat_modal()
+                    .is_none_or(|chat| chat.value.root != -1 || !chat.value.texts.is_empty())
+                {
                     return Poll::Ready(Err(failure("journal ownership lost before close")));
                 }
                 let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
@@ -235,9 +229,10 @@ impl NativeMachine for JournalMachine {
                 self.deadline = cx.active_now() + WINDOW;
             }
             Phase::Close => {
-                if snapshot.chat_modal().is_none_or(|chat| {
-                    chat.value.root != -1 || !chat.value.texts.is_empty()
-                }) {
+                if snapshot
+                    .chat_modal()
+                    .is_none_or(|chat| chat.value.root != -1 || !chat.value.texts.is_empty())
+                {
                     return Poll::Ready(Err(failure("journal ownership lost before close")));
                 }
                 let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
@@ -267,9 +262,10 @@ impl NativeMachine for JournalMachine {
                 if !pair.stamp.meets(receipt.evidence) || pair.stamp == receipt.evidence {
                     return Poll::Pending;
                 }
-                if snapshot.chat_modal().is_none_or(|chat| {
-                    chat.value.root != -1 || !chat.value.texts.is_empty()
-                }) {
+                if snapshot
+                    .chat_modal()
+                    .is_none_or(|chat| chat.value.root != -1 || !chat.value.texts.is_empty())
+                {
                     return Poll::Ready(Err(failure("journal ownership lost while closing")));
                 }
                 if pair.value.root == -1 && pair.value.texts.is_empty() {

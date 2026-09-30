@@ -22402,3 +22402,154 @@ mod native_walk;
 
 #[path = "script_progress_tests.rs"]
 mod script_progress;
+
+#[cfg(test)]
+mod read_journal_tests {
+    use super::*;
+    use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
+
+    struct ParkedRead {
+        requested: bool,
+        panic_on_read: bool,
+    }
+
+    impl Script for ParkedRead {
+        fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            if self.requested {
+                Ok(ScriptFlow::Complete)
+            } else {
+                Ok(ScriptFlow::Blocked(ScriptFailure {
+                    code: "journal-no-match".into(),
+                    message: "no journal rule matched".into(),
+                    retryable: true,
+                }))
+            }
+        }
+
+        fn read_journal(&mut self) -> Result<(), ScriptFailure> {
+            assert!(!self.panic_on_read, "read callback panicked");
+            self.requested = true;
+            Ok(())
+        }
+    }
+
+    fn play(panic_on_read: bool) -> (Play, ScriptSlot) {
+        let play = crate::run_with_io(
+            &crate::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        let slot = script_slot_or_insert(&play.scripts, "alice");
+        slot.lock()
+            .unwrap()
+            .start_test_script(
+                Box::new(ParkedRead {
+                    requested: false,
+                    panic_on_read,
+                }),
+                None,
+            )
+            .unwrap();
+        tick(&slot, 1);
+        (play, slot)
+    }
+
+    fn tick(slot: &ScriptSlot, tick: u64) {
+        slot.lock().unwrap().on_game_tick(&mut script::ScriptCtx {
+            driver: &mut NavRec::default(),
+            tick,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+    }
+
+    #[test]
+    fn host_read_journal_restarts_blocked_dispatch_and_finishes_the_read() {
+        let (play, slot) = play(false);
+        let run = slot.lock().unwrap().native_run().unwrap();
+        assert_eq!(
+            slot.lock().unwrap().native_status().unwrap().phase,
+            script::native::NativePhase::Blocked
+        );
+        play.script_native_read_journal("alice", run).unwrap();
+        assert_eq!(
+            slot.lock().unwrap().native_status().unwrap().phase,
+            script::native::NativePhase::Waiting
+        );
+        tick(&slot, 2);
+        let slot = slot.lock().unwrap();
+        assert_eq!(slot.state(), script::RunState::Idle);
+        assert_eq!(
+            slot.lifecycle_receipt().unwrap().state,
+            script::ScriptTerminalState::Completed
+        );
+    }
+
+    #[test]
+    fn host_read_journal_refuses_every_stale_run_key_dimension() {
+        let (play, slot) = play(false);
+        let run = slot.lock().unwrap().native_run().unwrap();
+        for stale in [
+            api::selected::RunKey {
+                slot: run.slot + 1,
+                ..run
+            },
+            api::selected::RunKey {
+                run: run.run + 1,
+                ..run
+            },
+            api::selected::RunKey {
+                session: run.session + 1,
+                ..run
+            },
+        ] {
+            assert_eq!(
+                play.script_native_read_journal("alice", stale),
+                Err("stale native run".into())
+            );
+            assert_eq!(
+                slot.lock().unwrap().native_status().unwrap().phase,
+                script::native::NativePhase::Blocked
+            );
+        }
+        tick(&slot, 2);
+        assert_eq!(
+            slot.lock().unwrap().native_status().unwrap().phase,
+            script::native::NativePhase::Blocked
+        );
+        play.script_native_read_journal("alice", run).unwrap();
+        tick(&slot, 3);
+        assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
+    }
+
+    #[test]
+    fn host_read_journal_panic_fails_the_run_without_poisoning_the_slot() {
+        let (play, slot) = play(true);
+        let run = slot.lock().unwrap().native_run().unwrap();
+        assert_eq!(
+            play.script_native_read_journal("alice", run),
+            Err("read callback panicked".into())
+        );
+        let slot = slot.lock().expect("panic fence must keep the lock usable");
+        assert_eq!(slot.state(), script::RunState::Error);
+        assert!(slot.native_run().is_none());
+        assert_eq!(
+            slot.lifecycle_receipt().unwrap().state,
+            script::ScriptTerminalState::Failed
+        );
+        assert_eq!(slot.last_error(), Some("read callback panicked"));
+    }
+}

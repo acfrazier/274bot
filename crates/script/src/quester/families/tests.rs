@@ -1081,11 +1081,7 @@ fn progress_predicates_validate_references_and_count_requirements() {
             "unresolved-progress-stage"
         );
         assert_eq!(
-            error_code(&fact(
-                "flag",
-                serde_json::json!({"quest":"cook","flag":""}),
-            ))
-            .as_ref(),
+            error_code(&fact("flag", serde_json::json!({"quest":"cook","flag":""}),)).as_ref(),
             "invalid-args"
         );
         assert_eq!(

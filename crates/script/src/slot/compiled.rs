@@ -729,8 +729,10 @@ impl SlotScript {
         Ok(())
     }
 
-    /// Same run/session fence as other native controls. Requests are latched;
-    /// this command never interrupts an owned dialogue or emits a game verb.
+    /// Same run/session fence as other native controls. A successful request
+    /// reopens Blocked dispatch so the script's retry-with-read can run.
+    /// Working requests remain boundary-latched; this command itself never
+    /// interrupts an owned dialogue or emits a game verb.
     pub fn read_journal_compiled(&mut self, target: RunKey) -> Result<(), ScriptFailure> {
         let run = self
             .compiled
@@ -742,7 +744,17 @@ impl SlotScript {
                 retryable: false,
             })?;
         match catch_unwind(AssertUnwindSafe(|| run.script.read_journal())) {
-            Ok(result) => result,
+            Ok(result) => {
+                result?;
+                if let Some(status) = run.output.status.as_mut() {
+                    if status.phase == NativePhase::Blocked {
+                        let status = Arc::make_mut(status);
+                        status.phase = NativePhase::Waiting;
+                        status.failure = None;
+                    }
+                }
+                Ok(())
+            }
             Err(payload) => {
                 let failure = ScriptFailure {
                     code: "read-journal-panic".into(),
