@@ -1,0 +1,98 @@
+[
+  {
+    "id": "native-kernel",
+    "module": "shim/_kernel.js",
+    "selector": "$module",
+    "reason": "Host-only transport helpers have no frozen source module; envelope results are not booleans.",
+    "runtime": "crates/script/src/shim/_kernel.js:4",
+    "declaration": "export interface WorldTile { x: number; z: number; level?: number }\nexport interface MachineResult { kind: string; value?: unknown; reason?: string }\nexport function host(): Record<string, unknown>;\nexport function snap(): Record<string, unknown>;\nexport function notImpl(name: string, reason?: string): Error;\nexport function queue(req: unknown): void;\nexport function runMachine(family: string, args: unknown, hooks?: unknown): Promise<MachineResult>;\nexport function machineNow(family: string, args: unknown): MachineResult;\nexport function proxy<T extends object>(ns: string, members: T): T;\nexport function notImplValue(ns: string): never;\nexport function distanceTo(a: WorldTile | null, b: WorldTile | null): number;\nexport function planarDistanceTo(a: WorldTile | null, b: WorldTile | null): number;\nexport function arrived(dest: WorldTile, radius?: number): boolean;\nexport function presentOps(actions: readonly (string | null)[] | null): string[];\nexport function opIndex(actions: readonly (string | null)[], action: string): number;\nexport function entitySnapView(row: Record<string, unknown> | null): Record<string, unknown> | null;\nexport function optionalText(value: unknown): string | null;"
+  },
+  {
+    "id": "native-market-maker",
+    "module": "api/market/MarketMaker.js",
+    "selector": "$module",
+    "reason": "Every string property read throws not impl; no upstream implementation or arbitrary callable any surface is advertised.",
+    "runtime": "crates/script/src/shim/market_maker.js:4",
+    "declaration": "export const MarketMaker: { readonly [key: string]: never };"
+  },
+  {
+    "id": "direct-navigator-api-alias",
+    "module": "api/walking/DirectNavigator.js",
+    "selector": "$module",
+    "reason": "Host serves the API alias of its event navigator, absent from the frozen API directory.",
+    "runtime": "crates/script/src/shim/modules.rs:847",
+    "declaration": "export { DirectNavigator } from '../../event/webwalk/DirectNavigator.js';"
+  },
+  {
+    "id": "prelude-lifecycle",
+    "module": "api/bot/Bot.js",
+    "selector": "AbstractBot",
+    "reason": "AbstractBot aliases the concrete prelude LoopingBot with settings views, default lifecycle hooks, posted recovery tiles and string subscriptions; no frozen bindLog/dispose machinery.",
+    "runtime": "crates/script/src/shim/modules.rs:101",
+    "declaration": "export interface SettingsView { str(name: string, fallback?: string): string; num(name: string, fallback?: number): number; bool(name: string, fallback?: boolean): boolean; tile(name: string, fallback?: import('../../adapter/ClientAdapter.js').WorldTile | null): import('../../adapter/ClientAdapter.js').WorldTile | null; list(name: string, fallback?: string[]): string[] }\nexport class AbstractBot { loopDelay: number; loopCadence: LoopCadence | null; onStart(): void | Promise<void>; onStop(): void | Promise<void>; onPause(): void; onResume(): void; onPaint(ctx?: CanvasRenderingContext2D): void; loop(): number | void | Promise<number | void>; recoveryAnchor(): import('../../adapter/ClientAdapter.js').WorldTile | null; grindTargets(): string[]; ignoredRandoms(): string[]; on(event: 'chat.message', cb: (payload: {text: string}) => unknown): void; on(event: string, cb: (payload: unknown) => unknown): void; log(message: string): void; get settings(): SettingsView; }"
+  },
+  {
+    "id": "prelude-looping-concrete",
+    "module": "api/bot/Bot.js",
+    "selector": "LoopingBot",
+    "reason": "Prelude loop is a concrete synchronous no-op and subclasses can return synchronous values or promises, as frozen types already admit.",
+    "runtime": "crates/script/src/shim/modules.rs:109",
+    "declaration": "export class LoopingBot extends AbstractBot { loop(): number | void | Promise<number | void>; }"
+  },
+  {
+    "id": "defineBot",
+    "module": "@rs2b0t/api",
+    "selector": "$add",
+    "reason": "The host manifest entry is supplied by the prelude, not by a frozen API module.",
+    "runtime": "crates/script/src/shim/modules.rs:95",
+    "declaration": "export function defineBot<T extends {name: string; create: () => unknown}>(manifest: T): T;"
+  },
+  {
+    "id": "native-quest-engine-not-impl",
+    "module": "api/ai/quests/engine/QuestEngine.js",
+    "selector": "QuestEngine",
+    "reason": "Host publishes an empty throwing proxy, not a constructible frozen Task engine.",
+    "runtime": "crates/script/src/shim/quest_engine.js:4",
+    "declaration": "export const QuestEngine: { readonly [key: string]: never };"
+  },
+  {
+    "id": "banking-native-casket",
+    "module": "api/bank/Banking.js",
+    "selector": "$add",
+    "reason": "Casket id is a native posted content value with unavailable sentinel, not the bankRules constant.",
+    "runtime": "crates/script/src/shim/banking.js:14",
+    "declaration": "export const RANDOM_EVENT_CASKET_ID: number;"
+  },
+  {
+    "id": "cooking-custom-location-reexport",
+    "module": "api/cooking/CookLocations.js",
+    "selector": "$add",
+    "reason": "Host facade additionally reexports the actual custom-location marker from its served data module.",
+    "runtime": "crates/script/src/shim/cook_locations.js:7",
+    "declaration": "export { CUSTOM_LOCATION } from '../../data/cookLocations.js';"
+  },
+  {
+    "id": "execution-native-machine-park",
+    "module": "api/execution/Execution.js",
+    "selector": "$add",
+    "reason": "Native step-machine park is a host-only helper, resolving a completion envelope.",
+    "runtime": "crates/script/src/shim/execution.js:110",
+    "declaration": "export function parkMachine(handle: number): Promise<import('../../shim/_kernel.js').MachineResult>;"
+  },
+  {
+    "id": "prelude-taskbot",
+    "module": "api/bot/Bot.js",
+    "selector": "TaskBot",
+    "reason": "Host supplies a concrete task loop and public enqueue method instead of frozen protected task storage.",
+    "runtime": "crates/script/src/shim/modules.rs:184",
+    "declaration": "export class TaskBot extends LoopingBot { constructor(); add(...tasks: Task[]): void; loop(): Promise<number | void>; }"
+  },
+  {
+    "id": "prelude-treebot",
+    "module": "api/bot/Bot.js",
+    "selector": "TreeBot",
+    "reason": "Prelude TreeBot inherits LoopingBot.loop unchanged; its concrete root throws unless overridden.",
+    "runtime": "crates/script/src/shim/modules.rs:201",
+    "declaration": "export class TreeBot extends LoopingBot { root(): TreeNode; }"
+  }
+]

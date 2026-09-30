@@ -1,0 +1,281 @@
+[
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:reader.chatContinueComId",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "reader.chatContinueComId",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/client_adapter.js:112",
+    "async": false
+  },
+  {
+    "id": "not-impl:adapter/ClientAdapter.js:reader.bankComId",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "reader.bankComId",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/client_adapter.js:228",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/game/Game.js:Game.castOnNpc",
+    "module": "api/game/Game.js",
+    "selector": "Game.castOnNpc",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/game.js:197",
+    "async": true
+  },
+  {
+    "id": "not-impl:api/acquisition/Tools.js:missingToolLabels",
+    "module": "api/acquisition/Tools.js",
+    "selector": "missingToolLabels",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/tools.js:73",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/acquisition/Tools.js:toolKitLabel",
+    "module": "api/acquisition/Tools.js",
+    "selector": "toolKitLabel",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/tools.js:77",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/acquisition/Tools.js:bankHasBetterGatherTool",
+    "module": "api/acquisition/Tools.js",
+    "selector": "bankHasBetterGatherTool",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/tools.js:81",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bank/bankSortRules.js:categoryOf",
+    "module": "api/bank/bankSortRules.js",
+    "selector": "categoryOf",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/bank_sort_rules.js:5",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bank/bankSortRules.js:isUnmatched",
+    "module": "api/bank/bankSortRules.js",
+    "selector": "isUnmatched",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/bank_sort_rules.js:9",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bank/bankRules.js:shouldBankNow",
+    "module": "api/bank/bankRules.js",
+    "selector": "shouldBankNow",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/bank_rules.js:11",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bank/bankRules.js:isDisposableGatherJunk",
+    "module": "api/bank/bankRules.js",
+    "selector": "isDisposableGatherJunk",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/bank_rules.js:15",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/bank/bankSort.js:sortBank",
+    "module": "api/bank/bankSort.js",
+    "selector": "sortBank",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/bank_sort.js:7",
+    "async": true
+  },
+  {
+    "id": "not-impl:api/bank/bankQuestJunk.js:findQuestJunk",
+    "module": "api/bank/bankQuestJunk.js",
+    "selector": "findQuestJunk",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/bank_quest_junk.js:5",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/trade/PartnerTrade.js:countOfferMatching",
+    "module": "api/trade/PartnerTrade.js",
+    "selector": "countOfferMatching",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/partner_trade.js:26",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/shop/Shop.js:Shop.buyById",
+    "module": "api/shop/Shop.js",
+    "selector": "Shop.buyById",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/shop.js:57",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/ui/dialogue/ChatDialog.js:ChatDialog.makeOne",
+    "module": "api/ui/dialogue/ChatDialog.js",
+    "selector": "ChatDialog.makeOne",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/chat_dialog.js:65",
+    "async": true
+  },
+  {
+    "id": "not-impl:api/ui/questlog/Quests.js:Quests.journal",
+    "module": "api/ui/questlog/Quests.js",
+    "selector": "Quests.journal",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/quests.js:24",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/walking/Traversal.js:Traversal.remaining",
+    "module": "api/walking/Traversal.js",
+    "selector": "Traversal.remaining",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/traversal.js:87",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/walking/Traversal.js:Traversal.requestRepath",
+    "module": "api/walking/Traversal.js",
+    "selector": "Traversal.requestRepath",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/traversal.js:93",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/thieving/cakeStallData.js:classifySteal",
+    "module": "api/thieving/cakeStallData.js",
+    "selector": "classifySteal",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/cake_stall_data.js:24",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/ai/quests/exec/primitives.js:pickByLine",
+    "module": "api/ai/quests/exec/primitives.js",
+    "selector": "pickByLine",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/primitives.js:34",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/ai/quests/exec/primitives.js:needsHop",
+    "module": "api/ai/quests/exec/primitives.js",
+    "selector": "needsHop",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/primitives.js:42",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/ai/quests/exec/primitives.js:gotoNpc",
+    "module": "api/ai/quests/exec/primitives.js",
+    "selector": "gotoNpc",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/primitives.js:72",
+    "async": true
+  },
+  {
+    "id": "not-impl:api/ai/quests/exec/primitives.js:talkChoosingBy",
+    "module": "api/ai/quests/exec/primitives.js",
+    "selector": "talkChoosingBy",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/primitives.js:107",
+    "async": true
+  },
+  {
+    "id": "not-impl:event/webwalk/walkOpening.js:towardDest",
+    "module": "event/webwalk/walkOpening.js",
+    "selector": "towardDest",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/walk_opening.js:7",
+    "async": false
+  },
+  {
+    "id": "not-impl:event/webwalk/walkOpening.js:isOpenableObstacle",
+    "module": "event/webwalk/walkOpening.js",
+    "selector": "isOpenableObstacle",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/walk_opening.js:11",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/tasks/Anchor.js:shouldWalkHomeToGatherAnchor",
+    "module": "api/tasks/Anchor.js",
+    "selector": "shouldWalkHomeToGatherAnchor",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/anchor.js:8",
+    "async": false
+  },
+  {
+    "id": "not-impl:api/tasks/Anchor.js:shouldSoftHomeFromGatherMiss",
+    "module": "api/tasks/Anchor.js",
+    "selector": "shouldSoftHomeFromGatherMiss",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
+    "runtime": "crates/script/src/shim/anchor.js:12",
+    "async": false
+  },
+  {
+    "id": "not-impl:hunting:walkApproach",
+    "module": "api/combat/hunting/supply.js",
+    "selector": "walkApproach",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl; retains frozen parameter types but has no successful result or required arguments.",
+    "runtime": "crates/script/src/shim/hunting_supply.js:81",
+    "async": false
+  },
+  {
+    "id": "not-impl:hunting:withdrawTo",
+    "module": "api/combat/hunting/supply.js",
+    "selector": "withdrawTo",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl; retains frozen parameter types but has no successful result or required arguments.",
+    "runtime": "crates/script/src/shim/hunting_supply.js:85",
+    "async": false
+  },
+  {
+    "id": "not-impl:query:inside",
+    "module": "api/query/Query.js",
+    "selector": "EntityQuery.inside",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl; the native query never inspects an area or produces a successful result.",
+    "runtime": "crates/script/src/shim/query.js:107",
+    "async": false
+  },
+  {
+    "id": "not-impl:query:nearestPreferLocal",
+    "module": "api/query/Query.js",
+    "selector": "EntityQuery.nearestPreferLocal",
+    "operation": "not-impl",
+    "reason": "Unconditional not-impl; the native query never inspects a preference radius or produces a successful result.",
+    "runtime": "crates/script/src/shim/query.js:111",
+    "async": false
+  }
+]
