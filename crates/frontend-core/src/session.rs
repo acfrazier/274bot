@@ -680,16 +680,25 @@ impl<Io> OperatorSession<Io> {
     /// selected slot (or the first spawned one) is the sole priority
     /// exception.
     pub fn login_all<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) -> OperationId {
-        let op = self.operations.open(ActionKind::Login);
         let names = self.fleet.members().to_vec();
-        for name in &names {
+        self.login_members(&names, surface)
+    }
+
+    /// [`Self::login_all`] for the named members only, as one operation.
+    pub fn login_members<S: SlotSurface<Io = Io>>(
+        &mut self,
+        names: &[String],
+        surface: &mut S,
+    ) -> OperationId {
+        let op = self.operations.open(ActionKind::Login);
+        for name in names {
             self.cancel_removal(name);
             self.fleet.clear_latch(name);
         }
         if let Some(play) = self.play.as_mut() {
             play.reap_finished_workers();
         }
-        for name in &names {
+        for name in names {
             let result = self.arm_login(name, surface);
             self.record_login(op, name, result);
         }
@@ -754,7 +763,6 @@ impl<Io> OperatorSession<Io> {
 
     /// Log out every member and every other running slot.
     pub fn logout_all(&mut self) -> OperationId {
-        let op = self.operations.open(ActionKind::Logout);
         let mut names = self.fleet.members().to_vec();
         if let Some(play) = &self.play {
             for s in play.statuses() {
@@ -763,8 +771,14 @@ impl<Io> OperatorSession<Io> {
                 }
             }
         }
+        self.logout_members(&names)
+    }
+
+    /// [`Self::logout_all`] for the named slots only, as one operation.
+    pub fn logout_members(&mut self, names: &[String]) -> OperationId {
+        let op = self.operations.open(ActionKind::Logout);
         for name in names {
-            self.logout_member(op, &name);
+            self.logout_member(op, name);
         }
         if let Some(play) = self.play.as_ref() {
             play.wake_all();

@@ -40,8 +40,7 @@ use host_play::live_gate::{self, CoreGate, LiveCore, PassHold};
 use host_play::live_start::{self, PendingCatalogStart, StartArming};
 use host_play::paired_core::PairWatch;
 use host_play::walk_map::{
-    observed_services, ActionError, ActionKind, Catalogue, MapContext, WalkExclude,
-    WalkSlotRequest, WalkSlotStatus,
+    observed_services, ActionError, ActionKind, Catalogue, MapContext, WalkExclude, WalkSlotStatus,
 };
 use host_play::{
     background_bots_ack_error, background_bots_acked, clear_background_bots_ack_error,
@@ -1440,16 +1439,11 @@ impl TuiSession {
             .map(|error| format!("map: {error}"));
     }
 
+    /// Walk every marked bot to the pending destination through the shared
+    /// [`frontend_core::walk_marked`], the same command the panel's picker
+    /// runs. Nothing marked keeps the map selection.
     fn map_walk_group(&mut self, app: &mut TuiApp) {
-        use host_play::walk_map::WalkSlotOutcomeKind;
-        let names: Vec<String> = app
-            .walk_send
-            .rows()
-            .iter()
-            .filter(|row| row.checked)
-            .map(|row| row.name.clone())
-            .collect();
-        if names.is_empty() {
+        if app.table.selection.is_empty() {
             app.error = Some("no bots selected".into());
             return;
         }
@@ -1458,39 +1452,25 @@ impl TuiSession {
             .map_model
             .pending()
             .map(|s| s.target.unwrap_or(s.requested));
-        let prepared = (|| {
-            let context = self.map_context(app)?;
+        let prepared = self.map_context(app).and_then(|context| {
             let plan = app.map_model.confirm_walk_plan(&context, options);
             app.clear_consumed_map_selection();
-            let plan = plan?;
-            let play = self.core.play().ok_or(ActionError::NoFocus)?;
-            Ok((context, plan, play))
-        })();
-        let (context, plan, play) = match prepared {
-            Ok(pair) => pair,
-            Err(error) => {
-                host_play::walk_map::WalkRequest::refuse_group(
-                    self.core.play(),
-                    &names,
-                    destination,
-                    options,
-                    self.server_profile
-                        .as_ref()
-                        .map_or(&host_play::WorldMembersFact::Unknown, |p| p.world_members()),
-                    error,
-                );
-                app.error = Some(format!("map: {error}"));
-                return;
-            }
-        };
-        let states: Vec<_> = names
-            .iter()
-            .map(|name| self.focused_walk_state(&Some(name.clone())))
-            .collect();
-        let banks: Vec<Vec<(i32, i32)>> = names
-            .iter()
-            .map(|name| {
-                self.snapshots
+            plan.map(|plan| (context, plan))
+        });
+        let planned = prepared.as_ref().ok().map(|(_, plan)| plan.destination());
+        let report = frontend_core::walk_marked(
+            &app.table.selection,
+            &self.core,
+            frontend_core::MarkedWalk {
+                prepared,
+                destination,
+                options,
+                arms: &self.travellers,
+            },
+            |name| frontend_core::WalkInputs {
+                state: self.focused_walk_state(&Some(name.to_string())),
+                bank: self
+                    .snapshots
                     .lock()
                     .unwrap()
                     .get(name)
@@ -1500,34 +1480,17 @@ impl TuiSession {
                             .map(|it| (it.def.id, it.count))
                             .collect::<Vec<_>>()
                     })
-                    .unwrap_or_default()
-            })
-            .collect();
-        let reqs: Vec<WalkSlotRequest<'_>> = names
-            .iter()
-            .enumerate()
-            .map(|(i, name)| WalkSlotRequest {
-                name,
-                state: &states[i],
-                bank: &banks[i],
-            })
-            .collect();
-        let report = play.map_walk_group(plan, &context, &reqs, &self.travellers);
-        {
+                    .unwrap_or_default(),
+            },
+        );
+        if report.done_count() > 0 {
             let mut latch = self.tick_latch.lock().unwrap();
-            for outcome in &report.outcomes {
-                if matches!(outcome.kind, WalkSlotOutcomeKind::Walking) {
-                    latch.remove(&outcome.name);
-                }
+            for name in report.done() {
+                latch.remove(name);
             }
-        }
-        self.walk_clear.store(false, Ordering::Relaxed);
-        if report
-            .outcomes
-            .iter()
-            .any(|outcome| matches!(outcome.kind, WalkSlotOutcomeKind::Walking))
-        {
-            app.walk_dest = Some(plan.destination());
+            drop(latch);
+            self.walk_clear.store(false, Ordering::Relaxed);
+            app.walk_dest = planned;
         }
         app.error = Some(report.summary());
     }
@@ -1714,6 +1677,56 @@ impl TuiSession {
             self.scripts.start_all(&mut self.core, root.as_deref());
             self.apply_script_notice(app);
         }
+    }
+
+    /// Save the selected script as the assignment of every marked bot; the
+    /// one bulk report names each bot that could not take it.
+    fn script_assign_marked(&mut self, app: &mut TuiApp) {
+        let Some(card) = app.script_sel.clone() else {
+            return;
+        };
+        let root = self.start_catalog_root();
+        let report = frontend_core::assign_marked(
+            &app.table.selection,
+            &mut self.core,
+            &mut self.scripts,
+            &card,
+            root.as_deref(),
+        );
+        self.apply_script_notice(app);
+        app.error = Some(report.summary());
+    }
+
+    /// Assign the selected script to every marked bot and start it there
+    /// through the paced Start permit; the running Start report follows.
+    fn script_restart_marked(&mut self, app: &mut TuiApp) {
+        let Some(card) = app.script_sel.clone() else {
+            return;
+        };
+        let root = self.start_catalog_root();
+        frontend_core::assign_and_restart_marked(
+            &app.table.selection,
+            &mut self.core,
+            &mut self.scripts,
+            &card,
+            root.as_deref(),
+        );
+        self.apply_script_notice(app);
+    }
+
+    /// Log in every marked bot, loading the ones not loaded yet.
+    fn login_marked(&mut self, app: &mut TuiApp) {
+        let (core, mut surface) = self.core_and_surface();
+        let report = frontend_core::login_marked(&app.table.selection, core, &mut surface);
+        app.error = Some(report.summary());
+    }
+
+    /// Log out every marked bot that is logged in or logging in.
+    fn logout_marked(&mut self, app: &mut TuiApp) {
+        let report =
+            frontend_core::logout_marked(&app.table.selection, &mut self.core, &mut self.scripts);
+        self.apply_script_notice(app);
+        app.error = Some(report.summary());
     }
 
     fn script_stop_all(&mut self, app: &mut TuiApp) {
@@ -2912,6 +2925,10 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptParams => session.open_params(app),
         AppAction::ScriptStartAll => session.script_start_all(app),
         AppAction::ScriptStopAll => session.script_stop_all(app),
+        AppAction::ScriptAssignMarked => session.script_assign_marked(app),
+        AppAction::ScriptRestartMarked => session.script_restart_marked(app),
+        AppAction::LoginMarked => session.login_marked(app),
+        AppAction::LogoutMarked => session.logout_marked(app),
         AppAction::ScriptReload => session.script_reload(app),
         AppAction::ScriptReloadCancel => session.script_reload_cancel(app),
         AppAction::ScriptSyncPrepare => session.prepare_settings_sync(app),

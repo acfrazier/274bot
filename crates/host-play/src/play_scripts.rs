@@ -645,6 +645,18 @@ impl Play {
             .unwrap_or(script::RunState::Idle)
     }
 
+    /// `name`'s armed run: runtime, time since gameplay last progressed and
+    /// levels gained since Start. `None` when no run is armed (idle slot) or
+    /// the slot lock is poisoned by a retiring worker. Reads only; the
+    /// Fleet window calls it for its visible rows while it is open.
+    pub fn script_progress(&self, name: &str) -> Option<script::ScriptProgress> {
+        script_slot(&self.scripts, name).and_then(|slot| {
+            slot.lock()
+                .ok()
+                .and_then(|slot| slot.progress(std::time::Instant::now()))
+        })
+    }
+
     /// Resolve `name`'s non-blocking isolate Start/Stop. The slot thread
     /// does this every observe; a slot that is offline or queued for login
     /// has no observe, so the UI pumps it (see [`Self::pump_script_lifecycles`]).

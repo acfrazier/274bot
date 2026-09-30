@@ -18,6 +18,7 @@ use crate::session::{ArmMirror, OperatorSession};
 
 const OTHER_CARD: &str = "assigned another card";
 const UNASSIGNED: &str = "no assignment";
+const NOT_MARKED: &str = "not marked";
 
 /// A prepared sync, frozen for confirmation.
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +44,33 @@ impl SyncScope {
     /// The confirmation line: card, source and frozen scope.
     pub fn prompt(&self) -> &str {
         &self.prompt
+    }
+
+    /// Keep only the targets `keep` accepts; the rest are skipped as not
+    /// marked, and the confirmation line names the narrowed scope.
+    fn restrict(&mut self, keep: impl Fn(&str) -> bool) {
+        let (kept, dropped): (Vec<_>, Vec<_>) = std::mem::take(&mut self.targets)
+            .into_iter()
+            .partition(|target| keep(target));
+        self.targets = kept;
+        self.excluded
+            .retain(|(target, _)| self.targets.contains(target));
+        self.skipped.extend(
+            dropped
+                .into_iter()
+                .map(|target| (target, NOT_MARKED.to_string())),
+        );
+        let mut prompt = format!(
+            "Copy {} parameters from {} to {} marked same-card member(s); {} other member(s) skipped.",
+            self.card_name,
+            self.source,
+            self.targets.len(),
+            self.skipped.len()
+        );
+        for (target, fields) in &self.excluded {
+            prompt.push_str(&format!(" {target}: preserve {}.", fields.join(", ")));
+        }
+        self.prompt = prompt;
     }
 }
 
@@ -373,6 +401,16 @@ impl Scripts {
 
     pub fn prepared_settings_sync(&self) -> Option<&SyncScope> {
         self.sync.prepared.as_ref()
+    }
+
+    /// Narrow the prepared Apply to all to the members `keep` accepts (the
+    /// marked rows): the others are skipped as not marked and the
+    /// confirmation names the narrowed scope. No effect when nothing is
+    /// prepared.
+    pub fn restrict_prepared_settings_sync(&mut self, keep: impl Fn(&str) -> bool) {
+        if let Some(scope) = self.sync.prepared.as_mut() {
+            scope.restrict(keep);
+        }
     }
 
     pub fn cancel_settings_sync(&mut self) {

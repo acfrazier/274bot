@@ -183,6 +183,14 @@ pub enum AppAction {
     ScriptStartAll,
     /// Stop every member's script (queued replacement Starts included).
     ScriptStopAll,
+    /// Save the selected script as the assignment of every marked bot.
+    ScriptAssignMarked,
+    /// Assign the selected script to every marked bot and start it there.
+    ScriptRestartMarked,
+    /// Log in every marked bot (loading the ones not loaded yet).
+    LoginMarked,
+    /// Log out every marked bot.
+    LogoutMarked,
     /// Reload the focused heading's card, or confirm a shown warning.
     ScriptReload,
     /// Discard a prepared reload without touching any run.

@@ -260,7 +260,7 @@ pub fn stop_marked<Io>(
     report
 }
 
-fn profile_rows<Io>(core: &OperatorSession<Io>) -> Vec<(String, ProfileIdentity)> {
+pub(crate) fn profile_rows<Io>(core: &OperatorSession<Io>) -> Vec<(String, ProfileIdentity)> {
     core.vault()
         .map(|vault| {
             vault

@@ -3,6 +3,8 @@ pub mod build_info;
 pub mod chrome;
 pub mod clipboard;
 pub mod fleet;
+mod fleet_actions;
+mod fleet_columns;
 pub mod focus;
 pub mod game_view;
 pub mod grid;

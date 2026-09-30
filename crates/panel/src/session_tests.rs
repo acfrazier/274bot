@@ -2661,10 +2661,30 @@ fn picker_focus_switch_walks_the_newly_focused_bot() {
     assert!(!arms.contains_key("alice"));
 }
 
+/// A session whose vault holds `names` (uids 1..), so the shared marked
+/// commands can resolve the fleet marks to profiles.
+fn session_with_vault(file: &str, names: &[&str]) -> Session {
+    let path = tmp_vault(file);
+    let mut s = Session::new();
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    for (i, name) in names.iter().enumerate() {
+        s.core
+            .vault_mut()
+            .unwrap()
+            .upsert(profile(name, "pw", 1 + i as i32))
+            .unwrap();
+    }
+    s
+}
+
 #[test]
 fn picker_group_walk_several_slots_reports_like_start_all() {
     use host_play::walk_map::{WalkExclude, WalkSlotStatus};
-    let mut s = Session::new();
+    let mut s = session_with_vault(
+        "group-walk-several.vault",
+        &["alice", "bob", "logged-out", "nopos"],
+    );
     let world = open_world(3, 3);
     let origin = Tile {
         x: 0,
@@ -2736,13 +2756,131 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
     );
     assert_eq!(s.walk_send.walk_label(), "Walk 2 bots");
     assert!(s.confirm_picker_group_walk(&world));
-    assert_eq!(s.error.as_deref(), Some("2 walking"));
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Walk marked: walking 2, skipped 0")
+    );
     assert!(s.map_model.pending().is_none());
     assert_eq!(s.walk_dest, Some(dest));
     let arms = s.travellers.lock().unwrap();
     assert_eq!(arms["alice"].lock().unwrap().queued_tile(), Some(dest));
     assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
     assert!(!arms.contains_key("logged-out"));
+}
+
+/// The picker's group Walk goes through the shared command: a marked bot
+/// that cannot walk is named with its reason instead of silently dropping
+/// out of the count, and the bots that can walk still get the tile.
+#[test]
+fn picker_group_walk_names_marked_bots_that_cannot_walk() {
+    let mut s = session_with_vault(
+        "group-walk-marked.vault",
+        &["alice", "bob", "logged-out", "nopos"],
+    );
+    let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let dest = Tile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let _fixture = bind_picker_session(&mut s, &world, origin);
+    push_session_slot(
+        &mut s,
+        "bob",
+        Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+        None,
+        true,
+        true,
+    );
+    push_session_slot(&mut s, "logged-out", origin, None, false, false);
+    push_session_slot(
+        &mut s,
+        "nopos",
+        Tile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        None,
+        true,
+        true,
+    );
+    s.statuses = s.core.play().unwrap().statuses();
+    for name in ["alice", "bob", "logged-out", "nopos"] {
+        s.core.fleet_mut().add(name);
+        let identity = s.fleet_identity(name);
+        s.fleet_selection.set(identity, true);
+    }
+    assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
+    s.refresh_walk_send();
+    s.set_walk_send_mode(super::WalkSendMode::Group);
+    assert!(s.confirm_picker_group_walk(&world));
+    assert_eq!(
+        s.error.as_deref(),
+        Some(
+            "Walk marked: walking 2, skipped 2: logged-out: not logged in, nopos: no position yet"
+        )
+    );
+    let arms = s.travellers.lock().unwrap();
+    assert_eq!(arms["alice"].lock().unwrap().queued_tile(), Some(dest));
+    assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
+    assert!(!arms.contains_key("logged-out"));
+    assert!(!arms.contains_key("nopos"));
+}
+
+/// The Fleet window's Walk opens the picker in group mode checked from the
+/// marks alone: an eligible bot that is not marked is not added.
+#[test]
+fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
+    let mut s = session_with_vault("fleet-walk-open.vault", &["alice", "bob"]);
+    let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let _fixture = bind_picker_session(&mut s, &world, origin);
+    push_session_slot(
+        &mut s,
+        "bob",
+        Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+        None,
+        true,
+        true,
+    );
+    s.statuses = s.core.play().unwrap().statuses();
+    for name in ["alice", "bob"] {
+        s.core.fleet_mut().add(name);
+    }
+    let alice = s.fleet_identity("alice");
+    s.fleet_selection.set(alice, true);
+
+    s.open_walkto_for_marked();
+
+    assert!(s.walkto_open);
+    assert_eq!(s.walk_send.mode, super::WalkSendMode::Group);
+    let checked: Vec<(&str, bool)> = s
+        .walk_send
+        .rows()
+        .iter()
+        .map(|row| (row.name.as_str(), row.checked))
+        .collect();
+    assert_eq!(checked, [("alice", true), ("bob", false)]);
+    assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
+    assert_eq!(s.fleet_selection.len(), 1, "a mark is never added");
 }
 
 #[test]

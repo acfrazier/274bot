@@ -108,6 +108,19 @@ Commands ending in `…` confirm first: Remove names the bot it will remove
 members they cover. If the fleet changes before you confirm, the dialog
 shows the new scope instead of running.
 
+**Marked rows.** The `[x]` marks are the one selection every fleet command
+reads. With rows marked, **Load+login all** and **Logout all** log in / out
+the marked bots only (loading unloaded ones first), **Start all** / **Stop
+all** start / stop them, and the palette adds **Assign script to marked…**
+(saves the Browse pick as their assignment without starting; running bots are
+skipped) and **Assign & restart marked…** (stops a running script, then
+starts the pick through the same one-per-frame Start permit as Start all).
+With the Map's group send (`g`), `Enter` walks every marked bot to the tile
+from its own position. Each of these prints one report with every marked bot
+counted once, failures first (`Walk marked: walking 3, skipped 2: gwalk2:
+running a script, gwalk3: not logged in`); bots that are logged out, have no
+position yet or run a script are skipped with that reason.
+
 **Mouse** (optional; every workflow works from the keyboard): left click
 focuses the pane, selects a fleet row (its checkbox column ticks the row
 instead), presses a button or tab, answers a dialogue option or selects a

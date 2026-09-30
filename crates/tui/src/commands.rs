@@ -46,6 +46,8 @@ pub enum Command {
     ScriptReloadCancel,
     ScriptStartAll,
     ScriptStopAll,
+    ScriptAssignMarked,
+    ScriptRestartMarked,
     ImportCatalog,
     ToggleGameChat,
     MapSearch,
@@ -201,6 +203,8 @@ impl Command {
         Command::ScriptReloadCancel,
         Command::ScriptStartAll,
         Command::ScriptStopAll,
+        Command::ScriptAssignMarked,
+        Command::ScriptRestartMarked,
         Command::ImportCatalog,
         Command::ToggleGameChat,
         Command::MapSearch,
@@ -250,6 +254,8 @@ impl Command {
             | Command::ScriptReloadCancel
             | Command::ScriptStartAll
             | Command::ScriptStopAll
+            | Command::ScriptAssignMarked
+            | Command::ScriptRestartMarked
             | Command::ImportCatalog => Group::Script,
             Command::ToggleGameChat => Group::Chat,
             Command::MapSearch
@@ -299,6 +305,8 @@ impl Command {
             Command::ScriptReloadCancel => "Cancel reload",
             Command::ScriptStartAll => "Start all…",
             Command::ScriptStopAll => "Stop all…",
+            Command::ScriptAssignMarked => "Assign script to marked…",
+            Command::ScriptRestartMarked => "Assign & restart marked…",
             Command::ImportCatalog => "Import rs2b0t catalog",
             Command::ToggleGameChat => "Toggle game chat / script paint",
             Command::MapSearch => "Map: search",
@@ -351,6 +359,8 @@ impl Command {
                 | Command::LogoutAll
                 | Command::ScriptStartAll
                 | Command::ScriptStopAll
+                | Command::ScriptAssignMarked
+                | Command::ScriptRestartMarked
         )
     }
 
@@ -371,11 +381,21 @@ impl Command {
             Group::App => "app".into(),
             Group::Logs => "log".into(),
             Group::Fleet => match self {
+                Command::LoadLoginAll if !app.table.selection.is_empty() => selected_scope(),
                 Command::LoadLoginAll => "every vault profile".into(),
+                Command::LogoutAll if !app.table.selection.is_empty() => selected_scope(),
                 Command::LogoutAll => format!("all {}", members_text(app.names.len())),
                 _ => "fleet table".into(),
             },
-            Group::Script if matches!(self, Command::ScriptStartAll | Command::ScriptStopAll) => {
+            Group::Script
+                if matches!(
+                    self,
+                    Command::ScriptStartAll
+                        | Command::ScriptStopAll
+                        | Command::ScriptAssignMarked
+                        | Command::ScriptRestartMarked
+                ) =>
+            {
                 selected_scope()
             }
             Group::Script if matches!(self, Command::ScriptBrowse | Command::ScriptLoad) => {
@@ -467,6 +487,16 @@ impl Command {
                 .then_some(())
                 .ok_or("no reload awaiting confirmation"),
             Command::ScriptStartAll | Command::ScriptStopAll => members(),
+            Command::ScriptAssignMarked | Command::ScriptRestartMarked => {
+                if app.table.selection.is_empty() {
+                    Err("mark fleet rows first")
+                } else {
+                    app.script_sel
+                        .as_ref()
+                        .map(|_| ())
+                        .ok_or("browse to pick a script first")
+                }
+            }
             Command::ToggleGameChat => app
                 .chat_data
                 .script_paint

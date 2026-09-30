@@ -823,6 +823,11 @@ pub(crate) fn script_observe_cached_with_channels(
                 && here.is_some()
                 && snapshot.is_some_and(|snap| snap.ingame() && snap.scene_state() == 2);
             let frozen = hold || !ready || slot.state() == script::RunState::Paused;
+            if ready {
+                if let Some(snapshot) = snapshot {
+                    slot.note_levels(snapshot.stats().iter().map(|stat| stat.base));
+                }
+            }
             let mut xp_slots = [0; 25];
             let xp = if let Some(snapshot) = snapshot {
                 for (xp, stat) in xp_slots.iter_mut().zip(snapshot.stats()) {

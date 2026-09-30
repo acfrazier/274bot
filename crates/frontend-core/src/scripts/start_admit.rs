@@ -45,16 +45,24 @@ pub(super) struct QueuedStart {
 #[derive(Debug, Default)]
 pub(super) struct StartAdmit {
     queue: VecDeque<QueuedStart>,
+    /// Restarts whose slot is still stopping: they join the queue (and its
+    /// pacing) only once the slot is idle, so a restart never dispatches a
+    /// Start onto a script that is still winding down.
+    awaiting_stop: Vec<QueuedStart>,
     publish: bool,
 }
 
 impl StartAdmit {
     pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
+        self.queue.is_empty() && self.awaiting_stop.is_empty()
     }
 
     pub fn contains(&self, profile: &str) -> bool {
         self.queue.iter().any(|entry| entry.profile == profile)
+            || self
+                .awaiting_stop
+                .iter()
+                .any(|entry| entry.profile == profile)
     }
 
     pub fn enqueue(&mut self, entry: QueuedStart) {
@@ -63,6 +71,30 @@ impl StartAdmit {
         }
         self.queue.push_back(entry);
         self.publish = true;
+    }
+
+    /// Hold `entry` until its slot has stopped; see [`Self::release_stopped`].
+    pub fn hold_until_stopped(&mut self, entry: QueuedStart) {
+        if self.contains(&entry.profile) {
+            return;
+        }
+        self.awaiting_stop.push(entry);
+    }
+
+    /// Move every held restart whose slot `stopped` reports onto the paced
+    /// queue, in the order they were held.
+    pub fn release_stopped(&mut self, mut stopped: impl FnMut(&str) -> bool) {
+        if self.awaiting_stop.is_empty() {
+            return;
+        }
+        let (ready, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.awaiting_stop)
+            .into_iter()
+            .partition(|entry| stopped(&entry.profile));
+        self.awaiting_stop = waiting;
+        if !ready.is_empty() {
+            self.queue.extend(ready);
+            self.publish = true;
+        }
     }
 
     pub fn poll(&self) -> StartPermit {
@@ -80,6 +112,13 @@ impl StartAdmit {
     }
 
     pub fn leave(&mut self, profile: &str) -> Option<QueuedStart> {
+        if let Some(index) = self
+            .awaiting_stop
+            .iter()
+            .position(|entry| entry.profile == profile)
+        {
+            return Some(self.awaiting_stop.remove(index));
+        }
         let index = self
             .queue
             .iter()
@@ -89,11 +128,13 @@ impl StartAdmit {
     }
 
     pub fn drain(&mut self) -> Vec<QueuedStart> {
-        if self.queue.is_empty() {
+        if self.is_empty() {
             return Vec::new();
         }
         self.publish = true;
-        self.queue.drain(..).collect()
+        let mut all: Vec<QueuedStart> = self.queue.drain(..).collect();
+        all.append(&mut self.awaiting_stop);
+        all
     }
 
     pub fn status(&self, profile: &str) -> Option<QueuePlace> {
