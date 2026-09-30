@@ -1,7 +1,7 @@
 //! Borrowed native observations with readiness attached to their evidence stamp.
 use super::{
     ActorTargetView, ChatLineView, ChatOptionView, GameSnapshot, GroundItemView, ItemView, LocView,
-    NpcView, QuestStatusView, StatView, VarpView,
+    LocalPlayerView, NpcView, QuestStatusView, StatView, VarpView, WorldStateView,
 };
 use crate::quest_progress::EvidenceStamp;
 
@@ -68,6 +68,38 @@ impl<'a> SnapshotView<'a> {
         }
         Some(Observed {
             value: snapshot.local_player()?.player.actor.tile,
+            stamp: self.stamp,
+        })
+    }
+
+    /// The local player once the player family has posted its first row.
+    /// Disconnect or a pre-player frame is not an observed empty player.
+    pub fn local_player(&self) -> Option<Observed<&'a LocalPlayerView>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.local_player()?,
+            stamp: self.stamp,
+        })
+    }
+
+    /// World scalars once a build origin has been observed. The origin is the
+    /// readiness marker because the rectangle is meaningless before a build.
+    pub fn world(&self) -> Option<Observed<&'a WorldStateView>> {
+        let snapshot = self.ingame()?;
+        snapshot.base()?;
+        Some(Observed {
+            value: snapshot.world(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Inventory capacity after the inventory component has posted a
+    /// positive slot count. Empty slots are omitted from `inventory()`.
+    pub fn inventory_capacity(&self) -> Option<Observed<u8>> {
+        let snapshot = self.ingame()?;
+        let capacity = snapshot.inventory_size();
+        (capacity > 0).then_some(Observed {
+            value: capacity as u8,
             stamp: self.stamp,
         })
     }
@@ -391,6 +423,9 @@ mod tests {
             SnapshotView::new(None, stamp),
             SnapshotView::new(Some(&snapshot), stamp),
         ] {
+            assert!(view.local_player().is_none());
+            assert!(view.world().is_none());
+            assert!(view.inventory_capacity().is_none());
             assert!(view.inventory().is_none());
             assert!(view.bank().is_none());
             assert!(view.quest_statuses().is_none());
@@ -412,6 +447,9 @@ mod tests {
         }
         snapshot.ingame = true;
         let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert!(view.local_player().is_none());
+        assert!(view.world().is_none());
+        assert!(view.inventory_capacity().is_none());
         assert!(view.inventory().is_none());
         assert!(view.bank().is_none());
         assert!(view.quest_statuses().is_none());
@@ -451,6 +489,7 @@ mod tests {
             used: true,
         }]);
         let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert_eq!(view.inventory_capacity().unwrap().value, 28);
         assert!(view.inventory().unwrap().value.is_empty());
         assert!(view.bank().unwrap().value.is_empty());
         assert!(view.quest_statuses().unwrap().value.is_empty());
@@ -467,6 +506,9 @@ mod tests {
         // A disconnected frame cannot lend stale cached observations.
         snapshot.ingame = false;
         let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert!(view.local_player().is_none());
+        assert!(view.world().is_none());
+        assert!(view.inventory_capacity().is_none());
         assert!(view.inventory().is_none());
         assert!(view.bank().is_none());
         assert!(view.quest_statuses().is_none());
@@ -477,6 +519,87 @@ mod tests {
         assert!(view.varps().is_none());
         assert!(view.run_energy().is_none());
         assert!(view.prayers_active().is_none());
+    }
+
+    #[test]
+    fn local_world_and_capacity_borrow_posted_facts() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 2,
+                session: 3,
+            },
+            tick: 4,
+            sequence: 5,
+        };
+        let mut snapshot = GameSnapshot::default();
+        snapshot.ingame = true;
+        snapshot.base = Some((3200, 3400));
+        snapshot.world = super::super::WorldStateView {
+            map_base_x: 3200,
+            map_base_z: 3400,
+            level: 1,
+            members: true,
+            multi_combat: false,
+            player_count: 1,
+            npc_count: 0,
+            cycle: 99,
+        };
+        snapshot.seed_local_player(super::super::LocalPlayerView {
+            player: super::super::PlayerView {
+                index: 7,
+                actor: super::super::ActorView {
+                    name: Some("alice".into()),
+                    actions: Vec::new(),
+                    tile: super::super::WorldTile {
+                        x: 3205,
+                        z: 3405,
+                        level: 1,
+                    },
+                    distance: 0,
+                    animation: -1,
+                    pose_animation: -1,
+                    orientation: 0,
+                    target_orientation: 0,
+                    overhead_text: None,
+                    spot_animation: -1,
+                    health: 10,
+                    total_health: 10,
+                    face_entity: -1,
+                    target: None,
+                    moving: false,
+                    running: false,
+                    in_combat: false,
+                },
+                combat_level: 3,
+                skill_level: 3,
+            },
+            energy: 77,
+            weight: 0,
+        });
+        snapshot.inventory_size = 28;
+
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        let local = view.local_player().expect("posted local player");
+        assert!(std::ptr::eq(
+            local.value,
+            snapshot.local_player().expect("seeded local player")
+        ));
+        assert_eq!(local.value.energy, 77);
+
+        let world = view.world().expect("posted world build");
+        assert_eq!(world.value.map_base_x, 3200);
+        assert_eq!(world.value.map_base_z, 3400);
+        assert_eq!(world.value.level, 1);
+        assert!(world.value.members);
+        assert_eq!(world.stamp, stamp);
+        assert_eq!(view.inventory_capacity().unwrap().value, 28);
+
+        snapshot.base = None;
+        snapshot.inventory_size = 0;
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert!(view.world().is_none());
+        assert!(view.inventory_capacity().is_none());
     }
 
     #[test]
