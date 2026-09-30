@@ -1,4 +1,4 @@
-//! Headless LIVE proofs for Quester journal evidence and the released Cook card.
+//! LIVE proofs for Quester journal evidence and the released Cook card.
 //!
 //! The synthetic card deliberately uses the Rune Mysteries journal branches from
 //! the R289 content pack while retaining the checked Cook Path header.  It is a
@@ -16,7 +16,11 @@
 //!
 //! On Windows, headed proof additionally requires the opt-in feature and both
 //! headed environment variables.  `BOT_CPU=1` selects the CPU pixmap path;
-//! leaving it unset exercises GPU frames through WindowTarget readback:
+//! leaving it unset requests the GPU renderer. In this fixture feature only,
+//! the producer reads GPU pixels before texture reuse and attaches the modal
+//! root/paint flag to every completed paint in a lossless FIFO. The capture
+//! worker writes each PNG/JSON and presents those same immutable pixels through
+//! a real Windows WindowTarget:
 //!
 //! ```text
 //! LIVE=1 BOT_CPU=1 BOT_JOURNAL_HEADED=1 BOT_JOURNAL_CAPTURE_DIR=guest_home\.274bot\smoke\journal cargo test -p host-play --release --features journal-paint-proof --lib live_quester_journal_synthetic_runemysteries -- --ignored --nocapture --test-threads=1
@@ -532,13 +536,17 @@ fn capture_loop(
     let mut last_mouse = (shell.mouse_x, shell.mouse_y);
     let mut last_button = shell.mouse_button;
     let mut disable_input_at = None;
+    let mut close_input_armed = false;
     let mut stop = false;
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
                 CaptureCommand::ArmInput => {
                     input.set_enabled(true);
-                    disable_input_at = Some(Instant::now() + Duration::from_millis(120));
+                    close_input_armed = true;
+                    // Keep synthetic input live until its observed close.
+                    // GPU readback can outlast a fixed-duration pulse.
+                    disable_input_at = None;
                 }
                 CaptureCommand::Stop => stop = true,
             }
@@ -629,6 +637,11 @@ fn capture_loop(
                     break;
                 }
                 remember_frame(&mut state, generation, &observation, &pixels);
+                if close_input_armed && state.saw_closed_after_click {
+                    input.set_enabled(false);
+                    close_input_armed = false;
+                    disable_input_at = None;
+                }
                 if record.gpu {
                     state.gpu_frames += 1;
                 } else {
@@ -639,7 +652,8 @@ fn capture_loop(
                 state.frames += 1;
             }
         }
-        if disable_input_at.is_some_and(|deadline| Instant::now() >= deadline) {
+        if !close_input_armed && disable_input_at.is_some_and(|deadline| Instant::now() >= deadline)
+        {
             input.set_enabled(false);
             disable_input_at = None;
         }
