@@ -213,6 +213,20 @@ pub struct ReachSidecar {
     pub bits: Vec<u64>,
 }
 
+/// Streaming sidecar result whose words occupy the final shared allocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReachSidecarLoad {
+    pub origin: WorldTile,
+    pub width: usize,
+    pub height: usize,
+    pub word_count: usize,
+    pub binding: [u8; 32],
+    pub bits: Arc<[u64]>,
+}
+
+/// Static canlight uses the same streaming result layout as paint reach.
+pub type CanlightSidecarLoad = ReachSidecarLoad;
+
 /// Hex form of a 32-byte SHA-256 (lowercase), matching [`crate::manifest::hash_bytes`].
 pub fn sha256_hex(bytes: &[u8; 32]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -266,6 +280,15 @@ pub fn decode_reach_sidecar(bytes: &[u8]) -> Result<ReachSidecar, PackError> {
     decode_bitset_sidecar(bytes, MAGIC_REACH, VERSION_REACH)
 }
 
+/// Stream a paint-reach sidecar into its final `Arc<[u64]>` allocation.
+/// `length` bounds reads and must be the opened file's byte length.
+pub fn read_reach_sidecar(
+    reader: &mut impl BufRead,
+    length: usize,
+) -> Result<ReachSidecarLoad, PackError> {
+    read_bitset_sidecar(reader, length, MAGIC_REACH, VERSION_REACH)
+}
+
 /// Decoded static canlight sidecar. Same geometry as [`ReachSidecar`]; the
 /// binding is pack+policy identity, not pack SHA alone.
 pub type CanlightSidecar = ReachSidecar;
@@ -294,6 +317,14 @@ pub fn encode_canlight_sidecar(
 /// here — the caller compares them to pack+policy identity.
 pub fn decode_canlight_sidecar(bytes: &[u8]) -> Result<CanlightSidecar, PackError> {
     decode_bitset_sidecar(bytes, MAGIC_CANLIGHT, VERSION_CANLIGHT)
+}
+
+/// Stream a static canlight sidecar into its final `Arc<[u64]>` allocation.
+pub fn read_canlight_sidecar(
+    reader: &mut impl BufRead,
+    length: usize,
+) -> Result<CanlightSidecarLoad, PackError> {
+    read_bitset_sidecar(reader, length, MAGIC_CANLIGHT, VERSION_CANLIGHT)
 }
 
 pub(super) fn encode_bitset_sidecar(
@@ -327,35 +358,11 @@ pub(super) fn decode_bitset_sidecar(
     expected_version: u8,
 ) -> Result<ReachSidecar, PackError> {
     let mut r = Cursor::new(bytes);
-    let mut magic = [0u8; 4];
-    r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
-    if &magic != expected_magic {
-        return Err(PackError::BadMagic);
-    }
-    let mut version = [0u8; 1];
-    r.read_exact(&mut version)
-        .map_err(|_| PackError::Truncated)?;
-    if version[0] != expected_version {
-        return Err(PackError::BadVersion(version[0]));
-    }
-    let origin = WorldTile {
-        x: read_i32(&mut r)?,
-        z: read_i32(&mut r)?,
-        level: read_i32(&mut r)?,
-    };
-    let width = read_u32(&mut r)? as usize;
-    let height = read_u32(&mut r)? as usize;
-    if width == 0 || height == 0 || width > MAX_GRID || height > MAX_GRID {
-        return Err(PackError::BadLength(format!(
-            "grid {width}x{height} exceeds the {MAX_GRID} tile cap"
-        )));
-    }
-    let word_count = read_u32(&mut r)? as usize;
-    let mut binding = [0u8; 32];
-    r.read_exact(&mut binding)
-        .map_err(|_| PackError::Truncated)?;
+    let (origin, width, height, word_count, binding) =
+        read_bitset_header(&mut r, expected_magic, expected_version)?;
     let payload = &bytes[r.position() as usize..];
-    if payload.len() != word_count.saturating_mul(8) {
+    let payload_len = word_count.checked_mul(8).ok_or(PackError::Truncated)?;
+    if payload.len() != payload_len {
         return Err(PackError::Truncated);
     }
     Ok(ReachSidecar {
@@ -366,6 +373,80 @@ pub(super) fn decode_bitset_sidecar(
         binding,
         bits: decode_u64le_words(payload),
     })
+}
+
+fn read_bitset_sidecar(
+    reader: &mut impl BufRead,
+    length: usize,
+    expected_magic: &[u8; 4],
+    expected_version: u8,
+) -> Result<ReachSidecarLoad, PackError> {
+    let mut r = BoundedReader::new(reader, length);
+    let (origin, width, height, word_count, binding) =
+        read_bitset_header(&mut r, expected_magic, expected_version)?;
+    let payload_len = word_count.checked_mul(8).ok_or(PackError::Truncated)?;
+    if r.remaining() != payload_len {
+        return Err(PackError::Truncated);
+    }
+
+    // One exact-size allocation (a TrustedLen collect), filled in place.
+    let mut bits: Arc<[u64]> = std::iter::repeat_n(0u64, word_count).collect();
+    {
+        let slots = Arc::get_mut(&mut bits).expect("new Arc is uniquely owned");
+        let mut chunk = [0u8; 4096];
+        let mut remaining = payload_len;
+        let mut word_index = 0;
+        while remaining > 0 {
+            let n = remaining.min(chunk.len());
+            r.read_bytes_exact(&mut chunk[..n])?;
+            for word in chunk[..n].as_chunks::<8>().0 {
+                slots[word_index] = u64::from_le_bytes(*word);
+                word_index += 1;
+            }
+            remaining -= n;
+        }
+        debug_assert_eq!(word_index, word_count);
+    }
+    Ok(ReachSidecarLoad {
+        origin,
+        width,
+        height,
+        word_count,
+        binding,
+        bits,
+    })
+}
+
+fn read_bitset_header<R: PackRead>(
+    r: &mut R,
+    expected_magic: &[u8; 4],
+    expected_version: u8,
+) -> Result<(WorldTile, usize, usize, usize, [u8; 32]), PackError> {
+    let mut magic = [0u8; 4];
+    r.read_bytes_exact(&mut magic)?;
+    if &magic != expected_magic {
+        return Err(PackError::BadMagic);
+    }
+    let version = read_u8(r)?;
+    if version != expected_version {
+        return Err(PackError::BadVersion(version));
+    }
+    let origin = WorldTile {
+        x: read_i32(r)?,
+        z: read_i32(r)?,
+        level: read_i32(r)?,
+    };
+    let width = read_u32(r)? as usize;
+    let height = read_u32(r)? as usize;
+    if width == 0 || height == 0 || width > MAX_GRID || height > MAX_GRID {
+        return Err(PackError::BadLength(format!(
+            "grid {width}x{height} exceeds the {MAX_GRID} tile cap"
+        )));
+    }
+    let word_count = read_u32(r)? as usize;
+    let mut binding = [0u8; 32];
+    r.read_bytes_exact(&mut binding)?;
+    Ok((origin, width, height, word_count, binding))
 }
 
 /// Bulk little-endian `u64` words from a length-checked payload (`len % 8 == 0`).
