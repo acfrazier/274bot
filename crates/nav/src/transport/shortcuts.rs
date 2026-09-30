@@ -16,6 +16,7 @@ pub(super) fn shortcut_edges(
     skipped: &mut HashMap<&'static str, usize>,
 ) {
     let reqs = shortcut_agility_reqs(content_root);
+    let members_reqs = shortcut_members_reqs(content_root);
     type PlacementMaker = fn(&Placement) -> Vec<WorldTile>;
     let makers: [(&str, PlacementMaker); 4] = [
         ("fullstyle", fullstyle_dests),
@@ -71,7 +72,7 @@ pub(super) fn shortcut_edges(
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
-                    members_req: false,
+                    members_req: members_reqs.get(loc_name).copied().unwrap_or(false),
                     wildy_cap: None,
                     quest_gates: None,
                 });
@@ -373,6 +374,50 @@ pub(super) fn shortcut_agility_reqs(content_root: &Path) -> HashMap<String, i32>
                 };
                 if let Some(level) = agility_level_req(line) {
                     out.entry(name.clone()).or_insert(level);
+                }
+            }
+        }
+    }
+    out
+}
+/// Members requirement from the source `[oploc1,<shortcut>]` guard.
+///
+/// A shortcut is emitted only when its handler's early `map_members = ^false`
+/// branch refuses F2P worlds. The source remains authoritative; an absent or
+/// unparseable handler is conservatively treated as unguarded.
+fn shortcut_members_reqs(content_root: &Path) -> HashMap<String, bool> {
+    let mut out = HashMap::new();
+    for dir in [
+        content_root
+            .join("scripts")
+            .join("skill_agility")
+            .join("scripts"),
+        content_root
+            .join("scripts")
+            .join("areas")
+            .join("area_yanille")
+            .join("scripts"),
+    ] {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for ent in entries.flatten() {
+            let path = ent.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("rs2") {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(path) else {
+                continue;
+            };
+            for (op, name, body) in script_blocks(&text) {
+                if op == "oploc1"
+                    && body.lines().take(5).any(|raw| {
+                        let code = raw.split_once("//").map_or(raw, |(code, _)| code);
+                        let compact: String = code.chars().filter(|c| !c.is_whitespace()).collect();
+                        compact == "if(map_members=^false){"
+                    })
+                {
+                    out.insert(name, true);
                 }
             }
         }

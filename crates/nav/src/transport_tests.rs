@@ -263,6 +263,100 @@ if($entering = false) {
         "the same Zanaris edge is usable on a members world"
     );
 }
+#[test]
+fn entrana_boat_members_guard_controls_world_behavior() {
+    let fx = Fixture::new();
+    fx.write(
+        "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2",
+        "\
+[opnpc1,shipmonk]
+if(map_members = ^false) {
+    mes(\"You need to be on a members' world to access this content.\");
+    return;
+}
+",
+    );
+    let graph = derive_static_routes_for(&fx);
+    let outbound = graph
+        .edges
+        .iter()
+        .find(|edge| edge.kind == TransportKind::Boat && edge.loc_id == 657)
+        .expect("Port Sarim -> Entrana boat");
+    assert!(outbound.members_req, "shipmonk is members-gated");
+    assert!(
+        !crate::world_state::WorldState::empty().allows(outbound),
+        "F2P cannot take the Entrana boat"
+    );
+    assert!(
+        crate::world_state::WorldState::empty()
+            .with_map_members(true)
+            .allows(outbound),
+        "members worlds can take the Entrana boat"
+    );
+
+    let return_boat = graph
+        .edges
+        .iter()
+        .find(|edge| edge.kind == TransportKind::Boat && edge.loc_id == 658)
+        .expect("Entrana -> Port Sarim boat");
+    assert!(
+        !return_boat.members_req,
+        "the return script has no map_members guard"
+    );
+}
+
+#[test]
+fn castlecrumbly_members_guard_controls_world_behavior() {
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "1947=castlecrumbly\n");
+    fx.write(
+        "scripts/skill_agility/scripts/shortcuts.rs2",
+        "\
+[oploc1,castlecrumbly]
+if (map_members = ^false) {
+    mes(^mes_members_feature);
+    return;
+}
+if(stat(agility) < 5) {
+    return;
+}
+",
+    );
+    fx.write(
+        "maps/m45_52.jm2",
+        "\
+==== MAP ====
+0 55 27: h1 u50
+==== LOC ====
+0 55 27: 1947 0 0
+",
+    );
+    let defs = loc_defs(&[(1947, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| edge.kind == TransportKind::AgilityShortcut && edge.loc_id == 1947)
+        .expect("Falador castlecrumbly shortcut");
+    assert!(edge.members_req, "castlecrumbly is members-gated");
+    assert!(
+        !crate::world_state::WorldState::empty().allows(edge),
+        "F2P cannot climb castlecrumbly"
+    );
+    let mut members = crate::world_state::WorldState::empty().with_map_members(true);
+    members.stats.insert(SKILL_AGILITY, 5);
+    assert!(
+        members.allows(edge),
+        "members worlds with Agility 5 can climb castlecrumbly"
+    );
+}
+
+fn derive_static_routes_for(fx: &Fixture) -> TransportGraph {
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(fx, &defs, &HashSet::new());
+    derive_transports(fx.path(), &defs, &wc)
+}
 
 /// The graph derived from an empty content root: only the explicit route
 /// tables (boats, carts, essence-mine wizards, Elkoy) that read no content.

@@ -340,7 +340,7 @@ fn derive_transports_with_audit(
         collision,
         &mut skipped,
     );
-    boat_edges(&mut graph, &gates, &mut audit);
+    boat_edges(content_root, &mut graph, &gates, &mut audit);
     cart_edges(&mut graph);
     essence_mine_edges(&mut graph);
     elkoy_edges(&mut graph);

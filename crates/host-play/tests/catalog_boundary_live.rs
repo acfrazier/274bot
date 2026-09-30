@@ -591,6 +591,7 @@ fn run_cell() -> Result<(), String> {
         .ok_or_else(|| "failed to mint local credential".to_string())?;
 
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
+    runner.set_map_members(profile.map_members());
     runner.set_live_names(&names);
     runner.set_shot_sink(Box::new(|_, _| {}));
 

@@ -1148,6 +1148,7 @@ fn seed_runner(
     scenario: scenario::Scenario,
     name: &str,
     world: Option<Arc<nav::world::NavWorld>>,
+    map_members: bool,
 ) -> Seed {
     let step_names = scenario.steps.iter().map(|step| step.name).collect();
     let deadline = if scenario.name == "duel_arena" {
@@ -1156,6 +1157,7 @@ fn seed_runner(
         Duration::from_secs(1800)
     };
     let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
+    runner.set_map_members(map_members);
     runner.set_live_names(&[name.to_owned()]);
     runner.set_deadline(deadline);
     Seed {
@@ -1236,6 +1238,7 @@ pub enum SeedNav {
     FromPlay {
         world: Option<Arc<nav::world::NavWorld>>,
         obj_names: Option<Arc<api::obj_names::ObjNames>>,
+        map_members: bool,
     },
 }
 
@@ -1471,14 +1474,19 @@ impl Run {
             *SEEDS.lock().unwrap() = Some(HashMap::new());
             return Ok(());
         }
-        let (seed_world, obj_names) = match seed_nav {
+        let (seed_world, obj_names, map_members) = match seed_nav {
             SeedNav::LoadDefault => (
                 nav::world::NavWorld::load_pack(&scenario::default_pack_path())
                     .ok()
                     .map(Arc::new),
                 None,
+                false,
             ),
-            SeedNav::FromPlay { world, obj_names } => (world, obj_names),
+            SeedNav::FromPlay {
+                world,
+                obj_names,
+                map_members,
+            } => (world, obj_names, map_members),
         };
         let mut seeds = HashMap::new();
         let duel_gate = (self.scenario_name.as_deref() == Some("duel_arena"))
@@ -1502,7 +1510,7 @@ impl Run {
             qualify_contentious_moss_fleet(&mut scenario, self.config.n)?;
             qualify_duel_arena_fleet(&mut scenario, self.config.n, slot, duel_gate.as_ref())?;
             scenario.settings.terminal_shot = None;
-            let mut seed = seed_runner(scenario, name, seed_world.clone());
+            let mut seed = seed_runner(scenario, name, seed_world.clone(), map_members);
             seed.duel = duel_gate.as_ref().map(|gate| DuelSlot {
                 gate: Arc::clone(gate),
                 slot,
@@ -2546,8 +2554,8 @@ mod tests {
             Default::default(),
             vec![],
         ));
-        let mut a = seed_runner(seeded_idle_scenario(), "seed_a", Some(world.clone()));
-        let b = seed_runner(seeded_idle_scenario(), "seed_b", Some(world.clone()));
+        let mut a = seed_runner(seeded_idle_scenario(), "seed_a", Some(world.clone()), false);
+        let b = seed_runner(seeded_idle_scenario(), "seed_b", Some(world.clone()), false);
         assert_eq!(
             Arc::strong_count(&world),
             3,
@@ -2593,6 +2601,7 @@ mod tests {
         run.bind_seed_nav(SeedNav::FromPlay {
             world: Some(world.clone()),
             obj_names: None,
+            map_members: false,
         })
         .expect("bind play world");
         let seeds = SEEDS.lock().unwrap();
@@ -2623,6 +2632,7 @@ mod tests {
         run.bind_seed_nav(SeedNav::FromPlay {
             world: None,
             obj_names: None,
+            map_members: false,
         })
         .expect("bind missing pack");
         let seeds = SEEDS.lock().unwrap();
@@ -2665,6 +2675,7 @@ mod tests {
             SeedNav::FromPlay {
                 world: Some(world.clone()),
                 obj_names: None,
+                map_members: false,
             },
         )
         .expect("prepare with play nav");
