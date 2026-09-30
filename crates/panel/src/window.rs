@@ -1399,21 +1399,20 @@ const PANEL_REQUIRED_GLYPHS: &[char] = &[
     '\u{f006}', '\u{f015}', '\u{f019}', '\u{f054}', '\u{f07b}', '\u{f108}', '\u{f15b}', '\u{f15c}',
 ];
 
-/// Add the 3270 subset as the atlas's only, base font at logical 14 px.
+/// Base UI font size. ImGui sizes a font by its ascent-to-descent height,
+/// not its em: at 15 px this 3270 cut advances ~6.0 px natively, the old
+/// ProggyClean text grid, with no glyph padding.
+const PANEL_FONT_SIZE: f32 = 15.0;
+
+/// Add the 3270 subset as the atlas's only, base font at [`PANEL_FONT_SIZE`].
 /// Dear ImGui 1.92 owns density scaling; the input size stays fixed.
-/// Its 14 px glyphs otherwise advance 5.61 px in ImGui; the minimum keeps
-/// the old 6 px text grid without scaling the font size.
 fn add_panel_font(ctx: &mut imgui::Context) -> bool {
     let mut fonts = ctx.fonts();
     let font = fonts
         .add_font_from_memory_ttf(
             PANEL_FONT_BYTES,
-            14.0,
-            Some(
-                &imgui::FontConfig::new()
-                    .name("3270 Nerd Font Condensed")
-                    .glyph_min_advance_x(6.0),
-            ),
+            PANEL_FONT_SIZE,
+            Some(&imgui::FontConfig::new().name("3270 Nerd Font Condensed")),
             None,
         )
         .expect("embedded 3270 Nerd Font Condensed subset is a valid TTF");
