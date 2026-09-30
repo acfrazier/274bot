@@ -1,0 +1,458 @@
+[
+  {
+    "module": "api/execution/Execution.js",
+    "shim": "execution.js"
+  },
+  {
+    "module": "shim/_kernel.js",
+    "shim": "_kernel.js"
+  },
+  {
+    "module": "geometry/Tile.js",
+    "shim": "tile.js"
+  },
+  {
+    "module": "api/query/Query.js",
+    "shim": "query.js"
+  },
+  {
+    "module": "api/execution/EventSignal.js",
+    "shim": "event_signal.js"
+  },
+  {
+    "module": "adapter/ClientAdapter.js",
+    "shim": "client_adapter.js"
+  },
+  {
+    "module": "input/Input.js",
+    "shim": "input.js"
+  },
+  {
+    "module": "api/game/Game.js",
+    "shim": "game.js"
+  },
+  {
+    "module": "api/inventory/Inventory.js",
+    "shim": "inventory.js"
+  },
+  {
+    "module": "api/combat/food.js",
+    "shim": "food.js"
+  },
+  {
+    "module": "api/inventory/packRules.js",
+    "shim": "pack_rules.js"
+  },
+  {
+    "module": "api/acquisition/Tools.js",
+    "shim": "tools.js"
+  },
+  {
+    "module": "api/skills/Skills.js",
+    "shim": "skills.js"
+  },
+  {
+    "module": "api/prayer/Prayer.js",
+    "shim": "prayer.js"
+  },
+  {
+    "module": "api/bank/Bank.js",
+    "shim": "bank.js"
+  },
+  {
+    "module": "api/bank/bankOps.js",
+    "shim": "bank_ops.js"
+  },
+  {
+    "module": "api/bank/bankSortRules.js",
+    "shim": "bank_sort_rules.js"
+  },
+  {
+    "module": "api/bank/Banking.js",
+    "shim": "banking.js"
+  },
+  {
+    "module": "api/bank/bankRules.js",
+    "shim": "bank_rules.js"
+  },
+  {
+    "module": "api/bank/bankSort.js",
+    "shim": "bank_sort.js"
+  },
+  {
+    "module": "api/bank/bankQuestJunk.js",
+    "shim": "bank_quest_junk.js"
+  },
+  {
+    "module": "api/npcs/Npcs.js",
+    "shim": "npcs.js"
+  },
+  {
+    "module": "api/model/Npc.js",
+    "shim": "model_npc.js"
+  },
+  {
+    "module": "api/locs/Locs.js",
+    "shim": "locs.js"
+  },
+  {
+    "module": "api/model/Loc.js",
+    "shim": "model_loc.js"
+  },
+  {
+    "module": "api/players/Players.js",
+    "shim": "players.js"
+  },
+  {
+    "module": "api/model/Player.js",
+    "shim": "model_player.js"
+  },
+  {
+    "module": "api/grounditems/GroundItems.js",
+    "shim": "grounditems.js"
+  },
+  {
+    "module": "api/equipment/Equipment.js",
+    "shim": "equipment.js"
+  },
+  {
+    "module": "api/trade/Trade.js",
+    "shim": "trade.js"
+  },
+  {
+    "module": "api/trade/drivePartnerTrade.js",
+    "shim": "drive_partner_trade.js"
+  },
+  {
+    "module": "api/trade/PartnerTrade.js",
+    "shim": "partner_trade.js"
+  },
+  {
+    "module": "api/shop/Shop.js",
+    "shim": "shop.js"
+  },
+  {
+    "module": "api/shop/types.js",
+    "shim": "shop_types.js"
+  },
+  {
+    "module": "api/shop/BuyoutLogic.js",
+    "shim": "buyout_logic.js"
+  },
+  {
+    "module": "api/ui/dialogue/ChatDialog.js",
+    "shim": "chat_dialog.js"
+  },
+  {
+    "module": "api/ui/widgets/Modals.js",
+    "shim": "modals.js"
+  },
+  {
+    "module": "api/ui/questlog/Quests.js",
+    "shim": "quests.js"
+  },
+  {
+    "module": "api/tasks/ContinueDialog.js",
+    "shim": "continue_dialog.js"
+  },
+  {
+    "module": "api/tasks/DeathRecovery.js",
+    "shim": "death_recovery.js"
+  },
+  {
+    "module": "api/tasks/PeriodicBank.js",
+    "shim": "periodic_bank.js"
+  },
+  {
+    "module": "api/combat/CombatStyle.js",
+    "shim": "combat_style.js"
+  },
+  {
+    "module": "data/spelldb.js",
+    "shim": "data/spelldb.js"
+  },
+  {
+    "module": "data/itemdb.js",
+    "shim": "data/itemdb.js"
+  },
+  {
+    "module": "data/herbs.js",
+    "shim": "data/herbs.js"
+  },
+  {
+    "module": "data/dropdb.js",
+    "shim": "dropdb.js"
+  },
+  {
+    "module": "data/cowKillerLocations.js",
+    "shim": "cow_killer_locations.js"
+  },
+  {
+    "module": "data/shopdb.js",
+    "shim": "shopdb.js"
+  },
+  {
+    "module": "data/miningRocks.js",
+    "shim": "mining_rocks.js"
+  },
+  {
+    "module": "data/runeCraftLocations.js",
+    "shim": "rune_craft_locations.js"
+  },
+  {
+    "module": "data/pickpocketTargets.js",
+    "shim": "data/pickpocket_targets.js"
+  },
+  {
+    "module": "data/woodcuttingLocations.js",
+    "shim": "data/woodcutting_locations.js"
+  },
+  {
+    "module": "api/combat/CombatStyleLogic.js",
+    "shim": "combat_style_logic.js"
+  },
+  {
+    "module": "api/combat/Special.js",
+    "shim": "special.js"
+  },
+  {
+    "module": "api/combat/rangedSettings.js",
+    "shim": "ranged_settings.js"
+  },
+  {
+    "module": "api/combat/fightUpkeep.js",
+    "shim": "fight_upkeep.js"
+  },
+  {
+    "module": "api/combat/eatTiming.js",
+    "shim": "eat_timing.js"
+  },
+  {
+    "module": "api/combat/boostPotions.js",
+    "shim": "boost_potions.js"
+  },
+  {
+    "module": "api/combat/keepList.js",
+    "shim": "keep_list.js"
+  },
+  {
+    "module": "api/combat/equipment.js",
+    "shim": "combat_equipment.js"
+  },
+  {
+    "module": "api/combat/meleeWeapons.js",
+    "shim": "melee_weapons.js"
+  },
+  {
+    "module": "api/combat/ranged.js",
+    "shim": "ranged.js"
+  },
+  {
+    "module": "api/sustain/Sustain.js",
+    "shim": "sustain.js"
+  },
+  {
+    "module": "api/combat/hunting/combat.js",
+    "shim": "hunting_combat.js"
+  },
+  {
+    "module": "api/combat/hunting/sites.js",
+    "shim": "hunting_sites.js"
+  },
+  {
+    "module": "api/combat/hunting/logic.js",
+    "shim": "hunting_logic.js"
+  },
+  {
+    "module": "api/combat/hunting/guarded.js",
+    "shim": "hunting_guarded.js"
+  },
+  {
+    "module": "api/combat/hunting/supply.js",
+    "shim": "hunting_supply.js"
+  },
+  {
+    "module": "api/firemaking/LightFire.js",
+    "shim": "light_fire.js"
+  },
+  {
+    "module": "api/firemaking/Firemaking.js",
+    "shim": "firemaking.js"
+  },
+  {
+    "module": "api/magic/Autocast.js",
+    "shim": "autocast.js"
+  },
+  {
+    "module": "api/chatbox/gameMessages.js",
+    "shim": "game_messages.js"
+  },
+  {
+    "module": "runtime/RecoveryHints.js",
+    "shim": "recovery_hints.js"
+  },
+  {
+    "module": "runtime/Supervisor.js",
+    "shim": "supervisor.js"
+  },
+  {
+    "module": "api/bank/BankLocations.js",
+    "shim": "bank_locations.js"
+  },
+  {
+    "module": "data/cookLocations.js",
+    "shim": "cook_locations_data.js"
+  },
+  {
+    "module": "api/cooking/CookLocations.js",
+    "shim": "cook_locations.js"
+  },
+  {
+    "module": "api/thieving/targets.js",
+    "shim": "thieving_targets.js"
+  },
+  {
+    "module": "api/thieving/stealRules.js",
+    "shim": "steal_rules.js"
+  },
+  {
+    "module": "api/walking/Traversal.js",
+    "shim": "traversal.js"
+  },
+  {
+    "module": "api/thieving/cakeStallData.js",
+    "shim": "cake_stall_data.js"
+  },
+  {
+    "module": "api/thieving/CakeStall.js",
+    "shim": "cake_stall.js"
+  },
+  {
+    "module": "api/loadout/loadoutSetting.js",
+    "shim": "loadout_setting.js"
+  },
+  {
+    "module": "api/loadout/loadoutPlan.js",
+    "shim": "loadout_plan.js"
+  },
+  {
+    "module": "paint/levelProgress.js",
+    "shim": "level_progress.js"
+  },
+  {
+    "module": "api/market/catalog.js",
+    "shim": "catalog.js"
+  },
+  {
+    "module": "api/market/MarketMaker.js",
+    "shim": "market_maker.js"
+  },
+  {
+    "module": "runtime/RunManager.js",
+    "shim": "run_manager.js"
+  },
+  {
+    "module": "runtime/Settings.js",
+    "shim": "settings.js"
+  },
+  {
+    "module": "api/ai/quests/engine/QuestEngine.js",
+    "shim": "quest_engine.js"
+  },
+  {
+    "module": "api/ai/quests/defs/murder/areas.js",
+    "shim": "murder_areas.js"
+  },
+  {
+    "module": "api/duel/Duel.js",
+    "shim": "duel.js"
+  },
+  {
+    "module": "api/duel/ClueDuel.js",
+    "shim": "clue_duel.js"
+  },
+  {
+    "module": "api/ai/clues/bankAccess.js",
+    "shim": "clue_bank_access.js"
+  },
+  {
+    "module": "api/ai/clues/ClueExecutor.js",
+    "shim": "clue_executor.js"
+  },
+  {
+    "module": "api/ai/clues/duelTravel.js",
+    "shim": "clue_duel_travel.js"
+  },
+  {
+    "module": "api/ai/clues/SolveClue.js",
+    "shim": "solve_clue.js"
+  },
+  {
+    "module": "api/ai/clues/cluePaint.js",
+    "shim": "clue_paint.js"
+  },
+  {
+    "module": "api/ai/clues/data/cluedb.js",
+    "shim": "cluedb.js"
+  },
+  {
+    "module": "api/ai/clues/data/toolAcquire.js",
+    "shim": "clue_tool_acquire.js"
+  },
+  {
+    "module": "api/ai/quests/exec/primitives.js",
+    "shim": "primitives.js"
+  },
+  {
+    "module": "api/walking/DirectNavigator.js",
+    "shim": "direct_navigator.js"
+  },
+  {
+    "module": "event/webwalk/DirectNavigator.js",
+    "shim": "direct_navigator.js"
+  },
+  {
+    "module": "api/walking/Reach.js",
+    "shim": "reach.js"
+  },
+  {
+    "module": "event/webwalk/geometry/Reachability.js",
+    "shim": "reachability.js"
+  },
+  {
+    "module": "event/webwalk/walkOpening.js",
+    "shim": "walk_opening.js"
+  },
+  {
+    "module": "event/webwalk/Navigator.js",
+    "shim": "navigator.js"
+  },
+  {
+    "module": "api/tasks/Anchor.js",
+    "shim": "anchor.js"
+  },
+  {
+    "module": "api/bot/Bot.js",
+    "shim": "bot.js"
+  },
+  {
+    "module": "paint/Paint.js",
+    "shim": "paint.js"
+  },
+  {
+    "module": "paint/jive.js",
+    "shim": "jive.js"
+  },
+  {
+    "module": "paint/paintLogic.js",
+    "shim": "paintLogic.js"
+  },
+  {
+    "module": "runtime/ScriptRunner.js",
+    "shim": "script_runner.js"
+  },
+  {
+    "module": "runtime/BotHost.js",
+    "shim": "bot_host.js"
+  }
+]

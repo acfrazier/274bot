@@ -161,6 +161,9 @@ required-features = ["load"]
 name = "dialog"
 required-features = ["load"]
 [[test]]
+name = "compat_dts"
+required-features = ["load"]
+[[test]]
 name = "host_js"
 [[test]]
 name = "native_api_v2"

@@ -131,6 +131,8 @@ mod boat_fare;
 pub mod cake_stall;
 pub mod clue;
 #[cfg(feature = "load")]
+pub mod compat_dts;
+#[cfg(feature = "load")]
 mod cook_locations;
 #[cfg(feature = "load")]
 mod death_recovery;

@@ -1,4 +1,5 @@
 /target
+/crates/script/compat-js/node_modules/
 *.navpack
 *.navcanlight
 docs/superpowers/
