@@ -204,7 +204,6 @@ impl ScriptStartHandle {
             .ok_or_else(|| format!("test script did not publish a run: {name}"))
     }
 
-
     /// `name`'s latest Start, read atomically (see [`Play::script_poll_start`]).
     pub fn poll_start(&self, name: &str) -> script::StartPoll {
         poll_start(&self.scripts, name)
@@ -238,6 +237,13 @@ impl ScriptStartHandle {
         drop(slot);
         clear_script_paint_status(&self.statuses, name);
         Ok(())
+    }
+
+    pub fn read_journal(&self, name: &str, target: api::selected::RunKey) -> Result<(), String> {
+        let slot = script_slot(&self.scripts, name).ok_or("stale native run")?;
+        let mut slot = slot.lock().map_err(|_| "script slot retiring")?;
+        slot.read_journal_compiled(target)
+            .map_err(|failure| failure.message.to_string())
     }
 
     /// Fail closed unless the slot is observed Idle with no native run.
@@ -443,6 +449,16 @@ impl Play {
         slot.retry_compiled(target)
             .map_err(|failure| failure.message.to_string())?;
         drop(slot);
+        self.wake(name);
+        Ok(())
+    }
+
+    pub fn script_native_read_journal(
+        &self,
+        name: &str,
+        target: api::selected::RunKey,
+    ) -> Result<(), String> {
+        self.script_start_handle().read_journal(name, target)?;
         self.wake(name);
         Ok(())
     }

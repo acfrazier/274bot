@@ -42,8 +42,6 @@ pub struct CompiledProgressFlagRule {
     pub count: Option<CountCapture>,
 }
 
-pub type CompiledFlagRule = CompiledProgressFlagRule;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CountCapture {
     pub max_digits: u8,
@@ -89,7 +87,9 @@ pub(crate) fn compile_progress(
     quests: &QuestCatalog,
 ) -> Result<CompiledProgress, super::compile::CompileError> {
     if role.progress_binding.0.is_empty() {
-        return Err(super::compile::CompileError::code("invalid-progress-binding"));
+        return Err(super::compile::CompileError::code(
+            "invalid-progress-binding",
+        ));
     }
 
     // Identity catalogs know the expected binding. Keep the compiler useful
@@ -141,11 +141,7 @@ pub(crate) fn compile_progress(
             flag: flag.flag.clone(),
             all: compile_needles(&flag.all)?,
             any: compile_needles(&flag.any)?,
-            count: flag
-                .count
-                .as_deref()
-                .map(compile_count)
-                .transpose()?,
+            count: flag.count.as_deref().map(compile_count).transpose()?,
         });
     }
 
@@ -161,9 +157,7 @@ pub(crate) fn compile_progress(
     })
 }
 
-fn compile_needles(
-    needles: &[String],
-) -> Result<Arc<[Arc<str>]>, super::compile::CompileError> {
+fn compile_needles(needles: &[String]) -> Result<Arc<[Arc<str>]>, super::compile::CompileError> {
     let mut compiled = Vec::with_capacity(needles.len());
     for needle in needles {
         if needle.is_empty()
@@ -171,11 +165,15 @@ fn compile_needles(
             || needle.chars().any(char::is_uppercase)
             || needle.chars().any(char::is_control)
         {
-            return Err(super::compile::CompileError::code("invalid-progress-needle"));
+            return Err(super::compile::CompileError::code(
+                "invalid-progress-needle",
+            ));
         }
         let normalized = normalize_text(needle);
         if normalized.is_empty() {
-            return Err(super::compile::CompileError::code("invalid-progress-needle"));
+            return Err(super::compile::CompileError::code(
+                "invalid-progress-needle",
+            ));
         }
         compiled.push(Arc::<str>::from(normalized));
     }
@@ -313,10 +311,7 @@ pub fn resolve_colour(
             Knowledge::Known(path.colour_in_progress.clone()),
             Truth::False,
         ),
-        QuestListStatus::Complete => (
-            Knowledge::Known(path.colour_complete.clone()),
-            Truth::True,
-        ),
+        QuestListStatus::Complete => (Knowledge::Known(path.colour_complete.clone()), Truth::True),
         QuestListStatus::Unknown => (unknown("quest-colour"), Truth::Unknown),
     };
     let rule = stage.clone();
@@ -342,20 +337,16 @@ pub fn resolve_journal(
     if read.quest != path.id {
         return unknown_journal_progress(path, read);
     }
+    let text = normalize_journal(&read.lines);
     let evidence = read.closed;
-    let hit = path
-        .progress
-        .rules
-        .iter()
-        .enumerate()
-        .find(|(_, rule)| {
-            rule_matches(
-                rule.all.as_ref(),
-                rule.any.as_ref(),
-                rule.not.as_ref(),
-                &text,
-            )
-        });
+    let hit = path.progress.rules.iter().enumerate().find(|(_, rule)| {
+        rule_matches(
+            rule.all.as_ref(),
+            rule.any.as_ref(),
+            rule.not.as_ref(),
+            &text,
+        )
+    });
 
     let mut stage = hit
         .map(|(_, rule)| Knowledge::Known(rule.stage.clone()))
@@ -379,12 +370,15 @@ pub fn resolve_journal(
                 && previous.evidence.run == evidence.run
                 && matches!(&previous.stage, Knowledge::Known(_))
             {
-                if let Some(previous_index) = path.progress.rules.iter().position(|candidate| {
-                    match &previous.stage {
-                        Knowledge::Known(stage) => &candidate.stage == stage,
-                        _ => false,
-                    }
-                }) {
+                if let Some(previous_index) =
+                    path.progress
+                        .rules
+                        .iter()
+                        .position(|candidate| match &previous.stage {
+                            Knowledge::Known(stage) => &candidate.stage == stage,
+                            _ => false,
+                        })
+                {
                     if current_index > previous_index {
                         stage = previous.stage.clone();
                         complete = previous.complete;
@@ -424,10 +418,7 @@ fn unknown_journal_progress(path: &CompiledPath, read: &JournalRead) -> QuestPro
     }
 }
 
-fn resolve_flags(
-    rules: &[CompiledProgressFlagRule],
-    text: &str,
-) -> Arc<[ProgressFlag]> {
+fn resolve_flags(rules: &[CompiledProgressFlagRule], text: &str) -> Arc<[ProgressFlag]> {
     let mut flags = Vec::with_capacity(rules.len());
     for rule in rules {
         if flags
@@ -438,12 +429,7 @@ fn resolve_flags(
         }
         let matched = rules.iter().find(|candidate| {
             candidate.flag == rule.flag
-                && rule_matches(
-                    candidate.all.as_ref(),
-                    candidate.any.as_ref(),
-                    &[],
-                    text,
-                )
+                && rule_matches(candidate.all.as_ref(), candidate.any.as_ref(), &[], text)
         });
         let (truth, count) = match matched {
             None => (Truth::False, None),
@@ -451,7 +437,7 @@ fn resolve_flags(
                 None => (Truth::True, None),
                 Some(capture) => match capture_number(rule, text, capture) {
                     Some(value) => (Truth::True, Some(value)),
-                    None => (Truth::False, None),
+                    None => (Truth::Unknown, None),
                 },
             },
         };
@@ -465,35 +451,42 @@ fn resolve_flags(
 }
 
 fn capture_number(
-    _rule: &CompiledProgressFlagRule,
+    rule: &CompiledProgressFlagRule,
     text: &str,
     capture: CountCapture,
 ) -> Option<u32> {
-    let bytes = text.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if !bytes[index].is_ascii_digit() {
-            index += 1;
-            continue;
-        }
-        let begin = index;
-        while index < bytes.len() && bytes[index].is_ascii_digit() {
-            index += 1;
-        }
-        let digits = &text[begin..index];
-        if digits.len() <= capture.max_digits as usize {
-            return digits.parse::<u32>().ok();
+    let mut count = None;
+    // A flag's capture belongs to its matching journal line, not to the
+    // first unrelated number anywhere in the quest. Ambiguity stays unknown.
+    for line in text
+        .lines()
+        .filter(|line| rule_matches(&rule.all, &rule.any, &[], line))
+    {
+        let bytes = line.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            if !bytes[index].is_ascii_digit() {
+                index += 1;
+                continue;
+            }
+            let begin = index;
+            while index < bytes.len() && bytes[index].is_ascii_digit() {
+                index += 1;
+            }
+            let digits = &line[begin..index];
+            if digits.len() > capture.max_digits as usize || count.is_some() {
+                return None;
+            }
+            count = Some(digits.parse::<u32>().ok()?);
         }
     }
-    None
+    count
 }
 
 fn rule_matches(all: &[Arc<str>], any: &[Arc<str>], not: &[Arc<str>], text: &str) -> bool {
     all.iter().all(|needle| text.contains(needle.as_ref()))
         && (any.is_empty() || any.iter().any(|needle| text.contains(needle.as_ref())))
-        && not
-            .iter()
-            .all(|needle| !text.contains(needle.as_ref()))
+        && not.iter().all(|needle| !text.contains(needle.as_ref()))
 }
 
 fn unknown<T>(code: &'static str) -> Knowledge<T> {
@@ -543,12 +536,7 @@ mod tests {
         )
     }
 
-    fn rule(
-        stage: &str,
-        all: &[&str],
-        any: &[&str],
-        not: &[&str],
-    ) -> CompiledProgressRule {
+    fn rule(stage: &str, all: &[&str], any: &[&str], not: &[&str]) -> CompiledProgressRule {
         CompiledProgressRule {
             stage: FactKey::new(stage),
             all: needles(all),
@@ -661,7 +649,7 @@ mod tests {
         );
         let progress = resolve_journal(
             &path,
-            &read(&path, 1, "journal|have feather|3 crystals placed"),
+            &read(&path, 1, "journal 99|have feather|3 crystals placed"),
             None,
         );
         assert_eq!(progress.flags.len(), 2);
@@ -670,6 +658,15 @@ mod tests {
         assert_eq!(progress.flags[1].truth, Truth::True);
         assert_eq!(progress.flags[1].count, Some(3));
         assert!(progress.signals.is_empty());
+        for body in [
+            "journal|3 of 7 crystals placed",
+            "journal|1234567890 crystals placed",
+            "journal|crystals placed",
+        ] {
+            let progress = resolve_journal(&path, &read(&path, 2, body), None);
+            assert_eq!(progress.flags[1].truth, Truth::Unknown);
+            assert_eq!(progress.flags[1].count, None);
+        }
     }
 
     #[test]

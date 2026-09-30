@@ -1,4 +1,4 @@
-//! First step whose `skip_if` is not `True`.
+//! Ordered, tri-valued selection: only a proven `False` may start a step.
 use super::compile::{CompiledPath, CompiledStep, PredicateContext};
 use api::selected::Truth;
 
@@ -8,32 +8,42 @@ pub struct Selection<'a> {
     pub prelude: bool,
 }
 
-/// Prelude first, then the current sequence. `Unknown` does not skip.
+pub enum SelectionDecision<'a> {
+    Selected(Selection<'a>),
+    Unknown,
+    Exhausted,
+}
+
+/// Prelude first, then the current sequence. Unknown blocks lower priorities.
 pub fn select<'a>(
     path: &'a CompiledPath,
     sequence: usize,
     cx: &PredicateContext<'_, '_>,
-) -> Option<Selection<'a>> {
-    for (index, step) in path.prelude.iter().enumerate() {
-        if step.skip_if.evaluate(cx) != Truth::True {
-            return Some(Selection {
-                step,
-                index,
-                prelude: true,
-            });
+) -> SelectionDecision<'a> {
+    for (prelude, steps) in [
+        (true, path.prelude.as_slice()),
+        (
+            false,
+            path.sequences
+                .get(sequence)
+                .map_or(&[], |seq| seq.steps.as_slice()),
+        ),
+    ] {
+        for (index, step) in steps.iter().enumerate() {
+            match step.skip_if.evaluate(cx) {
+                Truth::True => {}
+                Truth::Unknown => return SelectionDecision::Unknown,
+                Truth::False => {
+                    return SelectionDecision::Selected(Selection {
+                        step,
+                        index,
+                        prelude,
+                    })
+                }
+            }
         }
     }
-    let sequence = path.sequences.get(sequence)?;
-    for (index, step) in sequence.steps.iter().enumerate() {
-        if step.skip_if.evaluate(cx) != Truth::True {
-            return Some(Selection {
-                step,
-                index,
-                prelude: false,
-            });
-        }
-    }
-    None
+    SelectionDecision::Exhausted
 }
 
 pub fn sequence_for_stage(path: &CompiledPath, stage: &str) -> Option<usize> {
@@ -78,7 +88,7 @@ mod tests {
     }
 
     #[test]
-    fn any_empty_selects_and_unknown_skip_still_selects_on_empty_snapshot() {
+    fn any_empty_selects_and_unknown_skip_waits_on_empty_snapshot() {
         let data = selected();
         let pin = data.selected_pin().unwrap();
         let quests = quests(&data);
@@ -109,7 +119,9 @@ mod tests {
             chat_since: 0,
             outcome: None,
         };
-        let picked = select(&compiled, 0, &pred).expect("never-skip start");
+        let SelectionDecision::Selected(picked) = select(&compiled, 0, &pred) else {
+            panic!("never-skip start must select");
+        };
         assert_eq!(picked.step.id.0.as_ref(), "start");
         assert!(!picked.prelude);
 
@@ -120,7 +132,9 @@ mod tests {
             args: serde_json::json!({"obj": "egg"}),
         };
         let compiled = compile_uncached_for_test(&unknown, &data, &quests).unwrap();
-        let picked = select(&compiled, 0, &pred).expect("unknown skip_if still selects");
-        assert_eq!(picked.step.id.0.as_ref(), "start");
+        assert!(
+            matches!(select(&compiled, 0, &pred), SelectionDecision::Unknown),
+            "unknown inventory must wait, never select an action on login"
+        );
     }
 }

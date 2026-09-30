@@ -1,7 +1,7 @@
 //! Lazy per-activation Path compiler and the `(pin, digest, ABI)` weak cache.
 use super::families::{self, CompiledAcquireStep};
-pub use super::progress::CompiledProgress;
 use super::path::{PathDocument, StepDocument};
+pub use super::progress::CompiledProgress;
 use crate::native::{ActionContext, ActionError, NativeActions, NativeTick};
 use api::game_data::SelectedGameData;
 use api::gather_methods::GatherCatalog;
@@ -115,6 +115,12 @@ pub trait StepPlan: Send + Sync {
 pub trait StepRun: Send {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>>;
     fn cancel(&mut self, actions: &mut NativeActions);
+    /// Recipe steps delegate journal ownership to the runner while remaining
+    /// alive; no family opens a second journal transaction.
+    fn needs_progress_read(&self) -> bool {
+        false
+    }
+    fn progress_read_completed(&mut self, _now: std::time::Duration) {}
     /// Borrowed wait detail; machines do not allocate on pending polls.
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
         None
@@ -246,9 +252,8 @@ fn compile_uncached(
         .progress
         .as_ref()
         .ok_or_else(|| CompileError::code("missing-progress").with_path(document.id.clone()))?;
-    let compiled_progress =
-        super::progress::compile_progress(document, role, progress, quests)
-            .map_err(|err| err.with_path(document.id.clone()))?;
+    let compiled_progress = super::progress::compile_progress(document, role, progress, quests)
+        .map_err(|err| err.with_path(document.id.clone()))?;
     let mut areas = HashMap::new();
     for (name, area) in &header.areas {
         areas.insert(name.clone(), area.boxes.clone());
@@ -268,6 +273,7 @@ fn compile_uncached(
             compile_steps(steps, &recipe_ctx, document)?
                 .into_iter()
                 .map(|step| CompiledAcquireStep {
+                    advances: step.advances,
                     skip_if: step.skip_if,
                     settle: step.settle,
                     plan: step.plan,
@@ -756,31 +762,40 @@ mod tests {
     fn progress_program_compiles_and_validates_authored_rules() {
         let mut document = decode_cook().unwrap();
         let progress = document.roles[0].progress.as_mut().unwrap();
-        progress.rules.push(super::super::path::ProgressRuleDocument {
-            stage: FactKey::new("cook:1"),
-            all: vec!["journal".into()],
-            any: vec![],
-            not: vec!["blocked".into()],
-            varp: Some(4),
-        });
-        progress.flags.push(super::super::path::ProgressFlagDocument {
-            flag: FactKey::new("feather"),
-            all: vec![],
-            any: vec!["feather".into()],
-            count: None,
-        });
-        progress.flags.push(super::super::path::ProgressFlagDocument {
-            flag: FactKey::new("crystals"),
-            all: vec![],
-            any: vec!["crystals".into()],
-            count: Some(r"(\d+)".into()),
-        });
+        progress
+            .rules
+            .push(super::super::path::ProgressRuleDocument {
+                stage: FactKey::new("cook:1"),
+                all: vec!["journal".into()],
+                any: vec![],
+                not: vec!["blocked".into()],
+                varp: Some(4),
+            });
+        progress
+            .flags
+            .push(super::super::path::ProgressFlagDocument {
+                flag: FactKey::new("feather"),
+                all: vec![],
+                any: vec!["feather".into()],
+                count: None,
+            });
+        progress
+            .flags
+            .push(super::super::path::ProgressFlagDocument {
+                flag: FactKey::new("crystals"),
+                all: vec![],
+                any: vec!["crystals".into()],
+                count: Some(r"(\d+)".into()),
+            });
         let data = selected();
         let quests = quests(&data);
         let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
         assert_eq!(compiled.progress.rules.len(), 1);
         assert_eq!(compiled.progress.flags.len(), 2);
-        assert_eq!(compiled.progress.varp_hint(&FactKey::new("cook:1")), Some(4));
+        assert_eq!(
+            compiled.progress.varp_hint(&FactKey::new("cook:1")),
+            Some(4)
+        );
         assert_eq!(compiled.progress.rules[0].all[0].as_ref(), "journal");
     }
 
