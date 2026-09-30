@@ -81,7 +81,7 @@ impl Session {
         };
         if let Err(error) = frontend_core::prepare_apply_settings_marked(
             &self.fleet_selection,
-            &mut self.core,
+            &self.core,
             &mut self.scripts,
             &source,
             &card,

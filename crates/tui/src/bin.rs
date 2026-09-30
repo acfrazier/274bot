@@ -1725,7 +1725,7 @@ impl TuiSession {
         };
         match frontend_core::prepare_apply_settings_marked(
             &app.table.selection,
-            &mut self.core,
+            &self.core,
             &mut self.scripts,
             &source,
             &card,
@@ -1878,7 +1878,7 @@ impl TuiSession {
         } else if let Some((source, name, path)) = self.loaded_params_card(app) {
             Ok(self
                 .scripts
-                .prepare_settings_sync(&mut self.core, &profile, source, &name, &path))
+                .prepare_settings_sync(&self.core, &profile, source, &name, &path))
         } else {
             Err("parameters unavailable".into())
         };

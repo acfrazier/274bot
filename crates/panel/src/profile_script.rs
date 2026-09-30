@@ -287,7 +287,7 @@ impl Session {
             return;
         };
         self.scripts
-            .prepare_settings_sync(&mut self.core, &profile, source, &name, &path);
+            .prepare_settings_sync(&self.core, &profile, source, &name, &path);
         self.apply_script_notice();
     }
 
