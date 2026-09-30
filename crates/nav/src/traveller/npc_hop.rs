@@ -71,7 +71,10 @@ fn npc_ring(npc: &NpcView) -> impl Iterator<Item = WorldTile> {
 }
 
 /// Both stand selection and readiness use the engine's rectangle sides and
-/// shared-edge wall masks. Diagonals are a last resort, never the NPC tile.
+/// shared-edge wall masks. The diagonal branch is a deliberate bounded probe,
+/// not engine parity: the engine's NPC op reach has no diagonal case, so a
+/// diagonal click usually ends in "I can't reach that!" and spends the hop's
+/// bounded retries. It is used only when the scene has no cardinal stand.
 pub(super) fn npc_interaction_ready(
     snapshot: &GameSnapshot,
     here: WorldTile,
