@@ -60,7 +60,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
-use std::io::{self, Cursor, Read};
+use std::io::{self, BufRead, Cursor, Read};
 use std::num::NonZeroU16;
 use std::path::Path;
 
@@ -91,8 +91,9 @@ pub(crate) use mapsquare::{parse_loc_fields, parse_map_line, section};
 use mapsquare::{parse_mapsquare_text, SQUARE};
 pub use sidecars::{
     decode_canlight_sidecar, decode_flags_sidecar, decode_flags_sidecar_arc, decode_reach_sidecar,
-    encode_canlight_sidecar, encode_flags_sidecar, encode_reach_sidecar, read_flags_sidecar,
-    sha256_from_hex, sha256_hex, CanlightSidecar, FlagsSidecarLoad, ReachSidecar, FLAGS_HEADER_LEN,
+    encode_canlight_sidecar, encode_flags_sidecar, encode_reach_sidecar, read_canlight_sidecar,
+    read_flags_sidecar, read_reach_sidecar, sha256_from_hex, sha256_hex, CanlightSidecar,
+    CanlightSidecarLoad, FlagsSidecarLoad, ReachSidecar, ReachSidecarLoad, FLAGS_HEADER_LEN,
 };
 #[cfg(test)]
 use sidecars::{MAGIC_FLAGS, VERSION_FLAGS};
@@ -168,6 +169,142 @@ impl fmt::Display for PackError {
 
 impl std::error::Error for PackError {}
 
+/// Bounded input shared by the byte-slice and streaming decoders.
+pub(super) trait PackRead {
+    fn remaining(&self) -> usize;
+    fn read_bytes_exact(&mut self, buf: &mut [u8]) -> Result<(), PackError>;
+
+    /// Stream keys are borrowed while contiguous in the buffer; a crossing
+    /// key needs one temporary allocation. Cursor keys keep their borrowed
+    /// interning fast path.
+    fn read_fact_key(&mut self, keys: &mut FactStrings) -> Result<FactKey, PackError>
+    where
+        Self: Sized,
+    {
+        let len = read_u32(self)? as usize;
+        if len > self.remaining() {
+            return Err(PackError::Truncated);
+        }
+        let mut bytes = vec![0; len];
+        self.read_bytes_exact(&mut bytes)?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| PackError::BadLength("quest gate key is not UTF-8".into()))?;
+        Ok(FactKey(keys.intern(text)))
+    }
+}
+
+fn map_stream_error(error: io::Error) -> PackError {
+    if error.kind() == io::ErrorKind::UnexpectedEof {
+        PackError::Truncated
+    } else {
+        PackError::Io(error)
+    }
+}
+
+impl<'a> PackRead for Cursor<&'a [u8]> {
+    fn remaining(&self) -> usize {
+        self.get_ref()
+            .len()
+            .saturating_sub(self.position() as usize)
+    }
+
+    fn read_bytes_exact(&mut self, buf: &mut [u8]) -> Result<(), PackError> {
+        Read::read_exact(self, buf).map_err(|_| PackError::Truncated)
+    }
+
+    fn read_fact_key(&mut self, keys: &mut FactStrings) -> Result<FactKey, PackError> {
+        let len = read_u32(self)? as usize;
+        let start = self.position() as usize;
+        let end = start.checked_add(len).ok_or(PackError::Truncated)?;
+        let text = self.get_ref().get(start..end).ok_or(PackError::Truncated)?;
+        let text = std::str::from_utf8(text)
+            .map_err(|_| PackError::BadLength("quest gate key is not UTF-8".into()))?;
+        self.set_position(end as u64);
+        Ok(FactKey(keys.intern(text)))
+    }
+}
+
+impl<T: PackRead> PackRead for &mut T {
+    fn remaining(&self) -> usize {
+        (**self).remaining()
+    }
+
+    fn read_bytes_exact(&mut self, buf: &mut [u8]) -> Result<(), PackError> {
+        (**self).read_bytes_exact(buf)
+    }
+
+    fn read_fact_key(&mut self, keys: &mut FactStrings) -> Result<FactKey, PackError> {
+        (**self).read_fact_key(keys)
+    }
+}
+
+/// A reader whose reads and preallocation bounds cannot pass `length`.
+pub(super) struct BoundedReader<'a, R> {
+    reader: &'a mut R,
+    remaining: usize,
+}
+
+impl<'a, R: BufRead> BoundedReader<'a, R> {
+    pub(super) fn new(reader: &'a mut R, length: usize) -> Self {
+        Self {
+            reader,
+            remaining: length,
+        }
+    }
+
+    pub(super) fn drain_remaining(&mut self) -> Result<(), PackError> {
+        let mut chunk = [0u8; 4096];
+        while self.remaining > 0 {
+            let n = self.remaining.min(chunk.len());
+            self.read_bytes_exact(&mut chunk[..n])?;
+        }
+        Ok(())
+    }
+}
+
+impl<R: BufRead> PackRead for BoundedReader<'_, R> {
+    fn remaining(&self) -> usize {
+        self.remaining
+    }
+
+    fn read_bytes_exact(&mut self, buf: &mut [u8]) -> Result<(), PackError> {
+        if buf.len() > self.remaining {
+            return Err(PackError::Truncated);
+        }
+        self.reader.read_exact(buf).map_err(map_stream_error)?;
+        self.remaining -= buf.len();
+        Ok(())
+    }
+
+    fn read_fact_key(&mut self, keys: &mut FactStrings) -> Result<FactKey, PackError> {
+        let len = read_u32(self)? as usize;
+        if len > self.remaining {
+            return Err(PackError::Truncated);
+        }
+        let buffered_key = {
+            let buffered = self.reader.fill_buf().map_err(map_stream_error)?;
+            if buffered.len() >= len {
+                let text = std::str::from_utf8(&buffered[..len])
+                    .map_err(|_| PackError::BadLength("quest gate key is not UTF-8".into()))?;
+                Some(FactKey(keys.intern(text)))
+            } else {
+                None
+            }
+        };
+        if let Some(key) = buffered_key {
+            self.reader.consume(len);
+            self.remaining -= len;
+            return Ok(key);
+        }
+
+        let mut bytes = vec![0; len];
+        self.read_bytes_exact(&mut bytes)?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| PackError::BadLength("quest gate key is not UTF-8".into()))?;
+        Ok(FactKey(keys.intern(text)))
+    }
+}
+
 /// Serialize `g` to the 274N grid byte format.
 pub fn encode_grid(g: &StepGrid) -> Vec<u8> {
     let mut out =
@@ -203,16 +340,14 @@ pub fn encode_grid(g: &StepGrid) -> Vec<u8> {
 /// Deserialize a 274N grid, validating magic, version, and lengths.
 pub fn decode_grid(bytes: &[u8]) -> Result<StepGrid, PackError> {
     let mut r = Cursor::new(bytes);
-    let mut magic = [0u8; 4];
-    r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
-    if &magic != MAGIC_GRID {
-        return Err(PackError::BadMagic);
-    }
-    let mut version = [0u8; 1];
-    r.read_exact(&mut version)
-        .map_err(|_| PackError::Truncated)?;
-    if version[0] != VERSION_GRID {
-        return Err(PackError::BadVersion(version[0]));
+    read_magic(&mut r, MAGIC_GRID)?;
+    decode_grid_body(r)
+}
+
+fn decode_grid_body<R: PackRead>(mut r: R) -> Result<StepGrid, PackError> {
+    let version = read_u8(&mut r)?;
+    if version != VERSION_GRID {
+        return Err(PackError::BadVersion(version));
     }
     let origin = Tile {
         x: read_i32(&mut r)?,
@@ -230,11 +365,11 @@ pub fn decode_grid(bytes: &[u8]) -> Result<StepGrid, PackError> {
         .checked_mul(height)
         .ok_or_else(|| PackError::BadLength("grid size overflows".into()))?;
     let mut walk = vec![0u8; cells];
-    r.read_exact(&mut walk).map_err(|_| PackError::Truncated)?;
+    r.read_bytes_exact(&mut walk)?;
     let n_doors = read_u32(&mut r)? as usize;
     // Cap the preallocation at what the remaining bytes can hold; the reads
     // themselves still fail with Truncated past the real end.
-    let remaining = bytes.len().saturating_sub(r.position() as usize);
+    let remaining = r.remaining();
     let mut doors = Vec::with_capacity(n_doors.min(remaining / DOOR_BYTES));
     for _ in 0..n_doors {
         doors.push(DoorEdge {
@@ -257,6 +392,42 @@ pub fn decode_grid(bytes: &[u8]) -> Result<StepGrid, PackError> {
         });
     }
     Ok(StepGrid::from_parts(origin, width, height, walk, doors))
+}
+
+pub(super) enum DecodedInput {
+    Pack(WorldCollision, TransportGraph, Vec<BankStand>),
+    Grid(StepGrid),
+}
+
+/// Dispatch a bounded stream by magic, preserving the legacy-grid fallback
+/// and draining accepted trailing bytes for callers that hash while reading.
+pub(super) fn decode_any_reader<R: BufRead>(
+    reader: &mut R,
+    length: usize,
+) -> Result<DecodedInput, PackError> {
+    let mut r = BoundedReader::new(reader, length);
+    let mut magic = [0u8; 4];
+    r.read_bytes_exact(&mut magic)?;
+    let decoded = if &magic == MAGIC {
+        let (collision, graph, banks) = decode_pack_body(&mut r)?;
+        DecodedInput::Pack(collision, graph, banks)
+    } else if &magic == MAGIC_GRID {
+        DecodedInput::Grid(decode_grid_body(&mut r)?)
+    } else {
+        return Err(PackError::BadMagic);
+    };
+    r.drain_remaining()?;
+    Ok(decoded)
+}
+
+fn read_magic<R: PackRead>(r: &mut R, expected: &[u8; 4]) -> Result<(), PackError> {
+    let mut magic = [0u8; 4];
+    r.read_bytes_exact(&mut magic)?;
+    if &magic == expected {
+        Ok(())
+    } else {
+        Err(PackError::BadMagic)
+    }
 }
 
 /// Read and decode the 274N grid at `path`.
@@ -356,16 +527,16 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
 /// gate without one, or a malformed gate, is rejected.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
     let mut r = Cursor::new(bytes);
-    let mut magic = [0u8; 4];
-    r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
-    if &magic != MAGIC {
-        return Err(PackError::BadMagic);
-    }
-    let mut version = [0u8; 1];
-    r.read_exact(&mut version)
-        .map_err(|_| PackError::Truncated)?;
-    if version[0] != VERSION {
-        return Err(PackError::BadVersion(version[0]));
+    read_magic(&mut r, MAGIC)?;
+    decode_pack_body(r)
+}
+
+fn decode_pack_body<R: PackRead>(
+    mut r: R,
+) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
+    let version = read_u8(&mut r)?;
+    if version != VERSION {
+        return Err(PackError::BadVersion(version));
     }
     let quest_family = read_quest_family(&mut r)?;
     // Gate keys share one allocation per distinct string; the table itself
@@ -390,9 +561,9 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
         .checked_mul(4)
         .ok_or_else(|| PackError::BadLength("grid size overflows".into()))?;
     let mut walk = vec![0u8; cells];
-    r.read_exact(&mut walk).map_err(|_| PackError::Truncated)?;
+    r.read_bytes_exact(&mut walk)?;
     let words = cells.div_ceil(64);
-    let remaining = bytes.len().saturating_sub(r.position() as usize);
+    let remaining = r.remaining();
     let mut blocked = Vec::with_capacity(words.min(remaining / 8));
     for _ in 0..words {
         blocked.push(read_u64(&mut r)?);
@@ -400,17 +571,15 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
     let n_edges = read_u32(&mut r)? as usize;
     // Cap the preallocation at what the remaining bytes can hold; the reads
     // themselves still fail with Truncated past the real end.
-    let remaining = bytes.len().saturating_sub(r.position() as usize);
+    let remaining = r.remaining();
     let mut graph = TransportGraph {
         edges: Vec::with_capacity(n_edges.min(remaining / 41)),
         quest_family,
         ..Default::default()
     };
     for _ in 0..n_edges {
-        let mut kind = [0u8; 1];
-        r.read_exact(&mut kind).map_err(|_| PackError::Truncated)?;
         let edge = TransportEdge {
-            kind: kind_from_u8(kind[0])?,
+            kind: kind_from_u8(read_u8(&mut r)?)?,
             at: WorldTile {
                 x: read_i32(&mut r)?,
                 z: read_i32(&mut r)?,
@@ -566,9 +735,9 @@ fn write_req_strings(out: &mut Vec<u8>, reqs: &[String]) {
 }
 
 /// Read a count-prefixed `(id, value)` pair vector.
-fn read_req_pairs(r: &mut Cursor<&[u8]>) -> Result<Vec<(i32, i32)>, PackError> {
+fn read_req_pairs<R: PackRead>(r: &mut R) -> Result<Vec<(i32, i32)>, PackError> {
     let n = read_u32(r)? as usize;
-    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let remaining = r.remaining();
     let mut out = Vec::with_capacity(n.min(remaining / 8));
     for _ in 0..n {
         out.push((read_i32(r)?, read_i32(r)?));
@@ -577,14 +746,17 @@ fn read_req_pairs(r: &mut Cursor<&[u8]>) -> Result<Vec<(i32, i32)>, PackError> {
 }
 
 /// Read a count-prefixed length-prefixed UTF-8 string vector.
-fn read_req_strings(r: &mut Cursor<&[u8]>) -> Result<Vec<String>, PackError> {
+fn read_req_strings<R: PackRead>(r: &mut R) -> Result<Vec<String>, PackError> {
     let n = read_u32(r)? as usize;
-    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let remaining = r.remaining();
     let mut out = Vec::with_capacity(n.min(remaining / 4));
     for _ in 0..n {
         let len = read_u32(r)? as usize;
+        if len > r.remaining() {
+            return Err(PackError::Truncated);
+        }
         let mut buf = vec![0u8; len];
-        r.read_exact(&mut buf).map_err(|_| PackError::Truncated)?;
+        r.read_bytes_exact(&mut buf)?;
         let s = String::from_utf8(buf)
             .map_err(|_| PackError::BadLength("quest req is not UTF-8".into()))?;
         out.push(s);
@@ -601,9 +773,9 @@ fn write_req_ids(out: &mut Vec<u8>, reqs: &[i32]) {
 }
 
 /// Read a count-prefixed i32le id vector (the `worn_req` list).
-fn read_req_ids(r: &mut Cursor<&[u8]>) -> Result<Vec<i32>, PackError> {
+fn read_req_ids<R: PackRead>(r: &mut R) -> Result<Vec<i32>, PackError> {
     let n = read_u32(r)? as usize;
-    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let remaining = r.remaining();
     let mut out = Vec::with_capacity(n.min(remaining / 4));
     for _ in 0..n {
         out.push(read_i32(r)?);
@@ -625,13 +797,12 @@ fn write_quest_family(out: &mut Vec<u8>, family: Option<&QuestFamilyId>) {
 
 /// Read the header's quest-family binding; no [`QuestFamilyId`] has
 /// extractor schema 0, so it is malformed rather than "no schema".
-fn read_quest_family(r: &mut Cursor<&[u8]>) -> Result<Option<QuestFamilyId>, PackError> {
+fn read_quest_family<R: PackRead>(r: &mut R) -> Result<Option<QuestFamilyId>, PackError> {
     match read_u8(r)? {
         0 => Ok(None),
         1 => {
             let mut quest_facts_sha256 = [0u8; 32];
-            r.read_exact(&mut quest_facts_sha256)
-                .map_err(|_| PackError::Truncated)?;
+            r.read_bytes_exact(&mut quest_facts_sha256)?;
             let quest_extractor_schema = NonZeroU16::new(read_u16(r)?)
                 .ok_or_else(|| PackError::BadLength("quest family extractor schema is 0".into()))?;
             Ok(Some(QuestFamilyId::new(
@@ -669,8 +840,8 @@ fn write_quest_gates(out: &mut Vec<u8>, gates: Option<&QuestGates>) {
 /// Read an edge's quest-stage gates, bound to the header's `family`. Gates
 /// on a pack that binds no family, or that fail [`QuestGates::new`]'s
 /// validation (an empty key, an empty or unbounded window), are malformed.
-fn read_quest_gates(
-    r: &mut Cursor<&[u8]>,
+fn read_quest_gates<R: PackRead>(
+    r: &mut R,
     family: Option<&QuestFamilyId>,
     keys: &mut FactStrings,
 ) -> Result<Option<QuestGates>, PackError> {
@@ -683,7 +854,7 @@ fn read_quest_gates(
             "quest gates without a quest-family binding".into(),
         ));
     };
-    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let remaining = r.remaining();
     let mut gates = Vec::with_capacity(n.min(remaining / 6));
     for _ in 0..n {
         gates.push(match read_u8(r)? {
@@ -715,17 +886,8 @@ fn write_key(out: &mut Vec<u8>, key: &FactKey) {
 }
 
 /// Read a length-prefixed UTF-8 fact key through the decode's interner.
-fn read_key(r: &mut Cursor<&[u8]>, keys: &mut FactStrings) -> Result<FactKey, PackError> {
-    let len = read_u32(r)? as usize;
-    let start = r.position() as usize;
-    let text = r
-        .get_ref()
-        .get(start..start.saturating_add(len))
-        .ok_or(PackError::Truncated)?;
-    let text = std::str::from_utf8(text)
-        .map_err(|_| PackError::BadLength("quest gate key is not UTF-8".into()))?;
-    r.set_position((start + len) as u64);
-    Ok(FactKey(keys.intern(text)))
+fn read_key<R: PackRead>(r: &mut R, keys: &mut FactStrings) -> Result<FactKey, PackError> {
+    r.read_fact_key(keys)
 }
 
 /// One stage-window bound: `0` unbounded, `1` + i32le.
@@ -739,7 +901,7 @@ fn write_bound(out: &mut Vec<u8>, bound: Option<i32>) {
     }
 }
 
-fn read_bound(r: &mut Cursor<&[u8]>) -> Result<Option<i32>, PackError> {
+fn read_bound<R: PackRead>(r: &mut R) -> Result<Option<i32>, PackError> {
     match read_u8(r)? {
         0 => Ok(None),
         1 => Ok(Some(read_i32(r)?)),
@@ -760,11 +922,11 @@ fn write_wilderness_rules(out: &mut Vec<u8>, rules: &crate::transport::Wildernes
     out.extend_from_slice(&rules.offset.to_le_bytes());
 }
 
-fn read_wilderness_rules(
-    r: &mut Cursor<&[u8]>,
+fn read_wilderness_rules<R: PackRead>(
+    r: &mut R,
 ) -> Result<crate::transport::WildernessRules, PackError> {
     let n = read_u32(r)? as usize;
-    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let remaining = r.remaining();
     if n > remaining / 28 {
         return Err(PackError::BadLength(format!(
             "wilderness zone count {n} exceeds remaining pack bytes"
@@ -789,33 +951,33 @@ fn read_wilderness_rules(
     })
 }
 
-fn read_i32(r: &mut Cursor<&[u8]>) -> Result<i32, PackError> {
+fn read_i32<R: PackRead>(r: &mut R) -> Result<i32, PackError> {
     let mut b = [0u8; 4];
-    r.read_exact(&mut b).map_err(|_| PackError::Truncated)?;
+    r.read_bytes_exact(&mut b)?;
     Ok(i32::from_le_bytes(b))
 }
 
-fn read_u8(r: &mut Cursor<&[u8]>) -> Result<u8, PackError> {
+fn read_u8<R: PackRead>(r: &mut R) -> Result<u8, PackError> {
     let mut b = [0u8; 1];
-    r.read_exact(&mut b).map_err(|_| PackError::Truncated)?;
+    r.read_bytes_exact(&mut b)?;
     Ok(b[0])
 }
 
-fn read_u16(r: &mut Cursor<&[u8]>) -> Result<u16, PackError> {
+fn read_u16<R: PackRead>(r: &mut R) -> Result<u16, PackError> {
     let mut b = [0u8; 2];
-    r.read_exact(&mut b).map_err(|_| PackError::Truncated)?;
+    r.read_bytes_exact(&mut b)?;
     Ok(u16::from_le_bytes(b))
 }
 
-fn read_u32(r: &mut Cursor<&[u8]>) -> Result<u32, PackError> {
+fn read_u32<R: PackRead>(r: &mut R) -> Result<u32, PackError> {
     let mut b = [0u8; 4];
-    r.read_exact(&mut b).map_err(|_| PackError::Truncated)?;
+    r.read_bytes_exact(&mut b)?;
     Ok(u32::from_le_bytes(b))
 }
 
-fn read_u64(r: &mut Cursor<&[u8]>) -> Result<u64, PackError> {
+fn read_u64<R: PackRead>(r: &mut R) -> Result<u64, PackError> {
     let mut b = [0u8; 8];
-    r.read_exact(&mut b).map_err(|_| PackError::Truncated)?;
+    r.read_bytes_exact(&mut b)?;
     Ok(u64::from_le_bytes(b))
 }
 
