@@ -909,7 +909,19 @@ fn a_failed_write_is_reported_restores_the_durable_value_and_leaves_the_arm() {
     ));
     let failures = s.take_write_failures();
     assert_eq!(failures.len(), 1);
-    assert!(failures[0].starts_with("random: "), "{failures:?}");
+    assert_eq!(
+        (
+            failures[0].op,
+            failures[0].target.as_str(),
+            failures[0].label
+        ),
+        (op, "alice", "random"),
+        "{failures:?}"
+    );
+    assert!(
+        failures[0].to_string().starts_with("random: "),
+        "the banner text is `label: error`: {failures:?}"
+    );
     assert_eq!(
         s.vault()
             .unwrap()
@@ -1442,4 +1454,261 @@ fn a_0_1_8_1_vault_loads_spawns_and_saves_through_the_core_unchanged() {
     );
     assert_eq!(saved.password, "old-pass");
     assert_eq!(reread.get("bob"), s.vault().unwrap().get("bob"));
+}
+
+// A profile form's saves settle by their write's operation id: a delayed
+// writer lets the form move on (or the write fail) before the result lands.
+
+use crate::{FailedSave, FormNotice, FormSettled, ProfileFormSave, SaveResult, SavedProfile};
+
+/// `alice` with `password`, as a form would submit it.
+fn alice_with(s: &OperatorSession<u32>, password: &str) -> Profile {
+    let mut profile = s.vault().unwrap().get("alice").unwrap().clone();
+    profile.password = password.into();
+    profile
+}
+
+/// Queue a credentials save of alice from `form`.
+fn form_saves_alice(
+    s: &mut OperatorSession<u32>,
+    form: &mut ProfileFormSave,
+    password: &str,
+) -> OperationId {
+    let draft = alice_with(s, password);
+    let op = s
+        .save_profile(draft, ArmMirror::None, "credentials")
+        .unwrap();
+    form.submitted(s, op, Some("alice"), "alice");
+    op
+}
+
+#[test]
+fn a_write_failing_after_it_was_queued_shows_in_the_form_it_came_from() {
+    let mut s = session("form-fail", &[("alice", 1, false)]);
+    let mut form = ProfileFormSave::default();
+    form.form_changed();
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    let op = form_saves_alice(&mut s, &mut form, "typed");
+    assert!(form.saving(), "the form's save has not settled");
+    assert!(form.settle(&mut s).is_empty(), "still queued");
+    assert!(form.notice().is_none());
+
+    let blocked = block_writes(&vault_path("form-fail"));
+    drop(held);
+    s.flush_writes();
+    unblock_writes(blocked);
+
+    let failures = s.take_write_failures();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(
+        (failures[0].op, failures[0].target.as_str()),
+        (op, "alice"),
+        "the failure names its operation and profile"
+    );
+    assert_eq!(
+        form.settle(&mut s),
+        [FormSettled::Failed(FailedSave {
+            name: "alice".into(),
+            same_form: true,
+        })]
+    );
+    assert_eq!(
+        form.notice(),
+        Some(&FormNotice::Failed(failures[0].to_string())),
+        "the form shows the banner's text"
+    );
+    assert!(!form.saving(), "a failed save can be retried");
+    let staged = s.vault().unwrap().get("alice").unwrap();
+    assert_eq!(staged.password, "pw", "the durable value is back");
+
+    form.edited();
+    assert!(form.notice().is_none(), "the next edit clears the failure");
+}
+
+#[test]
+fn a_write_failing_after_the_form_moved_on_never_shows_in_another_form() {
+    let mut s = session("form-moved", &[("alice", 1, false)]);
+    let mut form = ProfileFormSave::default();
+    form.form_changed();
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    form_saves_alice(&mut s, &mut form, "typed");
+    // Switched to another target, then closed and reopened.
+    form.form_changed();
+    form.form_changed();
+    assert!(!form.saving(), "the new form has no save of its own");
+
+    let blocked = block_writes(&vault_path("form-moved"));
+    drop(held);
+    s.flush_writes();
+    unblock_writes(blocked);
+
+    assert_eq!(
+        form.settle(&mut s),
+        [FormSettled::Failed(FailedSave {
+            name: "alice".into(),
+            same_form: false,
+        })]
+    );
+    assert!(form.notice().is_none(), "nothing in the form showing now");
+    assert_eq!(
+        s.take_write_failures().len(),
+        1,
+        "the banner still reports it"
+    );
+}
+
+#[test]
+fn the_save_record_keeps_the_draft_as_submitted() {
+    let mut s = session("form-record", &[("alice", 1, false)]);
+    let mut form = ProfileFormSave::default();
+    form.form_changed();
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    let op = form_saves_alice(&mut s, &mut form, "typed");
+    // An unrelated edit staged after the save changes the vault row, not the
+    // record of what the save carried.
+    s.set_auto_login("alice", true).unwrap();
+    drop(held);
+    s.flush_writes();
+
+    let mut expected = alice_with(&s, "typed");
+    expected.settings.auto_login = false;
+    let settled = s.take_save(op).expect("the form's save settled");
+    assert_eq!(
+        (
+            settled.record.op,
+            settled.record.source.as_deref(),
+            settled.record.destination.as_str(),
+            settled.record.form,
+        ),
+        (op, Some("alice"), "alice", 1)
+    );
+    assert_eq!(settled.record.draft, expected);
+    assert_eq!(settled.result, SaveResult::Saved);
+    assert!(s.take_save(op).is_none(), "taken once");
+}
+
+#[test]
+fn a_superseded_save_settles_with_the_commit_it_was_written_in() {
+    for fails in [false, true] {
+        let test = format!("form-superseded-{fails}");
+        let mut s = session(&test, &[("alice", 1, false)]);
+        let mut form = ProfileFormSave::default();
+        form.form_changed();
+        let gate = s.write_gate();
+        let held = gate.lock().unwrap();
+        form_saves_alice(&mut s, &mut form, "first");
+        // The operator discards that form; the next one saves alice again
+        // before the writer got to the first.
+        form.form_changed();
+        let second = form_saves_alice(&mut s, &mut form, "second");
+        let blocked = fails.then(|| block_writes(&vault_path(&test)));
+        drop(held);
+        s.flush_writes();
+        if let Some(blocked) = blocked {
+            unblock_writes(blocked);
+        }
+
+        let settled = form.settle(&mut s);
+        if fails {
+            assert_eq!(
+                settled,
+                [
+                    FormSettled::Failed(FailedSave {
+                        name: "alice".into(),
+                        same_form: false,
+                    }),
+                    FormSettled::Failed(FailedSave {
+                        name: "alice".into(),
+                        same_form: true,
+                    }),
+                ]
+            );
+            let failures = s.take_write_failures();
+            assert_eq!(
+                failures.iter().map(|f| f.op).collect::<Vec<_>>(),
+                [second],
+                "one report, by the write that owns the row"
+            );
+            assert!(matches!(form.notice(), Some(FormNotice::Failed(_))));
+        } else {
+            assert_eq!(
+                settled,
+                [
+                    FormSettled::Saved(SavedProfile {
+                        name: "alice".into(),
+                        same_form: false,
+                    }),
+                    FormSettled::Saved(SavedProfile {
+                        name: "alice".into(),
+                        same_form: true,
+                    }),
+                ],
+                "the superseded save is durable inside the later one's row"
+            );
+            assert_eq!(
+                form.notice(),
+                Some(&FormNotice::Saved("Saved alice.".into()))
+            );
+            let disk = Vault::unlock(&vault_path(&test), "test-passphrase-01").unwrap();
+            assert_eq!(disk.get("alice").unwrap().password, "second");
+        }
+    }
+}
+
+#[test]
+fn a_save_of_a_profile_deleted_before_it_was_written_leaves_nothing_to_show() {
+    let mut s = session("form-deleted", &[("alice", 1, false)]);
+    let mut form = ProfileFormSave::default();
+    form.form_changed();
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    form_saves_alice(&mut s, &mut form, "typed");
+    s.vault_remove("alice").unwrap().unwrap();
+    drop(held);
+    s.flush_writes();
+
+    assert!(
+        form.settle(&mut s).is_empty(),
+        "the profile is gone: no Saved, and no profile to select"
+    );
+    assert!(form.notice().is_none());
+    assert!(!form.saving());
+    let disk = Vault::unlock(&vault_path("form-deleted"), "test-passphrase-01").unwrap();
+    assert!(disk.get("alice").is_none());
+}
+
+#[test]
+fn a_delete_that_fails_after_a_queued_save_reports_once_and_restores_the_profile() {
+    let mut s = session("form-delete-fails", &[("alice", 1, false)]);
+    let mut form = ProfileFormSave::default();
+    form.form_changed();
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    form_saves_alice(&mut s, &mut form, "typed");
+    let delete = s.vault_remove("alice").unwrap().unwrap();
+    let blocked = block_writes(&vault_path("form-delete-fails"));
+    drop(held);
+    s.flush_writes();
+    unblock_writes(blocked);
+
+    let failures = s.take_write_failures();
+    assert_eq!(
+        failures
+            .iter()
+            .map(|f| (f.op, f.target.as_str()))
+            .collect::<Vec<_>>(),
+        [(delete, "alice")]
+    );
+    assert_eq!(
+        form.settle(&mut s),
+        [FormSettled::Failed(FailedSave {
+            name: "alice".into(),
+            same_form: true,
+        })]
+    );
+    let restored = s.vault().unwrap().get("alice").expect("alice is back");
+    assert_eq!(restored.password, "pw", "the durable row, not the draft");
 }

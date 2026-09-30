@@ -1247,7 +1247,7 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
             .core
             .take_write_failures()
             .iter()
-            .any(|error| error.contains("unknown")));
+            .any(|failure| failure.error.contains("unknown")));
         f.core.stop_script("alice");
         start_sherlock(&mut f, "alice");
     }

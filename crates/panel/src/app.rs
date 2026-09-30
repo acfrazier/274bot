@@ -4386,15 +4386,18 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 slot_capture_section(ui, session);
                 slot_random_section(ui, session);
                 slot_clue_section(ui, session);
-                // Save's outcome, next to Save: a refusal (nothing was
-                // written; the banner is hidden while Profiles is open) or,
-                // once the write is durable, `Saved <name>.`.
+                // Save's outcome, next to Save: a refusal or a write that
+                // failed after it was queued (nothing was written; the
+                // banner is hidden while Profiles is open) or, once the
+                // write is durable, `Saved <name>.`.
                 match session.chooser_save.notice() {
-                    Some(FormNotice::Refused(reason)) => {
-                        ui.text_colored(ERROR, reason);
-                        ui.text_disabled(frontend_core::NOTHING_SAVED);
-                    }
                     Some(FormNotice::Saved(saved)) => ui.text_colored(GREEN, saved),
+                    Some(notice) => {
+                        if let Some(reason) = notice.error() {
+                            ui.text_colored(ERROR, reason);
+                            ui.text_disabled(frontend_core::NOTHING_SAVED);
+                        }
+                    }
                     None => {}
                 }
                 let avail = ui.content_region_avail()[0];
@@ -4410,7 +4413,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     ui.same_line();
                 }
                 if ui.button_with_size("Cancel", [bw, 0.0]) {
-                    session.cancel_edit_profile();
+                    session.request_cancel_edit();
                 }
             }
             edit_switch_popup(ui, session);
@@ -4425,8 +4428,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             }
             let w = ui.content_region_avail()[0];
             if ui.button_with_size("Close", [w, 0.0]) {
-                session.wall.chooser_open = false;
-                session.cancel_edit_profile();
+                session.request_close_profiles();
             }
             let pending = session.pending_profile_delete.clone();
             let body = match pending.as_deref() {
@@ -4443,17 +4445,16 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 &mut session.delete_understood,
             ) {
                 if let Some(name) = session.pending_profile_delete.take() {
-                    if session.chooser_edit.as_deref() == Some(name.as_str()) {
-                        session.cancel_edit_profile();
-                    }
-                    session.vault_remove(&name);
+                    session.delete_profile(&name);
                 }
             } else if !ui.is_popup_open(PROFILE_DELETE_POPUP) {
                 session.pending_profile_delete = None;
             }
         });
+    // The ✕ closes Profiles like Close does: while the form's save is
+    // still being written Discard / Keep editing asks first.
     if !open {
-        session.cancel_edit_profile();
+        open = !session.request_close_profiles();
     }
     session.wall.chooser_open = session.wall.chooser_open && open;
 }

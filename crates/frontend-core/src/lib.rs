@@ -25,6 +25,7 @@ pub mod map_bake;
 pub mod marked;
 pub mod operations;
 pub mod profile_form;
+pub mod profile_saves;
 mod profiles;
 pub mod progress;
 pub mod resources;
@@ -46,7 +47,10 @@ pub use marked::{
     prepare_apply_settings_marked, restart_scope, RestartScope,
 };
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
-pub use profile_form::{FormNotice, ProfileFormSave, SavedProfile, NOTHING_SAVED};
+pub use profile_form::{
+    FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
+};
+pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use selection::{
