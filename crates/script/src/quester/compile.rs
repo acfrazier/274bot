@@ -1,5 +1,6 @@
 //! Lazy per-activation Path compiler and the `(pin, digest, ABI)` weak cache.
 use super::families::{self, CompiledAcquireStep};
+pub use super::progress::CompiledProgress;
 use super::path::{PathDocument, StepDocument};
 use crate::native::{ActionContext, ActionError, NativeActions, NativeTick};
 use api::game_data::SelectedGameData;
@@ -55,6 +56,7 @@ pub struct CompiledPath {
     pub colour_not_started: FactKey,
     pub colour_in_progress: FactKey,
     pub colour_complete: FactKey,
+    pub progress: CompiledProgress,
     pub prelude: Vec<CompiledStep>,
     pub sequences: Vec<CompiledSequence>,
     pub warnings: Vec<Arc<str>>,
@@ -244,11 +246,9 @@ fn compile_uncached(
         .progress
         .as_ref()
         .ok_or_else(|| CompileError::code("missing-progress").with_path(document.id.clone()))?;
-    if !progress.rules.is_empty() || !progress.flags.is_empty() {
-        return Err(
-            CompileError::code("journal-progress-unavailable").with_path(document.id.clone())
-        );
-    }
+    let compiled_progress =
+        super::progress::compile_progress(document, role, progress, quests)
+            .map_err(|err| err.with_path(document.id.clone()))?;
     let mut areas = HashMap::new();
     for (name, area) in &header.areas {
         areas.insert(name.clone(), area.boxes.clone());
@@ -348,6 +348,7 @@ fn compile_uncached(
         colour_not_started: progress.colour.not_started.clone(),
         colour_complete: progress.colour.complete.clone(),
         colour_in_progress: progress.colour.in_progress.clone(),
+        progress: compiled_progress,
         prelude,
         sequences,
         warnings,
@@ -713,17 +714,6 @@ mod tests {
                     .unwrap()[4]
                     .args["target"]["name"] = serde_json::json!("Not a real display name")
             },
-            |d: &mut PathDocument| {
-                d.roles[0].progress.as_mut().unwrap().rules.push(
-                    super::super::path::ProgressRuleDocument {
-                        stage: FactKey::new("cook:1"),
-                        all: vec!["unsupported journal".into()],
-                        any: vec![],
-                        not: vec![],
-                        varp: None,
-                    },
-                )
-            },
         ] {
             compile_err(edit);
         }
@@ -760,5 +750,96 @@ mod tests {
             });
             assert_eq!(error.code.as_ref(), "invalid-args", "{kind}");
         }
+    }
+
+    #[test]
+    fn progress_program_compiles_and_validates_authored_rules() {
+        let mut document = decode_cook().unwrap();
+        let progress = document.roles[0].progress.as_mut().unwrap();
+        progress.rules.push(super::super::path::ProgressRuleDocument {
+            stage: FactKey::new("cook:1"),
+            all: vec!["journal".into()],
+            any: vec![],
+            not: vec!["blocked".into()],
+            varp: Some(4),
+        });
+        progress.flags.push(super::super::path::ProgressFlagDocument {
+            flag: FactKey::new("feather"),
+            all: vec![],
+            any: vec!["feather".into()],
+            count: None,
+        });
+        progress.flags.push(super::super::path::ProgressFlagDocument {
+            flag: FactKey::new("crystals"),
+            all: vec![],
+            any: vec!["crystals".into()],
+            count: Some(r"(\d+)".into()),
+        });
+        let data = selected();
+        let quests = quests(&data);
+        let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        assert_eq!(compiled.progress.rules.len(), 1);
+        assert_eq!(compiled.progress.flags.len(), 2);
+        assert_eq!(compiled.progress.varp_hint(&FactKey::new("cook:1")), Some(4));
+        assert_eq!(compiled.progress.rules[0].all[0].as_ref(), "journal");
+    }
+
+    #[test]
+    fn progress_program_rejects_bad_needles_counts_and_bindings() {
+        assert_eq!(
+            compile_err(|document| {
+                document.roles[0].progress.as_mut().unwrap().rules.push(
+                    super::super::path::ProgressRuleDocument {
+                        stage: FactKey::new("cook:1"),
+                        all: vec!["Not lower".into()],
+                        any: vec![],
+                        not: vec![],
+                        varp: None,
+                    },
+                )
+            })
+            .code
+            .as_ref(),
+            "invalid-progress-needle"
+        );
+        assert_eq!(
+            compile_err(|document| {
+                document.roles[0].progress.as_mut().unwrap().flags.push(
+                    super::super::path::ProgressFlagDocument {
+                        flag: FactKey::new("crystals"),
+                        all: vec![],
+                        any: vec!["crystals".into()],
+                        count: Some(".*".into()),
+                    },
+                )
+            })
+            .code
+            .as_ref(),
+            "invalid-progress-count"
+        );
+        assert_eq!(
+            compile_err(|document| {
+                document.roles[0].progress_binding = FactKey::new("journal:other");
+            })
+            .code
+            .as_ref(),
+            "progress-binding"
+        );
+        assert_eq!(
+            compile_err(|document| {
+                document.roles[0].progress.as_mut().unwrap().rules.push(
+                    super::super::path::ProgressRuleDocument {
+                        stage: FactKey::new("cook:99"),
+                        all: vec!["journal".into()],
+                        any: vec![],
+                        not: vec![],
+                        varp: None,
+                    },
+                )
+            })
+            .code
+            .as_ref(),
+            "unbound-progress-stage"
+        );
     }
 }
