@@ -3179,7 +3179,8 @@ impl Session {
         self.core.play().map(|p| p.map_members()).unwrap_or(false)
     }
 
-    /// Queue a `CLIENT_CHEAT` on the focused slot. No-op without play/focus.
+    /// Queue a host-owned rail cheat on the focused slot. No-op without
+    /// play/focus; these controls are not Debug-tab reply probes.
     pub fn cheat_focused(&self, cmd: &str) {
         let Some(play) = self.core.play() else {
             return;
@@ -3187,7 +3188,7 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        let _ = play.cheat(&name, cmd);
+        let _ = play.cheat_internal(&name, cmd);
     }
 
     /// Attach the opt-in Debug catalog from the immutable server profile.
@@ -3367,7 +3368,7 @@ impl Session {
             return;
         }
         if let Some(play) = self.core.play() {
-            let _ = play.cheat(&name, "getvar tutorial");
+            let _ = play.cheat_internal(&name, "getvar tutorial");
         }
     }
 

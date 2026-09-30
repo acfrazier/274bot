@@ -6370,6 +6370,99 @@ fn disconnected_slot_rejects_new_wire_and_cheat_work() {
     assert_eq!(play.cheats.lock().unwrap()["alice"].len(), 1);
     assert_eq!(play.wires.lock().unwrap()["alice"].len(), 1);
 }
+#[test]
+fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
+    let play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        ingame: true,
+        scene_state: 2,
+        ..SlotStatus::default()
+    });
+    play.cheats
+        .lock()
+        .unwrap()
+        .insert("alice".into(), VecDeque::new());
+    play.cheat_internal("alice", "getvar tutorial").unwrap();
+
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let (navs, world) = empty_nav();
+    let mut client = prepare_client(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    client.ingame = true;
+    client.scene_state = 2;
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let mut replies = super::debug_replies::DebugReplies::default();
+    let mark = crate::walk_map::test_log::mark();
+
+    super::script_observe_cached_with_channels(
+        &mut client,
+        "alice",
+        true,
+        false,
+        false,
+        1,
+        None,
+        None,
+        None,
+        Some(&snapshot),
+        None,
+        None,
+        &scripts,
+        &play.cheats,
+        &navs,
+        &world,
+        false,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        super::script_channels::BrokerWorld::Unavailable,
+        None,
+        Some(&mut replies),
+    );
+
+    assert_eq!(
+        replies.pending_len(),
+        0,
+        "host-internal tutorial probes must not enter DebugReplies"
+    );
+    let records = crate::walk_map::test_log::records_since(mark)
+        .into_iter()
+        .map(|(_, message)| message)
+        .filter(|message| message.contains("reply candidate"))
+        .collect::<Vec<_>>();
+    assert!(
+        records.is_empty(),
+        "host-internal probe logged a reply candidate"
+    );
+}
 
 #[test]
 fn debug_command_admission_rejects_remote_prod_and_invalid_wire_bodies() {

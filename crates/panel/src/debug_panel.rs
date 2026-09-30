@@ -113,7 +113,8 @@ type TargetRow = (frontend_core::ProfileIdentity, String);
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingSend {
     command_name: String,
-    wire: String,
+    wires: Vec<String>,
+    summary: String,
     targets: Vec<TargetRow>,
 }
 
@@ -333,6 +334,29 @@ fn target_description(rows: &[TargetRow]) -> String {
     } else {
         format!("{} marked bots: {names}", rows.len())
     }
+}
+pub(crate) fn request_destructive_send(
+    ui: &Ui,
+    session: &mut Session,
+    command_name: String,
+    wires: Vec<String>,
+    summary: String,
+) {
+    let targets = target_rows(session);
+    if targets.is_empty() {
+        session.debug_panel.status = Some(PanelStatus {
+            success: false,
+            text: "Send failed: pick a target bot first.".into(),
+        });
+        return;
+    }
+    session.debug_panel.pending_send = Some(PendingSend {
+        command_name,
+        wires,
+        summary,
+        targets,
+    });
+    ui.open_popup(CONFIRM_POPUP);
 }
 
 fn draw_target_controls(ui: &Ui, session: &mut Session) {
@@ -683,14 +707,21 @@ fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
             let _disabled = (targets.is_empty()).then(|| ui.begin_disabled());
             if ui.button("Send##debug-send") {
                 if command.destructive {
-                    session.debug_panel.pending_send = Some(PendingSend {
-                        command_name: command.name.clone(),
+                    request_destructive_send(
+                        ui,
+                        session,
+                        command.name.clone(),
+                        vec![wire.clone()],
                         wire,
-                        targets,
-                    });
-                    ui.open_popup(CONFIRM_POPUP);
+                    );
                 } else {
-                    send_wire(session, &command.name, &wire, targets);
+                    send_wires(
+                        session,
+                        &command.name,
+                        std::iter::once(wire.as_str()),
+                        wire.as_str(),
+                        targets,
+                    );
                 }
             }
             drop(_disabled);
@@ -832,15 +863,16 @@ fn draw_confirmation(ui: &Ui, session: &mut Session) {
         red.pop();
         ui.text_wrapped(format!(
             "Send {} to {}? This command may change or remove game state.",
-            pending.wire,
+            pending.summary,
             target_description(&pending.targets)
         ));
         if ui.button("Confirm send##debug-confirm") {
             if same_targets(&target_rows(session), &pending.targets) {
-                send_wire(
+                send_wires(
                     session,
                     &pending.command_name,
-                    &pending.wire,
+                    pending.wires.iter().map(String::as_str),
+                    &pending.summary,
                     pending.targets.clone(),
                 );
             } else {
@@ -860,7 +892,15 @@ fn draw_confirmation(ui: &Ui, session: &mut Session) {
     });
 }
 
-fn send_wire(session: &mut Session, command_name: &str, wire: &str, targets: Vec<TargetRow>) {
+fn send_wires<'a, I>(
+    session: &mut Session,
+    command_name: &str,
+    wires: I,
+    summary: &str,
+    targets: Vec<TargetRow>,
+) where
+    I: IntoIterator<Item = &'a str>,
+{
     if !same_targets(&target_rows(session), &targets) {
         session.debug_panel.pending_send = None;
         session.debug_panel.status = Some(PanelStatus {
@@ -877,36 +917,53 @@ fn send_wire(session: &mut Session, command_name: &str, wire: &str, targets: Vec
     match session.debug_panel.target_mode {
         DebugTargetMode::Focused => {
             let target = target_description(&targets);
-            match session.send_debug_command(wire) {
-                Ok(()) => {
-                    session.ui.debug_panel.remember_recent(command_name);
-                    save_prefs(session);
-                    session.debug_panel.status = Some(PanelStatus {
-                        success: true,
-                        text: format!("Queued for {target}: {wire}"),
-                    });
-                }
-                Err(error) => {
+            for wire in wires {
+                if let Err(error) = session.send_debug_command(wire) {
                     session.debug_panel.status = Some(PanelStatus {
                         success: false,
                         text: format!("Send failed: {error}"),
                     });
+                    return;
                 }
             }
+            session.ui.debug_panel.remember_recent(command_name);
+            save_prefs(session);
+            session.debug_panel.status = Some(PanelStatus {
+                success: true,
+                text: format!("Queued for {target}: {summary}"),
+            });
         }
         DebugTargetMode::Marked => {
-            let report = session.send_debug_command_marked_snapshot(wire, targets.clone());
+            let mut command_count = 0;
+            let mut accepted = 0;
+            let mut skipped = Vec::new();
+            for wire in wires {
+                command_count += 1;
+                let report = session.send_debug_command_marked_snapshot(wire, targets.clone());
+                accepted += report.accepted;
+                skipped.extend(report.skipped);
+            }
+            let report = frontend_core::MarkedCommandReport { accepted, skipped };
             if report.accepted > 0 {
                 session.ui.debug_panel.remember_recent(command_name);
                 save_prefs(session);
             }
             let mut text = if report.accepted > 0 {
-                format!(
-                    "Queued for {}/{} ({}) : {wire}",
-                    report.accepted,
-                    report.total(),
-                    target_description(&targets)
-                )
+                if command_count == 1 {
+                    format!(
+                        "Queued for {}/{} ({}) : {summary}",
+                        report.accepted,
+                        report.total(),
+                        target_description(&targets)
+                    )
+                } else {
+                    format!(
+                        "Queued for {}/{} command sends ({}) : {summary}",
+                        report.accepted,
+                        report.total(),
+                        target_description(&targets)
+                    )
+                }
             } else {
                 format!("Send failed for {}: ", target_description(&targets))
             };

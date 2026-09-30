@@ -84,10 +84,29 @@ impl fmt::Display for CheatRefusal {
 }
 
 impl Play {
+    /// A private queue marker for host-owned cheats. `Play::cheat` rejects
+    /// control bytes, so this cannot collide with an operator command.
+    pub(crate) const INTERNAL_CHEAT_PREFIX: char = '\u{1}';
+
     /// Queue `cmd` for a running local-profile slot, returning the admission
     /// reason when it cannot be queued. The slot's client performs the final
     /// admission at the encoder.
     pub fn cheat(&self, user: &str, cmd: &str) -> Result<(), CheatRefusal> {
+        self.queue_cheat(user, cmd, true)
+    }
+
+    /// Queue a host-owned cheat without making it a Debug-tab reply probe.
+    /// This is used for login/session bookkeeping, not operator commands.
+    pub fn cheat_internal(&self, user: &str, cmd: &str) -> Result<(), CheatRefusal> {
+        self.queue_cheat(user, cmd, false)
+    }
+
+    fn queue_cheat(
+        &self,
+        user: &str,
+        cmd: &str,
+        observe_replies: bool,
+    ) -> Result<(), CheatRefusal> {
         if self.connection.require_bot_operation().is_err() || !self.map_teleport_authorized() {
             return Err(CheatRefusal::Unauthorized);
         }
@@ -109,8 +128,17 @@ impl Play {
         {
             return Err(CheatRefusal::NotInGame);
         }
+        let queued = if observe_replies {
+            cmd.to_string()
+        } else {
+            let mut queued =
+                String::with_capacity(cmd.len() + Self::INTERNAL_CHEAT_PREFIX.len_utf8());
+            queued.push(Self::INTERNAL_CHEAT_PREFIX);
+            queued.push_str(cmd);
+            queued
+        };
         if let Some(q) = self.cheats.lock().unwrap().get_mut(user) {
-            q.push_back(cmd.to_string());
+            q.push_back(queued);
         } else {
             return Err(CheatRefusal::QueueUnavailable);
         }
