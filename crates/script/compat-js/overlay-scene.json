@@ -3,9 +3,9 @@
     "id": "scene-row-common-posted-shape",
     "module": "adapter/ClientAdapter.js",
     "selector": "$add",
-    "reason": "The host projects each scene kind through SceneEntityInput (crates/host-play/src/script_snapshot.rs:526-719) and writes flat x/z/level/actions together with the nested tile and remaining common fields (crates/script/src/load/snapshot.rs:1424-1504); ClientAdapter returns the posted rows unchanged.",
+    "reason": "The V8 SceneEntity writer posts flat x/z/level/actions, the nested tile and common combat fields; it does not expose the FlatBuffer-only shape or angle fields. ClientAdapter returns these posted rows unchanged.",
     "runtime": "crates/script/src/shim/client_adapter.js:89",
-    "declaration": "interface PostedSceneEntity { index: number; id: number; name: string | null; x: number; z: number; level: number; tile: WorldTile; distance: number; max_health: number; totalHealth: number; in_combat: boolean; animating: boolean; actions: string[]; reachable: boolean; reachable_adj: boolean; combat_level: number; target_kind: number; target_index: number; faceEntity: number; size: number; nx: number; nz: number; shape: number; angle: number; }"
+    "declaration": "interface PostedSceneEntity { index: number; id: number; name: string | null; x: number; z: number; level: number; tile: WorldTile; distance: number; max_health: number; totalHealth: number; in_combat: boolean; animating: boolean; actions: string[]; reachable: boolean; reachable_adj: boolean; combat_level: number; target_kind: number; target_index: number; faceEntity: number; size: number; nx: number; nz: number; }"
   },
   {
     "id": "scene-row-npc",
@@ -19,7 +19,7 @@
     "id": "scene-row-loc",
     "module": "adapter/ClientAdapter.js",
     "selector": "LocSnapshot",
-    "reason": "Loc rows are projected with flat scene coordinates, actions, shape and angle and emitted by the common SceneEntity writer (crates/host-play/src/script_snapshot.rs:591-614; crates/script/src/load/snapshot.rs:1424-1504); the shim wraps the row and reads x/z/level/actions directly (crates/script/src/shim/locs.js:5-28).",
+    "reason": "Loc rows expose flat scene coordinates, actions and combat fields through the common V8 SceneEntity writer, but not the FlatBuffer-only shape or angle. The shim wraps the row and reads x/z/level/actions directly.",
     "runtime": "crates/script/src/shim/locs.js:6",
     "declaration": "export interface LocSnapshot extends PostedSceneEntity { health: number; }"
   },

@@ -13,6 +13,7 @@
     "invalid-extra.ts",
     "reach.ts",
     "settings.ts",
+    "emit-round2.ts",
     "../../compat-js/index.d.ts"
   ]
 }

@@ -1284,10 +1284,7 @@ fn infer_imported_promises(modules: &mut [ShimModule], sources: &[(&str, &str)])
                             .filter(|member| member.kind == MemberKind::Method && member.is_async)
                         {
                             imported_facts.insert(
-                                (
-                                    module.specifier.clone(),
-                                    format!("{name}.{}", member.name),
-                                ),
+                                (module.specifier.clone(), format!("{name}.{}", member.name)),
                                 true,
                             );
                         }
@@ -2047,8 +2044,7 @@ fn dts_fn_export(name: &str, func: &Function) -> CompatExport {
         name: name.to_string(),
         params: finish_params(func.params.iter().map(|p| pat_to_param(&p.pat)).collect()),
         is_async: func.is_async || return_type.is_some_and(type_ann_is_promise),
-        allows_non_promise: !func.is_async
-            && return_type.map_or(true, type_ann_allows_non_promise),
+        allows_non_promise: !func.is_async && return_type.is_none_or(type_ann_allows_non_promise),
     }
 }
 
@@ -2101,7 +2097,7 @@ fn dts_class_members(class: &Class) -> Vec<Member> {
                 let is_async =
                     method.function.is_async || return_type.is_some_and(type_ann_is_promise);
                 let allows_non_promise = !method.function.is_async
-                    && return_type.map_or(true, type_ann_allows_non_promise);
+                    && return_type.is_none_or(type_ann_allows_non_promise);
                 out.push(Member {
                     name,
                     kind,
@@ -2185,7 +2181,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                     kind: MemberKind::Method,
                     params: finish_params(m.params.iter().map(ts_fn_param).collect()),
                     is_async: return_type.is_some_and(type_ann_is_promise),
-                    allows_non_promise: return_type.map_or(true, type_ann_allows_non_promise),
+                    allows_non_promise: return_type.is_none_or(type_ann_allows_non_promise),
                     is_static: false,
                 });
             }

@@ -108,10 +108,9 @@ function members(node, live) {
     if (!node) return null;
     if (ts.isNewExpression(node) && node.expression.getText() === 'Proxy') {
         const target = members(node.arguments?.[0], live);
-        const handler = node.arguments?.[1];
-        // ownKeys can expose host-posted keys absent from an empty proxy target.
-        if (target?.size === 0 && ts.isObjectLiteralExpression(handler) && handler.properties.some(p => name(p) === 'ownKeys')) return null;
-        return target;
+        // A Proxy can synthesize properties through get or ownKeys; an empty
+        // target is not evidence that its posted API has no members.
+        return target?.size === 0 ? null : target;
     }
     if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && live?.locals.has(node.expression.text)) return members(live.locals.get(node.expression.text), live);
     if (ts.isCallExpression(node) && node.expression.getText() === 'proxy') return members(node.arguments?.[1], live);
