@@ -42,6 +42,7 @@ pub struct LogPane {
     session_log_status: Option<String>,
     clipboard: Option<arboard::Clipboard>,
 }
+
 impl Default for LogPane {
     fn default() -> Self {
         Self {
@@ -56,6 +57,7 @@ impl Default for LogPane {
         }
     }
 }
+
 impl LogPane {
     /// Cache the session-file label when the preference is applied, rather
     /// than resolving and formatting the path in every frame.
@@ -301,7 +303,6 @@ fn action_row(ui: &Ui, pane: &mut LogPane, focused: Option<&str>) {
     }
     drop(_disabled);
     ui.modal_popup(SAVE_POPUP, || {
-        crate::app::keep_popup_inside_work_area(ui);
         ui.text(format!(
             "{} line(s) with the current filters",
             pane.view.len()

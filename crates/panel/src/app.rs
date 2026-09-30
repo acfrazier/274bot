@@ -2029,7 +2029,6 @@ fn debug_section(ui: &Ui, session: &mut Session) {
 
 fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
     ui.popup("##debug-teles", || {
-        keep_popup_inside_work_area(ui);
         let dests = debug_dest_cheats();
         let avail = PANEL_WIDTH;
         let cols = (1usize..=6)
@@ -3560,7 +3559,6 @@ const MEM_POPUP: &str = "mem-pick";
 /// button the same way Teles opens dests.
 fn mem_popup(ui: &Ui, session: &mut Session) {
     ui.popup(MEM_POPUP, || {
-        keep_popup_inside_work_area(ui);
         ui.text_disabled("mem");
         let low = session.focused_lowmem();
         if inverted_button(ui, "highmem", !low, [0.0, 0.0]) {
@@ -3974,7 +3972,6 @@ fn scary_confirm_popup(
 ) -> bool {
     let mut did = false;
     ui.popup(id, || {
-        keep_popup_inside_work_area(ui);
         if confirm_dismiss_key(ui) {
             *understood = false;
             ui.close_current_popup();
@@ -4004,45 +4001,6 @@ fn scary_confirm_popup(
         }
     });
     did
-}
-
-/// Keep a popup rectangle inside the viewport's usable work area. ImGui
-/// normally anchors popups at the item that opened them; that anchor can be
-/// flush-right in the Profiles list, leaving the trailing button clipped.
-pub fn popup_position_in_work_area(
-    work_pos: [f32; 2],
-    work_size: [f32; 2],
-    popup_pos: [f32; 2],
-    popup_size: [f32; 2],
-    margin: f32,
-) -> [f32; 2] {
-    let margin = margin.max(0.0);
-    let left = work_pos[0] + margin;
-    let top = work_pos[1] + margin;
-    let right = (work_pos[0] + work_size[0] - popup_size[0] - margin).max(left);
-    let bottom = (work_pos[1] + work_size[1] - popup_size[1] - margin).max(top);
-    [
-        popup_pos[0].clamp(left, right),
-        popup_pos[1].clamp(top, bottom),
-    ]
-}
-
-/// Clamp the current popup after ImGui has measured its content. This uses
-/// the viewport work area rather than the Profiles window, so a prompt opened
-/// by an item at the far right remains wholly actionable.
-pub fn keep_popup_inside_work_area(ui: &Ui) {
-    let viewport = ui.main_viewport();
-    let current = ui.window_pos();
-    let clamped = popup_position_in_work_area(
-        viewport.work_pos(),
-        viewport.work_size(),
-        current,
-        ui.window_size(),
-        8.0,
-    );
-    if clamped != current {
-        ui.set_window_pos(clamped);
-    }
 }
 
 /// Status values that carry no information are omitted instead of showing
@@ -4363,6 +4321,7 @@ pub fn chooser_should_open_popup(want: bool, prev: bool) -> (bool, bool) {
 fn chooser_dock_id(panel: Option<Id>) -> Option<Id> {
     panel
 }
+
 /// Whether the docked Profiles window extends past the viewport work area.
 /// Rows and form actions stack at that edge so their controls stay clickable.
 fn chooser_controls_stack(ui: &Ui) -> bool {
@@ -4474,7 +4433,13 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 } else {
                     (viewport_h - 280.0).clamp(120.0, 360.0)
                 };
-                let need = (names.len() as f32) * ROW_H + 8.0;
+                // A stacked row takes two lines: the name, then Edit and ✕.
+                let row_h = if stack_controls {
+                    ROW_H + ui.text_line_height_with_spacing()
+                } else {
+                    ROW_H
+                };
+                let need = (names.len() as f32) * row_h + 8.0;
                 let list_h = need.min(max_list);
                 ui.child_window("##profiles-list")
                     .size([0.0, list_h])

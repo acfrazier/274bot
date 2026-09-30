@@ -49,6 +49,7 @@ fn empty_walk_queue_and_modal_values_are_not_status_rows() {
     assert!(status_value_visible("modals", "0"));
     assert!(status_value_visible("state", "idle"));
 }
+
 #[test]
 fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -80,96 +81,47 @@ fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
     assert!(shown.contains("modals") && shown.contains("0"));
 }
 
-#[test]
-fn popup_position_clamps_every_edge_to_the_viewport_work_area() {
-    assert_eq!(
-        super::popup_position_in_work_area(
-            [100.0, 200.0],
-            [500.0, 400.0],
-            [90.0, 190.0],
-            [100.0, 80.0],
-            8.0,
-        ),
-        [108.0, 208.0],
-        "left/top margins remain visible"
-    );
-    assert_eq!(
-        super::popup_position_in_work_area(
-            [100.0, 200.0],
-            [500.0, 400.0],
-            [700.0, 700.0],
-            [100.0, 80.0],
-            8.0,
-        ),
-        [492.0, 512.0],
-        "right/bottom edges remain visible"
-    );
-    assert_eq!(
-        super::popup_position_in_work_area(
-            [100.0, 200.0],
-            [500.0, 400.0],
-            [700.0, 700.0],
-            [600.0, 500.0],
-            8.0,
-        ),
-        [108.0, 208.0],
-        "an oversized popup still gets the minimum safe position"
-    );
-}
-
-#[test]
-fn edit_switch_prompt_width_stays_stable_and_inside_1024_work_area() {
-    let _guard = crate::test_support::imgui_context_guard();
-    let mut ui = ProfilesUi::with_geometry(
-        "profiles-prompt-geometry",
-        &[("alice", "apass", 42), ("bob", "bpass", 43)],
-        [1024.0, 768.0],
-        [694.0, 0.0],
-        [PANEL_WIDTH, 768.0],
-    );
-    ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "typed".into();
-    let asked = ui.click(At::List, "Edit##edit-bob");
-    assert!(
-        asked.has("[ Discard ]") && asked.has("[ Keep editing ]"),
-        "{}",
-        asked.text
-    );
-
-    let rects: Vec<_> = (0..60).map(|_| ui.switch_prompt_rect()).collect();
-    let stable = rects[2].1[0];
-    assert!(
-        rects
-            .iter()
-            .skip(2)
-            .all(|(_, size)| (size[0] - stable).abs() < 0.01),
-        "prompt width changed across frames: {rects:?}"
-    );
-    assert!(
-        rects.iter().all(|(pos, size)| {
-            pos[0] >= 8.0
-                && pos[1] >= 8.0
-                && pos[0] + size[0] <= 1016.0
-                && pos[1] + size[1] <= 760.0
-        }),
-        "prompt escapes the 1024 work area: {rects:?}"
-    );
-}
-
+/// At 1024×768 the docked Profiles window runs past the right edge of the
+/// display. Every row's Edit and ✕, and the form's Save, Cancel and Close,
+/// still show their full height and at least their center (where the label
+/// sits) on screen and in the part of their window that shows, so the last
+/// profile's controls need no scrolling, and a click there lands.
 #[test]
 fn profiles_controls_remain_reachable_when_the_dock_runs_past_1024() {
     let _guard = crate::test_support::imgui_context_guard();
+    let display = [1024.0, 768.0];
     let mut ui = ProfilesUi::with_geometry(
         "profiles-narrow-controls",
-        &[("alice", "apass", 42)],
-        [1024.0, 768.0],
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+        display,
         [797.0, 0.0],
         [PANEL_WIDTH, 768.0],
     );
-    let shown = ui.click(At::List, "Edit##edit-alice");
-    for label in ["[ Edit ]", "[ ✕ ]", "[ Save ]", "[ Cancel ]", "[ Close ]"] {
-        assert!(shown.has(label), "{label} is not drawn: {}", shown.text);
+    ui.click(At::List, "Edit##edit-alice");
+    for (at, label) in [
+        (At::List, "Edit##edit-alice"),
+        (At::List, "✕##alice"),
+        (At::List, "Edit##edit-bob"),
+        (At::List, "✕##bob"),
+        (At::Form, "Save"),
+        (At::Form, "Cancel"),
+        (At::Window, "Close"),
+    ] {
+        let (item, visible) = ui.item_rect(at, label);
+        let center = rect_center(item);
+        for (name, area) in [("display", [[0.0, 0.0], display]), ("window", visible)] {
+            assert!(
+                center[0] >= area[0][0]
+                    && center[0] <= area[1][0]
+                    && item[0][1] >= area[0][1]
+                    && item[1][1] <= area[1][1],
+                "{label} at {item:?} is not shown in the {name}'s {area:?}"
+            );
+        }
     }
+    let (bob, _) = ui.item_rect(At::List, "Edit##edit-bob");
+    let opened = ui.click_at(rect_center(bob));
+    assert!(opened.has("Editing bob"), "{}", opened.text);
 }
 
 #[test]
@@ -3602,11 +3554,17 @@ enum At {
     SwitchPrompt,
 }
 
-/// Queue ImGui's own activation of the Profiles item `label`, whose id lives
-/// `at` (`form` is the edit form's id scope): it is pressed on the next
-/// frame exactly as a click presses it, and never while it is disabled.
-/// Call with the frame's context bound.
-fn activate_profiles_item(at: At, form: usize, label: &str) {
+/// The Profiles item `label`, whose id lives `at` (`form` is the edit
+/// form's id scope): the window that lays it out, and its id. Call with the
+/// frame's context bound.
+fn profiles_item(
+    at: At,
+    form: usize,
+    label: &str,
+) -> (
+    *mut dear_imgui_rs::sys::ImGuiWindow,
+    dear_imgui_rs::sys::ImGuiID,
+) {
     use dear_imgui_rs::sys;
     use std::ffi::CString;
 
@@ -3614,31 +3572,85 @@ fn activate_profiles_item(at: At, form: usize, label: &str) {
     // NUL-terminated copy that outlives its call, and a window is read only
     // after the lookup found it.
     unsafe {
-        let window_id = |name: &str| {
+        let window = |name: &str| {
             let name = CString::new(name).unwrap();
             let window = sys::igFindWindowByName(name.as_ptr());
             assert!(!window.is_null(), "{name:?} was drawn");
-            (*window).ID
+            window
         };
         let id = |label: &str, seed: sys::ImGuiID| {
             let label = CString::new(label).unwrap();
             sys::igGetIDWithSeed_Str(label.as_ptr(), std::ptr::null(), seed)
         };
-        let profiles = window_id("Profiles");
-        let seed = match at {
-            At::Window => profiles,
-            At::Form => sys::igGetIDWithSeed_Int(form as i32, profiles),
-            At::List => window_id(&format!(
-                "Profiles/##profiles-list_{:08X}",
-                id("##profiles-list", profiles)
-            )),
-            At::SwitchPrompt => window_id(&format!(
-                "##Popup_{:08x}",
-                id(super::PROFILE_EDIT_SWITCH_POPUP, profiles)
-            )),
+        let profiles = window("Profiles");
+        let profiles_id = (*profiles).ID;
+        let (window, seed) = match at {
+            At::Window => (profiles, profiles_id),
+            At::Form => (profiles, sys::igGetIDWithSeed_Int(form as i32, profiles_id)),
+            At::List => {
+                let list = window(&format!(
+                    "Profiles/##profiles-list_{:08X}",
+                    id("##profiles-list", profiles_id)
+                ));
+                (list, (*list).ID)
+            }
+            At::SwitchPrompt => {
+                let prompt = window(&format!(
+                    "##Popup_{:08x}",
+                    id(super::PROFILE_EDIT_SWITCH_POPUP, profiles_id)
+                ));
+                (prompt, (*prompt).ID)
+            }
         };
-        sys::igActivateItemByID(id(label, seed));
+        (window, id(label, seed))
     }
+}
+
+/// Queue ImGui's own activation of the Profiles item `label`, whose id lives
+/// `at` (`form` is the edit form's id scope): it is pressed on the next
+/// frame exactly as a click presses it, and never while it is disabled.
+/// Call with the frame's context bound.
+fn activate_profiles_item(at: At, form: usize, label: &str) {
+    let (_, id) = profiles_item(at, form, label);
+    // SAFETY: the caller binds the frame's context.
+    unsafe { dear_imgui_rs::sys::igActivateItemByID(id) };
+}
+
+/// Give the Profiles item `label` ImGui's keyboard focus, so laying it out
+/// this frame records where it went. Returns the window to read that back
+/// from with [`focused_item_rect`]. Call with the frame's context bound.
+fn focus_profiles_item(at: At, form: usize, label: &str) -> *mut dear_imgui_rs::sys::ImGuiWindow {
+    let (window, id) = profiles_item(at, form, label);
+    // SAFETY: the caller binds the frame's context and `window` is the live
+    // window the lookup found.
+    unsafe { dear_imgui_rs::sys::igSetFocusID(id, window) };
+    window
+}
+
+/// The focused item's laid-out rectangle and the visible part of `window`
+/// holding it, both as `[min, max]` on screen. Call with the frame's
+/// context bound, after the window drew.
+fn focused_item_rect(
+    window: *mut dear_imgui_rs::sys::ImGuiWindow,
+) -> ([[f32; 2]; 2], [[f32; 2]; 2]) {
+    use dear_imgui_rs::sys;
+
+    let corners = |r: sys::ImRect_c| [[r.Min.x, r.Min.y], [r.Max.x, r.Max.y]];
+    // SAFETY: the caller binds the frame's context; `window` came from
+    // `focus_profiles_item` this frame and ImGui keeps windows alive.
+    unsafe {
+        (
+            corners(sys::igWindowRectRelToAbs(window, (*window).NavRectRel[0])),
+            corners((*window).InnerClipRect),
+        )
+    }
+}
+
+fn rect_center(rect: [[f32; 2]; 2]) -> [f32; 2] {
+    [
+        (rect[0][0] + rect[1][0]) * 0.5,
+        (rect[0][1] + rect[1][1]) * 0.5,
+    ]
 }
 
 /// Pin the Profiles window to a chosen dock geometry. Call with the frame's
@@ -3669,9 +3681,10 @@ fn pin_profiles_geometry_at(pos: [f32; 2], size: [f32; 2]) {
     }
 }
 
-/// The Discard / Keep editing prompt's laid-out rectangle. Call with the
-/// frame's context bound, after the Profiles window drew.
-fn switch_prompt_rect() -> ([f32; 2], [f32; 2]) {
+/// The laid-out `(pos, size)` of the Profiles popup `popup` (the unsaved-
+/// edits or the delete prompt). Call with the frame's context bound, after
+/// the Profiles window drew.
+fn profiles_popup_rect(popup: &str) -> ([f32; 2], [f32; 2]) {
     use dear_imgui_rs::sys;
     use std::ffi::CString;
 
@@ -3681,20 +3694,20 @@ fn switch_prompt_rect() -> ([f32; 2], [f32; 2]) {
     unsafe {
         let profiles = sys::igFindWindowByName(c"Profiles".as_ptr());
         assert!(!profiles.is_null(), "Profiles was drawn");
-        let label = CString::new(super::PROFILE_EDIT_SWITCH_POPUP).unwrap();
+        let label = CString::new(popup).unwrap();
         let id = sys::igGetIDWithSeed_Str(label.as_ptr(), std::ptr::null(), (*profiles).ID);
         let name = CString::new(format!("##Popup_{id:08x}")).unwrap();
-        let popup = sys::igFindWindowByName(name.as_ptr());
-        assert!(!popup.is_null(), "the prompt was drawn");
+        let window = sys::igFindWindowByName(name.as_ptr());
+        assert!(!window.is_null(), "{popup:?} was drawn");
         (
-            [(*popup).Pos.x, (*popup).Pos.y],
-            [(*popup).Size.x, (*popup).Size.y],
+            [(*window).Pos.x, (*window).Pos.y],
+            [(*window).Size.x, (*window).Size.y],
         )
     }
 }
 
 fn switch_prompt_width() -> f32 {
-    switch_prompt_rect().1[0]
+    profiles_popup_rect(super::PROFILE_EDIT_SWITCH_POPUP).1[0]
 }
 
 /// The Profiles window over a real vault, driven through real ImGui frames
@@ -3830,7 +3843,9 @@ impl ProfilesUi {
         width
     }
 
-    fn switch_prompt_rect(&mut self) -> ([f32; 2], [f32; 2]) {
+    /// One frame; returns the Profiles popup `popup`'s laid-out
+    /// `(pos, size)`.
+    fn popup_rect(&mut self, popup: &str) -> ([f32; 2], [f32; 2]) {
         self.session.pump_status();
         self.ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
@@ -3842,10 +3857,49 @@ impl ProfilesUi {
             let ui = self.ctx.frame();
             ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
             super::chooser_window(ui, &mut self.session, None);
-            ui.with_bound_context(switch_prompt_rect)
+            ui.with_bound_context(|| profiles_popup_rect(popup))
         };
         self.ctx.render();
         rect
+    }
+
+    /// One frame; returns where the Profiles item `label` (its id lives
+    /// `at`) was laid out on screen and the visible part of the window
+    /// holding it, both as `[min, max]`.
+    fn item_rect(&mut self, at: At, label: &str) -> ([[f32; 2]; 2], [[f32; 2]; 2]) {
+        self.session.pump_status();
+        self.ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let form = self.session.chooser_form;
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
+        let rects = {
+            let ui = self.ctx.frame();
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
+            let window = ui.with_bound_context(|| focus_profiles_item(at, form, label));
+            super::chooser_window(ui, &mut self.session, None);
+            ui.with_bound_context(|| focused_item_rect(window))
+        };
+        self.ctx.render();
+        rects
+    }
+
+    /// A left click with the pointer at `pos`, as the mouse makes it; the
+    /// last frame shows the result.
+    fn click_at(&mut self, pos: [f32; 2]) -> Shown {
+        self.ctx.io_mut().add_mouse_pos_event(pos);
+        self.frame();
+        self.ctx
+            .io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+        self.frame();
+        self.ctx
+            .io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+        self.frame();
+        self.frame()
     }
 
     /// Type `c` into the edit form, as the keyboard would: Tab to one of
@@ -4690,38 +4744,81 @@ fn opening_another_profile_over_unsaved_edits_asks_first() {
     assert_eq!(ui.session.cred_pass, "bpass", "bob's own row loads");
 }
 
-/// The prompt keeps one width however long it stays open. Its buttons sit
-/// side by side, and a gap between them different from the one their width
-/// was computed with made the popup 2 px wider every frame (the R1 headed
-/// review saw only Discard on the narrow dock).
+/// A Profiles prompt opened from a control at the display's right edge:
+/// ImGui places it inside the display, and it keeps that place and width
+/// however long it stays open, so both its buttons stay on screen.
+fn assert_prompt_holds_on_screen(ui: &mut ProfilesUi, popup: &str) {
+    let display = ui.display_size;
+    let rects: Vec<_> = (0..60).map(|_| ui.popup_rect(popup)).collect();
+    let (pos, size) = rects[2];
+    for (frame, &rect) in rects.iter().enumerate().skip(2) {
+        assert_eq!(
+            rect,
+            (pos, size),
+            "{popup:?} at frame {frame} is {rect:?}, was {:?}",
+            (pos, size)
+        );
+    }
+    assert!(
+        pos[0] >= 0.0
+            && pos[1] >= 0.0
+            && pos[0] + size[0] <= display[0]
+            && pos[1] + size[1] <= display[1],
+        "{popup:?} at {pos:?} {size:?} leaves the {display:?} display"
+    );
+    assert!(
+        size[0] <= 2.0 * super::DIALOG_W,
+        "{popup:?} stays a dialog, not the window's width: {size:?}"
+    );
+}
+
+/// Profiles docked flush against the right edge of a 1024×768 display.
+fn far_right_profiles(label: &str) -> ProfilesUi {
+    ProfilesUi::with_geometry(
+        label,
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+        [1024.0, 768.0],
+        [1024.0 - PANEL_WIDTH, 0.0],
+        [PANEL_WIDTH, 768.0],
+    )
+}
+
+/// The unsaved-edits prompt keeps one width however long it stays open.
+/// Its buttons are sized for the gap between them, and any change to the
+/// popup's position or width inside its own frame feeds back into that
+/// size: a mismatched gap made it 2 px wider every frame, and moving it
+/// left inside the popup made it about 5 px wider every frame, until it
+/// covered the window.
 #[test]
 fn the_leave_prompt_keeps_a_stable_width_so_both_buttons_stay_on_screen() {
     let _guard = crate::test_support::imgui_context_guard();
-    let mut ui = ProfilesUi::new("profiles-prompt-width", &[("alice", "apass", 42)]);
+    let mut ui = far_right_profiles("profiles-prompt-width");
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
-    let gate = ui.session.core.write_gate();
-    let held = gate.lock().unwrap();
-    ui.click(At::Form, "Save");
-    let asked = ui.click(At::Window, "Close");
+    ui.session.cred_pass = "typed".into();
+    let (edit, _) = ui.item_rect(At::List, "Edit##edit-bob");
+    let asked = ui.click_at(rect_center(edit));
     assert!(
         asked.has("[ Discard ]") && asked.has("[ Keep editing ]"),
         "{}",
         asked.text
     );
-    let settled = ui.switch_prompt_width().0;
-    for frame in 0..90 {
-        let width = ui.switch_prompt_width().0;
-        assert_eq!(
-            width, settled,
-            "the prompt is {width} px wide at frame {frame}, was {settled}"
-        );
-    }
+    assert_prompt_holds_on_screen(&mut ui, super::PROFILE_EDIT_SWITCH_POPUP);
+}
+
+/// The delete prompt, opened from a row's ✕ at the display's right edge,
+/// holds its width and stays on screen the same way.
+#[test]
+fn the_delete_prompt_keeps_a_stable_width_so_both_buttons_stay_on_screen() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = far_right_profiles("profiles-delete-prompt-width");
+    let (delete, _) = ui.item_rect(At::List, "✕##bob");
+    let asked = ui.click_at(rect_center(delete));
     assert!(
-        settled <= 2.0 * super::DIALOG_W,
-        "the prompt stays a dialog, not the window's width: {settled}"
+        asked.has("Remove bob") && asked.has("[ Cancel ]"),
+        "{}",
+        asked.text
     );
-    drop(held);
+    assert_prompt_holds_on_screen(&mut ui, super::PROFILE_DELETE_POPUP);
 }
 
 #[test]
