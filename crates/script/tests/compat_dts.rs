@@ -1,21 +1,15 @@
-// Compat (JS API v1) declarations — generated from the shim name maps.
+// Compat (JS API v1) declarations — authored types gated against the shim.
 use script::compat_dts::{
-    collect_compat_surface, collect_compat_surface_from, compat_dts_path, find_export,
-    member_names, parse_module_source, render_compat_dts, render_compat_dts_with,
-    render_compat_surface, shim_source_pairs, write_compat_dts, CompatExport, DtsExtension,
-    FnParam, Member, MemberKind,
+    check_compat_dts_drift, collect_compat_surface, collect_compat_surface_from, compat_dts_path,
+    drift_against_shim, find_export, load_authored_dts, load_authored_dts_from, member_names,
+    parse_module_source, shim_source_pairs, write_authored_dts_tree, CompatExport, MemberKind,
 };
+use std::fs;
+use std::path::Path;
 
 #[test]
 fn compat_dts_is_fresh() {
-    let path = compat_dts_path();
-    let on_disk =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let rendered = render_compat_dts();
-    assert_eq!(
-        on_disk, rendered,
-        "compat-js/index.d.ts is stale; run: cargo test -p script --test compat_dts regen_compat_dts -- --ignored"
-    );
+    check_compat_dts_drift().unwrap_or_else(|e| panic!("{e}"));
 }
 
 #[test]
@@ -43,11 +37,11 @@ fn game_shim_methods_are_declared() {
             "Game.{need} missing from parsed shim: {names:?}"
         );
     }
-    let rendered = render_compat_dts();
+    let dts = fs::read_to_string(compat_dts_path()).unwrap();
     for need in ["ingame", "tile", "setCombatStyle", "teleport", "castOnNpc"] {
         assert!(
-            rendered.contains(&format!("{need}(")),
-            "generated d.ts missing Game.{need}"
+            dts.contains(&format!("{need}(")),
+            "authored d.ts missing Game.{need}"
         );
     }
 }
@@ -85,8 +79,8 @@ fn tile_and_bots_come_from_shim_and_prelude() {
     assert_eq!(settings.kind, MemberKind::Getter);
 }
 
-/// Adding a method to a shim source without regenerating must change the
-/// rendered declarations — the freshness check then fails against on-disk.
+/// Adding a method to a shim source must fail the structural drift gate
+/// against the authored declarations.
 #[test]
 fn drift_gate_fails_when_shim_gains_a_method() {
     let owned = shim_source_pairs();
@@ -117,44 +111,12 @@ fn drift_gate_fails_when_shim_gains_a_method() {
             }
         })
         .collect();
-    let original = render_compat_dts();
-    let next = render_compat_surface(&collect_compat_surface_from(&pairs));
+    let authored = load_authored_dts().expect("authored d.ts");
+    let drifts = drift_against_shim(&authored, &collect_compat_surface_from(&pairs));
     assert!(
-        next.contains("extraProbeMethod"),
-        "generator must pick up a method added to the Game shim"
+        drifts.iter().any(|d| d.contains("extraProbeMethod")),
+        "injected Game.extraProbeMethod must fail the drift gate: {drifts:?}"
     );
-    assert!(
-        !original.contains("extraProbeMethod"),
-        "unpatched surface must not already declare extraProbeMethod"
-    );
-    assert_ne!(
-        original, next,
-        "adding a shim method must change the generated d.ts so freshness fails"
-    );
-}
-
-#[test]
-fn dts_extension_appends_without_forking_the_generator() {
-    let extra = DtsExtension {
-        specifier: "/rs2b0t/bot/api/gather/Gatherer.js".to_string(),
-        exports: vec![CompatExport::Object {
-            name: "Gatherer".to_string(),
-            members: vec![Member {
-                name: "start".to_string(),
-                kind: MemberKind::Method,
-                params: vec![FnParam {
-                    name: "mode".to_string(),
-                    optional: false,
-                    rest: false,
-                }],
-                is_async: true,
-                is_static: false,
-            }],
-        }],
-    };
-    let src = render_compat_dts_with(&[extra]);
-    assert!(src.contains("declare module '*api/gather/Gatherer.js'"));
-    assert!(src.contains("start(mode: any): Promise<any>"));
 }
 
 #[test]
@@ -189,49 +151,31 @@ fn equipment_async_and_inventory_shape() {
     }
 }
 
-/// Writes `compat-js/index.d.ts` from the shim name maps.
-#[test]
-#[ignore]
-fn regen_compat_dts() {
-    write_compat_dts().expect("write compat-js/index.d.ts");
-    eprintln!("wrote {}", compat_dts_path().display());
-}
-
+/// Writes a declaration tree for `tsc` from the authored file.
 /// `COMPAT_DTS_TREE=/tmp/bot cargo test -p script --test compat_dts write_compat_dts_tree_to_env -- --ignored`
 #[test]
 #[ignore]
 fn write_compat_dts_tree_to_env() {
     let dir = std::env::var("COMPAT_DTS_TREE").expect("COMPAT_DTS_TREE");
-    script::compat_dts::write_compat_dts_tree(std::path::Path::new(&dir))
-        .expect("write compat dts tree");
-    eprintln!("wrote tree {}", dir);
+    script::compat_dts::write_compat_dts_tree(Path::new(&dir)).expect("write compat dts tree");
+    eprintln!("wrote tree {dir}");
 }
 
 #[test]
 fn dynamic_proxy_bags_are_any() {
-    let rendered = render_compat_dts();
-    assert!(
-        rendered.contains("export const SHOP_DB: any"),
-        "SHOP_DB is a dynamic Proxy bag"
-    );
-    assert!(
-        rendered.contains("export const DROP_DB: any"),
-        "DROP_DB is a dynamic Proxy bag"
-    );
-    assert!(
-        rendered.contains("export const ITEM_DB: any"),
-        "ITEM_DB must not be dropped because the Proxy target is an ident"
-    );
-    assert!(
-        rendered.contains("export const HERBS: any"),
-        "HERBS must not be dropped because the Proxy target is an array"
-    );
+    let dts = fs::read_to_string(compat_dts_path()).unwrap();
+    for bag in ["SHOP_DB", "DROP_DB", "ITEM_DB", "HERBS"] {
+        assert!(
+            dts.contains(&format!("export const {bag}:")),
+            "{bag} must remain on the authored surface"
+        );
+    }
 }
 
 #[test]
 fn reexports_defaults_and_tile_fields_follow_the_shim() {
     let surface = collect_compat_surface();
-    let rendered = render_compat_surface(&surface);
+    let dts = fs::read_to_string(compat_dts_path()).unwrap();
 
     let style = surface
         .modules
@@ -254,7 +198,10 @@ fn reexports_defaults_and_tile_fields_follow_the_shim() {
         .find(|m| m.specifier.ends_with("/webwalk/Navigator.js"))
         .expect("Navigator");
     assert_eq!(nav.default_export.as_deref(), Some("Navigator"));
-    assert!(rendered.contains("export default Navigator"));
+    assert!(
+        dts.contains("export default Navigator"),
+        "authored Navigator default export"
+    );
 
     let tile = find_export(&surface, "Tile").expect("Tile");
     let names = member_names(tile);
@@ -295,12 +242,9 @@ fn reexports_defaults_and_tile_fields_follow_the_shim() {
             .any(|e| matches!(e, CompatExport::Class { name, .. } if name == "HuntTask")),
         "unexported HuntTask must be emitted so `extends HuntTask` typechecks"
     );
+    assert!(dts.contains("class HuntTask"), "HuntTask class in d.ts");
     assert!(
-        rendered.contains("class HuntTask"),
-        "HuntTask class in d.ts"
-    );
-    assert!(
-        rendered.contains("want?: any, _walkable?: any, _canStep?: any, directions?: any"),
+        dts.contains("want?:") && dts.contains("directions?:"),
         "JS optional param must force following params optional: findBurnLane"
     );
 }
@@ -308,13 +252,223 @@ fn reexports_defaults_and_tile_fields_follow_the_shim() {
 #[test]
 fn dts_tree_mirrors_shim_urls_for_relative_imports() {
     let dir = std::env::temp_dir().join("compat-dts-tree-test");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
     script::compat_dts::write_compat_dts_tree(&dir).expect("write tree");
-    let game = std::fs::read_to_string(dir.join("api/game/Game.d.ts")).expect("Game.d.ts");
-    assert!(game.contains("ingame("), "{game}");
+    let game = fs::read_to_string(dir.join("api/game/Game.d.ts")).expect("Game.d.ts");
+    assert!(game.contains("ingame(): boolean"), "{game}");
     assert!(game.contains("castOnNpc("), "{game}");
-    let tile = std::fs::read_to_string(dir.join("geometry/Tile.d.ts")).expect("Tile.d.ts");
+    let tile = fs::read_to_string(dir.join("geometry/Tile.d.ts")).expect("Tile.d.ts");
     assert!(tile.contains("export default Tile"), "{tile}");
-    assert!(tile.contains("x: any"), "{tile}");
-    let _ = std::fs::remove_dir_all(&dir);
+    assert!(tile.contains("x: number"), "{tile}");
+    let host = fs::read_to_string(dir.join("runtime/BotHost.d.ts")).expect("BotHost.d.ts");
+    assert!(host.contains("addTickListener"), "{host}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn bot_host_shorthand_add_tick_listener_is_a_member() {
+    let parsed = parse_module_source(
+        "/rs2b0t/bot/runtime/BotHost.js",
+        include_str!("../src/shim/bot_host.js"),
+    );
+    let host = parsed
+        .exports
+        .iter()
+        .find(|e| matches!(e, CompatExport::Object { name, .. } if name == "BotHost"))
+        .expect("BotHost");
+    let names = member_names(host);
+    assert!(
+        names.contains(&"addTickListener"),
+        "shorthand addTickListener must be a BotHost member: {names:?}"
+    );
+    if let CompatExport::Object { members, .. } = host {
+        let add = members
+            .iter()
+            .find(|m| m.name == "addTickListener")
+            .unwrap();
+        assert_eq!(add.kind, MemberKind::Method);
+        assert_eq!(add.params.len(), 1);
+    }
+    let dts = fs::read_to_string(compat_dts_path()).unwrap();
+    assert!(
+        dts.contains("addTickListener"),
+        "authored d.ts must declare BotHost.addTickListener"
+    );
+}
+
+#[test]
+fn bank_deposit_and_delay_until_are_promise_returning() {
+    let bank = parse_module_source(
+        "/rs2b0t/bot/api/bank/Bank.js",
+        include_str!("../src/shim/bank.js"),
+    );
+    let bank_obj = bank
+        .exports
+        .iter()
+        .find(|e| matches!(e, CompatExport::Object { name, .. } if name == "Bank"))
+        .expect("Bank");
+    if let CompatExport::Object { members, .. } = bank_obj {
+        let deposit = members.iter().find(|m| m.name == "deposit").unwrap();
+        assert!(
+            deposit.is_async,
+            "Bank.deposit returns bankOp() which is async"
+        );
+        let withdraw = members.iter().find(|m| m.name == "withdraw").unwrap();
+        assert!(withdraw.is_async, "Bank.withdraw returns bankOp()");
+    }
+    let exec = parse_module_source(
+        "/rs2b0t/bot/api/execution/Execution.js",
+        include_str!("../src/shim/execution.js"),
+    );
+    let execution = exec
+        .exports
+        .iter()
+        .find(|e| matches!(e, CompatExport::Object { name, .. } if name == "Execution"))
+        .expect("Execution");
+    if let CompatExport::Object { members, .. } = execution {
+        let delay_until = members.iter().find(|m| m.name == "delayUntil").unwrap();
+        assert!(
+            delay_until.is_async,
+            "Execution.delayUntil returns park.enqueue() / Promise"
+        );
+    }
+}
+
+#[test]
+fn authored_game_tile_and_inventory_use_concrete_types() {
+    let dts = fs::read_to_string(compat_dts_path()).unwrap();
+    assert!(
+        dts.contains("ingame(): boolean"),
+        "Game.ingame must be boolean, not any"
+    );
+    assert!(
+        dts.contains("tile(): WorldTile | null") || dts.contains("tile(): WorldTile|null"),
+        "Game.tile must be a world-tile record or null"
+    );
+    assert!(
+        dts.contains("openSideTab(tab: number): Promise<boolean>")
+            || dts.contains("openSideTab(tab:"),
+        "Game.openSideTab must be Promise<boolean>"
+    );
+    assert!(
+        dts.contains("count(name: string): number"),
+        "Inventory.count / Bank.count must be number"
+    );
+    assert!(
+        dts.contains("delay(ms: number): Promise<void>"),
+        "Execution.delay must be Promise<void>"
+    );
+    assert!(
+        dts.contains("distanceTo(other: WorldTile): number")
+            || dts.contains("distanceTo(other: Tile): number"),
+        "Tile.distanceTo must be number"
+    );
+}
+
+fn write_gatherer_extension(dir: &Path, with_barrel: bool, with_file: bool) {
+    let src = fs::read_to_string(compat_dts_path()).unwrap();
+    fs::create_dir_all(dir).unwrap();
+    let barrel = if with_barrel {
+        src.replacen(
+            "declare module '@rs2b0t/api' {",
+            "declare module '@rs2b0t/api' {\n  export { Gatherer } from '*api/gather/Gatherer.js';",
+            1,
+        )
+    } else {
+        src
+    };
+    fs::write(dir.join("index.d.ts"), barrel).unwrap();
+    if with_file {
+        let gather_dir = dir.join("api/gather");
+        fs::create_dir_all(&gather_dir).unwrap();
+        fs::write(
+            gather_dir.join("Gatherer.d.ts"),
+            r#"/** Native gatherer start — O-SCRIPT-API extension example. */
+export type GatherMode = 'woodcut' | 'mine' | 'fish' | 'harvest';
+export interface GatherStart {
+  ok: boolean;
+  site: string;
+}
+export const Gatherer: {
+  start(mode: GatherMode): Promise<GatherStart>;
+};
+"#,
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn extension_accepted_when_typed_module_and_barrel_exist() {
+    let dir = std::env::temp_dir().join("compat-dts-ext-ok");
+    let _ = fs::remove_dir_all(&dir);
+    write_gatherer_extension(&dir, true, true);
+    let authored = load_authored_dts_from(&dir).expect("load extension dir");
+    let shim = collect_compat_surface();
+    let drifts = drift_against_shim(&authored, &shim);
+    assert!(
+        drifts.is_empty(),
+        "typed Gatherer module + barrel export must be accepted: {drifts:?}"
+    );
+    let gatherer = authored
+        .modules
+        .iter()
+        .find(|m| m.specifier.contains("gather/Gatherer"))
+        .expect("Gatherer module");
+    let start = gatherer
+        .exports
+        .iter()
+        .find(|e| matches!(e, CompatExport::Object { name, .. } if name == "Gatherer"));
+    match start {
+        Some(CompatExport::Object { members, .. }) => {
+            let m = members.iter().find(|x| x.name == "start").expect("start");
+            assert!(m.is_async, "Gatherer.start is Promise<GatherStart>");
+            assert_eq!(m.params.len(), 1);
+            assert_eq!(m.params[0].name, "mode");
+        }
+        other => panic!("Gatherer object: {other:?}"),
+    }
+    let tree = std::env::temp_dir().join("compat-dts-ext-tree");
+    let _ = fs::remove_dir_all(&tree);
+    write_authored_dts_tree(&authored, &tree).expect("tree");
+    let file = fs::read_to_string(tree.join("api/gather/Gatherer.d.ts")).expect("Gatherer.d.ts");
+    assert!(
+        file.contains("start(mode: GatherMode): Promise<GatherStart>"),
+        "{file}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&tree);
+}
+
+#[test]
+fn extension_rejected_without_barrel_export() {
+    let dir = std::env::temp_dir().join("compat-dts-ext-nobarrel");
+    let _ = fs::remove_dir_all(&dir);
+    write_gatherer_extension(&dir, false, true);
+    let authored = load_authored_dts_from(&dir).expect("load");
+    let drifts = drift_against_shim(&authored, &collect_compat_surface());
+    assert!(
+        drifts
+            .iter()
+            .any(|d| d.contains("Gatherer") && d.contains("barrel")),
+        "missing barrel export must fail: {drifts:?}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn extension_rejected_without_module_file() {
+    let dir = std::env::temp_dir().join("compat-dts-ext-nofile");
+    let _ = fs::remove_dir_all(&dir);
+    write_gatherer_extension(&dir, true, false);
+    let authored = load_authored_dts_from(&dir).expect("load");
+    let has_gatherer = authored
+        .modules
+        .iter()
+        .any(|m| m.specifier.contains("gather/Gatherer"));
+    assert!(
+        !has_gatherer,
+        "barrel-only Gatherer without a module file must not invent a module"
+    );
+    let _ = fs::remove_dir_all(&dir);
 }

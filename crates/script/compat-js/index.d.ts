@@ -1,11 +1,12 @@
-// Generated from the JS shim name maps (shim_modules + prelude) — do not edit by hand.
-// Regen: cargo test -p script --test compat_dts regen_compat_dts -- --ignored
-// Compat (JS API v1) as the isolate exposes it. O-SCRIPT-API appends via DtsExtension.
-// Not a clone of rs2b0t-api; stubs are declared ABI names with no shim owner.
+// Authored TypeScript declarations for the JS API v1 compat surface.
+// Names, members, arity and Promise-returning wrappers are gated against
+// the live shim (crates/script/src/compat_dts.rs). Types are written from
+// the shim implementation and the host natives. Do not regenerate.
+// O-SCRIPT-API: add a typed module .d.ts under compat-js/ and export it from
+// the @rs2b0t/api barrel below.
 
 declare module '@rs2b0t/api' {
-  export function defineBot(manifest: any): any;
-
+  export function defineBot(manifest: { name: string; create: () => unknown; [key: string]: unknown }): unknown;
   export const ALL_FISHING_GEAR_NAMES: any;
 
   export const AL_KHARID_BANK: any;
@@ -36,13 +37,18 @@ declare module '@rs2b0t/api' {
     log(message: any): any;
     get settings(): any;
   }
-
+  export { AL_KHARID_BANK } from '*data/cowKillerLocations.js';
+  export { ARDOUGNE_PICKPOCKET_TARGETS } from '*api/thieving/targets.js';
+  export { AXES } from '*api/acquisition/Tools.js';
+  export const AXE_BAR_FOR: unknown;
+  export const AXE_SHOP_COSTS: unknown;
+  export const AXE_SMITH_LEVEL: unknown;
+  export { AbstractBot } from '*api/bot/Bot.js';
   export class AcquireTask {
     constructor();
     execute(...args: any): any;
     validate(...args: any): any;
   }
-
   export class Area {
     constructor();
     static circular(...args: any): any;
@@ -50,84 +56,24 @@ declare module '@rs2b0t/api' {
     getRandomTile(...args: any): any;
     static rectangular(...args: any): any;
   }
-
-  export const BANK_LOCATIONS: any;
-
-  export const BOB_VENDOR: any;
-
-  export const BROKEN_AXE: any;
-
-  export const BROKEN_PICKAXE: any;
-
-  export const Bank: {
-    isOpen(): any;
-    loaded(): any;
-    ready(): any;
-    items(): any;
-    count(name: any): any;
-    deposit(name: any): any;
-    depositInventory(): Promise<any>;
-    depositAllMatching(predicate: any, log: any): Promise<any>;
-    depositAllExcept(keep: any): Promise<any>;
-    withdraw(name: any, amount: any): any;
-    setNoteMode(on: any): Promise<any>;
-    close(): Promise<any>;
-    withdrawById(id: any, op?: any): any;
-    withdrawX(name: any, count: any): any;
-    withdrawXById(id: any, count: any, landsAsId?: any): any;
-    openBooth(stand: any, boothName: any, op: any, _log: any): Promise<any>;
-    openNearest(boothName: any, op: any, log: any): Promise<any>;
-    openNearestWorld(): Promise<any>;
-    waitReady(timeoutMs: any, log: any): Promise<any>;
-    snapshotReady(): any;
-    snapshotGeneration(): any;
-    waitSnapshotAfter(generation: any, timeoutMs: any): Promise<any>;
-    countById(id: any): any;
-    withdrawLoad(name: any): Promise<any>;
-    openNearestAccess(access: any, log: any): Promise<any>;
-    openNpcAccess(access: any, log: any): Promise<any>;
-  };
-
-  export const Banking: {
-    open(opts?: any): Promise<any>;
-    bankNearest(opts?: any): Promise<any>;
-  };
-
+  export { BANK_LOCATIONS } from '*api/bank/BankLocations.js';
+  export const BOB_VENDOR: unknown;
+  export const BROKEN_AXE: unknown;
+  export { BROKEN_PICKAXE } from '*data/miningRocks.js';
+  export { Bank } from '*api/bank/Bank.js';
+  export { Banking } from '*api/bank/Banking.js';
   export class BranchTask {
     constructor();
     failure(...args: any): any;
     success(...args: any): any;
     validate(...args: any): any;
   }
-
-  export const CHISEL: any;
-
-  export const COINS: any;
-
-  export const COMMON_BANK_LOOT: any;
-
-  export const COW_LOCATIONS: any;
-
-  export const COW_LOCATION_OPTIONS: any;
-
-  export const ChatDialog: {
-    isOpen(): any;
-    canContinue(): any;
-    options(): any;
-    texts(): any;
-    isMakeMenu(): any;
-    makeProducts(): any;
-    make(match: any): Promise<any>;
-    makeX(match: any, count: any): Promise<any>;
-    continue(): Promise<any>;
-    chooseOption(match: any): Promise<any>;
-    isMainMakePanel(): any;
-    mainMakeProducts(): any;
-    makeFromPanel(match: any, op: any): Promise<any>;
-    makeFromPanelMax(match: any): Promise<any>;
-    makeOne(): Promise<any>;
-  };
-
+  export { CHISEL } from '*api/acquisition/Tools.js';
+  export { COINS } from '*api/combat/hunting/supply.js';
+  export { COMMON_BANK_LOOT } from '*api/bank/Banking.js';
+  export { COW_LOCATIONS } from '*data/cowKillerLocations.js';
+  export { COW_LOCATION_OPTIONS } from '*data/cowKillerLocations.js';
+  export { ChatDialog } from '*api/ui/dialogue/ChatDialog.js';
   export const DEFAULT_BOOTH_NAME: any;
 
   export const DEFAULT_BOOTH_OP: any;
@@ -138,48 +84,14 @@ declare module '@rs2b0t/api' {
     walk(dest: any): any;
     walkTo(dest: any, radius?: any, timeoutMs?: any): Promise<any>;
   };
-
-  export const ENT_LIFE_TICKS: any;
-
-  export const ENT_NPC_IDS: any;
-
-  export class EntityQuery {
-    constructor(supplySnaps: any, wrap: any);
-    supplySnaps: any;
-    wrap: any;
-    snapFilters: any;
-    entityFilters: any;
-    static fromSnapshots(supply: any, wrap: any): any;
-    name(...names: any): any;
-    action(action: any): any;
-    within(dist: any): any;
-    withinOf(origin: any, dist: any): any;
-    where(pred: any): any;
-    forEachMatch(seen: any): any;
-    results(): any;
-    nearest(): any;
-    first(): any;
-    exists(): any;
-    count(): any;
-    inside(_area: any): any;
-    nearestPreferLocal(_preferRadius: any): any;
-  }
-
-  export const Equipment: {
-    items(): any;
-    contains(name: any): any;
-    equip(name: any): Promise<any>;
-    unequip(name: any): Promise<any>;
-  };
-
-  export const Execution: {
-    delay(ms: any): Promise<any>;
-    delayTicks(n: any): Promise<any>;
-    delayUntil(cond: any, timeoutMs?: any): any;
-    delayUntilTicks(cond: any, maxTicks: any): any;
-    noteProgress(): any;
-  };
-
+  export const DEFAULT_BOOTH_OP: unknown;
+  export { DEFAULT_RUNE } from '*data/runeCraftLocations.js';
+  export { DirectNavigator } from '*api/walking/DirectNavigator.js';
+  export { ENT_LIFE_TICKS } from '*data/woodcuttingLocations.js';
+  export { ENT_NPC_IDS } from '*data/woodcuttingLocations.js';
+  export { EntityQuery } from '*api/query/Query.js';
+  export { Equipment } from '*api/equipment/Equipment.js';
+  export { Execution } from '*api/execution/Execution.js';
   export const FISHING_LOCATIONS: any;
 
   export const FISHING_LOCATION_OPTIONS: any;
@@ -234,88 +146,28 @@ declare module '@rs2b0t/api' {
     attackedByPlayer(): any;
     castOnNpc(): Promise<any>;
   };
-
-  export class GroundItem {
-    constructor(row: any);
-    snap: any;
-    get name(): any;
-    get id(): any;
-    get count(): any;
-    tile(): any;
-    distance(): any;
-    actions(): any;
-    interact(action: any): any;
-  }
-
-  export const GroundItems: {
-    query(): any;
-  };
-
-  export const HAMMER: any;
-
-  export const HARRY_VENDOR: any;
-
-  export class InvItem {
-    constructor();
-    actions(...args: any): any;
-    count(...args: any): any;
-    id(...args: any): any;
-    interact(...args: any): any;
-    name(...args: any): any;
-    slot(...args: any): any;
-    useOn(...args: any): any;
-  }
-
-  export const Inventory: {
-    count(name: any): any;
-    countById(id: any): any;
-    first(name: any): any;
-    items(): any;
-    contains(name: any): any;
-    used(): any;
-    isFull(): any;
-    free(): any;
-  };
-
-  export const KNIFE: any;
-
-  export class LeafTask {
-    constructor();
-    execute(...args: any): any;
-  }
-
-  export class Loc {
-    constructor(row: any);
-    snap: any;
-    get name(): any;
-    get id(): any;
-    tile(): any;
-    distance(): any;
-    actions(): any;
-    interact(action: any): any;
-  }
-
-  export const Locs: {
-    query(): any;
-  };
-
-  export class LoopingBot {
-    loopDelay: any;
-    loopCadence: any;
-    onStart(): any;
-    onStop(): any;
-    onPause(): any;
-    onResume(): any;
-    onPaint(): any;
-    loop(): any;
-    recoveryAnchor(): any;
-    grindTargets(): any;
-    ignoredRandoms(): any;
-    on(event: any, cb: any): any;
-    log(message: any): any;
-    get settings(): any;
-  }
-
+  export const FISHING_LOCATION_OPTIONS: unknown;
+  export const FISHING_METHODS: unknown;
+  export const FISHING_METHOD_OPTIONS: unknown;
+  export const FISHING_SHOP_COSTS: unknown;
+  export const FORGETFUL_BANK_ODDS: unknown;
+  export const FORGETFUL_BANK_SETTING: unknown;
+  export { GAS_ROCK_IDS } from '*data/miningRocks.js';
+  export { GAS_ROCK_TICKS } from '*data/miningRocks.js';
+  export const GERRANT_ONLY_FISHING: unknown;
+  export const GERRANT_VENDOR: unknown;
+  export { Game } from '*api/game/Game.js';
+  export { GroundItem } from '*api/grounditems/GroundItems.js';
+  export { GroundItems } from '*api/grounditems/GroundItems.js';
+  export { HAMMER } from '*api/acquisition/Tools.js';
+  export const HARRY_VENDOR: unknown;
+  export const InvItem: unknown;
+  export { Inventory } from '*api/inventory/Inventory.js';
+  export { KNIFE } from '*api/acquisition/Tools.js';
+  export const LeafTask: unknown;
+  export { Loc } from '*api/locs/Locs.js';
+  export { Locs } from '*api/locs/Locs.js';
+  export { LoopingBot } from '*api/bot/Bot.js';
   export const MAP_SQUARE: any;
 
   export const MINING_LOCATIONS: any;
@@ -328,12 +180,14 @@ declare module '@rs2b0t/api' {
     policy(...args: any): any;
     useTeleportCatalog(...args: any): any;
   };
-
+  export const MINING_LOCATIONS: unknown;
+  export const MINING_LOCATION_OPTIONS: unknown;
+  export const MINING_LOCATION_OPTION_LABELS: unknown;
+  export const NAV_PURE_WALK: unknown;
   export const NAV_WITH_TELES: {
     policy(...args: any): any;
     useTeleportCatalog(...args: any): any;
   };
-
   export const NEARBY_BANK_RADIUS: any;
 
   export const NEEDLE: any;
@@ -360,150 +214,35 @@ declare module '@rs2b0t/api' {
     valid(): any;
     interact(action: any): any;
   }
-
-  export const Npcs: {
-    query(): any;
-    all(): any;
-    nearest(count?: any): any;
-  };
-
-  export const PERIODIC_BANK_SETTINGS: {
-    bankStrategy: any;
-    bankEveryItems: any;
-    bankEveryMinutes: any;
-    bankCommonJunk: any;
-  };
-
-  export const PICKAXES: any;
-
-  export const PICKAXE_SHOP_COSTS: any;
-
-  export const PICKPOCKET_TARGETS: any;
-
-  export const PICKPOCKET_TARGET_NAMES: any;
-
-  export class Player {
-    constructor(row: any);
-    snap: any;
-    get name(): any;
-    get index(): any;
-    get inCombat(): any;
-    get combatLevel(): any;
-    targetsMe(): any;
-    tile(): any;
-    distance(): any;
-    actions(): any;
-    interact(action: any): any;
-  }
-
-  export const Players: {
-    query(): any;
-    all(): any;
-  };
-
-  export const Quests: {
-    all(): any;
-    status(name: any): any;
-    journal(): any;
-    points(): any;
-  };
-
-  export const RANDOM_EVENT_CASKET_ID: any;
-
-  export const ROCK_OPTIONS: any;
-
-  export const ROCK_TYPES: any;
-
-  export const RUNES: any;
-
-  export const RUNE_OPTIONS: any;
-
-  export const Shop: {
-    isOpen(): any;
-    stock(): any;
-    player(): any;
-    open(npcName: any): any;
-    buy(name: any, qty: any): any;
-    sell(name: any, qty: any, pick: any): any;
-    sellAll(name: any, pick: any): any;
-    close(): any;
-    buyById(): any;
-  };
-
-  export const Skills: {
-    index(name: any): any;
-    xp(name: any): any;
-    level(name: any): any;
-    effective(name: any): any;
-    hpFraction(): any;
-  };
-
-  export const Special: {
-    energy(): any;
-    armed(): any;
-    wielded(): any;
-    cost(weaponName: any): any;
-    ready(weaponName: any): any;
-    barComponent(): any;
-    arm(): Promise<any>;
-  };
-
-  export const TINDERBOX: any;
-
-  export const TOLL_COIN_TARGET: any;
-
-  export const TOOL_ACQUIRE_OPTIONS: any;
-
-  export const TOOL_ACQUIRE_SETTING: any;
-
-  export class TaskBot extends LoopingBot {
-    constructor();
-    add(...tasks: any): any;
-    loop(): Promise<any>;
-  }
-
-  export class Tile {
-    constructor(x: any, z: any, level?: any);
-    x: any;
-    z: any;
-    level: any;
-    static from(tile: any): any;
-    distanceTo(other: any): any;
-    translate(dx: any, dz: any): any;
-    equals(other: any): any;
-    toString(): any;
-  }
-
-  export const Trade: {
-    active(): any;
-    onOfferScreen(): any;
-    onConfirmScreen(): any;
-    partner(): any;
-    myOffer(): any;
-    theirOffer(): any;
-    request(playerName: any): any;
-    offerAll(name: any, pick: any): any;
-    offer(name: any, n: any, pick: any): any;
-    removeAll(): any;
-    accept(): any;
-    decline(): any;
-  };
-
-  export const Traversal: {
-    walkTo: any;
-    walkResilient(tile: any, opts?: any): Promise<any>;
-    preload(): any;
-    remaining(): any;
-    teleportsEnabled(): any;
-    requestRepath(_reason: any): any;
-    get pureWalk(): any;
-    get withTeles(): any;
-  };
-
-  export class TreeBot extends LoopingBot {
-    root(): any;
-  }
-
+  export { NEEDLE } from '*api/acquisition/Tools.js';
+  export const NURMOF_VENDOR: unknown;
+  export { Npc } from '*api/model/Npc.js';
+  export { Npcs } from '*api/npcs/Npcs.js';
+  export { PERIODIC_BANK_SETTINGS } from '*api/bank/Banking.js';
+  export { PICKAXES } from '*api/acquisition/Tools.js';
+  export const PICKAXE_SHOP_COSTS: unknown;
+  export { PICKPOCKET_TARGETS } from '*data/pickpocketTargets.js';
+  export { PICKPOCKET_TARGET_NAMES } from '*api/thieving/targets.js';
+  export { Player } from '*api/model/Player.js';
+  export { Players } from '*api/players/Players.js';
+  export { Quests } from '*api/ui/questlog/Quests.js';
+  export { RANDOM_EVENT_CASKET_ID } from '*api/bank/Banking.js';
+  export { ROCK_OPTIONS } from '*data/miningRocks.js';
+  export { ROCK_TYPES } from '*data/miningRocks.js';
+  export { RUNES } from '*data/runeCraftLocations.js';
+  export { RUNE_OPTIONS } from '*data/runeCraftLocations.js';
+  export { Shop } from '*api/shop/Shop.js';
+  export { Skills } from '*api/skills/Skills.js';
+  export { Special } from '*api/combat/Special.js';
+  export { TINDERBOX } from '*api/acquisition/Tools.js';
+  export const TOLL_COIN_TARGET: unknown;
+  export const TOOL_ACQUIRE_OPTIONS: unknown;
+  export const TOOL_ACQUIRE_SETTING: unknown;
+  export { TaskBot } from '*api/bot/Bot.js';
+  export { Tile } from '*geometry/Tile.js';
+  export { Trade } from '*api/trade/Trade.js';
+  export { Traversal } from '*api/walking/Traversal.js';
+  export { TreeBot } from '*api/bot/Bot.js';
   export const VARROCK_ANVIL_BANK: any;
 
   export const VARROCK_ANVIL_STAND: any;
@@ -566,225 +305,170 @@ declare module '@rs2b0t/api' {
     off(...args: any): any;
     on(...args: any): any;
   };
-
-  export function exactTool(name: any): any;
-
+  export const VARROCK_ANVIL_STAND: unknown;
+  export const WALK_DESTINATIONS: unknown;
+  export const WALK_OPTIONS: unknown;
+  export const WHIRLPOOL_IDS: unknown;
+  export const WOODCUTTING_LOCATIONS: unknown;
+  export const WOODCUTTING_LOCATION_OPTIONS: unknown;
+  export const acquireKeepNames: unknown;
+  export const apiVersion: unknown;
+  export { axeReq } from '*api/acquisition/Tools.js';
+  export const axeShopOffers: unknown;
+  export const bankDistance: unknown;
+  export { bankHasBetterGatherTool } from '*api/acquisition/Tools.js';
+  export { bankUnlocked } from '*api/bank/BankLocations.js';
+  export const bestAffordableShopTier: unknown;
+  export { bestAxe } from '*api/acquisition/Tools.js';
+  export { bestFromTiers } from '*api/acquisition/Tools.js';
+  export const bestHeldToolNames: unknown;
+  export const bestOwnedTier: unknown;
+  export { bestPickaxe } from '*api/acquisition/Tools.js';
+  export const bestSmithableAxe: unknown;
+  export const boothFields: unknown;
+  export const buyPlansCost: unknown;
+  export const canFundPlan: unknown;
+  export { canWieldTool } from '*api/acquisition/Tools.js';
+  export const coinsToWithdraw: unknown;
+  export { depositAllExcept } from '*api/bank/Banking.js';
+  export { depositMatcher } from '*api/bank/Banking.js';
+  export { entNpcOnTile } from '*data/woodcuttingLocations.js';
+  export const events: unknown;
+  export { exactTool } from '*api/acquisition/Tools.js';
   export function fishingGearShopCart(...args: any): any;
-
   export function fishingRestockPlan(...args: any): any;
-
   export function fishingShopCost(...args: any): any;
-
   export function fishingVendorFor(...args: any): any;
-
   export function gearKeepNames(...args: any): any;
-
   export function gearLabel(...args: any): any;
-
   export function hasAll(...args: any): any;
-
-  export function hasAllTools(reqs: any, skillLevel: any, count: any): any;
-
+  export { hasAllTools } from '*api/acquisition/Tools.js';
   export function hasFishingGear(...args: any): any;
-
-  export function hasToolReq(req: any, skillLevel: any, count: any): any;
-
+  export { hasToolReq } from '*api/acquisition/Tools.js';
   export function held(...args: any): any;
-
   export function isCowFieldLootTile(...args: any): any;
-
-  export function isEntNpcId(id: any): any;
-
+  export { isEntNpcId } from '*data/woodcuttingLocations.js';
   export function isFishingBaitPiece(...args: any): any;
-
   export function locationOptions(...args: any): any;
-
-  export function matchesCommonBankLoot(name: any, id?: any): any;
-
+  export { matchesCommonBankLoot } from '*api/bank/Banking.js';
   export function miningLocationLabel(...args: any): any;
-
   export function missingFishingGear(...args: any): any;
-
-  export function missingToolLabels(): any;
-
-  export function nearestBank(here: any): any;
-
-  export function nearestCowLocation(tile: any): any;
-
-  export function nearestUsableBank(here: any, usable: any): any;
-
+  export { missingToolLabels } from '*api/acquisition/Tools.js';
+  export { nearestBank } from '*api/bank/BankLocations.js';
+  export { nearestCowLocation } from '*data/cowKillerLocations.js';
+  export { nearestUsableBank } from '*api/bank/BankLocations.js';
   export function needsTollCoins(...args: any): any;
-
-  export function parseBankStrategy(label: any): any;
-
+  export { parseBankStrategy } from '*api/bank/Banking.js';
   export function parseToolAcquireMode(...args: any): any;
-
-  export function pickaxeReq(): any;
-
+  export { pickaxeReq } from '*api/acquisition/Tools.js';
   export function pickaxeShopOffers(...args: any): any;
-
   export function planAxeAcquire(...args: any): any;
-
   export function planBrokenToolRepair(...args: any): any;
-
   export function planFishingGearAcquire(...args: any): any;
-
   export function planFishingGearBuys(...args: any): any;
-
   export function planGatherToolAcquire(...args: any): any;
-
   export function planPickaxeAcquire(...args: any): any;
-
-  export const reader: {
-    worldTile(): any;
-    serverTile(): any;
-    selfSlot(): any;
-    inventorySize(): any;
-    inventory(): any;
-    bankSideItems(): any;
-    sceneState(): any;
-    ingame(): any;
-    npcs(): any;
-    locs(): any;
-    players(): any;
-    groundItems(): any;
-    equipment(): any;
-    modals(): any;
-    chatContinueComId(): any;
-    chatOptions(): any;
-    chatModalTexts(): any;
-    activeSideTab(): any;
-    localPlayerName(): any;
-    combatLevel(): any;
-    selfChat(): any;
-    hintTile(): any;
-    npcBox(index: any): any;
-    retaliateControls(): any;
-    inCombat(): any;
-    selfAnim(): any;
-    selfTarget(): any;
-    selfFaceEntity(): any;
-    energy(): any;
-    varp(index: any): any;
-    stat(i: any): any;
-    skillCount(): any;
-    sideTabInterface(tab: any): any;
-    selectButtonLabelsByVarp(_root: any, _varp: any): any;
-    selectButtonByVarp(_root: any, _varp: any, mode: any): any;
-    targetButtonByBase(_root: any, label: any): any;
-    bankComId(): any;
-    ifText(comId: any): any;
-    countDialogOpen(): any;
-    makeProducts(): any;
-    toLocal(x: any, z: any): any;
-  };
-
+  export { reader } from '*adapter/ClientAdapter.js';
   export function registerScript(...args: any): any;
-
   export function resolveBankOpenRoute(...args: any): any;
-
-  export function resolveCowLocation(setting: any): any;
-
+  export { resolveCowLocation } from '*data/cowKillerLocations.js';
   export function resolveDestination(...args: any): any;
-
   export function resolveFishMethod(...args: any): any;
-
   export function resolveFishingLocation(...args: any): any;
-
   export function resolveGatheringLocation(...args: any): any;
-
   export function resolveMiningLocation(...args: any): any;
-
-  export function resolveRockIds(_names: any): any;
-
+  export { resolveRockIds } from '*data/miningRocks.js';
   export function resolveWoodcuttingLocation(...args: any): any;
-
   export function sameMapSquare(...args: any): any;
-
   export function shopableMissingFishingGear(...args: any): any;
-
-  export function shouldBankNow(): any;
-
+  export { shouldBankNow } from '*api/bank/bankRules.js';
   export function shouldBootstrapTollCoins(...args: any): any;
-
   export function spotMatchesMethod(...args: any): any;
-
   export function surplusHeldToolNames(...args: any): any;
-
-  export function tinderboxReq(): any;
-
+  export { tinderboxReq } from '*api/acquisition/Tools.js';
   export function toolAttackLevel(...args: any): any;
-
-  export function toolKeepNames(reqs: any): any;
-
-  export function toolKitLabel(): any;
-
-  export function toolRestockPlan(reqs: any, skillLevel: any, invCount: any, bankCount: any): any;
-
+  export { toolKeepNames } from '*api/acquisition/Tools.js';
+  export { toolKitLabel } from '*api/acquisition/Tools.js';
+  export { toolRestockPlan } from '*api/acquisition/Tools.js';
   export function toolsNeedingEquip(...args: any): any;
-
   export function withBaitTarget(...args: any): any;
-
-  export function withdrawOp(ops: any, which: any): any;
-
+  export { withdrawOp } from '*api/bank/Bank.js';
+  export type { WorldTile, PaintContext, Task, SettingsView } from '*api/bot/Bot.js';
+  export type { InvItem } from '*api/inventory/Inventory.js';
+  export type { SettingsSchema } from '*runtime/Settings.js';
+  export type { MeleeCombatStyle } from '*api/combat/CombatStyle.js';
 }
 
 declare module '*adapter/ClientAdapter.js' {
+  export type InvItemSnapshot = { slot: number; id: number; name: string | null; count: number; ops?: string[]; comId?: number };
+
+  export interface WorldTile { x: number; z: number; level: number }
+  export type ChatLine = { seq?: number; text: string; [key: string]: unknown };
+  export interface SnapshotItem {
+    slot: number;
+    id: number;
+    name: string | null;
+    count: number;
+    ops: string[];
+    comId: number;
+  }
   export const reader: {
-    worldTile(): any;
-    serverTile(): any;
-    selfSlot(): any;
-    inventorySize(): any;
-    inventory(): any;
-    bankSideItems(): any;
-    sceneState(): any;
-    ingame(): any;
-    npcs(): any;
-    locs(): any;
-    players(): any;
-    groundItems(): any;
-    equipment(): any;
-    modals(): any;
-    chatContinueComId(): any;
-    chatOptions(): any;
-    chatModalTexts(): any;
-    activeSideTab(): any;
-    localPlayerName(): any;
-    combatLevel(): any;
-    selfChat(): any;
-    hintTile(): any;
-    npcBox(index: any): any;
-    retaliateControls(): any;
-    inCombat(): any;
-    selfAnim(): any;
-    selfTarget(): any;
-    selfFaceEntity(): any;
-    energy(): any;
-    varp(index: any): any;
-    stat(i: any): any;
-    skillCount(): any;
-    sideTabInterface(tab: any): any;
-    selectButtonLabelsByVarp(_root: any, _varp: any): any;
-    selectButtonByVarp(_root: any, _varp: any, mode: any): any;
-    targetButtonByBase(_root: any, label: any): any;
-    bankComId(): any;
-    ifText(comId: any): any;
-    countDialogOpen(): any;
-    makeProducts(): any;
-    toLocal(x: any, z: any): any;
+    worldTile(): WorldTile | null;
+    serverTile(): WorldTile | null;
+    selfSlot(): number;
+    inventorySize(): number;
+    inventory(): SnapshotItem[];
+    bankSideItems(): SnapshotItem[];
+    sceneState(): number;
+    ingame(): boolean;
+    npcs(): unknown[];
+    locs(): unknown[];
+    players(): unknown[];
+    groundItems(): unknown[];
+    equipment(): unknown[];
+    modals(): { main: number; chat: number; side: number };
+    chatContinueComId(): number;
+    chatOptions(): Array<{ text: string; comId: number }>;
+    chatModalTexts(): string[];
+    activeSideTab(): number;
+    localPlayerName(): string | null;
+    combatLevel(): number;
+    selfChat(): string | null;
+    hintTile(): { x: number; z: number } | null;
+    npcBox(index: number): Array<{ x: number; y: number }> | null;
+    retaliateControls(): { onComId: number; offComId: number } | null;
+    inCombat(): boolean;
+    selfAnim(): number;
+    selfTarget(): { kind: number; index: number };
+    selfFaceEntity(): number;
+    energy(): number;
+    varp(index: number): number;
+    stat(i: number): { name: string; xp: number; base: number; effective: number };
+    skillCount(): number;
+    sideTabInterface(tab: number): number;
+    selectButtonLabelsByVarp(_root: unknown, _varp: unknown): Array<{ mode: number; label: string }>;
+    selectButtonByVarp(_root: unknown, _varp: unknown, mode: number): number;
+    targetButtonByBase(_root: unknown, label: string): number;
+    bankComId(): number;
+    ifText(comId: number): string | null;
+    countDialogOpen(): boolean;
+    makeProducts(): Array<{ name: string; buttons: Array<{ qty: unknown; comId: unknown }> }>;
+    toLocal(x: number, z: number): { lx: number; lz: number } | null;
   };
   export const actions: {
-    closeModal(): any;
-    ifButton(componentId: any): any;
-    clickSideTab(tab: any): any;
-    setRetaliate(on: any): any;
-    setRun(on: any): any;
-    walkTo(lx: any, lz: any): any;
-    answerCountDialog(value: any): any;
+    closeModal(): boolean;
+    ifButton(componentId: number): boolean;
+    clickSideTab(tab: number): boolean;
+    setRetaliate(on: boolean): boolean;
+    setRun(on: boolean): boolean;
+    walkTo(lx: number, lz: number): boolean;
+    answerCountDialog(value: number): boolean;
   };
 }
 
 declare module '*api/acquisition/Tools.js' {
+  export type ToolReq = { name?: string; [key: string]: unknown };
+
   export const TINDERBOX: any;
   export const HAMMER: any;
   export const KNIFE: any;
@@ -792,54 +476,54 @@ declare module '*api/acquisition/Tools.js' {
   export const NEEDLE: any;
   export const AXES: any;
   export const PICKAXES: any;
-  export function exactTool(name: any): any;
-  export function tinderboxReq(): any;
-  export function axeReq(): any;
-  export function pickaxeReq(): any;
-  export function toolKeepNames(reqs: any): any;
-  export function hasToolReq(req: any, skillLevel: any, count: any): any;
-  export function hasAllTools(reqs: any, skillLevel: any, count: any): any;
-  export function bestAxe(level: any, available: any): any;
-  export function bestPickaxe(level: any, available: any): any;
-  export function bestFromTiers(level: any, tiers: any, available: any): any;
-  export function canWieldTool(name: any, attack: any): any;
-  export function toolRestockPlan(reqs: any, skillLevel: any, invCount: any, bankCount: any): any;
-  export function missingToolLabels(): any;
-  export function toolKitLabel(): any;
-  export function bankHasBetterGatherTool(): any;
+  export function exactTool(name: string): unknown;
+  export function tinderboxReq(): unknown;
+  export function axeReq(): unknown;
+  export function pickaxeReq(): unknown;
+  export function toolKeepNames(reqs: unknown): unknown;
+  export function hasToolReq(req: unknown, skillLevel: unknown, count: number): boolean;
+  export function hasAllTools(reqs: unknown, skillLevel: unknown, count: number): boolean;
+  export function bestAxe(level: number, available: unknown): unknown;
+  export function bestPickaxe(level: number, available: unknown): unknown;
+  export function bestFromTiers(level: number, tiers: unknown, available: unknown): unknown;
+  export function canWieldTool(name: string, attack: unknown): boolean;
+  export function toolRestockPlan(reqs: unknown, skillLevel: unknown, invCount: unknown, bankCount: unknown): unknown;
+  export function missingToolLabels(): unknown;
+  export function toolKitLabel(): unknown;
+  export function bankHasBetterGatherTool(): unknown;
 }
 
 declare module '*api/ai/clues/ClueExecutor.js' {
   export class ClueExecutor {
-    static setTeleports(enabled: any): any;
+    static setTeleports(enabled: unknown): unknown;
   }
 }
 
 declare module '*api/ai/clues/SolveClue.js' {
   export class SolveClue {
-    constructor(hostArg: any);
-    host: any;
-    token: any;
-    status: any;
-    clueStatus(): any;
-    noteDeath(): any;
-    ownsEquipment(): any;
-    retry(): any;
-    enabled(): any;
-    hooks(): any;
-    validate(): any;
-    execute(): Promise<any>;
+    constructor(hostArg: unknown): unknown;
+    host: unknown;
+    token: unknown;
+    status: unknown;
+    clueStatus(): unknown;
+    noteDeath(): unknown;
+    ownsEquipment(): unknown;
+    retry(): unknown;
+    enabled(): unknown;
+    hooks(): unknown;
+    validate(): boolean;
+    execute(): Promise<void>;
   }
-  export function heldClueLikeId(): any;
-  export function walkToBank(tile: any, log: any): any;
+  export function heldClueLikeId(): unknown;
+  export function walkToBank(tile: unknown, log: (msg: string) => void): unknown;
 }
 
 declare module '*api/ai/clues/bankAccess.js' {
-  export function openClueBank(_log: any): any;
+  export function openClueBank(_log: (msg: string) => void): unknown;
 }
 
 declare module '*api/ai/clues/cluePaint.js' {
-  export function paintClueProgress(p: any, idle?: any): any;
+  export function paintClueProgress(p: unknown, idle?: unknown): unknown;
 }
 
 declare module '*api/ai/clues/data/cluedb.js' {
@@ -857,37 +541,38 @@ declare module '*api/ai/clues/data/toolAcquire.js' {
 declare module '*api/ai/clues/duelTravel.js' {
   export const DUEL_CLUE_ID: any;
   export const DUEL_CLUE_TILE: any;
-  export function crossesClueDuel(dest: any): any;
-  export function walkAcrossClueDuel(dest: any, radius: any, log: any): Promise<any>;
+  export function crossesClueDuel(dest: unknown): unknown;
+  export function walkAcrossClueDuel(dest: unknown, radius: number, log: (msg: string) => void): Promise<boolean>;
 }
 
 declare module '*api/ai/quests/defs/murder/areas.js' {
-  export const MURDER_NAME: any;
+  export interface WorldTile { x: number; z: number; level: number }
+  export const MURDER_NAME: string;
   export const MURDER_OBJ: {
-    POT: any;
-    POT_FLOUR: any;
-    FLYPAPER: any;
-    DAGGER: any;
-    DAGGER_DUST: any;
-    UNKNOWN_PRINT: any;
-    KILLERS_PRINT: any;
-    THREAD_RED: any;
-    THREAD_GREEN: any;
-    THREAD_BLUE: any;
+    POT: number;
+    POT_FLOUR: number;
+    FLYPAPER: number;
+    DAGGER: number;
+    DAGGER_DUST: number;
+    UNKNOWN_PRINT: number;
+    KILLERS_PRINT: number;
+    THREAD_RED: number;
+    THREAD_GREEN: number;
+    THREAD_BLUE: number;
   };
   export const MURDER_LOC: {
-    WINDOW: any;
-    FLOUR_BARREL: any;
-    SACKS: any;
+    WINDOW: string;
+    FLOUR_BARREL: string;
+    SACKS: string;
   };
   export const MURDER_TILE: {
-    BANK: any;
-    GUARD: any;
-    STUDY: any;
-    FLOUR_BARREL: any;
-    SACKS: any;
-    SALESMAN: any;
-    ARHEIN: any;
+    BANK: WorldTile;
+    GUARD: WorldTile;
+    STUDY: WorldTile;
+    FLOUR_BARREL: WorldTile;
+    SACKS: WorldTile;
+    SALESMAN: WorldTile;
+    ARHEIN: WorldTile;
   };
 }
 
@@ -896,191 +581,265 @@ declare module '*api/ai/quests/engine/QuestEngine.js' {
 }
 
 declare module '*api/ai/quests/exec/primitives.js' {
-  export function pickPreferred(options: any, prefer: any): any;
-  export function pickByLine(): any;
-  export function isUnderground(t: any): any;
-  export function needsHop(): any;
-  export function walkWithHops(dest: any, radius: any, hops: any, log: any): Promise<any>;
-  export function gotoNpc(stop: any): Promise<any>;
-  export function driveDialog(prefer: any, log: any, gapMs: any): Promise<any>;
-  export function openDialogue(npcName: any, log: any): Promise<any>;
-  export function talkThrough(npcName: any, prefer: any, log: any, gapMs: any): Promise<any>;
-  export function talkStrict(npcName: any, prefer: any, log: any): any;
-  export function talkChoosingBy(): Promise<any>;
-  export function talkOp(actions: any): any;
+  export function pickPreferred(options: unknown, prefer: unknown): unknown;
+  export function pickByLine(): unknown;
+  export function isUnderground(t: unknown): boolean;
+  export function needsHop(): unknown;
+  export function walkWithHops(dest: unknown, radius: number, hops: unknown, log: (msg: string) => void): Promise<boolean>;
+  export function gotoNpc(stop: unknown): Promise<boolean>;
+  export function driveDialog(prefer: unknown, log: (msg: string) => void, gapMs: unknown): Promise<boolean>;
+  export function openDialogue(npcName: unknown, log: (msg: string) => void): Promise<boolean>;
+  export function talkThrough(npcName: unknown, prefer: unknown, log: (msg: string) => void, gapMs: unknown): Promise<boolean>;
+  export function talkStrict(npcName: unknown, prefer: unknown, log: (msg: string) => void): Promise<unknown>;
+  export function talkChoosingBy(): Promise<boolean>;
+  export function talkOp(actions: unknown): unknown;
 }
 
 declare module '*api/bank/Bank.js' {
-  export function withdrawOp(ops: any, which: any): any;
+  export type BackpackItem = { name: string | null; count: number; id: number; slot?: number };
+
+  export interface WorldTile { x: number; z: number; level: number }
+  export interface BankItem {
+    name: string | null;
+    count: number;
+    id: number;
+    slot: number;
+    comId: number;
+    ops: string[];
+    noted: boolean;
+    cert: number;
+  }
+  export interface BankAccess {
+    name?: string;
+    op?: string;
+    openFirst?: { name: string; op: string };
+  }
+  export interface NpcBankAccess {
+    name: string;
+    op: string;
+    choose?: string;
+  }
+  export function withdrawOp(ops: string[], which: unknown): string | null;
   export const Bank: {
-    isOpen(): any;
-    loaded(): any;
-    ready(): any;
-    items(): any;
-    count(name: any): any;
-    deposit(name: any): any;
-    depositInventory(): Promise<any>;
-    depositAllMatching(predicate: any, log: any): Promise<any>;
-    depositAllExcept(keep: any): Promise<any>;
-    withdraw(name: any, amount: any): any;
-    setNoteMode(on: any): Promise<any>;
-    close(): Promise<any>;
-    withdrawById(id: any, op?: any): any;
-    withdrawX(name: any, count: any): any;
-    withdrawXById(id: any, count: any, landsAsId?: any): any;
-    openBooth(stand: any, boothName: any, op: any, _log: any): Promise<any>;
-    openNearest(boothName: any, op: any, log: any): Promise<any>;
-    openNearestWorld(): Promise<any>;
-    waitReady(timeoutMs: any, log: any): Promise<any>;
-    snapshotReady(): any;
-    snapshotGeneration(): any;
-    waitSnapshotAfter(generation: any, timeoutMs: any): Promise<any>;
-    countById(id: any): any;
-    withdrawLoad(name: any): Promise<any>;
-    openNearestAccess(access: any, log: any): Promise<any>;
-    openNpcAccess(access: any, log: any): Promise<any>;
+    isOpen(): boolean;
+    loaded(): boolean;
+    ready(): boolean;
+    items(): BankItem[];
+    count(name: string): number;
+    deposit(name: string): Promise<boolean>;
+    depositInventory(): Promise<void>;
+    depositAllMatching(predicate: (item: BankItem) => boolean, log?: (msg: string) => void): Promise<void>;
+    depositAllExcept(keep: Iterable<string>): Promise<void>;
+    withdraw(name: string, amount?: number): Promise<boolean>;
+    setNoteMode(on: boolean): Promise<boolean>;
+    close(): Promise<boolean>;
+    withdrawById(id: number, op?: string): Promise<boolean>;
+    withdrawX(name: string, count: number): Promise<boolean>;
+    withdrawXById(id: number, count: number, landsAsId?: number): Promise<boolean>;
+    openBooth(stand?: WorldTile | null, boothName?: string, op?: string, _log?: (msg: string) => void): Promise<boolean>;
+    openNearest(boothName?: string, op?: string, log?: (msg: string) => void): Promise<boolean>;
+    openNearestWorld(): Promise<boolean>;
+    waitReady(timeoutMs?: number, log?: (msg: string) => void): Promise<boolean>;
+    snapshotReady(): boolean;
+    snapshotGeneration(): number;
+    waitSnapshotAfter(generation: number, timeoutMs?: number): Promise<boolean>;
+    countById(id: number): number;
+    withdrawLoad(name: string): Promise<boolean>;
+    openNearestAccess(access?: BankAccess, log?: (msg: string) => void): Promise<boolean>;
+    openNpcAccess(access: NpcBankAccess, log?: (msg: string) => void): Promise<boolean>;
   };
 }
 
 declare module '*api/bank/BankLocations.js' {
+  export interface WorldTile { x: number; z: number; level: number }
+  export type BankLocation = {
+    name?: string;
+    tile?: WorldTile;
+    [key: string]: unknown;
+  };
   export const USE_MAGE_BANK: any;
   export const USE_ZANARIS_BANK: any;
-  export const BANK_LOCATIONS: any;
-  export function approachOf(bank: any): any;
-  export function bankUnlocked(bank: any): any;
-  export function nearestBank(here: any): any;
-  export function nearestBanks(here: any): any;
-  export function nearestUsableBank(here: any, usable: any): any;
-  export function nearestBankReachable(here: any, _navigator: any): Promise<any>;
+  export const BANK_LOCATIONS: BankLocation[];
+  export function approachOf(bank: BankLocation | unknown): WorldTile | unknown;
+  export function bankUnlocked(bank: BankLocation | unknown): boolean;
+  export function nearestBank(here: WorldTile | unknown): BankLocation | null;
+  export function nearestBanks(here: WorldTile | unknown): BankLocation[];
+  export function nearestUsableBank(here: WorldTile | unknown, usable: unknown): BankLocation | null;
+  export function nearestBankReachable(here: WorldTile | unknown, _navigator: unknown): Promise<boolean>;
 }
 
 declare module '*api/bank/Banking.js' {
-  export const COMMON_BANK_LOOT: any;
-  export const RANDOM_EVENT_CASKET_ID: any;
-  export function matchesCommonBankLoot(name: any, id?: any): any;
-  export function depositMatcher(own: any, includeCommon: any): any;
-  export function depositAllExcept(keep: any): any;
-  export const PERIODIC_BANK_SETTINGS: {
-    bankStrategy: any;
-    bankEveryItems: any;
-    bankEveryMinutes: any;
-    bankCommonJunk: any;
+  export interface WorldTile { x: number; z: number; level: number }
+  export type BankDestination = {
+    name?: string;
+    tile?: WorldTile;
+    [key: string]: unknown;
   };
-  export function parseBankStrategy(label: any): any;
+  export const COMMON_BANK_LOOT: string[];
+  export const RANDOM_EVENT_CASKET_ID: number;
+  export function matchesCommonBankLoot(name: string, id?: number): boolean;
+  export function depositMatcher(own: (name: string, id?: number) => boolean, includeCommon: unknown): (name: string, id?: number) => boolean;
+  export function depositAllExcept(keep: Iterable<string> | null | undefined): (name: string) => boolean;
+  export const PERIODIC_BANK_SETTINGS: {
+    bankStrategy: unknown;
+    bankEveryItems: unknown;
+    bankEveryMinutes: unknown;
+    bankCommonJunk: unknown;
+  };
+  export function parseBankStrategy(label: string): string;
   export const Banking: {
-    open(opts?: any): Promise<any>;
-    bankNearest(opts?: any): Promise<any>;
+    open(opts?: unknown): Promise<boolean>;
+    bankNearest(opts?: unknown): Promise<boolean>;
   };
 }
 
 declare module '*api/bank/bankOps.js' {
-  export function withdrawOp(ops: any, which: any): any;
+  export function withdrawOp(ops: unknown, which: string): unknown;
 }
 
 declare module '*api/bank/bankQuestJunk.js' {
+  export type QuestJunkFinding = { quest?: string; items?: unknown; [key: string]: unknown };
+
   export const QUEST_JUNK: any;
-  export function findQuestJunk(): any;
+  export function findQuestJunk(): unknown;
 }
 
 declare module '*api/bank/bankRules.js' {
-  export function shouldBankNow(): any;
-  export function isDisposableGatherJunk(): any;
-  export function parseBankStrategy(label: any): any;
+  export function shouldBankNow(): unknown;
+  export function isDisposableGatherJunk(): boolean;
+  export function parseBankStrategy(label: string): unknown;
   export const PERIODIC_BANK_SETTINGS: {
-    bankStrategy: any;
-    bankEveryItems: any;
-    bankEveryMinutes: any;
-    bankCommonJunk: any;
+    bankStrategy: unknown;
+    bankEveryItems: unknown;
+    bankEveryMinutes: unknown;
+    bankCommonJunk: unknown;
   };
   export const COMMON_BANK_LOOT: any;
-  export function matchesCommonBankLoot(name: any, id?: any): any;
-  export function depositMatcher(own: any, includeCommon: any): any;
-  export function depositAllExcept(keep: any): any;
+  export function matchesCommonBankLoot(name: string, id?: number): unknown;
+  export function depositMatcher(own: unknown, includeCommon: unknown): unknown;
+  export function depositAllExcept(keep: unknown): unknown;
 }
 
 declare module '*api/bank/bankSort.js' {
+  export type BankSortResult = { moved?: number; [key: string]: unknown };
+  export type BankCategory = string;
+
   export const ARRANGE_SWAP_COM: any;
   export const ARRANGE_INSERT_COM: any;
   export const BANK_INSERT_VARP: any;
-  export function sortBank(): Promise<any>;
+  export function sortBank(): Promise<boolean>;
 }
 
 declare module '*api/bank/bankSortRules.js' {
   export const CATEGORY_ORDER: any;
-  export function categoryOf(): any;
-  export function isUnmatched(): any;
+  export function categoryOf(): unknown;
+  export function isUnmatched(): boolean;
 }
 
 declare module '*api/bot/Bot.js' {
+  export interface SettingsView {
+    str(name: string, fallback?: string): string;
+    num(name: string, fallback?: number): number;
+    bool(name: string, fallback?: boolean): boolean;
+    tile(name: string, fallback?: WorldTile | null): WorldTile | null;
+    list(name: string, fallback?: string[]): string[];
+  }
+  export interface WorldTile { x: number; z: number; level: number }
+  export type PaintContext = CanvasRenderingContext2D;
+  export interface ChatMessage {
+    text: string;
+    [key: string]: unknown;
+  }
+  export interface Task {
+    validate(): boolean | Promise<boolean>;
+    execute(): void | Promise<void>;
+  }
+  export type LoopCadence = number | { kind: string; ticks?: number } | null;
+  export type LoopResult = void | number | Promise<void | number>;
   export class LoopingBot {
-    loopDelay: any;
-    loopCadence: any;
-    onStart(): any;
-    onStop(): any;
-    onPause(): any;
-    onResume(): any;
-    onPaint(): any;
-    loop(): any;
-    recoveryAnchor(): any;
-    grindTargets(): any;
-    ignoredRandoms(): any;
-    on(event: any, cb: any): any;
-    log(message: any): any;
-    get settings(): any;
+    loopDelay: number;
+    loopCadence: LoopCadence;
+    onStart(): void | Promise<void>;
+    onStop(): void | Promise<void>;
+    onPause(): void;
+    onResume(): void;
+    onPaint(ctx?: CanvasRenderingContext2D): void;
+    loop(): LoopResult;
+    recoveryAnchor(): WorldTile | null;
+    grindTargets(): unknown[];
+    ignoredRandoms(): unknown[];
+    on(event: 'chat.message', cb: (payload: ChatMessage) => unknown): void;
+    on(event: string, cb: (payload: any) => unknown): void;
+    log(message: unknown): void;
+    get settings(): SettingsView;
   }
   export class TaskBot extends LoopingBot {
     constructor();
-    add(...tasks: any): any;
-    loop(): Promise<any>;
+    add(...tasks: Task[]): void;
+    loop(): Promise<void | number>;
   }
   export class TreeBot extends LoopingBot {
-    root(): any;
+    root(): unknown;
   }
   export class AbstractBot {
-    loopDelay: any;
-    loopCadence: any;
-    onStart(): any;
-    onStop(): any;
-    onPause(): any;
-    onResume(): any;
-    onPaint(): any;
-    loop(): any;
-    recoveryAnchor(): any;
-    grindTargets(): any;
-    ignoredRandoms(): any;
-    on(event: any, cb: any): any;
-    log(message: any): any;
-    get settings(): any;
+    loopDelay: number;
+    loopCadence: LoopCadence;
+    onStart(): void | Promise<void>;
+    onStop(): void | Promise<void>;
+    onPause(): void;
+    onResume(): void;
+    onPaint(ctx?: CanvasRenderingContext2D): void;
+    loop(): LoopResult;
+    recoveryAnchor(): WorldTile | null;
+    grindTargets(): unknown[];
+    ignoredRandoms(): unknown[];
+    on(event: 'chat.message', cb: (payload: ChatMessage) => unknown): void;
+    on(event: string, cb: (payload: any) => unknown): void;
+    log(message: unknown): void;
+    get settings(): SettingsView;
   }
 }
 
 declare module '*api/chatbox/gameMessages.js' {
-  export const CANT_REACH: any;
-  export const WRONG_SIDE: any;
+  export type ChatLine = { seq: number; text: string };
+  export const CANT_REACH: RegExp;
+  export const WRONG_SIDE: RegExp;
   export const GameMessages: {
-    mark(): any;
-    since(mark: any): any;
-    sawSince(mark: any, pattern: any): any;
+    mark(): number;
+    since(mark: number): ChatLine[];
+    sawSince(mark: number, pattern: RegExp | { test(text: string): boolean }): boolean;
   };
 }
 
 declare module '*api/combat/CombatStyle.js' {
-  export const COMBAT_STYLE_OPTIONS: any;
-  export const RANGE_STYLE_OPTIONS: any;
-  export function parseCombatStyle(name: any): any;
-  export function tryParseCombatStyle(name: any): any;
-  export function resolveSplitCombatSettings(rawCombatStyle: any, rawMeleeStyle: any): any;
-  export function parseRangeStyle(name: any): any;
-  export function describeCombatStyle(resolution: any): any;
+  export type MeleeCombatStyle = "attack" | "strength" | "controlled" | "defence";
+  export type RangeStyle = "accurate" | "rapid" | "longrange";
+  export interface CombatStyleResolution {
+    requested: string;
+    effective: string;
+    mode: number;
+    label: string;
+  }
+  export const COMBAT_STYLE_OPTIONS: MeleeCombatStyle[];
+  export const RANGE_STYLE_OPTIONS: RangeStyle[];
+  export function parseCombatStyle(name: string): MeleeCombatStyle;
+  export function tryParseCombatStyle(name: string): MeleeCombatStyle | null;
+  export function resolveSplitCombatSettings(rawCombatStyle: string, rawMeleeStyle?: string): {
+    kind: "melee" | "mage" | "range";
+    meleeStyle: MeleeCombatStyle;
+    legacyMigrated: MeleeCombatStyle | null;
+  };
+  export function parseRangeStyle(name: string): RangeStyle;
+  export function describeCombatStyle(resolution: CombatStyleResolution | unknown): string;
 }
 
 declare module '*api/combat/CombatStyleLogic.js' {
   export const ATTACKSTYLE_MAGIC_VARP: any;
   export const AUTOCAST_ARMED: any;
-  export function runesPerCast(spellName: any, wielded: any): any;
-  export function spellButtonCom(spellName: any): any;
-  export function castsAvailable(spellName: any, wielded: any, held: any): any;
-  export function runeWithdrawList(spellName: any, wielded: any, casts: any): any;
+  export function runesPerCast(spellName: unknown, wielded: unknown): unknown;
+  export function spellButtonCom(spellName: unknown): unknown;
+  export function castsAvailable(spellName: unknown, wielded: unknown, held: unknown): unknown;
+  export function runeWithdrawList(spellName: unknown, wielded: unknown, casts: unknown): unknown;
   export const SPELL_DB: {
     "Wind Strike": any;
     "Water Strike": any;
@@ -1104,34 +863,36 @@ declare module '*api/combat/CombatStyleLogic.js' {
 declare module '*api/combat/Special.js' {
   export const SA_MAX_ENERGY: any;
   export const Special: {
-    energy(): any;
-    armed(): any;
-    wielded(): any;
-    cost(weaponName: any): any;
-    ready(weaponName: any): any;
-    barComponent(): any;
-    arm(): Promise<any>;
+    energy(): number;
+    armed(): unknown;
+    wielded(): unknown;
+    cost(weaponName: unknown): unknown;
+    ready(weaponName: unknown): boolean;
+    barComponent(): unknown;
+    arm(): Promise<boolean>;
   };
 }
 
 declare module '*api/combat/boostPotions.js' {
+  export type PotionPlan = { name?: string; [key: string]: unknown };
+
   export const BOOST_POTIONS: any;
   export const SUPER_ATTACK: any;
   export const SUPER_STRENGTH: any;
   export const EMPTY_VIAL: any;
   export const BOOST_FLOOR: any;
-  export function boostFaded(base: any, effective: any, floor: any): any;
-  export function plannedPotions(carry: any): any;
-  export function potionToSip(s: any): any;
+  export function boostFaded(base: unknown, effective: unknown, floor: unknown): unknown;
+  export function plannedPotions(carry: unknown): unknown;
+  export function potionToSip(s: unknown): unknown;
 }
 
 declare module '*api/combat/eatTiming.js' {
   export const URGENT_HP_FRACTION: any;
-  export function shouldHoldEat(input: any): any;
+  export function shouldHoldEat(input: unknown): unknown;
   export class AttackClock {
-    observe(anim: any, tick: any): any;
-    attackedThisTick(tick: any): any;
-    reset(): any;
+    observe(anim: unknown, tick: unknown): unknown;
+    attackedThisTick(tick: unknown): unknown;
+    reset(): unknown;
   }
 }
 
@@ -1146,70 +907,75 @@ declare module '*api/combat/equipment.js' {
 }
 
 declare module '*api/combat/fightUpkeep.js' {
-  export function swingStartedThisTick(): any;
-  export function buryOneInFight(boneName: any): Promise<any>;
+  export function swingStartedThisTick(): unknown;
+  export function buryOneInFight(boneName: unknown): Promise<boolean>;
 }
 
 declare module '*api/combat/food.js' {
-  export const FOOD_OPTIONS: any;
-  export const MIN_EAT_HP: any;
-  export function foodHealAmount(foodName: any): any;
-  export function foodForms(foodName: any): any;
-  export function isFoodItem(name: any, foodName: any): any;
-  export function foodCount(items: any, foodName: any): any;
-  export function eatAtHpThreshold(maxHp: any, heal: any, minHp: any): any;
-  export function shouldEatToUseFood(opts: any): any;
-  export function shouldEatFood(foodName: any, opts: any): any;
+  export const FOOD_OPTIONS: string[];
+  export const MIN_EAT_HP: number;
+  export function foodHealAmount(foodName: string): number;
+  export function foodForms(foodName: string): string[];
+  export function isFoodItem(name: string, foodName: string): boolean;
+  export function foodCount(items: unknown, foodName: string): number;
+  export function eatAtHpThreshold(maxHp: number, heal: number, minHp: unknown): number;
+  export function shouldEatToUseFood(opts: unknown): boolean;
+  export function shouldEatFood(foodName: string, opts?: unknown): boolean;
 }
 
 declare module '*api/combat/hunting/combat.js' {
+  export type CombatHost = { log?: (msg: string) => void; [key: string]: unknown };
+
   class HuntTask {
-    constructor(family: any, host: any, site: any);
-    family: any;
-    host: any;
-    site: any;
-    hooks: any;
-    token: any;
-    validate(): any;
-    run(): Promise<any>;
+    constructor(family: string, host: unknown, site: unknown): unknown;
+    family: unknown;
+    host: unknown;
+    site: unknown;
+    hooks: unknown;
+    token: unknown;
+    validate(): boolean;
+    run(): Promise<boolean>;
   }
-  export function siteArgs(site: any, extra: any): any;
-  export function hooksOf(host: any, site: any, leave: any): any;
-  export function anchorFor(site: any, style: any, index: any): any;
+  export function siteArgs(site: unknown, extra: unknown): unknown;
+  export function hooksOf(host: unknown, site: unknown, leave: unknown): unknown;
+  export function anchorFor(site: unknown, style: unknown, index: number): unknown;
   export class Fight extends HuntTask {
-    constructor(host: any, site: any);
-    execute(): Promise<any>;
-    reset(): any;
-    interruptWatch(): any;
-    blocksLoot(): any;
+    constructor(host: unknown, site: unknown): unknown;
+    execute(): Promise<void>;
+    reset(): unknown;
+    interruptWatch(): unknown;
+    blocksLoot(): unknown;
   }
   export class Retreat extends HuntTask {
-    constructor(host: any, site: any);
-    execute(): Promise<any>;
+    constructor(host: unknown, site: unknown): unknown;
+    execute(): Promise<void>;
   }
   export class HoldSafespot extends HuntTask {
-    constructor(host: any, site: any);
-    execute(): Promise<any>;
+    constructor(host: unknown, site: unknown): unknown;
+    execute(): Promise<void>;
   }
   export class WalkToSpot extends HuntTask {
-    constructor(host: any, site: any);
-    execute(): Promise<any>;
+    constructor(host: unknown, site: unknown): unknown;
+    execute(): Promise<void>;
   }
   export class EnterLair extends HuntTask {
-    constructor(host: any, site: any);
-    execute(): Promise<any>;
+    constructor(host: unknown, site: unknown): unknown;
+    execute(): Promise<void>;
   }
-  export function cell(host: any, site: any): any;
-  export function leaveLair(host: any, site: any): any;
-  export function bankRoutine(host: any, site: any, opts: any): any;
+  export function cell(host: unknown, site: unknown): Promise<unknown>;
+  export function leaveLair(host: unknown, site: unknown): Promise<unknown>;
+  export function bankRoutine(host: unknown, site: unknown, opts: unknown): Promise<unknown>;
 }
 
 declare module '*api/combat/hunting/guarded.js' {
   export const LOOT_GUARD: any;
-  export function guarded(drop: any, bodies: any, radius?: any): any;
+  export function guarded(drop: unknown, bodies: unknown, radius?: number): unknown;
 }
 
 declare module '*api/combat/hunting/logic.js' {
+  export type Style = string;
+  export type KeyState = { [key: string]: unknown };
+
   export const SAFESPOT_BLIND_MS: any;
   export const PROTECT_FROM_MELEE: any;
   export const PRAYER_SIP_FLOOR: any;
@@ -1220,37 +986,39 @@ declare module '*api/combat/hunting/logic.js' {
   export const POTION_PROTECTS: any;
   export const ANTIFIRE_TICKS: any;
   export const ANTIFIRE_MARGIN_TICKS: any;
-  export function nextSafespot(s: any): any;
-  export function hurtOnSpot(s: any): any;
-  export function retreatDue(s: any): any;
-  export function lootHalts(s: any): any;
-  export function holdDue(s: any): any;
-  export function nearestSpot(from: any, spots: any): any;
-  export function bodyOrigin(tile: any, size: any): any;
-  export function noteSighting(prev: any, tile: any, now: any): any;
-  export function settled(s: any, now: any, ms: any): any;
-  export function retreatAim(a: any): any;
-  export function chaseMode(style: any, fireAtRange: any): any;
-  export function prayerFor(style: any, fireAtRange: any): any;
-  export function prayerSipDue(points: any, max: any): any;
-  export function lootReach(fireAtRange: any): any;
-  export function attackRangeFor(style: any): any;
-  export function engageRangeFor(style: any): any;
-  export function gapTo(from: any, tile: any, size: any): any;
-  export function shieldGate(style: any, fireAtRange: any, hasShield: any): any;
-  export function styleGate(style: any, fireAtRange: any): any;
-  export function antifireDue(s: any): any;
-  export function antifireLapsed(sawShield: any, sawPotion: any): any;
-  export function nextApproachIndex(stops: any, here: any): any;
-  export function isClueObj(id: any): any;
-  export function keyStatus(held: any, banked: any): any;
-  export function wantsDrop(item: any, f: any): any;
-  export function siteTileOf(schema: any, bag: any, key: any, site: any): any;
-  export function keepDoses(potionDoses: any, antipoisonDoses: any, carriesAntipoison: any): any;
+  export function nextSafespot(s: unknown): unknown;
+  export function hurtOnSpot(s: unknown): unknown;
+  export function retreatDue(s: unknown): unknown;
+  export function lootHalts(s: unknown): unknown;
+  export function holdDue(s: unknown): unknown;
+  export function nearestSpot(from: unknown, spots: unknown): unknown;
+  export function bodyOrigin(tile: unknown, size: unknown): unknown;
+  export function noteSighting(prev: unknown, tile: unknown, now: unknown): unknown;
+  export function settled(s: unknown, now: unknown, ms: number): unknown;
+  export function retreatAim(a: unknown): unknown;
+  export function chaseMode(style: unknown, fireAtRange: unknown): unknown;
+  export function prayerFor(style: unknown, fireAtRange: unknown): unknown;
+  export function prayerSipDue(points: unknown, max: unknown): unknown;
+  export function lootReach(fireAtRange: unknown): unknown;
+  export function attackRangeFor(style: unknown): unknown;
+  export function engageRangeFor(style: unknown): unknown;
+  export function gapTo(from: unknown, tile: unknown, size: unknown): unknown;
+  export function shieldGate(style: unknown, fireAtRange: unknown, hasShield: unknown): unknown;
+  export function styleGate(style: unknown, fireAtRange: unknown): unknown;
+  export function antifireDue(s: unknown): unknown;
+  export function antifireLapsed(sawShield: unknown, sawPotion: unknown): unknown;
+  export function nextApproachIndex(stops: unknown, here: unknown): unknown;
+  export function isClueObj(id: number): boolean;
+  export function keyStatus(held: unknown, banked: unknown): unknown;
+  export function wantsDrop(item: string, f: unknown): unknown;
+  export function siteTileOf(schema: unknown, bag: unknown, key: string, site: unknown): unknown;
+  export function keepDoses(potionDoses: unknown, antipoisonDoses: unknown, carriesAntipoison: unknown): unknown;
 }
 
 declare module '*api/combat/hunting/sites.js' {
-  export function inBox(b: any): any;
+  export type DragonSite = { name?: string; key?: string; [key: string]: unknown };
+
+  export function inBox(b: unknown): unknown;
   export const DRAGON_SITES: any;
   export const TAVERLEY_BLUE: any;
   export const TAVERLEY_BLACK: any;
@@ -1261,13 +1029,15 @@ declare module '*api/combat/hunting/sites.js' {
   export const STAND_SITE_KEYS: any;
   export const MAX_STANDS: any;
   export const SITE_OPTIONS: any;
-  export function needsShield(s: any, style: any): any;
-  export function huntNames(s: any): any;
-  export function standFor(s: any, n: any): any;
-  export function siteFor(key: any): any;
+  export function needsShield(s: unknown, style: unknown): unknown;
+  export function huntNames(s: unknown): unknown;
+  export function standFor(s: unknown, n: number): unknown;
+  export function siteFor(key: string): unknown;
 }
 
 declare module '*api/combat/hunting/supply.js' {
+  export type BankOpts = { [key: string]: unknown };
+
   export const SHIELD: any;
   export const POISONED: any;
   export const COINS: any;
@@ -1277,280 +1047,342 @@ declare module '*api/combat/hunting/supply.js' {
   export const PRAYER_DOSES: any;
   export const ANTIFIRE_LABEL: any;
   export const ANTIFIRE_DOSES: any;
-  export function antipoisonPlan(want: any): any;
-  export function prayerPlan(want: any): any;
-  export function antifirePlan(want: any): any;
-  export function doseToDrink(count: any, doses?: any): any;
-  export function escapeRunesFor(teleportId: any): any;
-  export function inCell(): any;
-  export function enterLair(h: any, site: any): Promise<any>;
-  export function feePrepaid(site: any): any;
-  export function acquireKey(h: any, site: any): Promise<any>;
-  export function leaveCell(h: any): Promise<any>;
-  export function teleportOut(h: any, site: any): Promise<any>;
-  export function waitFed(cond: any, ms: any): Promise<any>;
-  export function bankRoutine(h: any, site: any, opts: any): Promise<any>;
-  export function walkApproach(): any;
-  export function withdrawTo(): any;
-  export function leaveLair(host: any, site: any): any;
+  export function antipoisonPlan(want: unknown): unknown;
+  export function prayerPlan(want: unknown): unknown;
+  export function antifirePlan(want: unknown): unknown;
+  export function doseToDrink(count: number, doses?: unknown): unknown;
+  export function escapeRunesFor(teleportId: unknown): unknown;
+  export function inCell(): unknown;
+  export function enterLair(h: unknown, site: unknown): Promise<boolean>;
+  export function feePrepaid(site: unknown): unknown;
+  export function acquireKey(h: unknown, site: unknown): Promise<boolean>;
+  export function leaveCell(h: unknown): Promise<boolean>;
+  export function teleportOut(h: unknown, site: unknown): Promise<boolean>;
+  export function waitFed(cond: () => boolean, ms: number): Promise<boolean>;
+  export function bankRoutine(h: unknown, site: unknown, opts: unknown): Promise<boolean>;
+  export function walkApproach(): unknown;
+  export function withdrawTo(): unknown;
+  export function leaveLair(host: unknown, site: unknown): Promise<unknown>;
 }
 
 declare module '*api/combat/keepList.js' {
-  export function combatKeepNames(o: any): any;
+  export function combatKeepNames(o: unknown): unknown;
 }
 
 declare module '*api/combat/meleeWeapons.js' {
-  export function bestMeleeWeapon(available: any, pick: any): any;
-  export function knownMeleeWeapon(names: any): any;
+  export function bestMeleeWeapon(available: unknown, pick: unknown): unknown;
+  export function knownMeleeWeapon(names: unknown): unknown;
 }
 
 declare module '*api/combat/ranged.js' {
   export const RANGED_WEAPONS: any;
   export const ROCK_CRAB_RANGED_WEAPONS: any;
-  export function rangeLoadoutOf(weapon: any, ammo: any): any;
-  export function rockCrabRangeLoadout(...args: any): any;
-  export function rangeSupplyEmpty(equipped: any, carried: any, ground: any): any;
+  export function rangeLoadoutOf(weapon: unknown, ammo: unknown): unknown;
+  export function rockCrabRangeLoadout(...args: unknown[]): unknown;
+  export function rangeSupplyEmpty(equipped: unknown, carried: unknown, ground: unknown): unknown;
 }
 
 declare module '*api/combat/rangedSettings.js' {
   export const CUSTOM_RANGED_SETTINGS: {
-    customBow: any;
-    customAmmo: any;
+    customBow: unknown;
+    customAmmo: unknown;
   };
-  export function rangedItem(settings: any, key: any, fallback: any): any;
+  export function rangedItem(settings: unknown, key: string, fallback: unknown): unknown;
 }
 
 declare module '*api/cooking/CookLocations.js' {
-  export const COOK_LOCATION_OPTIONS: any;
-  export function cookLocation(name: any): any;
-  export function resolveCookLocation(setting: any, from: any, unlocked: any): any;
-  export const CUSTOM_LOCATION: any;
-  export const COOK_LOCATIONS: any;
+  export type CookLocation = { name: string; [key: string]: unknown };
+  export const COOK_LOCATION_OPTIONS: string[];
+  export function cookLocation(name: string): CookLocation | null;
+  export function resolveCookLocation(setting: unknown, from: unknown, unlocked?: (loc: CookLocation) => boolean): CookLocation | null;
+  export const CUSTOM_LOCATION: string;
+  export const COOK_LOCATIONS: CookLocation[];
 }
 
 declare module '*api/duel/ClueDuel.js' {
   export const CLUE_DUEL_LOBBY: any;
   export const CLUE_DUEL_OPTIONS: any;
-  export function clueDuelName(name: any): any;
-  export function leaveClueDuel(log: any): Promise<any>;
+  export function clueDuelName(name: string): unknown;
+  export function leaveClueDuel(log: (msg: string) => void): Promise<boolean>;
   export class ClueDuelHandshake {
-    constructor(partner: any, initiator: any, log: any);
-    partner: any;
-    initiator: any;
-    log: any;
-    tick(): Promise<any>;
+    constructor(partner: unknown, initiator: unknown, log: (msg: string) => void): unknown;
+    partner: unknown;
+    initiator: unknown;
+    log: unknown;
+    tick(): Promise<boolean>;
   }
   export class ClueDuelHelper {
-    constructor(partner: any, log: any);
-    partner: any;
-    log: any;
-    validate(): any;
-    execute(): Promise<any>;
+    constructor(partner: unknown, log: (msg: string) => void): unknown;
+    partner: unknown;
+    log: unknown;
+    validate(): boolean;
+    execute(): Promise<void>;
   }
 }
 
 declare module '*api/duel/Duel.js' {
+  export type Rect = { x: number; y: number; w?: number; h?: number; [key: string]: unknown };
+
   export const DUEL_SELECT_MODAL: any;
   export const DUEL_CONFIRM_MODAL: any;
   export const DUEL_WIN_MODAL: any;
   export const DUEL_FIGHT_ARENAS: any;
-  export function parseDuelPartnerHeader(header: any): any;
-  export function fightArenaAt(tile: any): any;
+  export function parseDuelPartnerHeader(header: unknown): unknown;
+  export function fightArenaAt(tile: unknown): unknown;
   export const Duel: {
-    offerOpen(): any;
-    confirmOpen(): any;
-    winOpen(): any;
-    active(): any;
-    partner(): any;
-    waitingForOther(): any;
-    challenge(player: any): any;
-    fight(player: any): any;
-    accept(): any;
-    cancel(): any;
-    closeWin(): any;
+    offerOpen(): unknown;
+    confirmOpen(): unknown;
+    winOpen(): unknown;
+    active(): unknown;
+    partner(): unknown;
+    waitingForOther(): unknown;
+    challenge(player: unknown): unknown;
+    fight(player: unknown): unknown;
+    accept(): Promise<boolean>;
+    cancel(): Promise<boolean>;
+    closeWin(): Promise<boolean>;
   };
 }
 
 declare module '*api/equipment/Equipment.js' {
+  export interface EquipmentItem {
+    name: string;
+    count: number;
+    id: number;
+  }
   export const Equipment: {
-    items(): any;
-    contains(name: any): any;
-    equip(name: any): Promise<any>;
-    unequip(name: any): Promise<any>;
+    items(): EquipmentItem[];
+    contains(name: string): boolean;
+    equip(name: string): Promise<boolean>;
+    unequip(name: string): Promise<boolean>;
   };
 }
 
 declare module '*api/execution/EventSignal.js' {
   export const EventSignal: {
-    pending(): any;
-    setInterrupt(callback: any): any;
-    ignoredRandoms(): any;
+    pending(): boolean;
+    setInterrupt(callback: (() => boolean) | null | undefined): void;
+    ignoredRandoms(): unknown[];
   };
 }
 
 declare module '*api/execution/Execution.js' {
   export const Execution: {
-    delay(ms: any): Promise<any>;
-    delayTicks(n: any): Promise<any>;
-    delayUntil(cond: any, timeoutMs?: any): any;
-    delayUntilTicks(cond: any, maxTicks: any): any;
-    noteProgress(): any;
+    delay(ms: number): Promise<void>;
+    delayTicks(n: number): Promise<void>;
+    delayUntil(cond: () => boolean, timeoutMs?: number): Promise<boolean>;
+    delayUntilTicks(cond: () => boolean, maxTicks: number): Promise<boolean>;
+    noteProgress(): void;
   };
-  export function parkMachine(handle: any): any;
+  export function parkMachine(handle: unknown): Promise<unknown>;
 }
 
 declare module '*api/firemaking/Firemaking.js' {
+  export interface WorldTile { x: number; z: number; level: number }
+  export type BurnDir = { dx: number; dz: number };
+  export type FirePlot = { origin?: WorldTile; [key: string]: unknown };
   export const TINDERBOX: any;
   export const CANT_LIGHT: any;
   export const FIRE_START_TICKS: any;
   export const FIRE_LIGHT_TICKS: any;
-  export const BURN_WEST: {
-    dx: any;
-    dz: any;
-  };
-  export const BURN_DIRS: any;
+  export const BURN_WEST: { dx: number; dz: number };
+  export const BURN_DIRS: BurnDir[];
   export const FIRE_SPOTS: any;
   export const FIRE_SPOT_OPTIONS: any;
-  export function localFirePlot(origin: any, half: any): any;
+  export function localFirePlot(origin: unknown, half: number): FirePlot;
   export const LOG_LEVELS: any;
-  export function tileKey(t: any): any;
+  export function tileKey(t: unknown): string;
   export class NoLightTiles {
-    add(tile: any): any;
-    has(tile: any): any;
-    get size(): any;
-    merge(occupied: any): any;
-    clear(): any;
+    add(tile: unknown): unknown;
+    has(tile: unknown): boolean;
+    get size(): number;
+    merge(occupied: unknown): unknown;
+    clear(): void;
   }
-  export function inFirePlot(t: any, plot: any): any;
-  export function burnLaneWant(logCount: any): any;
-  export function isBurnWest(dir: any): any;
-  export function fireReactionTicks(): any;
-  export function runInDir(from: any, plot: any, dir: any, occupied: any, walkable: any, canStep: any, cap: any): any;
-  export function findBurnLane(plot: any, here: any, occupied: any, want?: any, _walkable?: any, _canStep?: any, directions?: any): any;
-  export function lightFire(logName: any): Promise<any>;
+  export function inFirePlot(t: unknown, plot: unknown): boolean;
+  export function burnLaneWant(logCount: unknown): unknown;
+  export function isBurnWest(dir: unknown): boolean;
+  export function fireReactionTicks(): number;
+  export function runInDir(from: unknown, plot: unknown, dir: unknown, occupied: unknown, walkable: unknown, canStep: unknown, cap: number): unknown;
+  export function findBurnLane(plot: unknown, here: unknown, occupied: unknown, want?: unknown, _walkable?: unknown, _canStep?: unknown, directions?: unknown): unknown;
+  export function lightFire(logName: string): Promise<boolean>;
 }
 
 declare module '*api/firemaking/LightFire.js' {
-  export function lightFire(logName: any): Promise<any>;
+  export function lightFire(logName: string): Promise<boolean>;
 }
 
 declare module '*api/game/Game.js' {
+  export interface WorldTile {
+    x: number;
+    z: number;
+    level: number;
+  }
+  export interface CombatStyleResolution {
+    requested: string;
+    effective: string;
+    mode: number;
+    label: string;
+  }
   export const Game: {
-    ingame(): any;
-    tile(): any;
-    tick(): any;
-    inCombat(): any;
-    animating(): any;
-    runEnabled(): any;
-    autoRetaliate(): any;
-    autoRetaliateOn(): any;
-    myName(): any;
-    combatMode(): any;
-    combatStyles(): any;
-    hasCombatStyle(style: any): any;
-    combatStyleResolution(style: any): any;
-    setCombatMode(mode: any): any;
-    setCombatStyle(style: any): any;
-    setAutoRetaliate(on: any): any;
-    openSideTab(tab: any): Promise<any>;
-    castOnItem(spell: any, item: any): Promise<any>;
-    castOnLoc(spell: any, loc: any): Promise<any>;
-    teleport(name: any): Promise<any>;
-    energy(): any;
-    weight(): any;
-    cameraYaw(): any;
-    cameraPitch(): any;
-    setCameraYaw(yaw: any): any;
-    combatStyleMode(): any;
-    sceneReady(): any;
-    sceneState(): any;
-    attackedByPlayer(): any;
-    castOnNpc(): Promise<any>;
+    ingame(): boolean;
+    tile(): WorldTile | null;
+    tick(): number;
+    inCombat(): boolean;
+    animating(): boolean;
+    runEnabled(): boolean;
+    autoRetaliate(): boolean;
+    autoRetaliateOn(): boolean;
+    myName(): string | null;
+    combatMode(): number;
+    combatStyles(): Array<{ mode: number; label: string }> | null;
+    hasCombatStyle(style: string): boolean;
+    combatStyleResolution(style: string): CombatStyleResolution | null;
+    setCombatMode(mode: number): boolean;
+    setCombatStyle(style: string | number): boolean;
+    setAutoRetaliate(on: boolean): boolean;
+    openSideTab(tab: number): Promise<boolean>;
+    castOnItem(spell: string, item: string | { name?: string } | null): Promise<boolean>;
+    castOnLoc(spell: string, loc: { name?: string; tile?: () => WorldTile } | WorldTile | null): Promise<boolean>;
+    teleport(name: string): Promise<boolean>;
+    energy(): number;
+    weight(): number;
+    cameraYaw(): number;
+    cameraPitch(): number;
+    setCameraYaw(yaw: number): boolean;
+    combatStyleMode(): number;
+    sceneReady(): boolean;
+    sceneState(): number;
+    attackedByPlayer(): boolean;
+    castOnNpc(): Promise<boolean>;
   };
 }
 
 declare module '*api/grounditems/GroundItems.js' {
+  export interface WorldTile { x: number; z: number; level: number }
   export class GroundItem {
-    constructor(row: any);
+    constructor(row: unknown);
     snap: any;
-    get name(): any;
-    get id(): any;
-    get count(): any;
-    tile(): any;
-    distance(): any;
-    actions(): any;
-    interact(action: any): any;
+    get name(): string | null;
+    get id(): number;
+    get count(): number;
+    tile(): WorldTile;
+    distance(): number;
+    actions(): string[];
+    interact(action: string): boolean;
+  }
+  export interface GroundItemQuery {
+    name(...names: string[]): GroundItemQuery;
+    action(action: string): GroundItemQuery;
+    within(dist: number): GroundItemQuery;
+    withinOf(origin: WorldTile, dist: number): GroundItemQuery;
+    where(pred: (entity: GroundItem) => boolean): GroundItemQuery;
+    forEachMatch(seen: (entity: GroundItem) => boolean): void;
+    results(): GroundItem[];
+    nearest(): GroundItem | null;
+    first(): GroundItem | null;
+    exists(): boolean;
+    count(): number;
+    inside(_area?: unknown): GroundItemQuery;
+    nearestPreferLocal(_preferRadius?: number): GroundItem;
   }
   export const GroundItems: {
-    query(): any;
+    query(): GroundItemQuery;
   };
 }
 
 declare module '*api/inventory/Inventory.js' {
+  export interface InvItem {
+    name: string;
+    count: number;
+    id: number;
+    slot: number;
+    noted: boolean;
+    cert: number;
+    interact(action: string): boolean;
+    actions(): string[];
+    useOn(target: unknown): boolean;
+  }
   export const Inventory: {
-    count(name: any): any;
-    countById(id: any): any;
-    first(name: any): any;
-    items(): any;
-    contains(name: any): any;
-    used(): any;
-    isFull(): any;
-    free(): any;
+    count(name: string): number;
+    countById(id: number): number;
+    first(name: string): InvItem | null;
+    items(): InvItem[];
+    contains(name: string): boolean;
+    used(): number;
+    isFull(): boolean;
+    free(): number;
   };
 }
 
 declare module '*api/inventory/packRules.js' {
-  export function matchesAny(name: any, patterns: any): any;
-  export function countMatching(items: any, patterns: any): any;
-  export function slotsMatching(items: any, patterns: any): any;
-  export function shouldBank(lootSlots: any, bankAt: any, invFull: any): any;
-  export function shouldRestock(foodCount: any, threshold: any): any;
-  export function shouldEat(hp: any, maxHp: any, heal: any, foodCount: any): any;
-  export function shouldPanic(hpFrac: any, gate: any, foodCount: any): any;
+  export function matchesAny(name: string, patterns: unknown): unknown;
+  export function countMatching(items: unknown, patterns: unknown): number;
+  export function slotsMatching(items: unknown, patterns: unknown): unknown;
+  export function shouldBank(lootSlots: unknown, bankAt: number, invFull: unknown): unknown;
+  export function shouldRestock(foodCount: number, threshold: number): unknown;
+  export function shouldEat(hp: number, maxHp: number, heal: number, foodCount: number): unknown;
+  export function shouldPanic(hpFrac: number, gate: number, foodCount: number): unknown;
 }
 
 declare module '*api/loadout/loadoutPlan.js' {
-  export function foodOf(loadout: any, fallback: any): any;
-  export function gearOf(loadout: any): any;
-  export function suppliesOf(loadout: any): any;
-  export function weaponOf(loadout: any, fallback?: any): any;
-  export function scriptFood(bag: any, fallback: any): any;
-  export function scriptFoods(bag: any, fallback: any): any;
+  export function foodOf(loadout: unknown, fallback: unknown): unknown;
+  export function gearOf(loadout: unknown): unknown;
+  export function suppliesOf(loadout: unknown): unknown;
+  export function weaponOf(loadout: unknown, fallback?: unknown): unknown;
+  export function scriptFood(bag: unknown, fallback: unknown): unknown;
+  export function scriptFoods(bag: unknown, fallback: unknown): unknown;
 }
 
 declare module '*api/loadout/loadoutSetting.js' {
   export const LOADOUT_SETTING: {
-    type: any;
-    default: any;
-    options: any;
-    optionsFrom: any;
-    label: any;
-    help: any;
+    type: unknown;
+    default: unknown;
+    options: unknown;
+    optionsFrom: unknown;
+    label: unknown;
+    help: unknown;
   };
-  export function selectedLoadout(bag: any): any;
+  export function selectedLoadout(bag: unknown): unknown;
 }
 
 declare module '*api/locs/Locs.js' {
+  export interface WorldTile { x: number; z: number; level: number }
   export class Loc {
-    constructor(row: any);
-    snap: any;
-    get name(): any;
-    get id(): any;
-    tile(): any;
-    distance(): any;
-    actions(): any;
-    interact(action: any): any;
+    constructor(row: unknown);
+    snap: { name?: string | null; id?: number; x?: number; z?: number; level?: number; distance?: number; actions?: unknown };
+    get name(): string | null;
+    get id(): number;
+    tile(): WorldTile;
+    distance(): number;
+    actions(): string[];
+    interact(action: string): boolean;
+  }
+  export interface LocQuery {
+    name(...names: string[]): LocQuery;
+    action(action: string): LocQuery;
+    within(dist: number): LocQuery;
+    withinOf(origin: WorldTile, dist: number): LocQuery;
+    where(pred: (entity: Loc) => boolean): LocQuery;
+    forEachMatch(seen: (entity: Loc) => boolean): void;
+    results(): Loc[];
+    nearest(): Loc | null;
+    first(): Loc | null;
+    exists(): boolean;
+    count(): number;
+    inside(_area?: unknown): LocQuery;
+    nearestPreferLocal(_preferRadius?: number): Loc;
   }
   export const Locs: {
-    query(): any;
+    query(): LocQuery;
   };
 }
 
 declare module '*api/magic/Autocast.js' {
   export const Autocast: {
-    armed(): any;
-    staffTabAttached(): any;
-    arm(spellName: any, log: any): Promise<any>;
+    armed(): unknown;
+    staffTabAttached(): unknown;
+    arm(spellName: unknown, log: (msg: string) => void): Promise<boolean>;
   };
 }
 
@@ -1559,237 +1391,281 @@ declare module '*api/market/MarketMaker.js' {
 }
 
 declare module '*api/market/catalog.js' {
-  export function liveCatalog(): any;
-  export function tradeable(id: any): any;
-  export function clientName(_cat: any, id: any): any;
-  export function displayName(_cat: any, id: any): any;
-  export function notedId(_cat: any, id: any): any;
-  export function unnotedId(_cat: any, id: any): any;
+  export interface Catalog {
+    notedOf: Map<unknown, unknown>;
+    unnotedOf: Map<unknown, unknown>;
+    readonly byId: unknown;
+    readonly items: unknown;
+    readonly aliases: unknown;
+  }
+  export function liveCatalog(): Catalog;
+  export function tradeable(id: number): boolean;
+  export function clientName(_cat: Catalog | unknown, id: number): string | undefined;
+  export function displayName(_cat: Catalog | unknown, id: number): string;
+  export function notedId(_cat: Catalog | unknown, id: number): number | null;
+  export function unnotedId(_cat: Catalog | unknown, id: number): number;
 }
 
 declare module '*api/model/Loc.js' {
+  export interface WorldTile { x: number; z: number; level: number }
   export class Loc {
-    constructor(row: any);
-    snap: any;
-    get name(): any;
-    get id(): any;
-    tile(): any;
-    distance(): any;
-    actions(): any;
-    interact(action: any): any;
+    constructor(row: unknown);
+    snap: { name?: string | null; id?: number; x?: number; z?: number; level?: number; distance?: number; actions?: unknown };
+    get name(): string | null;
+    get id(): number;
+    tile(): WorldTile;
+    distance(): number;
+    actions(): string[];
+    interact(action: string): boolean;
   }
 }
 
 declare module '*api/model/Npc.js' {
+  export interface WorldTile { x: number; z: number; level: number }
   export class Npc {
-    constructor(row: any);
+    constructor(row: unknown);
     snap: any;
-    get name(): any;
-    get id(): any;
-    get index(): any;
-    get inCombat(): any;
-    get health(): any;
-    get level(): any;
-    get size(): any;
-    networkOrigin(): any;
-    networkTile(): any;
-    targetsMe(): any;
-    targetsAnotherPlayer(): any;
-    tile(): any;
-    distance(): any;
-    actions(): any;
-    valid(): any;
-    interact(action: any): any;
+    get name(): string | null;
+    get id(): number;
+    get index(): number;
+    get inCombat(): boolean;
+    get health(): number | null;
+    get level(): number;
+    get size(): number;
+    networkOrigin(): WorldTile;
+    networkTile(): WorldTile;
+    targetsMe(): boolean;
+    targetsAnotherPlayer(): boolean;
+    tile(): WorldTile;
+    distance(): number;
+    actions(): string[];
+    valid(): boolean;
+    interact(action: string): boolean;
   }
 }
 
 declare module '*api/model/Player.js' {
+  export interface WorldTile { x: number; z: number; level: number }
   export class Player {
-    constructor(row: any);
+    constructor(row: unknown);
     snap: any;
-    get name(): any;
-    get index(): any;
-    get inCombat(): any;
-    get combatLevel(): any;
-    targetsMe(): any;
-    tile(): any;
-    distance(): any;
-    actions(): any;
-    interact(action: any): any;
+    get name(): string | null;
+    get index(): number;
+    get inCombat(): boolean;
+    get combatLevel(): number;
+    targetsMe(): boolean;
+    tile(): WorldTile;
+    distance(): number;
+    actions(): string[];
+    interact(action: string): boolean;
   }
 }
 
 declare module '*api/npcs/Npcs.js' {
+  export interface WorldTile { x: number; z: number; level: number }
   export class Npc {
-    constructor(row: any);
+    constructor(row: unknown);
     snap: any;
-    get name(): any;
-    get id(): any;
-    get index(): any;
-    get inCombat(): any;
-    get health(): any;
-    get level(): any;
-    get size(): any;
-    networkOrigin(): any;
-    networkTile(): any;
-    targetsMe(): any;
-    targetsAnotherPlayer(): any;
-    tile(): any;
-    distance(): any;
-    actions(): any;
-    valid(): any;
-    interact(action: any): any;
+    get name(): string | null;
+    get id(): number;
+    get index(): number;
+    get inCombat(): boolean;
+    get health(): number | null;
+    get level(): number;
+    get size(): number;
+    networkOrigin(): WorldTile;
+    networkTile(): WorldTile;
+    targetsMe(): boolean;
+    targetsAnotherPlayer(): boolean;
+    tile(): WorldTile;
+    distance(): number;
+    actions(): string[];
+    valid(): boolean;
+    interact(action: string): boolean;
+  }
+  export interface NpcQuery {
+    name(...names: string[]): NpcQuery;
+    action(action: string): NpcQuery;
+    within(dist: number): NpcQuery;
+    withinOf(origin: WorldTile, dist: number): NpcQuery;
+    where(pred: (entity: Npc) => boolean): NpcQuery;
+    forEachMatch(seen: (entity: Npc) => boolean): void;
+    results(): Npc[];
+    nearest(): Npc | null;
+    first(): Npc | null;
+    exists(): boolean;
+    count(): number;
+    inside(_area?: unknown): NpcQuery;
+    nearestPreferLocal(_preferRadius?: number): Npc;
   }
   export const Npcs: {
-    query(): any;
-    all(): any;
-    nearest(count?: any): any;
+    query(): NpcQuery;
+    all(): Npc[];
+    nearest(count?: number): Npc[];
   };
-  export function talkOp(actions: any): any;
+  export function talkOp(actions: string[] | null | undefined): string | null;
 }
 
 declare module '*api/players/Players.js' {
+  export interface WorldTile { x: number; z: number; level: number }
   export class Player {
-    constructor(row: any);
+    constructor(row: unknown);
     snap: any;
-    get name(): any;
-    get index(): any;
-    get inCombat(): any;
-    get combatLevel(): any;
-    targetsMe(): any;
-    tile(): any;
-    distance(): any;
-    actions(): any;
-    interact(action: any): any;
+    get name(): string | null;
+    get index(): number;
+    get inCombat(): boolean;
+    get combatLevel(): number;
+    targetsMe(): boolean;
+    tile(): WorldTile;
+    distance(): number;
+    actions(): string[];
+    interact(action: string): boolean;
+  }
+  export interface PlayerQuery {
+    name(...names: string[]): PlayerQuery;
+    action(action: string): PlayerQuery;
+    within(dist: number): PlayerQuery;
+    withinOf(origin: WorldTile, dist: number): PlayerQuery;
+    where(pred: (entity: Player) => boolean): PlayerQuery;
+    forEachMatch(seen: (entity: Player) => boolean): void;
+    results(): Player[];
+    nearest(): Player | null;
+    first(): Player | null;
+    exists(): boolean;
+    count(): number;
+    inside(_area?: unknown): PlayerQuery;
+    nearestPreferLocal(_preferRadius?: number): Player;
   }
   export const Players: {
-    query(): any;
-    all(): any;
+    query(): PlayerQuery;
+    all(): Player[];
   };
 }
 
 declare module '*api/prayer/Prayer.js' {
-  export const PROTECT_FROM_MAGIC: any;
+  export const PROTECT_FROM_MAGIC: string;
   export const Prayer: {
-    points(): any;
-    max(): any;
-    full(): any;
-    known(name: any): any;
-    available(name: any): any;
-    active(name: any): any;
-    set(name: any, on: any): Promise<any>;
-    clear(): Promise<any>;
+    points(): number;
+    max(): number;
+    full(): boolean;
+    known(name: string): boolean;
+    available(name: string): boolean;
+    active(name: string): boolean;
+    set(name: string, on: boolean): Promise<boolean>;
+    clear(): Promise<void>;
   };
 }
 
 declare module '*api/query/Query.js' {
-  export function matchesEntityName(actual: any, configured: any): any;
-  export class EntityQuery {
-    constructor(supplySnaps: any, wrap: any);
-    supplySnaps: any;
-    wrap: any;
-    snapFilters: any;
-    entityFilters: any;
-    static fromSnapshots(supply: any, wrap: any): any;
-    name(...names: any): any;
-    action(action: any): any;
-    within(dist: any): any;
-    withinOf(origin: any, dist: any): any;
-    where(pred: any): any;
-    forEachMatch(seen: any): any;
-    results(): any;
-    nearest(): any;
-    first(): any;
-    exists(): any;
-    count(): any;
-    inside(_area: any): any;
-    nearestPreferLocal(_preferRadius: any): any;
+  export function matchesEntityName(actual: unknown, configured: unknown): boolean;
+  export class EntityQuery<T = any> {
+    constructor(supplySnaps: () => unknown[], wrap: (snap: unknown) => T);
+    supplySnaps: () => unknown[];
+    wrap: (snap: unknown) => T;
+    snapFilters: Array<(s: any) => boolean>;
+    entityFilters: Array<(e: T) => boolean>;
+    static fromSnapshots<U>(supply: () => unknown[], wrap: (snap: unknown) => U): EntityQuery<U>;
+    name(...names: string[]): this;
+    action(action: string): this;
+    within(dist: number): this;
+    withinOf(origin: { x: number; z: number; level?: number }, dist: number): this;
+    where(pred: (entity: T) => boolean): this;
+    forEachMatch(seen: (entity: T) => boolean): void;
+    results(): T[];
+    nearest(): T | null;
+    first(): T | null;
+    exists(): boolean;
+    count(): number;
+    inside(_area?: unknown): this;
+    nearestPreferLocal(_preferRadius?: number): T;
   }
   export default EntityQuery;
 }
 
 declare module '*api/shop/BuyoutLogic.js' {
-  export function buyoutPlan(rec: any, stock: any, coins: any, chosen: any): any;
+  export function buyoutPlan(rec: unknown, stock: unknown, coins: unknown, chosen: unknown): unknown;
 }
 
 declare module '*api/shop/Shop.js' {
   export const Shop: {
-    isOpen(): any;
-    stock(): any;
-    player(): any;
-    open(npcName: any): any;
-    buy(name: any, qty: any): any;
-    sell(name: any, qty: any, pick: any): any;
-    sellAll(name: any, pick: any): any;
-    close(): any;
-    buyById(): any;
+    isOpen(): boolean;
+    stock(): Array<{ name: string | null; count: number; slot: number }>;
+    player(): Array<{ name: string | null; count: number; slot: number }>;
+    open(npcName?: string): Promise<boolean>;
+    buy(name: string, qty?: number): Promise<number>;
+    sell(name: string, qty?: number, pick?: (row: unknown) => boolean): Promise<number>;
+    sellAll(name: string, pick?: (row: unknown) => boolean): Promise<number>;
+    close(): Promise<void>;
+    buyById(): never;
   };
 }
 
 declare module '*api/shop/types.js' {
+  export type ShopRecord = { name?: string; [key: string]: unknown };
+
   export {};
 }
 
 declare module '*api/skills/Skills.js' {
   export const Skills: {
-    index(name: any): any;
-    xp(name: any): any;
-    level(name: any): any;
-    effective(name: any): any;
-    hpFraction(): any;
+    index(name: string): number;
+    xp(name: string): number;
+    level(name: string): number;
+    effective(name: string): number;
+    hpFraction(): number;
   };
 }
 
 declare module '*api/sustain/Sustain.js' {
   export const Sustain: {
-    hook: any;
-    running: any;
-    set(hook: any): any;
-    run(): Promise<any>;
+    hook: unknown;
+    running: unknown;
+    set(hook: unknown): unknown;
+    run(): Promise<boolean>;
   };
 }
 
 declare module '*api/tasks/Anchor.js' {
   export const HOME_ARRIVE_RADIUS: any;
-  export function shouldWalkHomeToGatherAnchor(_distToAnchor: any, _arriveRadius: any): any;
-  export function shouldSoftHomeFromGatherMiss(_distToAnchor: any, _leash: any): any;
-  export function beyondLeash(bot: any, here?: any, slack?: any): any;
-  export function tileWithinLeash(bot: any, tile: any, slack?: any): any;
-  export function resolveRunAnchor(here: any, locationSpot: any): any;
-  export function createReturnToAnchorTask(bot: any, opts?: any): any;
+  export function shouldWalkHomeToGatherAnchor(_distToAnchor: unknown, _arriveRadius: unknown): unknown;
+  export function shouldSoftHomeFromGatherMiss(_distToAnchor: unknown, _leash: unknown): unknown;
+  export function beyondLeash(bot: unknown, here?: unknown, slack?: unknown): unknown;
+  export function tileWithinLeash(bot: unknown, tile: unknown, slack?: unknown): unknown;
+  export function resolveRunAnchor(here: unknown, locationSpot: unknown): unknown;
+  export function createReturnToAnchorTask(bot: unknown, opts?: unknown): unknown;
 }
 
 declare module '*api/tasks/ContinueDialog.js' {
   export class ContinueDialog {
-    constructor(onContinue: any);
-    onContinue: any;
-    validate(): any;
-    execute(): Promise<any>;
+    constructor(onContinue?: () => void);
+    onContinue?: () => void;
+    validate(): boolean;
+    execute(): Promise<void>;
   }
 }
 
 declare module '*api/tasks/DeathRecovery.js' {
   export class DeathRecovery {
-    constructor(_bot: any, opts: any);
-    opts: any;
-    validate(): any;
-    execute(): Promise<any>;
+    constructor(_bot: unknown, opts: unknown): unknown;
+    opts: unknown;
+    validate(): boolean;
+    execute(): Promise<void>;
   }
 }
 
 declare module '*api/tasks/PeriodicBank.js' {
   export class PeriodicBank {
-    constructor(opts: any);
-    opts: any;
-    validate(): any;
-    execute(): Promise<any>;
+    constructor(opts: unknown): unknown;
+    opts: unknown;
+    validate(): boolean;
+    execute(): Promise<void>;
   }
 }
 
 declare module '*api/thieving/CakeStall.js' {
-  export function carriedCakes(): any;
-  export function needsCakeRestock(target: any): any;
-  export function stealCakes(opts?: any): Promise<any>;
+  export function carriedCakes(): unknown;
+  export function needsCakeRestock(target: unknown): unknown;
+  export function stealCakes(opts?: unknown): Promise<boolean>;
 }
 
 declare module '*api/thieving/cakeStallData.js' {
@@ -1802,30 +1678,30 @@ declare module '*api/thieving/cakeStallData.js' {
   export const CAKE_ITEMS: any;
   export const LOCKOUT_TICKS: any;
   export const RESET_AFTER_REFUSALS: any;
-  export function classifySteal(): any;
-  export function shouldReset(consecutiveRefusals: any): any;
+  export function classifySteal(): unknown;
+  export function shouldReset(consecutiveRefusals: unknown): unknown;
 }
 
 declare module '*api/thieving/stealRules.js' {
   export const THIEVER_BANKING_OPTIONS: any;
   export const STUN_COMBAT_TICKS: any;
-  export function nextWithdrawChunk(need: any): any;
-  export function withdrawTo(name: any, target: any, count: any): Promise<any>;
-  export function closeBankAndConfirmCount(expected: any, count: any): Promise<any>;
-  export function autoFoodBanking(mode: any): any;
-  export function foodMatches(name: any, keyword: any): any;
-  export function countFood(items: any, keyword: any): any;
-  export function shouldRestockFood(enabled: any, foodCount: any, restockAt: any, bankablePackFull: any): any;
-  export function safeToSteal(hpFraction: any, eatAt: any, foodCount: any): any;
-  export function canStealNow(foodCount: any, hp: any, minEatHp: any, suicide: any): any;
+  export function nextWithdrawChunk(need: unknown): unknown;
+  export function withdrawTo(name: string, target: unknown, count: number): Promise<boolean>;
+  export function closeBankAndConfirmCount(expected: unknown, count: number): Promise<boolean>;
+  export function autoFoodBanking(mode: number): unknown;
+  export function foodMatches(name: string, keyword: unknown): unknown;
+  export function countFood(items: unknown, keyword: unknown): number;
+  export function shouldRestockFood(enabled: unknown, foodCount: number, restockAt: unknown, bankablePackFull: unknown): unknown;
+  export function safeToSteal(hpFraction: unknown, eatAt: unknown, foodCount: number): unknown;
+  export function canStealNow(foodCount: number, hp: number, minEatHp: unknown, suicide: unknown): boolean;
 }
 
 declare module '*api/thieving/targets.js' {
-  export function targetSpot(target: any): any;
-  export function requiredThieving(target: any): any;
+  export function targetSpot(target: unknown): unknown;
+  export function requiredThieving(target: unknown): unknown;
   export const HOSTILE_NAMES: any;
-  export function isHostileAttacker(c: any, maxDistance: any): any;
-  export function chooseTarget(candidatesNearestFirst: any, reachable: any): any;
+  export function isHostileAttacker(c: unknown, maxDistance: unknown): boolean;
+  export function chooseTarget(candidatesNearestFirst: unknown, reachable: unknown): unknown;
   export const PICKPOCKET_TARGET_NAMES: any;
   export const ARDOUGNE_PICKPOCKET_TARGETS: any;
 }
@@ -1833,121 +1709,148 @@ declare module '*api/thieving/targets.js' {
 declare module '*api/trade/PartnerTrade.js' {
   export const DEFAULT_TRADE_RANGE: any;
   export const MULE_MODE_OPTIONS: any;
-  export function parsePartnerList(raw: any): any;
-  export function namesMatch(a: any, b: any): any;
-  export function isConfiguredPartner(name: any, partners: any): any;
-  export function countOfferByName(items: any, itemName: any): any;
-  export function decideReceiverOfferScreen(opts: any): any;
-  export function decideGiverOfferScreen(myOfferSlots: any): any;
-  export function parseMuleMode(raw: any): any;
-  export function muleGathererHandoffActive(mode: any, partners: any, powerMode: any): any;
-  export function muleReceiverActive(mode: any, partners: any): any;
-  export function muleCookerActive(mode: any, partners: any): any;
-  export function muleSupplierActive(mode: any, partners: any, powerMode: any): any;
-  export function muleNonGathererActive(mode: any, partners: any): any;
-  export function countOfferMatching(): any;
+  export function parsePartnerList(raw: unknown): unknown;
+  export function namesMatch(a: unknown, b: unknown): unknown;
+  export function isConfiguredPartner(name: string, partners: unknown): boolean;
+  export function countOfferByName(items: unknown, itemName: unknown): number;
+  export function decideReceiverOfferScreen(opts: unknown): unknown;
+  export function decideGiverOfferScreen(myOfferSlots: unknown): unknown;
+  export function parseMuleMode(raw: unknown): unknown;
+  export function muleGathererHandoffActive(mode: number, partners: unknown, powerMode: unknown): unknown;
+  export function muleReceiverActive(mode: number, partners: unknown): unknown;
+  export function muleCookerActive(mode: number, partners: unknown): unknown;
+  export function muleSupplierActive(mode: number, partners: unknown, powerMode: unknown): unknown;
+  export function muleNonGathererActive(mode: number, partners: unknown): unknown;
+  export function countOfferMatching(): number;
 }
 
 declare module '*api/trade/Trade.js' {
   export const Trade: {
-    active(): any;
-    onOfferScreen(): any;
-    onConfirmScreen(): any;
-    partner(): any;
-    myOffer(): any;
-    theirOffer(): any;
-    request(playerName: any): any;
-    offerAll(name: any, pick: any): any;
-    offer(name: any, n: any, pick: any): any;
-    removeAll(): any;
-    accept(): any;
-    decline(): any;
+    active(): unknown;
+    onOfferScreen(): unknown;
+    onConfirmScreen(): unknown;
+    partner(): unknown;
+    myOffer(): unknown;
+    theirOffer(): unknown;
+    request(playerName: unknown): Promise<boolean>;
+    offerAll(name: string, pick: unknown): Promise<boolean>;
+    offer(name: string, n: number, pick: unknown): Promise<boolean>;
+    removeAll(): Promise<boolean>;
+    accept(): Promise<boolean>;
+    decline(): Promise<boolean>;
   };
 }
 
 declare module '*api/trade/drivePartnerTrade.js' {
-  export function driveActivePartnerTrade(opts: any): Promise<any>;
+  export function driveActivePartnerTrade(opts: unknown): Promise<boolean>;
 }
 
 declare module '*api/ui/dialogue/ChatDialog.js' {
   export const ChatDialog: {
-    isOpen(): any;
-    canContinue(): any;
-    options(): any;
-    texts(): any;
-    isMakeMenu(): any;
-    makeProducts(): any;
-    make(match: any): Promise<any>;
-    makeX(match: any, count: any): Promise<any>;
-    continue(): Promise<any>;
-    chooseOption(match: any): Promise<any>;
-    isMainMakePanel(): any;
-    mainMakeProducts(): any;
-    makeFromPanel(match: any, op: any): Promise<any>;
-    makeFromPanelMax(match: any): Promise<any>;
-    makeOne(): Promise<any>;
+    isOpen(): boolean;
+    canContinue(): boolean;
+    options(): string[];
+    texts(): string[];
+    isMakeMenu(): boolean;
+    makeProducts(): string[];
+    make(match?: string | null): Promise<boolean>;
+    makeX(match?: string | null, count?: number): Promise<boolean>;
+    continue(): Promise<boolean>;
+    chooseOption(match?: string | null): Promise<boolean>;
+    isMainMakePanel(): boolean;
+    mainMakeProducts(): string[];
+    makeFromPanel(match?: string | null, op?: string | null): Promise<boolean>;
+    makeFromPanelMax(match?: string | null): Promise<boolean>;
+    makeOne(): Promise<boolean>;
   };
 }
 
 declare module '*api/ui/questlog/Quests.js' {
+  export type QuestStatus = string;
+
   export const Quests: {
-    all(): any;
-    status(name: any): any;
-    journal(): any;
-    points(): any;
+    all(): unknown;
+    status(name: string): unknown;
+    journal(): unknown;
+    points(): unknown;
   };
 }
 
 declare module '*api/ui/widgets/Modals.js' {
   export const Modals: {
-    main(): any;
-    isOpen(): any;
-    close(): any;
-    closeIfOpen(): any;
+    main(): unknown;
+    isOpen(): boolean;
+    close(): Promise<boolean>;
+    closeIfOpen(): Promise<boolean>;
   };
 }
 
 declare module '*api/walking/DirectNavigator.js' {
+  export interface WorldTile { x: number; z: number; level: number }
   export const DirectNavigator: {
-    walk(dest: any): any;
-    walkTo(dest: any, radius?: any, timeoutMs?: any): Promise<any>;
+    walk(dest: WorldTile): boolean;
+    walkTo(dest: WorldTile, radius?: number, timeoutMs?: number): Promise<boolean>;
   };
 }
 
 declare module '*api/walking/Reach.js' {
   export const Reach: {
-    entityOp(opts: any): Promise<any>;
-    npcDialog(opts: any): Promise<any>;
+    entityOp(opts: unknown): Promise<boolean>;
+    npcDialog(opts: unknown): Promise<boolean>;
   };
 }
 
 declare module '*api/walking/Traversal.js' {
+  export interface WorldTile { x: number; z: number; level: number }
+  export interface WalkOptions {
+    radius?: number;
+    timeoutMs?: number;
+    attempts?: number;
+    sceneRadius?: number;
+    useTeleportCatalog?: boolean;
+    policy?: {
+      useTeleports?: boolean;
+      distanceBeforeTeleport?: number;
+      useShips?: boolean;
+      useShortcuts?: boolean;
+      allowTeleportIds?: unknown;
+      denyTeleportIds?: unknown;
+    };
+    avoidZones?: unknown[];
+    pathFollow?: unknown;
+    forceRepath?: boolean;
+    log?: (message: string) => void;
+  }
   export const Traversal: {
-    walkTo: any;
-    walkResilient(tile: any, opts?: any): Promise<any>;
-    preload(): any;
-    remaining(): any;
-    teleportsEnabled(): any;
-    requestRepath(_reason: any): any;
-    get pureWalk(): any;
-    get withTeles(): any;
+    walkTo(tile: WorldTile, opts?: WalkOptions): Promise<boolean>;
+    walkResilient(tile: WorldTile, opts?: WalkOptions): Promise<boolean>;
+    preload(): void;
+    remaining(): number;
+    teleportsEnabled(): boolean;
+    requestRepath(_reason: string): void;
+    get pureWalk(): { useTeleportCatalog: boolean; policy: { useTeleports: boolean } };
+    get withTeles(): { useTeleportCatalog: boolean; policy: { useTeleports: boolean } };
   };
 }
 
 declare module '*data/cookLocations.js' {
+  export type CookLocation = { name: string; [key: string]: unknown };
+
   export const CUSTOM_LOCATION: any;
   export const MAX_SURFACE_CHEB: any;
   export const COOK_LOCATIONS: any;
-  export function findCookLocation(locs: any, name: any): any;
-  export function buildCookLocations(): any;
+  export function findCookLocation(locs: unknown, name: string): unknown;
+  export function buildCookLocations(): unknown;
 }
 
 declare module '*data/cowKillerLocations.js' {
+  export type CowLocation = { name: string; anchor: { x: number; z: number; level: number }; usesAlKharidToll?: boolean; [key: string]: unknown };
+
   export const COW_LOCATIONS: any;
   export const COW_LOCATION_OPTIONS: any;
   export const AL_KHARID_BANK: any;
-  export function resolveCowLocation(setting: any): any;
-  export function nearestCowLocation(tile: any): any;
+  export function resolveCowLocation(setting: unknown): unknown;
+  export function nearestCowLocation(tile: unknown): unknown;
 }
 
 declare module '*data/dropdb.js' {
@@ -1955,6 +1858,8 @@ declare module '*data/dropdb.js' {
 }
 
 declare module '*data/herbs.js' {
+  export type HerbDef = { name?: string; [key: string]: unknown };
+
   export const HERBS: any;
   export const HERB_OPTIONS: any;
 }
@@ -1970,7 +1875,7 @@ declare module '*data/miningRocks.js' {
   export const GAS_ROCK_IDS: any;
   export const GAS_ROCK_TICKS: any;
   export const BROKEN_PICKAXE: any;
-  export function resolveRockIds(_names: any): any;
+  export function resolveRockIds(_names: unknown): unknown;
 }
 
 declare module '*data/pickpocketTargets.js' {
@@ -2014,176 +1919,252 @@ declare module '*data/spelldb.js' {
 declare module '*data/woodcuttingLocations.js' {
   export const ENT_NPC_IDS: any;
   export const ENT_LIFE_TICKS: any;
-  export function isEntNpcId(id: any): any;
-  export function entNpcOnTile(npcs: any, tile: any): any;
+  export function isEntNpcId(id: number): boolean;
+  export function entNpcOnTile(npcs: unknown, tile: unknown): unknown;
 }
 
 declare module '*event/webwalk/DirectNavigator.js' {
+  export interface WorldTile { x: number; z: number; level: number }
   export const DirectNavigator: {
-    walk(dest: any): any;
-    walkTo(dest: any, radius?: any, timeoutMs?: any): Promise<any>;
+    walk(dest: WorldTile): boolean;
+    walkTo(dest: WorldTile, radius?: number, timeoutMs?: number): Promise<boolean>;
   };
 }
 
 declare module '*event/webwalk/Navigator.js' {
   export const Navigator: {
-    start(): any;
-    isReady(): any;
-    findPath(from: any, to: any, opts?: any): Promise<any>;
+    start(): unknown;
+    isReady(): boolean;
+    findPath(from: unknown, to: unknown, opts?: unknown): Promise<boolean>;
   };
   export default Navigator;
 }
 
 declare module '*event/webwalk/geometry/Reachability.js' {
+  export interface WorldTile { x: number; z: number; level: number }
+  export type ReachTarget = WorldTile | { tile(): WorldTile | null | undefined };
   export const Reachability: {
-    walkable(target: any): any;
-    canReach(target: any, opts?: any): any;
-    lineOfSight(from: any, to: any, size: any): any;
-    canStep(from: any, to: any): any;
+    walkable(target: ReachTarget): boolean;
+    canReach(target: ReachTarget, opts?: unknown): boolean;
+    lineOfSight(from: ReachTarget, to: ReachTarget, size?: number): boolean;
+    canStep(from: ReachTarget, to: ReachTarget): boolean;
   };
 }
 
 declare module '*event/webwalk/walkOpening.js' {
-  export function openOp(actions: any): any;
-  export function towardDest(_from: any, _here: any, _toward: any): any;
-  export function isOpenableObstacle(_name: any, _actions: any, _obstacles: any): any;
-  export function walkOpening(dest: any, radius: any, obstacles: any, log: any): Promise<any>;
+  export type WalkOpeningOptions = { radius?: number; [key: string]: unknown };
+
+  export function openOp(actions: unknown): unknown;
+  export function towardDest(_from: unknown, _here: unknown, _toward: unknown): unknown;
+  export function isOpenableObstacle(_name: string, _actions: unknown, _obstacles: unknown): boolean;
+  export function walkOpening(dest: unknown, radius?: number, obstacles?: unknown, log?: (msg: string) => void): Promise<boolean>;
 }
 
 declare module '*geometry/Tile.js' {
-  export class Tile {
-    constructor(x: any, z: any, level?: any);
-    x: any;
-    z: any;
-    level: any;
-    static from(tile: any): any;
-    distanceTo(other: any): any;
-    translate(dx: any, dz: any): any;
-    equals(other: any): any;
-    toString(): any;
+  export interface WorldTile {
+    x: number;
+    z: number;
+    level: number;
+  }
+  export class Tile implements WorldTile {
+    constructor(x: number, z: number, level?: number);
+    x: number;
+    z: number;
+    level: number;
+    static from(tile: WorldTile): Tile;
+    distanceTo(other: WorldTile): number;
+    translate(dx: number, dz: number): Tile;
+    equals(other: WorldTile): boolean;
+    toString(): string;
   }
   export default Tile;
-  export function tileFromPosted(value: any): any;
+  export function tileFromPosted(value: unknown): WorldTile | null;
 }
 
 declare module '*input/Input.js' {
   export const Input: {
-    walk(lx: any, lz: any): any;
-    interactNpc(index: any, op: any): any;
-    interactPlayer(index: any, op: any): any;
-    interactLoc(lx: any, lz: any, _typecode: any, op: any): any;
-    takeObj(lx: any, lz: any, _objId: any, op: any): any;
-    heldOp(objId: any, _slot: any, _comId: any, op: any): any;
-    invButton(objId: any, slot: any, comId: any, op: any): any;
+    walk(lx: number, lz: number): unknown;
+    interactNpc(index: number, op: string): unknown;
+    interactPlayer(index: number, op: string): unknown;
+    interactLoc(lx: number, lz: number, _typecode: unknown, op: string): unknown;
+    takeObj(lx: number, lz: number, _objId: unknown, op: string): unknown;
+    heldOp(objId: unknown, _slot: number, _comId: number, op: string): unknown;
+    invButton(objId: unknown, slot: number, comId: number, op: string): unknown;
   };
 }
 
 declare module '*paint/Paint.js' {
+  export type PaintLine = string | { text?: string; [key: string]: unknown };
+  export interface PaintFrame {
+    title(text: string): PaintFrame;
+    row(...cols: Array<string | number>): PaintFrame;
+    gap(px?: number): PaintFrame;
+    text(line: string, _color?: string): PaintFrame;
+    bar(label: string, fraction: number, _color?: string): PaintFrame;
+    tabs(id: string, names: string[]): string;
+    cells(cols: Array<string | { text: string }>): PaintFrame;
+    strip(id: string, names: string[], status?: string, brand?: string, resolved?: string): string;
+    rail(id: string, names: string[], resolved?: string): string;
+    footer(text: string): PaintFrame;
+    rowsLeft(): number;
+    statGrid(rows: unknown, columns?: unknown): PaintFrame;
+    select(id: string, label: string, options: unknown[], current?: unknown): unknown;
+    buttons(items: Array<{ id: string; label: string } | null> | null): string | null;
+    end(): void;
+  }
   export const Paint: {
-    begin(ctx: any, opts: any): any;
+    begin(ctx: CanvasRenderingContext2D | null, opts?: { dock?: string; accent?: string }): PaintFrame;
   };
 }
 
 declare module '*paint/jive.js' {
-  export const JIVE_ACCENT: any;
-  export const JIVE_BYLINE: any;
-  export const COMBAT_SKILLS: any;
-  export function scriptFrame(ctx: any, opts: any): any;
-  export function jiveFrame(ctx: any, opts: any): any;
-  export class XpTracker {
-    constructor(skills: any, read: any);
-    skills: any;
-    read: any;
-    id: any;
-    begin(): any;
-    progress(): any;
-    gains(): any;
+  export const JIVE_ACCENT: string;
+  export const JIVE_BYLINE: string;
+  export const COMBAT_SKILLS: string[];
+  export interface SkillGain {
+    skill: string;
+    gained?: number;
+    [key: string]: unknown;
   }
-  export function paintLevels(p: any, gains: any, mins: any, reserve: any, empty: any): any;
+  export interface JivePaintFrame {
+    title(text: string): JivePaintFrame;
+    row(...cols: Array<string | number>): JivePaintFrame;
+    gap(px?: number): JivePaintFrame;
+    text(line: string): JivePaintFrame;
+    bar(label: string, fraction: number, _color?: string): JivePaintFrame;
+    tabs(id: string, names: string[]): string;
+    cells(cols: Array<string | { text: string }>): JivePaintFrame;
+    strip(id: string, names: string[], status?: string, brand?: string, resolved?: string): string;
+    rail(id: string, names: string[], resolved?: string): string;
+    footer(text: string): JivePaintFrame;
+    rowsLeft(): number;
+    statGrid(rows: unknown, columns?: unknown): JivePaintFrame;
+    select(id: string, label: string, options: unknown[], current?: unknown): unknown;
+    buttons(items: Array<{ id: string; label: string } | null> | null): string | null;
+    end(): void;
+  }
+  export interface JiveFrame {
+    frame: JivePaintFrame;
+    page: string;
+    section: string;
+  }
+  export function scriptFrame(ctx: CanvasRenderingContext2D | null, opts?: unknown): JiveFrame;
+  export function jiveFrame(ctx: CanvasRenderingContext2D | null, opts?: unknown): JiveFrame;
+  export class XpTracker {
+    constructor(skills: string[], read: { xp(skill: string): number; level(skill: string): number });
+    skills: string[];
+    read: { xp(skill: string): number; level(skill: string): number };
+    id: unknown;
+    begin(): void;
+    progress(): SkillGain[];
+    gains(): SkillGain[];
+  }
+  export function paintLevels(p: { rowsLeft?: () => number; [key: string]: unknown }, gains: SkillGain[], mins: number, reserve: number, empty?: unknown): void;
 }
 
 declare module '*paint/levelProgress.js' {
-  export function xpAtLevel(level: any): any;
-  export function levelProgress(level: any, xp: any): any;
-  export function etaHours(remaining: any, xpPerHour: any): any;
-  export function levelRow(g: any, mins: any): any;
+  export interface SkillGain {
+    skill: string;
+    gained?: number;
+    [key: string]: unknown;
+  }
+  export function xpAtLevel(level: number): number;
+  export function levelProgress(level: number, xp: number): number;
+  export function etaHours(remaining: number, xpPerHour: number): number | null;
+  export function levelRow(g: unknown, mins: number): string;
 }
 
 declare module '*paint/paintLogic.js' {
-  export function fmtDuration(minutes: any): any;
-  export function fmtXpHr(gained: any, mins: any): any;
-  export function paintSkillShort(skill: any): any;
+  export function fmtDuration(minutes: number): string;
+  export function fmtXpHr(gained: number, mins: number): string;
+  export function paintSkillShort(skill: string): string;
 }
 
 declare module '*runtime/BotHost.js' {
   export const BotHost: {
-    get tickCount(): any;
+    get tickCount(): number;
+    addTickListener(cb: () => void): () => boolean;
   };
 }
 
 declare module '*runtime/RecoveryHints.js' {
   export const RecoveryHints: {
-    get pendingRecovery(): any;
-    set pendingRecovery(value: any);
-    get anchor(): any;
-    set anchor(value: any);
-    takeAnchor(): any;
-    clear(): any;
+    get pendingRecovery(): unknown;
+    set pendingRecovery(value: number);
+    get anchor(): unknown;
+    set anchor(value: number);
+    takeAnchor(): unknown;
+    clear(): unknown;
   };
 }
 
 declare module '*runtime/RunManager.js' {
   export const RunManager: {
-    override(policy: any): any;
+    override(policy: unknown): unknown;
   };
 }
 
 declare module '*runtime/ScriptRunner.js' {
   export const ScriptRunner: {
-    stop(reason: any): any;
-    paintControls(p: any): any;
+    stop(reason?: string): void;
+    paintControls(p: { gap(px?: number): unknown; row(...cols: Array<string | number>): unknown }): void;
   };
 }
 
 declare module '*runtime/Settings.js' {
+  export interface WorldTile { x: number; z: number; level: number }
+  export interface SettingDef {
+    type?: unknown;
+    default?: unknown;
+    label?: unknown;
+    help?: unknown;
+    min?: unknown;
+    max?: unknown;
+    options?: unknown;
+    optionsFrom?: unknown;
+    group?: unknown;
+    showIf?: unknown;
+    [key: string]: unknown;
+  }
+  export type SettingsSchema = Record<string, SettingDef>;
   export class SettingsBag {
-    constructor(values?: any);
-    values: any;
-    bool(key: any, fallback?: any): any;
-    num(key: any, fallback?: any): any;
-    str(key: any, fallback?: any): any;
-    list(key: any, fallback?: any): any;
-    tile(key: any, fallback?: any): any;
+    constructor(values?: Record<string, unknown>);
+    values: Record<string, unknown>;
+    bool(key: string, fallback?: boolean): boolean;
+    num(key: string, fallback?: number): number;
+    str(key: string, fallback?: string): string;
+    list(key: string, fallback?: string[]): string[];
+    tile(key: string, fallback?: WorldTile | null): WorldTile | null;
   }
   export const SettingsStore: {
-    resolve(_name: any, schema: any): any;
-    displayString(_name: any, key: any, def: any): any;
-    saved(_name: any, key: any): any;
-    globalBag(): any;
+    resolve(_name: string, schema: SettingsSchema): Record<string, unknown>;
+    displayString(_name: string, key: string, def?: SettingDef): string;
+    saved(_name: string, key: string): string | undefined;
+    globalBag(): SettingsBag;
   };
 }
 
 declare module '*runtime/Supervisor.js' {
   export const Supervisor: {
-    noteProgress(): any;
+    noteProgress(): unknown;
   };
 }
 
 declare module '*shim/_kernel.js' {
-  export function host(): any;
-  export function snap(): any;
-  export function notImpl(name: any, reason: any): any;
-  export function queue(req: any): any;
-  export function runMachine(family: any, args: any, hooks: any): Promise<any>;
-  export function machineNow(family: any, args: any): any;
-  export function proxy(ns: any, members: any): any;
-  export function notImplValue(ns: any): any;
-  export function distanceTo(a: any, b: any): any;
-  export function planarDistanceTo(a: any, b: any): any;
-  export function arrived(dest: any, radius: any): any;
-  export function presentOps(actions: any): any;
-  export function opIndex(actions: any, action: any): any;
-  export function entitySnapView(row: any): any;
-  export function optionalText(value: any): any;
+  export function host(): unknown;
+  export function snap(): unknown;
+  export function notImpl(name: string, reason: string): unknown;
+  export function queue(req: unknown): unknown;
+  export function runMachine(family: string, args: unknown, hooks: unknown): Promise<boolean>;
+  export function machineNow(family: string, args: unknown): unknown;
+  export function proxy(ns: unknown, members: unknown): unknown;
+  export function notImplValue(ns: unknown): unknown;
+  export function distanceTo(a: unknown, b: unknown): number;
+  export function planarDistanceTo(a: unknown, b: unknown): unknown;
+  export function arrived(dest: unknown, radius: number): unknown;
+  export function presentOps(actions: unknown): unknown;
+  export function opIndex(actions: unknown, action: string): number;
+  export function entitySnapView(row: unknown): unknown;
+  export function optionalText(value: number): unknown;
 }
 
